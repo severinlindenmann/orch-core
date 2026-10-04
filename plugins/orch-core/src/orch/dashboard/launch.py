@@ -61,9 +61,13 @@ SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness")
 # turn off project and local settings and project MCP servers: a worktree is written by agents.
 DEFAULT_FACTORY_COMMAND = ["claude", "--setting-sources", "user", "--strict-mcp-config", "--session-id", "{session}",
                            "{prompt}"]
-# An argument that would hand the agent permissions itself: the permission hook stays the only gate.
-_SELF_GRANT = re.compile(r"dangerously|bypass|allowed-?tools|permission-prompt-tool|--settings|yolo|--trust-all|--full-auto"
-                         r"|--auto-approve|--yes\b", re.I)
+# The runner's command is an allowlist: the program is claude, the arguments are the ones below, each at most once, and
+# the permission hook stays the only gate. Anything else (skipping or pre-approving permissions, other settings or
+# MCP sources, extra folders, plugins, agents, a permission mode that skips prompts) is refused.
+_FACTORY_FLAGS = {"--setting-sources", "--strict-mcp-config", "--session-id", "--model", "--verbose",
+                  "--permission-mode"}
+_FACTORY_NOVALUE = {"--strict-mcp-config", "--verbose"}
+_FACTORY_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}")
 
 
 def factory_path() -> Path:
@@ -90,28 +94,49 @@ def load_factory_command() -> tuple[list[str], str | None]:
     return list(argv), None
 
 
-def _user_settings_only(argv) -> bool:
-    for i, a in enumerate(argv):
-        if a == "--setting-sources" and i + 1 < len(argv):
-            return argv[i + 1] == "user"
-        if a.startswith("--setting-sources="):
-            return a.split("=", 1)[1] == "user"
-    return False
-
-
 def factory_command_error(argv) -> str | None:
     """Why `argv` cannot be the runner's launch command, or None."""
     if not _argv_list(argv):
         return "the command must be a non-empty list of strings in a file that holds only {\"command\": [...]}"
-    if not any("{session}" in a for a in argv) or not any("{prompt}" in a for a in argv):
-        return "the command must contain {session} and {prompt}"
-    if not _user_settings_only(argv) or "--strict-mcp-config" not in argv:
-        return ("the command must pass --setting-sources user and --strict-mcp-config: settings and MCP servers "
-                "a worktree carries are written by agents")
-    if any(_SELF_GRANT.search(a) for a in argv):
-        return "the command must not grant the agent permissions itself: the permission hook is the gate"
+    if os.path.basename(argv[0]) != "claude":
+        return "the program must be claude"
+    seen, i = set(), 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "{prompt}":
+            if i != len(argv) - 1 or "{prompt}" in seen:
+                return "the command must end with {prompt}, once"
+            seen.add("{prompt}")
+            i += 1
+            continue
+        flag, eq, val = a.partition("=")
+        if flag not in _FACTORY_FLAGS:
+            return (f"{flag} is not an allowed argument (the command may not grant permissions or widen what the "
+                    "session reads)")
+        if flag in seen:
+            return f"{flag} is given more than once"
+        seen.add(flag)
+        if flag in _FACTORY_NOVALUE:
+            if eq:
+                return f"{flag} takes no value"
+        else:
+            if not eq:
+                i += 1
+                val = argv[i] if i < len(argv) else ""
+            if flag == "--setting-sources" and val != "user":
+                return "--setting-sources must be user: settings a worktree carries are written by agents"
+            if flag == "--session-id" and val != "{session}":
+                return "--session-id must be {session}"
+            if flag == "--permission-mode" and val not in ("default", "plan"):
+                return "--permission-mode may only be default or plan: a mode that skips prompts is the hook's to answer"
+            if flag == "--model" and not _FACTORY_MODEL.fullmatch(val):
+                return "--model is not a model name"
+        i += 1
+    for need, why in (("--setting-sources", "--setting-sources user"), ("--strict-mcp-config", "--strict-mcp-config"),
+                      ("--session-id", "--session-id {session}"), ("{prompt}", "{prompt}")):
+        if need not in seen:
+            return f"the command must pass {why}"
     return None
-
 
 def config_dir() -> Path:
     base = os.environ.get("ORCH_STATE_DIR")

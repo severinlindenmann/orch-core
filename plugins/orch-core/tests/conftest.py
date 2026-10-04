@@ -30,6 +30,7 @@ def _factory_pane_pid(monkeypatch):
     bind a session record 4242 and run "under" it, and say otherwise by replacing this themselves."""
     import orch.core.factory_sessions as fs
     monkeypatch.setattr(fs, "chain_pids", lambda: {4242})
+    monkeypatch.setattr(fs, "proc_start", lambda pid: "Mon Oct  4 10:00:00 2026")
 
 
 @pytest.fixture(autouse=True)

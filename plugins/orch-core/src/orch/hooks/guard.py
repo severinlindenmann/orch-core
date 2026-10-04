@@ -85,6 +85,26 @@ _ORCH_TMUX_DENIED = ("Mission Control's terminals (tmux -L orch) are the human's
                      "dashboard; an agent does not reach another session through them")
 
 
+# The AI Factory's own tmux server sits on a socket inside the permits folder. Best effort, spelling based: any tmux or
+# screen command that names the permits folder, takes a socket (-L/-S) that is not a plain literal, or is built with
+# variables, escapes, eval, aliases or functions is refused. A same-user process is not isolated from the socket by
+# the OS; the guard only makes the obvious routes fail.
+_MUX_WORD = re.compile(r"(?<![\w-])(?:tmux|screen)(?![\w-])")
+_MUX_DYNAMIC = re.compile(r"[$`\\]|(?<![\w-])(?:eval|alias|function|source)(?![\w-])|\(\)")
+_MUX_SOCKET = re.compile(r"(?<![\w-])-[LS]\s*(\S*)")
+_MUX_DENIED = ("a tmux or screen command with a socket that is not a plain literal, or built with variables, escapes, "
+               "eval, aliases or functions, can reach the AI Factory's sessions, which are the human's")
+
+
+def _mux_risky(cmd: str) -> bool:
+    text = cmd.replace("'", "").replace('"', "")
+    if not _MUX_WORD.search(text):
+        return False
+    if "permits" in text or _MUX_DYNAMIC.search(text):
+        return True
+    return any(not re.fullmatch(r"[A-Za-z0-9_./~-]+", m.group(1)) for m in _MUX_SOCKET.finditer(text))
+
+
 def _pty_wrapped(text: str) -> bool:
     """A pty or terminal wrapper as a command word (quoted text aside), or Python's pty helpers."""
     return bool(_PTY_CMD.search(_unquoted(text)) or _PTY_PY.search(text))
@@ -1035,6 +1055,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
+    if _mux_risky(cmd):
+        return Decision(False, _MUX_DENIED)
     may = ws.config["git"]["agent_may"]
     term = ws.config["git"]["review_term"]
     for seg in _command_segments(cmd):

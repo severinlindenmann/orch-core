@@ -27,7 +27,7 @@ from orch.errors import HumanOnlyError, ValidationError
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MAX_LAUNCHES = 5  # per child and delegation: a child that keeps parking is the human's to look at
 _MAX_BYTES = 4096
-_KEYS = {"workspace", "session", "epic", "delegation", "child", "name", "wake", "pid", "at"}
+_KEYS = {"workspace", "session", "epic", "delegation", "child", "name", "wake", "pid", "pid_start", "at"}
 
 
 def _root() -> Path:
@@ -72,22 +72,37 @@ def bind(ws, actor, *, session: str, epic: str, delegation: str, child: str, nam
     if not isinstance(session, str) or not SESSION_ID.match(session):
         raise ValidationError("a factory session id is a UUID the runner generated")
     body = {"workspace": workspace_id(ws), "session": session, "epic": str(epic), "delegation": str(delegation),
-            "child": str(child), "name": str(name), "wake": str(wake), "pid": "", "at": stamp_s()}
+            "child": str(child), "name": str(name), "wake": str(wake), "pid": "", "pid_start": "", "at": stamp_s()}
     if not _create(_root() / "sessions" / f"{session}.json", body):
         raise ValidationError(f"session {session} is bound already")
     return body
 
 
+def proc_start(pid: int) -> str | None:
+    """When process `pid` started, as `ps` prints it (None when it is gone or `ps` fails). With the pid it tells the
+    process the runner started from a later one that reused the number. Tests replace it."""
+    import subprocess
+    try:
+        r = subprocess.run(["/bin/ps", "-o", "lstart=", "-p", str(int(pid))], capture_output=True, text=True,
+                           timeout=5, stdin=subprocess.DEVNULL, env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"})
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    out = " ".join(r.stdout.split())
+    return out if r.returncode == 0 and out else None
+
+
 def set_pid(ws, actor, session: str, pid) -> None:
-    """Human only (the runner): record the first process of the session's tmux pane, once. The hook then trusts the
-    binding only for a process that runs under that pid, so a copied session id used elsewhere gets nothing."""
+    """Human only (the runner): record the first process of the session's tmux pane and when it started, once. The
+    hook then trusts the binding only for a process that runs under that very process, so a copied session id used
+    elsewhere gets nothing."""
     human_check(actor, "binding a factory session")
     b = binding(ws, session)
-    if b is None or b["pid"] or not isinstance(pid, int) or isinstance(pid, bool) or pid < 2:
+    start = proc_start(pid) if isinstance(pid, int) and not isinstance(pid, bool) and pid >= 2 else None
+    if b is None or b["pid"] or not start:
         raise ValidationError("the session's process cannot be recorded")
     path = _root() / "sessions" / f"{session}.json"
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({**b, "pid": str(pid)}, ensure_ascii=True), encoding="utf-8")
+    tmp.write_text(json.dumps({**b, "pid": str(pid), "pid_start": start}, ensure_ascii=True), encoding="utf-8")
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
@@ -99,13 +114,16 @@ def chain_pids() -> set[int]:
 
 
 def trusted(ws, session) -> dict | None:
-    """The binding for `session` when this process runs under the pid the runner recorded for it, else None: what the
-    permission hook trusts. Compared in constant time; a binding without a pid is not trusted yet."""
+    """The binding for `session` when this process runs under the process the runner recorded for it (same pid, same
+    start time), else None: what the permission hook trusts. Compared in constant time; a binding without a recorded
+    process is not trusted yet."""
     import hmac
     b = binding(ws, session)
     if b is None or not hmac.compare_digest(b["session"].encode(), str(session).encode()):
         return None
-    return b if b["pid"].isdigit() and int(b["pid"]) in chain_pids() else None
+    if not (b["pid"].isdigit() and b["pid_start"] and int(b["pid"]) in chain_pids()):
+        return None
+    return b if hmac.compare_digest(proc_start(int(b["pid"])) or "", b["pid_start"]) else None
 
 
 def _read(ws, path: Path) -> dict | None:
@@ -151,7 +169,7 @@ def ended(ws) -> list[dict]:
     return _listing(ws, ".ended")
 
 
-def end(ws, session: str) -> None:
+def end(ws, session: str, wake: str | None = None) -> None:
     """A session is over (it stopped, or the runner stopped it): its binding stops counting at once. The record is
     kept as an `.ended` file; its `wake` is what the child waited for when it started, so the runner starts the child
     again only when that changed."""
@@ -161,7 +179,7 @@ def end(ws, session: str) -> None:
     src = _root() / "sessions" / f"{session}.json"
     dst = _root() / "sessions" / f"{session}.ended"
     try:
-        dst.write_text(json.dumps(b, ensure_ascii=True), encoding="utf-8")
+        dst.write_text(json.dumps(b if wake is None else {**b, "wake": wake}, ensure_ascii=True), encoding="utf-8")
     finally:
         try:
             src.unlink()

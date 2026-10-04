@@ -157,34 +157,51 @@ state, and passing it back as `--after` waits for the next change. A Stopped car
 
 ## The runner (phase 4)
 
-The dashboard server can keep the agents going for you, on this machine, in Mission Control's tmux server (D4). When
-you start a factory epic **from the dashboard** (the epic page's "Start as an AI Factory"), that signed start also arms
-the runner for that delegation. Every few seconds the dashboard then, for each armed and active factory epic:
+The dashboard server can keep the agents going for you, on this machine, in a tmux server of its own (D4). When you
+start a factory epic **from the dashboard** (the epic page's "Start as an AI Factory"), that signed start also arms the
+runner for that delegation. Every few seconds the dashboard then, for each armed and active factory epic:
 
-- **launches** one agent session (the Terminals addon must be on, and tmux installed) for each child that is
-  auto-approved or covered by your charter, is size m or smaller, and is open, in progress or waiting: at most **3 at a
-  time** (`factory.max_concurrency` in `orchestrator/config.json` can only lower that), at most the charter's **max
+- **launches** one agent session (tmux must be installed) for each child that is auto-approved or covered by your
+  charter, is size m or smaller, and is open, in progress or waiting: at most **3 at a time**
+  (`factory.max_concurrency` in `orchestrator/config.json` can only lower that), at most the charter's **max
   children** distinct children, and a few launches per child. Those counts are markers beside the ledger, so editing
-  tickets cannot lower them. A session starts in the child's own worktree when the child names exactly one that lies inside the
-  workspace (and holds no harness settings of its own), else in the workspace root, with a minimal environment (an
-  allowlist of variables; nothing the dashboard holds besides them);
+  tickets cannot lower them;
 - **wakes** a child whose session ended while it was parked, when something it waits for changed: your grant, denial
   or revocation in that epic, or the child's own text or approvals. Nothing else restarts it;
 - **stops** every session of the epic, and ends its binding, when you pause the epic, edit its text, approve it again,
-  the epic is done, the time budget is used up, the ledger is cut or the factory is switched off; and a child's
-  session when the child is done. A used-up child budget only stops new children: those already running go on.
+  the epic is done, the time budget is used up, the ledger is cut, the factory is switched off or the user-scope
+  settings below stop holding; and a child's session when the child is done. A used-up child budget only stops new
+  children: those already running go on. When the dashboard stops, every session stops and every binding ends (each
+  child starts again with the next dashboard); when it starts, a binding whose session is not running ends. If tmux does
+  not answer, the runner concludes nothing that round and asks again.
 
 The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
 `orch approve --factory` signs the charter but does not arm the runner). It runs only in a process that is not under an
 agent harness, like the dashboard's other human actions.
 
+**Turn orch on at user scope first.** The launched session ignores project settings (see below), so orch's guard and
+permission hook must come from your user-scope Claude settings (`CLAUDE_CONFIG_DIR`, else `~/.claude`): enable the
+orch-core plugin there, or carry the orch guard and permission hooks. Until they do, the runner starts nothing, stops
+what runs, and the epic page says why.
+
 **Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child)
 exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
 permission hook trusts only this record to decide which epic's grants apply, and only for a process running under the
-first process the runner recorded for that session: a copied session id gets nothing elsewhere. An ended or stopped
-session loses the record at once. Only a human process writes it: agent processes are refused, and the guard keeps
-agents away from the folder. Session ids are random, never written to events, tickets, logs or pages.
+process the runner recorded for that session (same pid and same start time): a copied session id gets nothing
+elsewhere. An ended or stopped session loses the record at once. Only a human process writes it: agent processes are
+refused, and the guard keeps agents away from the folder. Session ids are random, never written to events, tickets,
+logs or pages.
+
+**Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
+private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
+programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
+path only when owned by you or root and not writable by group or others. The agent gets `env -i` with a fixed PATH (the
+folders of those programs, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
+session starts in the child's worktree only when the child names exactly one, below the workspace's
+`.claude/worktrees` folder or a git worktree in the workspace whose branch names the child; otherwise in the workspace
+root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
+so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
 
 **The launch command** is yours, in `factory-command.json` inside the permits folder of the orch config dir, which the
 guard keeps agents from reading and writing (never the workspace config, ticket text or anything else an agent can
@@ -195,16 +212,17 @@ edit; the prompt is built in):
 ```
 
 That is the default; a damaged file means the default. `{session}` is the id the runner bound (the agent must start
-under exactly that id) and `{prompt}` the child's work prompt. A command is refused, and the default used, when it
-carries a bypass or self-granting argument (skipping permission prompts, allowing tools, settings overrides) or does
-not turn project and local settings and project MCP servers off: the hook stays the only gate. Run the agents in a
-permission mode that does not prompt for file edits (see above).
+under exactly that id) and `{prompt}` the child's work prompt, last. The command is an allowlist: the program is
+`claude`; the arguments are `--setting-sources user`, `--strict-mcp-config`, `--session-id {session}` (all three
+required), and optionally `--model`, `--verbose` and `--permission-mode` default or plan, each once. Anything else is
+refused and the default used (settings, MCP or plugin sources, extra folders, agents, tool allowances, permission modes
+that skip prompts): the hook stays the only gate. Run the agents in a permission mode that does not prompt for file
+edits by setting it in your user settings, not in this command.
 
 **Worktrees are written by agents.** The launched session ignores the settings and MCP servers a worktree carries
 (user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a
 `.claude/settings.json`, `.claude/settings.local.json` or `.mcp.json` that is not identical to the workspace's own.
-Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text, and a
-custom command can drop these protections only by being a command you wrote yourself.
+Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text.
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).

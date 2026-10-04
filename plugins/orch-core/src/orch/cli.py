@@ -1082,7 +1082,7 @@ def hook_pre_commit(
 def hooks_install(
     repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Install even where a commit-msg hook exists in .git/hooks (that hook is kept as commit-msg.pre-orch and runs after the orch check).")] = False,
-    stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists).")] = False,
+    stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists; under core.hooksPath it is delegated like commit-msg). A commit that names paths may not carry the staged records.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Install the commit-msg check into each repo's own hooks directory; other hooks keep working.

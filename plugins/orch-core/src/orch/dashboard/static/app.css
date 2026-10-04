@@ -1642,3 +1642,28 @@ html.term-full-open { overflow: hidden; }
 .permit-cmd-inline { overflow-wrap: anywhere; min-width: 0; }
 .charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; }
 .factory-budget { margin-left: var(--s-2); }
+
+/* Charts (templates/_charts.html, static/charts.js) */
+.chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; }
+.chart-title { font: var(--type-section); }
+.chart-plot { position: relative; height: 240px; min-width: 0; }
+.chart-plot canvas { max-width: 100%; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; padding: 0; list-style: none; font: var(--type-meta); color: var(--muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: var(--s-2); }
+.chart-swatch { display: inline-block; width: var(--s-3); height: var(--s-3); border-radius: var(--s-1); }
+.chart-note { margin: 0; font: var(--type-meta); color: var(--muted); }
+.chart-data summary { cursor: pointer; font: var(--type-meta); color: var(--muted); }
+.chart-data .table-wrap { margin-top: var(--s-2); }
+.chart-table th[scope="row"] { font-weight: 400; text-align: left; }
+.chart-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Reports: needs-you block, record start, in-cell bars */
+.since { margin: 0 0 var(--s-4); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface2); color: var(--muted); font: var(--type-meta); }
+.since b { color: var(--text); }
+.needs-now { border-color: var(--line2); }
+.needs-now h2 { margin-bottom: var(--s-3); }
+.needs-now .kpis { margin-bottom: 0; }
+.ib { display: flex; align-items: center; gap: var(--s-2); font-variant-numeric: tabular-nums; }
+.ib-track { display: block; width: 96px; flex: none; }
+.ib-track i { display: block; height: var(--s-2); min-width: var(--s-1); border-radius: var(--s-1); background: var(--series-1); }
+.reports-grid .card { min-width: 0; }

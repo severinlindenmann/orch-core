@@ -780,8 +780,11 @@ class Ops(TaskOpsMixin):
     # -- gates -----------------------------------------------------------------------
 
     def approve(self, ref: str, gate: str, *, expected_hash: str | None = None,
-                despite_open_question: bool = False, delegate: dict | None = None) -> Ticket:
-        """`despite_open_question`: the human read the gate and approves although a line looks like an open question
+                despite_open_question: bool = False, delegate: dict | None = None,
+                skip_if_signed: bool = False) -> Ticket:
+        """`skip_if_signed` (batch approval): a gate already approved for exactly this hash is refused with
+        "already approved" under the ticket lock, so two batches never sign the same plan twice.
+        `despite_open_question`: the human read the gate and approves although a line looks like an open question
         for them (recorded in the event and the ledger). For an epic, `expected_hash` is the charter's hash and
         `delegate` ({max_children, max_size}, {} for the defaults) opts in to delegation (orch.core.epics)."""
         require_human(self.actor, "approving gates")
@@ -798,6 +801,10 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict:
             if expected_hash != gate_hash(t, gate):
                 raise ValidationError(f"the {gate} changed since you opened it — review again")
+            if skip_if_signed:
+                g = (t.meta.get("gates") or {}).get(gate) or {}
+                if g.get("approved") and g.get("hash") == expected_hash:
+                    raise ValidationError("already approved")
             from orch.core.gates import gate_meta, gate_parts
             _refuse_hidden(f"{gate} text", t.title, *(t.section(n) for n, _ in gate_parts(t, gate)),
                            *(v for _, v in gate_meta(t, gate)))
@@ -1001,12 +1008,8 @@ class Ops(TaskOpsMixin):
                 skipped.append((cid, f"not a child of {epic.id}"))
                 continue
             try:
-                cur = store.read_ticket(kids[cid].path)
-                g = (cur.meta.get("gates") or {}).get("plan") or {}
-                if g.get("approved") and g.get("hash") == h == gate_hash(cur, "plan"):
-                    skipped.append((cid, "already approved"))
-                    continue
-                approved.append(self.approve(cid, "plan", expected_hash=h, despite_open_question=cid in waived))
+                approved.append(self.approve(cid, "plan", expected_hash=h, despite_open_question=cid in waived,
+                                             skip_if_signed=True))  # the "already approved" check is under the lock
             except HumanOnlyError:
                 raise
             except OrchError as e:  # this child's checks failed (or its file is busy): the others go ahead

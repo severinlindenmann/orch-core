@@ -69,7 +69,7 @@
 .w-gb { position: absolute; height: calc(var(--w-gh) - var(--s-1)); margin-top: 2px; background: var(--info-mark);
   border-radius: var(--r-sm); min-width: 3px; overflow: hidden; container-type: inline-size; }
 @container (max-width: 6rem) { .w-gv { display: none; } }  /* a bar too short for its label prints none: title and text alternative have it */
-.w-gv { padding: 0 var(--s-1); font: var(--type-meta); line-height: calc(var(--w-gh) - var(--s-1) - 2px);
+.w-gv { display: block; padding: 0 var(--s-1); font: var(--type-meta); line-height: calc(var(--w-gh) - var(--s-1) - 2px);
   color: var(--surface); white-space: nowrap; }  /* the interval's values, drawn only on a bar wide enough for them */
 
 /* tests */

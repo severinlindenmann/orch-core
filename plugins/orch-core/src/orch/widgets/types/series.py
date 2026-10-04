@@ -38,7 +38,7 @@ def render_html(block, ctx) -> str:
     x0, x1 = min(xs), max(xs)
     ys = [y for _, y in pts]
     y0, y1 = min(ys), max(ys)
-    top = ROWS * ROW_H + 14 if marks else 16
+    top = ROWS * ROW_H + 26 if marks else 16  # room for a high label under the marker rows
     bot = H - 18
 
     def X(v): return LEFT + ((v - x0) / (x1 - x0) * (W - 2 * LEFT) if x1 > x0 else (W - 2 * LEFT) / 2)
@@ -52,8 +52,14 @@ def render_html(block, ctx) -> str:
                    f'<text class="w-mk" x="{p(x)}" y="{ty}" text-anchor="{_anchor(x)}"><title>{esc(m["label"])}</title>'
                    f'{esc(_clip(m["label"]))}</text>')
     shown: list[int] = []
-    for i in (0, len(pts) - 1, ys.index(y1), ys.index(y0)):  # first, last, high, low; skip one too near a shown label
-        if all(abs(X(pts[i][0]) - X(pts[j][0])) > 70 for j in shown):
+    def span(i):  # where the label's text runs along x, in viewBox units (about 7 per character)
+        x, w = X(pts[i][0]), 7 * len(with_unit(pts[i][1], d.get("unit")))
+        a = _anchor(x)
+        return (x, x + w) if a == "start" else (x - w, x) if a == "end" else (x - w / 2, x + w / 2)
+
+    for i in (ys.index(y1), ys.index(y0), 0, len(pts) - 1):  # high and low win; first and last skip when they would touch one
+        a0, a1 = span(i)
+        if all(a1 + 6 < b0 or b1 + 6 < a0 for b0, b1 in map(span, shown)):
             shown.append(i)
     for i in sorted(shown):
         x, y = pts[i]

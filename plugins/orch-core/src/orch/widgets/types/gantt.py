@@ -49,7 +49,8 @@ def render_html(block, ctx) -> str:
         placed, nrows = _rows(ivs)
         bars = "".join(
             f'<b class="w-gb" style="left:{p(pct(a, lo, hi))}%;width:{p(max(pct(b, lo, hi) - pct(a, lo, hi), 0.8))}%;'
-            f'top:calc({r} * var(--w-gh))" title="{esc(with_unit(a, d.get("unit")))} – {esc(with_unit(b, d.get("unit")))}"></b>'
+            f'top:calc({r} * var(--w-gh))" title="{esc(with_unit(a, d.get("unit")))} – {esc(with_unit(b, d.get("unit")))}">'
+            f'<span class="w-gv" aria-hidden="true">{esc(fmt(a))}–{esc(with_unit(b, d.get("unit")))}</span></b>'
             for r, a, b in placed)
         lanes.append(f'<li class="w-lane"><span class="w-lane-n">{esc(name)}</span>'
                      f'<span class="w-lane-t" style="--rows:{nrows}">{grid}{bars}</span></li>')

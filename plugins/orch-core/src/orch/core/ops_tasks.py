@@ -238,6 +238,9 @@ class TaskOpsMixin:
     def task_start(self, ref: str, task_id: str):
         def change(t, items, task):
             self._plan_approved_for_agent(t)
+            if not self.actor.is_human:
+                from orch.core.permits import require_budget
+                require_budget(self.ws, t)  # AI Factory: the time budget is used up, the human decides
             if task.state == "doing":
                 raise ValidationError(f"{task.id} is already in progress")
             if task.closed:

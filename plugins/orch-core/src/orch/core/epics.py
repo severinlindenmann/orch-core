@@ -111,9 +111,9 @@ def normalize_delegate(delegate) -> dict | None:
         try:
             hours = int(d["max_hours"])
         except (TypeError, ValueError):
-            raise UsageError("--max-hours must be a number") from None
+            raise UsageError("the factory's hour budget must be a number") from None
         if hours < 1:
-            raise UsageError("--max-hours must be at least 1")
+            raise UsageError("the factory's hour budget must be at least 1 hour")
         out.update(factory=True, max_hours=hours)
     return out
 

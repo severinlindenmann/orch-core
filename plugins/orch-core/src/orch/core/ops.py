@@ -302,7 +302,9 @@ class Ops(TaskOpsMixin):
             frm = t.status
             if not self.actor.is_human:
                 from orch.core.ledger import require_signed
+                from orch.core.permits import require_budget
                 require_signed(self.ws, t, ("requirements",))
+                require_budget(self.ws, t)
             if frm == "open":
                 check_move(t, "in-progress", self.actor, plan_skip_sizes=self._skip_sizes,
                            command="claim", open_blockers=self._open_blockers(t))

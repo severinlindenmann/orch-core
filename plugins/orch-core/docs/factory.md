@@ -26,7 +26,8 @@ confirmation (owner decision D7). It signs one charter into the ledger with the 
 - everything the existing delegation already rules: agents auto-approve only children they wrote, requirements and
   plan, once per child, while the epic text is unchanged and the delegation is not paused.
 
-When the budget is used up, auto-approvals stop and grants answer nothing until you decide again.
+When the time budget is used up, agents stop: no new auto-approvals, no claims or task starts on its children, and
+grants answer nothing until you decide again. A used-up budget (time or children) is a card in `orch permit list`;
 `orch epic show <epic>` shows the state.
 
 ## What changes for agents in a factory epic
@@ -40,13 +41,21 @@ When the budget is used up, auto-approvals stop and grants answer nothing until 
 ## Permissions: one system, answered by you
 
 orch-core's plugin registers a Claude Code `PermissionRequest` hook (`orch permit hook`). Outside a factory session,
-or with the factory off, it gives no answer and the harness asks you as usual. In a session working a factory
-ticket (the session that claimed it):
+or with the factory off, it gives no answer and the harness asks you as usual (with the factory off it reads only
+the workspace config). A factory session is one whose claimed tickets all belong to one factory epic; a session
+with claims in more than one factory epic gets no answer. Binding a session to its epic when you start it is the
+runner's job, in a later phase. In a factory session:
 
 - a **live signed grant** for this exact command answers `allow`;
 - otherwise the hook files a request (one per epic and command while it is open) and answers `deny` with "waiting
   for permission P-n", so that child parks and the others go on;
-- an error, an unreadable ledger or anything unexpected never answers `allow`.
+- an error, an unreadable ledger or anything unexpected never answers `allow`;
+- prompts for anything other than a shell command are denied, so run factory sessions in a permission mode that
+  does not prompt for file edits (accept edits, or auto mode).
+
+A request's command text and reason are kept beside the ledger in your orch config dir, not in the repository; the
+event log only records that a request with that id and command hash was filed. A once grant's use is recorded there
+too, so every checkout of the workspace sees it.
 
 You answer requests in your own terminal:
 
@@ -64,9 +73,11 @@ A grant binds the epic, the delegation it was given under, the exact command tex
 wildcards. A grant for the epic ends when the epic is done, paused, changed or approved again, or when the budget
 is used up.
 
-Some commands are never grantable, and no request is filed for them: anything the guard denies (human-only orch
-commands, `--no-verify`, hook path changes, writes to `orchestrator/.state`), orch's permission commands,
-`orch serve`, and the harness's own settings and hook files.
+Some commands are never grantable, and no request is filed for them. The list is coarse and errs towards refusing:
+anything the guard denies, orch's permission commands, starting the dashboard, the harness's own settings, hooks and
+plugins, orch's config, state and ledger, the variables that decide where orch keeps its records, elevated rights,
+merging pull requests, force pushes, sweeping recursive removals, permission changes on orch's config dir, and any
+command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped.
 
 ## Harness settings and auto mode
 

@@ -40,29 +40,28 @@ def request(command: Annotated[str, typer.Argument(help="The exact command, as i
 def list_(json_out: JsonOpt = False) -> None:
     """Open requests and every grant with its state."""
     from orch.core import permits
-    from orch.textsafe import visible
     cli, ws = _ctx()
-    reqs, grants = permits.open_requests(ws), permits.grants(ws)
-    lines = [f"{r['id']:<7} {r['epic']} {r['ticket']} asks: {visible(r['command'])}" for r in reqs] or ["no open requests"]
-    lines += [f"grant {g['grant']} ({g['scope']}) {g['epic']}: {visible(str(g['command']))}"
+    reqs, grants, cards = permits.open_requests(ws), permits.grants(ws), permits.budget_cards(ws)
+    lines = [f"needs you: {c['epic']} {permits.shown(c['title'])}: {c['reason']}" for c in cards]
+    lines += [f"{r['id']:<10} {r['epic']} {r['ticket']} asks: {permits.shown(r['command'])}" for r in reqs] \
+        or ["no open requests"]
+    lines += [f"grant {g['grant']} ({g['scope']}) {g['epic']}: {permits.shown(g['command'])}"
               + ("" if g["live"] else f" · {g['why']}") for g in grants]
-    cli._out({"requests": reqs, "grants": grants}, json_out, "\n".join(lines))
+    cli._out({"requests": reqs, "grants": grants, "cards": cards}, json_out, "\n".join(lines))
 
 
 def _show_request(ws, rid: str, verb: str) -> dict:
+    """Print what the answer binds: every character outside printable ASCII escaped, so nothing hides."""
     from orch.core import permits
-    from orch.errors import NotFoundError, ValidationError
-    from orch.textsafe import decodes_to_hidden, visible
+    from orch.errors import NotFoundError
     r = permits.requests(ws).get(rid.upper())
     if r is None:
         raise NotFoundError(f"no permission request {rid}")
-    if decodes_to_hidden(r["command"]):
-        raise ValidationError(f"{r['id']}: the command holds hidden or control characters; it cannot be answered "
-                              "here", hint="leave it: a request answers nothing until you grant it")
-    typer.echo(f"{verb} {r['id']} for epic {r['epic']} (ticket {r['ticket']}, asked by {r['actor']} via {r['source']}):")
+    typer.echo(f"{verb} {r['id']} for epic {r['epic']} (ticket {r['ticket']}, asked by {permits.shown(r['actor'])} "
+               f"via {permits.shown(r['source'])}):")
     if r["reason"]:
-        typer.echo(f"  reason: {visible(r['reason'])}")
-    typer.echo(f"  command | {visible(r['command'])}")
+        typer.echo(f"  reason: {permits.shown(r['reason'])}")
+    typer.echo(f"  command | {permits.shown(r['command'])}")
     typer.echo(f"  {r['sha'][:15]}…")
     return r
 
@@ -119,7 +118,10 @@ def hook() -> None:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):
             return
-        ws = Workspace.open(Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()))
+        start = Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+        if not permits.enabled_at(start):
+            return  # fast path: the factory is off (read without opening the workspace)
+        ws = Workspace.open(start)
     except Exception:
         return  # not an orch workspace, or unreadable: no opinion, the harness asks as usual (never an allow)
     decision = permits.hook_decision(ws, payload)

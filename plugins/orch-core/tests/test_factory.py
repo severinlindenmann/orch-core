@@ -329,3 +329,134 @@ def test_hook_cli_is_silent_outside_a_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     res = CliRunner().invoke(app, ["permit", "hook"], input=json.dumps({"cwd": str(tmp_path), **_payload("ls")}))
     assert res.exit_code == 0 and res.stdout.strip() == ""
+
+
+# -- security review round 1 ---------------------------------------------------------------------------------------
+
+def _grant_once(fws, human, command="make e2e"):
+    permits.hook_decision(fws, _payload(command))
+    (r,) = permits.open_requests(fws)
+    return permits.permit_grant(fws, human, r["id"], "once", expected_sha=r["sha"])
+
+
+def test_once_grant_is_used_up_for_every_checkout(fws, fa, fh, human, ws_root, tmp_path):
+    """The use is recorded beside the ledger, not in this checkout's event log."""
+    import shutil
+    from orch.core.workspace import Workspace
+    _factory(fa, fh)
+    _grant_once(fws, human)
+    copy = tmp_path / "copy"
+    shutil.copytree(ws_root, copy)  # another checkout of the same workspace, before the grant is used
+    assert _behavior(permits.hook_decision(fws, _payload("make e2e"))) == "allow"
+    other = Workspace.open(copy)
+    assert _behavior(permits.hook_decision(other, _payload("make e2e"))) == "deny"
+
+
+def test_session_spanning_two_factory_epics_gets_no_answer(fws, fa, fh):
+    _factory(fa, fh)
+    _factory(fa, fh)  # the same agent session claims a child of a second factory epic
+    assert permits.hook_decision(fws, _payload("make e2e")) is None
+
+
+def test_factory_epic_is_never_taken_from_the_environment(fws, fa, fh, monkeypatch):
+    eid, _ = _factory(fa, fh)
+    monkeypatch.setenv("ORCH_FACTORY_EPIC", eid)
+    assert permits.hook_decision(fws, _payload("make e2e", session="unclaimed")) is None
+
+
+@pytest.mark.parametrize("command", ["make e2e‮", "make e2e", "make e2e\nrm x", "make e2e\r", "ma\tke"])
+def test_text_outside_printable_ascii_is_never_grantable(fws, fa, fh, command):
+    _, cid = _factory(fa, fh)
+    out = permits.hook_decision(fws, _payload(command))
+    assert _behavior(out) == "deny" and "never granted" in out["hookSpecificOutput"]["decision"]["message"]
+    assert not permits.open_requests(fws)
+    with pytest.raises(ValidationError, match="never be granted"):
+        permits.request(fws, fa.actor, store.load(fws, cid)[1], command)
+
+
+def test_cards_escape_what_could_hide():
+    assert permits.shown("a‮b\nc") == "a\\u202eb\\nc"
+
+
+@pytest.mark.parametrize("command", [
+    "gh pr merge 12 --squash", "gh pr merge --auto 3", "git push --force origin main", "git push -f origin main",
+    "git push origin +main", "git push --force-with-lease origin main", "cp x ~/.claude/plugins/a/b",
+    "echo x > $CLAUDE_PLUGIN_ROOT/hooks/x", "echo '{}' > ~/.claude.json", "echo '{}' > orchestrator/config.json",
+    "ORCH_STATE_DIR=/tmp/x make e2e", "export XDG_CONFIG_HOME=/tmp/x", "CLAUDE_CODE_SESSION_ID=abc orch claim L-1",
+    "ORCH_SESSION=x make", "sudo make install", "rm -rf ~", "rm -rf /", "rm -r -f $HOME", "rm -rf .",
+    "chmod 777 ~/.config/orch", "chown me $ORCH_STATE_DIR",
+])
+def test_more_never_grantable(fws, command):
+    assert permits.never_grantable(fws, command)
+
+
+def test_ordinary_commands_stay_grantable(fws):
+    for command in ("make e2e", "npm run deploy-staging", "rm -rf build", "git fetch origin"):
+        assert permits.never_grantable(fws, command) is None, command
+
+
+def test_request_body_stays_outside_the_repository(fws, fa, fh):
+    from orch.core.ledger import base_dir
+    _, cid = _factory(fa, fh)
+    r = permits.request(fws, fa.actor, store.load(fws, cid)[1], "make secret-target", reason="private reason")
+    log = (fws.state_dir / "events.jsonl").read_text(encoding="utf-8")
+    assert "secret-target" not in log and "private reason" not in log
+    (ev,) = [e for e in read_events(fws) if e.kind == "permit.requested"]
+    assert set(ev.data) == {"request", "epic", "command_sha"}
+    import re
+    assert re.fullmatch(r"P-[0-9A-F]{8}", r["id"])
+    body = base_dir() / "permits" / "requests" / f"{r['id']}.json"
+    assert json.loads(body.read_text(encoding="utf-8"))["command"] == "make secret-target"
+    # a body changed after filing no longer matches its event: the request is gone, nothing to grant
+    data = json.loads(body.read_text(encoding="utf-8"))
+    data["command"] = "make other"
+    body.write_text(json.dumps(data), encoding="utf-8")
+    assert permits.open_requests(fws) == []
+
+
+def test_non_string_command_is_denied_and_files_nothing(fws, fa, fh):
+    _factory(fa, fh)
+    p = _payload("x")
+    p["tool_input"] = {"command": ["make", "e2e"]}
+    assert _behavior(permits.hook_decision(fws, p)) == "deny"
+    assert not permits.open_requests(fws) and not [e for e in read_events(fws) if e.kind == "permit.requested"]
+
+
+def test_used_up_budget_stops_claims_and_task_starts_and_raises_a_card(fws, fa, fh, monkeypatch):
+    from orch import clock
+    eid, cid = _factory(fa, fh)
+    fa.task_add(cid, ["do it"])
+    late = fa.new("late", epic=eid)
+    _refine(fa, late.id)
+    fa.epic_auto_approve(late.id)
+    assert permits.budget_cards(fws) == []
+    real = clock.now()
+    monkeypatch.setattr(clock, "now", lambda: real + timedelta(hours=73))
+    with pytest.raises(ValidationError, match="time budget"):
+        fa.claim(late.id)
+    with pytest.raises(ValidationError, match="time budget"):
+        fa.task_start(cid, "T1")
+    (card,) = permits.budget_cards(fws)
+    assert card["epic"] == eid and "72 hours" in card["reason"]
+
+
+def test_child_budget_raises_a_card(fws, fa, fh):
+    eid, _ = _factory(fa, fh, max_children=1)
+    (card,) = permits.budget_cards(fws)
+    assert card["epic"] == eid and "child budget" in card["reason"]
+
+
+def test_no_message_names_a_flag_that_does_not_exist():
+    with pytest.raises(UsageError) as e:
+        epics.normalize_delegate({"factory": True, "max_hours": 0})
+    assert "--max-hours" not in str(e.value)
+
+
+def test_hook_fast_path_reads_only_the_config(ws_root, monkeypatch):
+    from typer.testing import CliRunner
+    from orch.cli import app
+    before = sorted(p.name for p in (ws_root / "orchestrator").iterdir())
+    res = CliRunner().invoke(app, ["permit", "hook"], input=json.dumps({"cwd": str(ws_root), **_payload("ls")}))
+    assert res.exit_code == 0 and res.stdout.strip() == ""
+    assert sorted(p.name for p in (ws_root / "orchestrator").iterdir()) == before
+    assert not permits.enabled_at(ws_root)

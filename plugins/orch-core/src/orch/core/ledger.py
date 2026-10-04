@@ -450,6 +450,15 @@ def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = N
     return "unverified"
 
 
+def pre_chain(ws, ticket, signed: list[dict] | None = None, events=None, *, closed: bool) -> bool:
+    """A done that counts as verified only through the older rule: the newest signed status entry has no `prev`.
+    It is weaker (no hash binding, no removed-line detection); `orch ledger adopt` re-signs it as a chained entry."""
+    signed = entries(ws) if signed is None else signed
+    chain = status_chain(ws, ticket.id, signed)
+    return (bool(chain) and "prev" not in chain[-1]
+            and done_verification(ws, ticket, closed=closed, signed=signed, events=events) == "verified")
+
+
 def unsigned_gates(ws, ticket, signed: list[dict] | None = None) -> list[str]:
     from orch.core.gates import GATE_SECTIONS
     signed = entries(ws) if signed is None else signed
@@ -542,14 +551,19 @@ def unsigned_items(ws, tickets) -> list[dict]:
                                                       lambda e, i=q.get("id"): e.data.get("qid") == i)})
         if t.status == "done":
             v = (t.meta.get("gates") or {}).get("verify") or {}
-            if v.get("verdict") == "done":
-                if done_verification(ws, t, closed=False, signed=signed, events=events) == "unverified":
-                    out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
-                                "verify_at": v.get("at"), "verdict_hash": v.get("hash"), "text": f"verdict done at {v.get('at')}",
-                                "provenance": _provenance(events, t.id, ("verdict.given",),
-                                                          lambda e: e.data.get("verdict") == "done")})
-            elif done_verification(ws, t, closed=True, signed=signed, events=events) == "unverified":
-                out.append({"ticket": t.id, "title": t.title, "kind": "close", "text": "closed (done without a verdict)",
+            closed = v.get("verdict") != "done"
+            old = pre_chain(ws, t, signed, events, closed=closed)
+            weak = old or done_verification(ws, t, closed=closed, signed=signed, events=events) == "unverified"
+            note = " (re-sign: the signed entry predates the ledger chain)" if old else ""
+            if weak and not closed:
+                out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
+                            "verify_at": v.get("at"), "verdict_hash": v.get("hash"),
+                            "text": f"verdict done at {v.get('at')}{note}",
+                            "provenance": _provenance(events, t.id, ("verdict.given",),
+                                                      lambda e: e.data.get("verdict") == "done")})
+            elif weak:
+                out.append({"ticket": t.id, "title": t.title, "kind": "close",
+                            "text": f"closed (done without a verdict){note}",
                             "provenance": _provenance(events, t.id, ("ticket.moved",),
                                                       lambda e: e.data.get("command") == "close")})
     for item in out:

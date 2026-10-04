@@ -40,7 +40,7 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `repos` | Repositories the ticket touches. |
 | `branches` | Branches per repository. |
 | `prs` | Pull or merge requests. |
-| `gates` | `requirements` and `plan`: `{state, hash, covers, approved, via, changes_requested}`; `verify`: `{verdict, at, via}`. `covers` lists what `hash` binds, in order: section names, then frontmatter keys. Show all of it before approving. |
+| `gates` | `requirements` and `plan`: `{state, hash, covers, approved, via, changes_requested}`; `verify`: `{verdict, at, via, hash}` (1.7: `hash` is the verdict hash the verdict was given on, the one the signed verdict entry carries as `verdict_hash`; null when none was stored, as on a verdict from before hashes). `covers` lists what `hash` binds, in order: section names, then frontmatter keys. Show all of it before approving. |
 | `questions` | The questions asked on the ticket, each with its `hash` (see below). |
 | `sections` | Section name to Markdown text, every core section always present. |
 | `tasks` | The task-list view, format `orch.tasks.v1` (see Task list). |
@@ -178,7 +178,7 @@ ticket's newest signed status entry is a `close`, or a done `verdict` that match
 (`verify_at`, `verdict_hash` against `gates.verify.hash`), and its `prev` is the `mac` of the entry before it. A later
 reopen or follow-up verdict ends every earlier close; the event log and the ticket file are not inputs. An entry
 from before the chain existed has no `prev`; it counts only while no later signed status entry exists and the event
-log shows exactly one done for the ticket (a review with `orch ledger adopt` signs a chained entry). A signed
+log shows exactly one done for the ticket; `orch check` reports it as `pre-chain-signature` (a warning: weaker verification, no hash binding), and a review with `orch ledger adopt` signs a chained entry in its place. A signed
 head record, `ledger.head` beside the ledger, holds the number of signed entries, the `mac` of the newest one and
 whether the ledger was already cut when it was written, signed with the same key and rewritten under the ledger's
 lock on every append; every entry written since carries `n`, its place among the signed entries. When the ledger

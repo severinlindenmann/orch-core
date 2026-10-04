@@ -295,7 +295,7 @@ class Cards:
         if self._needs_by is None:
             self._needs_by = {}
             for item in self.needs:
-                if item.get("kind") in ("confirm", "stale-claim"):  # never the human's move (steps._own)
+                if item.get("kind") in ("confirm", "stale-claim", "factory-ready", "factory-stopped"):  # never the human's move (steps._own)
                     continue
                 self._needs_by.setdefault(str(item.get("ticket", "")).upper(), []).append(item)
         return self._needs_by.get(tid.upper(), [])

@@ -149,8 +149,8 @@
 {#- M: Your move first (every decision, across groups), then the flow: one swimlane per group, or one flow. -#}
 <section class="ym-strip" id="your-move" aria-labelledby="your-move-h">
   <div class="ym-strip-head"><h2 id="your-move-h">Your move</h2>{% if moves %}<span class="chip chip-you">{{ ui.icon("you") }} {{ moves|length }}</span>{% endif %}
-    <span class="muted">{% if moves or (permits and (permits.requests or permits.budget)) %}agents wait on these · act right here, or open the ticket for the full text{% else %}Nothing needs you. The agents carry on below.{% endif %}</span></div>
-  {% if permits and (permits.requests or permits.budget) %}<div class="permit-strip" id="permits">{{ pm.cards(permits, "/board") }}</div>{% endif %}
+    <span class="muted">{% if moves or (permits and permits.cards_n) %}agents wait on these · act right here, or open the ticket for the full text{% else %}Nothing needs you. The agents carry on below.{% endif %}</span></div>
+  {% if permits and permits.cards_n %}<div class="permit-strip" id="permits">{{ pm.cards(permits, "/board") }}</div>{% endif %}
   {% if strip %}<div class="ym-grid">{% for s in strip %}{{ fl.move_card(s, kind_labels) }}{% endfor %}</div>{% endif %}
   {% if moves|length > strip_max %}<p><a class="lnk" href="{{ list_view_link }}">+{{ moves|length - strip_max }} more in the List, your moves first</a></p>{% endif %}
 </section>

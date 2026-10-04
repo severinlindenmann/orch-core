@@ -127,7 +127,8 @@ def palette(request: Request):
     from fastapi.responses import JSONResponse
     ws = request.app.state.ws
     entries = store.scan(ws)
-    items = [i for i in query.waiting(ws, entries=entries) if i.get("scope") != "backlog"]
+    items = [i for i in query.waiting(ws, entries=entries)
+             if i.get("scope") != "backlog" and i["kind"] not in query.FACTORY_KINDS]
     decisions = []
     for i in items:
         card = f"d-{i['ticket']}-{i['kind']}" + (f"-{i['detail']}" if i["kind"] == "task" else "")
@@ -254,7 +255,7 @@ def strip(ws, cards: list[dict], *, waiting, entries, events, now) -> list[dict]
     chosen: dict[str, dict] = {}
     for i in waiting:
         tid = str(i.get("ticket", "")).upper()
-        if tid not in want or i.get("kind") in ("confirm", "stale-claim"):
+        if tid not in want or i.get("kind") in ("confirm", "stale-claim", *query.FACTORY_KINDS):
             continue
         if tid not in chosen or (i.get("kind") == want[tid] and chosen[tid].get("kind") != want[tid]):
             chosen[tid] = i

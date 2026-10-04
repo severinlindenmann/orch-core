@@ -183,6 +183,8 @@
   <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
     <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
   {% endif %}
+  {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
+  {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#factory", True) }}{% endfor %}
   {% for c in p.budget %}{{ pm.budget_card(c) }}{% endfor %}
   {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#factory") }}{% endfor %}
   {% if p.grants %}

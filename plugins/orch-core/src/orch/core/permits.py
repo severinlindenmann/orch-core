@@ -98,11 +98,22 @@ def require_budget(ws, t) -> None:
                                   "the human decides how it goes on", hint=f"stop and wait (`orch wait {t.id}`)")
 
 
+def budget_reason(ws, epic, d: dict, events=None) -> str | None:
+    """Why the budget of factory epic `epic` (delegation `d`) is used up, or None (also None while the human paused
+    the delegation or the epic changed: agents are stopped then for another reason). Signed charter and markers only."""
+    if d is None or d["paused"] or d["epic_changed"]:
+        return None
+    if d.get("expired"):
+        return f"time budget of {d['max_hours']} hours used up"
+    if epics.delegated_count(ws, epic.id, d["id"], _events(ws, events)) >= d["max_children"]:
+        return f"child budget of {d['max_children']} used up"
+    return None
+
+
 def budget_cards(ws) -> list[dict]:
     """Factory epics whose budget is used up: a card for the human each ({epic, title, reason})."""
     if not enabled(ws):
         return []
-    from orch.core.events import read_events
     out, events = [], None
     for e in store.scan(ws):
         if e.status == "done" or not epics.is_epic(e.meta or {}):
@@ -112,16 +123,12 @@ def budget_cards(ws) -> list[dict]:
         except Exception:
             continue
         d = factory_delegation(ws, epic)
-        if d is None or d["paused"] or d["epic_changed"]:
+        if d is None:
             continue
-        if d.get("expired"):
-            reason = f"time budget of {d['max_hours']} hours used up"
-        else:
-            events = read_events(ws) if events is None else events
-            if epics.delegated_count(ws, epic.id, d["id"], events) < d["max_children"]:
-                continue
-            reason = f"child budget of {d['max_children']} used up"
-        out.append({"epic": epic.id, "title": epic.title, "reason": reason})
+        events = _events(ws, events)
+        reason = budget_reason(ws, epic, d, events)
+        if reason:
+            out.append({"epic": epic.id, "title": epic.title, "reason": reason})
     return out
 
 

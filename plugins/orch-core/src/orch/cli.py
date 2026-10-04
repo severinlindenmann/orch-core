@@ -324,8 +324,9 @@ def wait(ref: str,
         raise WaitTimeout(f"no human decision on {store.resolve(ws, ref).id} within {timeout:g} s",
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
     status = store.resolve(ws, event.ticket).status
+    who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
     _out({"ticket": event.ticket, "event": asdict(event), "status": status, "cursor": event.seq}, json_out,
-         f"{event.ticket}: {event.kind} by the human (status {status})")
+         f"{event.ticket}: {event.kind} {who} (status {status})")
 
 
 @app.command()

@@ -130,7 +130,7 @@ def _own(ticket, needs_items) -> list[dict]:
     """This ticket's items that make it the human's move. A "confirm" item (#12: the agent went ahead on a non-blocking
     question) and a silent claim never do: the agent's move stays the agent's."""
     return [i for i in needs_items or [] if isinstance(i, dict) and str(i.get("ticket", "")).upper() == ticket.id.upper()
-            and i.get("kind") not in ("confirm", "stale-claim")]
+            and i.get("kind") not in ("confirm", "stale-claim", "factory-ready", "factory-stopped")]
 
 
 def need_gate(item: dict) -> str | None:

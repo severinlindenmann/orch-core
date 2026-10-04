@@ -1,11 +1,11 @@
-# AI Factory (phases 1 and 2)
+# AI Factory (phases 1 to 3)
 
 One epic in, finished work out: you write an epic and start it as a factory, and agents split, specify,
 auto-approve and build its children. You hear from them when they need a permission they do not hold, and at the
-end for the verdict. Issue #2 tracks the whole feature; this page describes what phase 1 ships.
+end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 3 ship.
 
-AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface described below. The runner and the
-Ready and Stopped reports follow in later phases.
+AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface and phase 3 the
+Ready report and the Stopped message, all described below. The runner follows in a later phase.
 
 ## Switching it on
 
@@ -115,11 +115,40 @@ as `orch permit ...`, with the dashboard's inline confirm (no popup), bound to t
 - **Board**: Group by "Factory epic" gathers each factory epic and its children; everything else sits under
   "Not in a factory".
 
+## Ready and Stopped (phase 3)
+
+Both are derived, read-only views of an epic whose signed charter is a factory one. Nothing in them approves, grants,
+starts or signs anything, and nothing an agent can write turns one on or hides it: they come from the signed charter,
+the signed ledger entries, the budget markers beside the ledger and the tickets' own state.
+
+**Ready.** Every child is in testing or done, at least one is in testing, and every acceptance criterion of every
+child in testing has evidence. The report lists, per child, how it was approved, its criteria count, its
+Verification text (where to look), its links and what its Findings leave open, all as plain text. It has one action,
+yours: **Accept the epic and close its children**. That is the epic verdict that already existed (`orch verdict <epic>
+done`, or the epic page): it signs the epic's verdict hash, the hash of exactly the children and evidence the report
+showed, and is refused if any of it changed since. The report never closes a child by itself, and an agent cannot
+give the verdict (D1: the verdict stays whole).
+
+**Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
+holds, and what you can do about it; it has no action of its own. A reason is one of:
+
+- the budget is used up (25 children or 72 hours, or what you signed);
+- a child you sent back with a follow-up verdict three times is still not finished (counted from your signed verdicts);
+- a request you denied still holds a child back (counted from your signed denials);
+- the approval ledger on this machine was cut, so no approval or grant counts.
+
+A Ready epic is never also Stopped. A child blocked in some other way, or one that failed its own checks, is not a
+reason yet: those need the runner's records and come with it.
+
+**Where you see them.** Today (an "AI Factory" section) and the Board's Your move strip show a card each; the epic
+page shows them in its factory section. Both count as items waiting on you: they are in the Today headline, the
+menu badge, the tab title and the session-start summary, and `orch wait <epic or child>` returns when the factory
+becomes Ready or Stopped (event kind `factory.ready` or `factory.stopped`, actor `orch:factory`, derived and not
+written to the event log). A Stopped card for a used-up budget replaces the budget card.
+
 ## Coming in later phases
 
 - The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
-- The Ready report (what is live, where to look, decisions made, what was not built) with your one-tap verdict, and
-  the Stopped message (D3).
 - The runner: `orch serve` keeping agents going in Mission Control's terminals (D4), waking a parked child after a
   grant.
 - `factory.ask`: actions the harness would allow that you still want asked.

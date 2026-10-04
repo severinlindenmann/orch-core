@@ -1,4 +1,5 @@
-"""`orch wait`: an agent blocks until the human acts on its ticket. Read-only: it takes no
+"""`orch wait`: an agent blocks until the human acts on its ticket (or, in an AI Factory epic, until the factory is
+Ready or Stopped). Read-only: it takes no
 lock, writes no event and needs no human. It reads events.jsonl again only when the file changed size, and
 sleeps a bounded interval between looks."""
 from __future__ import annotations
@@ -6,7 +7,8 @@ from __future__ import annotations
 import time
 
 from orch.core import store
-from orch.core.events import events_path, last_seq, read_events
+from orch.clock import stamp_s
+from orch.core.events import Event, events_path, last_seq, read_events
 
 HUMAN_EVENT_KINDS = ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given",
                      "permit.granted", "permit.denied")
@@ -26,6 +28,26 @@ def default_cursor(ws, ticket_id: str) -> int:
     return max(mine) if mine else last_seq(ws)
 
 
+def _factory_ticket(ws, ticket_id: str):
+    """The ticket, when it is (or is a child of) an AI Factory epic whose signed charter says so; else None."""
+    try:
+        from orch.core import permits
+        t = store.read_ticket(store.resolve(ws, ticket_id).path)
+        epic = permits.charter_epic(ws, t) if permits.enabled(ws) else None
+        return epic
+    except Exception:
+        return None
+
+
+def _factory_signal(ws, epic):
+    """"ready" or "stopped" while the factory epic is in that state (orch.core.factory_report), else None. The state is
+    derived from signed records and observable state, so it wakes the waiter whether or not an event was written."""
+    if epic is None:
+        return None
+    from orch.core import factory_report
+    return factory_report.signal(ws, epic)
+
+
 def _match(event, ticket_id: str) -> bool:
     return event.ticket == ticket_id and event.kind in HUMAN_EVENT_KINDS and str(event.actor).startswith("human:")
 
@@ -38,7 +60,11 @@ def wait_for_human(ws, ref: str, *, after: int | None = None, timeout: float = 0
     interval = min(max(float(poll or 0), MIN_POLL), MAX_POLL)
     deadline = clock() + timeout if timeout and timeout > 0 else None
     path, size = events_path(ws), -1
+    factory = _factory_ticket(ws, ticket_id)
     while True:
+        sig = _factory_signal(ws, factory)
+        if sig is not None:
+            return Event(last_seq(ws), stamp_s(), factory.id, f"factory.{sig}", "orch:factory", "derived", {})
         try:
             current = path.stat().st_size
         except FileNotFoundError:

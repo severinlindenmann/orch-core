@@ -24,7 +24,7 @@ MAX_SERIES = 8  # API 2.6 Chart
 MAX_POINTS = 400  # points per series
 MAX_UNIT_LEN = 20
 CHART_STYLES = ("bar", "line")
-CHART_X = ("category", "linear")
+CHART_X = ("category", "linear", "time")
 _TOKEN = re.compile(r"[a-z][a-z0-9-]{0,39}")  # a CSS custom property name without the leading --
 _CORE_PARAMS = frozenset({"msg", "err", "token"})  # flash messages and the login token, never an addon's
 _PARAM = re.compile(r"[a-z][a-z0-9_]{0,49}")  # a Search field name: also a GET query key on the addon page
@@ -254,7 +254,7 @@ class ChartSeries:
 class Chart:
     """API 2.6: a bar or line chart core draws (vendored Chart.js, colours from the theme tokens) with its numbers as
     a table under "Show the numbers". Plain data only: at most 8 series and 400 points, numbers only. `labels` are
-    strings, or numbers when `x="linear"` (real spacing, e.g. hours since the start). `stacked` stacks the series;
+    strings, or numbers when `x="linear"` (real spacing, e.g. hours since the start) or `x="time"` (epoch seconds, drawn as clock times). `stacked` stacks the series;
     `horizontal` turns a bar chart on its side; `unit` is a short word shown after the numbers ("h", "tickets")."""
     title: str
     labels: tuple
@@ -351,7 +351,8 @@ def _number(v) -> bool:
 
 
 def _check_chart(w: Chart, where: str, out: list[str]) -> None:
-    _title_field(w.title, MAX_LABEL_LEN, where, "title", out)
+    if w.title != "":  # empty: no heading (the card around it names the chart)
+        _title_field(w.title, MAX_LABEL_LEN, where, "title", out)
     if w.style not in CHART_STYLES:
         out.append(f"{where}.style: {w.style!r} must be one of {', '.join(CHART_STYLES)}")
     if w.x not in CHART_X:
@@ -361,17 +362,17 @@ def _check_chart(w: Chart, where: str, out: list[str]) -> None:
         _flag(getattr(w, field), where, field, out)
     if w.horizontal is True and w.style == "line":
         out.append(f"{where}.horizontal: only a bar chart can be horizontal")
-    if w.x == "linear" and w.horizontal is True:
-        out.append(f"{where}.horizontal: not available with x='linear'")
+    if w.x != "category" and w.horizontal is True:
+        out.append(f"{where}.horizontal: not available with x={w.x!r}")
     if not isinstance(w.labels, (tuple, list)) or not isinstance(w.series, (tuple, list)):
         out.append(f"{where}: labels and series must be tuples")
         return
     if not 1 <= len(w.labels) <= MAX_POINTS:
         out.append(f"{where}.labels: between 1 and {MAX_POINTS} points, got {len(w.labels)}")
     for i, label in enumerate(w.labels[:MAX_POINTS]):
-        if w.x == "linear":
+        if w.x != "category":
             if not _number(label):
-                out.append(f"{where}.labels[{i}]: must be a number with x='linear'")
+                out.append(f"{where}.labels[{i}]: must be a number with x={w.x!r}")
                 break
         elif not _str_field(label, MAX_LABEL_LEN, where, f"labels[{i}]", out):
             break

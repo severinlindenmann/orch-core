@@ -201,6 +201,81 @@ def check(ref: Annotated[Optional[str], typer.Argument(help="One ticket; default
         raise typer.Exit(5)
 
 
+VERDICT_SECTIONS = ("Verification", "Acceptance criteria")
+
+
+@widget_app.command("repin")
+def repin(ref: str,
+          block: Annotated[Optional[str], typer.Option("--block", help="One block: its id or index.")] = None,
+          all_: Annotated[bool, typer.Option("--all", help="Every drifted block that can be re-pinned.")] = False,
+          dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the diff, write nothing.")] = False,
+          json_out: JsonOpt = False) -> None:
+    """Re-pin drifted template blocks to the template's current digest and show what changes. Look at what the new
+    version draws first (`orch widget render`): the pin is what keeps a template from changing under a reader. Never
+    touches a block whose template is unknown or whose file pins are broken. Writes like `orch section set`."""
+    import difflib
+
+    from orch.core import store
+    from orch.widgets import registry
+    from orch.widgets.blocks import ticket_blocks
+    from orch.widgets.validate import validate
+    cli, ws = _cli()
+    if (block is None) == (not all_):
+        raise UsageError("pass exactly one of --block or --all")
+    path, ticket = store.load(ws, ref)
+    blocks = ticket_blocks(ticket, path.read_text(encoding="utf-8"))
+    chosen = [b for b in blocks if block is None or block in (b.key, str(b.index))]
+    if block is not None and not chosen:
+        raise UsageError(f"{ticket.id} has no widget {block!r}")
+    plan, skipped = [], []
+    for b in chosen:
+        codes = {p.code for p in validate(b, ticket, ws=ws)}
+        name = (b.data or {}).get("widget")
+        current = registry.template_state(ws.home, name, None)[1] if isinstance(name, str) else None
+        if isinstance(name, str) and current is None and b.layer == "widget":
+            why = "its template is unknown or cannot be read"
+        elif codes != {"widget-drift"}:
+            why = ("is not drifted" if not codes else
+                   "has problems other than drift (a broken file pin, schema or placement; see `orch widget check`)")
+        elif b.raw.count(b.data["sha256"]) != 1:
+            why = "has a pin that cannot be replaced unambiguously"
+        else:
+            old = b.data["sha256"]
+            plan.append({"index": b.index, "id": b.data.get("id"), "section": b.section, "widget": name,
+                         "from": old, "to": current, "old": b.raw, "new": b.raw.replace(old, current)})
+            continue
+        if block is not None:
+            raise UsageError(f"{ticket.id} widget {block!r} is not re-pinned: it {why}")
+        if "not drifted" not in why:
+            skipped.append({"index": b.index, "id": (b.data or {}).get("id"), "reason": why})
+    diff = "\n".join(f"--- #{p['index']} {p['section']}\n" + "\n".join(
+        difflib.unified_diff(p["old"].splitlines(), p["new"].splitlines(), "before", "after", lineterm=""))
+        for p in plan)
+    stale = any(p["section"] in VERDICT_SECTIONS for p in plan)
+    if plan and not dry_run:
+        ops = cli._ops(ws)
+        for section in dict.fromkeys(p["section"] for p in plan):
+            edits = [p for p in plan if p["section"] == section]
+
+            def compose(current, edits=edits):
+                for p in edits:
+                    if current.count(p["old"]) != 1:
+                        raise UsageError(f"the {section} section changed while re-pinning; nothing was written for it")
+                    current = current.replace(p["old"], p["new"])
+                return current
+            ops._write_section(ticket.id, section, compose)
+    rows = [{k: v for k, v in p.items() if k not in ("old", "new")} for p in plan]
+    out = {"ticket": ticket.id, "dry_run": dry_run, "repinned": rows, "skipped": skipped, "diff": diff,
+           "verdict_stale": stale}
+    lines = [diff] if diff else []
+    lines += [f"skipped #{s['index']}: {s['reason']}" for s in skipped]
+    lines.append(f"{ticket.id}: {len(rows)} block(s) " + ("would be re-pinned" if dry_run else "re-pinned"))
+    if stale:
+        lines.append("A verdict that read this section (this ticket's, or its epic's) must be given fresh"
+                     + (": re-pinning would make it stale." if dry_run else ": it is stale now."))
+    cli._out(out, json_out, "\n".join(lines))
+
+
 @widget_app.command("render")
 def render(ref: str,
            text: Annotated[bool, typer.Option("--text", help="Text alternatives (the default).")] = False,

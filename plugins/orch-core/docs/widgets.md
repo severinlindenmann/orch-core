@@ -161,16 +161,17 @@ A built-in template that changes in an upgrade makes every existing block that p
 that block is re-pinned. This is by design: the verdict hash binds the pin, so a template must never change what a
 reader or a verdict covers without somebody looking at it. Nothing is repaired automatically.
 
-There is no `orch widget` command that re-pins. To re-pin a block, run `orch widget check <ID>`, read the digest
-the drift message gives ("it now has sha256 ..."), read the template (`orch widget show <name@v>` prints its schema, example and body path) or render the ticket
-(`orch widget render <ID> --html`) to see what it draws,
-then replace the block's `"sha256"` with that digest in the section text (`orch section set <ID> <Section> --file ...`
-rewrites the whole section; copy the section out with `orch show` first). Run `orch widget check <ID>` again.
+To re-pin, run `orch widget check <ID>`, read what the new version draws (`orch widget render <ID> --html`, or
+`orch widget show <name@v>`), then run `orch widget repin <ID> --block <id|index>` (or `--all`). It replaces each
+drifted block's `"sha256"` with the template's current digest, prints a diff of what changes, and writes through the
+same path, locks and event as `orch section set`. `--dry-run` shows the diff and writes nothing. It never re-pins a
+block whose template is unknown or whose file pins are broken (missing or changed): `--block` refuses it, `--all`
+lists it as skipped. It edits ticket text, so it is not a human-only verb, and it is not a decision.
 
 Re-pinning edits the section text, so where the section is Verification or Acceptance criteria and a verdict hash was
-already bound to the ticket, the old verdict is stale: the human has to read the widget again and give a fresh verdict. An agent
-cannot give or carry it over. The verdict hash already reads "drift" right after the upgrade, so an earlier verdict is
-refused even before any re-pin.
+already bound to the ticket or to its epic (whose verdict binds every open child's criteria and Verification), the old verdict is stale: `repin` says so whatever the ticket's status, the human has to read the
+widget again and give a fresh verdict, and an agent cannot give or carry it over. The verdict hash already reads
+"drift" right after the upgrade, so an earlier verdict is refused even before any re-pin.
 
 What the pin leaves out is display-only: widget.json's `title`, `description`, `moment`, `min_height` (the frame's
 starting height before the document reports its own) and each version's `schema` and `notes` (the schema only checks

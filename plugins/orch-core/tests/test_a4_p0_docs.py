@@ -9,7 +9,11 @@ def test_core_has_no_tix_code():
     for p in (ROOT / "src" / "orch").rglob("*"):
         # static/vendor holds third-party libraries verbatim (Plot's minified source says "mirror").
         if p.suffix in (".py", ".html", ".css", ".js") and not {"__pycache__", "vendor"} & set(p.parts):
-            hit = banned.search(p.read_text(encoding="utf-8"))
+            text = p.read_text(encoding="utf-8")
+            if p.name == "permits.py" and p.parent.name == "core":
+                # git's push flag in the AI Factory's never-grantable list, not TIX code: only that exact token
+                text = re.sub(r"--mirror\b", "", text)
+            hit = banned.search(text)
             assert hit is None, f"{hit.group(0)!r} in {p.relative_to(ROOT)}"
 
 

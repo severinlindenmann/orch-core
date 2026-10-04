@@ -133,8 +133,8 @@ _NEVER = (
     (re.compile(r"\bgh\s+(?:-\S+\s+)*pr\s+(?:-\S+\s+)*merge\b|\bgh\s+(?:-\S+\s+)*api\b[^;&|\n]*merge"),
      "merging a pull request is the human's"),
     (re.compile(r"\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*(?:\s--force(?:-with-lease)?\b|\s-[A-Za-z]*[fd]\b|\s\+\S|\s:\S"
-                r"|\s--delete\b|\s--m[i]rror\b|\s--prune\b)"),  # [i]: core sources avoid that word (test_a4_p0_docs)
-     "force pushes, pushes of every ref and deleting remote branches are the human's"),
+                r"|\s--delete\b|\s--mirror\b|\s--prune\b)"),
+     "force pushes, --mirror pushes and deleting remote branches are the human's"),
     (re.compile(r"(?<![\w-])ch(?:mod|own|grp|flags)(?![\w-])[^;&|\n]*(?:\.config|ORCH_STATE_DIR|XDG_CONFIG_HOME|\borch\b)"),
      "orch's config dir keeps its permissions"),
     (re.compile(r"(?<![\w-])(?:ba|z|da|k|fi)?sh\s+(?:-\S+\s+)*-\w*c\w*\b[^;&|\n]*(?:\$\(|`)"),

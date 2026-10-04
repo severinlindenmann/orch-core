@@ -202,7 +202,7 @@ def test_menu_chip_is_the_weekly_percent_coloured_by_it_with_a_five_hour_line():
     assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
     line = mk(35, 39).line
     assert [type(p).__name__ for p in line] == ["Text", "Badge", "Text", "Countdown"]
-    assert (line[0].text, line[1].text, line[1].role, line[2].text) == ("5 h", "35 %", "ok", "· resets")
+    assert (line[0].text, line[1].text, line[1].role, line[2].text) == ("5 h", "35 %", "ok", "·")
     assert mk(75, 1).line[1].role == "warn" and mk(95, 1).line[1].role == "err"
 
 
@@ -322,7 +322,7 @@ def test_zero_total_and_one_day_and_not_ready_states():
     zero = T.page(_snap(daily={"2026-10-03": [0] * 5, "2026-10-04": [0] * 5}), True, {}, NOW)
     _valid(zero)
     assert any(w.kind == "text" and w.text == "No output in this range." for w in _walk(zero))
-    assert not any(w.kind == "chart" and w.title == "Output tokens by model" for w in _walk(zero))
+    assert not _charts(zero)
     one = T.page(_snap(daily={"2026-10-04": [500, 0, 0, 0, 0]}), True, {}, NOW)
     _valid(one)
     assert not any(w.kind == "tabs" for w in _walk(one)) and not _charts(one)
@@ -354,11 +354,20 @@ def test_attribution_top_history_and_cost_charts():
                  cost_days={"2026-09-30": 10.0, "2026-10-02": 5.0, "2026-10-06": 1.5})
     out = T.page(snap, True, {}, NOW)
     _valid(out)
-    by = {c.title: c for c in _charts(out)}
-    assert by["Output this week"].horizontal and by["Output by ticket"].labels == ("B-1", "B-2")
-    line = by["Limit percentages"]
-    assert line.style == "line" and line.x == "linear" and line.labels == (0.0, 1.0, 2.0)
-    cost = by["API-price equivalent"]
+    by = {c.series[0].name: c for c in _charts(out)}
+    attrib, topc = [c for c in _charts(out) if c.horizontal]
+    assert attrib.labels == ("No ticket claimed", "Shared runs, not split", "Tied to one ticket") and topc.labels == ("B-1", "B-2")
+    line = by["Week"]
+    assert line.style == "line" and line.x == "time" and line.labels == (round(NOW - 7200), round(NOW - 3600), round(NOW))
+    cost = by["USD"]
     assert cost.labels == ("W40 · 28 Sep", "W41 · 05 Oct") and cost.series[0].values == (15.0, 1.5)
     assert any("10 % can be tied to a single ticket. 80 % comes from sessions" in w.text for w in _walk(out) if w.kind == "text")
-    assert not any(c.title == "API-price equivalent" for c in _charts(T.page(snap, False, {}, NOW)))
+    assert not any(c.series[0].name == "USD" for c in _charts(T.page(snap, False, {}, NOW)))
+
+
+def test_days_and_weeks_follow_the_machine_zone(monkeypatch):
+    import time as _t
+    monkeypatch.setenv("TZ", "Pacific/Auckland")  # UTC+13 in October: 2026-10-03 23:00Z is already 04 Oct
+    _t.tzset()
+    assert data.day_of(data.to_epoch("2026-10-03T23:00:00Z")) == "2026-10-04"
+    assert data.monday_of(data.day_of(data.to_epoch("2026-10-04T12:00:00Z"))) == "2026-10-05"  # Sunday 12:00Z is Monday there

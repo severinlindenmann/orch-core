@@ -323,7 +323,7 @@ def _usage_charts(stats: dict, params: dict, show_cost: bool, now: float) -> lis
             body.append(KV((("Output tokens", _k(tot)), ("On Opus", f"{round(100 * sum(r[0] for r in rows) / tot)} %"),
                             (f"Busiest {'week' if rng == 'all' else 'day'}, {labels[busiest]}", _k(sums[busiest]))),
                            layout="stats"))
-            body.append(Chart("Output tokens by model", tuple(labels), tuple(
+            body.append(Chart("", tuple(labels), tuple(
                 ChartSeries(FAMILIES[i].capitalize(), tuple(r[i] for r in rows), f"series-{n + 1}")
                 for n, i in enumerate(used)), stacked=True, unit="tokens"))
         else:
@@ -337,7 +337,7 @@ def _usage_charts(stats: dict, params: dict, show_cost: bool, now: float) -> lis
     if wk_total:
         pc = lambda n: round(100 * n / wk_total)  # noqa: E731
         cards.append(Card("How much of this week's output is tied to a ticket", (
-            Chart("Output this week", ("No ticket claimed", "Shared runs, not split", "Tied to one ticket"),
+            Chart("", ("No ticket claimed", "Shared runs, not split", "Tied to one ticket"),
                   (ChartSeries("Output tokens", (a.get("none", 0), a.get("shared", 0), a.get("ticket", 0)), "series-1"),),
                   horizontal=True, unit="tokens"),
             Text(f"{pc(a.get('ticket', 0))} % can be tied to a single ticket. {pc(a.get('none', 0))} % comes from sessions that claimed "
@@ -346,22 +346,19 @@ def _usage_charts(stats: dict, params: dict, show_cost: bool, now: float) -> lis
         cards.append(Card("How much of this week's output is tied to a ticket", (Text("No Claude output found this week."),)))
     top = [(t, n) for t, n in (stats.get("top") or []) if n]
     cards.append(Card("Output tied to each ticket, this week", (
-        Chart("Output by ticket", tuple(t for t, _ in top), (ChartSeries("Output tokens", tuple(n for _, n in top), "series-1"),),
+        Chart("", tuple(t for t, _ in top), (ChartSeries("Output tokens", tuple(n for _, n in top), "series-1"),),
               horizontal=True, unit="tokens") if top else Text("No ticket has output this week."),
         Text("Its own sessions plus subagents that name it. Output tokens, not effort or value."))))
     out += cards
     hist = stats.get("history") or []
     if len(hist) >= 2:
         t0 = hist[0][0]
-        xs = tuple(round((h[0] - t0) / 3600, 2) for h in hist)
-        hours = len(hist) and xs[-1] < 48
-        xs = xs if hours else tuple(round(x / 24, 2) for x in xs)
+        xs = tuple(round(h[0]) for h in hist)
         lim = Card("Limits history", (
-            Chart("Limit percentages", xs, (ChartSeries("Week", tuple(h[2] for h in hist), "series-1"),
+            Chart("", xs, (ChartSeries("Week", tuple(h[2] for h in hist), "series-1"),
                                             ChartSeries("5-hour window", tuple(h[1] for h in hist), "series-2")),
-                  style="line", x="linear", unit="%"),
-            Text(f"Status line readings, spaced by real time: {'hours' if hours else 'days'} since {_clock(t0)}. "
-                 "Only new highs within a window are drawn.")))
+                  style="line", x="time", unit="%"),
+            Text(f"Status line readings since {_clock(t0)}, spaced by real time. Only new highs within a window are drawn.")))
     else:
         lim = Card("Limits history", (Text("Not enough status line readings yet. This fills as you work."),))
     cost = []
@@ -374,7 +371,7 @@ def _usage_charts(stats: dict, params: dict, show_cost: bool, now: float) -> lis
             note = ("Claude Code's own estimate at API list prices, written when a session ends: a long session lands in the week it "
                     f"ended. Not what your plan bills.{'' if monday_of(first) == first else f' Records start {_d(first)}, so the first week is partial.'}")
             cost = [Card("API-price equivalent per calendar week", (
-                Chart("API-price equivalent", tuple(_wk(m) for m in sorted(weeks)),
+                Chart("", tuple(_wk(m) for m in sorted(weeks)),
                       (ChartSeries("USD", tuple(round(weeks[m], 2) for m in sorted(weeks)), "series-1"),), unit="USD"),
                 Text(note)))]
     return out + [lim] + cost
@@ -456,7 +453,7 @@ def menu_chip(snaps, now: float):
         else:
             line = (Text("5 h"), Badge(_role(v), f"{v:.0f} %"))
             if isinstance(last.get("five_reset"), (int, float)):
-                line += (Text("· resets"), Countdown(iso(last["five_reset"])))
+                line += (Text("·"), Countdown(iso(last["five_reset"])))
     return MenuStatus(badge, line)
 
 

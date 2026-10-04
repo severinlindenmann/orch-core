@@ -176,8 +176,8 @@ def family(model: str) -> int:
 
 
 def day_of(epoch: float) -> str:
-    """The UTC calendar day of an epoch, ISO. ponytail: UTC, not the viewer's zone, so a snapshot is the same everywhere."""
-    return datetime.fromtimestamp(epoch, timezone.utc).date().isoformat()
+    """The calendar day of an epoch in this machine's local zone, ISO (the dashboard runs on the user's machine)."""
+    return datetime.fromtimestamp(epoch).date().isoformat()
 
 
 def monday_of(day: str) -> str:

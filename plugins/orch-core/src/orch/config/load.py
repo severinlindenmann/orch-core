@@ -56,8 +56,9 @@ DEFAULTS: dict = {
     "sprints": [],  # [{id, name, start, end}] (orch.core.sprints): planning metadata only
     "feedback": {"enabled": True},  # #37: agents may queue redacted reports about orch itself (orch feedback add)
     # AI Factory (#2, docs/factory.md): off until the human switches it on; a factory epic still needs the human's
-    # signed `orch approve <epic> requirements --factory`.
-    "factory": {"enabled": False},
+    # signed `orch approve <epic> requirements --factory`. `dark` (phase 5): a factory epic the human started with
+    # `--dark` answers its permission prompts from the signed Dark profile instead of cards (orch.core.dark_profile).
+    "factory": {"enabled": False, "dark": False},
     # Named checks (orch.core.receipts): what `orch task done --run` runs for a verify line `check:<name>`, step by
     # step. Each project says what its verification takes; the guard refuses an agent edit of this key.
     "checks": {},

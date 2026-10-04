@@ -74,3 +74,16 @@ def test_hardened_never_grantable(pushy, cmd):
                                  "bash -c 'make e2e'"])
 def test_ordinary_commands_stay_grantable(pushy, cmd):
     assert permits.never_grantable(pushy, cmd) is None, cmd
+
+
+@pytest.mark.parametrize("cmd,allowed", [
+    ('orch dark profile add --prefix "npm run verify"', False), ("orch dark profile remove R-0123456789", False),
+    ("uv run orch --json dark profile add --exact 'make x'", False), ("orch dark profile --json add --exact x", False),
+    ("echo R-1 | xargs orch dark profile remove", False), ("o''rch dark profile add --exact x", False),
+    ("sh -c 'orch dark profile add --exact x'", False),
+    ("orch dark profile list", True), ("orch dark profile list --json", True),
+])
+def test_guard_keeps_the_dark_profile_with_the_human(ws, cmd, allowed):
+    assert _bash(ws, cmd).allow is allowed, cmd
+    if not allowed:
+        assert permits.never_grantable(ws, cmd)

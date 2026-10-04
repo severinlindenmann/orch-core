@@ -115,7 +115,8 @@
     "widgets": {"type": "object", "additionalProperties": false, "properties": {"html": {"type": "boolean"}}},
     "addons": {"type": "object", "additionalProperties": {"type": "object"}},
     "feedback": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
-    "factory": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "factory": {"type": "object", "additionalProperties": false, "properties": {
+      "enabled": {"type": "boolean"}, "dark": {"type": "boolean"}, "max_concurrency": {"type": "integer", "minimum": 0}}},
     "quick": {
       "type": "object",
       "additionalProperties": false,

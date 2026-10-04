@@ -1287,7 +1287,12 @@ class Ops(TaskOpsMixin):
             if not enabled(self.ws):
                 raise UsageError("AI Factory is switched off in this workspace",
                                  hint="set factory.enabled to true in orchestrator/config.json (docs/factory.md)")
-        delegate = epics.normalize_delegate(delegate)
+        if isinstance(delegate, dict) and delegate.get("dark"):
+            from orch.core.permits import dark_on
+            if delegate.get("factory") and not dark_on(self.ws):
+                raise UsageError("Dark AI Factory is switched off in this workspace",
+                                 hint="set factory.dark to true in orchestrator/config.json (docs/factory.md)")
+        delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`
         covered: dict = {}
 
         def fn(t: Ticket) -> dict:

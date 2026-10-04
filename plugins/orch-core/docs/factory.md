@@ -1,11 +1,12 @@
-# AI Factory (phases 1 to 4)
+# AI Factory (phases 1 to 5)
 
 One epic in, finished work out: you write an epic and start it as a factory, and agents split, specify,
 auto-approve and build its children. You hear from them when they need a permission they do not hold, and at the
-end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 4 ship.
+end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 5 ship.
 
 AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface, phase 3 the
-Ready report and the Stopped message, and phase 4 the runner that keeps the agents going, all described below.
+Ready report and the Stopped message, phase 4 the runner that keeps the agents going, and phase 5 the core of Dark AI
+Factory (no permission prompts while it runs), all described below.
 
 ## Switching it on
 
@@ -256,8 +257,74 @@ Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktre
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).
 
+## Dark AI Factory (phase 5, core)
+
+A Dark factory is an AI Factory epic that never asks you for a permission while it runs. It is built on everything
+above: the permission hook stays the only gate, orch still writes no harness settings (D2 B), and the runner's launch
+command allowlist is unchanged (no settings file, no skip or bypass flags, no permission mode that stops asking).
+Instead of a card for every prompt, a Dark epic's hook answers from your **Dark profile**: a signed list of shell
+commands this workspace's Dark runs may run.
+
+**Switching it on.** Set both `factory.enabled` and `factory.dark` to `true` in `orchestrator/config.json`. With
+`factory.dark` off, a Dark epic behaves as an ordinary factory epic: the profile is ignored and every prompt is a card,
+as before. With the factory off, nothing here does anything.
+
+**Starting a Dark epic (you only).**
+
+```bash
+orch approve <epic> requirements --dark       # implies --factory
+```
+
+The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
+before the typed confirmation says it plainly: Dark runs without asking you, only commands the profile lists run, and
+it releases and closes only within what the charter signs, which today is nothing: the verdict stays yours. The
+command is refused while `factory.dark` is off, under an agent harness, and without a terminal, like every approval.
+
+**The Dark profile** is per workspace, kept as signed ledger entries (add and remove), written only by a human
+process; the rules in force are a replay of them. A cut ledger means no rule counts.
+
+```bash
+orch dark profile list                          # anyone may read it
+orch dark profile add --prefix "npm run verify"  # a single simple command starting with these words
+orch dark profile add --exact "make test > out.txt"
+orch dark profile add --from-request P-7         # an open Dark card: its command as an exact rule
+orch dark profile remove <rule id>
+```
+
+Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed; agents are
+refused in orch itself and by the guard.
+
+- An **exact** rule matches only the identical command text.
+- A **prefix** rule matches only a single simple command: no `;`, `&`, `|`, `<`, `>`, `(`, `)`, backtick, `$`,
+  backslash or newline anywhere, and its first words (split as the shell would) equal the rule's. Compound commands,
+  redirects, pipes and substitutions never match a prefix rule (a redirect defeats prefix rules in Claude's own
+  matcher too); they can only match an exact rule. `npm run verify --quiet` matches `npm run verify`;
+  `npm run verify > f` and `npm run verify; rm -rf x` do not.
+- **Broad rules are refused**: a prefix of fewer than two words; one that starts with a shell, interpreter, wrapper,
+  network or file-sweeping tool (`sh`, `bash`, `zsh`, `fish`, `dash`, `env`, `sudo`, `su`, `doas`, `eval`, `exec`,
+  `xargs`, `python`, `python3`, `node`, `perl`, `ruby`, `osascript`, `curl`, `wget`, `ssh`, `scp`, `rsync`,
+  `docker`, `kubectl`, `find`, `awk`, `sed`, `tee`, `dd`); `git` with an option before its subcommand; `git push`,
+  `git reset`, `git clean`, `rm` and `mv` as prefixes; anything never grantable; anything outside printable ASCII.
+
+**In a Dark session** (one the runner bound to a Dark epic, as in phase 4):
+
+- a never-grantable command, or a tool other than the shell, is denied as before; a never-grantable command is never
+  allowed, whatever the profile holds;
+- a command a rule matches is allowed; rules are standing, nothing is used up;
+- a live grant for the exact command still allows, as before;
+- anything else is denied with "not in the Dark profile", and a card (source `dark`) is filed for you: grant or deny
+  it as usual, or add it to the profile. A rule that now covers it answers the card. Nothing is asked in the session.
+
+**Waking.** Adding or removing a rule wakes the parked children of Dark epics (the runner relaunches them), the same
+way your grants do.
+
+Not in this phase: the switch and the "Add to the Dark profile" action on the dashboard, a ring or factory list view,
+release stages, and closing children under the charter.
+
 ## Coming in later phases
 
+- Dark AI Factory on the dashboard: the switch, "Add to the Dark profile" on cards, the ring view and the factory
+  list; release stages and closing under the charter.
 - The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
 - Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

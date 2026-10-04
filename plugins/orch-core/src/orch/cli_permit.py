@@ -1,12 +1,13 @@
 """`orch permit …` (AI Factory, #2): permission requests in a factory epic and the human's signed answers.
 Agents may `request` and `list`; `grant`, `deny` and `revoke` are the human's; `hook` is Claude Code's
-PermissionRequest hook (orch.core.permits)."""
+PermissionRequest hook (orch.core.permits). `orch dark profile …` (Dark AI Factory): anyone may `list`; `add` and
+`remove` are the human's (orch.core.dark_profile)."""
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 import typer
 
@@ -106,6 +107,74 @@ def revoke(grant_id: str, json_out: JsonOpt = False) -> None:
     actor = confirm_typed(grant_id)
     entry = permits.permit_revoke(ws, actor, grant_id)
     cli._out(entry, json_out, f"grant {grant_id}: revoked")
+
+
+dark_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory: the workspace's Dark profile.")
+profile_app = typer.Typer(no_args_is_help=True, help="The shell commands a Dark factory epic runs without asking you.")
+dark_app.add_typer(profile_app, name="profile")
+
+
+def _rule_line(r: dict) -> str:
+    from orch.core import dark_profile, permits
+    return f"{r['id']}  {r['kind']:<6} {permits.shown(dark_profile.text(r['kind'], r['rule']))}"
+
+
+@profile_app.command("list")
+def profile_list(json_out: JsonOpt = False) -> None:
+    """The rules in force (anyone may read them)."""
+    from orch.core import dark_profile, permits
+    cli, ws = _ctx()
+    rules = dark_profile.rules(ws)
+    lines = [] if permits.dark_on(ws) else ["Dark AI Factory is switched off (factory.dark): the profile answers nothing"]
+    lines += [_rule_line(r) for r in rules] or ["the Dark profile is empty"]
+    cli._out({"rules": rules, "dark": permits.dark_on(ws)}, json_out, "\n".join(lines))
+
+
+@profile_app.command("add")
+def profile_add(prefix: Annotated[Optional[str], typer.Option(
+                    "--prefix", help='Plain words a single simple command starts with, e.g. "npm run verify".')] = None,
+                exact: Annotated[Optional[str], typer.Option("--exact", help="The full command text.")] = None,
+                from_request: Annotated[Optional[str], typer.Option(
+                    "--from-request", help="An open Dark request (P-…): its command as an exact rule.")] = None,
+                json_out: JsonOpt = False) -> None:
+    """Add a rule to the Dark profile. Human only."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import dark_profile
+    from orch.errors import UsageError
+    cli, ws = _ctx()
+    if sum(x is not None for x in (prefix, exact, from_request)) != 1:
+        raise UsageError("give exactly one of --prefix, --exact or --from-request")
+    require_human_terminal("changing the Dark profile")
+    if from_request is not None:
+        r = _show_request(ws, from_request, "Adding to the Dark profile, as an exact rule, the command of")
+        actor = confirm_typed(r["id"])
+        entry = dark_profile.add_from_request(ws, actor, r["id"], expected_sha=r["sha"])
+    else:
+        kind, value = dark_profile.check_rule(ws, "prefix" if prefix is not None else "exact",
+                                              prefix if prefix is not None else exact)
+        rid = dark_profile.rule_id(kind, value)
+        typer.echo("Adding to the Dark profile (every later Dark run in this workspace may run it without asking):")
+        typer.echo("  " + _rule_line({"id": rid, "kind": kind, "rule": value}))
+        actor = confirm_typed(rid)
+        entry = dark_profile.add(ws, actor, kind, value)
+    cli._out(entry, json_out, f"{entry['rule_id']}: added to the Dark profile")
+
+
+@profile_app.command("remove")
+def profile_remove(rule_id: str, json_out: JsonOpt = False) -> None:
+    """Take a rule out of the Dark profile. Human only."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import dark_profile
+    from orch.errors import NotFoundError
+    cli, ws = _ctx()
+    require_human_terminal("changing the Dark profile")
+    r = next((x for x in dark_profile.rules(ws) if x["id"] == rule_id), None)
+    if r is None:
+        raise NotFoundError(f"no rule {rule_id} in the Dark profile")
+    typer.echo("Removing from the Dark profile:\n  " + _rule_line(r))
+    actor = confirm_typed(r["id"])
+    entry = dark_profile.remove(ws, actor, r["id"])
+    cli._out(entry, json_out, f"{r['id']}: removed from the Dark profile")
 
 
 @permit_app.command("hook")

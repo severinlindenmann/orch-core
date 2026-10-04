@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
 {% import "_decisions.html" as dc %}
+{% import "_permits.html" as pm %}
 {% import "_ticket_card.html" as tc %}
 {% from "_tasks.html" import task_now %}
 {#- Today (#11/#17, Main / Moments drafts): what blocks an agent first, then what can wait, then the backlog folded
@@ -13,6 +14,9 @@
     {#- M: one headline instead of three tiles: how many decisions stand between the agents and running on their own. -#}
     {% if n %}
     <h1>{{ n }} {{ "decision" if n == 1 else "decisions" }}, then the agents run on their own</h1>
+    {% elif permits and (permits.requests or permits.budget) %}
+    {% set np = permits.requests|length + permits.budget|length %}
+    <h1>{{ np }} {{ "permission" if np == 1 else "permissions" }} to answer, then the agents go on</h1>
     {% else %}
     <h1>Nothing is waiting on you</h1>
     {% endif %}
@@ -38,6 +42,13 @@
 
 <div class="grid-2 today-main">
   <div class="decision-cards" id="decisions">
+    {% if permits and (permits.requests or permits.budget) %}
+    {#- AI Factory (off unless factory.enabled): agents wait on these. Not part of the decision count above. -#}
+    <section class="dc-section permit-section" id="permits" aria-labelledby="permits-h">
+      <h2 id="permits-h" class="dc-section-h">Permissions <span class="count">{{ permits.requests|length + permits.budget|length }}</span></h2>
+      {{ pm.cards(permits, "/") }}
+    </section>
+    {% endif %}
     {% if n %}
     <section class="dc-section" aria-labelledby="waiting-h">
       <h2 id="waiting-h" class="dc-section-h">Waiting on you <span class="count">{{ n }}</span></h2>

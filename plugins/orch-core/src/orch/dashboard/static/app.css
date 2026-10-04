@@ -1558,3 +1558,19 @@ html.term-full-open { overflow: hidden; }
 @media (max-width: 600px) { .term .term-screen { height: clamp(180px, calc(100dvh - 430px), 900px); } }
 /* a landscape phone: the terminal takes the screen's height (terminal.js scrolls to it), the page head stays above */
 @media (max-height: 500px) { .term .term-screen { height: calc(100dvh - 120px); } }
+
+/* ---------- AI Factory (#2, phase 2): permission cards, standing grants, the epic's budget ---------- */
+.permit-card { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; margin-bottom: var(--s-3); }
+.permit-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); }
+.permit-cmd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.permit-reason, .permit-meta { margin: 0; overflow-wrap: anywhere; }
+.permit-card .actions { margin: 0; }
+.permit-card .actions form { margin: 0; }
+.permit-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: var(--s-3); margin-bottom: var(--s-3); }
+.permit-strip .permit-card { margin: 0; }
+.permit-grants { display: flex; flex-direction: column; gap: var(--s-2); }
+.permit-grant { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2); min-width: 0; }
+.permit-grant form { margin: 0; }
+.permit-cmd-inline { overflow-wrap: anywhere; min-width: 0; }
+.charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; }
+.factory-budget { margin-left: var(--s-2); }

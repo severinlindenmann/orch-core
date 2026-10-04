@@ -90,7 +90,8 @@ def document(block, ctx) -> str:
             if path is None:
                 raise LookupError(f"{data['html']} is missing")
             pin = data.get("sha256")  # only the page the block's text pins runs: the full digest, of the bytes read
-            raw = read_pinned(path, pin, max_bytes(ctx.ws)) if isinstance(pin, str) and len(pin) == 64 else None
+            path, root = artifacts.open_args(ctx.ws, tid, data["html"], path)
+            raw = read_pinned(path, pin, max_bytes(ctx.ws), root=root) if isinstance(pin, str) and len(pin) == 64 else None
             if raw is None:
                 raise ValueError(f"{data['html']} changed since this widget was written")
             libs = data.get("libs", [])

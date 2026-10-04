@@ -120,11 +120,15 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
     blocks = [b for b in every if b.index < MAX_BLOCKS and not b.error and (b.data or {}).get("id") not in twice
               and not any(p.level == "error" and p.code not in ("widget-digest", "widget-drift") for p in b.problems)]
     refs = {r["ref"] for b in blocks for r in artifacts.refs(b.data) if r["sha256"] == digest}
-    path = next((p for ref in sorted(refs) if (p := artifacts.resolve(ctx.ws, ctx.ticket.id, ref)) is not None), None)
+    path = ref = None
+    for ref in sorted(refs):
+        if (path := artifacts.resolve(ctx.ws, ctx.ticket.id, ref)) is not None:
+            break
     kind = mimetypes.guess_type(path.name)[0] if path else None
     if kind not in artifacts.IMAGE_TYPES | VIDEO_TYPES:
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
-    data = read_pinned(path, digest, max_bytes(ctx.ws))
+    path, root = artifacts.open_args(ctx.ws, ctx.ticket.id, ref, path)
+    data = read_pinned(path, digest, max_bytes(ctx.ws), root=root)
     if data is None:
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
     return ranged(request, data, kind, {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff",

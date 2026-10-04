@@ -20,7 +20,7 @@ from orch.core.model import Ticket, new_ticket, parse_ticket
 from orch.core.ops_tasks import TaskOpsMixin, block_doing_for, check_raw_tasks, restart_answered
 from orch.core.protect import agent_wrote_ask, protected_changes
 from orch.core.questions import build_questions, find_question, question_hash, validate_answer
-from orch.errors import ClaimError, HumanOnlyError, TransitionError, UsageError, ValidationError
+from orch.errors import ClaimError, HumanOnlyError, OrchError, TransitionError, UsageError, ValidationError
 
 _UNSAFE_NAME = re.compile(r'[\\:*?"<>|]')
 _EMPTY_CLAIM = {"session": None, "harness": None, "at": None}
@@ -964,6 +964,50 @@ class Ops(TaskOpsMixin):
         for c in covered["ch"]["children"]:
             self._cover_child(c, epic.id, covered["ch"]["hash"])
         return epic
+
+    def approve_plans(self, ref: str, expected: dict, *,
+                      despite: tuple | list | set = ()) -> tuple[list[Ticket], list[tuple[str, str]]]:
+        """#27: approve the plans of an epic's children after one confirmation. `expected` maps each child's id to
+        the plan hash the human was shown (one entry per child); every child is approved exactly as
+        `approve <child> plan` would be (one signed ledger entry and one event per child, bound to that child's plan
+        hash), never anything not listed. `despite`: the children (ids) whose open-question line the human waived,
+        one by one. A child that fails its checks (the plan changed since it was shown, it left the epic, a question
+        opened) is skipped and reported, and so is one already approved for exactly that hash; the others go ahead.
+        Returns (approved tickets, [(id, why skipped)])."""
+        from orch.core import epics
+        from orch.core.ids import normalize_ref
+        require_human(self.actor, "approving gates")
+        if not expected:
+            raise ValidationError("no plans to approve", hint="orch approve <epic> plans lists the plans waiting")
+        seen: dict[str, str] = {}
+        for raw, h in expected.items():
+            cid = normalize_ref(self.ws, str(raw)).upper()
+            if cid in seen:
+                raise UsageError(f"{cid} is listed more than once: one plan hash per child")
+            _require_seen(h, "an approval of a plan")
+            seen[cid] = h
+        waived = {normalize_ref(self.ws, str(x)).upper() for x in despite}
+        epic = store.resolve(self.ws, ref)
+        if not epics.is_epic(epic.meta or {}):
+            raise UsageError(f"{epic.id} is not an epic", hint=f"orch approve {epic.id} plan")
+        kids = {e.id: e for e in epics.children(self.ws, epic.id)}
+        approved, skipped = [], []
+        for cid, h in sorted(seen.items()):
+            if cid not in kids:
+                skipped.append((cid, f"not a child of {epic.id}"))
+                continue
+            try:
+                cur = store.read_ticket(kids[cid].path)
+                g = (cur.meta.get("gates") or {}).get("plan") or {}
+                if g.get("approved") and g.get("hash") == h == gate_hash(cur, "plan"):
+                    skipped.append((cid, "already approved"))
+                    continue
+                approved.append(self.approve(cid, "plan", expected_hash=h, despite_open_question=cid in waived))
+            except HumanOnlyError:
+                raise
+            except OrchError as e:  # this child's checks failed (or its file is busy): the others go ahead
+                skipped.append((cid, e.message))
+        return approved, skipped
 
     def _check_child_for_charter(self, ct: Ticket) -> list[str]:
         """Refuse a child the charter cannot cover (orch.core.epics.charter_blocker); return its lines that read as

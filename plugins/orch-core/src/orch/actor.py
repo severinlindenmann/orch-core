@@ -229,7 +229,10 @@ def human_actor(ticket_id: str) -> Actor:
 def confirm_typed(ticket_id: str) -> Actor:
     """Ask the human to type the ticket id; the caller has already run require_human_terminal and its checks (#7)."""
     from orch.textsafe import visible
-    typed = input(f"Type {visible(ticket_id)} to confirm: ").strip()
+    import contextlib
+    import sys
+    with contextlib.redirect_stdout(sys.stderr):  # the prompt goes to stderr: --json output on stdout stays clean
+        typed = input(f"Type {visible(ticket_id)} to confirm: ").strip()
     if typed.upper() != ticket_id.upper():
         raise HumanOnlyError("confirmation did not match; nothing changed")
     return Actor("human", "you", "tty", None)

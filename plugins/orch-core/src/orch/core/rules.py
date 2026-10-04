@@ -33,7 +33,8 @@ def render_rules(cfg: dict) -> str:
         "config edit alone never turns it on); an "
         "agent is recognised "
         "by its environment and its process ancestry, and never acts as the human",
-        "epics: approving an epic covers its open children; a changed child needs the epic approved again; with "
+        "epics: approving an epic covers every child not done; a changed child needs the epic approved again; plans "
+        "written after the approval are approved together with `orch approve <epic> plans`; with "
         "the human's delegation an agent approves a child it created with `orch epic auto-approve`, within the limits",
         "ticket file: the Log is append-only and never names the human as actor; questions for the human go "
         "through `orch ask`, never into Requirements or Plan text (such a gate is approved only when the human "

@@ -61,12 +61,12 @@
     ("Tasks 3/5", "PR #31 ✓ checks", "AC 1/3", "▦ 2 artifacts"), the epic as a chip, the agent as initials with
     its last action; the move chip only when the move is yours or something is wrong (no R/P/T codes here: those
     stay in the List and the compact rows, with words for screen readers). -#}
-{% macro board_card(c) -%}
+{% macro board_card(c, kid=false) -%}
 {#- Inlined (no nested macro calls for the chip and the task bar): the board draws every card, so this is the hot path. -#}
 {%- set m = c.move -%}
 <a class="card tcard" href="/t/{{ c.id }}" data-ticket="{{ c.id }}" draggable="true">
   <span class="tc-top"><span class="id">{{ c.id }}</span>
-    {%- if c.epic %}<span class="chip chip-neu tc-epic-chip"><span aria-hidden="true">◇</span> {{ c.epic.title or c.epic.id }}<span class="sr-only"> (epic {{ c.epic.id }})</span></span>
+    {%- if c.epic and not kid %}<span class="chip chip-neu tc-epic-chip"><span aria-hidden="true">◇</span> {{ c.epic.title or c.epic.id }}<span class="sr-only"> (epic {{ c.epic.id }})</span></span>
     {%- elif c.rollup %}<span class="tc-meta">EPIC</span>{% elif c.size or c.external %}<span class="tc-meta">{{ c.size|upper }}{% if c.size and c.external %} · {% endif %}{% if c.external %}{{ c.external.key }}{% endif %}</span>{% endif %}
     {%- if c.agent %}<span class="tc-av tc-av-{{ c.agent.status }}" title="{{ c.agent.harness }}" aria-hidden="true">{{ c.agent.harness|initials }}</span>{% endif %}</span>
   <span class="title">{{ c.title }}</span>
@@ -94,6 +94,40 @@
   {%- if c.parent %}<span class="tc-parent muted">part of {{ c.parent }}</span>{% endif %}
   {%- if c.agent %}{% set a = c.agent %}<span class="tc-agent tc-agent-{{ a.status }}">{% if a.status == "stale" %}<svg class="i" aria-hidden="true"><use href="#i-warn"/></svg> {% endif %}<span class="sr-only">{{ a.harness }}: </span>{% if a.status == "stale" %}silent{% elif a.last_action %}{{ a.last_action }}{% else %}{{ a.harness }} active{% endif %}{% if a.last %} · <time datetime="{{ a.last.isoformat() }}">{{ a.last|ago }}</time>{% endif %}</span>{% endif %}
 </a>
+{%- endmacro %}
+
+{#- Epics view of the Board: one card per epic and lane. The header is the link to the epic; the foot is a button
+    outside it (a link cannot hold a button) that unfolds the tickets drawn here. Not draggable; the tickets inside are.
+    `g` comes from data.epic.board_lanes; app.js keeps open/closed per g.key across a swap. -#}
+{% macro group_card(g, shown) -%}
+{%- set e, u, n = g.epic, g.rollup, g.kids|length -%}
+{%- set gid = "grp-" ~ (g.key|replace(":", "-")|replace(".", "-")) -%}
+{%- set word = "ticket" if n == 1 else "tickets" -%}
+<div class="card tcard group-card" role="group" aria-labelledby="{{ gid }}-t" data-group="{{ g.key }}">
+  <a class="group-head" href="/t/{{ e.id }}">
+    <span class="tc-top"><span class="id">{{ e.id }}</span><span class="tc-meta">Epic</span></span>
+    <span class="title" id="{{ gid }}-t">{{ e.title or e.id }}</span>
+    {%- if u %}
+    <span class="tc-prog"><span class="tc-pword">Children {{ u.done }}/{{ u.total }}</span><span class="tc-bar" role="img" aria-label="{{ u.done }} of {{ u.total }} children done"><i style="width: {{ (100 * u.done / u.total)|round|int if u.total else 0 }}%"></i></span></span>
+    {%- endif %}
+    <span class="tc-facts">
+      <span class="tc-fact">{{ n }} {{ word }} here</span>
+      {%- if g.need %}<span class="chip chip-you"><svg class="i" aria-hidden="true"><use href="#i-you"/></svg> {{ g.need }} need you</span>{% endif %}
+      {%- if g.idle %}<span class="tc-fact tc-fact-warn"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg> {{ g.idle }} no progress</span>{% endif %}
+      {%- if g.factory %}<span class="tc-fact">AI Factory</span>{% endif %}
+    </span>
+  </a>
+  <div class="group-foot"><button type="button" class="group-toggle" data-group-toggle aria-expanded="{{ 'true' if g.open else 'false' }}" aria-controls="{{ gid }}-k"
+      data-show="Show {{ n }} {{ word }}" data-hide="Hide {{ n }} {{ word }}"><span>{{ "Hide" if g.open else "Show" }} {{ n }} {{ word }}</span><span class="group-chev" aria-hidden="true">▾</span></button></div>
+  <div class="group-kids" id="{{ gid }}-k"{% if not g.open %} hidden{% endif %}>
+    {%- for k in g.kids[:shown] %}{{ board_card(k, true) }}{% endfor %}
+    {%- if n > shown %}
+    <div class="group-extra" id="{{ gid }}-x" hidden>{% for k in g.kids[shown:] %}{{ board_card(k, true) }}{% endfor %}</div>
+    <button type="button" class="btn btn-quiet group-more" data-group-more aria-expanded="false" aria-controls="{{ gid }}-x"
+      data-show="Show all {{ n }}" data-hide="Show first {{ shown }}">Show all {{ n }}</button>
+    {%- endif %}
+  </div>
+</div>
 {%- endmacro %}
 
 {#- L: the top of the ticket page, below the crumb. `summary` is the agent's Summary text (Markdown), or "". -#}

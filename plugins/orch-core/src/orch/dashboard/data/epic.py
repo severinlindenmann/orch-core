@@ -101,6 +101,50 @@ def lanes(ws, by: str, items: list[tuple], index: dict) -> list[dict]:
     return out
 
 
+GROUP_SHOWN = 5  # children drawn before "Show all N"
+
+
+def _silent(card: dict) -> bool:
+    """A child with no progress: stale, or claimed and never active."""
+    a = card.get("agent") or {}
+    return (card.get("move") or {}).get("what") == "stale" or a.get("status") == "stale" or (bool(a) and not a.get("last"))
+
+
+def board_lanes(columns: dict, statuses, index: dict, *, grouped: bool, rollup_of=None, factory_ids=frozenset()) -> dict:
+    """The Board's lanes as cards: {status: {entries, cards, tickets}}. Each item is {"card": c} or, with `grouped`, one
+    {"group": {...}} per epic that has children in that lane (the epic itself is a container: not drawn where it has
+    children anywhere in the flow). `cards` is what the lane header counts, `tickets` the tickets drawn in it; the
+    one rule for both, so the template only prints them. Built from `columns`, i.e. after the filters."""
+    kids: dict[str, dict[str, list]] = {}
+    if grouped:
+        for s in statuses:
+            for c in columns[s]:
+                eid = str((c.get("epic") or {}).get("id") or "").upper()
+                if eid and "move" in c and eid in index:
+                    kids.setdefault(eid, {}).setdefault(s, []).append(c)
+    out = {}
+    for s in statuses:
+        items, seen, tickets = [], set(), 0
+        for c in columns[s]:
+            eid = str((c.get("epic") or {}).get("id") or "").upper()
+            if grouped and c.get("rollup") is not None and str(c["id"]).upper() in kids:
+                continue  # a container, drawn as its groups
+            tickets += 1
+            if not (grouped and eid in kids):
+                items.append({"card": c})
+            elif eid not in seen:
+                seen.add(eid)
+                mine = kids[eid][s]
+                need = sum(1 for k in mine if (k.get("move") or {}).get("who") == "you")
+                e = index[eid]
+                roll = rollup_of(eid) if rollup_of else c.get("rollup")
+                items.append({"group": {"key": f"{e['id']}:{s}", "epic": e, "kids": mine, "need": need,
+                                        "idle": sum(1 for k in mine if _silent(k)), "open": need > 0,
+                                        "rollup": roll, "factory": eid in factory_ids}})
+        out[s] = {"entries": items, "cards": len(items), "tickets": tickets}
+    return out
+
+
 # -- Today ----------------------------------------------------------------------------------------------------------
 
 def delegated_fyi(ws, entries, events, limit: int = 8) -> dict:

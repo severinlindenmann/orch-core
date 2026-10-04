@@ -317,3 +317,26 @@ def promote(ref: str,
     out = {"name": name, "version": version, "widget": f"{name}@{version}", "folder": str(folder)}
     cli._out(out, json_out, f"template {name}@{version} written to {folder}\n"
                             f'use it as {{"widget": "{name}@{version}", "data": {{…}}}}')
+
+
+@widget_app.command("html")
+def html_(state: Annotated[str, typer.Argument(help="on | off | status")] = "status", json_out: JsonOpt = False) -> None:
+    """Whether agent-written HTML runs in ticket widgets. `on` is the human's decision, signed into the approval
+    ledger (run it in your own terminal); `off` anyone may run; a config edit alone never turns it on."""
+    from orch.core import ledger
+    cli, ws = _cli()
+    if state not in ("on", "off", "status"):
+        raise UsageError("expected on, off or status")
+    if state == "on":
+        from orch.actor import confirm_typed, require_human_terminal
+        require_human_terminal("turning on agent HTML in widgets")
+        typer.echo("Agent-written HTML and scripts will run in sandboxed frames on ticket pages of this workspace.",
+                   err=json_out)
+        cli._ops(ws, confirm_typed("HTML")).set_widgets_html(True)
+    elif state == "off":
+        cli._ops(ws).set_widgets_html(False)
+    now = ledger.widgets_html_state(ws)
+    cli._out({"widgets.html": now}, json_out, {
+        "on": "agent HTML is on (signed)", "off": "agent HTML is off",
+        "unsigned": "agent HTML is off: config.json asks for it, but no signed decision on this machine backs it; "
+                    "turn it on with `orch widget html on` in your own terminal"}[now])

@@ -10,6 +10,8 @@ import pytest
 from orch import actor
 from orch.cli import run
 
+pytestmark = pytest.mark.usefixtures("html_on")  # agent HTML on, signed (#9)
+
 pytest.importorskip("fastapi")
 
 F = "```"

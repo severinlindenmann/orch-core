@@ -55,6 +55,11 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings += _check_remote(ws, events)
     findings += _check_human_evidence(events)
     findings += _check_widgets(ws)
+    if ledger.widgets_html_state(ws) == "unsigned":
+        findings.append(Finding("warning", "unsigned-setting", None,
+                                "widgets.html is true in orchestrator/config.json, but no signed decision on this "
+                                "machine backs it, so agent HTML stays off: the human turns it on with `orch widget "
+                                "html on` in their own terminal"))
     findings += _check_orphan_artifacts(ws, entries)
     findings += _check_commits(ws, entries)
     return findings

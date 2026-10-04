@@ -113,6 +113,13 @@ def human():
 
 
 @pytest.fixture
+def html_on(ws, human):
+    """Agent HTML in widgets turned on the human's way: a signed ledger entry plus the config (#9)."""
+    from orch.core.ops import Ops
+    Ops(ws, human).set_widgets_html(True)
+
+
+@pytest.fixture
 def aops(ws, agent):
     from orch.core.ops import Ops
     return Ops(ws, agent)

@@ -1075,8 +1075,9 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
 
 
 _WIDGETS_WORD = re.compile(r"\bwidgets\b")
-_WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widgets) is the human's setting; ask the "
-                   "user to change it in orchestrator/config.json")
+_WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widgets) is the human's setting, signed into "
+                   "the approval ledger; ask the user to run `orch widget html on` in their own terminal (anyone may "
+                   "turn it off with `orch widget html off`)")
 # Files that run code in the human's own sessions: shell startup files, direnv's .envrc, git hooks.
 _STARTUP_FILE = re.compile(r"(?:^|[\s'\"=/~])\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|bash_login|profile|"
                            r"envrc)\b|\.git[/\\]hooks(?:[/\\]|\b)")
@@ -1164,14 +1165,14 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
 
 
 def _widgets_html(text: str):
-    """`widgets.html` as the file sets it (True when unset), or None when the text is not a JSON object."""
+    """`widgets.html` as the file sets it (False when unset), or None when the text is not a JSON object."""
     import json
     try:
         cfg = json.loads(text)
     except ValueError:
         return None
     widgets = cfg.get("widgets") if isinstance(cfg, dict) else None
-    return widgets.get("html", True) if isinstance(widgets, dict) else (True if isinstance(cfg, dict) else None)
+    return widgets.get("html", False) if isinstance(widgets, dict) else (False if isinstance(cfg, dict) else None)
 
 
 def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:

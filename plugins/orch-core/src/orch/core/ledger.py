@@ -6,7 +6,7 @@ is one file per user, `ledger.jsonl` in the orch config dir (`$ORCH_STATE_DIR`, 
 `~/.config/orch`). Every line names its workspace (`workspace_id`: derived from the config's customer and id prefix,
 so it survives worktrees, moves and renames) and carries an HMAC-SHA256 over its content with a per-user key in
 `ledger.key` (mode 0600) next to it. Only human actions write it (`Ops.approve`, `Ops.answer`, `Ops.verdict`,
-`Ops.close`, `Ops.ledger_adopt`, `Ops.epic_pause`; an epic approval also signs its charter), and a human action is refused under an agent harness (`lifecycle.require_human`);
+`Ops.close`, `Ops.ledger_adopt`, `Ops.epic_pause`, `Ops.set_widgets_html`; an epic approval also signs its charter), and a human action is refused under an agent harness (`lifecycle.require_human`);
 the guard keeps agents' tools away from both files.
 
 Where an agent proceeds on a human decision (claim, task start/done, move to testing) the decision must be in the
@@ -50,6 +50,22 @@ def workspace_id(ws) -> str:
     cfg = ws.config
     ident = f"{cfg.get('customer', '')}|{(cfg.get('id') or {}).get('prefix', '')}"
     return hashlib.sha256(ident.encode("utf-8")).hexdigest()[:16]
+
+
+WIDGETS_HTML = "widgets.html"
+
+
+def widgets_html_state(ws, signed: list[dict] | None = None) -> str:
+    """Whether agent HTML runs in ticket widgets: "on" when the config asks for it and this workspace's latest signed
+    `widgets.html` decision says on; "unsigned" when the config asks for it but no such decision backs it (a hand
+    edit, another machine, or a workspace from before the setting was signed): treated as off; else "off"."""
+    cfg = (getattr(ws, "config", None) or {}).get("widgets") or {}
+    if not isinstance(cfg, dict) or cfg.get("html") is not True:
+        return "off"
+    for e in reversed(entries(ws) if signed is None else signed):
+        if e.get("kind") == "setting" and e.get("setting") == WIDGETS_HTML:
+            return "on" if e.get("value") is True else "unsigned"
+    return "unsigned"
 
 
 def ledger_path(ws=None) -> Path:
@@ -96,8 +112,9 @@ def _mac(key: bytes, entry: dict) -> str:
 
 
 def record(ws, *, ticket: str, kind: str, actor, evidence: dict | None, **fields) -> dict:
-    """Append one signed entry (kind "gate", "answer", "verdict", "close", for epics "charter" and "pause", and
-    "ticket_request" for a backlog ticket a paired phone created).
+    """Append one signed entry (kind "gate", "answer", "verdict", "close", for epics "charter" and "pause",
+    "ticket_request" for a backlog ticket a paired phone created, and "setting" for a workspace setting only the human
+    turns on: ticket None, `setting` and `value`).
     Raises OrchError when it cannot be
     written, so the action it records is not applied without it."""
     entry = {"workspace": workspace_id(ws), "ticket": ticket, "kind": kind, **fields, "actor": actor.to_str(),

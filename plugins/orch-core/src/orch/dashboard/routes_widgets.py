@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
-from orch.core import store
+from orch.core import ledger, store
 from orch.errors import OrchError
 from orch.widgets import Ctx, registry, render_document, render_html, ticket_blocks
 from orch.widgets.assemble import NONCE
@@ -46,7 +46,7 @@ def template_preview(request: Request, ref: str, theme: str = "", n: str = ""):
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
     name, _, v = ref.partition("@")
     if not ctx.html:
-        return HTMLResponse(render.shell(render.note("neu", "Note", "Agent HTML is off in this workspace"), ctx),
+        return HTMLResponse(render.shell(render.note("neu", "Note", render.HTML_OFF), ctx),
                             headers=HEADERS)
     try:
         folder = Path(spec["folder"])
@@ -253,4 +253,4 @@ def widgets_page(request: Request):
     from orch.widgets.render import inline
     return page(request, "widgets.html", nav="widgets", title="Widgets", groups=groups, widget_css=css_names(),
                 inline_md=lambda text: Markup(inline(text)),
-                html_on=Ctx.of(ws).html, unused_days=UNUSED_DAYS, broken=registry.template_problems(ws.home), total=sum(len(g["items"]) for g in groups))
+                html_state=ledger.widgets_html_state(ws), unused_days=UNUSED_DAYS, broken=registry.template_problems(ws.home), total=sum(len(g["items"]) for g in groups))

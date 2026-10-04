@@ -17,6 +17,7 @@ EVENT_KINDS = frozenset({
     "addon.decision",
     "task.added", "task.edited", "task.moved", "ledger.adopted",
     "gate.delegated", "delegation.paused",  # epics: an agent's approval under delegation; the human's pause
+    "setting.changed",  # a workspace setting changed through orch (`orch widget html`)
 })
 
 

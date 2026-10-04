@@ -211,8 +211,15 @@ Digests are hashed once per file version (path, size, mtime).
 
 ## The frame (agent HTML)
 
-Agent HTML is on when the workspace config says `widgets.html: true` (default **true**); only a human changes it
-(like addon trust, the guard refuses an agent's edit of that key; `orch rules` lists it as human-only). Off → the
+Agent HTML is on when the workspace config says `widgets.html: true` (default **false**) **and** the approval ledger
+on this machine holds a signed human decision for this workspace whose latest value is on. `orch widget html on` is
+that decision: a human verb like approve or verdict, refused for any process with an agent harness in its ancestry,
+confirmed by typing, signed into the ledger (bound to the workspace and the value) and then written to the config.
+`orch widget html off` takes power away, so anyone may run it; the human's off is signed as well, an agent's is
+recorded in the event log. Wherever the setting is read (`Ctx.of`: ticket pages, frames, previews, decision cards,
+addons), a config that says true without a matching signed entry (a hand edit, a tampered or foreign entry, another
+machine, or a workspace from before the setting was signed) counts as off; `orch check` reports it as
+`unsigned-setting` and the `/widgets` page says how to turn it on. `orch widget html` alone prints the state. Off → the
 chrome shows the text alternative.
 
 A `srcdoc` frame inherits the embedding page's CSP (the dashboard's `script-src 'self'` would block every inline
@@ -273,10 +280,11 @@ What the frame does not stop, by design or for lack of a browser control:
 - **Beacons without fetch.** A navigation, or a prefetch/DNS hint, can carry data out even with `connect-src
   'none'`; so can WebRTC (`RTCPeerConnection` ICE candidates are not governed by CSP). What a frame can read is its
   own document: the block's data and the images it names, nothing of the dashboard.
-- **`widgets.html` is the human's setting.** The guard compares the config before and after an Edit/Write and
-  refuses a change of that key. A Bash command that writes config.json is refused only when it names `widgets` as a
-  word; a command that builds the key (`jq '.["widg"+"ets"].html=…'`, a script) passes. This is a known limit of
-  matching shell text, not a boundary: an agent able to run arbitrary shell can change any file it can write.
+- **`widgets.html` is the human's setting, signed.** The config value alone never turns agent HTML on: a signed
+  ledger entry must back it (see "The frame"). The guard also refuses an agent's edit of the key, as defence in depth
+  only. The ledger has the limit stated in `orch.core.ledger`: it is not OS isolation, so same-user code outside the
+  guard's view can read the files it uses; it makes turning the setting on a deliberate act against files outside the
+  repository rather than an edit of the config, and `orch check` reports a config the ledger does not back.
 
 Turn agent HTML off (`widgets.html: false`) where these matter: tickets then show each widget's text alternative.
 

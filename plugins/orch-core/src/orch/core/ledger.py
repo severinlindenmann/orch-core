@@ -7,7 +7,8 @@ is one file per user, `ledger.jsonl` in the orch config dir (`$ORCH_STATE_DIR`, 
 so it survives worktrees, moves and renames) and carries an HMAC-SHA256 over its content with a per-user key in
 `ledger.key` (mode 0600) next to it. Only human actions write it (`Ops.approve`, `Ops.answer`, `Ops.verdict`,
 `Ops.close`, `Ops.ledger_adopt`, `Ops.epic_pause`, `Ops.set_widgets_html`; an epic approval also signs its charter), and a human action is refused under an agent harness (`lifecycle.require_human`);
-the guard keeps agents' tools away from both files.
+the guard keeps agents' tools away from both files. One exception: turning a workspace setting off
+(`Ops.set_widgets_html(False)`) takes power away, so any actor's off is signed too (it must outrank an earlier on).
 
 Where an agent proceeds on a human decision (claim, task start/done, move to testing) the decision must be in the
 ledger: an approval or a blocking answer without a signed entry, including one recorded before the ledger existed,
@@ -53,19 +54,80 @@ def workspace_id(ws) -> str:
 
 
 WIDGETS_HTML = "widgets.html"
+_checkouts: dict[str, str] = {}
+
+
+def checkout_id(ws) -> str:
+    """sha256 of the real path of the checkout's git common dir (one value for every worktree of a clone), else of
+    the workspace root, [:16]. Setting entries carry it, so a decision made here does not carry over to a copy, a
+    clone, a moved checkout or another workspace with the same customer and prefix."""
+    key = str(ws.home)
+    if key not in _checkouts:
+        root = Path(ws.root).resolve()
+        common = root
+        for d in (root, *root.parents):
+            git = d / ".git"
+            if git.is_dir():
+                common = git
+                break
+            if git.is_file():
+                try:
+                    gitdir = (d / git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()).resolve()
+                except (OSError, IndexError, ValueError):
+                    break
+                try:
+                    common = gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()
+                except OSError:
+                    common = gitdir
+                break
+        _checkouts[key] = hashlib.sha256(os.fsencode(common.resolve())).hexdigest()[:16]
+    return _checkouts[key]
+
+
+def _settings(ws, name: str, signed: list[dict]) -> list[dict]:
+    cid = checkout_id(ws)
+    return [e for e in signed if e.get("kind") == "setting" and e.get("setting") == name and e.get("checkout") == cid]
+
+
+def record_setting(ws, name: str, value, actor, evidence: dict | None) -> dict:
+    """Sign a workspace setting, chained: the entry's MAC covers `prev`, the MAC of this checkout's previous entry for
+    the setting. The caller holds the workspace's config lock."""
+    chain = _settings(ws, name, entries(ws))
+    return record(ws, ticket=None, kind="setting", actor=actor, evidence=evidence, setting=name, value=value,
+                  checkout=checkout_id(ws), prev=chain[-1]["mac"] if chain else "")
+
+
+def signed_setting(ws, name: str, signed: list[dict] | None = None):
+    """The value of this checkout's newest signed entry for `name`, or None when there is none or it does not chain
+    onto the entry before it (a replayed, reordered or out-of-place entry): that counts as no decision."""
+    chain = _settings(ws, name, entries(ws) if signed is None else signed)
+    if not chain:
+        return None
+    last, prev = chain[-1], (chain[-2]["mac"] if len(chain) > 1 else "")
+    if last.get("prev") != prev or sum(e["mac"] == last["mac"] for e in chain) > 1:
+        return None
+    return last.get("value")
 
 
 def widgets_html_state(ws, signed: list[dict] | None = None) -> str:
-    """Whether agent HTML runs in ticket widgets: "on" when the config asks for it and this workspace's latest signed
-    `widgets.html` decision says on; "unsigned" when the config asks for it but no such decision backs it (a hand
-    edit, another machine, or a workspace from before the setting was signed): treated as off; else "off"."""
+    """Whether agent HTML runs in ticket widgets. "on": the config asks for it, this checkout's newest signed
+    `widgets.html` entry says on, and the event log records no later off. "unsigned": the config asks for it without
+    that (a hand edit, another machine or checkout, a broken chain, or a workspace from before the setting was
+    signed): treated as off. "stale": the config says off but the newest signed entry still says on (an off made by
+    hand, not through orch): off, but a later config edit would count. Else "off"."""
     cfg = (getattr(ws, "config", None) or {}).get("widgets") or {}
-    if not isinstance(cfg, dict) or cfg.get("html") is not True:
+    asked = isinstance(cfg, dict) and cfg.get("html") is True
+    if getattr(ws, "home", None) is None:
         return "off"
-    for e in reversed(entries(ws) if signed is None else signed):
-        if e.get("kind") == "setting" and e.get("setting") == WIDGETS_HTML:
-            return "on" if e.get("value") is True else "unsigned"
-    return "unsigned"
+    if signed_setting(ws, WIDGETS_HTML, signed) is not True:
+        return "unsigned" if asked else "off"
+    if not asked:
+        return "stale"
+    from orch.core.events import read_events
+    for ev in reversed(read_events(ws)):  # every orch change of the setting ends with this event
+        if ev.kind == "setting.changed" and (ev.data or {}).get("setting") == WIDGETS_HTML:
+            return "on" if ev.data.get("value") is True else "unsigned"
+    return "on"
 
 
 def ledger_path(ws=None) -> Path:

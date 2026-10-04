@@ -338,5 +338,7 @@ def html_(state: Annotated[str, typer.Argument(help="on | off | status")] = "sta
     now = ledger.widgets_html_state(ws)
     cli._out({"widgets.html": now}, json_out, {
         "on": "agent HTML is on (signed)", "off": "agent HTML is off",
-        "unsigned": "agent HTML is off: config.json asks for it, but no signed decision on this machine backs it; "
+        "stale": "agent HTML is off in config.json, but the signed on is still in force; run `orch widget html off`",
+        "unsigned": "agent HTML is off: config.json asks for it, but no current signed decision for this checkout "
+                    "on this machine backs it; "
                     "turn it on with `orch widget html on` in your own terminal"}[now])

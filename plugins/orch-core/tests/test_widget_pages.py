@@ -50,7 +50,7 @@ def compare(ref, digest):
     return {"type": "compare", "before": {"path": ref, "sha256": digest}, "after": {"path": ref, "sha256": digest}}
 
 
-def test_a_page_draws_a_bars_block_and_a_template_like_a_ticket(ws):
+def test_a_page_draws_a_bars_block_and_a_template_like_a_ticket(ws, html_on):
     html = draw(ws, f"# Page\n\n{fence(BARS)}\n\n{fence(pin_t(ws, {'widget': 'mermaid@1', 'data': MERMAID, 'id': 'flow'}))}\n")
     assert 'class="w w-t-bars"' in html and "Bundle size" in html and ">core<" in html
     assert 'id="w-flow"' in html and "agent HTML · mermaid@1" in html and "Show text" in html
@@ -136,7 +136,7 @@ def test_a_page_never_makes_a_live_link_to_a_ticket_artifact(ws):
     assert 'href="https://example.com/"' in html
 
 
-def test_frame_route_serves_the_page_block_with_the_sandbox_headers(dash, ws):
+def test_frame_route_serves_the_page_block_with_the_sandbox_headers(dash, ws, html_on):
     tpl = pin_t(ws, {"widget": "mermaid@1", "data": MERMAID})
     text = f"intro\n\n{fence(tpl)}\n"
     seen = []

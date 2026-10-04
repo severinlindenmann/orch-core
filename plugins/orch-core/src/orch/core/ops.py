@@ -1076,7 +1076,8 @@ class Ops(TaskOpsMixin):
     def set_widgets_html(self, on: bool) -> None:
         """`widgets.html`: whether agent-written HTML runs in ticket widgets. Turning it on is a human decision, signed
         into the ledger for this workspace and value (orch.core.ledger.widgets_html_state reads it back). Turning it
-        off takes power away, so anyone may; the human's off is signed too, an agent's is recorded as an event."""
+        off takes power away, so anyone may, and every off is signed as well: the newest signed entry decides, so an
+        off by anyone outranks an earlier on and only a fresh human on turns it back on."""
         import json
         from orch.config.load import CONFIG_NAME
         from orch.core import ledger
@@ -1088,10 +1089,8 @@ class Ops(TaskOpsMixin):
         path = self.ws.home / CONFIG_NAME
         with lock(self.ws, "config"):
             raw = json.loads(path.read_text(encoding="utf-8"))
-            if self.actor.is_human:
-                from orch.actor import process_evidence
-                ledger.record(self.ws, ticket=None, kind="setting", actor=self.actor, evidence=process_evidence(),
-                              setting=ledger.WIDGETS_HTML, value=on)
+            from orch.actor import process_evidence
+            ledger.record_setting(self.ws, ledger.WIDGETS_HTML, on, self.actor, process_evidence())
             widgets = raw.get("widgets") if isinstance(raw.get("widgets"), dict) else {}
             raw["widgets"] = {**widgets, "html": on}
             atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")

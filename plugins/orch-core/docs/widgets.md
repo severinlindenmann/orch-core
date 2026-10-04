@@ -212,15 +212,18 @@ Digests are hashed once per file version (path, size, mtime).
 ## The frame (agent HTML)
 
 Agent HTML is on when the workspace config says `widgets.html: true` (default **false**) **and** the approval ledger
-on this machine holds a signed human decision for this workspace whose latest value is on. `orch widget html on` is
-that decision: a human verb like approve or verdict, refused for any process with an agent harness in its ancestry,
-confirmed by typing, signed into the ledger (bound to the workspace and the value) and then written to the config.
-`orch widget html off` takes power away, so anyone may run it; the human's off is signed as well, an agent's is
-recorded in the event log. Wherever the setting is read (`Ctx.of`: ticket pages, frames, previews, decision cards,
-addons), a config that says true without a matching signed entry (a hand edit, a tampered or foreign entry, another
-machine, or a workspace from before the setting was signed) counts as off; `orch check` reports it as
-`unsigned-setting` and the `/widgets` page says how to turn it on. `orch widget html` alone prints the state. Off → the
-chrome shows the text alternative.
+on this machine holds a current signed human decision to turn it on for this workspace and this checkout.
+`orch widget html on` is that decision. It is a human verb like approve or verdict, refused for any process with an
+agent harness in its ancestry and confirmed by typing; the signed entry is bound to the workspace, to the checkout
+(its git common dir, shared by its worktrees) and to the value, and chained to the previous entry for the setting.
+`orch widget html off` takes power away, so anyone may run it, and every off is signed too: the newest entry decides,
+so after any off only a new human on turns it back on. Wherever the setting is read (`Ctx.of`: ticket pages, frames,
+previews, decision cards, addons) it counts as off when the config says true without such a decision: a hand edit or
+a pull, an entry that does not chain onto the one before it, a later off (in the ledger or the event log), another
+machine, or a moved, copied or cloned checkout (each needs its own `orch widget html on`). `orch check` reports that
+as `unsigned-setting`, and reports `stale-setting` when the config says false but a signed on is still in force (an
+off made by hand rather than with `orch widget html off`). The `/widgets` page says how to turn it on, and
+`orch widget html` alone prints the state. Off → the chrome shows the text alternative.
 
 A `srcdoc` frame inherits the embedding page's CSP (the dashboard's `script-src 'self'` would block every inline
 script), so each frame is a URL of its own: `GET /w/<ID>/<section>/<digest>`, where `digest` is the sha256 of the block's

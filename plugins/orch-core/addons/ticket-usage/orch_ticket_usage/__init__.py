@@ -20,7 +20,7 @@ UNKNOWN_PCT = "unknown, needs the status line recorder"
 
 
 def _owner(store: dict, key: str) -> dict:
-    return store.setdefault(key, {"main": {}, "sub": {}, "other": {}, "week": {}, "first": None, "last": None})
+    return store.setdefault(key, {"main": {}, "sub": {}, "week": {}, "first": None, "last": None})
 
 
 def build(claude, tickets, log_path, now) -> list[dict]:
@@ -74,7 +74,8 @@ def build(claude, tickets, log_path, now) -> list[dict]:
                 c["models"][m] = c["models"].get(m, 0.0) + usd
         for f, desc in subagents(path):
             named = names(desc, ids)
-            take(named or owner, "sub" if named else "other" if len(claimed) == 1 else "main", parse_file(f))
+            # a session of one ticket owns all its subagents; in a shared one only a subagent naming a ticket is that ticket's
+            take(named or owner, "sub" if named or len(claimed) == 1 else "main", parse_file(f))
 
     share = distribute(rises, msgs)
     items = []
@@ -87,7 +88,7 @@ def build(claude, tickets, log_path, now) -> list[dict]:
         o = owners.get(key) or _owner({}, key)
         c = costs.get(key)
         item = {"id": key if kind != "ticket" else f"ticket:{key}", "kind": kind, "label": label, "role": "neu",
-                "text": "", "main": o["main"], "sub": o["sub"], "other": o["other"], "week": o["week"],
+                "text": "", "main": o["main"], "sub": o["sub"], "week": o["week"],
                 "first": o["first"], "last": o["last"], "cost": c, "running": key in running, "pct": pct(key)}
         item.update(extra)
         items.append(item)
@@ -193,14 +194,12 @@ def ticket_panel(item, show_cost: bool) -> list:
             (model_name(m), tokens(item["main"].get(m, 0)) if m in item["main"] else "—",
              tokens(item["sub"].get(m, 0)) if m in item["sub"] else "—") for m in by_model),
             empty="No output tokens found for this ticket."))
-    if item["other"]:
-        body.append(Text(f"Other subagents in these sessions: {models_text(item['other'])} output tokens."))
     for s in item.get("shared") or []:
         body.append(Text(f"Shared orchestrator: {s['tickets']} tickets, {tokens(total(s['out']))} output tokens "
                          f"({models_text(s['out'])}). Only subagents that name this ticket count above."))
     for sid in item.get("missing") or []:
         body.append(Text(f"Session {sid[:8]}: not on this machine."))
-    if not total(item["main"], item["sub"], item["other"]) and not item.get("missing") and not item.get("shared"):
+    if not total(item["main"], item["sub"]) and not item.get("missing") and not item.get("shared"):
         body.append(Text("No output tokens found yet."))
     return [Card("Usage", tuple(body))]
 

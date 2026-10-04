@@ -69,8 +69,8 @@ def test_ticket_with_its_own_session_gets_main_and_named_subagents(tmp_path):
                   ("Challenge a draft", [reply("s3", 4, "2026-10-01T11:00:00Z", "claude-sonnet-5-5")])])
     item = build(tmp_path, [("B-2914", "t", [SID]), ("B-29140", "t", [])])["ticket:B-2914"]
     assert item["main"] == {"claude-opus-5-5": 100}
-    assert item["sub"] == {"claude-sonnet-5-5": 30}  # B-2914 is not found inside B-29140
-    assert item["other"] == {"claude-sonnet-5-5": 12 - 8}  # unnamed, and the one naming B-29140 belongs to that id
+    # its own session owns the unnamed subagent too; the one naming B-29140 belongs to that id (B-2914 is not inside it)
+    assert item["sub"] == {"claude-sonnet-5-5": 30 + 4}
     assert item["cost"]["total"] == 2.5 and item["cost"]["added"] == 7 and not item["running"]
 
 

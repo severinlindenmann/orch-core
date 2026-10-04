@@ -182,7 +182,8 @@ agent harness, like the dashboard's other human actions.
 
 **Turn orch on at user scope first.** The launched session ignores project settings (see below), so orch's guard and
 permission hook must come from your user-scope Claude settings (`CLAUDE_CONFIG_DIR`, else `~/.claude`): enable the
-orch-core plugin there, or carry the orch guard and permission hooks. Until they do, the runner starts nothing, stops
+orch-core plugin there, or carry the orch guard and permission hooks (commands whose program is `orch` or an absolute
+path ending in `/orch`), and `disableAllHooks` must not be on. Until that holds, the runner starts nothing, stops
 what runs, and the epic page says why.
 
 **Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child)
@@ -202,6 +203,15 @@ session starts in the child's worktree only when the child names exactly one, be
 `.claude/worktrees` folder or a git worktree in the workspace whose branch names the child; otherwise in the workspace
 root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
 so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
+
+The guard's part is a text check, not a shell. It refuses a command run from inside the orch config dir, a `cd` or
+`pushd` that lands in it (resolved with variables, `..` and globs, step by step), a listing of it (`ls`, `find`, `du`,
+`stat`, `tree`, also recursive over a folder above it), and any tmux or screen command it cannot show plain: a socket
+must be an absolute, literal path with no `..`, outside the config dir (relative ones are refused, because the
+working directory is not known to a later command). The socket sits in a random-named folder whose name is kept in a
+permits file. Known limits of a text guard, not built: a word written without a mention of tmux or screen by
+concatenation that uses none of the characters it looks for, a string built in another language (perl, osascript,
+python), and a script file written and then run.
 
 **The launch command** is yours, in `factory-command.json` inside the permits folder of the orch config dir, which the
 guard keeps agents from reading and writing (never the workspace config, ticket text or anything else an agent can

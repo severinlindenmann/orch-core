@@ -112,19 +112,34 @@ def user_settings_blocker(environ=None) -> str | None:
         data = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return why
+    if not isinstance(data, dict) or data.get("disableAllHooks") is True:
+        return why
     if _enabled_plugin_id(path):
         return None
-    hooks = data.get("hooks") if isinstance(data, dict) else None
+    hooks = data.get("hooks")
 
     def has(event: str, *words: str) -> bool:
-        for entry in (hooks or {}).get(event) or [] if isinstance(hooks, dict) else []:
-            for h in entry.get("hooks") or [] if isinstance(entry, dict) else []:
+        for entry in (hooks.get(event) or []) if isinstance(hooks, dict) else []:
+            for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
                 cmd = h.get("command") if isinstance(h, dict) else None
-                if isinstance(cmd, str) and all(w in cmd for w in words):
+                if _orch_words(cmd)[:len(words)] == list(words):
                     return True
         return False
 
-    return None if has("PreToolUse", "orch", "guard") and has("PermissionRequest", "orch", "permit hook") else why
+    return None if has("PreToolUse", "guard") and has("PermissionRequest", "permit", "hook") else why
+
+
+def _orch_words(cmd) -> list[str]:
+    """The words after the program of hook command `cmd`, when that program is `orch` or an absolute path ending in
+    /orch; else an empty list. Parsed as a shell would split it, not matched as text."""
+    import shlex
+    try:
+        words = shlex.split(cmd) if isinstance(cmd, str) else []
+    except ValueError:
+        return []
+    if not words or not (words[0] == "orch" or (os.path.isabs(words[0]) and os.path.basename(words[0]) == "orch")):
+        return []
+    return words[1:]
 
 
 def work_prompt(key: str) -> str | None:

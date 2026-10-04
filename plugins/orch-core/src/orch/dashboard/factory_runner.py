@@ -3,7 +3,7 @@ that calls orch.core.factory_runner.tick. It does nothing unless the factory is 
 an epic from the dashboard.
 
 Its sessions run on a tmux server of their own, on a socket inside the guarded permits folder of the orch config dir
-(`tmux -S <config>/permits/tmux/factory`, folder 0700), not on the Terminals' named socket. A same-user process is not
+(`tmux -S <config>/permits/tmux/<random>/factory`, folder 0700), not on the Terminals' named socket. A same-user process is not
 isolated from that socket by the operating system; the guard only makes the obvious routes to it fail."""
 from __future__ import annotations
 
@@ -24,13 +24,38 @@ ROUND_SECONDS = 15
 _NO_SERVER = ("no server running", "No such file or directory", "no sessions")
 
 
+def _folder_name(permits: Path) -> str:
+    """The random name of the folder that holds the socket, kept only in a permits file (created once, exclusively)."""
+    import re
+    import secrets
+    f = permits / "tmux.name"
+    for _ in range(2):
+        try:
+            name = f.read_text(encoding="utf-8").strip()
+            if re.fullmatch(r"[0-9a-f]{16}", name):
+                return name
+        except OSError:
+            pass
+        try:
+            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as h:
+            h.write(secrets.token_hex(8))
+    raise UsageError("the factory's tmux folder name cannot be read")
+
+
 def socket_path() -> Path:
-    """The factory's tmux socket. Its folder is created 0700 and must be ours alone."""
-    d = launch.config_dir() / "permits" / "tmux"
+    """The factory's tmux socket: in a random-named folder (0700) of permits/tmux, so a listing of the folder above does
+    not show where it is. Every folder on the way must be ours alone."""
+    permits = launch.config_dir() / "permits"
+    permits.mkdir(mode=0o700, parents=True, exist_ok=True)
+    d = permits / "tmux" / _folder_name(permits)
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    st = d.stat()
-    if st.st_uid != os.getuid() or st.st_mode & 0o077:
-        os.chmod(d, 0o700)
+    for x in (d.parent, d):
+        st = x.stat()
+        if st.st_uid != os.getuid() or st.st_mode & 0o077:
+            os.chmod(x, 0o700)
     return d / "factory"
 
 

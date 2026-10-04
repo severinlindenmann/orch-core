@@ -928,8 +928,13 @@ def test_the_factory_tmux_socket_is_inside_the_guarded_permits_folder_and_privat
     from orch.core.ledger import base_dir
     from orch.dashboard import factory_runner as dash
     sock = dash.socket_path()
-    assert sock.parent == base_dir() / "permits" / "tmux" and sock.name == "factory"
-    assert (sock.parent.stat().st_mode & 0o777) == 0o700
+    import re
+    assert sock.parent.parent == base_dir() / "permits" / "tmux" and sock.name == "factory"
+    assert re.fullmatch(r"[0-9a-f]{16}", sock.parent.name)  # random, so listing permits/tmux does not give it away
+    assert (base_dir() / "permits" / "tmux.name").read_text(encoding="utf-8") == sock.parent.name
+    assert dash.socket_path() == sock  # stable
+    for d in (sock.parent, sock.parent.parent):
+        assert (d.stat().st_mode & 0o777) == 0o700
     sock.parent.chmod(0o755)
     dash.socket_path()
     assert (sock.parent.stat().st_mode & 0o777) == 0o700
@@ -946,7 +951,7 @@ def test_the_launcher_runs_tmux_on_that_socket_by_its_resolved_path(monkeypatch)
     monkeypatch.setattr(dash.subprocess, "run", run)
     dash.TmuxLauncher().start("fx-L-1-abc", "/w", ["/opt/test/env", "-i", "PATH=/x", "/opt/test/claude", "go;"])
     for argv, kw in seen:
-        assert argv[0] == "/opt/test/tmux" and argv[1] == "-S" and argv[2].endswith("/permits/tmux/factory")
+        assert argv[0] == "/opt/test/tmux" and argv[1] == "-S" and "/permits/tmux/" in argv[2] and argv[2].endswith("/factory")
         assert set(kw["env"]) == {"PATH", "LC_ALL"}
 
 
@@ -979,3 +984,110 @@ def test_guard_leaves_an_agents_own_plain_tmux_alone(ws):
         from orch.hooks import guard
         assert not guard._mux_risky(cmd), cmd
     assert evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "ls -L $HOME"}, "cwd": str(ws.root)}).allow
+
+
+# -- third review: the guard resolves where a command runs, it does not only read its text ----------------------
+
+def _bash(ws, cmd, cwd=None):
+    from orch.hooks.guard import evaluate
+    return evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd or ws.root)})
+
+
+@pytest.mark.parametrize("cmd", [
+    'cd "$ORCH_STATE_DIR"; cd permits; cd tmux; tmux -S factory ls',
+    'cd "$ORCH_STATE_DIR" && cd p* && cd t* && tmux -S ./factory ls',
+    'cd $ORCH_STATE_DIR/permits/tmux; tmux -Sfactory ls',
+    'cd "${{ORCH_STATE_DIR}}"/permits; cd tmux; tmux -S ../tmux/factory ls',
+    'cd "$ORCH_STATE_DIR"/../orch-state*/permits; ls',
+    'cd "$ORCH_STATE_DIR"/../o*; cd p*',
+    "cd {base}; ls", "pushd {base}", "cd {base}/permits", "cd {parent}; cd {name}",
+    "cd {parent} && cd orch*", "cd '{base}'", 'cd "{base}"', "cd -- {base}", "cd -P {base}", "cd {base}/../{name}",
+    "builtin cd {base}", "cd {base}/permits/..",
+])
+def test_guard_refuses_a_cd_into_the_config_dir_in_every_spelling(ws, cmd):
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    d = _bash(ws, cmd.format(base=base, parent=base.parent, name=base.name))
+    assert not d.allow
+
+
+def test_guard_refuses_every_command_run_from_inside_the_config_dir(ws):
+    from orch.core.ledger import base_dir
+    for sub in ("", "permits", "permits/tmux"):
+        (base_dir() / sub).mkdir(parents=True, exist_ok=True)
+        assert not _bash(ws, "ls", cwd=base_dir() / sub).allow
+        assert not _bash(ws, "tmux -S factory ls", cwd=base_dir() / sub).allow
+    assert _bash(ws, "ls", cwd=ws.root).allow
+
+
+@pytest.mark.parametrize("cmd", [
+    "tmux -Sfactory ls", "tmux -S factory ls", "tmux -S ./factory ls", "tmux -S ../tmux/factory ls",
+    "tmux -f /dev/null -S factory ls", "tmux -CC -S factory attach", 'tmux -S "."/factory ls', "tmux -S=factory ls",
+    "tmux -CCS factory attach", "tmux -uS factory ls", "tmux -S /x/../y/factory ls", "tmux -S //x/y ls",
+    "tmux -S {base}/permits/tmux/abc/factory ls", "tmux -S {base}/x ls", "tmux -S {base}/../{name}/x ls",
+    "screen -S factory -X quit", "tmux -L a/b ls", "tmux -L ../x ls", "tmux -S ls", "tmux -S",
+])
+def test_guard_refuses_a_tmux_socket_that_is_relative_or_odd(ws, cmd):
+    from orch.core.ledger import base_dir
+    assert not _bash(ws, cmd.format(base=base_dir(), name=base_dir().name)).allow
+
+
+def test_guard_allows_an_absolute_literal_socket_elsewhere(ws):
+    for cmd in ("tmux -S /tmp/mine/sock ls", "tmux -L mine ls", "tmux -f /dev/null -S /tmp/Mine.sock ls"):
+        assert _bash(ws, cmd).allow, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    'ls -R "$ORCH_STATE_DIR"', 'ls "$ORCH_STATE_DIR"/../*/permits', 'ls "$ORCH_STATE_DIR"', "ls {base}/permits/tmux",
+    "find {base} -type s", "find {base}/permits", "du -a {base}", "stat {base}/permits", "tree {base}", "ls {base}/p*",
+    "ls -la {base}/../{name}*", "ls $ORCH_STATE_DIR/permits/tmux",
+])
+def test_guard_refuses_listing_the_config_dir(ws, cmd):
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    assert not _bash(ws, cmd.format(base=base, parent=base.parent, name=base.name)).allow
+
+
+def test_guard_leaves_ordinary_listings_alone(ws):
+    for cmd in ("ls", "ls -la src", "find . -name '*.py'", "du -sh .", "ls /tmp", "find /tmp -maxdepth 1",
+                "stat README.md"):
+        assert _bash(ws, cmd).allow, cmd
+
+
+def test_the_guard_says_best_effort_not_fail_closed():
+    import inspect
+    from orch.hooks import guard
+    src = inspect.getsource(guard).split("_MUX_WORD =")[0].split("The AI Factory's own tmux server sits")[1]
+    assert "Best effort" in src and "fail closed" not in src.lower()
+
+
+def test_hooks_disabled_or_only_mentioned_do_not_count(tmp_path, monkeypatch):
+    real = _REAL_BLOCKER
+
+    def hooks(guard_cmd, permit_cmd):
+        return {"PreToolUse": [{"hooks": [{"command": guard_cmd}]}],
+                "PermissionRequest": [{"hooks": [{"command": permit_cmd}]}]}
+
+    for data in ({"hooks": HOOKS, "disableAllHooks": True},
+                 {"enabledPlugins": {"orch-core@x": True}, "disableAllHooks": True},
+                 {"hooks": hooks("echo orch guard", "echo orch permit hook")},
+                 {"hooks": hooks("evil orch guard", "./orch permit hook")},
+                 {"hooks": hooks("orchestra guard", "orch permit hook")},
+                 {"hooks": hooks("orch guard 'unterminated", "orch permit hook")}):
+        _user_settings(tmp_path, monkeypatch, data)
+        assert real(), data
+    for guard_cmd, permit_cmd in (("orch guard --hook-json", "orch permit hook"),
+                                  ("/usr/local/bin/orch guard", '"/opt/x y/bin/orch" permit hook')):
+        _user_settings(tmp_path, monkeypatch, {"hooks": hooks(guard_cmd, permit_cmd), "disableAllHooks": False})
+        assert real() is None, guard_cmd
+
+
+def test_a_recursive_listing_over_a_folder_that_holds_the_config_dir_is_refused(ws, tmp_path, monkeypatch):
+    home = tmp_path / "elsewhere"
+    (home / ".config" / "orch").mkdir(parents=True)
+    monkeypatch.setenv("ORCH_STATE_DIR", str(home / ".config" / "orch"))
+    for cmd in (f"find {home} -name x", f"du {home}", f"ls -R {home}", f"ls -laR {home}/.config", f"tree {home}",
+                f"find {home}/.config -type s"):
+        assert not _bash(ws, cmd).allow, cmd
+    for cmd in (f"ls {home}", f"ls -la {home}/.config", "find . -name x"):  # one level: it does not show the folder's inside
+        assert _bash(ws, cmd).allow, cmd

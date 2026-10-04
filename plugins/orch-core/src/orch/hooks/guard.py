@@ -7,6 +7,7 @@ It keeps the common, one-command paths closed and gives clear reasons; the human
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,29 +86,139 @@ _ORCH_TMUX_DENIED = ("Mission Control's terminals (tmux -L orch) are the human's
                      "dashboard; an agent does not reach another session through them")
 
 
-# The AI Factory's own tmux server sits on a socket inside the permits folder. Fail closed instead of parsing bash: a
-# command that mentions tmux or screen anywhere (any case, quotes and backslashes removed) is allowed only when it is
-# provably plain: one simple command with no expansion, substitution, grouping, redirection, comment, separator, glob
-# or ANSI-C string, no mention of the permits folder, and every -L/-S argument a plain literal. Anything else is
-# refused. A same-user process is not isolated from the socket by the OS; the guard only makes the routes fail.
+# The AI Factory's own tmux server sits on a socket inside the permits folder. Best effort: a text guard cannot read
+# bash the way bash does, so this makes the obvious routes fail and no more. A command that mentions tmux or screen
+# anywhere (any case, quotes and backslashes removed) is refused unless it is one plain command (no expansion,
+# substitution, grouping, redirection, comment, separator, glob or ANSI-C string, no mention of the permits folder) whose
+# every socket argument is plain: -S an absolute, normalised path with no `..` outside the config dir (never a relative
+# one: the working directory is not known to a later command), -L a plain name. Commands are also judged by what they
+# resolve to: a working directory or a `cd`/`pushd` target at or below the config dir, and a listing of it, are refused.
+# Known limits: a word written without a mention of tmux or screen by concatenation that uses none of the characters
+# above, other languages building the string (perl, osascript, python), and a script file written and then run.
+# A same-user process is not isolated from the socket by the OS.
 _MUX_WORD = re.compile(r"tmux|screen")
 _MUX_UNSURE = re.compile(r"[$`(){}<>#;&|!*?\[\]\n\r\x0b\x0c\u2028\u2029\x85]")
-_ORCH_TMUX_I = re.compile(_ORCH_TMUX.pattern, re.I)
-_MUX_SOCKET = re.compile(r"(?<![\w-])-[LS]\s*(\S*)", re.I)
+_MUX_FLAG = re.compile(r"-([A-Za-z0-9]*?)([LS])(.*)", re.S)
 _MUX_ANSI_C = re.compile(r"\$'|\\[xuU0-7]")
-_MUX_DENIED = ("a tmux or screen command the guard cannot prove plain (variables, escapes, substitutions, separators, "
-               "a socket that is not a literal, or the permits folder) can reach the AI Factory's sessions, which "
-               "are the human's")
+_ORCH_TMUX_I = re.compile(_ORCH_TMUX.pattern, re.I)
+_MUX_DENIED = ("a tmux or screen command the guard cannot show plain (variables, escapes, substitutions, separators, a "
+               "relative or unusual socket, or the permits folder) can reach the AI Factory's sessions, which are the "
+               "human's")
+_STATE_DENIED = ("the orch config dir (the ledger and the permits folder with the AI Factory's records and sockets) is "
+                 "the human's: agents do not work in it, change into it or list it")
+_CD_TARGET = re.compile(r"(?<![\w-])(?:cd|pushd|chdir)\s+(?:-[LPe@]+\s+)*(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|<>()]+)")
+_LISTERS = ("ls", "dir", "vdir", "find", "stat", "du", "tree", "exa", "eza", "lsd", "fd", "ncdu", "realpath", "readlink")
+_RECURSIVE = ("find", "du", "tree", "fd", "ncdu")
+
+
+def _state_dir() -> Path | None:
+    from orch.core.ledger import base_dir
+    try:
+        return Path(base_dir()).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _expand(raw: str) -> str:
+    """`raw` with ~ and the variables a shell would fill in; the orch state variables default to the real folders (an
+    agent's shell has them even where the hook does not)."""
+    from orch.core.ledger import base_dir
+    env = {**os.environ, "ORCH_STATE_DIR": os.environ.get("ORCH_STATE_DIR") or str(base_dir())}
+    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: env.get(m.group(1) or m.group(2), m.group(0)),
+                  os.path.expanduser(raw))
+
+
+def _resolved(cur: str, raw: str) -> list[Path]:
+    """Where `raw` (a path as written, quotes removed) points from `cur`: every glob match, else the literal path."""
+    import glob
+    text = _expand(raw.strip("'\""))
+    full = text if os.path.isabs(text) else os.path.join(cur, text)
+    hits = glob.glob(full) if re.search(r"[*?\[]", text) else []
+    out = []
+    for h in hits or [full]:
+        try:
+            out.append(Path(h).resolve())
+        except (OSError, RuntimeError, ValueError):
+            out.append(Path(os.path.normpath(h)))
+    return out
+
+
+def _within(p: Path, base: Path) -> bool:
+    return p == base or base in p.parents
+
+
+def _touches_state_dir(ws, cmd: str, cwd) -> bool:
+    """The working directory, a `cd` chain, or a listing resolves into the config dir (or recursively over it)."""
+    base = _state_dir()
+    if base is None:
+        return False
+    cur = str(cwd) if cwd else os.getcwd()
+    try:
+        if _within(Path(cur).resolve(), base):
+            return True
+    except (OSError, RuntimeError, ValueError):
+        return True
+    where = [cur]
+    for m in _CD_TARGET.finditer(cmd):
+        hits = _resolved(cur, m.group(1))
+        if any(_within(h, base) for h in hits):
+            return True
+        cur = str(hits[0])
+        where.append(cur)
+    try:
+        root = Path(ws.root).resolve()
+    except (OSError, RuntimeError):
+        root = None
+    text = cmd.replace("'", " ").replace('"', " ")
+    for seg in re.split(r"[;&|\n]", text):
+        words = seg.split()
+        for i, w in enumerate(words):
+            prog = w.rsplit("/", 1)[-1]
+            if prog not in _LISTERS:
+                continue
+            recursive = prog in _RECURSIVE or any(x.startswith("-") and not x.startswith("--") and "R" in x
+                                                  for x in words[i + 1:] if prog == "ls") or "--recursive" in words
+            for arg in (x for x in words[i + 1:] if not x.startswith("-")):
+                for c in where:
+                    for h in _resolved(c, arg):
+                        if _within(h, base):
+                            return True
+                        if recursive and h in base.parents and not (root is not None and (h == root or h in root.parents)):
+                            return True
+    return False
 
 
 def _mux_risky(cmd: str) -> bool:
-    text = cmd.lower().replace("'", "").replace('"', "").replace("\\", "")
+    plain = cmd.replace("'", "").replace('"', "").replace("\\", "")
+    text = plain.lower()
     if not _MUX_WORD.search(text):
         # the word itself may be written as an escape the text above does not join (ANSI-C, hex) next to a socket flag
-        return bool(_MUX_ANSI_C.search(cmd) and _MUX_SOCKET.search(cmd))
+        return bool(_MUX_ANSI_C.search(cmd) and _MUX_FLAG.search(cmd))
     if "permits" in text or _MUX_UNSURE.search(text) or _ORCH_TMUX_I.search(text):
         return True
-    return any(not re.fullmatch(r"[a-z0-9_./-]+", m.group(1)) for m in _MUX_SOCKET.finditer(text))
+    base = _state_dir()
+    toks = plain.split()
+    for i, tok in enumerate(toks):
+        m = _MUX_FLAG.fullmatch(tok)
+        if not m:
+            continue
+        before, letter, rest = m.groups()
+        if before:  # a cluster such as -CCS: the value belongs to a flag we cannot place
+            return True
+        value = rest if rest else (toks[i + 1] if i + 1 < len(toks) else "")
+        if letter == "L":
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+                return True
+        else:
+            if not re.fullmatch(r"/[A-Za-z0-9_./-]*", value) or ".." in value.split("/") or "//" in value:
+                return True
+            if base is not None:
+                try:
+                    if _within(Path(value).resolve(), base):
+                        return True
+                except (OSError, RuntimeError, ValueError):
+                    return True
+    return False
 
 
 def _pty_wrapped(text: str) -> bool:
@@ -236,7 +347,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
 # grant) are protected the same way: removing a marker would revive a used grant.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
@@ -1060,6 +1171,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
+    if _touches_state_dir(ws, cmd, cwd):
+        return Decision(False, _STATE_DENIED)
     if _mux_risky(cmd):
         named = _ORCH_TMUX.search(cmd.replace("'", "").replace('"', ""))
         return Decision(False, _ORCH_TMUX_DENIED if named else _MUX_DENIED)

@@ -290,7 +290,7 @@ def mark_delegated(did: str, child: str) -> None:
 
 @contextmanager
 def delegation_lock(did: str):
-    """One lock for every checkout and process sharing the config dir: the child count and the marker write of an
+    """One lock for every checkout and process that uses the config dir: the child count and the marker write of an
     auto-approval happen under it, so two of them at the limit cannot both pass."""
     d = _marker_dir()
     d.mkdir(parents=True, exist_ok=True)

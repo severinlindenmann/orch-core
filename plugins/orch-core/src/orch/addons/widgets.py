@@ -41,6 +41,8 @@ class Markdown:
     text: str
     here: str = ""  # the id of the page shown, for relative links (see pages)
     pages: tuple = ()  # ids of your pages: a relative link to one of them opens /addons/<name>/?page=<id>
+    widgets: bool = False  # API 2.3: draw the page's ```orch blocks as on a ticket (docs/widgets.md)
+    files: str = ""  # with widgets: your page folder, workspace-relative; blocks name `_files/<name>` in it, by digest
     kind: ClassVar[str] = "markdown"
 
 
@@ -266,6 +268,9 @@ def _check(w, manifest, where: str, out: list[str], depth: int, slot: str = "") 
     elif isinstance(w, Markdown):
         _str_field(w.text, MAX_MARKDOWN_LEN, where, "text", out)
         _str_field(w.here, MAX_TARGET_LEN, where, "here", out)
+        _str_field(w.files, MAX_TARGET_LEN, where, "files", out)
+        if not isinstance(w.widgets, bool):
+            out.append(f"{where}.widgets: must be true or false")
         if not isinstance(w.pages, tuple) or len(w.pages) > MAX_ROWS:
             out.append(f"{where}.pages: must be a tuple of at most {MAX_ROWS} page ids")
         else:

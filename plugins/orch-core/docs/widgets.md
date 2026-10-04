@@ -330,6 +330,50 @@ alternative and source out, for a host that draws them around the frame (`ctx.ti
 HTML documents never carry chrome. Every document's tokens CSS inlines the dashboard's Figtree and Manrope
 (`static/fonts`, about 60 KB as `data:`), so a frame draws in the same type as the dashboard.
 
+## Widgets on a wiki page
+
+The wiki addon's local pages draw ```orch fences like a ticket does (`Markdown(text, here, pages, widgets=True,
+files=<wiki folder>)`; `GitHub wiki` pages are not drawn in orch, they open on GitHub, so they are unchanged). The
+fence rule, the strict JSON, the schemas, the chrome (title, layer chip, source, **Show numbers / Show text**), the
+error callouts and the sandboxed frame are the ticket's: the same code, with a page in place of a ticket
+(`orch.widgets.pages`: `PageTicket`, `Ctx.ticket.is_page`). What differs:
+
+- **Placement.** A page has no gate and no hashed section, so no block is refused for where it stands (no
+  `widget-place`), also not under a `## Requirements` heading or before the first heading. Fences nested in a list item
+  or another block stay code, as on a ticket. 40 blocks per page; `id`s are unique per page (a reused id is drawn as an
+  error and never served to a frame).
+- **Errors.** An invalid block shows the error callout with the page's file path and the line **in that file**
+  (front matter included): `orchestrator/wiki/decisions/X.md, line 12`. The rest of the page draws.
+- **Frame address.** `GET /wp/<addon>/<digest>?page=<page id>&n=<nonce>`: the sha256 of the block's canonical JSON,
+  as on a ticket, plus the page. Core asks the addon for that page's text (`page_source(page_id) -> (text, folder)`,
+  the cache the page was drawn from, never the live file) and serves only the block with that digest, with the same
+  headers (`sandbox allow-scripts`, no-network CSP) as `/w/`; 404 for anything else, 409 for a reused id, 400 for a bad
+  nonce. The route is exempt from the dashboard's page CSP the same way `/w/` is.
+- **Files.** A block names `_files/<name>` in the wiki folder plus its `sha256` (flat: no subfolders). The folder is
+  resolved again by core with the addon's rule (inside the workspace, not hidden, not orch's records, no symlink on
+  the way); the file must be a regular file directly in `_files/`, never a symlink, and `_files/` itself never a link.
+  Missing, outside the folder, a symlink or `artifacts/<ID>/...` all give the "missing" state; a wrong digest the
+  "changed since this widget was written; it is not shown" warning, as on a ticket. Bytes are read once and hashed as
+  read. A page has no `/a/` route, so its images and videos are embedded as `data:` URIs (5 MB each, 8 MB per
+  widget); a one-off `html` file runs only when its bytes match the pin.
+- **Links.** No link or image on a page is ever live toward a ticket's artifact: a `links`/`deploy` url or inline
+  Markdown in a block that would be another ticket's `/a/` file is shown as text (R24 for pages).
+- **A `checks` block** points at acceptance criteria (`AC<n>`) of a ticket, but a page has no ticket and no
+  criteria. Decision: it is drawn read-only exactly as on a ticket (the rows are the claim the page's author wrote),
+  with a note "A claim written on this page: not a gate, and not the ticket's verdict". It never gates, is never
+  projected onto a ticket (`projection` reads only a ticket's Verification) and looks nothing up: the block has no
+  ticket key, so the ticket's live state is shown on the ticket. `deps` and `links` need no ticket either: they draw
+  from their own data (a `deps` node's `status` is a word the author wrote, not a lookup).
+- **Search and mentions** read each valid block's text alternative (`render_text`) instead of its JSON, through
+  `ctx.page_widget_text(text, page_id, folder)`; a block that does not parse stays as written.
+- **Create page from ticket** copies the blocks of Verification and Findings (Summary and Requirements are gated and
+  hold none) with their pinned files into `_files/<ID>-<name>`, digest-checked and read once; a block whose file is
+  missing or changed is left out and the page says so (`ctx.ticket_widget_copy`). The wiki then **commits** the new
+  files (an explicit exception to "orch never commits on its own", see the wiki addon's README).
+- **Checks.** `orch widget check` (no ticket argument) and `orch check` also validate the blocks of the local wiki
+  pages when the wiki addon is enabled here with provider `local`, reported as `<page path>:<line>`. Core reads the
+  addon's saved settings, not its code.
+
 ## TIX
 
 orch-tix reads `ctx.ticket_widgets(ref)` (the addon API; addons do not import `orch.widgets`; its documents are

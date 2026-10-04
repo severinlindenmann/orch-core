@@ -61,9 +61,12 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
 
 def _check_widgets(ws) -> list[Finding]:
     """widget-parse / widget-schema / widget-place / widget-digest (docs/widgets.md), as `orch widget check`."""
+    from orch.widgets import pages
     from orch.widgets.validate import findings
-    return [Finding(r["level"], r["code"], r["ticket"], f"{r['section']}, line {r['line']}: {r['message']}")
-            for r in findings(ws)]
+    return ([Finding(r["level"], r["code"], r["ticket"], f"{r['section']}, line {r['line']}: {r['message']}")
+             for r in findings(ws)]
+            + [Finding(r["level"], r["code"], None, f"{r['section']}:{r['line']}: {r['message']}")  # a wiki page
+               for r in pages.findings(ws)])
 
 
 def _record_invalidation(ws, t, gate: str, events) -> None:

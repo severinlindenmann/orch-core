@@ -58,6 +58,39 @@ def template_preview(request: Request, ref: str, theme: str = "", n: str = ""):
     return HTMLResponse(doc, headers=HEADERS)
 
 
+@router.get("/wp/{addon}/{digest}")
+def page_widget_document(request: Request, addon: str, digest: str, page: str = "", theme: str = "", n: str = ""):
+    """The block of the page `page` of `addon` whose canonical JSON has sha256 `digest`: the frame of a widget on a
+    wiki page. The addon says what the page's text is (its `page_source(page_id)` -> (text, folder), the same cache the
+    page was drawn from); nothing else is served: no id or index lookup, and a block whose id the page uses twice is
+    never served."""
+    from orch.addons.loader import valid_name
+    from orch.widgets.pages import blocks_of, page_ctx
+    ws = request.app.state.ws
+    la = request.app.state.addons.registry.get(addon) if valid_name(addon) else None
+    source = getattr(la.obj, "page_source", None) if la is not None else None
+    try:
+        found = source(page) if callable(source) and re.fullmatch(r"[0-9a-f]{64}", digest) else None
+    except Exception:
+        found = None
+    if not (isinstance(found, tuple) and len(found) == 2 and all(isinstance(x, str) for x in found)):
+        return PlainTextResponse("not found", status_code=404, headers=HEADERS)
+    text, folder = found
+    base = _frame_ctx(request, None, theme, n)  # the nonce check (400) and the theme
+    if not isinstance(base, Ctx):
+        return base
+    ctx = page_ctx(ws, addon, page, folder)
+    ctx.nonce, ctx.theme = base.nonce, base.theme
+    blocks = blocks_of(text, ctx.ticket)
+    block = next((b for b in blocks if b.digest == digest), None)
+    if block is None or block.index >= MAX_BLOCKS:
+        return PlainTextResponse("not found", status_code=404, headers=HEADERS)
+    if (block.data or {}).get("id") in duplicate_ids(blocks):
+        return PlainTextResponse("this widget's id is used twice on the page; it is not served", status_code=409,
+                                 headers=HEADERS)
+    return HTMLResponse(render_document(block, ctx), headers=HEADERS)
+
+
 @router.get("/w/{ref}/{section}/{digest}")
 def widget_document(request: Request, ref: str, section: str, digest: str, theme: str = "", n: str = ""):
     """The block of `section` whose canonical JSON has sha256 `digest` (Block.digest, render.frame_path); `n` the

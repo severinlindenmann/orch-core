@@ -63,7 +63,7 @@ def inline(text, ctx=None) -> str:
     except ImportError:
         return esc(text)
     from orch.widgets.types import scope
-    return render_inline(str(text), scope(ctx))
+    return render_inline(str(text), scope(ctx), page=getattr(getattr(ctx, "ticket", None), "is_page", False))
 
 
 def _chip(block: Block, ctx: Ctx) -> str:
@@ -80,7 +80,7 @@ def note(role: str, word: str, text: str) -> str:
 
 
 def _where(block: Block) -> str:
-    return f"{block.section or 'before the first section'}, line {block.line}"
+    return f"{block.section or 'before the first section'}, line {block.line}"  # on a page the section is its path
 
 
 def _as_code(block: Block, role: str, head: str, text: str) -> str:
@@ -116,6 +116,9 @@ def chrome(block: Block, ctx: Ctx, *, framed: bool = True, bare: bool = False) -
     notes = [note("warn", "Drift", p.message) if p.code == "widget-drift" else
              note("err" if p.level == "error" else "warn", "Error" if p.level == "error" else "Warning", p.message)
              for p in problems if p.code in ("widget-digest", "widget-drift")]
+    if getattr(ctx.ticket, "is_page", False) and data.get("type") == "checks":
+        notes.append(note("neu", "Note", "A claim written on this page: not a gate, and not the ticket's verdict. "
+                                        "What a ticket records is shown on the ticket"))
     missing = any(p.level == "error" for p in problems)
     alt_label = "Show text"
     if block.layer == "type":
@@ -169,7 +172,12 @@ def _frame_placeholder(block: Block, ctx: Ctx) -> str:
         spec, _ = registry.template_version(ctx.home, block.data["widget"])
         height = block.data.get("height") or (spec or {}).get("min_height") or 160
     nonce = secrets.token_urlsafe(12)
-    return (f'<div class="w-frame" data-doc-url="{esc(frame_path(tid, block))}?n={nonce}" data-nonce="{nonce}" '
+    if getattr(ctx.ticket, "is_page", False):  # /wp/<addon>/<digest>?page=<id>: the page's text is read by its addon
+        from urllib.parse import quote
+        url = f"/wp/{quote(ctx.ticket.id.addon, safe='')}/{block.digest}?page={quote(str(tid), safe='')}&n={nonce}"
+    else:
+        url = f"{frame_path(tid, block)}?n={nonce}"
+    return (f'<div class="w-frame" data-doc-url="{esc(url)}" data-nonce="{nonce}" '
             f'data-min-height="{int(height)}" data-title="{esc(block.data.get("title") or "Widget")}">'
             f'{frames.fallback(block, ctx)}</div>')
 

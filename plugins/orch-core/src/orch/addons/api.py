@@ -556,6 +556,21 @@ class AddonContext:
                         "problems": [p.to_dict() for p in problems]})
         return out
 
+    def page_widget_text(self, text: str, page_id: str = "", folder: str = "") -> str:
+        """API 2.3: `text` (a page of yours) with each valid ```orch block replaced by its text alternative, for a
+        search index or a mention scan that should read what a widget says, not its JSON. `folder` is your page
+        folder (workspace-relative), where `_files/<name>` blocks are looked up. Read-only."""
+        from orch.widgets.pages import text_alternatives
+        return text_alternatives(self.ws, text, page_id, folder)
+
+    def ticket_widget_copy(self, ref: str, sections) -> dict:
+        """API 2.3: the ```orch blocks of the ticket's `sections`, ready to put on a page of yours, with the files they
+        pin: {"blocks": [(section, fenced text naming `_files/<ID>-<name>`)], "files": {name: bytes} (digest-checked),
+        "skipped": [why a block was left out]}. A block whose file is missing or changed is skipped, never copied.
+        Read-only: you write the page and the files."""
+        from orch.widgets.pages import ticket_copy
+        return ticket_copy(self.ws, ref, tuple(sections))
+
     def ops(self) -> AddonOps:
         return AddonOps(self.ws, self.name)
 
@@ -610,6 +625,12 @@ class ProviderContext:
 
     def ticket_widgets(self, ref: str, *, theme: str = "system") -> list[dict]:
         return self.addon.ticket_widgets(ref, theme=theme)
+
+    def page_widget_text(self, text: str, page_id: str = "", folder: str = "") -> str:
+        return self.addon.page_widget_text(text, page_id, folder)
+
+    def ticket_widget_copy(self, ref: str, sections) -> dict:
+        return self.addon.ticket_widget_copy(ref, sections)
 
     def snapshots(self, provider: str | None = None) -> list[Snapshot]:
         return self.addon.snapshots(provider)

@@ -13,10 +13,15 @@ IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+
 
 def name_of(ticket_id: str, ref) -> str | None:
     """The file name inside the ticket's own folder that `ref` names: `artifacts/<ticket_id>/<name>` or
-    `artifact:<name>` (the ticket artifact reference of orch.core.artifacts), else None."""
+    `artifact:<name>` (the ticket artifact reference of orch.core.artifacts), else None. For a wiki page (a
+    `PageKey`), `_files/<name>` of its wiki folder."""
     from orch.core.artifacts import safe_name
+    from orch.widgets.pages import FILES, PageKey
     if not isinstance(ref, str):
         return None
+    if isinstance(ticket_id, PageKey):  # a wiki page names only `_files/<name>` of its own wiki folder
+        name = ref[len(FILES) + 1:] if ref.startswith(f"{FILES}/") else ""
+        return name if safe_name(name) and "/" not in name else None
     for prefix in (f"artifacts/{ticket_id}/", "artifact:"):
         if ref.startswith(prefix):
             name = ref[len(prefix):]
@@ -27,7 +32,10 @@ def name_of(ticket_id: str, ref) -> str | None:
 def resolve(ws, ticket_id: str, ref: str) -> Path | None:
     """The file `ref` names, only when it is under this ticket's own folder (orch.core.query.artifact_file)."""
     from orch.core.query import artifact_file
+    from orch.widgets.pages import PageKey, file_path
     name = name_of(ticket_id, ref)
+    if isinstance(ticket_id, PageKey):
+        return None if name is None else file_path(ticket_id, name)
     return None if ws is None or name is None else artifact_file(ws, ticket_id, name)
 
 

@@ -186,11 +186,16 @@ does not hold exactly the signed entries the head counts, its entry at that coun
 match its place, an unnumbered entry follows a numbered one, or the head record is missing, damaged or older than the newest numbered entry, the ledger was cut: every chained decision (done verdicts, closes, reopens
 and workspace settings) then counts as not verified, `orch check` reports `ledger-cut` as an error, and the head
 stays marked as cut after later appends. The human recovers by restoring the ledger and its head record from a
-backup, or by starting a new ledger (every decision then needs `orch ledger adopt`). A ledger without a head record
+backup, or by starting a new ledger (every decision then needs `orch ledger adopt`). One cut has a narrower
+repair: a crash between appending an entry and rewriting the head record leaves exactly one signed entry, numbered the
+head's count plus one, at the end. `orch ledger repair` (human only, interactive terminal) shows that entry and, after
+the human types its id, rewrites the head record to count it; every other shape (two or more trailing entries, a bad
+signature, a different number, a head already marked cut, no head record) is refused. A ledger without a head record
 counts only while no entry carries `n` (a ledger from before the head record existed): nothing that verified before
 changes, and its next append writes one. Deleting the
 head record together with every numbered entry falls back to that older mode and is not detected, and neither is
-rolling the ledger and the head record back together to an earlier consistent state: no anchor inside these files can
+rolling the ledger and the head record back together to any earlier consistent state, including the state from before
+the head record existed: no anchor inside these files can
 close either. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
 from the workspace config; `mac` is HMAC-SHA256 over the canonical JSON of the other fields with the 32-byte key
 in `ledger.key`. A line with a bad `mac` is ignored. An approved gate, answered question or done verdict without a

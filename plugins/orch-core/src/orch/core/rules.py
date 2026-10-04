@@ -28,7 +28,7 @@ def render_rules(cfg: dict) -> str:
         "tasks: write the list with `orch task add` right after claiming; one task in progress; "
         "testing needs every task done or skipped with a reason (every size)",
         "human-only: approve, request changes, answer, verdict, move to open, backlog, in-progress "
-        "or done, reopen, close, `orch epic pause`, `orch ledger adopt`, moving a ticket into or out of an approved "
+        "or done, reopen, close, `orch epic pause`, `orch ledger adopt`, `orch ledger repair`, moving a ticket into or out of an approved "
         "epic, addon install/update/trust/enable/disable/remove/rollback, `orch widget html on` (agent HTML in widgets, signed; a "
         "config edit alone never turns it on); an "
         "agent is recognised "

@@ -284,6 +284,43 @@ def _write_head(key: bytes, count: int, last: str, *, broken: bool) -> None:
         raise
 
 
+def _tail_to_repair(key: bytes) -> dict:
+    """The one entry a crash between appending and rewriting the head leaves behind: the newest line, signed, numbered
+    head.count + 1, behind a ledger that matches its head exactly. Any other shape raises OrchError."""
+    signed = _read(ledger_path(), key, _stat(key_path()))
+    if len(signed) < 2 or not head_path().exists() or not _head_matches(key, signed[:-1]):
+        raise OrchError("nothing to repair: the ledger does not end in exactly one signed entry past its head record",
+                        hint="a ledger cut in any other way is restored from a backup, or replaced by a new ledger")
+    tail = signed[-1]
+    if tail.get("n") != len(signed):
+        raise OrchError("nothing to repair: the newest entry is not numbered as the next one after the head record")
+    return tail
+
+
+def tail_to_repair() -> dict:
+    key = _key(create=False)
+    if not key:
+        raise OrchError("nothing to repair: there is no ledger key")
+    return _tail_to_repair(key)
+
+
+def repair_tail(typed: str) -> dict:
+    """Accept the entry `tail_to_repair` shows by rewriting the head record to include it (the caller is a human who
+    saw it and typed the first 8 hex digits of its `mac`). Checked again under the ledger lock."""
+    key = _key(create=False)
+    if not key:
+        raise OrchError("nothing to repair: there is no ledger key")
+    try:
+        with FileLock(str(base_dir() / LOCK_FILE), timeout=10):
+            tail = _tail_to_repair(key)
+            if typed.strip().lower() != tail["mac"][:8]:
+                raise OrchError(f"the typed id does not match {tail['mac'][:8]}; nothing was repaired")
+            _write_head(key, tail["n"], tail["mac"], broken=False)
+    except (OSError, Timeout) as e:
+        raise OrchError(f"could not repair the approval ledger ({e})", hint=f"check that {base_dir()} is writable") from e
+    return tail
+
+
 _head_cache: dict[str, tuple[tuple, bool]] = {}
 
 

@@ -6,9 +6,11 @@ from html import escape
 
 from pathlib import Path
 
+from markdown_it.common.utils import escapeHtml
 from markdown_it.renderer import RendererHTML
 
 from orch.core.artifacts import _SHA, _parser, resolve_src
+from orch.dashboard.keys import _pattern as _key_pattern
 from orch.textsafe import badge_html, has_hidden
 
 # One parser for rendering and for what a gate or verdict hash binds (orch.core.artifacts.binding): only render rules
@@ -286,18 +288,43 @@ def _fence(self, tokens, idx, options, env):
     return RendererHTML.fence(self, tokens, idx, options, env)
 
 
+def _text(self, tokens, idx, options, env):
+    """Plain text, escaped as markdown-it does; with a `key_prefix` in env, each bare key of this workspace outside a
+    link becomes a link to its ticket (keys.link_keys' pattern). Code spans and fences are other tokens."""
+    out = escapeHtml(tokens[idx].content)
+    prefix = env.get("key_prefix") if isinstance(env, dict) else None
+    if not prefix or env.get("_in_link"):
+        return out
+    return _key_pattern(prefix).sub(lambda m: f'<a class="lnk key" href="/t/{m.group(1).upper()}">{m.group(1)}</a>', out)
+
+
+def _counted_open(self, tokens, idx, options, env):
+    if isinstance(env, dict):
+        env["_in_link"] = env.get("_in_link", 0) + 1
+    return _link_open(self, tokens, idx, options, env)
+
+
+def _counted_close(self, tokens, idx, options, env):
+    if isinstance(env, dict):
+        env["_in_link"] = max(0, env.get("_in_link", 0) - 1)
+    return _link_close(self, tokens, idx, options, env)
+
+
 _md.add_render_rule("fence", _fence)
 _md.add_render_rule("image", _image)
-_md.add_render_rule("link_open", _link_open)
-_md.add_render_rule("link_close", _link_close)
+_md.add_render_rule("link_open", _counted_open)
+_md.add_render_rule("link_close", _counted_close)
+_md.add_render_rule("text", _text)
 
 
-def render_markdown(text: str | None, scope: ArtifactScope | None = None, *, widgets=None, section: str = "") -> str:
+def render_markdown(text: str | None, scope: ArtifactScope | None = None, *, widgets=None, section: str = "",
+                    key_prefix: str | None = None) -> str:
     """Markdown as HTML. With `scope` (artifact_scope(ticket, ws)), an image of a linked artifact shows inline and a
     link to one opens its file; which ones is decided by orch.core.artifacts.refs_in_tokens on the same tokens. With
     `widgets` (a SectionWidgets), each top-level ```orch fence of `section` is drawn as its widget."""
     tokens = _md.parse(text or "", {})
     env = _env(tokens, scope)
+    env["key_prefix"] = key_prefix
     if widgets is not None:
         env.update(widgets=widgets, section=section)
     html = _md.renderer.render(tokens, _md.options, env)
@@ -308,14 +335,15 @@ def render_markdown(text: str | None, scope: ArtifactScope | None = None, *, wid
     return html
 
 
-def render_page_markdown(text: str | None, pages: PageScope | None = None, *, widgets=None, section: str = "") -> str:
+def render_page_markdown(text: str | None, pages: PageScope | None = None, *, widgets=None, section: str = "",
+                         key_prefix: str | None = None) -> str:
     """The addon Markdown widget (a wiki page): the same parser, sanitiser and R24 link rules as ticket text, but
     never with an artifact scope and with no live link to any ticket's artifact (`/a/...`, `artifacts/...`,
     `artifact:`): no gate hash covers page text, so a page can never point at a file as if a ticket had bound it.
     With `pages`, a relative link to another listed page becomes a link to it (page_link); anything else is R24's.
     With `widgets` (a SectionWidgets of the page), each top-level ```orch fence is drawn as its widget."""
     tokens = _md.parse(text or "", {})
-    env = {"artifacts": None, "bound": set(), "page": True, "pages": pages}
+    env = {"artifacts": None, "bound": set(), "page": True, "pages": pages, "key_prefix": key_prefix}
     if widgets is not None:
         env.update(widgets=widgets, section=section)
     html = _md.renderer.render(tokens, _md.options, env)
@@ -348,11 +376,13 @@ def pinned_images(text: str | None, scope: ArtifactScope | None, limit: int = 3)
     return out
 
 
-def render_inline(text: str | None, scope: ArtifactScope | None = None, *, page: bool = False) -> str:
+def render_inline(text: str | None, scope: ArtifactScope | None = None, *, page: bool = False,
+                  key_prefix: str | None = None) -> str:
     """One line of Markdown (code, emphasis, links) without a wrapping paragraph. `page`: text of a wiki page's
     widget, where no ticket's artifact link or image is ever live."""
     tokens = _md.parseInline(text or "", {})
     env = _env(tokens, scope)
+    env["key_prefix"] = key_prefix
     if page:
         env["page"] = True
     html = _md.renderer.render(tokens, _md.options, env)
@@ -402,11 +432,11 @@ def section_widgets(ws, ticket, raw: str | None = None, *, assets: bool = False)
 
 
 def render_section(text: str | None, section: str, widgets: SectionWidgets | None = None,
-                   scope: ArtifactScope | None = None) -> str:
+                   scope: ArtifactScope | None = None, key_prefix: str | None = None) -> str:
     """Markdown of one ticket section, with its ```orch blocks drawn as widgets (or as code with a warning where
     widgets may not stand). Without `widgets`, the same as `render_markdown`."""
     use = isinstance(widgets, SectionWidgets)  # a template rendered without them passes Undefined
-    return render_markdown(text, scope, widgets=widgets if use else None, section=section)
+    return render_markdown(text, scope, widgets=widgets if use else None, section=section, key_prefix=key_prefix)
 
 
 def md_page_filter(text, addon="", here="", pages=(), ws=None, files="") -> str:
@@ -415,9 +445,11 @@ def md_page_filter(text, addon="", here="", pages=(), ws=None, files="") -> str:
     from `files`, the wiki folder (docs/widgets.md, "Widgets on a wiki page")."""
     ids = frozenset(p for p in pages or () if isinstance(p, str))
     scope = PageScope(str(addon), str(here or ""), ids) if addon and ids else None
+    prefix = ((getattr(ws, "config", None) or {}).get("id") or {}).get("prefix") if ws is not None else None
     if ws is None or not hasattr(ws, "config") or not addon:
         return render_page_markdown(text, scope)
     from orch.widgets.pages import blocks_of, page_ctx
     ctx = page_ctx(ws, str(addon), str(here or ""), str(files or ""))
     widgets = SectionWidgets(ctx, blocks_of(text or "", ctx.ticket), assets=True)
-    return render_page_markdown(text, scope, widgets=widgets, section=ctx.ticket.label)
+    return render_page_markdown(text, scope, widgets=widgets, section=ctx.ticket.label,
+                                key_prefix=prefix if isinstance(prefix, str) and prefix else None)

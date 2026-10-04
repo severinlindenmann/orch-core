@@ -51,14 +51,21 @@ def _scope(ctx, scope):
     return artifact_scope(t, getattr(getattr(getattr(request, "app", None), "state", None), "ws", None))
 
 
+def _key_prefix(ctx) -> str | None:
+    """This workspace's ticket key prefix, so bare keys in rendered text link to their tickets."""
+    ws = getattr(getattr(getattr(ctx.get("request"), "app", None), "state", None), "ws", None)
+    prefix = ((getattr(ws, "config", None) or {}).get("id") or {}).get("prefix")
+    return prefix if isinstance(prefix, str) and prefix else None
+
+
 @pass_context
 def _md_filter(ctx, text, scope=None):
-    return render_markdown(text, _scope(ctx, scope))
+    return render_markdown(text, _scope(ctx, scope), key_prefix=_key_prefix(ctx))
 
 
 @pass_context
 def _md_inline_filter(ctx, text, scope=None):
-    return render_inline(text, _scope(ctx, scope))
+    return render_inline(text, _scope(ctx, scope), key_prefix=_key_prefix(ctx))
 
 
 @pass_context
@@ -76,7 +83,7 @@ TEMPLATES.env.filters["md_page"] = md_page_filter  # addon Markdown widget: neve
 @pass_context
 def _section_filter(ctx, text, section, widgets=None, scope=None):
     """A ticket section: `md` plus its ```orch blocks drawn as widgets."""
-    return render_section(text, section, widgets, _scope(ctx, scope))
+    return render_section(text, section, widgets, _scope(ctx, scope), key_prefix=_key_prefix(ctx))
 
 
 TEMPLATES.env.filters["section_md"] = _section_filter

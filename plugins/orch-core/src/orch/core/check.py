@@ -276,7 +276,7 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
         out.append(Finding("error", "status-without-gate", tid, f"ticket is {entry.status} but its requirements were never approved"))
     if not closed and entry.status in ("testing", "done") and plan_required(ws, t) and gate_state(t, "plan") != "approved":
         out.append(Finding("error", "status-without-plan", tid, f"ticket is {entry.status} but its plan is {gate_state(t, 'plan')}"))
-    if entry.status == "done" and ledger.done_verification(ws, t, closed=closed, signed=signed) == "unverified":
+    if entry.status == "done" and ledger.done_verification(ws, t, closed=closed, signed=signed, events=events) == "unverified":
         out.append(Finding("warning", "unsigned-decision", tid,
                            f"the ticket's done verdict or close is not in the ledger on this machine: review it with "
                            f"`orch ledger adopt {tid}`"))

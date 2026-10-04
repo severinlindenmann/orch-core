@@ -293,19 +293,52 @@ def answer_verification(ws, ticket, q: dict, signed: list[dict] | None = None) -
     return "unverified"
 
 
-def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = None) -> str:
-    """The same for a done ticket: its human done verdict, or its human close."""
+# The signed entries that change where a ticket stands after its work: a close, a verdict (done or follow-up) and a
+# reopen. They form one chain per ticket: a new entry carries `prev`, the MAC of the ticket's previous such entry.
+STATUS_KINDS = ("close", "verdict", "reopen")
+
+
+def status_chain(ws, ticket_id: str, signed: list[dict] | None = None) -> list[dict]:
+    return [e for e in (entries(ws) if signed is None else signed)
+            if e.get("ticket") == ticket_id and e.get("kind") in STATUS_KINDS]
+
+
+def record_status(ws, *, ticket: str, kind: str, actor, evidence: dict | None, **fields) -> dict:
+    """Sign a close, verdict or reopen, chained onto the ticket's previous one. The caller holds the ticket's lock."""
+    chain = status_chain(ws, ticket)
+    return record(ws, ticket=ticket, kind=kind, actor=actor, evidence=evidence, **fields,
+                  prev=chain[-1]["mac"] if chain else "")
+
+
+def _done_events(events, ticket_id: str) -> list:
+    return [e for e in events if e.ticket == ticket_id and e.kind in ("ticket.moved", "verdict.given")
+            and (e.data or {}).get("to") == "done"]
+
+
+def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = None, events=None) -> str:
+    """The same for a done ticket (no verdict block and not closed: unverified), decided by the ledger alone: the ticket's newest signed status entry must be a
+    close, or a done verdict that matches the ticket's verify block (`verify_at`, `verdict_hash`), and must chain
+    onto the entry before it (`prev`), so a removed line breaks it. A later reopen or follow-up verdict therefore
+    ends every earlier close. An entry from before the chain existed (no `prev`) counts only when no later signed
+    status entry exists and the event log shows exactly one done for the ticket."""
+    from orch.core.events import read_events
     signed = entries(ws) if signed is None else signed
-    if closed:
-        return "verified" if any(e.get("kind") == "close" and e.get("ticket") == ticket.id for e in signed) \
-            else "unverified"
     v = (ticket.meta.get("gates") or {}).get("verify") or {}
-    if v.get("verdict") != "done":
-        return "none"
-    for e in signed:
-        if (e.get("kind") == "verdict" and e.get("ticket") == ticket.id and e.get("verdict") == "done"
-                and e.get("verify_at") == v.get("at")):
-            return "verified"
+    chain = status_chain(ws, ticket.id, signed)
+    if not chain:
+        return "unverified"
+    last = chain[-1]
+    if "prev" in last:
+        if last["prev"] != (chain[-2]["mac"] if len(chain) > 1 else ""):
+            return "unverified"
+    elif len(_done_events(read_events(ws, ticket.id) if events is None else events, ticket.id)) != 1:
+        return "unverified"
+    if closed:
+        return "verified" if last["kind"] == "close" else "unverified"
+    if (v.get("verdict") == "done" and last["kind"] == "verdict" and last.get("verdict") == "done"
+            and last.get("verify_at") == v.get("at")
+            and ("prev" not in last or last.get("verdict_hash") == v.get("hash"))):
+        return "verified"
     return "unverified"
 
 
@@ -366,7 +399,7 @@ def item_id(item: dict) -> str:
 
 # What a displayed adopt item and the item re-derived under the ticket lock must agree on, field by field.
 SIGNED_FIELDS = ("ticket", "title", "kind", "gate", "hash", "hash_v", "qid", "answer", "question_hash", "verdict", "verify_at",
-                 "text")
+                 "verdict_hash", "text")
 
 
 def _provenance(events, tid: str, kinds: tuple, match) -> str:
@@ -402,12 +435,12 @@ def unsigned_items(ws, tickets) -> list[dict]:
         if t.status == "done":
             v = (t.meta.get("gates") or {}).get("verify") or {}
             if v.get("verdict") == "done":
-                if done_verification(ws, t, closed=False, signed=signed) == "unverified":
+                if done_verification(ws, t, closed=False, signed=signed, events=events) == "unverified":
                     out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
-                                "verify_at": v.get("at"), "text": f"verdict done at {v.get('at')}",
+                                "verify_at": v.get("at"), "verdict_hash": v.get("hash"), "text": f"verdict done at {v.get('at')}",
                                 "provenance": _provenance(events, t.id, ("verdict.given",),
                                                           lambda e: e.data.get("verdict") == "done")})
-            elif done_verification(ws, t, closed=True, signed=signed) == "unverified":
+            elif done_verification(ws, t, closed=True, signed=signed, events=events) == "unverified":
                 out.append({"ticket": t.id, "title": t.title, "kind": "close", "text": "closed (done without a verdict)",
                             "provenance": _provenance(events, t.id, ("ticket.moved",),
                                                       lambda e: e.data.get("command") == "close")})

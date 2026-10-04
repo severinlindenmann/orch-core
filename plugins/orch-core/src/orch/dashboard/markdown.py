@@ -308,14 +308,17 @@ def render_markdown(text: str | None, scope: ArtifactScope | None = None, *, wid
     return html
 
 
-def render_page_markdown(text: str | None, pages: PageScope | None = None) -> str:
+def render_page_markdown(text: str | None, pages: PageScope | None = None, *, widgets=None, section: str = "") -> str:
     """The addon Markdown widget (a wiki page): the same parser, sanitiser and R24 link rules as ticket text, but
     never with an artifact scope and with no live link to any ticket's artifact (`/a/...`, `artifacts/...`,
     `artifact:`): no gate hash covers page text, so a page can never point at a file as if a ticket had bound it.
-    With `pages`, a relative link to another listed page becomes a link to it (page_link); anything else is R24's."""
+    With `pages`, a relative link to another listed page becomes a link to it (page_link); anything else is R24's.
+    With `widgets` (a SectionWidgets of the page), each top-level ```orch fence is drawn as its widget."""
     tokens = _md.parse(text or "", {})
-    html = _md.renderer.render(tokens, _md.options, {"artifacts": None, "bound": set(), "page": True,
-                                                      "pages": pages})
+    env = {"artifacts": None, "bound": set(), "page": True, "pages": pages}
+    if widgets is not None:
+        env.update(widgets=widgets, section=section)
+    html = _md.renderer.render(tokens, _md.options, env)
     if has_hidden(html):
         html = badge_html(html)
     for plain, task in _TASKS:
@@ -345,10 +348,14 @@ def pinned_images(text: str | None, scope: ArtifactScope | None, limit: int = 3)
     return out
 
 
-def render_inline(text: str | None, scope: ArtifactScope | None = None) -> str:
-    """One line of Markdown (code, emphasis, links) without a wrapping paragraph."""
+def render_inline(text: str | None, scope: ArtifactScope | None = None, *, page: bool = False) -> str:
+    """One line of Markdown (code, emphasis, links) without a wrapping paragraph. `page`: text of a wiki page's
+    widget, where no ticket's artifact link or image is ever live."""
     tokens = _md.parseInline(text or "", {})
-    html = _md.renderer.render(tokens, _md.options, _env(tokens, scope))
+    env = _env(tokens, scope)
+    if page:
+        env["page"] = True
+    html = _md.renderer.render(tokens, _md.options, env)
     return badge_html(html) if has_hidden(html) else html
 
 
@@ -382,7 +389,8 @@ class SectionWidgets:
             return _as_code(block, "warn", "Shown as code", f"only the first {MAX_BLOCKS} widgets of a ticket are drawn")
         wid = (block.data or {}).get("id") if isinstance(block.data, dict) else None
         if wid in self.duplicates:
-            return _as_code(block, "err", "Widget not shown", f"id {wid!r} is used twice in this ticket")
+            where = "on this page" if getattr(self.ctx.ticket, "is_page", False) else "in this ticket"
+            return _as_code(block, "err", "Widget not shown", f"id {wid!r} is used twice {where}")
         return (self._assets() if self.assets else "") + str(render_html(block, self.ctx))
 
 
@@ -401,7 +409,15 @@ def render_section(text: str | None, section: str, widgets: SectionWidgets | Non
     return render_markdown(text, scope, widgets=widgets if use else None, section=section)
 
 
-def md_page_filter(text, addon="", here="", pages=()) -> str:
-    """The `md_page` template filter for the addon Markdown widget: relative links reach the addon's listed pages."""
+def md_page_filter(text, addon="", here="", pages=(), ws=None, files="") -> str:
+    """The `md_page` template filter for the addon Markdown widget: relative links reach the addon's listed pages.
+    With `ws` (the widget asked for widgets=True), the page's ```orch blocks are drawn as on a ticket, with files read
+    from `files`, the wiki folder (docs/widgets.md, "Widgets on a wiki page")."""
     ids = frozenset(p for p in pages or () if isinstance(p, str))
-    return render_page_markdown(text, PageScope(str(addon), str(here or ""), ids) if addon and ids else None)
+    scope = PageScope(str(addon), str(here or ""), ids) if addon and ids else None
+    if ws is None or not hasattr(ws, "config") or not addon:
+        return render_page_markdown(text, scope)
+    from orch.widgets.pages import blocks_of, page_ctx
+    ctx = page_ctx(ws, str(addon), str(here or ""), str(files or ""))
+    widgets = SectionWidgets(ctx, blocks_of(text or "", ctx.ticket), assets=True)
+    return render_page_markdown(text, scope, widgets=widgets, section=ctx.ticket.label)

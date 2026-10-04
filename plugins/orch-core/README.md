@@ -54,7 +54,7 @@ A workspace set up earlier with harness `claude` has its own `orch guard` hooks 
 
 ## What goes into git
 
-orch never commits. The files it writes are either shared records or local to one machine:
+orch never commits on its own, with one exception: the wiki addon's Create page from ticket commits the new page it writes, and only that (the owner's explicit decision; see the addon's README). The files it writes are either shared records or local to one machine:
 
 - **Commit** (shared records every clone needs): `orchestrator/config.json`, `AGENTS.orch.md`, `tickets/`, `artifacts/`, `static/`, `.state/counter.json`, `.state/events.jsonl` (the event log `orch check` and the receipts read), `.state/gates/`, `.state/remote/ledger.jsonl` (which phone decisions were applied), each addon's `.state/addons/<name>/records/`, and what `orch instructions sync` writes outside `orchestrator/` (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, …).
 - **Local** (caches, locks, spools, per-machine state): `temporary/`, `.state/locks/`, `.state/index.json`, the error logs, `.state/needs-count`, `.state/run/`, every `*.lock`, and the rest of `.state/addons/` (snapshots, cursors, inbox and outbox). The approval ledger and its key live outside the repository, in the orch config dir.

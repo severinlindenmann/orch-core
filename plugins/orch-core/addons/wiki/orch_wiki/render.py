@@ -86,7 +86,8 @@ def local_view(view, addon, pages: list[dict], pid: str) -> list:
     out.append(Link("All pages", "/addons/wiki/"))
     out.append(Card(_str(found.get("title") or pid), (
         Copy("Copy path", _str(found.get("path"), 500)),
-        Markdown(body, here=pid, pages=tuple(sorted(str(p["id"]) for p in pages))[:500]) if body is not None else Callout("warn", "Page text not cached", "Press Refresh to read it again."))))
+        Markdown(body, here=pid, pages=tuple(sorted(str(p["id"]) for p in pages))[:500], widgets=True,
+                 files=_str(found.get("space"), 500)) if body is not None else Callout("warn", "Page text not cached", "Press Refresh to read it again."))))
     return out
 
 

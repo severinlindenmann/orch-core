@@ -57,6 +57,15 @@ def bodies_path(state_dir, space: str) -> Path:
     return index_path(state_dir, "local", space).with_suffix(".bodies.json")
 
 
+def _readable(ctx, text: str, page_id: str, scope: str) -> str:
+    """The page text with each ```orch widget block replaced by its text alternative, so title, excerpt, search and
+    ticket mentions read what a widget says and not its JSON. The text as it is when core cannot say."""
+    try:
+        return ctx.page_widget_text(text, page_id, scope)
+    except Exception:  # a widget must never stop the folder from being read
+        return text
+
+
 class BodyReader:
     """{page id: Markdown body} of the local pages, re-read only when the file changes."""
 
@@ -118,7 +127,8 @@ class LocalPages:
                 skipped += 1
                 continue
             page_id = rel.removesuffix(".md")
-            parsed = parse_page(file.stem, raw, local_prefix=str(ident.get("prefix") or ""),
+            text = raw.replace("\r\n", "\n").lstrip("﻿")
+            parsed = parse_page(file.stem, _readable(ctx, text, page_id, scope), local_prefix=str(ident.get("prefix") or ""),
                                 pad=int(ident.get("pad") or 4), tracker_prefixes=trackers)
             when = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
             items.append(page_item(provider=self.id, space=scope, id=page_id, title=parsed.title,
@@ -127,7 +137,10 @@ class LocalPages:
                                    file_links=parsed.file_links))
             texts[page_id] = parsed.text
             titles[page_id] = items[-1]["title"]
-            bodies[page_id] = front_matter(raw.replace("\r\n", "\n").lstrip("﻿"))[1][:MAX_BODY_CHARS]
+            body = front_matter(text)[1][:MAX_BODY_CHARS]
+            # blank lines where the front matter was: the body keeps the line numbers of the file, so a message about
+            # a widget block names the line a person finds in it (leading blank lines draw nothing)
+            bodies[page_id] = "\n" * text[:len(text) - len(front_matter(text)[1])].count("\n") + body
         write_index(ctx.addon.state_dir, self.id, scope, texts, titles)
         target = bodies_path(ctx.addon.state_dir, scope)
         target.parent.mkdir(parents=True, exist_ok=True)

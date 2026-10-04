@@ -52,6 +52,8 @@ def _layer_problems(data: dict, home) -> list[Problem]:
 
 def _digest_problems(data: dict, ticket, ws) -> list[Problem]:
     out = []
+    where = ("only files under _files/ of the wiki folder can be shown" if getattr(ticket, "is_page", False)
+             else f"only files under artifacts/{ticket.id}/ or artifact:<name> can be shown")
     if isinstance(data.get("widget"), str):
         state, current = registry.template_state(ws.home, data["widget"], data.get("sha256"))
         if state == "drift":
@@ -61,8 +63,7 @@ def _digest_problems(data: dict, ticket, ws) -> list[Problem]:
     for r in artifacts.refs(data):
         state = artifacts.state(ws, ticket.id, r["ref"], r["sha256"])
         if state == "missing":
-            out.append(Problem("widget-digest", f"{r['ref']} is missing (only files under artifacts/{ticket.id}/ "
-                                                "or artifact:<name> can be shown)"))
+            out.append(Problem("widget-digest", f"{r['ref']} is missing ({where})"))
         elif state == "changed" and r["node"] is data and "html" in data:  # the one-off page itself: it never runs
             out.append(Problem("widget-digest", f"{r['ref']} changed since this widget was written; it does not run"))
         elif state == "changed":
@@ -77,7 +78,7 @@ def validate(block: Block, ticket, section: str | None = None, *, ws=None) -> li
     section = block.section if section is None else section
     if block.error:
         found = [Problem("widget-parse", block.error)]
-    elif not placement(section):
+    elif not placement(section) and not getattr(ticket, "is_page", False):  # a page has no gate: anywhere is fine
         found = [Problem("widget-place", f"widgets cannot stand in {section or 'the text before the first section'}"
                                          " (hashed by a gate, own grammar or append-only); shown as code")]
     else:

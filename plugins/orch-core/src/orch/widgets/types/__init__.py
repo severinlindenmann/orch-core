@@ -39,4 +39,6 @@ def safe_url(url: str, ctx=None) -> str | None:
     text."""
     from orch.dashboard.markdown import canonical_link
     kind, href = canonical_link(url, scope(ctx))
+    if kind == "other" and getattr(getattr(ctx, "ticket", None), "is_page", False):
+        return None  # a page is bound by no gate: it never links any ticket's artifact
     return None if kind == "inert" else href

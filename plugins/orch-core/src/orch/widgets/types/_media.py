@@ -7,6 +7,7 @@ import mimetypes
 from urllib.parse import quote
 
 from orch.widgets import artifacts
+from orch.widgets.pages import PageKey
 
 SHA = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
 REQUIRED = ["path", "sha256"]
@@ -16,7 +17,7 @@ VIDEO_TYPES = {"video/mp4", "video/webm", "video/ogg", "video/quicktime"}
 def file_schema(extra: dict | None = None) -> dict:
     """The schema of one digest-pinned file: {path under artifacts/<ID>/, sha256}."""
     return {"type": "object", "additionalProperties": False, "required": list(REQUIRED),
-            "properties": {"path": {"type": "string", "pattern": "^(artifacts/[^/]+/|artifact:).+", "maxLength": 500}, "sha256": SHA, **(extra or {})}}
+            "properties": {"path": {"type": "string", "pattern": "^(artifacts/[^/]+/|artifact:|_files/).+", "maxLength": 500}, "sha256": SHA, **(extra or {})}}
 
 
 def uri(ctx, file: dict, kinds=artifacts.IMAGE_TYPES) -> str | None:
@@ -26,6 +27,12 @@ def uri(ctx, file: dict, kinds=artifacts.IMAGE_TYPES) -> str | None:
     only bytes it hashed as read; a standalone document embeds bytes read once and hashed (artifacts.data_uri)."""
     tid = getattr(ctx.ticket, "id", None)
     ref, digest = file.get("path"), file.get("sha256")
+    if isinstance(tid, PageKey) and not ctx.standalone:  # a page's file: /wpf/, by digest, never embedded
+        path = artifacts.resolve(ctx.ws, tid, ref)
+        kind = mimetypes.guess_type(path.name)[0] if path else None
+        if path is None or kind not in kinds or not digest or artifacts.sha256(path) != digest:
+            return None
+        return f"/wpf/{quote(tid.addon, safe='')}/{digest}?page={quote(str(tid), safe='')}"
     if not ctx.standalone:
         path = artifacts.resolve(ctx.ws, tid, ref) if tid else None
         kind = mimetypes.guess_type(path.name)[0] if path else None

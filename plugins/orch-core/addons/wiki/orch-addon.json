@@ -1,7 +1,7 @@
 {
   "name": "wiki",
   "title": "Wiki",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "requires_api": "2",
   "kind": "in-process",
   "description": "Wiki pages related to tickets, docs that may need an update, and search; from the GitHub wiki or a Markdown folder in the workspace, and a page created from a ticket.",
@@ -19,6 +19,6 @@
   "actions": [
     {"id": "dismiss", "label": "Dismiss", "confirm": "Hide this hint for this ticket?"},
     {"id": "create_page", "label": "Create page from ticket",
-     "confirm": "Write decisions/<ticket>.md in the wiki folder from this ticket? It is a copy of the ticket text, not an approval, and is not committed."}
+     "confirm": "Write decisions/<ticket>.md in the wiki folder from this ticket and commit it? It is a copy of the ticket text and its widgets, not an approval. Only the new files are committed, and only when the folder is in a git repository."}
   ]
 }

@@ -80,6 +80,7 @@ class SlotGroup:
     confirms: dict = field(default_factory=dict)
     uploads: dict = field(default_factory=dict)  # action id -> the HTML accept value ("" = any type)
     key_prefix: str = ""  # this workspace's ticket prefix: core links those keys in widget text
+    ws: object = field(default=None, repr=False, compare=False)  # a Markdown widget with widgets=True draws with it
 
 
 class SlotView:
@@ -233,7 +234,7 @@ class AddonRuntime:
                     banner = None
                 if widgets or banner is not None:
                     groups.append(SlotGroup(la.name, la.manifest.title, widgets, banner, _confirms(la.manifest),
-                                            _uploads(la.manifest), self._prefix()))
+                                            _uploads(la.manifest), self._prefix(), self.ws))
             except Exception:
                 _log_error(self.ws, la.name, f"slot {name}")
         return groups
@@ -250,7 +251,7 @@ class AddonRuntime:
             return None
         try:
             return SlotGroup(la.name, title, self._widgets(la, f"page.{name}", params=params),
-                             self._banner(la), _confirms(la.manifest), _uploads(la.manifest), self._prefix())
+                             self._banner(la), _confirms(la.manifest), _uploads(la.manifest), self._prefix(), self.ws)
         except Exception:
             _log_error(self.ws, name, f"page {name}")
             return SlotGroup(la.name, title, (Callout("err", f"{la.manifest.title} could not render", _SEE_ERRORS),))

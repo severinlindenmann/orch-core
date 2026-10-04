@@ -27,7 +27,7 @@ WIDGET_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
     **COMMON, "widget": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}@[1-9][0-9]{0,3}$"}, "sha256": _SHA,
     "data": {"type": "object"}, "height": _HEIGHT}}
 HTML_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["html", "sha256"], "properties": {
-    **COMMON, "html": {"type": "string", "pattern": "^(artifacts/[^/]+/|artifact:).+\\.html?$", "maxLength": 500}, "sha256": _SHA,
+    **COMMON, "html": {"type": "string", "pattern": "^(artifacts/[^/]+/|artifact:|_files/).+\\.html?$", "maxLength": 500}, "sha256": _SHA,
     "data": {"type": "object"}, "libs": {"type": "array", "items": {"type": "string", "maxLength": 40}, "maxItems": 10},
     "height": _HEIGHT}}
 

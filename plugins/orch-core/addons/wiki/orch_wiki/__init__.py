@@ -1,6 +1,9 @@
 """wiki: related pages, docs that may need an update and search (spec A1 §7.4); the local folder provider and
-Create page from ticket write only one new file under the wiki folder."""
+Create page from ticket write only new files under the wiki folder, and commit them (the owner's one exception to
+"orch never commits")."""
 from __future__ import annotations
+
+from pathlib import Path
 
 from orch.addons.api import Intent
 from orch.errors import ValidationError
@@ -11,7 +14,7 @@ from .create import create_page
 from .diffs import BranchDiffs
 from .dismissed import Dismissed
 from .github_wiki import GitHubWikiPages
-from .local import BodyReader, LocalPages
+from .local import BodyReader, LocalPages, resolve_folder
 from .pages import IndexReader
 from .relate import TARGET, stale_docs
 
@@ -32,6 +35,19 @@ class WikiAddon:
 
     def body_of(self, page: dict) -> str | None:
         return self.bodies.bodies(str(page.get("space") or "")).get(str(page.get("id") or ""))
+
+    def page_source(self, page_id: str):
+        """(the page text, the wiki folder) of a local page, for core's frame of a widget on it: the text is the cached
+        body the page was drawn from, so a digest in a frame address is found in the very text that drew it."""
+        settings = self.ctx.settings
+        if settings.get("provider") != "local":
+            return None
+        folder, _ = resolve_folder(self.ctx.root, settings)
+        if folder is None or not isinstance(page_id, str):
+            return None
+        space = folder.relative_to(Path(self.ctx.root)).as_posix()
+        body = self.body_of({"space": space, "id": page_id})
+        return (body, space) if body is not None else None
 
     def mentions_of(self, page: dict) -> dict | None:
         found = self.index.mentions(str(page.get("provider") or ""), str(page.get("space") or ""))
@@ -74,8 +90,7 @@ class WikiAddon:
 
     def act(self, action_id, target, ctx):
         if action_id == "create_page":
-            rel = create_page(ctx, target)
-            return Intent("none", reason=f"Created {rel}; review it and commit it with your own changes.")
+            return Intent("none", reason=create_page(ctx, target))
         if action_id != "dismiss" or not TARGET.fullmatch(target or ""):
             raise ValidationError("that hint reference is not valid; reload the page")
         Dismissed(ctx.addon.state_dir).add(target)

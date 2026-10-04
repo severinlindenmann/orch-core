@@ -180,17 +180,23 @@ def _problem(message: str):
 @widget_app.command("check")
 def check(ref: Annotated[Optional[str], typer.Argument(help="One ticket; default every ticket.")] = None,
           json_out: JsonOpt = False) -> None:
-    """widget-parse, widget-schema, widget-place and widget-digest findings. Exit 5 on errors."""
+    """widget-parse, widget-schema, widget-place and widget-digest findings, in tickets and (for the whole workspace)
+    in the local wiki pages, named `<page path>:<line>`. Exit 5 on errors."""
+    from orch.widgets import pages
     from orch.widgets.validate import findings
     cli, ws = _cli()
     rows = findings(ws, ref)
+    if ref is None:
+        rows += [{**r, "page": True} for r in pages.findings(ws)]
     if ref is None:  # a malformed template is left out everywhere: say which and why
         from orch.widgets import registry
         rows += [{"ticket": "-", "index": None, "section": b["path"], "line": 0, "code": "widget-template",
                   "level": "warning", "message": f"template {b['name']} skipped: {b['problem']}"}
                  for b in registry.template_problems(ws.home)]
-    cli._out(rows, json_out, "\n".join(f"{r['level']:<7} {r['ticket']:<8} {r['code']:<14} {r['section']}, line "
-                                       f"{r['line']}: {r['message']}" for r in rows) or "all good")
+    cli._out(rows, json_out, "\n".join(
+        f"{r['level']:<7} {'page':<8} {r['code']:<14} {r['section']}:{r['line']}: {r['message']}" if r.get("page") else
+        f"{r['level']:<7} {r['ticket']:<8} {r['code']:<14} {r['section']}, line {r['line']}: {r['message']}"
+        for r in rows) or "all good")
     if any(r["level"] == "error" for r in rows):
         raise typer.Exit(5)
 

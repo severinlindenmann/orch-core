@@ -50,6 +50,7 @@ class Markdown:
 class Badge:
     role: str
     text: str
+    title: str = ""  # API 2.5: a tooltip, used by menu_badge (the sidebar chip); other slots ignore it
     kind: ClassVar[str] = "badge"
 
 

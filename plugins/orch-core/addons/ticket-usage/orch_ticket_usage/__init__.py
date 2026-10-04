@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from orch.addons.api import Snapshot
-from orch.addons.widgets import KV, Callout, Card, Table, Text, Time
+from orch.addons.widgets import KV, Badge, Callout, Card, Table, Text, Time
 
 from .data import (claude_dir, cost_of, distribute, names, parse_file, read_limits, subagents, transcripts,
                    week_rises)
@@ -138,7 +138,9 @@ def tokens(n) -> str:
 
 
 def model_name(model: str) -> str:
-    return re.sub(r"-\d{8}$", "", model.removeprefix("claude-"))
+    """claude-haiku-4-5-20251001 or haiku-4-5 -> Haiku 4.5, sonnet-5 -> Sonnet 5; anything else stays as it is."""
+    m = re.fullmatch(r"(?:claude-)?([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?", model)
+    return model if not m else f"{m[1].capitalize()} {m[2]}" + (f".{m[3]}" if m[3] else "")
 
 
 def models_text(by_model: dict) -> str:
@@ -221,7 +223,8 @@ def page(snaps, show_cost: bool) -> list:
         times = [(label, last.get(k)) for label, k in (("5-hour limit resets", "five_reset"), ("Weekly limit resets", "week_reset"))]
         out.append(KV(tuple((label, Time(iso(v), "at")) for label, v in times if isinstance(v, (int, float)))))
     rows = []
-    for i in sorted(items, key=lambda i: -total(i["week"]) if i["kind"] != "limits" else 0):
+    order = {"ticket": 0, "shared": 1, "unlinked": 2}  # tickets first, then shared orchestrators, unlinked last
+    for i in sorted(items, key=lambda i: (order.get(i["kind"], 3), -total(i.get("week") or {}))):
         if i["kind"] == "limits" or not total(i["week"]):
             continue
         week = (i.get("pct") or {}).get("week")
@@ -236,6 +239,31 @@ def page(snaps, show_cost: bool) -> list:
     return out
 
 
+def _clock(epoch) -> str:
+    d, now = datetime.fromtimestamp(epoch), datetime.now()
+    return d.strftime("%H:%M") if d.date() == now.date() else d.strftime("%d.%m. %H:%M")
+
+
+def menu_chip(snaps, now: float):
+    """The sidebar chip: the higher of the two used percentages, coloured by how little is left; None without data."""
+    last = next((i for s in snaps[:1] for i in s.items if i["kind"] == "limits"), {}).get("last")
+    if not last:
+        return None
+    parts, values = [], []
+    for name, k in (("5-hour", "five"), ("week", "week")):
+        v, reset = last.get(k), last.get(k + "_reset")
+        if not isinstance(v, (int, float)):
+            parts.append(f"{name} unknown")
+            continue
+        past = isinstance(reset, (int, float)) and reset <= now  # that window has reset since the last record
+        values.append(0 if past else v)
+        parts.append(f"{name} {0 if past else v:.0f} %" + (" · reset" if past else f" · resets {_clock(reset)}" if isinstance(reset, (int, float)) else ""))
+    if not values:
+        return None
+    top = max(values)
+    return Badge("ok" if top < 70 else "warn" if top < 90 else "err", f"{top:.0f} %", title=" · ".join(parts))
+
+
 class TicketUsage:
     def __init__(self, ctx):
         self.page = f"page.{ctx.name}"
@@ -246,6 +274,9 @@ class TicketUsage:
             return self._widgets(slot, view)
         except Exception:  # a snapshot from another version of this addon, or a shape we do not know: never raise
             return [Text("Usage could not be read. Press Refresh.")] if slot in (self.page, "ticket.code") else []
+
+    def menu_badge(self, view):
+        return menu_chip(view.snapshots("usage"), time.time())
 
     def _widgets(self, slot, view):
         snaps = view.snapshots("usage")

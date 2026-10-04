@@ -48,6 +48,13 @@ class Demo:
         return [Card(f"Status {XSS}", body + (Table(("Repo", "Link"), (("a/b", Link(XSS, "https://example.com")),)),
                                                Action("rerun", "Rerun failed", "a/b#1")))]
 
+    chip = None
+
+    def menu_badge(self, view):
+        if self.chip == "raise":
+            raise RuntimeError("badge boom")
+        return self.chip
+
     def decisions(self, view):
         return [PendingDecision("phone/1", "Answer from phone", "ISO 8601", ticket="L-0001"),
                 PendingDecision("phone/2", "Old answer", stale=True)]
@@ -96,6 +103,21 @@ def _snap(health="ok", items=None, **kw):
 def test_menu_lists_the_addon_page(client):
     html = client.get("/").text
     assert "menu-addons" in html and 'href="/addons/demo/"' in html and "Demo status" in html
+
+
+@pytest.mark.parametrize("role", ["ok", "warn", "err", "neu"])
+def test_menu_badge_renders_a_chip_with_its_role_and_tooltip(client, demo, role):
+    demo.chip = Badge(role, "39 %", title="5-hour 30 % · week 39 %")
+    for url in ("/", "/addons/demo/"):
+        html = client.get(url).text
+        assert f'<span class="chip chip-{role}" title="5-hour 30 % · week 39 %" aria-label="Demo status: 5-hour 30 % · week 39 %">39 %</span>' in html
+
+
+@pytest.mark.parametrize("chip", [None, "raise", "39 %", Badge("you", "x"), Badge("ok", " ")])
+def test_menu_badge_none_or_broken_is_no_chip_and_the_page_still_renders(client, demo, chip):
+    demo.chip = chip
+    r = client.get("/addons/demo/")
+    assert r.status_code == 200 and 'class="chip chip-' not in r.text.split('class="menu-addons"')[1].split("</nav>")[0]
 
 
 def test_addon_page_renders_widgets_escaped_with_core_csp(client, ws):

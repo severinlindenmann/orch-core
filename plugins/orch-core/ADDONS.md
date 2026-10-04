@@ -51,6 +51,7 @@ No `requirements.txt`, `pyproject.toml` or other dependency files: API 2 allows 
 |---|---|
 | `provider` | `providers`: a list of providers (next section) |
 | `page`, `panel` | `widgets(slot, view) -> list[Widget]`; the page slot is `page.<name>` |
+| `page` with a `menu` (optional) | `menu_badge(view) -> Badge | None` (API 2.5): one status chip on your sidebar entry |
 | `decisions` | `decisions(view) -> list[PendingDecision]` and `resolve(id, choice, ctx: ProviderContext) -> TicketIntent | str | None`; optional `on_intent_result(id, outcome, message)` |
 | `events` | `on_event(event, outbox)` and `drain(ctx, items) -> list[acked ids]` |
 | (actions) | `act(action_id, target, ctx: ProviderContext) -> TicketIntent | FileResult | Reveal | str | None` for each action in the manifest |
@@ -130,6 +131,8 @@ Every `pending` code (`malformed`, `kind-not-allowed`, `not-paired`, `bad-signat
 ### QR codes
 
 `QR(text, caption="")` draws a QR code as an inline SVG, server-side, from a module matrix — never from addon markup, and never JavaScript or an external image URL (dashboard extra only, needs `segno`). `text` is capped at 1000 UTF-8 bytes; if it is too long to encode, orch shows a "QR code not shown" Callout instead of failing the page. Use it to show a link or a short code a human can scan, for example a pairing link.
+
+**API 2.5 (still `requires_api: "2"`).** `menu_badge(view) -> Badge | None` is new and optional: an addon with a `page` and a `menu` may show one status chip (`Badge(role, text, title="")`, `ok`, `warn`, `err` or `neu`) next to its sidebar and phone-menu entry, e.g. "39 %" in amber. `view` is the read-only view widgets get (snapshots only, no `ctx.run`); `title` is the tooltip and the chip's accessible name. Return `None` for no chip. An exception or any other return value also shows no chip and is logged; the page never fails. An addon without the method is unchanged.
 
 ## Settings
 

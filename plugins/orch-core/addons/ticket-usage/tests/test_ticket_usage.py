@@ -184,3 +184,48 @@ class TestProvider(ProviderContract):
 
 class TestAddon(AddonContract):
     addon_dir = ADDON
+
+
+def _limits_snap(**last):
+    from datetime import datetime, timezone
+    from orch.addons.api import Snapshot
+    item = {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": last or None}
+    return [Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=(item,))]
+
+
+def test_menu_chip_takes_the_higher_percent_and_colours_by_it():
+    now = 1_000_000.0
+    mk = lambda five, week: T.menu_chip(_limits_snap(five=five, week=week, five_reset=now + 3600, week_reset=now + 86400), now)  # noqa: E731
+    assert (mk(30, 39).text, mk(30, 39).role) == ("39 %", "ok")
+    assert mk(70, 10).role == "warn" and mk(10, 89).role == "warn"
+    assert mk(10, 90).role == "err" and mk(95, 1).text == "95 %"
+    t = mk(30, 39).title
+    assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
+
+
+def test_menu_chip_treats_a_reset_window_as_zero_and_no_data_as_no_chip():
+    now = 1_000_000.0
+    chip = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
+    assert chip.text == "40 %" and "5-hour 0 % · reset · week 40 %" in chip.title
+    assert T.menu_chip(_limits_snap(), now) is None and T.menu_chip([], now) is None
+    assert T.menu_chip(_limits_snap(five=None, week=None), now) is None
+
+
+def test_model_names_are_human_labels():
+    assert [T.model_name(m) for m in ("opus-5-5", "sonnet-5", "haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-5-5",
+                                      "claude-sonnet-5", "weird")] == ["Opus 5.5", "Sonnet 5", "Haiku 4.5", "Haiku 4.5",
+                                                                       "Opus 5.5", "Sonnet 5", "weird"]
+
+
+def test_page_rows_are_tickets_by_output_then_shared_then_unlinked():
+    def it(kind, label, out, **kw):
+        return {"id": label, "kind": kind, "label": label, "role": "neu", "text": "", "week": {"claude-opus-5-5": out},
+                "main": {}, "sub": {}, "cost": None, "pct": None, "tickets": [], **kw}
+    from datetime import datetime, timezone
+    from orch.addons.api import Snapshot
+    items = (it("unlinked", "u", 9999), it("shared", "s", 5000), it("ticket", "B-1", 10), it("ticket", "B-2", 300),
+             {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": None})
+    out = T.page([Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=items)], True)
+    table = next(w for w in out if w.kind == "table")
+    assert [r[0] for r in table.rows] == ["B-2", "B-1", "Shared orchestrator (0 tickets)", "Not linked to a ticket"]
+    assert table.rows[0][1] == "Opus 5.5"

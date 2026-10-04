@@ -96,5 +96,11 @@ def test_the_vendored_chart_library_is_served_and_is_the_one_in_the_readme(dash)
 def test_the_series_tokens_exist_in_both_themes():
     from pathlib import Path
     css = (Path(__file__).parents[1] / "src/orch/dashboard/static/tokens.css").read_text()
-    for i in range(1, 5):
+    for i in range(1, 9):
         assert css.count(f"--series-{i}:") >= 2
+
+
+def test_eight_series_never_share_a_colour():
+    w = ok(labels=("a",), series=tuple(ChartSeries(f"s{i}", (i,)) for i in range(8)))
+    assert problems(w) == []
+    assert len({s["token"] for s in w.spec()["series"]}) == 8

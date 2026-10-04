@@ -223,14 +223,14 @@ class QR:
     kind: ClassVar[str] = "qr"
 
 
-SERIES_TOKENS = ("series-1", "series-2", "series-3", "series-4")
+SERIES_TOKENS = tuple(f"series-{i}" for i in range(1, MAX_SERIES + 1))
 
 
 def chart_spec(labels, series, *, kind: str = "bar", stacked: bool = False, unit: str = "", x: str = "category",
                horizontal: bool = False) -> dict:
     """The one plain dict static/charts.js draws (and the `chart` macro writes out as a table). `series` is
     [(name, values)], [(name, values, token)] or [(name, values, token, stack)]; a series without a token takes
-    series-1..4 in turn, then again from the first."""
+    series-1..8 in order (at most 8 series, so no colour repeats)."""
     out = []
     for i, s in enumerate(series):
         name, values, token, stack = (tuple(s) + ("", ""))[:4]
@@ -242,7 +242,7 @@ def chart_spec(labels, series, *, kind: str = "bar", stacked: bool = False, unit
 
 @dataclass(frozen=True)
 class ChartSeries:
-    """One series of a Chart: `values` has one number per label. `token` names a colour token (`series-1`..`series-4`,
+    """One series of a Chart: `values` has one number per label. `token` names a colour token (`series-1`..`series-8`,
     or a role mark such as `ok-mark`); empty takes the next series colour."""
     name: str
     values: tuple

@@ -302,7 +302,9 @@ class Ops(TaskOpsMixin):
             frm = t.status
             if not self.actor.is_human:
                 from orch.core.ledger import require_signed
+                from orch.core.permits import require_budget
                 require_signed(self.ws, t, ("requirements",))
+                require_budget(self.ws, t)
             if frm == "open":
                 check_move(t, "in-progress", self.actor, plan_skip_sizes=self._skip_sizes,
                            command="claim", open_blockers=self._open_blockers(t))
@@ -703,6 +705,15 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict:
             if t.status == "done":
                 raise TransitionError(f"{t.id} is done; open a follow-up instead", hint=f"orch new --from {t.id} --title ...")
+            if not self.actor.is_human:
+                from orch.core.permits import factory_epic
+                epic = factory_epic(self.ws, t)
+                if epic is not None:
+                    raise ValidationError(
+                        f"{t.id} is part of the AI Factory epic {epic.id}: questions are not asked there",
+                        hint="decide within the epic's text and record why with `orch log` (a note, not an answer), "
+                             "or leave the item out and list it as not built; a missing permission goes through "
+                             "`orch permit request`")
             qs = build_questions(raw_questions, t.meta.get("questions") or [], stamp())
             t.meta.setdefault("questions", []).extend(qs)
             added.extend(qs)
@@ -893,6 +904,11 @@ class Ops(TaskOpsMixin):
         if gate != "requirements":
             raise UsageError(f"{eid} is an epic: it has only the requirements gate (its children have plans)",
                              hint=f"orch approve {eid} requirements")
+        if isinstance(delegate, dict) and delegate.get("factory"):
+            from orch.core.permits import enabled
+            if not enabled(self.ws):
+                raise UsageError("AI Factory is switched off in this workspace",
+                                 hint="set factory.enabled to true in orchestrator/config.json (docs/factory.md)")
         delegate = epics.normalize_delegate(delegate)
         covered: dict = {}
 
@@ -1005,6 +1021,9 @@ class Ops(TaskOpsMixin):
             if d["epic_changed"]:
                 raise ValidationError(f"the requirements of epic {epic.id} changed since the human delegated: the "
                                       "delegation waits until they approve the epic again")
+            if d.get("expired"):
+                raise ValidationError(f"the time budget of {d['max_hours']} hours on {epic.id} is used up: the human "
+                                      f"approves {t.id} or the epic again", hint=f"stop and wait (`orch wait {t.id}`)")
             why = epics.within_limits(t, d)
             if why:
                 raise ValidationError(f"{t.id}: {why}")

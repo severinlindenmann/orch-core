@@ -8,7 +8,8 @@ import time
 from orch.core import store
 from orch.core.events import events_path, last_seq, read_events
 
-HUMAN_EVENT_KINDS = ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given")
+HUMAN_EVENT_KINDS = ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given",
+                     "permit.granted", "permit.denied")
 MIN_POLL, MAX_POLL = 0.01, 5.0  # seconds; never a busy loop, never a long nap
 
 

@@ -54,12 +54,14 @@ _ADDON_ADMIN = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*"
 _QUOTED_ADDON_ADMIN = re.compile(r"""['"]\s*(?:[^'"\n]*/)?orch['"]\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*""" + _ADMIN_VERBS)
 _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
-# Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, and moves to a status only
+# Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
+# grant|deny|revoke` (AI Factory), and moves to a status only
 # the human moves to. Agents never run them, in any spelling: `uv run orch`, `python -m orch.cli`, a wrapper path,
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
-_HUMAN_VERB_RE = r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause)(?![\w-])"
+_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
+                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -67,7 +69,8 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 # Code that drives orch from an interpreter: the word orch (not orch-core, not orch.core) and a human verb anywhere in
 # the command, or a human Actor built by hand.
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
-_HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|epic_pause)(?![\w-])")
+_HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|epic_pause"
+                              r"|permit_(?:grant|deny|revoke))(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal
 # outside the agent's process tree.
@@ -98,7 +101,8 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     main, docs = _split_heredocs(cmd)
     units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
-_HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger and moving a "
+_HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
+                      "permissions and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
                       "terminal or the dashboard")
 # The harness markers orch reads to tell an agent from a human (orch.actor): an agent does not strip or blank them.
@@ -131,6 +135,8 @@ def _human_only_tokens(seg: str) -> bool:
         if rest and rest[0] in _HUMAN_VERBS:
             return True
         if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
+            return True
+        if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -202,10 +208,13 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
                   "in Mission Control → Workspace & addons → Phones")
 # The approval ledger and its signing key (orch.core.ledger), in the orch config dir: the human's record of approvals.
 # Agents never read or write them, by any tool; best effort for Bash, as for the pairing keys.
-_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl)\b|orch[/\\]+ledger\b|ORCH_STATE_DIR\}?[/\\]+ledger\b"
-                     r"|\borch\.core\.ledger\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\bledger\b")
-_LEDGER_DENIED = ("the approval ledger and its key are the human's signed record of approvals and verdicts; "
-                  "agents do not read or write them")
+# The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
+# grant) are protected the same way: removing a marker would revive a used grant.
+_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
+                     r"|\bpermits[/\\]+(?:used|requests)\b"
+                     r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
+_LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
+                  "decisions; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
@@ -887,16 +896,18 @@ def _ledger_path(raw: str) -> bool:
         base = ledger.base_dir().resolve()
     except (OSError, RuntimeError):
         base = ledger.base_dir()
-    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE)
+    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE) or p == base / "permits" or (base / "permits") in p.parents
 
 
 def _filter_could_reach_ledger(pattern: str) -> bool:
     """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`)."""
     import fnmatch
-    if not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower():
+    if (not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower()
+            or "permits" in pattern.lower()):
         return True
     name = pattern.rsplit("/", 1)[-1]
-    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl"))
+    # the ledger files and the shapes of the permit records (a request body, a once-use marker)
+    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "P-0123ABCD.json", "0123456789abcdef"))
 
 
 def _bash_reaches_ledger(cmd: str) -> bool:
@@ -904,7 +915,7 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
         return True
     base = str(ledger.base_dir())
-    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE))
+    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, "permits"))
 
 
 def evaluate(ws, payload: dict) -> Decision:
@@ -1059,7 +1070,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _HUMAN_ONLY_DENIED)
     for m in _XARGS_ORCH.finditer(_unquoted(code)):
         sub = m.group(2)
-        if not sub or sub in _HUMAN_VERBS or sub == "move" or sub.startswith(("$", "{", "`", "|", ";", "&")):
+        if not sub or sub in _HUMAN_VERBS or sub in ("move", "permit") or sub.startswith(("$", "{", "`", "|", ";", "&")):
             return Decision(False, _HUMAN_ONLY_DENIED)
     if _DECODED_RUN.search(code):
         return Decision(False, _DECODED_DENIED)

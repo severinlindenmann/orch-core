@@ -29,6 +29,7 @@ from orch.errors import NotFoundError, UsageError
 
 EPIC = "epic"
 DELEGATE_DEFAULTS = {"max_children": 10, "max_size": "m"}
+FACTORY_DEFAULTS = {"max_children": 25, "max_size": "m", "max_hours": 72}
 _SIZE_RANK = {s: i for i, s in enumerate(SIZES)}
 # What a child is with respect to its epic's charter (child_state).
 STATE_LABELS = {
@@ -86,10 +87,15 @@ def epic_approved(t) -> bool:
 
 
 def normalize_delegate(delegate) -> dict | None:
+    """The delegation limits as signed. A factory delegation (AI Factory, orch.core.permits) adds `factory: True` and
+    a time budget `max_hours`; its defaults are 25 children or 72 hours (owner decision D5) and its children stay at
+    size m or below (D6). An ordinary delegation keeps exactly its two keys, so its charter hash is unchanged."""
     if delegate is None or delegate is False:
         return None
-    d = dict(DELEGATE_DEFAULTS)
-    d.update({k: v for k, v in (delegate if isinstance(delegate, dict) else {}).items() if v is not None})
+    given = delegate if isinstance(delegate, dict) else {}
+    factory = bool(given.get("factory"))
+    d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
+    d.update({k: v for k, v in given.items() if v is not None and k != "factory"})
     try:
         d["max_children"] = int(d["max_children"])
     except (TypeError, ValueError):
@@ -98,7 +104,31 @@ def normalize_delegate(delegate) -> dict | None:
         raise UsageError("--max-children must be at least 1")
     if d["max_size"] not in SIZES:
         raise UsageError(f"--max-size must be one of {', '.join(SIZES)}")
-    return {"max_children": d["max_children"], "max_size": d["max_size"]}
+    out = {"max_children": d["max_children"], "max_size": d["max_size"]}
+    if factory:
+        if _SIZE_RANK[out["max_size"]] > _SIZE_RANK[FACTORY_DEFAULTS["max_size"]]:
+            raise UsageError("a factory epic auto-approves children up to size m; larger children wait for you")
+        try:
+            hours = int(d["max_hours"])
+        except (TypeError, ValueError):
+            raise UsageError("the factory's hour budget must be a number") from None
+        if hours < 1:
+            raise UsageError("the factory's hour budget must be at least 1 hour")
+        out.update(factory=True, max_hours=hours)
+    return out
+
+
+def budget_used_up(entry: dict, d: dict) -> bool:
+    """A factory delegation's time budget (hours since the charter was signed) is used up."""
+    if not d.get("max_hours"):
+        return False
+    from datetime import timedelta
+    from orch import clock
+    try:
+        signed_at = clock.parse_stamp(str(entry.get("at")))
+    except ValueError:
+        return True  # no readable time: fail closed
+    return clock.now() >= signed_at + timedelta(hours=d["max_hours"])
 
 
 def child_hashes(t) -> dict:
@@ -164,7 +194,8 @@ def _epic_current(epic, entry: dict) -> bool:
 
 def delegation(ws, epic, signed=None) -> dict | None:
     """The delegation of the latest signed charter, or None: {id, max_children, max_size, active, paused,
-    epic_changed}. Active only while not paused and the epic's requirements still hash as signed."""
+    epic_changed, expired} (a factory delegation also `factory`, `max_hours`). Active only while not paused, the
+    epic's requirements still hash as signed and a factory's time budget is not used up."""
     signed = _signed(ws, signed)
     entry = latest_charter(ws, epic.id, signed)
     if not entry or not isinstance(entry.get("delegate"), dict) or not entry.get("delegation"):
@@ -175,8 +206,9 @@ def delegation(ws, epic, signed=None) -> dict | None:
     changed = not _epic_current(epic, entry)
     d = normalize_delegate(entry["delegate"]) or dict(DELEGATE_DEFAULTS)
     kept = [k for k in (pause or {}).get("kept") or [] if isinstance(k, dict) and k.get("id")]
-    return {"id": did, **d, "paused": pause is not None, "epic_changed": changed,
-            "active": pause is None and not changed, "kept": kept, "at": entry.get("at")}
+    expired = budget_used_up(entry, d)
+    return {"id": did, **d, "paused": pause is not None, "epic_changed": changed, "expired": expired,
+            "active": pause is None and not changed and not expired, "kept": kept, "at": entry.get("at")}
 
 
 def _covered(ws, epic, child, gate: str, h, signed) -> bool:

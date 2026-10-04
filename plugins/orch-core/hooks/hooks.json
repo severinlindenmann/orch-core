@@ -6,6 +6,12 @@
         "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" guard --hook-json"}]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" permit hook"}]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" hook session-start"}]

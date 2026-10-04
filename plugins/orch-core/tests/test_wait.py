@@ -16,7 +16,8 @@ def _asked(aops):
 
 
 def test_human_event_kinds():
-    assert HUMAN_EVENT_KINDS == ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given")
+    assert HUMAN_EVENT_KINDS == ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given",
+                                 "permit.granted", "permit.denied")  # AI Factory: the human's answer to a request
 
 
 def test_returns_the_first_human_decision(ws, aops, hops):

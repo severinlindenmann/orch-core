@@ -39,8 +39,11 @@ def charter_lines(s: dict) -> list[str]:
         lines.append(f"  {rid:<8} left the epic since its approval")
     d = s["delegation"]
     if d:
-        state = "paused" if d["paused"] else "suspended (epic changed)" if d["epic_changed"] else "active"
-        lines.append(f"  delegation {state}: up to {d['max_children']} children of size ≤ {d['max_size']}")
+        state = ("paused" if d["paused"] else "suspended (epic changed)" if d["epic_changed"]
+                 else "stopped (budget used up)" if d.get("expired") else "active")
+        lines.append(f"  {'AI Factory' if d.get('factory') else 'delegation'} {state}: up to {d['max_children']} "
+                     f"children of size ≤ {d['max_size']}"
+                     + (f" or {d['max_hours']} hours from {d['at']}" if d.get("max_hours") else ""))
     for a in s["auto_approvals"]:
         lines.append(f"  auto-approved {a['ticket']} {a['gate']} by {a['actor']} at {a['at']}"
                      + ("" if a["valid"] else " (no longer valid)"))
@@ -130,8 +133,13 @@ def render_charter(ws, epic, kids, delegate) -> list[str]:
         _block(out, "Plan", t.section("Plan"), "    ")
     for rid in diff["removed"]:
         out.append(f"- {rid} left the epic since your last approval")
-    out.append(f"Delegation: on, up to {delegate['max_children']} children of size ≤ {delegate['max_size']}"
-               if delegate else "Delegation: off")
+    if delegate and delegate.get("factory"):
+        out.append(f"AI Factory: on. Agents split, specify, auto-approve and build children: up to "
+                   f"{delegate['max_children']} children of size ≤ {delegate['max_size']} or {delegate['max_hours']} "
+                   "hours, then they stop and tell you. Questions are not asked; permissions and the verdict stay yours.")
+    else:
+        out.append(f"Delegation: on, up to {delegate['max_children']} children of size ≤ {delegate['max_size']}"
+                   if delegate else "Delegation: off")
     return out
 
 

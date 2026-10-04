@@ -18,3 +18,14 @@ def _no_real_claude_files(tmp_path, monkeypatch):
     """The addon reads Claude's dir and a limits log under HOME by default: point both at an empty temp dir."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "home" / ".claude"))
+
+
+@pytest.fixture(autouse=True)
+def _utc(monkeypatch):
+    """Days are the machine's local days: pin the zone so the expected days do not depend on where tests run."""
+    import time
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()

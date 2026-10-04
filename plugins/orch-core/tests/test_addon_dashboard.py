@@ -132,14 +132,14 @@ def test_menu_status_renders_chip_and_one_status_line(client, demo):
         m = _menu(client.get(url).text)
         assert 'class="chip chip-warn"' in m and ">75 %</span>" in m
         assert '<span class="menu-line">' in m and '<span class="ml-ok">35 %</span>' in m and "· resets" in m
-        assert f'data-until="{until}"' in m and "in 3 h 05" in m
+        assert f'data-until="{until}"' in m and "3h05" in m
 
 
 def test_countdown_text_future_past_and_bad_until():
     from orch.addons.widgets import countdown_text
     now = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
-    assert countdown_text("2026-10-04T15:05:30Z", "reset", now) == "in 3 h 05"
-    assert countdown_text("2026-10-04T12:12:30+00:00", "reset", now) == "in 12 min"
+    assert countdown_text("2026-10-04T15:05:30Z", "reset", now) == "3h05"
+    assert countdown_text("2026-10-04T12:12:30+00:00", "reset", now) == "12 min"
     assert countdown_text("2026-10-04T11:59:00Z", "done!", now) == "done!"
     assert countdown_text("nonsense", "reset", now) is None and countdown_text("2026-10-04T15:00:00", "r", now) is None
 

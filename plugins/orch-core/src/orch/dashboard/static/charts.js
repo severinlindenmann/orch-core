@@ -34,7 +34,14 @@
     plot.append(canvas);
     const horizontal = Boolean(spec.horizontal) && spec.kind === "bar";
     plot.style.height = horizontal ? Math.max(200, spec.labels.length * 30 + 48) + "px" : "";
-    const linear = spec.x === "linear";
+    const timed = spec.x === "time";
+    const linear = spec.x === "linear" || timed;
+    const span = timed ? Math.max(...spec.labels) - Math.min(...spec.labels) : 0;
+    const clock = (v) => {  // epoch seconds in the browser's local time: HH:MM within a day, dd.MM HH:MM across days
+      const d = new Date(v * 1000), p2 = (n) => String(n).padStart(2, "0");
+      return (span > 86400 ? p2(d.getDate()) + "." + p2(d.getMonth() + 1) + " " : "") + p2(d.getHours()) + ":" + p2(d.getMinutes());
+    };
+    const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
     const ink = css("--muted"), grid = css("--line");
     const whole = spec.series.every((s) => s.values.every((v) => Number.isInteger(v)));
     const stacked = Boolean(spec.stacked);
@@ -50,11 +57,11 @@
     const axis = (extra) => Object.assign({ ticks: { color: ink, font: { size: 11 } }, grid: { color: grid }, border: { color: grid } }, extra);
     const cat = axis({ grid: { display: false }, stacked });
     const val = axis({ beginAtZero: true, stacked, border: { display: false },
-      ticks: { color: ink, font: { size: 11 }, precision: whole ? 0 : undefined } });
+      ticks: { color: ink, font: { size: 11 }, precision: whole ? 0 : undefined, callback: (v) => compact.format(v) } });
     const tip = {
       backgroundColor: css("--surface2", "#fff"), titleColor: css("--text"), bodyColor: css("--text"),
       borderColor: css("--line2"), borderWidth: 1, padding: 10,
-      callbacks: { label: (c) => " " + c.dataset.label + ": " + (horizontal ? c.parsed.x : c.parsed.y) + (spec.unit ? " " + spec.unit : "") },
+      callbacks: { title: timed ? (items) => (items.length ? clock(items[0].parsed.x) : "") : undefined, label: (c) => " " + c.dataset.label + ": " + (horizontal ? c.parsed.x : c.parsed.y) + (spec.unit ? " " + spec.unit : "") },
     };
     return new window.Chart(canvas, {
       type: spec.kind === "line" ? "line" : "bar",
@@ -63,7 +70,7 @@
         responsive: true, maintainAspectRatio: false, animation: reduced() ? false : { duration: 250 },
         indexAxis: horizontal ? "y" : "x", interaction: { mode: "index", intersect: false },
         plugins: { legend: { display: false }, tooltip: tip },
-        scales: horizontal ? { x: val, y: cat } : { x: linear ? axis({ type: "linear" }) : cat, y: val },
+        scales: horizontal ? { x: val, y: cat } : { x: timed ? axis({ type: "linear", ticks: { color: ink, font: { size: 11 }, maxTicksLimit: 6, callback: (v) => clock(v) } }) : linear ? axis({ type: "linear" }) : cat, y: val },
       },
     });
   };

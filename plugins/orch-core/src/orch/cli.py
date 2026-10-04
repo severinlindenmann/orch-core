@@ -475,11 +475,25 @@ def answer(ref: str, qid: str, value: str,
     _out(_view(ws, t), json_out, f"{t.id}: answered {qid.upper()} (status {t.status})")
 
 
+_ALL = "\x00all"  # --despite-open-question given with `plans` (no keys)
+
+
+def _keys(ws, raw: str | None) -> list[str]:
+    from orch.core.ids import normalize_ref
+    return [normalize_ref(ws, k.strip()).upper() for k in (raw or "").split(",") if k.strip()]
+
+
 @app.command()
 def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan | plans (an epic's children)")],
             despite_open_question: Annotated[bool, typer.Option(
                 "--despite-open-question",
-                help="Approve although a line reads as an open question for you (you read it; it is not one).")] = False,
+                help="Approve although a line reads as an open question for you (you read it; it is not one). "
+                     "With `plans` only when exactly one plan has such a line.")] = False,
+            despite_on: Annotated[Optional[str], typer.Option(
+                "--despite-open-question-on", metavar="KEY,...",
+                help="With `plans`: the children whose open-question line you read and waive, one by one.")] = None,
+            only: Annotated[Optional[str], typer.Option(
+                "--only", metavar="KEY,...", help="With `plans`: approve only these children's plans.")] = None,
             delegate: Annotated[bool, typer.Option(
                 "--delegate", help="Epics: let agents auto-approve children they add, within the limits.")] = False,
             max_children: Annotated[Optional[int], typer.Option(
@@ -508,7 +522,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if gate == "plans":
         if delegate:
             raise UsageError("delegation is given when approving an epic's requirements")
-        return _approve_plans(ws, target, despite_open_question, dry_run, json_out)
+        if despite_open_question and despite_on is not None:
+            raise UsageError("pass --despite-open-question or --despite-open-question-on KEY,..., not both")
+        return _approve_plans(ws, target, _ALL if despite_open_question else despite_on, only, dry_run, json_out)
+    if only is not None or despite_on is not None:
+        raise UsageError("--only and --despite-open-question-on go with `orch approve <epic> plans`")
     if epics.is_epic(target.meta or {}):
         # The whole charter is shown before the typed confirmation, and the approval binds the hash of exactly the
         # tickets shown: a child added or changed in between makes it fail, nothing is signed.
@@ -551,48 +569,83 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     _out(_view(ws, t), json_out, text)
 
 
-def _approve_plans(ws, target, despite: bool, dry_run: bool, json_out: bool) -> None:
-    """`orch approve <epic> plans` (#27): every child's plan waiting for approval (orch.core.epics.pending_plans) is
-    printed in full with its key, title and exact plan hash, then one typed confirmation (the epic's key) approves
-    each of them, bound to its own hash: a plan changed after it was printed is skipped and reported."""
+def _approve_plans(ws, target, despite: str | None, only: str | None, dry_run: bool, json_out: bool) -> None:
+    """`orch approve <epic> plans` (#27): every child's plan waiting for approval (orch.core.epics.pending_plans,
+    `--only` narrows it) is printed in full with its key, title and exact plan hash, then a summary, then one typed
+    confirmation (the epic's key) approves each of them, bound to its own hash: a plan changed after it was printed
+    is skipped and reported. An open-question line is waived per child (`--despite-open-question-on KEY,...`; the
+    bare `--despite-open-question` only when exactly one child has one)."""
     from orch.actor import confirm_typed, require_human_terminal
     from orch.core import epics, store
     from orch.core.events import Actor
-    from orch.core.gates import gate_hash
+    from orch.core.gates import gate_hash, human_questions_in
+    from orch.core.lifecycle import require_human
     from orch.core.ops import Ops
     from orch.errors import ValidationError
+    from orch.textsafe import visible
     if not epics.is_epic(target.meta or {}):
         raise UsageError(f"{target.id} is not an epic: `plans` approves an epic's children",
                          hint=f"orch approve {target.id} plan")
+    require_human(Actor("human", "you", "tty"), "approving gates")  # an agent is refused here, dry run or not
     if not dry_run:
         require_human_terminal("human-only action")
     epic_t = store.load(ws, target.id)[1]
     kids = epics.pending_plans(ws, epic_t)  # read once: printed and hashed from the same objects
+    wanted = _keys(ws, only) if only is not None else None
+    if wanted is not None:
+        if not wanted:
+            raise UsageError("--only needs at least one key")
+        missing = [k for k in wanted if k not in {t.id for t in kids}]
+        if missing:
+            raise ValidationError(f"no plan waits for approval on {', '.join(missing)} in {epic_t.id}",
+                                  hint=f"orch approve {epic_t.id} plans --dry-run lists the plans waiting")
+        kids = [t for t in kids if t.id in wanted]
     if not kids:
         raise ValidationError(f"no plan of {epic_t.id}'s children waits for approval",
-                              hint="plans are approved while a child is in progress; a child still open is covered "
-                                   f"by approving the epic again: orch approve {epic_t.id} requirements")
+                              hint="plans are approved while a child is in progress or waiting; a child still open is "
+                                   "covered by approving the epic again, which is possible while the epic is in "
+                                   f"backlog or open: orch approve {epic_t.id} requirements")
     expected = {t.id: gate_hash(t, "plan") for t in kids}
+    asks = {t.id: human_questions_in(t, "plan") for t in kids}
+    asks = {k: v for k, v in asks.items() if v}
+    if despite == _ALL:
+        if len(asks) > 1:
+            raise UsageError("more than one plan has a line that reads as an open question for you: "
+                             + ", ".join(asks), hint="name the ones you read and mean: --despite-open-question-on "
+                                                     + ",".join(asks))
+        waived = list(asks)
+    else:
+        waived = _keys(ws, despite)
+        stray = [k for k in waived if k not in expected]
+        if stray:
+            raise UsageError(f"--despite-open-question-on names {', '.join(stray)}, not in this batch")
     approved, skipped = Ops(ws, Actor("human", "you", "tty"), dry_run=True).approve_plans(
-        epic_t.id, expected, despite_open_question=despite)
+        epic_t.id, expected, despite=waived)
     lines = []
     for t in kids:
         lines += _gated_text(t, "plan") + [f"  plan hash {expected[t.id]}", ""]
     lines += [f"{sid}: skipped ({why})" for sid, why in skipped]
+    ok = {t.id for t in approved}
+    summary = [f"{'key':<12} {'plan hash':<18} {'open question':<14} title"] + [
+        f"{t.id:<12} {_short(expected[t.id]):<18} {('waived' if t.id in waived else 'yes') if t.id in asks else 'no':<14} "
+        f"{visible(t.title)}" for t in kids if t.id in ok]
+    waivers = [f"despite an open-question line: {k} (line {visible(asks[k][0][:80])})" for k in waived if k in ok]
     if dry_run:
         return _out({"epic": epic_t.id, "dry_run": True, "plans": expected,
-                     "would_approve": [t.id for t in approved], "skipped": dict(skipped)}, json_out,
-                    "\n".join(lines + [f"dry run: would approve {len(approved)} plan(s) of {epic_t.id}: "
-                                        + ", ".join(t.id for t in approved) + "; nothing was written"]))
+                     "would_approve": [t.id for t in approved], "skipped": dict(skipped), "despite": waived},
+                    json_out,
+                    "\n".join(lines + summary + waivers + [f"dry run: would approve {len(approved)} plan(s) of "
+                                                         f"{epic_t.id}: " + ", ".join(t.id for t in approved)
+                                                         + "; nothing was written"]))
     if not approved:
         typer.echo("\n".join(lines), err=json_out)
         raise ValidationError(f"none of the plans of {epic_t.id}'s children can be approved now")
-    typer.echo("\n".join(lines + [f"{epic_t.id}: approve the {len(approved)} plan(s) of "
-                                    + ", ".join(t.id for t in approved) + " exactly as shown, each bound to its hash"]),
-               err=json_out)
+    typer.echo("\n".join(lines + summary + waivers
+                         + [f"{epic_t.id}: approve the {len(approved)} plan(s) above exactly as shown, each bound to "
+                            "its hash"]), err=json_out)
     actor = confirm_typed(epic_t.id)
     approved, skipped = _ops(ws, actor).approve_plans(
-        epic_t.id, {t.id: expected[t.id] for t in approved}, despite_open_question=despite)
+        epic_t.id, {t.id: expected[t.id] for t in approved}, despite=waived)
     _out({"epic": epic_t.id, "approved": {t.id: t.meta["gates"]["plan"]["hash"] for t in approved},
           "skipped": dict(skipped)}, json_out,
          "\n".join([f"{t.id}: plan approved ({_short(t.meta['gates']['plan']['hash'])})" for t in approved]

@@ -964,32 +964,43 @@ class Ops(TaskOpsMixin):
         return epic
 
     def approve_plans(self, ref: str, expected: dict, *,
-                      despite_open_question: bool = False) -> tuple[list[Ticket], list[tuple[str, str]]]:
+                      despite: tuple | list | set = ()) -> tuple[list[Ticket], list[tuple[str, str]]]:
         """#27: approve the plans of an epic's children after one confirmation. `expected` maps each child's id to
-        the plan hash the human was shown; every child is approved exactly as `approve <child> plan` would be (one
-        signed ledger entry and one event per child, bound to that child's plan hash), never anything not listed.
-        A child that fails its checks (the plan changed since it was shown, it left the epic, a question opened) is
-        skipped and reported; the others go ahead. Returns (approved tickets, [(id, why skipped)])."""
+        the plan hash the human was shown (one entry per child); every child is approved exactly as
+        `approve <child> plan` would be (one signed ledger entry and one event per child, bound to that child's plan
+        hash), never anything not listed. `despite`: the children (ids) whose open-question line the human waived,
+        one by one. A child that fails its checks (the plan changed since it was shown, it left the epic, a question
+        opened) is skipped and reported, and so is one already approved for exactly that hash; the others go ahead.
+        Returns (approved tickets, [(id, why skipped)])."""
         from orch.core import epics
         from orch.core.ids import normalize_ref
         require_human(self.actor, "approving gates")
         if not expected:
             raise ValidationError("no plans to approve", hint="orch approve <epic> plans lists the plans waiting")
-        for h in expected.values():
+        seen: dict[str, str] = {}
+        for raw, h in expected.items():
+            cid = normalize_ref(self.ws, str(raw)).upper()
+            if cid in seen:
+                raise UsageError(f"{cid} is listed more than once: one plan hash per child")
             _require_seen(h, "an approval of a plan")
+            seen[cid] = h
+        waived = {normalize_ref(self.ws, str(x)).upper() for x in despite}
         epic = store.resolve(self.ws, ref)
         if not epics.is_epic(epic.meta or {}):
             raise UsageError(f"{epic.id} is not an epic", hint=f"orch approve {epic.id} plan")
-        kids = {e.id for e in epics.children(self.ws, epic.id)}
+        kids = {e.id: e for e in epics.children(self.ws, epic.id)}
         approved, skipped = [], []
-        for cid, h in sorted(expected.items()):
-            cid = normalize_ref(self.ws, cid).upper()
+        for cid, h in sorted(seen.items()):
             if cid not in kids:
                 skipped.append((cid, f"not a child of {epic.id}"))
                 continue
             try:
-                approved.append(self.approve(cid, "plan", expected_hash=h,
-                                             despite_open_question=despite_open_question))
+                cur = store.read_ticket(kids[cid].path)
+                g = (cur.meta.get("gates") or {}).get("plan") or {}
+                if g.get("approved") and g.get("hash") == h == gate_hash(cur, "plan"):
+                    skipped.append((cid, "already approved"))
+                    continue
+                approved.append(self.approve(cid, "plan", expected_hash=h, despite_open_question=cid in waived))
             except HumanOnlyError:
                 raise
             except OrchError as e:  # this child's checks failed (or its file is busy): the others go ahead

@@ -776,3 +776,32 @@ def test_dry_run_approves_nothing(ws, aops, human):
     assert [t.id for t in approved] == kids and skipped == []
     assert all(gate_state(_load(ws, c), "plan") == "pending" for c in kids)
     assert not [e for e in ledger.entries(ws) if e.get("gate") == "plan"]
+
+
+def test_duplicate_keys_are_refused(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=1)
+    h = _plans_seen(ws, eid)[kids[0]]
+    with pytest.raises(UsageError, match="more than once"):
+        hops.approve_plans(eid, {kids[0]: h, kids[0].lower(): h})
+    assert gate_state(_load(ws, kids[0]), "plan") == "pending"
+
+
+def test_a_plan_already_approved_for_that_hash_is_skipped(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=2)
+    seen = _plans_seen(ws, eid)
+    hops.approve(kids[0], "plan")
+    before = len(ledger.entries(ws))
+    approved, skipped = hops.approve_plans(eid, seen)
+    assert [t.id for t in approved] == [kids[1]] and skipped == [(kids[0], "already approved")]
+    assert len(ledger.entries(ws)) == before + 1  # only the second child was signed
+
+
+def test_open_question_lines_are_waived_per_child(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=2)
+    for cid in kids:
+        aops.set_section(cid, "Plan", f"1. build {cid}\nOpen question: which queue for {cid}?")
+    approved, skipped = hops.approve_plans(eid, _plans_seen(ws, eid), despite=[kids[0].lower()])
+    assert [t.id for t in approved] == [kids[0]]
+    assert [s[0] for s in skipped] == [kids[1]] and "open question" in skipped[0][1]
+    entry = [e for e in ledger.entries(ws) if e.get("gate") == "plan"][-1]
+    assert entry["ticket"] == kids[0] and entry.get("despite_open_question") is True

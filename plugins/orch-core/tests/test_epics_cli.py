@@ -310,3 +310,71 @@ def test_single_plan_approval_points_to_the_batch(switch, ws_root, capsys):
     switch.human(kids[0])
     out = _ok(capsys, "approve", kids[0], "plan")
     assert "2 more plan(s) in epic L-0001 wait: orch approve L-0001 plans" in out
+
+
+def _questions(capsys, kids):
+    for k in kids:
+        _ok(capsys, "section", "set", k, "Plan", "-m", f"1. build {k}\nOpen question: which queue for {k}?")
+
+
+def test_bare_despite_flag_refuses_more_than_one_child_with_a_question(switch, ws_root, capsys):
+    kids = _epic_with_claimed_plans(switch, capsys)
+    _questions(capsys, kids)
+    switch.human("L-0001")
+    assert run(["approve", "L-0001", "plans", "--despite-open-question"]) == 2
+    err = capsys.readouterr().err
+    assert all(k in err for k in kids)
+
+
+def test_bare_despite_flag_waives_the_only_child_with_a_question(switch, ws_root, capsys):
+    kids = _epic_with_claimed_plans(switch, capsys)
+    _questions(capsys, kids[:1])
+    switch.human("L-0001")
+    out = _ok(capsys, "approve", "L-0001", "plans", "--despite-open-question")
+    assert f"despite an open-question line: {kids[0]} (line " in out
+    assert f"{kids[0]}: plan approved" in out and f"{kids[1]}: plan approved" in out
+
+
+def test_despite_on_names_children_one_by_one(switch, ws_root, capsys):
+    kids = _epic_with_claimed_plans(switch, capsys, n=3)
+    _questions(capsys, kids[:2])
+    switch.human("L-0001")
+    out = _ok(capsys, "approve", "L-0001", "plans", "--despite-open-question-on", kids[1].lower())
+    waiver = out.index(f"despite an open-question line: {kids[1]}")
+    assert waiver < out.index("approve the 2 plan(s) above")  # printed right above the confirmation
+    assert f"{kids[0]}: skipped" in out and "despite an open-question line: " + kids[0] not in out
+    assert f"{kids[1]}: plan approved" in out and f"{kids[2]}: plan approved" in out
+    assert run(["approve", "L-0001", "plans", "--despite-open-question-on", "L-0099"]) == 2  # not in the batch
+
+
+def test_only_limits_the_batch_and_a_summary_stands_above_the_prompt(switch, ws_root, capsys):
+    kids = _epic_with_claimed_plans(switch, capsys, n=3)
+    switch.human("L-0001")
+    out = _ok(capsys, "approve", "L-0001", "plans", "--only", f"{kids[0]},{kids[2].lower()}")
+    table = out.index("key          plan hash          open question  title")
+    assert table < out.index(f"{kids[0]:<12} sha256 ") < out.index("approve the 2 plan(s) above")
+    assert f"{kids[0]}: plan approved" in out and f"{kids[2]}: plan approved" in out and kids[1] + ": plan" not in out
+    assert run(["approve", "L-0001", "plans", "--only", kids[0]]) == 5  # no longer waiting
+
+
+def test_agent_dry_run_is_refused_even_with_nothing_waiting(switch, ws_root, capsys):
+    _ok(capsys, "new", "--title", "Billing", "--type", "epic")
+    assert run(["approve", "L-0001", "plans", "--dry-run"]) == 3
+
+
+def test_no_waiting_plan_hint_names_when_the_epic_can_be_reapproved(switch, ws_root, capsys):
+    _ok(capsys, "new", "--title", "Billing", "--type", "epic")
+    switch.human("L-0001")
+    assert run(["approve", "L-0001", "plans"]) == 5
+    assert "backlog or open" in capsys.readouterr().err
+
+
+def test_json_stdout_stays_clean_with_the_prompt_on_stderr(switch, ws_root, capsys, monkeypatch):
+    kids = _epic_with_claimed_plans(switch, capsys)
+    switch.human("L-0001")
+    monkeypatch.setattr("builtins.input", lambda prompt="": (print(prompt, end=""), "L-0001")[1])
+    out = capsys.readouterr()
+    code = run(["approve", "L-0001", "plans", "--json"])
+    out = capsys.readouterr()
+    assert code == 0 and "to confirm" in out.err
+    assert set(json.loads(out.out)["approved"]) == set(kids)

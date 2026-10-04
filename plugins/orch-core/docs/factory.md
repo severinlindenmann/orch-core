@@ -30,6 +30,11 @@ When the time budget is used up, agents stop: no new auto-approvals, no claims o
 grants answer nothing until you decide again. A used-up budget (time or children) is a card in `orch permit list`;
 `orch epic show <epic>` shows the state.
 
+The child count also comes from one marker per auto-approved child, kept beside the ledger outside the repository,
+not only from the event log or ticket files, so editing those cannot understate it. The budget is decided by the
+signed charter alone: the factory switch does not lift it. At the limit, a child the delegation approved goes on;
+any other child without a human approval is refused a claim or task start.
+
 ## What changes for agents in a factory epic
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never

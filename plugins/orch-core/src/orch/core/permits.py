@@ -64,27 +64,38 @@ def factory_delegation(ws, epic, signed=None) -> dict | None:
     return d if d and d.get("factory") else None
 
 
-def factory_epic(ws, t, signed=None):
-    """The factory epic `t` is (or is a child of), or None; None whenever the factory is switched off (its epics
-    then behave as ordinary delegated epics)."""
-    if not enabled(ws):
-        return None
+def charter_epic(ws, t, signed=None):
+    """The factory epic `t` is (or is a child of), judged by its signed charter alone, whatever the switch says: what
+    only stops an agent (the budget, no questions) must not be lifted by editing the config."""
     epic = t if epics.is_epic(t) else epics.parent_epic(ws, t)
     if epic is None or factory_delegation(ws, epic, signed) is None:
         return None
     return epic
 
 
+def factory_epic(ws, t, signed=None):
+    """As charter_epic, but None whenever the factory is switched off (its epics then behave as ordinary delegated
+    epics); for what ADDS power: grants, requests, the hook."""
+    return charter_epic(ws, t, signed) if enabled(ws) else None
+
+
 def require_budget(ws, t) -> None:
-    """Refuse an agent's claim or task start on a factory ticket once the epic's time budget is used up (owner
-    decision D5: then the human decides; `orch permit list` shows the card)."""
-    epic = factory_epic(ws, t)
+    """Refuse an agent's claim or task start on a factory ticket once the epic's time or child budget is used up
+    (owner decision D5: then the human decides; `orch permit list` shows the card). Decided by the signed charter and
+    the markers beside the ledger, never by the config switch or the repository's files."""
+    epic = charter_epic(ws, t)
     if epic is None:
         return
     d = factory_delegation(ws, epic)
     if d and d.get("expired"):
         raise ValidationError(f"the time budget of AI Factory epic {epic.id} is used up: the human decides how it "
                               "goes on", hint=f"stop and wait (`orch wait {t.id}`)")
+    if d and t.id != epic.id and not d["paused"] and not d["epic_changed"]:
+        from orch.core import ledger
+        if (epics.marked_delegated(d["id"]) >= d["max_children"] and not epics.is_marked(d["id"], t.id)
+                and ledger.gate_verification(ws, t, "requirements") != "verified"):
+            raise ValidationError(f"the child budget of {d['max_children']} on AI Factory epic {epic.id} is used up: "
+                                  "the human decides how it goes on", hint=f"stop and wait (`orch wait {t.id}`)")
 
 
 def budget_cards(ws) -> list[dict]:

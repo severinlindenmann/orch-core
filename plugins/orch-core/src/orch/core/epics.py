@@ -172,9 +172,11 @@ def charter(ws, epic, delegate=None, entries=None, tickets=None) -> dict:
 
 def _signed(ws, signed):
     """The signed ledger entries: as given, else read once per request scope (orch.core.store.memo)."""
+    from orch.core import ledger
+    if not ledger.head_ok():
+        return []  # a cut ledger backs no charter, pause or delegation
     if signed is not None:
         return signed
-    from orch.core import ledger
     return store.memo(ws, "ledger-entries", lambda: ledger.entries(ws))
 
 

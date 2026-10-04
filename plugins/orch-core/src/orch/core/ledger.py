@@ -22,11 +22,14 @@ the repository, not an edit of the ticket, and `orch check` reports what does no
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
+
+from filelock import FileLock, Timeout
 
 from orch.clock import stamp_s
 from orch.core.canonical import canonical_json
@@ -34,6 +37,7 @@ from orch.errors import OrchError
 
 LEDGER_FILE = "ledger.jsonl"
 KEY_NAME = "ledger.key"
+HEAD_FILE = "ledger.head"
 _cache: dict[str, tuple[tuple, list[dict]]] = {}
 
 NOT_SIGNED_HINT = ("ask the human to review it with `orch ledger adopt`; if they did not approve it, they should "
@@ -59,18 +63,21 @@ _checkouts: dict[str, str] = {}
 
 def checkout_id(ws) -> str:
     """sha256 of the real path of the checkout's git common dir (one value for every worktree of a clone), else of
-    the workspace root, [:16]. Setting entries carry it, so a decision made here does not carry over to a copy, a
-    clone, a moved checkout or another workspace with the same customer and prefix."""
+    the workspace root, plus the workspace root's path relative to the repository's top level when it is not the top
+    level itself, [:16]. Setting entries carry it, so a decision made here does not carry over to a copy, a clone, a
+    moved checkout, a workspace nested elsewhere in the same repository or another workspace with the same customer
+    and prefix; the worktrees of one clone keep the same relative path and share it."""
     key = str(ws.home)
     if key not in _checkouts:
         root = Path(ws.root).resolve()
-        common = root
+        common, top = root, root
         for d in (root, *root.parents):
             git = d / ".git"
             if git.is_dir():
-                common = git
+                common, top = git, d
                 break
             if git.is_file():
+                top = d
                 try:
                     gitdir = (d / git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip()).resolve()
                 except (OSError, IndexError, ValueError):
@@ -80,7 +87,11 @@ def checkout_id(ws) -> str:
                 except OSError:
                     common = gitdir
                 break
-        _checkouts[key] = hashlib.sha256(os.fsencode(common.resolve())).hexdigest()[:16]
+        ident = os.fsencode(common.resolve())
+        rel = root.relative_to(top).as_posix()
+        if rel != ".":  # a workspace at the top level keeps the id it had before the relative path was bound
+            ident += b"\0" + rel.encode("utf-8")
+        _checkouts[key] = hashlib.sha256(ident).hexdigest()[:16]
     return _checkouts[key]
 
 
@@ -101,7 +112,7 @@ def signed_setting(ws, name: str, signed: list[dict] | None = None):
     """The value of this checkout's newest signed entry for `name`, or None when there is none or it does not chain
     onto the entry before it (a replayed, reordered or out-of-place entry): that counts as no decision."""
     chain = _settings(ws, name, entries(ws) if signed is None else signed)
-    if not chain:
+    if not chain or not head_ok():
         return None
     last, prev = chain[-1], (chain[-2]["mac"] if len(chain) > 1 else "")
     if last.get("prev") != prev or sum(e["mac"] == last["mac"] for e in chain) > 1:
@@ -132,6 +143,10 @@ def widgets_html_state(ws, signed: list[dict] | None = None) -> str:
 
 def ledger_path(ws=None) -> Path:
     return base_dir() / LEDGER_FILE
+
+
+def head_path() -> Path:
+    return base_dir() / HEAD_FILE
 
 
 def key_path() -> Path:
@@ -186,16 +201,107 @@ def record(ws, *, ticket: str, kind: str, actor, evidence: dict | None, **fields
     if getattr(actor, "device", None):
         entry["device"] = actor.device  # a phone decision (via "phone:<label>"): which paired phone
     try:
+        fresh = not key_path().exists()
         key = _key(create=True)
-        entry["mac"] = _mac(key, entry)
+        if fresh:  # a new key starts a new ledger: a head record signed with an earlier key says nothing about it
+            with contextlib.suppress(FileNotFoundError):
+                head_path().unlink()
         path = ledger_path(ws)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError as e:
+        with FileLock(str(base_dir() / LOCK_FILE), timeout=10):
+            before = _read(path, key, _stat(key_path()))
+            intact = _head_matches(key, before)
+            entry["n"] = len(before) + 1  # its place among the signed entries; marks a ledger that has a head
+            entry["mac"] = _mac(key, entry)
+            size = _stat(path)
+            try:
+                with open(path, "a", encoding="utf-8", newline="\n") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                _write_head(key, len(before) + 1, entry["mac"], broken=not intact)
+            except BaseException:  # the entry is not recorded without its head: take it back
+                with contextlib.suppress(OSError), open(path, "r+b") as f:
+                    f.truncate(size[0] if size else 0)
+                raise
+    except (OSError, Timeout) as e:
         raise OrchError(f"could not write the approval ledger ({e}); nothing was applied",
                         hint=f"check that {base_dir()} is writable") from e
     return entry
+
+
+# -- the head record: how long the ledger is and how it ends, signed, so a removed line is noticed --------------
+# `ledger.head` beside the ledger holds {kind: "head", count, last, broken, mac}: the number of signed entries in the
+# file, the MAC of the newest one and whether the ledger was already cut when it was written, signed with the ledger
+# key. Every append rewrites it atomically under the ledger lock, and every entry written since carries `n`, its place
+# among the signed entries. The ledger counts as intact only when the head's signature checks out, it is not marked
+# `broken`, the file holds at least `count` signed entries with `last` at place `count`, the newest entry that carries
+# `n` is the one the head names, and every `n` matches its place. Otherwise entries were removed or replaced, or the
+# head was removed, damaged or swapped for an older one: every chained decision (status entries, settings) then
+# counts as not verified, and stays so (`broken`) after later appends. A ledger with no entry carrying `n` is one
+# from before the head record existed: it may have no head, and its next append writes one. Rolling back the ledger
+# and the head together to an earlier consistent state needs an anchor outside both files (the documented limit).
+LOCK_FILE = "ledger.lock"
+
+
+def _head_matches(key: bytes, signed_all: list[dict]) -> bool:
+    marked = [(i, e) for i, e in enumerate(signed_all, 1) if "n" in e]
+    if any(e["n"] != i for i, e in marked):
+        return False
+    if marked and any("n" not in e for e in signed_all[marked[0][0]:]):
+        return False  # an unnumbered line after the first numbered one: an old entry copied in
+    try:
+        raw = head_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return not marked  # only a ledger that never had a head record may run without one
+    except (OSError, UnicodeDecodeError):
+        return False
+    try:
+        head = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if not (isinstance(head, dict) and head.get("kind") == "head" and isinstance(head.get("mac"), str)
+            and hmac.compare_digest(head["mac"], _mac(key, head))):
+        return False
+    count = head.get("count")
+    if head.get("broken") is not False or not isinstance(count, int) or count < 1 or len(signed_all) != count:
+        return False  # fewer: entries removed; more: lines added after the head, or an older head put back
+    return signed_all[count - 1]["mac"] == head.get("last")
+
+
+def _write_head(key: bytes, count: int, last: str, *, broken: bool) -> None:
+    import tempfile
+    head = {"kind": "head", "count": count, "last": last, "broken": broken}
+    head["mac"] = _mac(key, head)
+    fd, tmp = tempfile.mkstemp(dir=base_dir(), prefix=".ledger.head.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(head) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, head_path())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+_head_cache: dict[str, tuple[tuple, bool]] = {}
+
+
+def head_ok() -> bool:
+    """False when the ledger on this machine is shorter than its signed head record, or ends differently: entries
+    were removed or replaced, so no chained decision counts. True without a key (nothing is signed) or without a
+    head record (a ledger from before it existed)."""
+    key = _key(create=False)
+    if not key:
+        return True
+    keysig = _stat(key_path())
+    sig = (_stat(head_path()), _stat(ledger_path()), keysig)
+    cached = _head_cache.get(str(base_dir()))
+    if cached and cached[0] == sig:
+        return cached[1]
+    ok = _head_matches(key, _read(ledger_path(), key, keysig))
+    _head_cache[str(base_dir())] = (sig, ok)
+    return ok
 
 
 def _stat(path: Path):
@@ -327,7 +433,7 @@ def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = N
     signed = entries(ws) if signed is None else signed
     v = (ticket.meta.get("gates") or {}).get("verify") or {}
     chain = status_chain(ws, ticket.id, signed)
-    if not chain:
+    if not chain or not head_ok():
         return "unverified"
     last = chain[-1]
     if "prev" in last:

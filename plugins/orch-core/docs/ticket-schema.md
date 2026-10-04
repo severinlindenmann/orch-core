@@ -169,7 +169,7 @@ with `orch ask` instead.
 
 Human approvals, answers, verdicts and closes are also signed into one per-user file, `ledger.jsonl` in the orch
 config dir. Each line is a JSON object `{workspace, ticket, kind: "gate"|"answer"|"verdict"|"close"|"charter"|"pause"|"ticket_request", gate, hash,
-hash_v, despite_open_question, qid, answer, question_hash, verdict, verify_at, verdict_hash, prev, reason, adopted, actor, via, at,
+hash_v, despite_open_question, qid, answer, question_hash, verdict, verify_at, verdict_hash, prev, reason, adopted, n, actor, via, at,
 evidence, mac}` (fields by kind), plus `device` (the paired phone's id) on a decision applied from a phone (`via`
 `phone:<label>`); a backlog ticket a paired phone requested is signed as `ticket_request` with its `decision` id. A
 `phone:` event of a signed kind without a matching entry is `unverified-remote` in `orch check`, and Today shows its
@@ -179,8 +179,20 @@ ticket's newest signed status entry is a `close`, or a done `verdict` that match
 (`verify_at`, `verdict_hash` against `gates.verify.hash`), and its `prev` is the `mac` of the entry before it. A later
 reopen or follow-up verdict ends every earlier close; the event log and the ticket file are not inputs. An entry
 from before the chain existed has no `prev`; it counts only while no later signed status entry exists and the event
-log shows exactly one done for the ticket (a review with `orch ledger adopt` signs a chained entry). Removing the
-newest entries of the ledger is outside what the chain detects. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
+log shows exactly one done for the ticket (a review with `orch ledger adopt` signs a chained entry). A signed
+head record, `ledger.head` beside the ledger, holds the number of signed entries, the `mac` of the newest one and
+whether the ledger was already cut when it was written, signed with the same key and rewritten under the ledger's
+lock on every append; every entry written since carries `n`, its place among the signed entries. When the ledger
+does not hold exactly the signed entries the head counts, its entry at that count is not the one named, an `n` does not
+match its place, an unnumbered entry follows a numbered one, or the head record is missing, damaged or older than the newest numbered entry, the ledger was cut: every chained decision (done verdicts, closes, reopens
+and workspace settings) then counts as not verified, `orch check` reports `ledger-cut` as an error, and the head
+stays marked as cut after later appends. The human recovers by restoring the ledger and its head record from a
+backup, or by starting a new ledger (every decision then needs `orch ledger adopt`). A ledger without a head record
+counts only while no entry carries `n` (a ledger from before the head record existed): nothing that verified before
+changes, and its next append writes one. Deleting the
+head record together with every numbered entry falls back to that older mode and is not detected, and neither is
+rolling the ledger and the head record back together to an earlier consistent state: no anchor inside these files can
+close either. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
 from the workspace config; `mac` is HMAC-SHA256 over the canonical JSON of the other fields with the 32-byte key
 in `ledger.key`. A line with a bad `mac` is ignored. An approved gate, answered question or done verdict without a
 matching line is `unsigned-decision` in `orch check`, and agents do not claim, start or finish tasks, or move to

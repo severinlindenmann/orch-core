@@ -711,8 +711,8 @@ class Ops(TaskOpsMixin):
             if t.status == "done":
                 raise TransitionError(f"{t.id} is done; open a follow-up instead", hint=f"orch new --from {t.id} --title ...")
             if not self.actor.is_human:
-                from orch.core.permits import factory_epic
-                epic = factory_epic(self.ws, t)
+                from orch.core.permits import charter_epic
+                epic = charter_epic(self.ws, t)
                 if epic is not None:
                     raise ValidationError(
                         f"{t.id} is part of the AI Factory epic {epic.id}: questions are not asked there",
@@ -1063,6 +1063,14 @@ class Ops(TaskOpsMixin):
                 raise ValidationError(f"{t.id} is not a child of an epic")
             d = epics.delegation(self.ws, epic)
             if d is None:
+                return approve(t, epic)  # refuses
+            # the count and the marker under one lock shared by every checkout of this config dir; approve re-checks
+            with epics.delegation_lock(d["id"]):
+                return approve(t, epic)
+
+        def approve(t: Ticket, epic) -> list:
+            d = epics.delegation(self.ws, epic)
+            if d is None:
                 raise ValidationError(f"{epic.id} has no delegation: the human approves {t.id}",
                                       hint=f"stop and wait for the human (`orch wait {t.id}`)")
             if d["paused"]:
@@ -1113,6 +1121,8 @@ class Ops(TaskOpsMixin):
                                 delegation=d["id"])
                 records.append(("gate.delegated", {"gate": gate, "hash": t.meta["gates"][gate]["hash"],
                                                    "hash_v": HASH_VERSION, "epic": epic.id, "delegation": d["id"]}))
+            if not self.dry_run:
+                epics.mark_delegated(d["id"], t.id)  # the count behind the factory's child budget
             t.meta["status"] = "open"  # backlog → open on the delegated approval (the human's move otherwise)
             self._log(t, f"auto-approved {' and '.join(gates)} under the delegation of epic {epic.id}")
             return records

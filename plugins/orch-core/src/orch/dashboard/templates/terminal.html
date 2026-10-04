@@ -31,7 +31,7 @@
 
 <p class="term-summary" data-summary data-sig="{{ live.sig }}" data-name="{{ s.name }}">
   <b data-f="now">{{ live.now or "No agent activity read yet" }}</b>
-  <span class="muted" data-f="line">{% if live.ticket %}{{ live.ticket }}{% if live.tasks %} {{ live.tasks }} tasks{% endif %}{% if live.more %} +{{ live.more }}{% endif %} · {% endif %}{% if live.subs %}{{ live.subs }} · {% endif %}{% if live.context %}context {{ live.context }}{% endif %}</span>
+  <span class="muted" data-f="line">{% set tk = (live.ticket ~ ((" " ~ live.tasks ~ " tasks") if live.tasks else "") ~ ((" +" ~ live.more) if live.more else "")) if live.ticket else "" %}{{ [tk, live.subs, ("context " ~ live.context) if live.context else "", live.cache] | select | join(" · ") }}</span>
 </p>
 
 <div class="term-layout">
@@ -85,6 +85,7 @@
     <h2>Session</h2>
     <p class="term-row"><span class="muted">Model</span><span>{{ info.model or "—" }}{% for m, n in info.models[1:] %} · {{ m }}{% endfor %}</span></p>
     <p class="term-row"><span class="muted">Context now</span><span>{{ compact(info.context) }} tokens</span></p>
+    {% if info.cache %}<p class="term-row"><span class="muted">Prompt cache</span><span>{{ "warm" if info.cache.warm else "cold: the next prompt writes the context again" }} ({{ info.cache.ttl // 60 }}m lifetime)</span></p>{% endif %}
     {% if info.last_prompt %}<p class="term-row"><span class="muted">Last prompt</span><span class="term-quote">“{{ info.last_prompt }}”</span></p>{% endif %}
     {% if info.prs %}<p class="term-row"><span class="muted">PRs</span><span>{% for p in info.prs %}{% if p.url %}<a class="lnk" href="{{ p.url }}">#{{ p.number }}</a>{% else %}#{{ p.number }}{% endif %}{{ " " if not loop.last }}{% endfor %}</span></p>{% endif %}
     <p class="term-row"><span class="muted">Running for</span><span data-ago="{{ s.created }}"></span></p>

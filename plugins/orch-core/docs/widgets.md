@@ -224,11 +224,13 @@ Agent HTML is on when the workspace config says `widgets.html: true` (default **
 on this machine holds a current signed human decision to turn it on for this workspace and this checkout.
 `orch widget html on` is that decision. It is a human verb like approve or verdict, refused for any process with an
 agent harness in its ancestry and confirmed by typing; the signed entry is bound to the workspace, to the checkout
-(its git common dir, shared by its worktrees) and to the value, and chained to the previous entry for the setting.
+(its git common dir plus the workspace's path inside the repository, so a nested workspace has its own and the
+worktrees of one clone share it) and to the value, and chained to the previous entry for the setting.
 `orch widget html off` takes power away, so anyone may run it, and every off is signed too: the newest entry decides,
 so after any off only a new human on turns it back on. Wherever the setting is read (`Ctx.of`: ticket pages, frames,
 previews, decision cards, addons) it counts as off when the config says true without such a decision: a hand edit or
-a pull, an entry that does not chain onto the one before it, a later off (in the ledger or the event log), another
+a pull, an entry that does not chain onto the one before it, a ledger cut short (see the head record in
+docs/ticket-schema.md), a later off (in the ledger or the event log), another
 machine, or a moved, copied or cloned checkout (each needs its own `orch widget html on`). `orch check` reports that
 as `unsigned-setting`, and reports `stale-setting` when the config says false but a signed on is still in force (an
 off made by hand rather than with `orch widget html off`). The `/widgets` page says how to turn it on, and

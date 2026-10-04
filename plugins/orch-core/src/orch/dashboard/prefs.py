@@ -8,7 +8,7 @@ import json
 
 from orch.core.fsutil import atomic_write_text
 
-GROUPS = ("none", "epic", "sprint", "label", "agent", "repo")
+GROUPS = ("none", "epic", "sprint", "label", "agent", "repo", "factory")
 FILE = "dashboard.json"
 
 

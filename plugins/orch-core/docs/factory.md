@@ -1,10 +1,10 @@
-# AI Factory (phase 1)
+# AI Factory (phases 1 and 2)
 
 One epic in, finished work out: you write an epic and start it as a factory, and agents split, specify,
 auto-approve and build its children. You hear from them when they need a permission they do not hold, and at the
 end for the verdict. Issue #2 tracks the whole feature; this page describes what phase 1 ships.
 
-AI Factory is **off by default**. Phase 1 works from the terminal only; the dashboard cards, the runner and the
+AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface described below. The runner and the
 Ready and Stopped reports follow in later phases.
 
 ## Switching it on
@@ -29,6 +29,11 @@ confirmation (owner decision D7). It signs one charter into the ledger with the 
 When the time budget is used up, agents stop: no new auto-approvals, no claims or task starts on its children, and
 grants answer nothing until you decide again. A used-up budget (time or children) is a card in `orch permit list`;
 `orch epic show <epic>` shows the state.
+
+The child count also comes from one marker per auto-approved child, kept beside the ledger outside the repository,
+not only from the event log or ticket files, so editing those cannot understate it. The budget is decided by the
+signed charter alone: the factory switch does not lift it. At the limit, a child the delegation approved goes on;
+any other child without a human approval is refused a claim or task start.
 
 ## What changes for agents in a factory epic
 
@@ -92,10 +97,27 @@ denies the same action again, that is a new request each time. Making such an ac
 own settings change, never orch's. The test suite covers this path (`tests/test_factory.py`) without touching any
 real settings.
 
+## On the dashboard (phase 2)
+
+Only while `factory.enabled` is on; otherwise none of it is drawn and the routes refuse. Everything here is yours:
+the dashboard's own cookie and same-origin checks apply, and orch refuses these answers to a process running inside
+an agent harness, as it does for the terminal commands. Each is a signed ledger entry written by the same functions
+as `orch permit ...`, with the dashboard's inline confirm (no popup), bound to the hash of the command the card shows.
+
+- The human-only check runs in the dashboard process, as for approvals: keep the dashboard link and its cookie
+  yours, because a grant lets a command run.
+- **Start**: the epic's approval form has a "Start as an AI Factory" choice (25 children or 72 hours, size m or
+  smaller); it is the same signed charter approval as `orch approve <epic> requirements --factory`.
+- **Epic page**: a factory section with the state, children used out of the limit and hours left, the epic's open
+  permission cards, its standing grants with Revoke, and the budget card once the budget is used up.
+- **Permission cards** on Today and in the Board's Your move: the exact command (escaped), the reason, the epic and
+  the asking ticket, with Grant once, Grant for this epic and Deny. They are not part of the decision count.
+- **Board**: Group by "Factory epic" gathers each factory epic and its children; everything else sits under
+  "Not in a factory".
+
 ## Coming in later phases
 
-- Dashboard: the factory switch on the new-epic form, permission cards on Today and in Your move, standing grants
-  with Revoke, and phone cards through the signed phone-decision flow.
+- The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
 - The Ready report (what is live, where to look, decisions made, what was not built) with your one-tap verdict, and
   the Stopped message (D3).
 - The runner: `orch serve` keeping agents going in Mission Control's terminals (D4), waking a parked child after a

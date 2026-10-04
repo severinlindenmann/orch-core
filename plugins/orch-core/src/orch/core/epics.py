@@ -20,6 +20,11 @@ event matches. A signed pause stops further auto-approvals; it keeps (with their
 from __future__ import annotations
 
 import hashlib
+import os
+import re
+from contextlib import contextmanager
+
+from filelock import FileLock, Timeout
 
 from orch.core import store
 from orch.core.canonical import canonical_json
@@ -167,9 +172,11 @@ def charter(ws, epic, delegate=None, entries=None, tickets=None) -> dict:
 
 def _signed(ws, signed):
     """The signed ledger entries: as given, else read once per request scope (orch.core.store.memo)."""
+    from orch.core import ledger
+    if not ledger.head_ok():
+        return []  # a cut ledger backs no charter, pause or delegation
     if signed is not None:
         return signed
-    from orch.core import ledger
     return store.memo(ws, "ledger-entries", lambda: ledger.entries(ws))
 
 
@@ -263,9 +270,61 @@ def frontmatter_delegated(ws, epic_id: str, did: str, entries=None) -> list[str]
     return out
 
 
+def _marker_dir():
+    from orch.core.ledger import base_dir
+    return base_dir() / "permits" / "children"
+
+
+def _marker(did: str, child: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", f"{did}.{child}")
+
+
+def mark_delegated(did: str, child: str) -> None:
+    """Note, beside the ledger and outside the repository, that delegation `did` auto-approved `child` (one exclusive
+    marker per child). A marker only ever counts against the budget, so the agent's own process may write it."""
+    d = _marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.close(os.open(d / _marker(did, child), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        pass
+
+
+@contextmanager
+def delegation_lock(did: str):
+    """One lock for every checkout and process that uses the config dir: the child count and the marker write of an
+    auto-approval happen under it, so two of them at the limit cannot both pass."""
+    d = _marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    fl = FileLock(str(d / f".{_marker(did, '')}lock"), timeout=30)
+    try:
+        fl.acquire()
+    except Timeout as e:
+        raise UsageError("another auto-approval holds the delegation", hint="retry in a moment") from e
+    try:
+        yield
+    finally:
+        fl.release()
+
+
+def is_marked(did: str, child: str) -> bool:
+    return (_marker_dir() / _marker(did, child)).exists()
+
+
+def marked_delegated(did: str) -> int:
+    """How many children delegation `did` approved, by markers (the repository's events and files cannot lower it)."""
+    try:
+        return sum(1 for n in os.listdir(_marker_dir()) if n.startswith(_marker(did, "")))
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return 10**9  # unreadable: fail closed, the limit counts as reached
+
+
 def delegated_count(ws, epic_id: str, did: str, events, entries=None) -> int:
-    """How many children the delegation has approved: the larger of what the events and the frontmatter say."""
-    return max(len(delegated_children(events, did)), len(frontmatter_delegated(ws, epic_id, did, entries)))
+    """How many children the delegation has approved: the largest of the markers, the events and the frontmatter."""
+    return max(marked_delegated(did), len(delegated_children(events, did)),
+               len(frontmatter_delegated(ws, epic_id, did, entries)))
 
 
 def hidden_in(child) -> bool:

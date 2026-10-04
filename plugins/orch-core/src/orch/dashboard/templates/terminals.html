@@ -62,6 +62,7 @@
       <span class="term-ticket" data-f="ticket">{{ l.ticket or "no ticket" }}</span>
       <span data-f="tasks">{{ (l.tasks ~ " tasks") if l.tasks else "" }}</span>
       <span data-f="subs">{{ l.subs }}</span>
+      <span class="term-cache{% if l.cold %} term-cache-cold{% endif %}" data-f="cache">{{ l.cache }}</span>
     </span>
     <pre class="term-screen term-tail" data-screen="{{ r.s.name }}" data-tail>{{ r.screen.tail|safe }}</pre>
     <span class="term-tile-foot"><span>last output <span data-ago="{{ r.s.activity }}"></span></span><span class="mono">{{ r.s.name }}{% if l.model %} · {{ l.model }}{% endif %}</span></span>

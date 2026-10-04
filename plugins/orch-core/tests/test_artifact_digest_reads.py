@@ -146,3 +146,28 @@ def test_nested_components_are_walked_without_following_links(tmp_path):
     (root / "a" / "b").symlink_to(tmp_path / "elsewhere")  # an intermediate component swapped for a link
     assert read_regular(root / "a" / "b" / "f", root=root) is None
     assert read_regular(tmp_path / "elsewhere" / "f", root=root) is None  # not under the root
+
+
+def test_a_response_dropped_unread_closes_its_file(ws, working):
+    import gc
+    from types import SimpleNamespace
+
+    from orch.dashboard.routes_ticket import artifact
+    (_folder(ws, working) / "big.bin").write_bytes(b"x" * 1000)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws=ws)))
+    before = set(os.listdir("/dev/fd"))
+    r = artifact(request, working, "big.bin")
+    assert len(set(os.listdir("/dev/fd")) - before) == 1  # the one open handle
+    del r
+    gc.collect()
+    assert set(os.listdir("/dev/fd")) <= before
+
+
+def test_data_uri_refuses_a_link_inside_the_ticket_folder(ws, working):
+    from orch.widgets.artifacts import data_uri
+    d = _folder(ws, working)
+    (d / "a.png").write_bytes(b"\x89PNG-1")
+    (d / "l.png").symlink_to(d / "a.png")
+    sha = _full(b"\x89PNG-1")
+    assert data_uri(ws, working, f"artifacts/{working}/a.png", sha).startswith("data:image/png;base64,")
+    assert data_uri(ws, working, f"artifacts/{working}/l.png", sha) is None

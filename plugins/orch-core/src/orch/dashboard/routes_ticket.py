@@ -5,6 +5,7 @@ import os
 import re
 
 from fastapi import APIRouter, Request
+from starlette.background import BackgroundTask
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from orch.core import evidence, query, store, tasks_view
@@ -253,14 +254,15 @@ def artifact(request: Request, ticket: str, name: str, v: str = ""):
     if fd is None:
         return PlainTextResponse("not found", status_code=404)
 
-    size = os.fstat(fd).st_size
+    f = os.fdopen(fd, "rb")  # owned from here on: closed by the generator, or when the response is dropped unread
+    size = os.fstat(f.fileno()).st_size
 
     def chunks():
         left = size  # never more than the length announced, even if the file grows meanwhile
-        with os.fdopen(fd, "rb") as f:
+        with f:
             while left > 0 and (block := f.read(min(1 << 16, left))):
                 left -= len(block)
                 yield block
 
     headers["Content-Length"] = str(size)
-    return StreamingResponse(chunks(), media_type=media, headers=headers)
+    return StreamingResponse(chunks(), media_type=media, headers=headers, background=BackgroundTask(f.close))

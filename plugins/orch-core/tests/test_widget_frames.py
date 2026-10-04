@@ -158,24 +158,20 @@ def test_preview_route(dash):
 def test_library_page(dash, put, ws):
     tid = put("in-progress", sections={"Findings": fence(pin_t(ws, {"widget": "mermaid@1", "data": MERMAID})) + "\n\n"
                                        + fence({"type": "callout", "role": "ok", "text": "fine"})})
-    body = dash.get("/widgets").text
-    assert '<h1>Widgets</h1>' in body and 'aria-current="page"' in body and 'href="/widgets"' in body
+    body = dash.get("/widgets").text  # redirected to the tab
+    assert 'data-tab="widgets"' in body and 'aria-current="true"' in body
     assert re.search(r'<script src="/static/widgets/orch-frames\.js', body)
     for name in ("mermaid", "before-after", "callout", "checks"):
-        assert f'id="lib-' in body and f"<code>{name}</code>" in body, name
-    assert re.search(r'data-doc-url="/w/preview/mermaid@1\?n=[\w-]+"', body)
-    mermaid = body[body.index('id="lib-widget-mermaid"'):]
-    mermaid = mermaid[:mermaid.index("</article>")]
-    assert "1 use" in mermaid and f'href="/t/{tid}"' in mermaid and "<code>source</code>" in mermaid
-    assert "Unused for" not in mermaid
-    treemap = body[body.index('id="lib-widget-bundle-treemap"'):]
-    assert "Unused for 30 days" in treemap[:treemap.index("</article>")]
-    callout = body[body.index('id="lib-core-callout"'):]
-    callout = callout[:callout.index("</article>")]
-    assert 'class="w w-t-callout"' in callout and "1 use" in callout  # drawn inline from EXAMPLE
-    from orch.widgets.registry import MOMENTS
-    shown = re.findall(r'<section class="lib-group" id="m-([a-z]+)"', body)
-    assert shown == [m for m in MOMENTS if m in shown] and len(shown) >= 5
+        assert f'id="w-{name}"' in body, name
+    mermaid = dash.get("/workspace?tab=widgets&w=mermaid").text
+    assert re.search(r'data-doc-url="/w/preview/mermaid@1\?n=[\w-]+"', mermaid)
+    side = mermaid[mermaid.index('aria-label="Selected widget"'):]
+    assert "1 use" in side and f'href="/t/{tid}"' in side and "<code>source</code>" in side
+    treemap = dash.get("/workspace?tab=widgets&w=bundle-treemap").text
+    assert "Not used on any ticket yet." in treemap[treemap.index('aria-label="Selected widget"'):]
+    callout = dash.get("/workspace?tab=widgets&w=callout").text
+    side = callout[callout.index('aria-label="Selected widget"'):]
+    assert 'class="w w-t-callout"' in side and "1 use" in side  # drawn inline from EXAMPLE
 
 
 # -- CLI ---------------------------------------------------------------------------------------------------------

@@ -6,7 +6,6 @@
   ("board", "Board", "/board", "board", 0, ""),
   ("activity", "Activity", "/activity", "activity", 0, ""),
   ("reports", "Reports", "/reports", "reports", 0, ""),
-  ("widgets", "Widgets", "/widgets", "widgets", 0, ""),
 ] -%}
 {%- macro badge_label(tone, n) -%}
   {%- if tone == "hot" %}{{ n }} {{ "decision waits" if n == 1 else "decisions wait" }} on you

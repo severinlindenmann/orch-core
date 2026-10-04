@@ -33,9 +33,10 @@ def _panels(html):
 
 def test_addons_is_the_default_tab_and_the_others_are_hidden(client):
     html = client.get("/workspace").text
-    assert _panels(html) == {"addons": "", "setup": " hidden", "phones": " hidden", "advanced": " hidden"}
+    assert _panels(html) == {"addons": "", "setup": " hidden", "widgets": " hidden", "phones": " hidden",
+                                "advanced": " hidden"}
     tabs = html[html.index('<nav class="tabs ws-tabs"'):html.index("</nav>", html.index('<nav class="tabs ws-tabs"'))]
-    assert re.findall(r'data-tab="(\w+)"', tabs) == ["addons", "setup", "phones", "advanced"]
+    assert re.findall(r'data-tab="(\w+)"', tabs) == ["addons", "setup", "widgets", "phones", "advanced"]
     assert 'href="/workspace" class="on" data-tab="addons" aria-current="true"' in tabs
     assert _panels(client.get("/workspace?tab=advanced").text)["advanced"] == ""
     assert _panels(client.get("/workspace?tab=bogus").text)["addons"] == ""

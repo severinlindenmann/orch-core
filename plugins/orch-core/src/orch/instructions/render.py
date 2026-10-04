@@ -78,6 +78,7 @@ Tickets live in `orchestrator/tickets/` and are managed with the `orch` command.
 5. **{term}s.** {review_rule} Title `Draft: {key} <summary>` until the human removes the draft marker. Body sections: {' / '.join(sections)}. Keep it short and proportional to the change; detailed evidence goes into the ticket's artifacts (`orch artifact add`).
 6. **Outward actions** ({term}s, tracker or wiki writes, addon posts) need the user's confirmation in the current session.
 7. **Handoff.** End every session with `orch state <id> -m "..."` and `orch log <id> -m "..."`.
+   Show, don't only tell: put a `checks` widget in Verification (one row per acceptance criterion), `screens` or `compare` for a UI change, `stats` for measured numbers, `options` when you ask the human to choose (`orch widget add`, `orch widget types`).
 {feedback_rule}
 Skills: `orch-tickets` (commands and conventions), `orch-refine-ticket` (requirements engineering), `orch-work-on-ticket` (claim, plan, implement, verify), `orch-setup` (set up or check this workspace)."""
     return text

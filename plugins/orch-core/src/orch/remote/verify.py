@@ -26,6 +26,12 @@ MAX_SKEW_S = 300
 # ticket request only creates a backlog ticket, as the desktop's New ticket does.
 DIRECT_KINDS = ("answer", "request_changes", "approve", "verdict", "ticket_request")
 STATUSES = ("applied", "pending", "stale", "superseded", "answered-locally", "duplicate", "unlinked")
+# Why a decision was not applied (or that it was): the stable, machine-readable `RemoteResult.code`. Messages are
+# human text and may be reworded; these strings never change meaning. Documented in ADDONS.md (API 2.4).
+CODES = ("applied", "malformed", "kind-not-allowed", "not-paired", "bad-signature", "implausible-time", "too-old",
+         "kind-switched-off", "no-such-ticket", "question-not-found", "already-handled", "superseded",
+         "already-approved", "answered-locally", "changed-since", "wrong-status", "wrong-round",
+         "refused-retry", "refused-final")
 _DEC_ID = re.compile(r"dec_[0-9a-f]{32}")
 _LABEL_SAFE = re.compile(r"[^A-Za-z0-9 ._-]")
 _EVENT_KIND = {"answer": "question.answered", "approve": "gate.approved",
@@ -39,6 +45,7 @@ class RemoteResult:
     message: str
     ticket: str | None = None
     event_seq: int | None = None
+    code: str = ""  # one of CODES; "" only for a result an addon built itself
 
 
 def mac_of(key: bytes, decision: dict) -> str:
@@ -57,8 +64,8 @@ def _at(value) -> datetime | None:
     return dt.astimezone(timezone.utc) if dt.tzinfo else None
 
 
-def _pending(message: str, ticket: str | None = None) -> RemoteResult:
-    return RemoteResult("pending", message, ticket)
+def _pending(message: str, code: str, ticket: str | None = None) -> RemoteResult:
+    return RemoteResult("pending", message, ticket, code=code)
 
 
 def _target_problem(kind: str, target: dict) -> str | None:
@@ -89,46 +96,47 @@ def verify_and_apply(ws, decision: dict, *, addon: str, now: datetime | None = N
     now = now or clock_now()
     if not isinstance(decision, dict) or decision.get("v") != 1 or not isinstance(decision.get("decision_id"), str) \
             or not _DEC_ID.fullmatch(decision["decision_id"]):
-        return _pending("not a version 1 decision")
+        return _pending("not a version 1 decision", "malformed")
     kind, target = decision.get("kind"), decision.get("target")
     if kind not in DIRECT_KINDS:
-        return _pending("a phone cannot decide this kind of thing; do it on the desktop")
+        return _pending("a phone cannot decide this kind of thing; do it on the desktop", "kind-not-allowed")
     if kind == "ticket_request":
         problem = _request_problem(decision)
         if problem:
-            return _pending(problem)
+            return _pending(problem, "malformed")
         target = {}
     elif not isinstance(target, dict) or any(decision.get(k) is not None and not isinstance(decision.get(k), str)
                                              for k in ("value", "note", "ticket", "pair")):
-        return _pending("the decision is malformed")
+        return _pending("the decision is malformed", "malformed")
     phone = phones.find(ws.root, decision.get("pair") or "")
     if phone is None or phone.revoked_at or phone.addon != addon:
-        return _pending("this phone is not paired with this workspace")
+        return _pending("this phone is not paired with this workspace", "not-paired")
     given = decision.get("mac")
     try:
         expected = mac_of(phone.key, decision).encode("ascii")
     except (TypeError, ValueError):
-        return _pending("the phone's signature did not verify")
+        return _pending("the phone's signature did not verify", "bad-signature")
     if not isinstance(given, str) or not hmac.compare_digest(given.encode("utf-8"), expected):
-        return _pending("the phone's signature did not verify")
+        return _pending("the phone's signature did not verify", "bad-signature")
     at = _at(decision.get("at"))
     if at is None or at > now + timedelta(seconds=MAX_SKEW_S):
-        return _pending("the decision's time is not plausible; apply it on the desktop if it is right")
+        return _pending("the decision's time is not plausible; apply it on the desktop if it is right",
+                        "implausible-time")
     if now - at > timedelta(days=MAX_AGE_DAYS):
         return _ledgered_stale(ws, decision, kind, phone)
     if not phones.permissions(ws.root).get(kind):
         return _pending(f"{kind.replace('_', ' ')} from the phone is switched off (Workspace → Phones); "
-                        "do it on the desktop")
+                        "do it on the desktop", "kind-switched-off")
     if kind == "ticket_request":
         with ledger.lock(ws):
             return _apply_request(ws, decision, phone)
     problem = _target_problem(kind, target)
     if problem:
-        return _pending(problem)
+        return _pending(problem, "malformed")
     try:
         tid = store.resolve(ws, decision.get("ticket") or "").id
     except (NotFoundError, UsageError):
-        return RemoteResult("unlinked", "no such ticket in this workspace")
+        return RemoteResult("unlinked", "no such ticket in this workspace", code="no-such-ticket")
     with ledger.lock(ws):
         return _apply(ws, decision, kind, target, tid, phone)
 
@@ -162,7 +170,7 @@ def _apply_request(ws, decision, phone) -> RemoteResult:
 
     did = decision["decision_id"]
     if ledger.seen(ws, did):
-        return RemoteResult("duplicate", "already handled")
+        return RemoteResult("duplicate", "already handled", code="already-handled")
     title = " ".join(decision["value"]["title"].split())
     body = neutral_text(str(decision["value"].get("body") or "").strip())
     label = _LABEL_SAFE.sub("", phone.label)[:40] or "phone"
@@ -170,7 +178,7 @@ def _apply_request(ws, decision, phone) -> RemoteResult:
     try:
         t = Ops(ws, actor).new(title, ask=body)
     except OrchError as e:
-        return _pending(e.message)
+        return _pending(e.message, "refused-retry")
     from orch.actor import process_evidence
     from orch.core import ledger as signed_ledger
     try:  # signed like every other phone decision: which decision, which phone
@@ -183,15 +191,15 @@ def _apply_request(ws, decision, phone) -> RemoteResult:
     written = [e for e in read_events(ws, t.id) if e.via == actor.via]
     seq = next((e.seq for e in written if e.kind == "ticket.created"), None)
     return _record(ws, did, t.id, f"request:{did}", "ticket_request", phone,
-                   RemoteResult("applied", message, t.id, seq),
+                   RemoteResult("applied", message, t.id, seq, "applied"),
                    event_seqs=[e.seq for e in written])
 
 
 def _ledgered_stale(ws, decision, kind, phone) -> RemoteResult:
-    result = RemoteResult("stale", f"older than {MAX_AGE_DAYS} days; never applied automatically")
+    result = RemoteResult("stale", f"older than {MAX_AGE_DAYS} days; never applied automatically", code="too-old")
     with ledger.lock(ws):
         if ledger.seen(ws, decision["decision_id"]):
-            return RemoteResult("duplicate", "already handled")
+            return RemoteResult("duplicate", "already handled", code="already-handled")
         return _record(ws, decision["decision_id"], None, None, kind, phone, result)
 
 
@@ -206,7 +214,7 @@ def _apply(ws, decision, kind, target, tid, phone) -> RemoteResult:
 
     did = decision["decision_id"]
     if ledger.seen(ws, did):
-        return RemoteResult("duplicate", "already handled", tid)
+        return RemoteResult("duplicate", "already handled", tid, code="already-handled")
     t = store.load(ws, tid)[1]
     ticket_events = read_events(ws, tid)
     if kind == "answer":
@@ -223,7 +231,7 @@ def _apply(ws, decision, kind, target, tid, phone) -> RemoteResult:
         return _record(ws, did, tid, key, kind, phone, result, shown=shown)
 
     if ledger.decided(ws, tid, key):
-        return done(RemoteResult("superseded", "another phone decision was applied first", tid))
+        return done(RemoteResult("superseded", "another phone decision was applied first", tid, code="superseded"))
     value = neutral_text(decision.get("value") or "")
     note = neutral_text(decision.get("note") or "")
     try:
@@ -231,42 +239,43 @@ def _apply(ws, decision, kind, target, tid, phone) -> RemoteResult:
             try:
                 q = find_question(t, target["qid"])
             except NotFoundError as e:
-                return _pending(e.message, tid)
+                return _pending(e.message, "question-not-found", tid)
             if q.get("answer") not in (None, ""):
-                return done(RemoteResult("answered-locally", "answered on the desktop", tid))
+                return done(RemoteResult("answered-locally", "answered on the desktop", tid, code="answered-locally"))
             if question_hash(q) != target["hash"]:
-                return done(RemoteResult("stale", "the question changed since", tid))
+                return done(RemoteResult("stale", "the question changed since", tid, code="changed-since"))
             intent, anchor = Intent("answer", ref=tid, qid=q["id"], value=value, reason=note,
                                     expected_hash=target["hash"]), q["id"]
         elif kind == "approve":
             gate = target["gate"]
             if gate_hash(t, gate) != target["hash"]:
-                return done(RemoteResult("stale", f"the {gate} changed since", tid))
+                return done(RemoteResult("stale", f"the {gate} changed since", tid, code="changed-since"))
             if gate_state(t, gate) == "approved":
-                return done(RemoteResult("superseded", "already approved", tid))
+                return done(RemoteResult("superseded", "already approved", tid, code="already-approved"))
             if target.get("plan_hash"):  # F2: requirements and plan in one decision, each bound to its own hash
                 if gate_hash(t, "plan") != target["plan_hash"]:
-                    return done(RemoteResult("stale", "the plan changed since", tid))
+                    return done(RemoteResult("stale", "the plan changed since", tid, code="changed-since"))
                 return _apply_together(ws, did, tid, key, phone, target, ticket_events, shown)
             intent, anchor = Intent("approve", ref=tid, gate=gate, expected_hash=target["hash"]), f"gate:{gate}"
         elif kind == "request_changes":
             gate = target["gate"]
             if gate_hash(t, gate) != target["hash"]:
-                return done(RemoteResult("stale", f"the {gate} changed since", tid))
+                return done(RemoteResult("stale", f"the {gate} changed since", tid, code="changed-since"))
             intent, anchor = Intent("request_changes", ref=tid, gate=gate, reason=value or note,
                                     expected_hash=target["hash"]), f"gate:{gate}"
         else:
             if t.status != "testing":
-                return done(RemoteResult("stale", f"{tid} is {t.status}, not testing", tid))
+                return done(RemoteResult("stale", f"{tid} is {t.status}, not testing", tid, code="wrong-status"))
             if target.get("round") != round_now:
-                return done(RemoteResult("stale", "this verdict was signed for an earlier testing round", tid))
+                return done(RemoteResult("stale", "this verdict was signed for an earlier testing round", tid,
+                                        code="wrong-round"))
             from orch.core.epics import verdict_hash
             if verdict_hash([t], ws) != target["hash"]:
-                return done(RemoteResult("stale", "the criteria or evidence changed since", tid))
+                return done(RemoteResult("stale", "the criteria or evidence changed since", tid, code="changed-since"))
             intent, anchor = Intent("verdict", ref=tid, value=value, reason=note,
                                     expected_hash=target["hash"]), "verdict"
     except ValueError as e:  # an Intent field over its cap
-        return _pending(str(e), tid)
+        return _pending(str(e), "malformed", tid)
 
     label = _LABEL_SAFE.sub("", phone.label)[:40] or "phone"
     actor = Actor("human", "you", f"phone:{label}", device=phone.id)
@@ -276,13 +285,14 @@ def _apply(ws, decision, kind, target, tid, phone) -> RemoteResult:
                         decisions=True, anchor=anchor)
     except (ValidationError, TransitionError) as e:
         if kind == "answer" and _answered(ws, tid, intent.qid):
-            return done(RemoteResult("answered-locally", "answered on the desktop", tid))
-        return done(RemoteResult("stale", e.message, tid))
+            return done(RemoteResult("answered-locally", "answered on the desktop", tid, code="answered-locally"))
+        return done(RemoteResult("stale", e.message, tid, code="refused-final"))
     except OrchError as e:
-        return _pending(e.message, tid)
+        return _pending(e.message, "refused-retry", tid)
     written = [e for e in read_events(ws, tid, after=last) if e.via == actor.via]
     seq = next((e.seq for e in written if e.kind == _EVENT_KIND[kind]), None)
-    return _record(ws, did, tid, key, kind, phone, RemoteResult("applied", f"applied from {label}", tid, seq),
+    applied = RemoteResult("applied", f"applied from {label}", tid, seq, "applied")
+    return _record(ws, did, tid, key, kind, phone, applied,
                    event_seqs=[e.seq for e in written], shown=shown)
 
 
@@ -296,12 +306,14 @@ def _apply_together(ws, did, tid, key, phone, target, ticket_events, shown) -> R
     try:
         Ops(ws, actor).approve_together(tid, requirements_hash=target["hash"], plan_hash=target["plan_hash"])
     except (ValidationError, TransitionError) as e:
-        return _record(ws, did, tid, key, "approve", phone, RemoteResult("stale", e.message, tid), shown=shown)
+        refused = RemoteResult("stale", e.message, tid, code="refused-final")
+        return _record(ws, did, tid, key, "approve", phone, refused, shown=shown)
     except OrchError as e:
-        return _pending(e.message, tid)
+        return _pending(e.message, "refused-retry", tid)
     written = [e for e in read_events(ws, tid, after=last) if e.via == actor.via]
     seq = next((e.seq for e in written if e.kind == "gate.approved"), None)
-    return _record(ws, did, tid, key, "approve", phone, RemoteResult("applied", f"applied from {label}", tid, seq),
+    applied = RemoteResult("applied", f"applied from {label}", tid, seq, "applied")
+    return _record(ws, did, tid, key, "approve", phone, applied,
                    event_seqs=[e.seq for e in written], shown=shown)
 
 

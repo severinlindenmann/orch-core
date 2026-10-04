@@ -14,7 +14,9 @@ def _bash(ws, cmd):
     'cd "$(printenv ORCH_STATE_DIR)" && ls -R',
     'cd "$XDG_CONFIG_HOME/orch" && cp -r . /tmp/x',
     'cd "$HOME/.config" && tar cf /tmp/o .',
-    'cd "$(orch where)" && cp -r . /tmp/x',
+    'cd "$(printenv XDG_CONFIG_HOME/orch)" && cp -r . /tmp/x',
+    'cd "$(python3 -c \'import os;print(os.environ[chr(79)+"RCH_STATE_DIR"])\')" && cp -r . /tmp/x',
+    'cd "$(echo $(echo b3JjaA== | base64 -d)/config | tr a b)" && cp -r . /tmp/x',
 ])
 def test_a_cd_that_names_orchs_own_environment_is_a_cd_into_the_config_dir(ws, cmd):
     assert not _bash(ws, cmd).allow
@@ -25,6 +27,11 @@ def test_a_cd_that_names_orchs_own_environment_is_a_cd_into_the_config_dir(ws, c
     'cd "$HOME/.config/nvim" && ls',
     'cd "$XDG_CONFIG_HOME/nvim" && ls',
     "cd ~/.config/nvim && ls",
+    'cd "$(orch root)" && ls',
+    'cd "$(orch --json root)" && tar cf /tmp/o .',
+    'cd "$(printenv HOME)" && ls -R | head',
+    'cd "$(printenv HOME)/code" && tar cf /tmp/o .',
+    'cd "$(env | grep -m1 ^PWD= | cut -d= -f2)" && ls',
 ])
 def test_a_cd_to_an_unrelated_place_is_still_allowed(ws, cmd):
     assert _bash(ws, cmd).allow

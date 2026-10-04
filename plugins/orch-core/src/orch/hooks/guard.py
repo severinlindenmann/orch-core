@@ -283,8 +283,9 @@ def _unknown_word(word: str, reads: bool) -> bool:
     return any(_sensitive_component(c, i == 0, reads) for i, c in enumerate(comps))
 
 
-_ORCH_ENV_TEXT = re.compile(r"ORCH_STATE_DIR|(?:XDG_CONFIG_HOME|\.config)(?!/(?!orch\b))|\borch\b|\b(?:env|printenv|getenv|environ)\b",
-                            re.I)
+_ORCH_ENV_TEXT = re.compile(r"STATE_DIR|CLAUDE_CONFIG_DIR|(?:XDG_CONFIG_HOME|\.config)(?!/(?!orch\b))|config/orch", re.I)
+_ORCH_OBFUSCATED = re.compile(r"chr\(|base64|\beval\b|os\.environ|getenv", re.I)  # with orch or config named too
+_ORCH_OR_CONFIG = re.compile(r"\borch|config", re.I)
 _CONFIG_WORDS = re.compile(r"orch_state_dir|xdg_config_home|\.config/orch")
 _MUX_WORD = re.compile(r"(?<![a-z])(?:tmux|screen)(?![a-z])")
 
@@ -383,7 +384,8 @@ def _touches_state_dir(ws, cmd: str, cwd):
             if target == "-":
                 target = old or cur
             if re.search(r"[$`]", target) or cdpath_set:
-                if re.search(r"[$`]", target) and _ORCH_ENV_TEXT.search(raw):  # (a plain word under CDPATH is not one)
+                if re.search(r"[$`]", target) and (_ORCH_ENV_TEXT.search(raw) or (
+                        _ORCH_OBFUSCATED.search(raw) and _ORCH_OR_CONFIG.search(raw))):  # not the bare words orch, env
                     return True  # the target names orch's own environment or config place: judged as a cd into it
                 unknown = True  # a place the guard cannot work out: allowed, but the working directory is unknown now
                 continue

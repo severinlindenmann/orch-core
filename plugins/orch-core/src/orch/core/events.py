@@ -18,6 +18,8 @@ EVENT_KINDS = frozenset({
     "task.added", "task.edited", "task.moved", "ledger.adopted",
     "gate.delegated", "delegation.paused",  # epics: an agent's approval under delegation; the human's pause
     "setting.changed",  # a workspace setting changed through orch (`orch widget html`)
+    # AI Factory (orch.core.permits): an agent's request and a grant's use; the human's answers (signed in the ledger)
+    "permit.requested", "permit.used", "permit.granted", "permit.denied", "permit.revoked",
 })
 
 

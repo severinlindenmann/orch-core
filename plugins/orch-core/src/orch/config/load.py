@@ -53,6 +53,9 @@ DEFAULTS: dict = {
     "suggested_addons": [],
     "sprints": [],  # [{id, name, start, end}] (orch.core.sprints): planning metadata only
     "feedback": {"enabled": True},  # #37: agents may queue redacted reports about orch itself (orch feedback add)
+    # AI Factory (#2, docs/factory.md): off until the human switches it on; a factory epic still needs the human's
+    # signed `orch approve <epic> requirements --factory`.
+    "factory": {"enabled": False},
 }
 
 

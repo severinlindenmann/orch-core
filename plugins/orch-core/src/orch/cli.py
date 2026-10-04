@@ -27,6 +27,8 @@ app.add_typer(widget_app, name="widget")
 from orch.cli_epic import epic_app, sprint_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
+from orch.cli_permit import permit_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(permit_app, name="permit")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")
@@ -484,6 +486,9 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
                 "--max-children", help="With --delegate: at most this many auto-approved children (default 10).")] = None,
             max_size: Annotated[Optional[str], typer.Option(
                 "--max-size", help="With --delegate: the largest size auto-approved (default m, up to l).")] = None,
+            factory: Annotated[bool, typer.Option(
+                "--factory", help="Epics: start it as an AI Factory (implies --delegate; 25 children or 72 hours "
+                                  "by default, children up to size m). Needs factory.enabled.")] = False,
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
@@ -491,9 +496,12 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     printed before the typed confirmation; the approval binds exactly what was printed."""
     from orch.core import epics, store
     ws = _ws()
+    delegate = delegate or factory
     if (max_children is not None or max_size is not None) and not delegate:
         raise UsageError("--max-children and --max-size go with --delegate")
     limits = {"max_children": max_children, "max_size": max_size} if delegate else None
+    if factory:
+        limits["factory"] = True
     target = store.resolve(ws, ref)
     if epics.is_epic(target.meta or {}):
         # The whole charter is shown before the typed confirmation, and the approval binds the hash of exactly the

@@ -46,7 +46,7 @@ def test_the_gallery_covers_every_widget_kind():
         for w in sp.widgets:
             walk(w)
     assert {"Text", "Badge", "Link", "Copy", "Action", "Callout", "KV", "Table", "Card", "Search", "Chips", "QR",
-            "Tabs", "Time", "Tile"} <= kinds
+            "Tabs", "Time", "Tile", "Chart"} <= kinds
 
 
 def test_design_page_renders_both_themes_in_three_frames(dash):

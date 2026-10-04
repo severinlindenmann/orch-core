@@ -1,0 +1,21 @@
+{#- A chart: <figure class="chart" data-chart='{json}'>. static/charts.js draws it with the vendored Chart.js (loaded
+    only on a page that has one); the numbers are always in the table under <details>, so it also works without JS.
+    `title` names the chart; `note` is an optional line under it; `spec` is orch.dashboard.charts.spec(...). -#}
+{% macro chart(spec, title, note="", id="") -%}
+  {%- set many = spec.series|length > 1 -%}
+  <figure class="chart" data-chart='{{ spec|tojson }}' data-lib="{{ static_url('vendor/chartjs/chart.umd.min.js') if static_url is defined else '/static/vendor/chartjs/chart.umd.min.js' }}"{% if id %} id="{{ id }}"{% endif %}>
+    <figcaption class="chart-title">{{ title }}</figcaption>
+    {%- if many %}
+    <ul class="chart-legend">{% for s in spec.series %}<li><i class="chart-swatch" style="background: var(--{{ s.token }})" aria-hidden="true"></i>{{ s.name }}</li>{% endfor %}</ul>
+    {%- endif %}
+    <div class="chart-plot" aria-hidden="true"></div>
+    {%- if note %}<p class="chart-note">{{ note }}</p>{% endif %}
+    <details class="chart-data">
+      <summary>Show the numbers</summary>
+      <div class="table-wrap"><table class="table chart-table">
+        <thead><tr><th scope="col">{{ title }}</th>{% for s in spec.series %}<th scope="col" class="num">{{ s.name }}{% if spec.unit %} ({{ spec.unit }}){% endif %}</th>{% endfor %}</tr></thead>
+        <tbody>{% for label in spec.labels %}{% set i = loop.index0 %}<tr><th scope="row">{{ label }}</th>{% for s in spec.series %}<td class="num">{{ "%g"|format(s["values"][i]) }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+  </figure>
+{%- endmacro %}

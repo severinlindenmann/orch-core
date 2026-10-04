@@ -1578,3 +1578,17 @@ html.term-full-open { overflow: hidden; }
 .permit-cmd-inline { overflow-wrap: anywhere; min-width: 0; }
 .charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; }
 .factory-budget { margin-left: var(--s-2); }
+
+/* Charts (templates/_charts.html, static/charts.js) */
+.chart { margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.chart-title { font-family: var(--font-heading); font-weight: 700; font-size: 16px; }
+.chart-plot { position: relative; height: 240px; min-width: 0; }
+.chart-plot canvas { max-width: 100%; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.chart-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.chart-note { margin: 0; font-size: 12px; color: var(--muted); }
+.chart-data summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.chart-data .table-wrap { margin-top: 8px; }
+.chart-table th[scope="row"] { font-weight: 400; text-align: left; }
+.chart-table .num { text-align: right; font-variant-numeric: tabular-nums; }

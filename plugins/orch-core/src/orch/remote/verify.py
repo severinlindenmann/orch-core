@@ -177,6 +177,9 @@ def _apply_request(ws, decision, phone) -> RemoteResult:
     actor = Actor("human", "you", f"phone:{label}", device=phone.id)
     try:
         t = Ops(ws, actor).new(title, ask=body)
+    except ValidationError as e:  # the same text is refused every time: ledger it, final
+        return _record(ws, did, None, f"request:{did}", "ticket_request", phone,
+                       RemoteResult("stale", e.message, None, code="refused-final"))
     except OrchError as e:
         return _pending(e.message, "refused-retry")
     from orch.actor import process_evidence

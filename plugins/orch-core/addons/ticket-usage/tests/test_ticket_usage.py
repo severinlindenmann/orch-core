@@ -193,20 +193,26 @@ def _limits_snap(**last):
     return [Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=(item,))]
 
 
-def test_menu_chip_takes_the_higher_percent_and_colours_by_it():
+def test_menu_chip_is_the_weekly_percent_coloured_by_it_with_a_five_hour_line():
     now = 1_000_000.0
     mk = lambda five, week: T.menu_chip(_limits_snap(five=five, week=week, five_reset=now + 3600, week_reset=now + 86400), now)  # noqa: E731
-    assert (mk(30, 39).text, mk(30, 39).role) == ("39 %", "ok")
-    assert mk(70, 10).role == "warn" and mk(10, 89).role == "warn"
-    assert mk(10, 90).role == "err" and mk(95, 1).text == "95 %"
-    t = mk(30, 39).title
+    assert (mk(30, 39).badge.text, mk(30, 39).badge.role) == ("39 %", "ok")
+    assert mk(10, 70).badge.role == "warn" and mk(10, 89).badge.role == "warn" and mk(10, 90).badge.role == "err"
+    t = mk(30, 39).badge.title
     assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
+    line = mk(35, 39).line
+    assert [type(p).__name__ for p in line] == ["Text", "Badge", "Text", "Countdown"]
+    assert (line[0].text, line[1].text, line[1].role, line[2].text) == ("5 h", "35 %", "ok", "· resets")
+    assert mk(75, 1).line[1].role == "warn" and mk(95, 1).line[1].role == "err"
 
 
-def test_menu_chip_treats_a_reset_window_as_zero_and_no_data_as_no_chip():
+def test_menu_chip_reset_five_hour_window_no_week_and_no_data():
     now = 1_000_000.0
-    chip = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
-    assert chip.text == "40 %" and "5-hour 0 % · reset · week 40 %" in chip.title
+    st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
+    assert st.badge.text == "40 %" and "5-hour 0 % · reset · week 40 %" in st.badge.title
+    assert [p.text for p in st.line] == ["5 h · reset"]
+    st = T.menu_chip(_limits_snap(five=35, week=None, five_reset=now + 60), now)
+    assert st.badge is None and st.line[1].text == "35 %"
     assert T.menu_chip(_limits_snap(), now) is None and T.menu_chip([], now) is None
     assert T.menu_chip(_limits_snap(five=None, week=None), now) is None
 

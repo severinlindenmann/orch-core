@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 
 from orch.addons.api import Snapshot
-from orch.addons.widgets import KV, Badge, Callout, Card, Table, Text, Time
+from orch.addons.widgets import KV, Badge, Callout, Card, Countdown, MenuStatus, Table, Text, Time
 
 from .data import (claude_dir, cost_of, distribute, names, parse_file, read_limits, subagents, transcripts,
                    week_rises)
@@ -244,24 +244,39 @@ def _clock(epoch) -> str:
     return d.strftime("%H:%M") if d.date() == now.date() else d.strftime("%d.%m. %H:%M")
 
 
+def _role(v) -> str:
+    return "ok" if v < 70 else "warn" if v < 90 else "err"
+
+
 def menu_chip(snaps, now: float):
-    """The sidebar chip: the higher of the two used percentages, coloured by how little is left; None without data."""
+    """The menu entry: a chip with the weekly percent and, under the label, the 5-hour percent with a live countdown to
+    its reset; coloured by how little is left. None without data."""
     last = next((i for s in snaps[:1] for i in s.items if i["kind"] == "limits"), {}).get("last")
     if not last:
         return None
-    parts, values = [], []
+    parts, vals = [], {}
     for name, k in (("5-hour", "five"), ("week", "week")):
         v, reset = last.get(k), last.get(k + "_reset")
         if not isinstance(v, (int, float)):
             parts.append(f"{name} unknown")
             continue
         past = isinstance(reset, (int, float)) and reset <= now  # that window has reset since the last record
-        values.append(0 if past else v)
+        vals[k] = (0 if past else v, past)
         parts.append(f"{name} {0 if past else v:.0f} %" + (" · reset" if past else f" · resets {_clock(reset)}" if isinstance(reset, (int, float)) else ""))
-    if not values:
+    if not vals:
         return None
-    top = max(values)
-    return Badge("ok" if top < 70 else "warn" if top < 90 else "err", f"{top:.0f} %", title=" · ".join(parts))
+    week = vals.get("week")
+    badge = Badge(_role(week[0]), f"{week[0]:.0f} %", title=" · ".join(parts)) if week else None
+    line = ()
+    if "five" in vals:
+        v, past = vals["five"]
+        if past:
+            line = (Text("5 h · reset"),)
+        else:
+            line = (Text("5 h"), Badge(_role(v), f"{v:.0f} %"))
+            if isinstance(last.get("five_reset"), (int, float)):
+                line += (Text("· resets"), Countdown(iso(last["five_reset"])))
+    return MenuStatus(badge, line)
 
 
 class TicketUsage:

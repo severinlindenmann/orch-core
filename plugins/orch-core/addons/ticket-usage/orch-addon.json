@@ -1,7 +1,7 @@
 {
   "name": "ticket-usage",
   "title": "Ticket usage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "requires_api": "2",
   "kind": "in-process",
   "description": "Claude Code usage per ticket: estimated cost, output tokens per model and an estimated share of the weekly limit.",

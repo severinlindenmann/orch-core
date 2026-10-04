@@ -13,12 +13,16 @@
   {%- else %}{{ n }} setup {{ "item" if n == 1 else "items" }} open{% endif %}
 {%- endmacro -%}
 {%- macro item(key, label, href, icon, badge=0, tone="", path=false, broken="", chip=none) -%}
-      <a class="item" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>
+      <a class="item{{ ' has-line' if chip and chip.line }}" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>
         {% if path %}<svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ icon }}"/></svg>
         {%- else %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}
-        <span class="label">{{ label }}</span>
+        <span class="label">{{ label }}
+          {%- if chip and chip.line %}<span class="menu-line">{% for p in chip.line %}{% if not loop.first %} {% endif %}
+            {%- if p.k == "badge" %}<span class="ml-{{ p.role }}">{{ p.text }}</span>
+            {%- elif p.k == "cd" %}<span data-until="{{ p.until }}" data-done="{{ p.done }}">{{ p.text }}</span>
+            {%- else %}{{ p.text }}{% endif %}{% endfor %}</span>{% endif %}</span>
         {% if broken %}<span class="nav-dot" role="img" aria-label="{{ label }}: {{ broken }}"></span>{% endif %}
-        {% if chip %}<span class="chip chip-{{ chip.role }}"{% if chip.title %} title="{{ chip.title }}"{% endif %} aria-label="{{ label }}: {{ chip.title or chip.text }}">{{ chip.text }}</span>{% endif %}
+        {% if chip and chip.badge %}{% set b = chip.badge %}<span class="chip chip-{{ b.role }}"{% if b.title %} title="{{ b.title }}"{% endif %} aria-label="{{ label }}: {{ b.title or b.text }}">{{ b.text }}</span>{% endif %}
         {% if badge and badge > 0 %}<span class="badge{{ ' badge-' ~ tone if tone }}" aria-label="{{ badge_label(tone, badge) }}">{{ badge }}</span>{% endif %}
       </a>
 {%- endmacro -%}

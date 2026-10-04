@@ -64,16 +64,27 @@ def work_prompt(key: str) -> str | None:
     return DEFAULTS["agents"]["prompts"]["work"].replace("{key}", key)
 
 
-def start_dir(ws, t) -> str:
-    """The child's own worktree when it names exactly one that resolves to a folder strictly inside the workspace
-    and carries no harness settings of its own; else the workspace root."""
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.is_file() and b.is_file() and not a.is_symlink() and not b.is_symlink() \
+            and a.read_bytes() == b.read_bytes()
+    except OSError:
+        return False
+
+
+def start_dir(ws, t) -> str | None:
+    """The child's own worktree when it names exactly one that resolves to a folder strictly inside the workspace,
+    else the workspace root. None (refuse to launch) when that worktree carries a harness settings or MCP file that is
+    not identical to the workspace's own: agents write worktrees, and such a file can grant permissions or add hooks."""
     root = Path(ws.root).resolve()
     wts = t.meta.get("worktrees")
     vals = list(wts.values()) if isinstance(wts, dict) else []
     if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
         try:
             p = (root / vals[0]).resolve()
-            if p != root and root in p.parents and p.is_dir() and not any((p / f).exists() for f in _HARNESS_FILES):
+            if p != root and root in p.parents and p.is_dir():
+                if any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES):
+                    return None
                 return str(p)
         except (OSError, RuntimeError, ValueError):
             pass
@@ -163,6 +174,10 @@ def _launch(ws, actor, launcher, settings, epic, d, t, token, lines) -> dict | N
     """Start one session. The command is the user's launch setting with the generated id and the built-in prompt put
     in as whole argv elements (never a shell, never ticket text), under `env -i` with the allowlisted variables."""
     prompt = work_prompt(t.id)
+    cwd = start_dir(ws, t)
+    if cwd is None:
+        lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")
+        return None
     if prompt is None or not _gate(ws, epic.id, d["id"]):
         return None
     sid = fs.new_session_id()
@@ -170,7 +185,7 @@ def _launch(ws, actor, launcher, settings, epic, d, t, token, lines) -> dict | N
     argv = [*env_prefix(), *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in settings["factory_command"])]
     b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token)
     try:
-        pid = launcher.start(name, start_dir(ws, t), argv)
+        pid = launcher.start(name, cwd, argv)
         fs.set_pid(ws, actor, sid, pid)
     except (OrchError, OSError, ValueError) as e:
         try:

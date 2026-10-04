@@ -186,17 +186,25 @@ first process the runner recorded for that session: a copied session id gets not
 session loses the record at once. Only a human process writes it: agent processes are refused, and the guard keeps
 agents away from the folder. Session ids are random, never written to events, tickets, logs or pages.
 
-**The launch command** is yours, in `factory.json` in the orch config dir, a file the guard keeps agents from writing
-(never the workspace config, ticket text or anything else an agent can edit; the prompt is built in):
+**The launch command** is yours, in `factory-command.json` inside the permits folder of the orch config dir, which the
+guard keeps agents from reading and writing (never the workspace config, ticket text or anything else an agent can
+edit; the prompt is built in):
 
 ```json
-{"command": ["claude", "--session-id", "{session}", "{prompt}"]}
+{"command": ["claude", "--setting-sources", "user", "--strict-mcp-config", "--session-id", "{session}", "{prompt}"]}
 ```
 
-That is the default; a damaged file means the default. `{session}` is the id the runner bound (the agent must start under exactly that id) and `{prompt}`
-the child's work prompt. A command with a bypass or self-granting argument (skipping permission prompts, allowing
-tools, settings overrides) is refused and the default is used: the hook stays the only gate. Run the agents in a
+That is the default; a damaged file means the default. `{session}` is the id the runner bound (the agent must start
+under exactly that id) and `{prompt}` the child's work prompt. A command is refused, and the default used, when it
+carries a bypass or self-granting argument (skipping permission prompts, allowing tools, settings overrides) or does
+not turn project and local settings and project MCP servers off: the hook stays the only gate. Run the agents in a
 permission mode that does not prompt for file edits (see above).
+
+**Worktrees are written by agents.** The launched session ignores the settings and MCP servers a worktree carries
+(user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a
+`.claude/settings.json`, `.claude/settings.local.json` or `.mcp.json` that is not identical to the workspace's own.
+Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text, and a
+custom command can drop these protections only by being a command you wrote yourself.
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).

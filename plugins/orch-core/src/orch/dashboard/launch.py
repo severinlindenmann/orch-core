@@ -56,16 +56,18 @@ DEFAULT_HARNESSES = {"claude": ["claude", "{prompt}"], "copilot": ["copilot", "-
 SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness")
 # What the AI Factory runner starts for one child (docs/factory.md): {session} is the id the runner generated and binds
 # (the harness must start its session under exactly that id), {prompt} the child's work prompt. It lives in its own
-# file, factory.json in the orch config dir ({"command": [...]}), which the guard keeps agents from writing: a
-# command that starts agents unattended must not be one an agent can set.
-DEFAULT_FACTORY_COMMAND = ["claude", "--session-id", "{session}", "{prompt}"]
+# file, permits/factory-command.json in the orch config dir ({"command": [...]}), under the folder the guard keeps
+# agents from reading and writing: a command that starts agents unattended must not be one an agent can set. It must
+# turn off project and local settings and project MCP servers: a worktree is written by agents.
+DEFAULT_FACTORY_COMMAND = ["claude", "--setting-sources", "user", "--strict-mcp-config", "--session-id", "{session}",
+                           "{prompt}"]
 # An argument that would hand the agent permissions itself: the permission hook stays the only gate.
 _SELF_GRANT = re.compile(r"dangerously|bypass|allowed-?tools|permission-prompt-tool|--settings|yolo|--trust-all|--full-auto"
                          r"|--auto-approve|--yes\b", re.I)
 
 
 def factory_path() -> Path:
-    return config_dir() / "factory.json"
+    return config_dir() / "permits" / "factory-command.json"
 
 
 def load_factory_command() -> tuple[list[str], str | None]:
@@ -88,12 +90,24 @@ def load_factory_command() -> tuple[list[str], str | None]:
     return list(argv), None
 
 
+def _user_settings_only(argv) -> bool:
+    for i, a in enumerate(argv):
+        if a == "--setting-sources" and i + 1 < len(argv):
+            return argv[i + 1] == "user"
+        if a.startswith("--setting-sources="):
+            return a.split("=", 1)[1] == "user"
+    return False
+
+
 def factory_command_error(argv) -> str | None:
     """Why `argv` cannot be the runner's launch command, or None."""
     if not _argv_list(argv):
         return "the command must be a non-empty list of strings in a file that holds only {\"command\": [...]}"
     if not any("{session}" in a for a in argv) or not any("{prompt}" in a for a in argv):
         return "the command must contain {session} and {prompt}"
+    if not _user_settings_only(argv) or "--strict-mcp-config" not in argv:
+        return ("the command must pass --setting-sources user and --strict-mcp-config: settings and MCP servers "
+                "a worktree carries are written by agents")
     if any(_SELF_GRANT.search(a) for a in argv):
         return "the command must not grant the agent permissions itself: the permission hook is the gate"
     return None

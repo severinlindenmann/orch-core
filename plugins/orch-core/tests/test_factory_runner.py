@@ -110,20 +110,27 @@ def test_launch_binds_one_session_per_child_before_it_starts(fws, fa, fh, human,
     assert lines == [f"started {name}"] and name == b["name"] and cwd == str(fws.root)
     assert (b["epic"], b["delegation"], b["child"]) == (eid, d["id"], cid)
     i = argv.index("claude")
-    assert argv[:2] == ["env", "-i"] and argv[i + 1] == "--session-id" and argv[i + 2] == b["session"] and cid in argv[i + 3]
+    assert argv[:2] == ["env", "-i"] and argv[i + 1:i + 4] == ["--setting-sources", "user", "--strict-mcp-config"]
+    assert argv[i + 4] == "--session-id" and argv[i + 5] == b["session"] and cid in argv[i + 6]
     assert not any("dangerously" in a or "bypass" in a for a in argv)
     assert _tick(fws, human, fake) == [] and len(fake.started) == 1  # one session per child
 
 
 def test_default_launch_command_grants_nothing_itself():
-    assert launch.load_settings()["factory_command"] == ["claude", "--session-id", "{session}", "{prompt}"]
+    assert launch.load_settings()["factory_command"] == launch.DEFAULT_FACTORY_COMMAND
+
+
+_SAFE = ["claude", "--setting-sources", "user", "--strict-mcp-config", "--session-id", "{session}", "{prompt}"]
 
 
 @pytest.mark.parametrize("argv,why", [
-    (["claude", "--dangerously-skip-permissions", "--session-id", "{session}", "{prompt}"], "grant"),
-    (["claude", "--permission-mode", "bypassPermissions", "{session}", "{prompt}"], "grant"),
-    (["claude", "--allowedTools", "Bash", "{session}", "{prompt}"], "grant"),
-    (["claude", "--settings", "x.json", "{session}", "{prompt}"], "grant"),
+    (_SAFE + ["--dangerously-skip-permissions"], "grant"),
+    (_SAFE + ["--permission-mode", "bypassPermissions"], "grant"),
+    (_SAFE + ["--allowedTools", "Bash"], "grant"),
+    (_SAFE + ["--settings", "x.json"], "grant"),
+    (["claude", "--session-id", "{session}", "{prompt}"], "setting-sources"),
+    (["claude", "--setting-sources", "user,project", "--strict-mcp-config", "{session}", "{prompt}"], "setting-sources"),
+    (["claude", "--setting-sources", "user", "{session}", "{prompt}"], "strict-mcp"),
     (["claude", "{prompt}"], "{session}"),
     (["claude", "{session}"], "{prompt}"),
     ([], "non-empty"),
@@ -133,7 +140,8 @@ def test_launch_command_that_grants_itself_is_refused(argv, why):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"command": argv}), encoding="utf-8")
     got, error = launch.load_factory_command()
-    assert why in error and got == launch.DEFAULT_FACTORY_COMMAND
+    assert why in error.replace("--", "") or why in error
+    assert got == launch.DEFAULT_FACTORY_COMMAND
     assert launch.load_settings()["factory_command"] == launch.DEFAULT_FACTORY_COMMAND
 
 
@@ -148,12 +156,11 @@ def test_a_damaged_launch_file_means_the_default(fws):
 def test_launch_command_is_configurable_per_user(fws, fa, fh, human, fake):
     path = launch.factory_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"command": ["my-agent", "--id={session}", "{prompt}"]}), encoding="utf-8")
+    path.write_text(json.dumps({"command": ["my-agent", "--setting-sources=user", "--strict-mcp-config", "--id={session}", "{prompt}"]}), encoding="utf-8")
     _started(fws, fa, fh)
     _tick(fws, human, fake)
     ((_, _, argv),) = fake.started
-    i = argv.index("my-agent")
-    assert argv[i + 1] == f"--id={fs.bindings(fws)[0]['session']}"
+    assert f"--id={fs.bindings(fws)[0]['session']}" in argv and argv[argv.index("my-agent") + 1].startswith("--setting")
 
 
 def test_concurrency_cap_is_three_and_config_only_lowers_it(fws, fa, fh, human, fake, configure):
@@ -482,17 +489,11 @@ def test_ticket_text_never_reaches_the_launch(fws, fa, fh, human, fake):
 
 
 def test_the_launch_command_is_not_writable_by_agents(ws):
-    from orch.core.ledger import base_dir
     from orch.hooks.guard import evaluate
-    path = str(base_dir() / "factory.json")
+    path = str(launch.factory_path())
     assert not evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": path, "content": "{}"},
                              "cwd": str(ws.root)}).allow
-    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": f"echo '{{}}' > {path}"},
-                             "cwd": str(ws.root)}).allow
-    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "echo x > ~/.config/orch/factory.json"},
-                             "cwd": str(ws.root)}).allow
-    assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(ws.root / ".vscode" / "launch.json"),
-                                                               "content": "{}"}, "cwd": str(ws.root)}).allow
+    assert launch.factory_path().parent.name == "permits"
 
 
 def test_the_agent_starts_with_an_allowlisted_environment_only(fws, fa, fh, human, fake, monkeypatch):
@@ -554,7 +555,12 @@ def test_start_dir_is_the_childs_worktree_inside_the_workspace_only(fws, fa, fh,
     (wt / ".claude").mkdir()
     (wt / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
     t.meta["worktrees"] = {"app": str(wt)}
-    assert factory_runner.start_dir(fws, t) == str(fws.root.resolve())  # its own harness settings: not used
+    assert factory_runner.start_dir(fws, t) is None  # settings the workspace does not carry: refused
+    (fws.root / ".claude").mkdir()
+    (fws.root / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    assert factory_runner.start_dir(fws, t) == str(wt.resolve())  # identical to the workspace's own: fine
+    (wt / ".claude" / "settings.json").write_text('{"permissions": {"allow": ["Bash(*)"]}}', encoding="utf-8")
+    assert factory_runner.start_dir(fws, t) is None
     t.meta["worktrees"] = {"a": str(wt), "b": str(wt)}
     assert factory_runner.start_dir(fws, t) == str(fws.root.resolve())
 
@@ -595,3 +601,56 @@ def test_launch_gate_fails_closed(fws, fa, fh, configure, monkeypatch, what):
         assert not factory_runner._gate(ws, eid, d["id"])
     else:
         assert factory_runner._gate(fws, eid, d["id"])
+
+
+@pytest.mark.parametrize("name,body", [
+    (".claude/settings.json", '{"permissions": {"allow": ["Bash(*)"]}}'),
+    (".claude/settings.local.json", '{"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "x"}]}]}}'),
+    (".mcp.json", '{"mcpServers": {"x": {"command": "evil"}}}'),
+])
+def test_a_worktree_with_agent_written_settings_is_refused(fws, fa, fh, human, fake, name, body):
+    eid, (cid,), d = _started(fws, fa, fh)
+    wt = fws.root / "wt"
+    (wt / name).parent.mkdir(parents=True)
+    (wt / name).write_text(body, encoding="utf-8")
+    fa.link(cid, repo="app", worktree=str(wt))
+    lines = _tick(fws, human, fake)
+    assert not fake.started and fs.bindings(fws) == [] and "harness settings" in lines[0]
+
+
+def test_the_default_command_switches_project_settings_and_mcp_servers_off():
+    argv = launch.DEFAULT_FACTORY_COMMAND
+    assert argv[argv.index("--setting-sources") + 1] == "user" and "--strict-mcp-config" in argv
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat {base}/permits/factory-command.json", "echo x > $ORCH_STATE_DIR/permits/factory-command.json",
+    "echo x > ${{XDG_CONFIG_HOME}}/orch/permits/factory-command.json", "rm ~/.config/orch/permits/factory-command.json",
+    "cd {base}/permits && cat factory-command.json", "cd {base} && sed -i s/a/b/ permits/factory-command.json",
+    "tee {base}/permits/sessions/{u}.json < /dev/null", "python3 -c \"open('{base}/permits/armed/x','w')\"",
+    "cat {base}/permits/*", "cp /dev/null {base}/permits/runs/x",
+])
+def test_guard_covers_every_spelling_of_the_runner_state(ws, cmd):
+    from orch.core.ledger import base_dir
+    from orch.hooks.guard import evaluate
+    d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd.format(base=base_dir(), u=UUID)},
+                      "cwd": str(ws.root)})
+    assert not d.allow
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Write", {"file_path": "{p}/factory-command.json", "content": "{}"}),
+    ("Edit", {"file_path": "{p}/factory-command.json", "old_string": "a", "new_string": "b"}),
+    ("MultiEdit", {"file_path": "{p}/factory-command.json", "edits": []}),
+    ("NotebookEdit", {"notebook_path": "{p}/factory-command.json", "new_source": "x"}),
+    ("Read", {"file_path": "{p}/sessions/" + UUID + ".json"}),
+    ("Grep", {"pattern": "x", "path": "{p}/sessions"}),
+    ("Glob", {"pattern": "*", "path": "{p}"}),
+    ("Write", {"file_path": "{p}/../permits/armed/x", "content": ""}),
+])
+def test_guard_covers_the_runner_state_in_every_file_tool(ws, tool, inp):
+    from orch.core.ledger import base_dir
+    from orch.hooks.guard import evaluate
+    p = str(base_dir() / "permits")
+    got = {k: v.replace("{p}", p) if isinstance(v, str) else v for k, v in inp.items()}
+    assert not evaluate(ws, {"tool_name": tool, "tool_input": got, "cwd": str(ws.root)}).allow

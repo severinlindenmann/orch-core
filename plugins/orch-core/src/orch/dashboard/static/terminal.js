@@ -128,8 +128,10 @@
         tile.querySelector('[data-f="tasks"]').textContent = l.tasks ? l.tasks + " tasks" : "";
         tile.querySelector('[data-f="subs"]').textContent = l.subs;
         const cache = tile.querySelector('[data-f="cache"]');
-        cache.textContent = l.cache;
-        cache.classList.toggle("term-cache-cold", l.cold);
+        if (cache) {  // a page from before the cache field
+          cache.textContent = l.cache;
+          cache.classList.toggle("term-cache-cold", l.cold);
+        }
         const age = tile.querySelector("[data-ago]");
         age.dataset.ago = l.activity;
         age.textContent = ago(l.activity);

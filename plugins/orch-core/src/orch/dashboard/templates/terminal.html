@@ -31,7 +31,7 @@
 
 <p class="term-summary" data-summary data-sig="{{ live.sig }}" data-name="{{ s.name }}">
   <b data-f="now">{{ live.now or "No agent activity read yet" }}</b>
-  <span class="muted" data-f="line">{% if live.ticket %}{{ live.ticket }}{% if live.tasks %} {{ live.tasks }} tasks{% endif %}{% if live.more %} +{{ live.more }}{% endif %} · {% endif %}{% if live.subs %}{{ live.subs }} · {% endif %}{% if live.context %}context {{ live.context }}{% endif %}{% if live.cache %} · {{ live.cache }}{% endif %}</span>
+  <span class="muted" data-f="line">{% set tk = (live.ticket ~ ((" " ~ live.tasks ~ " tasks") if live.tasks else "") ~ ((" +" ~ live.more) if live.more else "")) if live.ticket else "" %}{{ [tk, live.subs, ("context " ~ live.context) if live.context else "", live.cache] | select | join(" · ") }}</span>
 </p>
 
 <div class="term-layout">

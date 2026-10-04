@@ -196,13 +196,8 @@ class Ops(TaskOpsMixin):
             return
         from orch.actor import process_evidence
         from orch.core import ledger
-        ledger.record(self.ws, ticket=t.id, kind=kind, actor=self.actor, evidence=process_evidence(), **fields)
-
-    def _next_done_round(self, t: Ticket) -> int:
-        """The number the move to done now being made will have (ledger.done_round); the caller holds the ticket's lock."""
-        from orch.core import ledger
-        from orch.core.events import read_events
-        return ledger.done_round(read_events(self.ws, t.id), t.id) + 1
+        record = ledger.record_status if kind in ledger.STATUS_KINDS else ledger.record
+        record(self.ws, ticket=t.id, kind=kind, actor=self.actor, evidence=process_evidence(), **fields)
 
     def _external(self, key: str) -> dict:
         return trackers.external_ref(self.ws.config["external_trackers"], key)
@@ -563,7 +558,7 @@ class Ops(TaskOpsMixin):
             skipped = _skip_open_tasks(t, reason)
             t.meta["status"] = "done"
             t.meta["claim"] = dict(_EMPTY_CLAIM)
-            self._ledger(t, "close", reason=reason, round=self._next_done_round(t))
+            self._ledger(t, "close", reason=reason)
             self._log(t, f"closed: {reason}" + (f" (skipped {', '.join(skipped)})" if skipped else ""))
             return {"reason": reason, "command": "close", **({"tasks_skipped": skipped} if skipped else {})}
 
@@ -581,6 +576,7 @@ class Ops(TaskOpsMixin):
             check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="reopen")
             t.meta["status"] = to
             t.meta.setdefault("gates", {}).pop("verify", None)
+            self._ledger(t, "reopen", reason=reason)
             if to == "backlog":
                 clear_gate(t, "requirements")
                 clear_gate(t, "plan")
@@ -1140,7 +1136,7 @@ class Ops(TaskOpsMixin):
             t.meta["status"] = "done"
             t.meta.setdefault("gates", {})["verify"] = {"verdict": "done", "at": stamp(), "via": self.actor.via}
             self._ledger(t, "verdict", verdict="done", verify_at=t.meta["gates"]["verify"]["at"],
-                         children=[e.id for e in kids], round=self._next_done_round(t))
+                         children=[e.id for e in kids])
             self._log(t, "verdict done for the epic and " + ", ".join(e.id for e in kids)
                       + (f": {message}" if message else ""))
             return {"verdict": "done", "message": message, "children": [e.id for e in kids]}
@@ -1166,7 +1162,7 @@ class Ops(TaskOpsMixin):
                 raise ValidationError(f"{t.id}: the text holds hidden or control characters; request changes instead "
                                       "of adopting it")
             fields = {k: it.get(k) for k in ("gate", "hash", "hash_v", "qid", "answer", "question_hash", "verdict",
-                                              "verify_at", "round") if it.get(k) is not None}
+                                              "verify_at", "verdict_hash") if it.get(k) is not None}
             if it["kind"] == "gate":
                 if it["hash_v"] is None:
                     raise ValidationError(f"the {it['gate']} of {t.id} changed since it was approved; it needs a new "
@@ -1264,9 +1260,10 @@ class Ops(TaskOpsMixin):
             to = "done" if verdict == "done" else "in-progress"
             check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="verdict")
             t.meta["status"] = to
-            t.meta.setdefault("gates", {})["verify"] = {"verdict": verdict, "at": stamp(), "via": self.actor.via}
+            t.meta.setdefault("gates", {})["verify"] = {"verdict": verdict, "at": stamp(), "via": self.actor.via,
+                                                           "hash": seen}
             self._ledger(t, "verdict", verdict=verdict, verify_at=t.meta["gates"]["verify"]["at"],
-                         verdict_hash=seen, **({"round": self._next_done_round(t)} if to == "done" else {}))
+                         verdict_hash=seen)
             if to == "done":
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
             self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))

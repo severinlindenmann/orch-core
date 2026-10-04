@@ -168,14 +168,18 @@ with `orch ask` instead.
 
 Human approvals, answers, verdicts and closes are also signed into one per-user file, `ledger.jsonl` in the orch
 config dir. Each line is a JSON object `{workspace, ticket, kind: "gate"|"answer"|"verdict"|"close"|"charter"|"pause"|"ticket_request", gate, hash,
-hash_v, despite_open_question, qid, answer, question_hash, verdict, verify_at, round, verdict_hash, reason, adopted, actor, via, at,
+hash_v, despite_open_question, qid, answer, question_hash, verdict, verify_at, verdict_hash, prev, reason, adopted, actor, via, at,
 evidence, mac}` (fields by kind), plus `device` (the paired phone's id) on a decision applied from a phone (`via`
 `phone:<label>`); a backlog ticket a paired phone requested is signed as `ticket_request` with its `decision` id. A
 `phone:` event of a signed kind without a matching entry is `unverified-remote` in `orch check`, and Today shows its
-receipt as "unverified". A `close` or done `verdict` entry carries `round`, the number of the move to done it signed
-(counted from the event log), and confirms only that done: a ticket that is reopened and done again shows as not
-verified until it is signed again. An entry written before `round` existed has none and confirms only the first done
-after its `at`, never a later one. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
+receipt as "unverified". Closes, verdicts and reopens form one chain per ticket: each carries `prev`, the `mac` of the ticket's previous such
+entry, and a reopen is signed like the others. A done counts as human-verified only when the ledger alone says so: the
+ticket's newest signed status entry is a `close`, or a done `verdict` that matches the ticket's verify block
+(`verify_at`, `verdict_hash` against `gates.verify.hash`), and its `prev` is the `mac` of the entry before it. A later
+reopen or follow-up verdict ends every earlier close; the event log and the ticket file are not inputs. An entry
+from before the chain existed has no `prev`; it counts only while no later signed status entry exists and the event
+log shows exactly one done for the ticket (a review with `orch ledger adopt` signs a chained entry). Removing the
+newest entries of the ledger is outside what the chain detects. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
 from the workspace config; `mac` is HMAC-SHA256 over the canonical JSON of the other fields with the 32-byte key
 in `ledger.key`. A line with a bad `mac` is ignored. An approved gate, answered question or done verdict without a
 matching line is `unsigned-decision` in `orch check`, and agents do not claim, start or finish tasks, or move to

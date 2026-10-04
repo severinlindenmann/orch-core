@@ -283,6 +283,23 @@ def _unknown_word(word: str, reads: bool) -> bool:
     return any(_sensitive_component(c, i == 0, reads) for i, c in enumerate(comps))
 
 
+_ORCH_ENV_TEXT = re.compile(r"ORCH_STATE_DIR|(?:XDG_CONFIG_HOME|\.config)(?!/(?!orch\b))|\borch\b|\b(?:env|printenv|getenv|environ)\b",
+                            re.I)
+_CONFIG_WORDS = re.compile(r"orch_state_dir|xdg_config_home|\.config/orch")
+_MUX_WORD = re.compile(r"(?<![a-z])(?:tmux|screen)(?![a-z])")
+
+
+def _config_and_mux(cmd: str) -> bool:
+    """The orch config location and a terminal multiplexer named in one command, interpreter strings included: quotes,
+    backslashes and the dots or pluses that join string fragments are removed first, so split-up pieces count."""
+    text = re.sub(r"""['"]\s*[.+]\s*['"]""", "", cmd)
+    text = re.sub(r"""['"\\]""", "", text).lower()
+    if not _MUX_WORD.search(text):
+        return False
+    base = _state_dir()
+    return bool(_CONFIG_WORDS.search(text) or (base is not None and str(base).lower() in text))
+
+
 _SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
 _ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
 
@@ -366,6 +383,8 @@ def _touches_state_dir(ws, cmd: str, cwd):
             if target == "-":
                 target = old or cur
             if re.search(r"[$`]", target) or cdpath_set:
+                if re.search(r"[$`]", target) and _ORCH_ENV_TEXT.search(raw):  # (a plain word under CDPATH is not one)
+                    return True  # the target names orch's own environment or config place: judged as a cd into it
                 unknown = True  # a place the guard cannot work out: allowed, but the working directory is unknown now
                 continue
             for c in ([cur, *cdpath] if not os.path.isabs(target) else [cur]):
@@ -465,6 +484,8 @@ def _mux_risky(cmd: str) -> bool:
     if len(cmd) > MAX_CMD and re.search(r"tmux|screen", cmd, re.I):
         raise _Bound("length")
     flat = _prep(cmd)
+    if _config_and_mux(flat):
+        return True
     whole = re.search(r"tmux|screen", flat, re.I)
     if _MUX_ANSI_C.search(flat) and _MUX_FLAG.search(flat):
         return True

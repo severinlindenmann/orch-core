@@ -161,6 +161,12 @@ Addons add pages and panels to Mission Control (code reviews, issues, status, wi
 
 Pair a phone to a `remote_humans` addon (Workspace & addons, your own QR code or "Copy pairing link") so it can answer, approve, request changes, give a verdict or request a new ticket for you from wherever that addon's own app or chat surface runs — never by moving a ticket. A paired phone is you: a decision that passes core's checks (pairing, signature, age, the hash of the exact text it was given for, the testing round) applies at once, with no second step on the desktop, and is signed into your approval ledger with `via` `phone:<name>` and the phone's id. Today shows what your phone applied as receipts ("Approved requirements of ACME-12 from your phone (iPhone) 08:12"). Every kind is on by default; switch one off in Workspace → Phones to keep it for the desktop. A revoked or unknown phone, a bad signature or a changed text never applies. Revoke a phone any time. Agents never see the pairing key and never wait on a phone directly: they call `orch wait <ref>` to block (agent-callable, read-only) until you decide, by phone or on the desktop, whichever comes first.
 
+## Upgrading
+
+A built-in widget template that changes in an upgrade shows as "Drift" on existing tickets until each block is
+re-pinned (`orch widget check` lists them). That is intended, and a re-pin in a Verification section needs a fresh
+human verdict. See [docs/widgets.md](docs/widgets.md#upgrades-drift-and-re-pinning).
+
 ## Without the plugin
 
 For a repository where the plugin is not available, install the CLI from this folder (`uv tool install "<plugin folder>[dashboard]"`) and run `orch init` in the repo, for example:

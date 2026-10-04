@@ -154,11 +154,27 @@ def _check_trackers(ws) -> list[Finding]:
 
 
 def _check_migration(ws) -> list[Finding]:
-    """Old artifact link targets (`../artifacts/<ticket>/<name>`) no longer resolve; `orch migrate` rewrites them. The
-    other old shapes say so where they fail: a ticket that does not load, a tracker that `tracker_problem` rejects."""
-    from orch.core.migrate import pending_paths
-    return [Finding("error", "needs-migration", None, f"{rel} has old artifact links ({rule}): run `orch migrate` (a dry "
-                    "run), then `orch migrate --apply`") for rel, rule in pending_paths(ws.home)]
+    """What `orch migrate` would change is an error (it is a command away); what it would refuse is a warning, since
+    it needs a person. Old tickets and bare trackers also say so where they fail to load or fail `tracker_problem`."""
+    from orch.core import migrate
+    try:
+        result = migrate.plan(ws.home)
+    except (OSError, ValueError):
+        return []  # an unreadable config is reported by validate_schema
+    out = []
+    for item in result.items:
+        if item.ticket is not None:
+            out.append(Finding("error", "needs-migration", item.ticket, f"{item.rel}: old format ({', '.join(item.rules)}): "
+                               "run `orch migrate` (a dry run), then `orch migrate --apply`"))
+            out += [Finding("warning", "approval-voided", item.ticket, n) for n in item.notes]
+    for where, rule, why in result.refused:
+        if where.startswith("tickets/done/"):
+            why = f"history, cannot migrate ({rule}): {why}"
+        else:
+            why = f"needs a human decision ({rule}): {why}"
+        out.append(Finding("warning", "migration-refused", None, f"{where}: {why}"))
+    out += [Finding("warning", "approval-voided", None, f"{w}: {n}") for w, n in result.notes]
+    return out
 
 
 def _check_entries(entries) -> list[Finding]:

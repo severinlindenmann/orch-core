@@ -31,6 +31,7 @@ from orch.core.fsutil import atomic_write_text
 from orch.core.model import Ticket, parse_ticket, render_ticket, section_text_problem
 from orch.errors import OrchError, TicketParseError
 
+IMPORT_NOTE = "imported from the Plan checklist"
 WORKED = ("in-progress", "waiting", "testing")  # a ticket in these has been claimed, so it has tasks now
 _FILE = re.compile(r"^([A-Za-z][A-Za-z0-9]*-\d+)(?:-[^/\\]*)?\.md$")
 _DEST = re.compile(r"((?:\]\(|^ {0,3}\[[^\]\n]+\]:)[ \t]*<?)(?:\.{1,2}/)*artifacts/([^/\s)>]+)/", re.M)
@@ -48,6 +49,8 @@ class Item:
     rules: list[str]
     old: str
     new: str
+    ticket: str | None = None  # the ticket id, whose lock a write takes
+    notes: list[str] = field(default_factory=list)
 
     def diff(self) -> str:
         return "".join(difflib.unified_diff(self.old.splitlines(True), self.new.splitlines(True),
@@ -60,6 +63,9 @@ class Plan:
     items: list[Item] = field(default_factory=list)
     refused: list[tuple[str, str, str]] = field(default_factory=list)  # (where, rule, why)
     unreadable: list[tuple[str, str]] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (file, why) set by apply
+    ws: object = None
+    notes: list[tuple[str, str]] = field(default_factory=list)  # (file, what a human has to do)
 
     def empty(self) -> bool:
         return not (self.items or self.refused or self.unreadable)
@@ -112,7 +118,7 @@ def plan_items(text: str, repo_names) -> list[tk.Task]:
     return out
 
 
-def import_plan(t: Ticket, repo_names, used: set[int]) -> str | None:
+def import_plan(t: Ticket, repo_names, used) -> str | None:
     """Write the Plan's checklist as the ticket's tasks. A reason to refuse or skip, or None (done or nothing to do)."""
     if t.status not in WORKED or t.section("Tasks").strip():
         return None
@@ -121,9 +127,10 @@ def import_plan(t: Ticket, repo_names, used: set[int]) -> str | None:
         return None
     if t.status == "testing" and any(x.state != "done" for x in new):
         return "the ticket is in testing and the Plan checklist has open items; tick or drop them, then move it back"
-    start = tk.next_number([], used)
+    start = tk.next_number([], used())
     for i, task in enumerate(new):
         task.id = f"T{start + i}"
+        task.note = IMPORT_NOTE
     t.set_section("Tasks", tk.render(new))
     return None
 
@@ -144,34 +151,45 @@ def artifact_paths(text: str, ticket_id: str) -> str:
 
 # -- what a human decision is bound to --------------------------------------------------------------------
 
-def bound_text(t: Ticket) -> dict[str, tuple]:
+def bound_text(t: Ticket, ws) -> dict[str, object]:
     """What an approval or verdict of this ticket covers, per decision: gate_parts and gate_meta of each gate (what
-    the gate hash is made of), and the text a verdict reads."""
+    the gate hash is made of), and the verdict hash itself (Verification, criteria, inline artifacts, widget pins)."""
+    from orch.core import epics
     from orch.core.gates import GATE_SECTIONS, gate_meta, gate_parts
     out = {g: (tuple(gate_parts(t, g)), tuple(gate_meta(t, g))) for g in GATE_SECTIONS}
-    out["verdict"] = (t.section("Verification"), t.section("Acceptance criteria"))
+    try:
+        out["verdict"] = epics.verdict_hash([t], ws)
+    except Exception:  # a widget that cannot be pinned: compare the text it is made of
+        out["verdict"] = (t.section("Verification"), t.section("Acceptance criteria"))
     return out
 
 
-def signed(t: Ticket, decision: str) -> bool:
-    """True when somebody may have signed `decision` for this ticket's current text."""
+def signed(t: Ticket, decision: str, epics_with_verdict=frozenset()) -> bool:
+    """True when a decision that still holds may cover this ticket's current text. An approval whose hash no longer
+    matches (gate state invalidated) is void already, and rewriting cannot void it further."""
+    from orch.core.gates import gate_state
     gates = t.meta.get("gates") or {}
     if decision == "verdict":
-        return t.status in ("testing", "done") or bool((gates.get("verify") or {}).get("verdict"))
+        return (t.status in ("testing", "done") or bool((gates.get("verify") or {}).get("verdict"))
+                or str(t.meta.get("parent") or "") in epics_with_verdict)
     g = gates.get(decision) or {}
-    return bool(g.get("approved") or g.get("changes_requested"))
+    return gate_state(t, decision) == "approved" or bool(g.get("changes_requested"))
 
 
-def changed_decisions(before: Ticket, after: Ticket) -> list[str]:
-    old, new = bound_text(before), bound_text(after)
-    return [d for d in old if old[d] != new[d] and signed(before, d)]
+def changed_decisions(before: Ticket, after: Ticket, ws, epics_with_verdict=frozenset()) -> list[str]:
+    old, new = bound_text(before, ws), bound_text(after, ws)
+    return [d for d in old if old[d] != new[d] and signed(before, d, epics_with_verdict)]
+
+
+def voided(t: Ticket) -> list[str]:
+    """Gates whose approval no longer matches the text while the gated text has old artifact links: what the upgrade
+    voided (old links stopped binding their images)."""
+    from orch.core.gates import GATE_SECTIONS, gate_parts, gate_state
+    return [g for g in GATE_SECTIONS if gate_state(t, g) == "invalidated"
+            and any(artifact_paths(body, t.id) != body for _, body in gate_parts(t, g))]
 
 
 # -- tickets ------------------------------------------------------------------------------------------------
-
-def _read(path: Path) -> Ticket:
-    return parse_ticket(path.read_text(encoding="utf-8"), path.name, allow_old=True)
-
 
 def _ticket_files(home: Path):
     for status in STATUSES:
@@ -185,7 +203,7 @@ def _copy(t: Ticket) -> Ticket:
     return _copy_ticket(t)
 
 
-def migrate_ticket(t: Ticket, repo_names, used: set[int]) -> tuple[Ticket, list[str], list[tuple[str, str]]]:
+def migrate_ticket(t: Ticket, repo_names, used, ws, epics_with_verdict=frozenset()) -> tuple[Ticket, list[str], list[tuple[str, str]]]:
     """(the migrated ticket, the rules that changed it, [(rule, why refused)])."""
     cur, rules, refused = _copy(t), [], []
 
@@ -194,7 +212,7 @@ def migrate_ticket(t: Ticket, repo_names, used: set[int]) -> tuple[Ticket, list[
         trial = _copy(cur)
         why = edit(trial)
         if why is None and (trial.sections != cur.sections or trial.meta != cur.meta):
-            if hit := changed_decisions(cur, trial):
+            if hit := changed_decisions(cur, trial, ws, epics_with_verdict):
                 why = (f"it would change text a human decision is bound to ({', '.join(hit)}); "
                        "that needs a human re-approval, so it is left as it is")
             else:
@@ -216,8 +234,16 @@ def migrate_ticket(t: Ticket, repo_names, used: set[int]) -> tuple[Ticket, list[
 
 # -- trackers -----------------------------------------------------------------------------------------------
 
-def migrate_trackers(cfg: dict, tickets: list[Ticket]) -> tuple[dict | None, dict[str, list[dict]], str | None]:
-    """(the new config's external_trackers or None, {ticket id: new external list}, a reason to refuse)."""
+def _migrated_shape(tracker: dict) -> bool:
+    """A tracker in the form this migration writes (`<prefix>-(?P<id>\\d+)`): the config of an earlier run."""
+    pre = str(tracker.get("prefix") or "")
+    return bool(_PREFIX.match(pre)) and tracker.get("pattern") == f"{pre}-(?P<id>\\d+)"
+
+
+def migrate_trackers(cfg: dict, tickets: list[Ticket]) -> tuple[list | None, dict[str, list[dict]], str | None]:
+    """(the new config's external_trackers or None, {ticket id: new external list}, a reason to refuse). Bare numbers
+    in tickets go to the trackers just migrated; with none in this config, to the one tracker already in the migrated
+    shape (an earlier run, or the same edit by hand). Anything else is left alone, and an ambiguous owner is refused."""
     old = [dict(x) if isinstance(x, dict) else x for x in cfg.get("external_trackers") or []]
     bare = [i for i, x in enumerate(old) if isinstance(x, dict) and isinstance(x.get("pattern"), str)
             and trackers.accepts_bare_number(x["pattern"])]
@@ -232,17 +258,17 @@ def migrate_trackers(cfg: dict, tickets: list[Ticket]) -> tuple[dict | None, dic
         if isinstance(x.get("url"), str):
             x["url"] = x["url"].replace("{key}", "{id}")
     live = [x for x in new if isinstance(x, dict) and isinstance(x.get("pattern"), str)]
-    owners = [new[i] for i in bare] or live
+    owners = [new[i] for i in bare] or [x for x in live if _migrated_shape(x)]
     keys: dict[str, list[dict]] = {}
     for t in tickets:
+        have = {str(x.get("key", "")).upper() for x in t.meta.get("external") or [] if isinstance(x, dict)}
         entries, changed = [], False
         for x in t.meta.get("external") or []:
             key = str(x.get("key", "")).strip() if isinstance(x, dict) else ""
             if not key.isdigit() or trackers.find(live, key):
                 entries.append(x)
                 continue
-            fit = [o for o in owners if _PREFIX.match(str(o.get("prefix") or ""))
-                   and trackers.matches(o["pattern"], f"{o['prefix']}-{key}")]
+            fit = [o for o in owners if trackers.matches(o["pattern"], f"{o['prefix']}-{key}")]
             if not fit:
                 entries.append(x)
                 continue
@@ -250,10 +276,10 @@ def migrate_trackers(cfg: dict, tickets: list[Ticket]) -> tuple[dict | None, dic
                 return None, {}, (f"{t.id}: the external key {key} could belong to "
                                   f"{' or '.join(str(o['prefix']) for o in fit)}; pick one by hand")
             ref = trackers.external_ref(live, f"{fit[0]['prefix']}-{key}")
-            if any(isinstance(e, dict) and str(e.get("key", "")).upper() == ref["key"] for e in t.meta["external"]):
-                return None, {}, f"{t.id} already links {ref['key']}; remove the bare {key} by hand"
-            entries.append({**x, **ref})
             changed = True
+            if ref["key"] in have or any(e.get("key") == ref["key"] for e in entries):
+                continue  # the same link is already there: the bare number is a duplicate of it
+            entries.append({**x, **ref})
         if changed:
             keys[t.id] = entries
     if new == old and not keys:
@@ -263,80 +289,80 @@ def migrate_trackers(cfg: dict, tickets: list[Ticket]) -> tuple[dict | None, dic
 
 # -- the whole workspace ------------------------------------------------------------------------------------
 
+def _workspace(home: Path, cfg: dict):
+    from orch.config.load import DEFAULTS, deep_merge
+    from orch.core.workspace import Workspace
+    return Workspace(home=home, config=deep_merge(DEFAULTS, cfg))  # no layout changes, no validation: reads only
+
+
 def plan(home: Path) -> Plan:
     """What migrating the workspace at `home` (the orchestrator folder) would change. Reads only."""
     from orch.core.ops_tasks import used_numbers
     home = Path(home)
-    result = Plan(home)
     cfg_path = home / "config.json"
     cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
-    ws = _Light(home, cfg)
+    ws = _workspace(home, cfg)
+    result = Plan(home, ws=ws)
     repo_names = list((cfg.get("git") or {}).get("repos") or {})
-    loaded: list[tuple[Path, Ticket, str]] = []
+    loaded: list[tuple[Path, Ticket]] = []
     for path in _ticket_files(home):
         rel = path.relative_to(home).as_posix()
         try:
-            text = path.read_text(encoding="utf-8")
-            loaded.append((path, parse_ticket(text, rel, allow_old=True), text))
+            loaded.append((path, parse_ticket(path.read_text(encoding="utf-8"), rel, allow_old=True)))
         except (TicketParseError, UnicodeDecodeError, OSError) as e:
             result.unreadable.append((rel, e.message if isinstance(e, OrchError) else str(e)))
-    new_trackers, new_external, why = migrate_trackers(cfg, [t for _, t, _ in loaded])
+    new_trackers, new_external, why = migrate_trackers(cfg, [t for _, t in loaded])
     if why:
         result.refused.append(("config.json", "trackers", why))
-    pending: list[tuple[Path, Ticket, Ticket, list[str]]] = []
-    for path, t, text in loaded:
+    verdicts = frozenset(t.id for _, t in loaded if ((t.meta.get("gates") or {}).get("verify") or {}).get("verdict"))
+    for path, t in loaded:
         rel = path.relative_to(home).as_posix()
-        cur, rules, refused = migrate_ticket(t, repo_names, used_numbers(ws, t.id))
+        cur, rules, refused = migrate_ticket(t, repo_names, lambda: used_numbers(ws, t.id), ws, verdicts)
         result.refused += [(rel, rule, why) for rule, why in refused]
         if t.id in new_external:
             cur.meta["external"] = new_external[t.id]
             rules.append("trackers")
-        if rules:
-            pending.append((path, t, cur, rules))
-    for path, t, cur, rules in pending:
+        if not rules:
+            continue
         old = path.read_text(encoding="utf-8")
-        cur.meta["updated"] = _stamp()
-        result.items.append(Item(path, path.relative_to(home).as_posix(), rules, old, render_ticket(cur)))
+        if render_ticket(cur) != render_ticket(t):  # dropping empty old headings alone is not an edit
+            cur.meta["updated"] = _stamp()
+        notes = [f"the {g} approval was voided by the upgrade (old artifact links no longer bind their images); "
+                 "migrate, then re-approve" for g in voided(t)] if "artifact-paths" in rules else []
+        result.items.append(Item(path, rel, rules, old, render_ticket(cur), t.id, notes))
     if new_trackers is not None:
         old_cfg = cfg_path.read_text(encoding="utf-8-sig")
         new_cfg = json.dumps({**cfg, "external_trackers": new_trackers}, indent=2, ensure_ascii=False) + "\n"
         result.items.append(Item(cfg_path, "config.json", ["trackers"], old_cfg, new_cfg))
+    for path, t in loaded:  # an approval already void whose gated text has old links, which stays as it is
+        if not any(i.ticket == t.id for i in result.items) and (g := voided(t)):
+            result.notes.append((path.relative_to(home).as_posix(),
+                                 f"the {', '.join(g)} approval was voided by the upgrade; fix the links, then re-approve"))
     return result
 
 
 def apply(result: Plan) -> int:
-    """Write every item; the number written. Tickets first, the config last, so a stop in between leaves tickets
-    that a second run finishes (the second run sees the config still waiting)."""
+    """Write every item, the number written. Each file is re-read under its ticket's lock (the one orch's own writes
+    take) and skipped, with a reason in `result.skipped`, if it is no longer what the plan was made from. Tickets
+    first, the config last; the config is left out when a ticket that needs it was skipped."""
+    from orch.core.locks import lock
+    written, ticket_skipped = 0, False
     for item in sorted(result.items, key=lambda i: i.rel == "config.json"):
-        atomic_write_text(item.path, item.new)
-    return len(result.items)
+        if item.ticket is None and ticket_skipped:
+            result.skipped.append((item.rel, "a ticket that needs the new tracker keys was skipped; run orch migrate again"))
+            continue
+        with lock(result.ws, item.ticket or "config"):
+            enc = "utf-8-sig" if item.ticket is None else "utf-8"
+            now = item.path.read_text(encoding=enc) if item.path.exists() else None
+            if now != item.old:
+                result.skipped.append((item.rel, "changed since the plan was made; run orch migrate again"))
+                ticket_skipped = ticket_skipped or "trackers" in item.rules
+                continue
+            atomic_write_text(item.path, item.new)
+            written += 1
+    return written
 
 
 def _stamp() -> str:
     from orch.clock import stamp
     return stamp()
-
-
-@dataclass
-class _Light:
-    """Just enough of a Workspace to read the event log (used_numbers): no config validation, no layout changes."""
-    home: Path
-    config: dict
-
-    @property
-    def state_dir(self) -> Path:
-        return self.home / ".state"
-
-
-def pending_paths(home: Path) -> list[tuple[str, str]]:
-    """(ticket file, rule) for what `orch check` reports as needing `orch migrate`: old artifact paths (the other
-    old shapes fail to load, or are config problems, and say so themselves)."""
-    out = []
-    for path in _ticket_files(Path(home)):
-        try:
-            t = _read(path)
-        except (TicketParseError, UnicodeDecodeError, OSError):
-            continue
-        if any(artifact_paths(text, t.id) != text for name, text in t.sections.items() if name != "Log"):
-            out.append((path.relative_to(home).as_posix(), "artifact-paths"))
-    return out

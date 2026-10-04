@@ -113,8 +113,9 @@ def test_plan_checklist_becomes_tasks_and_the_plan_stays(ws_root, make):
     migrate_all(ws_root)
     t = read(path)
     assert t.section("Plan") == PLAN
-    assert t.section("Tasks") == ("- [x] T1 Inventory `hub/jobs/` first\n  - ref: file:hub/jobs/\n"
-                                  "- [ ] T2 Migrate the gold jobs\n- [ ] T3 Compare costs")
+    note = "  - note: imported from the Plan checklist"
+    assert t.section("Tasks") == ("- [x] T1 Inventory `hub/jobs/` first\n  - ref: file:hub/jobs/\n" + note +
+                                  "\n- [ ] T2 Migrate the gold jobs\n" + note + "\n- [ ] T3 Compare costs\n" + note)
 
 
 def test_plan_checklist_only_for_tickets_being_worked(ws_root, make):
@@ -138,7 +139,7 @@ def test_testing_ticket_with_open_checklist_items_is_refused(ws_root, make):
 def test_testing_ticket_with_a_finished_checklist_gets_done_tasks(ws_root, make):
     _, path = make("testing", sections={"Plan": "- [x] a\n- [x] b"})
     migrate_all(ws_root)
-    assert read(path).section("Tasks") == "- [x] T1 a\n- [x] T2 b"
+    assert [x.id for x in __import__("orch.core.tasks", fromlist=["x"]).ticket_tasks(read(path))] == ["T1", "T2"]
 
 
 def test_task_numbers_never_reuse_ones_the_event_log_named(ws_root, make):
@@ -246,11 +247,24 @@ def test_bare_keys_under_an_already_prefixed_tracker_are_prefixed(ws_root, make)
     assert read(path).meta["external"] == [{"key": "GH-12", "url": "https://a.test/issues/12"}]
 
 
-def test_a_bare_key_two_prefixed_trackers_could_own_is_refused(ws_root, make):
+def test_a_bare_key_two_migrated_shape_trackers_could_own_is_refused(ws_root, make):
     config(ws_root, external_trackers=[{"prefix": "GH", "pattern": "GH-(?P<id>\\d+)", "url": "https://a.test/{id}"},
-                                       {"prefix": "BB", "pattern": "BB-\\d+", "url": "https://b.test/{key}"}])
+                                       {"prefix": "BB", "pattern": "BB-(?P<id>\\d+)", "url": "https://b.test/{id}"}])
     make(external=[{"key": "12", "url": None}])
     assert migrate.plan(ws_root / "orchestrator").refused
+
+
+def test_bare_keys_are_not_guessed_onto_a_tracker_this_migration_did_not_write(ws_root, make):
+    config(ws_root, external_trackers=[{"prefix": "ABC", "pattern": "ABC-\\d+", "url": "https://a.test/{key}"}])
+    _, path = make(external=[{"key": "12", "url": None}])
+    assert migrate.plan(ws_root / "orchestrator").empty()
+
+
+def test_duplicate_keys_collapse_within_a_ticket(ws_root, make):
+    config(ws_root, external_trackers=[{"prefix": "GH", "pattern": "\\d+", "url": "https://a.test/{key}"}])
+    _, path = make(external=[{"key": "12", "url": None}, {"key": "12", "url": None}, {"key": "GH-12", "url": None}])
+    migrate_all(ws_root)
+    assert [x["key"] for x in read(path).meta["external"]] == ["GH-12"]
 
 
 def test_a_bare_tracker_is_a_config_error_and_never_links_numbers(ws, configure):
@@ -326,11 +340,100 @@ def test_migration_never_touches_the_ledger_events_or_approved_snapshots(ws_root
     (state / "gates").mkdir(parents=True, exist_ok=True)
     (state / "gates" / "L-0001-requirements.md").write_text("snapshot\n", encoding="utf-8")
     (state / "events.jsonl").write_text("", encoding="utf-8")
-    before = {p.name: p.read_bytes() for p in state.rglob("*") if p.is_file() and p.name != "index.json"}
+    before = {p.name: p.read_bytes() for p in state.rglob("*") if p.is_file() and p.name != "index.json" and "locks" not in p.parts}
     migrate_all(ws_root)
-    assert {p.name: p.read_bytes() for p in state.rglob("*") if p.is_file() and p.name != "index.json"} == before
+    assert {p.name: p.read_bytes() for p in state.rglob("*") if p.is_file() and p.name != "index.json" and "locks" not in p.parts} == before
     assert "orch.core.ledger" not in Path(migrate.__file__).read_text(encoding="utf-8")
 
 
 def test_the_old_import_command_is_gone(ws_root, capsys):
     assert run(["task", "import", "L-0001", "--from-plan"]) != 0
+
+
+# -- review fixes -------------------------------------------------------------------------------------------
+
+def test_apply_skips_a_file_that_changed_since_the_plan(ws_root, make):
+    _, edited = make(sections={"Proposal": "p"})
+    _, other = make(sections={"Proposal": "q"})
+    result = migrate.plan(ws_root / "orchestrator")
+    edited.write_text(edited.read_text(encoding="utf-8") + "\n## Findings\n\nsomeone else wrote this\n", encoding="utf-8")
+    assert migrate.apply(result) == 1
+    assert "someone else wrote this" in edited.read_text(encoding="utf-8") and "## Proposal" in edited.read_text(encoding="utf-8")
+    assert result.skipped[0][0].endswith("L-0001-old-ticket.md") and "Proposal" not in read(other).sections
+
+
+def test_a_skipped_ticket_holds_the_tracker_config_back(ws_root, make):
+    config(ws_root, external_trackers=[{"prefix": "GH", "pattern": "\\d+", "url": "https://a.test/{key}"}])
+    _, path = make(external=[{"key": "12", "url": None}])
+    result = migrate.plan(ws_root / "orchestrator")
+    path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    cfg_before = (ws_root / "orchestrator" / "config.json").read_bytes()
+    assert migrate.apply(result) == 0 and len(result.skipped) == 2
+    assert (ws_root / "orchestrator" / "config.json").read_bytes() == cfg_before
+
+
+def test_check_errors_only_for_what_would_apply_and_warns_for_refusals(ws_root, make):
+    from orch.core.check import run_checks
+    from orch.core.workspace import Workspace
+    make("in-progress", sections={"Plan": "- [ ] a"})
+    make("done", sections={"Verification": "![r](../artifacts/L-0002/r.png)"})
+    make("open", sections={"Requirements": "![r](../artifacts/L-0003/r.png)"})
+    found = {(f.code, f.level, f.ticket) for f in run_checks(Workspace.open(ws_root), emit_events=False)}
+    assert ("needs-migration", "error", "L-0001") in found
+    assert not any(c == "needs-migration" and t == "L-0002" for c, _, t in found)
+    assert any(c == "migration-refused" and lvl == "warning" for c, lvl, _ in found)
+
+
+def test_check_says_history_for_a_done_ticket(ws_root, make):
+    from orch.core.check import run_checks
+    from orch.core.workspace import Workspace
+    make("done", sections={"Verification": "![r](../artifacts/L-0001/r.png)"})
+    msgs = [f.message for f in run_checks(Workspace.open(ws_root), emit_events=False) if f.code == "migration-refused"]
+    assert msgs and "history, cannot migrate" in msgs[0]
+
+
+def test_an_approval_the_upgrade_voided_is_rewritten_and_flagged(ws_root, make):
+    _, path = make("open", sections={"Requirements": "see ![a](../artifacts/L-0001/a.png)", "Acceptance criteria": "- [ ] x"})
+    t = approve(path, "requirements")
+    t.meta["gates"]["requirements"]["hash"] = "sha256:" + "0" * 64  # what the old link binding left behind
+    path.write_text(render_ticket(t), encoding="utf-8")
+    result = migrate.plan(ws_root / "orchestrator")
+    assert result.items and "voided by the upgrade" in result.items[0].notes[0] and "re-approve" in result.items[0].notes[0]
+    from orch.core.check import run_checks
+    from orch.core.workspace import Workspace
+    assert any(f.code == "approval-voided" for f in run_checks(Workspace.open(ws_root), emit_events=False))
+
+
+def test_a_child_whose_epic_verdict_is_recorded_keeps_its_verification(ws_root, make):
+    epic, _ = make("testing", type="epic")
+    e = read(next((ws_root / "orchestrator" / "tickets" / "testing").iterdir()))
+    e.meta["gates"]["verify"] = {"verdict": "accepted", "at": "2026-01-03T09:00Z", "via": "dashboard"}
+    next((ws_root / "orchestrator" / "tickets" / "testing").iterdir()).write_text(render_ticket(e), encoding="utf-8")
+    _, child = make("in-progress", parent=epic, sections={"Verification": "![r](../artifacts/L-0002/r.png)"})
+    result = migrate.plan(ws_root / "orchestrator")
+    assert [r for _, r, _ in result.refused] == ["artifact-paths"] and not result.items
+
+
+def test_the_verdict_check_uses_the_real_verdict_hash(ws_root, make, monkeypatch):
+    from orch.core import epics
+    seen = []
+    real = epics.verdict_hash
+    monkeypatch.setattr(epics, "verdict_hash", lambda ts, ws: seen.append(1) or real(ts, ws))
+    make("testing", sections={"Verification": "ran it", "Context": "![c](../artifacts/L-0001/c.png)"})
+    migrate.plan(ws_root / "orchestrator")
+    assert seen
+
+
+def test_removing_only_empty_old_headings_keeps_the_updated_stamp(ws_root, make):
+    _, path = make(sections={"Proposal": ""})
+    path.write_text(path.read_text(encoding="utf-8") + "\n## Proposal\n", encoding="utf-8")
+    before = read(path).meta["updated"]
+    migrate_all(ws_root)
+    assert "## Proposal" not in path.read_text(encoding="utf-8") and read(path).meta["updated"] == before
+
+
+def test_a_partial_apply_exits_5(ws_root, make, capsys):
+    _, gated = make("open", sections={"Requirements": "![a](../artifacts/L-0001/a.png)"})
+    approve(gated, "requirements")
+    make(sections={"Proposal": "p"})
+    assert run(["migrate", "--apply"]) == 5 and "1 file(s) written" in capsys.readouterr().out

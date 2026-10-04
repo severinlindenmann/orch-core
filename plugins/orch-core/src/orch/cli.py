@@ -784,21 +784,27 @@ def migrate(
     Moves Proposal and Decisions into Context, writes a worked ticket's Plan checklist as tasks, turns
     ../artifacts/<ticket>/<name> links into artifact:<name>, and gives bare-number trackers a prefix. It never
     touches the approval ledger, the event log or an approved text: a rewrite that would change text a human
-    decision is bound to is refused for that ticket and listed (exit 5); the human re-approves it. Safe to rerun."""
+    decision is bound to is refused for that ticket and listed. Exit 5 when anything was refused, skipped or
+    unreadable, also after --apply wrote the rest. Safe to rerun."""
     from orch.config.load import find_home
     from orch.core import migrate as m
     result = m.plan(find_home())
     written = m.apply(result) if apply and result.items else 0
-    refused = bool(result.refused or result.unreadable)
+    refused = bool(result.refused or result.unreadable or result.skipped)
     if json_out:
         _out({"applied": bool(apply), "written": written,
               "changes": [{"file": i.rel, "rules": i.rules} for i in result.items],
               "refused": [{"where": w, "rule": r, "why": y} for w, r, y in result.refused],
-              "unreadable": [{"file": f, "why": y} for f, y in result.unreadable]}, True, "")
+              "unreadable": [{"file": f, "why": y} for f, y in result.unreadable],
+              "skipped": [{"file": f, "why": y} for f, y in result.skipped],
+              "notes": [{"file": i.rel, "note": n} for i in result.items for n in i.notes]
+              + [{"file": f, "note": n} for f, n in result.notes]}, True, "")
     else:
         lines = [i.diff() if not apply else f"rewrote {i.rel} ({', '.join(i.rules)})" for i in result.items]
         lines += [f"refused  {w}: {r}: {y}" for w, r, y in result.refused]
-        lines += [f"skipped  {f}: {y}" for f, y in result.unreadable]
+        lines += [f"skipped  {f}: {y}" for f, y in result.unreadable + result.skipped]
+        lines += [f"note     {i.rel}: {n}" for i in result.items for n in i.notes]
+        lines += [f"note     {f}: {n}" for f, n in result.notes]
         lines.append("nothing to migrate" if result.empty() else
                      f"{written} file(s) written" if apply else
                      f"{len(result.items)} file(s) would change; run `orch migrate --apply` to write them")

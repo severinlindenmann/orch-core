@@ -248,7 +248,7 @@
 </section>
 {% endmacro %}
 
-{% macro epic_row(r) %}{{ tc.row(r.card) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}{% if r.sub %} · {{ r.sub }}{% endif %}</p>{% endmacro %}
+{% macro epic_row(r) %}{{ tc.row(r.card, false) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}{% if r.sub %} · {{ r.sub }}{% endif %}</p>{% endmacro %}
 
 {% macro epic_list(e) %}
 <section class="epic-children" id="epic-children" aria-labelledby="epic-children-h">
@@ -406,7 +406,7 @@
 {% set card_needed = move.kind == "human" and not (ea.kind == "verdict" and epic.verdict_ready) %}
 {{ epic_slot(epic, gate_shown, card_needed) }}
 {{ epic_progress(epic) }}
-{% if start_box and not start_box.disabled %}{{ start_agent(start_box, t.id) }}{% endif %}
+{% if start_box and not start_box.disabled %}<details class="more-start"><summary class="lnk">Start an agent ▸</summary>{{ start_agent(start_box, t.id) }}</details>{% endif %}
 {{ epic_list(epic) }}
 {% elif t.status != "done" %}
 {% set human = move.kind == "human" %}

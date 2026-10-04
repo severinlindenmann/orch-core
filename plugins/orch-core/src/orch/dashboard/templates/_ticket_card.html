@@ -47,11 +47,11 @@
 {%- endmacro %}
 
 {#- S: one line (two below 560 px): icon, key, title, move, strip, PR. -#}
-{% macro row(c) -%}
+{% macro row(c, show_epic=true) -%}
 <div class="tc-row">
   <span class="tc-icon tc-{{ c.move.role }}">{{ ui.icon(c.move.role) }}</span>
   <a class="key lnk" href="/t/{{ c.id }}">{{ c.id }}</a>
-  <span class="tc-title">{% if c.epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}</span>
+  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}</span>
   <span class="tc-move">{{ move_chip(c.move) }}</span>
   <span class="tc-progress">{{ strip(c) }}{% if c.code %} {{ code_token(c.code) }}{% endif %}</span>
 </div>

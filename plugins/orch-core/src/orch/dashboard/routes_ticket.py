@@ -57,11 +57,20 @@ def load_or_error(request: Request, ref: str, entries: list[store.Entry] | None 
                                     heading="Ambiguous ticket", message=e.message)
 
 
-def _drawn_html(t) -> frozenset:
-    """Names of the HTML artifacts an `html` block of the ticket already draws in its own frame."""
-    from orch.widgets import ticket_blocks
+def _drawn_html(ws, t) -> frozenset:
+    """Names of the HTML artifacts an `html` block of the ticket really draws in a frame: the same test as
+    `widgets.render.chrome` (agent HTML on, a renderer installed, block valid and pinned to the file as it is now,
+    id not duplicated). A stale or wrong pin, or HTML off, leaves the file's own preview in place."""
+    from orch.widgets import Ctx, frames, ticket_blocks, validate
     from orch.widgets.artifacts import name_of
-    return frozenset(n for b in ticket_blocks(t) if b.layer == "html" and (n := name_of(t.id, b.data.get("html"))))
+    from orch.widgets.blocks import duplicate_ids
+    ctx = Ctx.of(ws, t)
+    if not (ctx.html and frames.INSTALLED):
+        return frozenset()
+    blocks = ticket_blocks(t)
+    dup = duplicate_ids(blocks)
+    return frozenset(n for b in blocks if b.layer == "html" and b.data.get("id") not in dup
+                     and not validate(b, t, ws=ws) and (n := name_of(t.id, b.data.get("html"))))
 
 
 def _artifacts(ws, ticket_id: str, drawn: frozenset = frozenset()) -> list[dict]:
@@ -205,7 +214,7 @@ def ticket_page(request: Request, ref: str, open: str = ""):
                 ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),
                 notes=story.agent_notes(t, ticket_events), timeline=story.timeline(ticket_events),
                 plan_checklist=plan_checklist(t.section("Plan")) if not task_view["tasks"] else None,
-                artifacts=_artifacts(ws, t.id, _drawn_html(t)), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")), ran_on=ran_on,
+                artifacts=_artifacts(ws, t.id, _drawn_html(ws, t)), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")), ran_on=ran_on,
                 external=external, prs=prs, branches=branches, start_box=start_box, tasks_card=tasks_card,
                 ticket_decisions=ticket_decisions, epic=epic_view, together=bool(together),
                 together_questions=human_questions_in(t, "requirements") + human_questions_in(t, "plan"))

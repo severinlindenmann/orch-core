@@ -11,6 +11,33 @@ TITLES = {"screenshot": "Screenshots", "diagram": "Diagrams", "report": "Reports
 ORDER = ("screenshot", "diagram", "report", "dataset", "log", "build", "link", "other")
 
 
+def widget_files(ws, t) -> list[dict]:
+    """The files the ticket's widget blocks pin (section, ref, state ok/changed/missing). Linked only while the bytes
+    still match the pin, through the artifact route's read-once `?v=` path; never a filesystem path, and only for a
+    file of this ticket's own folder (orch.widgets.artifacts.resolve), so a changed or foreign file has no link."""
+    from urllib.parse import quote
+    from orch.core.artifacts import safe_name
+    from orch.widgets import artifacts as wa
+    from orch.widgets.blocks import has_blocks, ticket_blocks
+    if not has_blocks("\n".join(t.sections.values())):
+        return []
+    out, seen = [], set()
+    for b in ticket_blocks(t):
+        if not isinstance(b.data, dict) or b.layer is None:
+            continue
+        for r in wa.refs(b.data):
+            ref, digest = r["ref"], r["sha256"]
+            if (b.section, ref, digest) in seen:
+                continue
+            seen.add((b.section, ref, digest))
+            name = wa.name_of(t.id, ref)
+            state = wa.state(ws, t.id, ref, digest)
+            ok = state == "ok" and name and safe_name(name) and isinstance(digest, str) and len(digest) == 64
+            out.append({"ref": ref, "section": b.section, "state": state,
+                        "href": f"/a/{quote(t.id)}/{quote(name)}?v={digest[:16]}" if ok else None})
+    return out
+
+
 def view(ws, t) -> dict:
     scope = artifact_scope(t, ws)
     changed = dict(art.changed(ws, t))
@@ -33,6 +60,7 @@ def view(ws, t) -> dict:
         else:
             item["text"] = f"orchestrator/static/{e['static']}"
         items.append(item)
+    wfiles = widget_files(ws, t)
     groups = [{"kind": k, "title": TITLES[k], "items": [i for i in items if i["kind"] == k]} for k in ORDER]
     by_ac: dict[int, list] = {}
     by_task: dict[str, list] = {}
@@ -45,6 +73,8 @@ def view(ws, t) -> dict:
     panel = [{"key": "images", "title": "Screenshots and diagrams", "items": [i for i in items if i["image"]]},
              {"key": "files", "title": "Reports and files", "items": [i for i in items if not i["image"] and i["source"] != "url"]},
              {"key": "links", "title": "Links", "items": [i for i in items if i["source"] == "url"]}]
-    return {"count": len(items), "groups": [g for g in groups if g["items"]], "by_ac": by_ac, "by_task": by_task,
+    if wfiles:
+        panel.append({"key": "widgets", "title": "Widget files", "items": wfiles})
+    return {"count": len(items) + len(wfiles), "groups": [g for g in groups if g["items"]], "by_ac": by_ac, "by_task": by_task,
             "panel": [g for g in panel if g["items"]],
             "unlinked": art.unregistered(ws, t) + art.unregistered_static(ws, t)}

@@ -54,10 +54,10 @@ def _action_cap(request) -> tuple[int, bool]:
 
 async def csp_middleware(request, call_next):
     """Give every dashboard response the core CSP, overwriting any other (whatever its content type);
-    only artifacts (/a/), widget frames (/w/, and /wp/ for a wiki page's) and addon downloads keep the stricter one
+    only artifacts (/a/), widget frames (/w/, and /wp/ for a wiki page's), a wiki page's files (/wpf/) and addon downloads keep the stricter one
     their route sets."""
     response = await call_next(request)
-    if _ADDON_FILE.match(request.url.path) or request.url.path.startswith(("/w/", "/wp/")):  # the frame's own
+    if _ADDON_FILE.match(request.url.path) or request.url.path.startswith(("/w/", "/wp/", "/wpf/")):  # the frame's own
         response.headers.setdefault("Content-Security-Policy", "sandbox")  # also the 401 page there
     elif not request.url.path.startswith("/a/"):
         response.headers["Content-Security-Policy"] = PAGE_CSP

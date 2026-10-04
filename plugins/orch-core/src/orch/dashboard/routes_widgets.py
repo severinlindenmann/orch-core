@@ -91,6 +91,43 @@ def page_widget_document(request: Request, addon: str, digest: str, page: str = 
     return HTMLResponse(render_document(block, ctx), headers=HEADERS)
 
 
+@router.get("/wpf/{addon}/{digest}")
+def page_file_document(request: Request, addon: str, digest: str, page: str = ""):
+    """A file a widget on a wiki page pins, by its sha256: served only when a valid block of that page names a file of
+    its `_files/` folder with this digest, and only the bytes that hash to it (read once, hashed as read). Images and
+    video only; nosniff, no-store and `sandbox`, so an SVG opened on its own cannot run."""
+    import mimetypes
+
+    from fastapi.responses import Response
+
+    from orch.addons.loader import valid_name
+    from orch.core.artifacts import read_pinned
+    from orch.widgets import artifacts
+    from orch.widgets.pages import blocks_of, page_ctx
+    from orch.widgets.types._media import VIDEO_TYPES
+    la = request.app.state.addons.registry.get(addon) if valid_name(addon) else None
+    source = getattr(la.obj, "page_source", None) if la is not None else None
+    try:
+        found = source(page) if callable(source) and re.fullmatch(r"[0-9a-f]{64}", digest) else None
+    except Exception:
+        found = None
+    if not (isinstance(found, tuple) and len(found) == 2 and all(isinstance(x, str) for x in found)):
+        return PlainTextResponse("not found", status_code=404, headers=HEADERS)
+    text, folder = found
+    ctx = page_ctx(request.app.state.ws, addon, page, folder)
+    blocks = [b for b in blocks_of(text, ctx.ticket) if not b.error and b.index < MAX_BLOCKS]
+    refs = {r["ref"] for b in blocks for r in artifacts.refs(b.data) if r["sha256"] == digest}
+    path = next((p for ref in sorted(refs) if (p := artifacts.resolve(ctx.ws, ctx.ticket.id, ref)) is not None), None)
+    kind = mimetypes.guess_type(path.name)[0] if path else None
+    if kind not in artifacts.IMAGE_TYPES | VIDEO_TYPES:
+        return PlainTextResponse("not found", status_code=404, headers=HEADERS)
+    data = read_pinned(path, digest)
+    if data is None:
+        return PlainTextResponse("not found", status_code=404, headers=HEADERS)
+    return Response(data, media_type=kind, headers={"Content-Security-Policy": "sandbox",
+                                                     "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
 @router.get("/w/{ref}/{section}/{digest}")
 def widget_document(request: Request, ref: str, section: str, digest: str, theme: str = "", n: str = ""):
     """The block of `section` whose canonical JSON has sha256 `digest` (Block.digest, render.frame_path); `n` the

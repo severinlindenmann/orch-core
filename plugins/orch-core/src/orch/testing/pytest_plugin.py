@@ -14,6 +14,12 @@ def orch_user_dir(tmp_path, monkeypatch):
     d = tmp_path / "orch-user"
     monkeypatch.setenv("ORCH_STATE_DIR", str(d))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    # git must not read the real ~/.gitconfig (signing, hooks path, identity) or the system one: tests that commit
+    # (the wiki addon's) would otherwise depend on the machine they run on.
+    empty = tmp_path / "empty.gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     for var in _AGENT_ENV:
         monkeypatch.delenv(var, raising=False)
     # Tests may run under an agent harness or CI: human actions in a test must not depend on the real process tree.

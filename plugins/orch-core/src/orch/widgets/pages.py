@@ -174,7 +174,7 @@ def findings(ws) -> list[dict]:
 
 def text_alternatives(ws, text: str, page_id: str = "", folder: str = "") -> str:
     """The page text with each valid ```orch block replaced by its text alternative (what search and `mentions` read
-    instead of the JSON); a block that does not parse stays as it is. Not drawn, so no frame and no file is read."""
+    instead of the JSON); a block that does not parse stays as it is. Not drawn, so no frame is built; a pinned file is only hashed (to say whether it matches), never embedded."""
     from orch.widgets.render import render_text
     ctx = page_ctx(ws, "wiki", page_id, folder)
     lines = text.split("\n")

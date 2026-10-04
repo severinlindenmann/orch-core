@@ -287,7 +287,7 @@ def test_create_page_carries_the_widgets_and_the_files_they_pin(wiki):
     # the new page renders both blocks
     refresh(fw, addon)
     html = md_page_filter(addon.obj.page_source("decisions/DEMO-0001")[0], "wiki", "decisions/DEMO-0001", (), fw.ws, FOLDER)
-    assert "w-t-stats" in html and html.count("data:image/png;base64,") == 2
+    assert "w-t-stats" in html and html.count("/wpf/wiki/") == 2 and "data:" not in html
 
 
 def test_a_changed_file_is_not_copied_and_the_page_says_so(wiki):
@@ -446,3 +446,23 @@ def test_the_folder_rule_is_the_same_in_core(tmp_path):
     (tmp_path / "real").mkdir()
     (tmp_path / "ln").symlink_to(tmp_path / "real", target_is_directory=True)
     assert resolve_wiki_folder(tmp_path, "ln")[0] is None and local_module.resolve_folder(tmp_path, {"folder": "ln"})[0] is None
+
+
+def test_tests_never_read_the_real_git_config(tmp_path, monkeypatch):
+    """orch_user_dir points git at an empty global config: a machine's commit.gpgsign or hooks path cannot reach a
+    commit a test makes (the create-page commit is real git)."""
+    import os
+    home = tmp_path / "realhome"
+    home.mkdir()
+    (home / ".gitconfig").write_text("[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /bin/false\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    assert os.environ["GIT_CONFIG_NOSYSTEM"] == "1" and Path(os.environ["GIT_CONFIG_GLOBAL"]).read_text() == ""
+    assert Path(os.environ["GIT_CONFIG_GLOBAL"]).parent != home
+    repo = tmp_path / "r"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@example.com")
+    git(repo, "config", "user.name", "T")
+    write(repo, "f.txt", "x")
+    git(repo, "add", "f.txt")
+    git(repo, "commit", "-q", "-m", "m")  # would fail through /bin/false if the real config were read

@@ -353,9 +353,18 @@ error callouts and the sandboxed frame are the ticket's: the same code, with a p
   resolved again by core with the addon's rule (inside the workspace, not hidden, not orch's records, no symlink on
   the way); the file must be a regular file directly in `_files/`, never a symlink, and `_files/` itself never a link.
   Missing, outside the folder, a symlink or `artifacts/<ID>/...` all give the "missing" state; a wrong digest the
-  "changed since this widget was written; it is not shown" warning, as on a ticket. Bytes are read once and hashed as
-  read. A page has no `/a/` route, so its images and videos are embedded as `data:` URIs (5 MB each, 8 MB per
-  widget); a one-off `html` file runs only when its bytes match the pin.
+  "changed since this widget was written; it is not shown" warning, as on a ticket.
+  A page has no `/a/` route, so core types (`compare`, `screens`, `video`) show a page's files through
+  `GET /wpf/<addon>/<sha256>?page=<page id>`: the route asks the addon for the page text, serves a file only when a
+  valid block of that page pins a file of `_files/` with that digest, and only the bytes that hash to it (read once,
+  hashed as read, `read_pinned`); images and video only, with `nosniff`, `no-store` and a `sandbox` CSP, and exempt from
+  the page CSP like `/w/`. The page CSP's `default-src 'self'` lets `<img>` and `<video>` load them (so video plays and
+  seeks); nothing is embedded as a `data:` URI on a page, so a page's size does not depend on its files. A page's
+  URLs carry the digest, so a file swapped after the page was drawn is refused as well. The agent-HTML layer is
+  unchanged: its frame document inlines the images its data names as `data:` URIs, within the same
+  8 MB (`artifacts.MAX_INLINED`) budget per widget as on a ticket ("too many or too large images" beyond it), and a
+  one-off `html` file runs only when its bytes match the pin. Standalone documents (`render_document`) embed up to
+  5 MB per file, and one of more than about 9 MB is replaced by the "too many or too large images" error, as for tickets.
 - **Links.** No link or image on a page is ever live toward a ticket's artifact: a `links`/`deploy` url or inline
   Markdown in a block that would be another ticket's `/a/` file is shown as text (R24 for pages).
 - **A `checks` block** points at acceptance criteria (`AC<n>`) of a ticket, but a page has no ticket and no

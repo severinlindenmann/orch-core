@@ -98,9 +98,10 @@ def test_a_checks_block_on_a_page_is_a_claim_never_a_gate(ws, put):
 def test_files_by_digest_inside_the_wiki_folder(ws):
     ref = put_file(ws, "a.png", PNG)
     html = draw(ws, fence(compare(ref, sha(PNG))))
-    assert html.count("data:image/png;base64,") == 2 and "/a/" not in html
+    url = f"/wpf/wiki/{sha(PNG)}?page=decisions%2FDEMO-0001"
+    assert html.count(f'src="{url}"') == 2 and "data:" not in html and "/a/" not in html  # never embedded
     changed = draw(ws, fence(compare(ref, sha(b"other"))))
-    assert "changed since this widget was written" in changed and "data:image" not in changed
+    assert "changed since this widget was written" in changed and "/wpf/" not in changed
 
 
 def test_a_file_outside_the_wiki_folder_a_symlink_or_missing_is_missing(ws, tmp_path):
@@ -111,10 +112,10 @@ def test_a_file_outside_the_wiki_folder_a_symlink_or_missing_is_missing(ws, tmp_
     for bad in ("artifacts/DEMO-0001/a.png", f"{pages.FILES}/link.png", f"{pages.FILES}/nope.png",
                 f"{pages.FILES}/../a.png", "artifact:a.png", f"{pages.FILES}/sub/a.png"):
         html = draw(ws, fence(compare(bad, sha(PNG))))
-        assert "data:image" not in html, bad
+        assert "/wpf/" not in html and "data:image" not in html, bad
         assert "is missing" in html or "Widget not shown" in html, bad
     assert ref  # the good one still draws
-    assert "data:image/png" in draw(ws, fence(compare(ref, sha(PNG))))
+    assert "/wpf/wiki/" in draw(ws, fence(compare(ref, sha(PNG))))
 
 
 def test_a_linked_files_folder_is_not_read(ws, tmp_path):
@@ -123,7 +124,7 @@ def test_a_linked_files_folder_is_not_read(ws, tmp_path):
     (outside / "a.png").write_bytes(PNG)
     (ws.root / FOLDER).mkdir(parents=True)
     (ws.root / FOLDER / pages.FILES).symlink_to(outside, target_is_directory=True)
-    assert "data:image" not in draw(ws, fence(compare(f"{pages.FILES}/a.png", sha(PNG))))
+    assert "/wpf/" not in draw(ws, fence(compare(f"{pages.FILES}/a.png", sha(PNG))))
 
 
 def test_a_page_never_makes_a_live_link_to_a_ticket_artifact(ws):
@@ -236,3 +237,48 @@ def test_ticket_copy_keeps_blocks_of_verification_and_findings_with_digest_check
     (art / "a.png").write_bytes(b"swapped")  # a file that no longer matches its digest is not copied
     again = ticket_copy(ws, tid, ("Findings",))
     assert again["blocks"] == [] and len(again["skipped"]) == 2 and again["files"] == {}
+
+
+def test_a_video_on_a_page_is_a_wpf_url_the_page_csp_lets_play(ws):
+    blob = b"\x00\x00\x00\x18ftypmp42" + b"x" * 64
+    ref = put_file(ws, "run.mp4", blob)
+    html = draw(ws, fence({"type": "video", "path": ref, "sha256": sha(blob)}))
+    assert f'<video class="w-video" controls preload="metadata" src="/wpf/wiki/{sha(blob)}?page=' in html
+    assert "data:" not in html
+    from orch.dashboard.app import PAGE_CSP
+    assert "default-src 'self'" in PAGE_CSP and "media-src" not in PAGE_CSP  # same-origin media falls back to it
+
+
+def _serve(dash, text):
+    obj = SimpleNamespace(page_source=lambda page: (text, FOLDER) if page == "p" else None)
+    dash.app.state.addons = SimpleNamespace(registry=SimpleNamespace(get=lambda n: SimpleNamespace(obj=obj) if n == "wiki" else None))
+
+
+def test_page_file_route_serves_only_pinned_bytes_with_safe_headers(dash, ws):
+    ref = put_file(ws, "a.png", PNG)
+    put_file(ws, "unpinned.png", PNG + b"1")
+    _serve(dash, fence(compare(ref, sha(PNG))))
+    r = dash.get(f"/wpf/wiki/{sha(PNG)}?page=p")
+    assert r.status_code == 200 and r.content == PNG and r.headers["content-type"] == "image/png"
+    assert r.headers["x-content-type-options"] == "nosniff" and r.headers["cache-control"] == "no-store"
+    assert r.headers["content-security-policy"] == "sandbox"  # not replaced by the page CSP
+    assert dash.get(f"/wpf/wiki/{sha(PNG + b'1')}?page=p").status_code == 404  # a file no block pins
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=other").status_code == 404
+    assert dash.get(f"/wpf/nope/{sha(PNG)}?page=p").status_code == 404
+    assert dash.get("/wpf/wiki/xyz?page=p").status_code == 404
+    (ws.root / FOLDER / pages.FILES / "a.png").write_bytes(b"swapped after the page was drawn")
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 404  # bytes no longer match: never served
+
+
+def test_page_file_route_refuses_symlinks_non_media_and_a_block_with_an_error(dash, ws, tmp_path):
+    outside = tmp_path / "o.png"
+    outside.write_bytes(PNG)
+    put_file(ws, "x.png", b"x")
+    (ws.root / FOLDER / pages.FILES / "link.png").symlink_to(outside)
+    html_blob = b"<script>1</script>"
+    ref_html = put_file(ws, "n.html", html_blob)
+    text = fence(compare(f"{pages.FILES}/link.png", sha(PNG))) + "\n\n" + fence({"type": "screens", "items": [
+        {"label": "h", "path": ref_html, "sha256": sha(html_blob)}], "bogus": 1})
+    _serve(dash, text)
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 404
+    assert dash.get(f"/wpf/wiki/{sha(html_blob)}?page=p").status_code == 404

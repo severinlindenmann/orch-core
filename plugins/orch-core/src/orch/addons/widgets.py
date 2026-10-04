@@ -63,7 +63,7 @@ class Badge:
 
 @dataclass(frozen=True)
 class Countdown:
-    """API 2.5: a live "in 3 h 05" to `until` (ISO 8601 with Z or an offset), used in a MenuStatus line; after it
+    """API 2.5: a live "3h05" to `until` (ISO 8601 with Z or an offset), used in a MenuStatus line; after it
     the text is `done`. Core renders the first text and a small script keeps it current."""
     until: str
     done: str = "reset"
@@ -80,7 +80,7 @@ class MenuStatus:
 
 
 def countdown_text(until: str, done: str, now: datetime | None = None) -> str | None:
-    """"in 3 h 05", "in 12 min" or `done`; None when `until` is not an ISO time with an offset."""
+    """"3h05", "12 min" or `done`; None when `until` is not an ISO time with an offset."""
     try:
         t = datetime.fromisoformat(until)
     except (TypeError, ValueError):
@@ -91,7 +91,7 @@ def countdown_text(until: str, done: str, now: datetime | None = None) -> str | 
     if s <= 0:
         return done
     m = int(s // 60)
-    return f"in {m // 60} h {m % 60:02d}" if m >= 60 else f"in {max(m, 1)} min"
+    return f"{m // 60}h{m % 60:02d}" if m >= 60 else f"{max(m, 1)} min"
 
 
 @dataclass(frozen=True)

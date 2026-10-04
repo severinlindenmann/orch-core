@@ -451,9 +451,9 @@ def menu_chip(snaps, now: float):
         if past:
             line = (Text("5h reset"),)
         else:
-            line = (Badge(_role(v), f"{v:.0f}%"),)
+            line = (Text("5h"), Badge(_role(v), f"{v:.0f}%"))  # "5h 51% · 3h05": which limit, how full, how long
             if isinstance(last.get("five_reset"), (int, float)):
-                line += (Countdown(iso(last["five_reset"])),)
+                line += (Text("·"), Countdown(iso(last["five_reset"])))
     return MenuStatus(badge, line)
 
 

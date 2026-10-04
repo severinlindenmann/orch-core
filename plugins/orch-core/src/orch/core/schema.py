@@ -103,7 +103,7 @@ def ticket_schema() -> dict:
                 "type": "object", "required": ["source", "kind", "label"],
                 "properties": {"source": {"enum": ["file", "link", "static"]}, "kind": _S, "label": _S, "name": _S,
                                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "task": _S,
-                               "ac": {"type": "integer", "minimum": 1}}}},
+                               "ac": {"type": "integer", "minimum": 1}, "by": _S}}},
             # 1.4: whose move it is (the dashboard's move chip): who you|agent|nobody, kind (approve-requirements,
             # approve-plan, re-approve, approve-epic, answer, task, verdict, repair, working, stale, blocked, ready,
             # done), label, ref (gate, question or task, or null); why (one line, when it is yours); epic (a

@@ -276,8 +276,9 @@ def test_document_lists_artifacts_by_name_label_and_kind_only(ws, aops, working,
     assert SCHEMA_VERSION == "1.6.0"
     sha = _meta(ws, working).meta["artifacts"][0]["sha256"]
     assert doc["artifact_items"] == [
-        {"source": "file", "kind": "screenshot", "label": "Jobs page", "name": "shot.png", "sha256": sha, "ac": 1},
-        {"source": "link", "kind": "report", "label": "Cost dashboard"}]
+        {"source": "file", "kind": "screenshot", "label": "Jobs page", "name": "shot.png", "sha256": sha, "ac": 1,
+         "by": "agent:claude-code:7f3c9a21"},
+        {"source": "link", "kind": "report", "label": "Cost dashboard", "by": "agent:claude-code:7f3c9a21"}]
     assert "secret" not in json.dumps(doc["artifact_items"])
     assert doc["artifacts"] == ["shot.png"]
     jsonschema.validate(doc, ticket_schema())

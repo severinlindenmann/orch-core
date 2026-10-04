@@ -342,6 +342,8 @@ def widget_binding(ticket, texts, ws) -> list[tuple[str, str]]:
 
 
 _SHA = re.compile(r"^[0-9a-f]{64}$")
+# who added an entry (Actor.to_str): a hand-edited value that is not one never reaches the ticket document
+_ACTOR = re.compile(r"^(?:human:you|agent:[A-Za-z0-9._-]{1,40}(?::[0-9A-Za-z-]{1,8})?)$")
 
 
 def ticket_dir(ws, ticket_id: str) -> Path:
@@ -455,6 +457,8 @@ def doc_items(ticket) -> list[dict]:
             item["task"] = e["task"]
         if isinstance(e.get("ac"), int) and not isinstance(e.get("ac"), bool):
             item["ac"] = e["ac"]
+        if isinstance(e.get("by"), str) and _ACTOR.match(e["by"]):
+            item["by"] = e["by"]
         out.append(item)
     return out
 

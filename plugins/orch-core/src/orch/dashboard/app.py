@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 
+from orch.dashboard import factory_runner
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
 from orch.dashboard.auth import auth_middleware
@@ -242,6 +243,7 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
         tasks.append(asyncio.create_task(app.state.scheduler.run_forever()))
         tasks.append(asyncio.create_task(outbox_loop(ws, seconds, app.state.outbox)))
         tasks.append(asyncio.create_task(store_sweep_loop(STORE_SWEEP_SECONDS, app.state.downloads, app.state.reveals)))
+        tasks.append(asyncio.create_task(factory_runner.loop(ws)))  # AI Factory: idle unless the human started an epic
         try:
             yield
         finally:

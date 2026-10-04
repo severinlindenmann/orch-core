@@ -1,11 +1,11 @@
-# AI Factory (phases 1 to 3)
+# AI Factory (phases 1 to 4)
 
 One epic in, finished work out: you write an epic and start it as a factory, and agents split, specify,
 auto-approve and build its children. You hear from them when they need a permission they do not hold, and at the
-end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 3 ship.
+end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 4 ship.
 
-AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface and phase 3 the
-Ready report and the Stopped message, all described below. The runner follows in a later phase.
+AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface, phase 3 the
+Ready report and the Stopped message, and phase 4 the runner that keeps the agents going, all described below.
 
 ## Switching it on
 
@@ -47,9 +47,10 @@ any other child without a human approval is refused a claim or task start.
 
 orch-core's plugin registers a Claude Code `PermissionRequest` hook (`orch permit hook`). Outside a factory session,
 or with the factory off, it gives no answer and the harness asks you as usual (with the factory off it reads only
-the workspace config). A factory session is one whose claimed tickets all belong to one factory epic; a session
-with claims in more than one factory epic gets no answer. Binding a session to its epic when you start it is the
-runner's job, in a later phase. In a factory session:
+the workspace config). A factory session is one the runner launched and bound to
+one factory epic (phase 4, below). Claims in tickets, environment variables and session ids an agent chose give no
+factory treatment, and a session the runner did not launch gets none: the harness asks you as usual. In a factory
+session:
 
 - a **live signed grant** for this exact command answers `allow`;
 - otherwise the hook files a request (one per epic and command while it is open) and answers `deny` with "waiting
@@ -154,9 +155,50 @@ becomes Ready or Stopped (event kind `factory.ready` or `factory.stopped`, actor
 written to the event log; a child's own wait does not). It wakes once per state: the cursor it prints names the
 state, and passing it back as `--after` waits for the next change. A Stopped card for a used-up budget replaces the budget card.
 
+## The runner (phase 4)
+
+The dashboard server can keep the agents going for you, on this machine, in Mission Control's tmux server (D4). When
+you start a factory epic **from the dashboard** (the epic page's "Start as an AI Factory"), that signed start also arms
+the runner for that delegation. Every few seconds the dashboard then, for each armed and active factory epic:
+
+- **launches** one agent session (the Terminals addon must be on, and tmux installed) for each child that is
+  auto-approved or covered by your charter, is size m or smaller, and is open, in progress or waiting: at most **3 at a
+  time** (`factory.max_concurrency` in `orchestrator/config.json` can only lower that), at most the charter's **max
+  children** distinct children, and a few launches per child. Those counts are markers beside the ledger, so editing
+  tickets cannot lower them. Sessions start in the workspace root; the agent makes its own worktree as the work skill
+  says;
+- **wakes** a child whose session ended while it was parked, when something it waits for changed: your grant, denial
+  or revocation in that epic, or the child's own text or approvals. Nothing else restarts it;
+- **stops** every session of the epic, and ends its binding, when you pause the epic, edit its text, approve it again,
+  the epic is done, the time budget is used up, the ledger is cut or the factory is switched off; and a child's
+  session when the child is done. A used-up child budget only stops new children: those already running go on.
+
+The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
+the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
+`orch approve --factory` signs the charter but does not arm the runner). It runs only in a process that is not under an
+agent harness, like the dashboard's other human actions.
+
+**Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child)
+exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
+permission hook trusts only this record to decide which epic's grants apply; an ended or stopped session loses it at
+once. Only a human process writes it: agent processes are refused, and the guard keeps agents away from the folder.
+
+**The launch command** is yours, per user, in `launch.json` in the orch config dir (never the workspace config):
+
+```json
+{"factory_command": ["claude", "--session-id", "{session}", "{prompt}"]}
+```
+
+That is the default. `{session}` is the id the runner bound (the agent must start under exactly that id) and `{prompt}`
+the child's work prompt. A command with a bypass or self-granting argument (skipping permission prompts, allowing
+tools, settings overrides) is refused and the default is used: the hook stays the only gate. Run the agents in a
+permission mode that does not prompt for file edits (see above).
+
+**Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
+mode"); the runner does not change that (D2 B).
+
 ## Coming in later phases
 
 - The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
-- The runner: `orch serve` keeping agents going in Mission Control's terminals (D4), waking a parked child after a
-  grant.
+- Runner status on the epic page, a per-child worktree for the launch, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

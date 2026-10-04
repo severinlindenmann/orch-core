@@ -144,7 +144,7 @@ _NEVER = (
      "the harness's settings, hooks and plugins are the human's"),
     (re.compile(r"--no-verify\b|core\.hookspath", re.I), "git hooks stay on"),
     (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"
-                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests)\b"),
+                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs)\b"),
      "orch's config, state, ledger and permit records are changed by orch and the human only"),
     (re.compile(r"\b" + _ENV_VARS + r"\s*="), "the variables that decide where orch keeps its records are fixed"),
     (re.compile(r"(?<![\w-])(?:sudo|doas|su)(?![\w-])"), "no elevated rights"),
@@ -476,37 +476,27 @@ def use(ws, actor, g: dict, ticket_id: str | None) -> bool:
 # -- the PermissionRequest hook ---------------------------------------------------------------------------------------
 
 def _session_ticket(ws, session: str | None):
-    """The factory ticket this harness session works on: a ticket it claimed. None when it claims none, or when its
-    claims span more than one factory epic (then the session is not bound to one epic, and the hook gives no
-    answer). Binding a session to its epic at the human's Start is the runner's job (a later phase)."""
-    if not session:
+    """The factory ticket this harness session works on: the child its binding names. Only the runner's binding
+    (orch.core.factory_sessions, written when the runner launched the session) counts: a claim, the environment or a
+    session id an agent chose does not make a session a factory session (#31). None when the session is not bound,
+    or its child no longer belongs to the bound epic under the bound delegation (a binding that went stale answers
+    nothing, and the harness asks as usual)."""
+    from orch.core import factory_sessions
+    b = factory_sessions.binding(ws, session)
+    if b is None:
         return None
-    found = []
-    for e in store.scan(ws):
-        claim = (e.meta or {}).get("claim") if isinstance(e.meta, dict) else None
-        if e.status != "done" and isinstance(claim, dict) and claim.get("session") == session:
-            try:
-                t = store.read_ticket(e.path)
-            except Exception:
-                return None
-            epic = factory_epic(ws, t)
-            if epic is not None:
-                found.append((epic.id, t))
-    if not found or len({eid for eid, _ in found}) > 1:
+    t = store.read_ticket(store.resolve(ws, b["child"]).path)
+    epic = factory_epic(ws, t)
+    d = factory_delegation(ws, epic) if epic is not None else None
+    if epic is None or epic.id != b["epic"] or d is None or d["id"] != b["delegation"]:
         return None
-    return found[0][1]
+    return t
 
 
-def _claims_epic_child(ws, session) -> bool:
-    """Whether the session holds a claim on an unfinished ticket that has a parent epic (it may be a factory child:
-    with the ledger cut that cannot be told from the signed charter)."""
-    try:
-        return bool(session) and any(
-            e.status != "done" and isinstance(e.meta, dict) and e.meta.get("parent")
-            and isinstance(e.meta.get("claim"), dict) and e.meta["claim"].get("session") == session
-            for e in store.scan(ws))
-    except Exception:
-        return True  # never an opinion that could read as allow: deny
+def _bound(ws, session) -> bool:
+    """Whether the runner bound this session (with the ledger cut the epic cannot be told from the signed charter)."""
+    from orch.core import factory_sessions
+    return factory_sessions.binding(ws, session) is not None
 
 
 def _decision(behavior: str, message: str | None = None) -> dict:
@@ -523,7 +513,7 @@ def hook_decision(ws, payload: dict) -> dict | None:
     if not enabled(ws):
         return None
     from orch.core import ledger
-    if not ledger.head_ok() and _claims_epic_child(ws, payload.get("session_id")):
+    if not ledger.head_ok() and _bound(ws, payload.get("session_id")):
         return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
                                  "grant counts; nothing was allowed. Stop and ask the human to look at it.")
     try:

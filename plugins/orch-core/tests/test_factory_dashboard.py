@@ -63,6 +63,8 @@ def running(fws, fa, fh):
     _refine(fa, c.id)
     fa.epic_auto_approve(c.id)
     fa.claim(c.id)
+    from test_factory import bind
+    bind(fws, fh.actor, e.id, c.id)
     r = permits.request(fws, fa.actor, store.load(fws, c.id)[1], CMD, reason="deploy the <preview>")
     return e.id, c.id, r
 
@@ -153,7 +155,7 @@ def test_grant_once_signs_into_the_ledger_and_answers_the_hook(fws, fd, running)
     g = ledger.entries(fws)[-1]
     assert g["kind"] == "grant" and g["scope"] == "once" and g["command"] == CMD and g["actor"].startswith("human")
     assert not permits.open_requests(fws) and "permit-card" not in fd.get("/").text
-    out = permits.hook_decision(fws, {"session_id": "7f3c9a21-0000", "tool_name": "Bash",
+    out = permits.hook_decision(fws, {"session_id": "11111111-2222-4333-8444-555555555555", "tool_name": "Bash",
                                       "tool_input": {"command": CMD}})
     assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 

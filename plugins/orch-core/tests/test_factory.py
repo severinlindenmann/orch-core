@@ -8,7 +8,7 @@ from orch.core import epics, ledger, permits, store
 from orch.core.events import read_events
 from orch.errors import HumanOnlyError, UsageError, ValidationError
 
-SESSION = "7f3c9a21-0000"  # the `agent` fixture's session
+SESSION = "11111111-2222-4333-8444-555555555555"  # a session the runner launched and bound (since phase 4)
 
 
 def _refine(ops, tid, plan="1. do it"):
@@ -44,7 +44,16 @@ def _factory(fa, fh, **limits):
     _refine(fa, c.id)
     fa.epic_auto_approve(c.id)
     fa.claim(c.id)
+    bind(fh.ws, fh.actor, e.id, c.id)
     return e.id, c.id
+
+
+def bind(ws, human, epic_id, child_id, session=SESSION):
+    """What the runner does at launch: bind the session to its epic, delegation and child (human only)."""
+    from orch.core import factory_sessions
+    d = epics.delegation(ws, store.load(ws, epic_id)[1])
+    return factory_sessions.bind(ws, human, session=session, epic=epic_id, delegation=d["id"], child=child_id,
+                                 name=f"fx-{child_id}", wake="")
 
 
 def _payload(command, session=SESSION, tool="Bash"):
@@ -353,10 +362,16 @@ def test_once_grant_is_used_up_for_every_checkout(fws, fa, fh, human, ws_root, t
     assert _behavior(permits.hook_decision(other, _payload("make e2e"))) == "deny"
 
 
-def test_session_spanning_two_factory_epics_gets_no_answer(fws, fa, fh):
-    _factory(fa, fh)
-    _factory(fa, fh)  # the same agent session claims a child of a second factory epic
-    assert permits.hook_decision(fws, _payload("make e2e")) is None
+def test_a_claim_alone_never_makes_a_factory_session(fws, fa, fh):
+    """#31: the session id of a claim comes from the agent's environment; only the runner's binding counts."""
+    _, cid = _factory(fa, fh)
+    spoof = "99999999-2222-4333-8444-555555555555"
+    fa.release(cid)
+    from orch.core.events import Actor
+    from orch.core.ops import Ops
+    Ops(fws, Actor("agent", "claude-code", "cli", spoof)).claim(cid)  # claims the bound child under another id
+    assert permits.hook_decision(fws, _payload("make e2e", session=spoof)) is None
+    assert not permits.open_requests(fws)
 
 
 def test_factory_epic_is_never_taken_from_the_environment(fws, fa, fh, monkeypatch):

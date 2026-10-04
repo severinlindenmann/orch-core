@@ -53,7 +53,25 @@ _LAUNCHER_BIN = {"cmux": "cmux", "terminal": "open", "iterm": "open", "ghostty":
 HARNESS_NAME = re.compile(r"[a-z][a-z0-9_-]*")
 DEFAULT_HARNESSES = {"claude": ["claude", "{prompt}"], "copilot": ["copilot", "-i", "{prompt}"],
                      "codex": ["codex", "{prompt}"]}
-SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness")
+SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness", "factory_command")
+# What the AI Factory runner starts for one child (docs/factory.md): {session} is the id the runner generated and binds
+# (the harness must start its session under exactly that id), {prompt} the child's work prompt. Per user only, like
+# every launch setting.
+DEFAULT_FACTORY_COMMAND = ["claude", "--session-id", "{session}", "{prompt}"]
+# An argument that would hand the agent permissions itself: the permission hook stays the only gate.
+_SELF_GRANT = re.compile(r"dangerously|bypass|allowed-?tools|permission-prompt-tool|--settings|yolo|--trust-all|--full-auto"
+                         r"|--auto-approve|--yes\b", re.I)
+
+
+def factory_command_error(argv) -> str | None:
+    """Why `argv` cannot be the runner's launch command, or None."""
+    if not _argv_list(argv):
+        return "factory_command must be a non-empty list of strings"
+    if not any("{session}" in a for a in argv) or not any("{prompt}" in a for a in argv):
+        return "factory_command must contain {session} and {prompt}"
+    if any(_SELF_GRANT.search(a) for a in argv):
+        return "factory_command must not grant the agent permissions itself: the permission hook is the gate"
+    return None
 
 
 def config_dir() -> Path:
@@ -70,7 +88,8 @@ def config_path() -> Path:
 
 def _defaults() -> dict:
     return {"terminal": "auto", "terminal_command": [], "default_harness": "claude",
-            "harnesses": {k: list(v) for k, v in DEFAULT_HARNESSES.items()}, "error": None, "path": str(config_path())}
+            "harnesses": {k: list(v) for k, v in DEFAULT_HARNESSES.items()},
+            "factory_command": list(DEFAULT_FACTORY_COMMAND), "error": None, "path": str(config_path())}
 
 
 def _argv_list(value) -> bool:
@@ -126,8 +145,11 @@ def _load_settings(path: Path) -> dict:
     default = data.get("default_harness", "claude")
     if not isinstance(default, str) or default not in merged:
         return broken("default_harness must name a known harness")
+    factory_command = data.get("factory_command", DEFAULT_FACTORY_COMMAND)
+    if factory_command_error(factory_command):
+        return broken(factory_command_error(factory_command))
     return {**out, "terminal": terminal, "terminal_command": list(command), "harnesses": merged,
-            "default_harness": default}
+            "default_harness": default, "factory_command": list(factory_command)}
 
 
 def choose(env: Mapping[str, str], configured: str, platform: str) -> str:

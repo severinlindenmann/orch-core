@@ -226,3 +226,87 @@ def test_epic_show_prints_the_content_hash_the_approval_shows(switch, ws_root, c
     ch = epics.charter(_ws(ws_root), store.load(_ws(ws_root), "L-0001")[1])
     assert ch["content_hash"][7:15] in out
     assert ch["hash"][7:15] not in out
+
+
+def _epic_with_claimed_plans(switch, capsys, n=2):
+    _ok(capsys, "new", "--title", "Billing", "--type", "epic")
+    _refine(capsys, "L-0001", plan=False)
+    kids = []
+    for i in range(n):
+        _ok(capsys, "new", "--title", f"Child {i}", "--epic", "L-0001")
+        kids.append(f"L-{i + 2:04d}")
+        _refine(capsys, kids[-1], plan=False)
+    switch.human("L-0001")
+    _ok(capsys, "approve", "L-0001", "requirements")
+    switch.agent()
+    for k in kids:
+        _ok(capsys, "claim", k)
+        _ok(capsys, "section", "set", k, "Plan", "-m", f"1. build {k}")
+    return kids
+
+
+def test_approve_epic_plans_with_one_confirmation(switch, ws_root, capsys, monkeypatch):
+    from orch.core import ledger
+    from orch.core.gates import gate_hash, gate_state
+    from orch.core.workspace import Workspace
+    kids = _epic_with_claimed_plans(switch, capsys)
+    ws = Workspace.open(ws_root)
+    hashes = {k: gate_hash(store.load(ws, k)[1], "plan") for k in kids}
+    prompts = []
+    switch.human("L-0001")
+    monkeypatch.setattr("builtins.input", lambda prompt="": prompts.append(prompt) or "L-0001")
+    out = _ok(capsys, "approve", "L-0001", "plans")
+    assert len(prompts) == 1 and "L-0001" in prompts[0]  # one typed confirmation, the epic's key
+    for k in kids:
+        assert k in out and hashes[k] in out and f"build {k}" in out  # key, full plan text and its exact hash
+        assert gate_state(store.load(ws, k)[1], "plan") == "approved"
+    signed = {e["ticket"]: e["hash"] for e in ledger.entries(ws) if e["kind"] == "gate" and e.get("gate") == "plan"}
+    assert signed == hashes
+
+
+def test_approve_epic_plans_dry_run_and_agent_refusal(switch, ws_root, capsys):
+    from orch.core.gates import gate_state
+    from orch.core.workspace import Workspace
+    kids = _epic_with_claimed_plans(switch, capsys)
+    assert run(["approve", "L-0001", "plans"]) != 0  # agent: refused
+    assert run(["approve", "L-0001", "plans", "--dry-run"]) != 0  # agent: refused like the real command
+    switch.human("wrong")
+    assert run(["approve", "L-0001", "plans"]) != 0  # confirmation must be the epic key
+    out = _ok(capsys, "approve", "L-0001", "plans", "--dry-run")
+    assert all(k in out for k in kids) and "nothing was written" in out
+    ws = Workspace.open(ws_root)
+    assert all(gate_state(store.load(ws, k)[1], "plan") == "pending" for k in kids)
+
+
+def test_approve_plans_reports_a_plan_changed_before_the_confirmation(switch, ws_root, capsys, monkeypatch):
+    from orch.core.gates import gate_state
+    from orch.core.workspace import Workspace
+    kids = _epic_with_claimed_plans(switch, capsys)
+    ws = Workspace.open(ws_root)
+    switch.human("L-0001")
+
+    def edit_then_confirm(prompt=""):
+        from orch.core.events import Actor
+        from orch.core.ops import Ops
+        Ops(ws, Actor("agent", "claude-code", "cli", "s")).set_section(kids[0], "Plan", "1. swapped")
+        return "L-0001"
+
+    monkeypatch.setattr("builtins.input", edit_then_confirm)
+    monkeypatch.delenv("ORCH_HARNESS", raising=False)
+    out = _ok(capsys, "approve", "L-0001", "plans")
+    assert f"{kids[0]}: skipped" in out
+    assert gate_state(store.load(ws, kids[0])[1], "plan") == "pending"
+    assert gate_state(store.load(ws, kids[1])[1], "plan") == "approved"
+
+
+def test_approve_plans_on_a_plain_ticket_is_a_usage_error(switch, ws_root, capsys):
+    _ok(capsys, "new", "--title", "Plain")
+    switch.human("L-0001")
+    assert run(["approve", "L-0001", "plans"]) == 2
+
+
+def test_single_plan_approval_points_to_the_batch(switch, ws_root, capsys):
+    kids = _epic_with_claimed_plans(switch, capsys, n=3)
+    switch.human(kids[0])
+    out = _ok(capsys, "approve", kids[0], "plan")
+    assert "2 more plan(s) in epic L-0001 wait: orch approve L-0001 plans" in out

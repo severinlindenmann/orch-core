@@ -141,6 +141,16 @@ def open_children(ws, epic, entries=None) -> list:
     return [store.read_ticket(e.path) for e in children(ws, epic.id, entries) if e.status != "done"]
 
 
+def pending_plans(ws, epic, entries=None) -> list:
+    """The children whose plan waits for the human (`orch approve <epic> plans`): in progress or waiting (where a
+    plan is approved), with a Plan, a plan gate, and that gate not approved for the current text. A child still open
+    is covered by approving the epic again, which binds every child that is not done, plan included."""
+    from orch.core.gates import gate_state, plan_required
+    return [t for t in open_children(ws, epic, entries)
+            if t.status in ("in-progress", "waiting") and t.section("Plan").strip() and plan_required(ws, t)
+            and gate_state(t, "plan") != "approved"]
+
+
 def charter(ws, epic, delegate=None, entries=None, tickets=None) -> dict:
     """What approving `epic` now would bind: {epic, epic_hash, hash_v, children: [{id, requirements, plan}],
     delegate, hash, content_hash}. Done children are left out. `hash` binds everything including the delegation;

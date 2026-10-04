@@ -676,3 +676,103 @@ def test_a_child_edited_between_the_epic_check_and_its_close_closes_nothing(ws, 
     assert [_load(ws, c).status for c in (c1, c2, eid)] == ["done", "done", "done"]
     child_entries = {e["ticket"]: e for e in ledger.entries(ws) if e["kind"] == "verdict" and e["ticket"] != eid}
     assert set(child_entries) == {c1, c2} and all(e["verdict_hash"] for e in child_entries.values())
+
+
+# -- approving the children's plans in one confirmation (#27) ------------------------------------------------------
+
+def _claimed_with_plans(ws, aops, hops, n=3):
+    """An approved epic whose `n` children were claimed after the approval and then got their plans."""
+    eid = _epic(aops)
+    kids = [_child(aops, eid, f"child {i}", plan=None) for i in range(n)]
+    hops.approve(eid, "requirements")
+    for cid in kids:
+        aops.claim(cid)
+        aops.set_section(cid, "Plan", f"1. build {cid}")
+    return eid, kids
+
+
+def _plans_seen(ws, eid):
+    from orch.core.gates import gate_hash
+    return {t.id: gate_hash(t, "plan") for t in epics.pending_plans(ws, _load(ws, eid))}
+
+
+def test_pending_plans_lists_in_progress_children_waiting_for_plan_approval(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops)
+    assert [t.id for t in epics.pending_plans(ws, _load(ws, eid))] == kids
+    hops.approve(kids[0], "plan")
+    assert [t.id for t in epics.pending_plans(ws, _load(ws, eid))] == kids[1:]
+
+
+def test_one_confirmation_signs_one_entry_per_child_plan(ws, aops, hops):
+    from orch.core.events import read_events
+    eid, kids = _claimed_with_plans(ws, aops, hops)
+    seen = _plans_seen(ws, eid)
+    approved, skipped = hops.approve_plans(eid, seen)
+    assert [t.id for t in approved] == kids and skipped == []
+    signed = [e for e in ledger.entries(ws) if e["kind"] == "gate" and e.get("gate") == "plan"]
+    assert {e["ticket"]: e["hash"] for e in signed} == seen  # each bound to its own child's plan text
+    evs = {e.ticket: e.data["hash"] for e in read_events(ws) if e.kind == "gate.approved" and e.data["gate"] == "plan"}
+    assert evs == seen
+    for cid in kids:
+        t = _load(ws, cid)
+        assert gate_state(t, "plan") == "approved" and ledger.gate_verification(ws, t, "plan") == "verified"
+
+
+def test_a_plan_changed_after_listing_is_skipped_and_reported(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops)
+    seen = _plans_seen(ws, eid)
+    aops.set_section(kids[1], "Plan", "1. something else")
+    approved, skipped = hops.approve_plans(eid, seen)
+    assert [t.id for t in approved] == [kids[0], kids[2]]
+    assert [s[0] for s in skipped] == [kids[1]] and "changed" in skipped[0][1]
+    assert gate_state(_load(ws, kids[1]), "plan") == "pending"
+
+
+def test_batch_plan_approval_is_human_only(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops)
+    with pytest.raises(HumanOnlyError):
+        aops.approve_plans(eid, _plans_seen(ws, eid))
+    assert all(gate_state(_load(ws, c), "plan") == "pending" for c in kids)
+
+
+def test_hashes_bind_per_child(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=2)
+    seen = _plans_seen(ws, eid)
+    swapped = {kids[0]: seen[kids[1]], kids[1]: seen[kids[0]]}
+    approved, skipped = hops.approve_plans(eid, swapped)
+    assert approved == [] and [s[0] for s in skipped] == kids
+
+
+def test_a_later_plan_edit_invalidates_only_that_child(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops)
+    hops.approve_plans(eid, _plans_seen(ws, eid))
+    aops.set_section(kids[2], "Plan", "1. changed later")
+    states = [gate_state(_load(ws, c), "plan") for c in kids]
+    assert states == ["approved", "approved", "invalidated"]
+    assert [t.id for t in epics.pending_plans(ws, _load(ws, eid))] == [kids[2]]
+
+
+def test_batch_plan_approval_refuses_non_children_and_empty_lists(ws, aops, hops):
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=1)
+    loose = aops.new("loose")
+    _refine(aops, loose.id, plan=None)
+    hops.approve(loose.id, "requirements")
+    aops.claim(loose.id)
+    aops.set_section(loose.id, "Plan", "1. x")
+    from orch.core.gates import gate_hash
+    approved, skipped = hops.approve_plans(eid, {loose.id: gate_hash(_load(ws, loose.id), "plan")})
+    assert approved == [] and skipped[0][0] == loose.id and "not a child" in skipped[0][1]
+    with pytest.raises(ValidationError):
+        hops.approve_plans(eid, {})
+    with pytest.raises(UsageError, match="not an epic"):
+        hops.approve_plans(loose.id, {kids[0]: "sha256:x"})
+
+
+def test_dry_run_approves_nothing(ws, aops, human):
+    from conftest import human_ops
+    hops = human_ops(ws, human)
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=2)
+    approved, skipped = human_ops(ws, human, dry_run=True).approve_plans(eid, _plans_seen(ws, eid))
+    assert [t.id for t in approved] == kids and skipped == []
+    assert all(gate_state(_load(ws, c), "plan") == "pending" for c in kids)
+    assert not [e for e in ledger.entries(ws) if e.get("gate") == "plan"]

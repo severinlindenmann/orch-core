@@ -476,7 +476,7 @@ def answer(ref: str, qid: str, value: str,
 
 
 @app.command()
-def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan")],
+def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan | plans (an epic's children)")],
             despite_open_question: Annotated[bool, typer.Option(
                 "--despite-open-question",
                 help="Approve although a line reads as an open question for you (you read it; it is not one).")] = False,
@@ -492,8 +492,10 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
-    On an epic this approves its charter: the epic's requirements and every open child's requirements and plan, all
-    printed before the typed confirmation; the approval binds exactly what was printed."""
+    On an epic this approves its charter: the epic's requirements and every child that is not done (in any status),
+    its requirements and its plan, all printed before the typed confirmation; the approval binds exactly what was
+    printed. `orch approve <epic> plans` approves only the children's plans that wait for approval (in progress or
+    waiting), each printed with its hash, after one typed confirmation of the epic's key."""
     from orch.core import epics, store
     ws = _ws()
     delegate = delegate or factory
@@ -503,6 +505,10 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if factory:
         limits["factory"] = True
     target = store.resolve(ws, ref)
+    if gate == "plans":
+        if delegate:
+            raise UsageError("delegation is given when approving an epic's requirements")
+        return _approve_plans(ws, target, despite_open_question, dry_run, json_out)
     if epics.is_epic(target.meta or {}):
         # The whole charter is shown before the typed confirmation, and the approval binds the hash of exactly the
         # tickets shown: a child added or changed in between makes it fail, nothing is signed.
@@ -537,7 +543,60 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would approve the {gate} ({_short(t.meta['gates'][gate]['hash'])}),"
                                      f" status then {t.status}")
-    _out(_view(ws, t), json_out, f"{t.id}: {gate} approved (status {t.status})")
+    text = f"{t.id}: {gate} approved (status {t.status})"
+    parent = epics.parent_epic(ws, t) if gate == "plan" else None
+    more = epics.pending_plans(ws, parent) if parent is not None else []
+    if more:  # the routine case on an epic: one confirmation for the rest
+        text += f"\n{len(more)} more plan(s) in epic {parent.id} wait: orch approve {parent.id} plans"
+    _out(_view(ws, t), json_out, text)
+
+
+def _approve_plans(ws, target, despite: bool, dry_run: bool, json_out: bool) -> None:
+    """`orch approve <epic> plans` (#27): every child's plan waiting for approval (orch.core.epics.pending_plans) is
+    printed in full with its key, title and exact plan hash, then one typed confirmation (the epic's key) approves
+    each of them, bound to its own hash: a plan changed after it was printed is skipped and reported."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import epics, store
+    from orch.core.events import Actor
+    from orch.core.gates import gate_hash
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    if not epics.is_epic(target.meta or {}):
+        raise UsageError(f"{target.id} is not an epic: `plans` approves an epic's children",
+                         hint=f"orch approve {target.id} plan")
+    if not dry_run:
+        require_human_terminal("human-only action")
+    epic_t = store.load(ws, target.id)[1]
+    kids = epics.pending_plans(ws, epic_t)  # read once: printed and hashed from the same objects
+    if not kids:
+        raise ValidationError(f"no plan of {epic_t.id}'s children waits for approval",
+                              hint="plans are approved while a child is in progress; a child still open is covered "
+                                   f"by approving the epic again: orch approve {epic_t.id} requirements")
+    expected = {t.id: gate_hash(t, "plan") for t in kids}
+    approved, skipped = Ops(ws, Actor("human", "you", "tty"), dry_run=True).approve_plans(
+        epic_t.id, expected, despite_open_question=despite)
+    lines = []
+    for t in kids:
+        lines += _gated_text(t, "plan") + [f"  plan hash {expected[t.id]}", ""]
+    lines += [f"{sid}: skipped ({why})" for sid, why in skipped]
+    if dry_run:
+        return _out({"epic": epic_t.id, "dry_run": True, "plans": expected,
+                     "would_approve": [t.id for t in approved], "skipped": dict(skipped)}, json_out,
+                    "\n".join(lines + [f"dry run: would approve {len(approved)} plan(s) of {epic_t.id}: "
+                                        + ", ".join(t.id for t in approved) + "; nothing was written"]))
+    if not approved:
+        typer.echo("\n".join(lines), err=json_out)
+        raise ValidationError(f"none of the plans of {epic_t.id}'s children can be approved now")
+    typer.echo("\n".join(lines + [f"{epic_t.id}: approve the {len(approved)} plan(s) of "
+                                    + ", ".join(t.id for t in approved) + " exactly as shown, each bound to its hash"]),
+               err=json_out)
+    actor = confirm_typed(epic_t.id)
+    approved, skipped = _ops(ws, actor).approve_plans(
+        epic_t.id, {t.id: expected[t.id] for t in approved}, despite_open_question=despite)
+    _out({"epic": epic_t.id, "approved": {t.id: t.meta["gates"]["plan"]["hash"] for t in approved},
+          "skipped": dict(skipped)}, json_out,
+         "\n".join([f"{t.id}: plan approved ({_short(t.meta['gates']['plan']['hash'])})" for t in approved]
+                   + [f"{sid}: skipped, not approved ({why})" for sid, why in skipped]))
 
 
 @app.command("request-changes")

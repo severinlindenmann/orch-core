@@ -34,6 +34,7 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings += _check_addons(ws)
     findings += _check_artifact_mode(ws)
     findings += _check_trackers(ws)
+    findings += _check_migration(ws)
     entries = store.scan(ws)
     findings += _check_entries(entries)
     findings += _check_event_log(ws)
@@ -150,6 +151,14 @@ def _check_trackers(ws) -> list[Finding]:
             name = t.get("prefix", "?") if isinstance(t, dict) else "?"
             out.append(Finding("error", "tracker-config", None, f"external_trackers[{i}] ({name}): {problem}"))
     return out
+
+
+def _check_migration(ws) -> list[Finding]:
+    """Old artifact link targets (`../artifacts/<ticket>/<name>`) no longer resolve; `orch migrate` rewrites them. The
+    other old shapes say so where they fail: a ticket that does not load, a tracker that `tracker_problem` rejects."""
+    from orch.core.migrate import pending_paths
+    return [Finding("error", "needs-migration", None, f"{rel} has old artifact links ({rule}): run `orch migrate` (a dry "
+                    "run), then `orch migrate --apply`") for rel, rule in pending_paths(ws.home)]
 
 
 def _check_entries(entries) -> list[Finding]:

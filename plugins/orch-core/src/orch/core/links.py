@@ -68,8 +68,8 @@ class LinkIndex:
         self._external: list[re.Pattern] = []
         for tracker in ws.config.get("external_trackers") or []:
             pattern = tracker.get("pattern") if isinstance(tracker, dict) else None
-            if not isinstance(pattern, str) or trackers.matches_bare_number(pattern):
-                continue  # \d+ would link any number in a title
+            if not isinstance(pattern, str) or trackers.accepts_bare_number(pattern):
+                continue  # \d+ would link any number in a title; orch check reports it, orch migrate fixes it
             try:
                 self._external.append(re.compile(rf"(?<![A-Za-z0-9])(?:{trackers.plain(pattern)})(?![A-Za-z0-9])", re.IGNORECASE))
             except re.error:

@@ -117,7 +117,7 @@ class IssuesProvider:
             return Snapshot(self.id, scope, at, health="error", message=f"{scope} is no longer a GitHub tracker in external_trackers")
         if tracker.key_for(1) is None:
             return Snapshot(self.id, scope, at, health="error",
-                            message=f"the {tracker.prefix} tracker pattern matches neither {tracker.prefix}-<number> nor <number>")
+                            message=f"the {tracker.prefix} tracker pattern does not match {tracker.prefix}-<number>")
         try:
             me = self.whoami(ctx)
             data = run_json(ctx, ["gh", "issue", "list", "--repo", scope, "--state", "all", "--limit", str(LIMIT),

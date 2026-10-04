@@ -165,25 +165,6 @@ def test_section_set_tasks_is_refused(aops, working):
         aops.set_section(working, "Tasks", "- [x] T1 sneaky")
 
 
-def test_import_from_plan_keeps_plan_and_approval(ws, aops, hops, working):
-    aops.set_section(working, "Plan", "- [x] inventory\n- [ ] migrate")
-    hops.approve(working, "plan")
-    _, ids = aops.task_import(working)
-    assert ids == ["T1", "T2"]
-    t = store.load(ws, working)[1]
-    assert gate_state(t, "plan") == "approved" and t.section("Plan") == "- [x] inventory\n- [ ] migrate"
-    assert [x.state for x in tk.ticket_tasks(t)] == ["done", "todo"]
-    assert task_events(ws, working, "task.added")[-1] == {"tasks": ["T1", "T2"], "after_approval": False, "imported": True}
-    with pytest.raises(ValidationError, match="already has tasks"):
-        aops.task_import(working)
-
-
-def test_import_needs_a_plan_checklist(aops, working):
-    aops.set_section(working, "Plan", "1. plain steps")
-    with pytest.raises(ValidationError, match="no checklist"):
-        aops.task_import(working)
-
-
 def test_raw_edit_validates_tasks_and_leaves_agent_ticks_to_the_agent(ws, aops, hops, working):
     aops.task_add(working, [{"text": "a"}])
     text = store.resolve(ws, working).path.read_text(encoding="utf-8")

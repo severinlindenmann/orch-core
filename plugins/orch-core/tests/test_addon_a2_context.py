@@ -23,10 +23,10 @@ def test_the_harness_is_named_harness_when_not_listed(ws):
 def test_trackers_build_keys_and_urls(configure):
     ws = configure(external_trackers=[
         {"prefix": "GH", "pattern": "GH-(?P<id>\\d+)", "url": "https://github.com/a/b/issues/{id}"},
-        {"prefix": "OLD", "pattern": "\\d+", "url": "https://github.com/a/c/issues/{key}"}])
-    gh, old = AddonContext(ws, "x").provider_context().trackers()
-    assert gh.key_for(12) == "GH-12" and old.key_for(12) == "12"
-    assert gh.url_for("gh-12") == "https://github.com/a/b/issues/12" and old.url_for("12") == "https://github.com/a/c/issues/12"
+        {"prefix": "ABC", "pattern": "ABC-\\d+", "url": "https://jira.test/browse/{key}"}])
+    gh, abc = AddonContext(ws, "x").provider_context().trackers()
+    assert gh.key_for(12) == "GH-12" and abc.key_for(12) == "ABC-12"
+    assert gh.url_for("gh-12") == "https://github.com/a/b/issues/12" and abc.url_for("abc-12") == "https://jira.test/browse/ABC-12"
     assert gh.matches("GH-3") and not gh.matches("3")
 
 

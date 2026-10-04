@@ -79,12 +79,8 @@ def test_exit_codes(cli, claimed, plan_approved):
     assert cli("task", "done", claimed, "T2", "-m", "granted")[0] == 0
 
 
-def test_add_needs_text_or_file_and_import_needs_from_plan(cli, claimed):
+def test_add_needs_text_or_file(cli, claimed):
     assert cli("task", "add", claimed)[0] == 2
-    assert cli("section", "set", claimed, "Plan", "-m", "- [x] inventory\n- [ ] migrate")[0] == 0
-    assert cli("task", "import", claimed)[0] == 2
-    code, out, _ = cli("task", "import", claimed, "--from-plan")
-    assert code == 0 and "imported T1, T2 from the Plan" in out
 
 
 def test_edit_block_reopen(cli, claimed):

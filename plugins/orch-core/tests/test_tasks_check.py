@@ -24,19 +24,17 @@ def test_task_warnings(ws, put):
         assert (code, "warning") in got, code
 
 
-def test_stale_doing_missing_list_and_legacy_plan(ws, put):
+def test_stale_doing_and_missing_list(ws, put):
     old = stamp(now() - timedelta(hours=9))
     stale = put("in-progress", sections={"Tasks": "- [/] T1 a"}, claim={"session": "x", "harness": "h", "at": old})
     assert ("task-doing-stale", "warning") in codes(ws, stale)
     recent = stamp(now() - timedelta(hours=1))
     missing = put("in-progress", size="xs", claim={"session": "x", "harness": "h", "at": recent})
     assert ("tasks-missing", "warning") in codes(ws, missing)
-    legacy = put("in-progress", sections={"Plan": "- [ ] a\n- [x] b"})
-    assert ("plan-checklist-legacy", "warning") in codes(ws, legacy)
 
 
-def test_legacy_tickets_without_tasks_stay_quiet(ws, put):
-    for tid in (put("testing"), put("done", sections={"Plan": "- [x] a"})):
+def test_a_plan_checklist_without_tasks_is_not_a_finding(ws, put):
+    for tid in (put("testing"), put("done", sections={"Plan": "- [x] a"}), put("open", sections={"Plan": "- [ ] a"})):
         assert not {c for c, _ in codes(ws, tid) if c.startswith(("task", "plan-checklist"))}
 
 

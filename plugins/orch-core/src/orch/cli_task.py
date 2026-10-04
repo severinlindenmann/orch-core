@@ -186,16 +186,3 @@ def list_(ref: str, json_out: JsonOpt = False) -> None:
     cli._out(v, json_out, render_text(v, t.title))
     if v["error"]:
         raise typer.Exit(6)  # a broken Tasks section is a broken ticket file (exit 6); the view keeps the error
-
-
-@task_app.command("import")
-def import_(ref: str,
-            from_plan: Annotated[bool, typer.Option("--from-plan", help="Turn the Plan's - [ ] / - [x] items into tasks.")] = False,
-            json_out: JsonOpt = False) -> None:
-    """Turn a legacy Plan checklist into tasks (the Plan and its approval stay unchanged)."""
-    from orch.errors import UsageError
-    if not from_plan:
-        raise UsageError("say where to import from", hint=f"orch task import {ref} --from-plan")
-    cli, ws = _ctx()
-    t, added = cli._ops(ws).task_import(ref)
-    _report(t, json_out, f"{t.id}: imported {', '.join(added)} from the Plan")

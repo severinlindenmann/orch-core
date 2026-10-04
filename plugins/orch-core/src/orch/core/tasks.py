@@ -36,8 +36,6 @@ _QID = re.compile(r"^Q(\d+)$", re.I)
 _KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 _STAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$")
 LINES = re.compile(r"^(.*?)(?:#L(\d+)(?:-(\d+))?)?$")
-_PLAN_ITEM = re.compile(r"^[-*+]\s+\[([ xX])\]\s+(.*)$")
-_CODE = re.compile(r"`([^`]+)`")
 
 
 class TaskParseError(TicketParseError):
@@ -348,31 +346,6 @@ def needs_problems(tasks: list[Task]) -> tuple[list[tuple[str, str]], list[str] 
             if cycle:
                 return unknown, cycle
     return unknown, None
-
-
-def from_plan(text: str, repo_names) -> list[Task]:
-    """Legacy Plan checklist → tasks (T1…, renumbered by the caller): top-level `- [ ]`/`- [x]`
-    items, indented lines joined into the text, inline `repo/path` code spans become file: refs."""
-    items: list[list] = []
-    for line in (text or "").split("\n"):
-        if not line.strip():
-            continue
-        m = None if line[:1].isspace() else _PLAN_ITEM.match(line.strip())
-        if m:
-            items.append([m.group(1) != " ", m.group(2).strip()])
-        elif items and line[:1].isspace():
-            items[-1][1] += " " + line.strip().lstrip("-*+ ").strip()
-    out = []
-    for n, (checked, body) in enumerate(items, 1):
-        refs = []
-        for code in _CODE.findall(body):
-            if "/" in code and re.split(r"[/\\]", code, maxsplit=1)[0] in set(repo_names):
-                try:
-                    refs.append(parse_ref(f"file:{code}"))
-                except ValueError:
-                    pass
-        out.append(Task(id=f"T{n}", state="done" if checked else "todo", text=one_line(body), refs=refs))
-    return out
 
 
 def newly_done_agent_tasks(old: list[Task], new: list[Task]) -> list[str]:

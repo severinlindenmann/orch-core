@@ -426,12 +426,9 @@ class TrackerRef:
         return trackers.matches(self.pattern, str(key))
 
     def key_for(self, ident) -> str | None:
-        """The external key for a tracker-native id (an issue number): `<prefix>-<id>` or `<id>`, whichever the
-        pattern accepts (legacy \\d+ trackers keep bare numbers)."""
-        for candidate in (f"{self.prefix}-{ident}", str(ident)):
-            if self.matches(candidate):
-                return candidate.upper()
-        return None
+        """The external key for a tracker-native id (an issue number): `<prefix>-<id>` when the pattern accepts it."""
+        candidate = f"{self.prefix}-{ident}"
+        return candidate.upper() if self.matches(candidate) else None
 
     def url_for(self, key) -> str | None:
         from orch.core import trackers

@@ -25,12 +25,12 @@ def test_an_ask_given_at_creation_is_written(aops, ws):
     assert [line for line in text.splitlines() if line.startswith("## ")] == ["## Ask", "## Log"]
 
 
-def test_render_drops_empty_sections_and_keeps_filled_legacy_ones_in_place():
+def test_render_drops_empty_sections_and_keeps_the_rest_in_place():
     old = ("---\nid: L-1\ntitle: t\n---\n\n## Ask\n\nhi\n\n## Context\n\n## Requirements\n\nr\n\n"
-           "## Proposal\n\nA or B\n\n## Plan\n\np\n\n## Decisions\n\n## Log\n\n- x\n")
+           "## Plan\n\np\n\n## Verification\n\n## Log\n\n- x\n")
     out = render_ticket(parse_ticket(old))
     headings = [line for line in out.splitlines() if line.startswith("## ")]
-    assert headings == ["## Ask", "## Requirements", "## Proposal", "## Plan", "## Log"]
+    assert headings == ["## Ask", "## Requirements", "## Plan", "## Log"]
 
 
 def test_summary_is_written_right_after_the_ask():
@@ -53,14 +53,6 @@ def test_legacy_sections_are_not_written_any_more(aops, name):
     with pytest.raises(UsageError) as e:
         aops.set_section(t.id, name, "text")
     assert "Summary" in (e.value.hint or "") and name not in (e.value.hint or "")
-
-
-def test_section_refs_still_find_legacy_sections(ws, put):
-    from orch.core import tasks_view
-    from orch.core.tasks import Ref
-    tid = put("in-progress", sections={"Decisions": "we chose B"})
-    t = store.load(ws, tid)[1]
-    assert tasks_view.resolve_ref(ws, t, Ref("section", "decisions"))["exists"] is True
 
 
 def test_guard_protects_the_ask(ws, put):

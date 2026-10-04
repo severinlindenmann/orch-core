@@ -7,7 +7,7 @@ from orch.core import trackers
 GH = {"prefix": "GH", "pattern": "GH-(?P<id>\\d+)", "url": "https://github.com/acme/ticket-orch-demo/issues/{id}"}
 ABC = {"prefix": "ABC", "pattern": "ABC-(?P<id>\\d+)", "url": "https://jira.example/browse/ABC-{id}"}
 JIRA = {"prefix": "ABC", "pattern": "ABC-\\d+", "url": "https://jira.example/browse/{key}"}
-LEGACY = {"prefix": "GH", "pattern": "\\d+", "url": "https://github.com/acme/ticket-orch-demo/issues/{key}"}
+BARE = {"prefix": "GH", "pattern": "\\d+", "url": "https://github.com/acme/ticket-orch-demo/issues/{key}"}
 BODY = "\n\nWhat: add it\nWhy:  needed\nRisk: low\n"
 
 
@@ -20,7 +20,6 @@ def test_url_for_uses_the_id_group():
     assert trackers.url_for(GH, "GH-12") == "https://github.com/acme/ticket-orch-demo/issues/12"
     assert trackers.url_for(ABC, "ABC-7") == "https://jira.example/browse/ABC-7"
     assert trackers.url_for(JIRA, "ABC-123") == "https://jira.example/browse/ABC-123"
-    assert trackers.url_for(LEGACY, "12") == "https://github.com/acme/ticket-orch-demo/issues/12"
     assert trackers.url_for(GH, "ABC-1") is None
 
 
@@ -39,11 +38,11 @@ def test_a_broken_pattern_never_raises():
 
 
 def test_bare_number_patterns_are_detected():
-    assert trackers.matches_bare_number("\\d+") and not trackers.matches_bare_number(GH["pattern"])
+    assert trackers.accepts_bare_number("\\d+") and not trackers.accepts_bare_number(GH["pattern"])
 
 
 @pytest.mark.parametrize("tracker, needle", [
-    (GH, None), (JIRA, None), (LEGACY, None),
+    (GH, None), (JIRA, None), (BARE, "bare number"),
     ({"prefix": "GH", "pattern": "GH-\\d+", "url": "https://x/{id}"}, "named group (?P<id>"),
     ({"prefix": "GH", "pattern": "GH-\\d+", "url": "https://x/"}, "{key} or {id}"),
     ({"prefix": "GH", "pattern": "GH-(", "url": "https://x/{key}"}, "not a valid regex"),
@@ -128,7 +127,7 @@ def test_url_for_encodes_values_in_one_pass():
 
 @pytest.mark.parametrize("pattern", ["\\d+", "\\d{2}", "\\d{1,4}", "[0-9]{4}", "\\d"])
 def test_bare_number_probes_several_lengths(pattern):
-    assert trackers.matches_bare_number(pattern)
+    assert trackers.accepts_bare_number(pattern)
 
 
 def test_link_texts_are_capped(ws_root, configure, put):

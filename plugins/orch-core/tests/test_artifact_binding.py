@@ -88,8 +88,6 @@ FORMS = {
     "entity": "![Mock](artifact:login&#46;png)",
     "backslash escape": "![Mock](artifact:login\\.png)",
     "percent encoding": "![Mock](artifact:logi%6E.png)",
-    "legacy relative path": "![Mock](../artifacts/{tid}/login.png)",
-    "legacy relative path, no dots": "![Mock](artifacts/{tid}/login.png)",
     "artifact route": "![Mock](/a/{tid}/login.png)",
     "in a table": "| shot |\n|---|\n| ![Mock](artifact:login.png) |",
     "inside a link": "[![Mock](artifact:login.png)](https://ex.com)",
@@ -157,11 +155,9 @@ def test_the_renderer_shows_only_names_the_binding_returns(ws, aops, tmp_path, m
 
 LINK_FORMS = {
     "route with fragment": "[a](/a/{tid}/login.png#f)",
-    "relative path with fragment": "[a](artifacts/{tid}/login.png#f)",
     "percent-encoded ticket": "[a](/a/{tid_enc}/login.png)",
     "percent-encoded prefix": "[a](/%61/{tid}/login.png)",
     "route with query and fragment": "[a](/a/{tid}/login.png?v=aaaa#f)",
-    "dot-slash relative path": "[a](./artifacts/{tid}/login.png)",
 }
 
 

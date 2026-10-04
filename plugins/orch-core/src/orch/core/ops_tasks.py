@@ -223,25 +223,6 @@ class TaskOpsMixin:
 
         return self._edit_tasks(ref, "task.edited", fn)
 
-    def task_import(self, ref: str):
-        added: list[str] = []
-
-        def fn(t, items):
-            if items:
-                raise ValidationError(f"{t.id} already has tasks; import works on an empty task list")
-            new = tk.from_plan(t.section("Plan"), list((self.ws.config["git"].get("repos") or {}).keys()))
-            if not new:
-                raise ValidationError("the Plan has no checklist (- [ ] / - [x]) to import")
-            start = tk.next_number([], used_numbers(self.ws, t.id))
-            for i, n in enumerate(new):
-                n.id = f"T{start + i}"
-            items.extend(new)
-            added.extend(n.id for n in new)
-            self._log(t, f"imported {len(new)} tasks from the Plan")
-            return {"tasks": list(added), "after_approval": False, "imported": True}
-
-        return self._edit_tasks(ref, "task.added", fn), added
-
     # -- state moves -----------------------------------------------------------------------
 
     def _task_move(self, ref: str, task_id: str, change):

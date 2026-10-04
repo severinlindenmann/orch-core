@@ -1,9 +1,9 @@
 /* flow */
 .w-flow { display: flex; flex-wrap: wrap; gap: var(--s-2); list-style: none; margin: 0; padding: 0; }
-.w-flow-s { display: grid; grid-template-columns: auto 1fr; gap: 0 var(--s-2); flex: 1 1 calc(var(--s-12) * 3); min-width: 0;
+.w-flow-s { display: grid; grid-template-columns: auto 1fr; align-content: start; gap: 0 var(--s-2); flex: 1 1 calc(var(--s-12) * 3); min-width: 0;
   padding: var(--s-2) var(--s-3); border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface2); }
 .w-flow-on { border: 2px solid var(--info-mark); background: var(--info-bg); color: var(--info-fg); }
-.w-flow-i { grid-column: 1; grid-row: 1; font: var(--type-meta); color: var(--muted); align-self: center; }
+.w-flow-i { grid-column: 1; grid-row: 1; font: var(--type-meta); color: var(--muted); align-self: baseline; }
 .w-flow-on .w-flow-i { color: inherit; }
 .w-flow-t { grid-column: 2; grid-row: 1; font: var(--type-item); overflow-wrap: anywhere; }
 .w-flow-here, .w-flow-n { grid-column: 2; font: var(--type-meta); overflow-wrap: anywhere; }

@@ -76,7 +76,8 @@ def core_check() -> CoreUpdate | None:
     return CoreUpdate(repo, package, behind) if behind else None
 
 
-def core_apply(c: CoreUpdate) -> None:
+def core_apply(c: CoreUpdate) -> str:
+    """Pull and reinstall; returns what happened to the Claude plugin, for the human to read."""
     uv = shutil.which("uv")
     if uv is None:
         raise ValidationError("uv is not on PATH, so orch-core cannot be reinstalled",
@@ -89,6 +90,28 @@ def core_apply(c: CoreUpdate) -> None:
         tail = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
         raise ValidationError(f"the orch-core reinstall failed: {tail}")
     _set_state(core_commit=manage._git("rev-parse", "HEAD", cwd=c.repo, timeout=10).strip())
+    return refresh_plugin()
+
+
+PLUGIN = "orch-core@orch-core"
+
+
+def refresh_plugin() -> str:
+    """Bring the Claude plugin (hooks and skills) along with the tool. Its version string never changes, so Claude
+    would otherwise keep serving the old cache. Best effort: the result is reported as it is, never raised."""
+    claude = shutil.which("claude")
+    if claude is None:
+        return f"the Claude plugin was not refreshed (no claude CLI on PATH): claude plugin update {PLUGIN}"
+    try:
+        r = subprocess.run([claude, "plugin", "update", PLUGIN], capture_output=True, text=True, timeout=120,
+                           stdin=subprocess.DEVNULL, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"the Claude plugin was not refreshed ({e}): claude plugin update {PLUGIN}"
+    said = (r.stdout.strip() or r.stderr.strip()).splitlines()
+    tail = said[-1] if said else f"exit {r.returncode}"
+    if r.returncode:
+        return f"the Claude plugin was not refreshed: {tail}"
+    return f"Claude plugin: {tail}. Restart Claude Code sessions to load it."
 
 
 def needs_review(r: manage.TrustReview) -> bool:
@@ -96,17 +119,28 @@ def needs_review(r: manage.TrustReview) -> bool:
     return r.old_version is None or any(r.added.values()) or r.api_change is not None or r.remote_humans_added
 
 
-def addon_apply(name: str, review_text: Callable[[manage.TrustReview], str], confirm: Callable[[str], bool],
-                out: Callable[[str], None]) -> None:
-    before = userfiles.registry_entries().get(name, {}).get("version", "?")
-    m = manage.update_apply(name)
+def apply_addon(name: str, actor=None) -> tuple[str, manage.Manifest, manage.TrustReview, bool]:
+    """Apply an addon update and trust it again when it asks for nothing new (the contract suite runs; the enabled
+    switch is untouched). Returns (old version, new manifest, review, trusted). When not trusted the caller shows
+    the review and, if the human agrees, calls `manage.trust_addon(name, seen_digest=review.digest)`."""
+    before = str(userfiles.registry_entries().get(name, {}).get("version", "?"))
+    m = manage.update_apply(name, actor=actor)
     r = manage.review(name)
     if needs_review(r):
+        return before, m, r, False
+    manage.trust_addon(name, seen_digest=r.digest, actor=actor)
+    return before, m, r, True
+
+
+def addon_apply(name: str, review_text: Callable[[manage.TrustReview], str], confirm: Callable[[str], bool],
+                out: Callable[[str], None]) -> None:
+    before, m, r, trusted = apply_addon(name)
+    if not trusted:
         out(review_text(r))
         if not confirm(name):
             out(f"{name} {before} → {m.version} is installed but stays off until you run: orch addon trust {name}")
             return
-    manage.trust_addon(name, seen_digest=r.digest)  # runs the contract suite; the enabled switch is untouched
+        manage.trust_addon(name, seen_digest=r.digest)
     out(f"updated {name} {before} → {m.version}")
 
 
@@ -134,7 +168,7 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
         return
     if core:
         out("updating orch-core …")
-        core_apply(core)
+        out(core_apply(core))
         os.environ[CONTINUE_ENV] = "1"
         out("orch-core updated; restarting")
         os.execv(shutil.which("orch") or sys.argv[0], ["orch", *sys.argv[1:]])

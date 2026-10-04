@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
-from orch import onboarding
+from orch import onboarding, update
 from orch.addons import cache, manage, userfiles
 from orch.addons.discovery import custom_addons_dir, discover, find
 from orch.addons.loader import valid_name
@@ -218,6 +218,51 @@ async def addon_check_updates(request: Request):
     await asyncio.to_thread(userfiles.update_json, _update_path(), mutate)
     n = sum(i.has_update for i in infos)
     return back(_BACK, msg=f"{n} update(s) available" if n else "All custom addons are up to date")
+
+
+def _update_everything() -> tuple[list[str], list[str]]:
+    """(done, problems). Core is pulled and reinstalled but cannot restart a running server; an addon that asks for
+    something new is installed and left for the human to review and trust in its row."""
+    done, problems = [], []
+    try:
+        core = update.core_check()
+        if core:
+            done.append(f"orch-core updated ({core.behind} commits); restart orch serve to run it. {update.core_apply(core)}")
+    except OrchError as e:
+        problems.append(f"orch-core: {e.message}")
+    updated = set()
+    for info in manage.update_check(None):
+        if not info.has_update:
+            continue
+        try:
+            before, m, r, trusted = update.apply_addon(info.name, actor=HUMAN)
+        except OrchError as e:
+            problems.append(f"{info.name}: {e.message}")
+            continue
+        updated.add(info.name)
+        done.append(f"{info.name} {before} → {m.version}" + ("" if trusted else " (review and trust it below)"))
+    userfiles.update_json(_update_path(), lambda d: [d.pop(n, None) for n in updated])
+    return done, problems
+
+
+@router.post("/workspace/addons/update-all")
+async def addon_update_all(request: Request, ask: str = Form("")):
+    if not strict_same_origin(request):
+        return _refused()
+    if ask:
+        return confirm_page(request, action="/workspace/addons/update-all", fields=[],
+                            title="Update orch and its addons?", body="Pulls orch-core and reinstalls it, then updates"
+                            " every custom addon. An addon that asks for nothing new is trusted again; any other waits for"
+                            " your review.", confirm="Update all", cancel="Cancel", cancel_href=_BACK, nav="workspace")
+    try:
+        done, problems = await asyncio.to_thread(_update_everything)
+    except OrchError as e:
+        return back(_BACK, err=error_text(e))
+    await asyncio.to_thread(request.app.state.addons.reload)
+    invalidate_setup_count(request.app.state.ws)
+    if problems:
+        return back(_BACK, err="; ".join(problems), msg="; ".join(done) or None)
+    return back(_BACK, msg="; ".join(done) if done else "Everything is up to date")
 
 
 @router.post("/workspace/addons/{name}/enable")

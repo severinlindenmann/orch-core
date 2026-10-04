@@ -18,6 +18,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(actor, "is_interactive", lambda: True)
     monkeypatch.setattr(update, "core_source", lambda: None)  # tests opt in to a core clone explicitly
     monkeypatch.delenv(update.CONTINUE_ENV, raising=False)
+    monkeypatch.setattr(update, "refresh_plugin", lambda: "plugin stub")  # never run the real claude CLI
 
 
 class Talk:
@@ -133,7 +134,7 @@ def test_core_update_pulls_reinstalls_and_restarts(tmp_path, monkeypatch, clone)
     t.run(check_only=False, force=True)
     assert (repo / "f").read_text() == "2"
     assert log.read_text().startswith("tool install --force --reinstall orch-core[dashboard] @")
-    assert execs and os.environ.get(update.CONTINUE_ENV) == "1"
+    assert execs and os.environ.get(update.CONTINUE_ENV) == "1" and "plugin stub" in t.said
     assert update.core_check() is None  # the recorded build is now the clone's HEAD
 
 

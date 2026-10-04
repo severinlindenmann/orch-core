@@ -107,6 +107,7 @@
     <h2 id="addons-h">Addons</h2>
     <span class="muted">Enable is per workspace and only for you. A custom addon runs only after you trust this exact version. Addons are never loaded from orchestrator/.</span>
     {% if has_custom %}<form method="post" action="/workspace/addons/check-updates"><button type="submit" class="btn">Check for updates</button></form>{% endif %}
+    <form method="post" action="/workspace/addons/update-all"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Update all</button></form>
   </div>
   {% if addon_rows %}
   {#- One row per addon: who it is, its trust and health, a real switch for Enabled here, and its settings in a

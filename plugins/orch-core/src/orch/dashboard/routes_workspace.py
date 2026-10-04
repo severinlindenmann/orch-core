@@ -18,8 +18,8 @@ from orch.addons.settings import form_value, parse_settings
 from orch.core.check import record_invalidations, run_checks
 from orch.core.maintenance import tidy
 from orch.dashboard.auth import strict_same_origin
-from orch.dashboard import setup_state
-from orch.dashboard.views import HUMAN, back, confirm_page, error_text, invalidate_setup_count, page
+from orch.dashboard import routes_widgets, setup_state
+from orch.dashboard.views import HUMAN, _theme, back, confirm_page, error_text, invalidate_setup_count, page
 from orch.errors import OrchError
 from orch.hooks.install import hook_state
 from orch.remote import store as phone_store
@@ -48,7 +48,7 @@ def _repos(ws) -> list[dict]:
     return out
 
 
-TABS = ("addons", "setup", "phones", "advanced")
+TABS = ("addons", "setup", "widgets", "phones", "advanced")
 
 
 def _relative(path, root) -> str:
@@ -153,7 +153,18 @@ def workspace(request: Request):
     pairing = reveals.pop(pair_token) if isinstance(peeked, dict) and peeked.get("kind") == "pair" else None
     tab = request.query_params.get("tab", "")
     tab = tab if tab in TABS else ("phones" if pairing is not None else "addons")
-    response = page(request, "workspace.html", nav="workspace", title="Workspace & addons", tab=tab,
+    widgets = {}
+    if tab == "widgets":
+        from markupsafe import Markup
+
+        from orch.core import ledger
+        from orch.widgets import registry
+        from orch.widgets.render import css_names, inline
+        theme = _theme(request, ws)
+        widgets = dict(cat=routes_widgets.catalog(ws, request.query_params, theme), widget_css=css_names(),
+                       inline_md=lambda text: Markup(inline(text)), html_state=ledger.widgets_html_state(ws),
+                       unused_days=routes_widgets.UNUSED_DAYS, broken=registry.template_problems(ws.home))
+    response = page(request, "workspace.html", nav="workspace", title="Workspace & addons", tab=tab, **widgets,
                 checks=snap.checks, checks_error=snap.checks_error,
                 repos=[{**r, "rel": _relative(r["path"], ws.root)} for r in snap.repos],
                 theme_default=dashboard.get("theme", "system"),

@@ -1,0 +1,103 @@
+{#- The widget catalog, a tab of Workspace & addons (docs/widgets.md): task-first entry, search and group filters as GET
+    params (so it works without JS), a compact grid whose previews are the real renderers drawing each type's own
+    example, and a detail panel (aside on desktop, inline under the tile on a phone). Context: routes_widgets.catalog. -#}
+{% macro detail(it, id) %}
+<div class="cat-head"><h3 id="{{ id }}-h"><code>{{ it.name }}</code></h3>
+  <span class="muted">{{ "core" if it.layer == "core" else "template · " ~ it.origin }} · {{ it.moment }}</span></div>
+{% if it.title != it.name %}<p class="cat-title">{{ it.title }}</p>{% endif %}
+{% if it.description %}<p class="cat-desc">{{ inline_md(it.description) }}</p>{% endif %}
+<p class="cat-avail cat-avail-{{ 'ok' if it.layer == 'core' or html_state == 'on' else 'warn' }}">
+  {%- if it.layer == "core" %}Core type: draws on every ticket, with or without Agent HTML.
+  {%- elif html_state == "on" %}Template: runs as agent HTML in a sandboxed frame on a ticket.
+  {%- else %}Template: needs Agent HTML, which is off here. A ticket then shows its fields and a text alternative.{% endif %}</p>
+<div class="cat-preview">
+  {% if it.layer == "core" %}{{ it.preview }}
+  {% elif it.preview %}
+  <figure class="w w-t-widget" data-layer="widget">
+    <figcaption class="w-head"><span class="w-title">Example</span><span class="w-chip">agent HTML · {{ it.name }}@{{ it.preview.v }}</span></figcaption>
+    <div class="w-body"><div class="w-frame" data-doc-url="{{ it.preview.url }}" data-nonce="{{ it.preview.nonce }}" data-min-height="{{ it.preview.min_height }}" data-title="{{ it.title }} example"></div></div>
+    <details class="w-alt"><summary>Show text</summary><pre class="w-text">No text alternative given</pre></details>
+  </figure>
+  {% endif %}
+</div>
+<h4>{{ "Example to paste into a ticket section" if it.layer == "core" else "Command to add it" }}</h4>
+<pre class="cat-code"><code>{{ it.example }}</code></pre>
+<p class="cluster"><button type="button" class="btn copy-fix" data-copy="{{ it.example }}">Copy example</button></p>
+{% if it.fields %}
+<details class="lib-fields">
+  <summary>Fields ({{ it.fields|length }})</summary>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th scope="col">Field</th><th scope="col">Type</th><th scope="col">Required</th><th scope="col">Notes</th></tr></thead>
+    <tbody>{% for f in it.fields %}<tr><td data-label="Field"><code>{{ f.name }}</code></td><td data-label="Type">{{ f.type }}</td><td data-label="Required">{{ "yes" if f.required else "no" }}</td><td class="lib-notes" data-label="Notes">{{ f.notes }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</details>
+{% endif %}
+{% if it.libs %}<p class="muted lib-meta">Libraries: {{ it.libs|join(", ") }}</p>{% endif %}
+{% if it.versions %}
+<ul class="lib-versions" aria-label="Versions">
+  {% for v in it.versions %}<li><b>v{{ v.v }}</b> <span class="muted">{{ v.uses }} use{{ "" if v.uses == 1 else "s" }}</span>{% if v.notes %} · {{ v.notes }}{% endif %}</li>{% endfor %}
+</ul>
+{% endif %}
+<p class="lib-used">
+  {%- if it.tickets %}{{ it.uses }} {{ "use" if it.uses == 1 else "uses" }} on {% for t in it.tickets %}<a class="lnk" href="/t/{{ t }}">{{ t }}</a>{{ ", " if not loop.last }}{% endfor %}
+  {%- if it.unused %} <span class="muted">· none in the last {{ unused_days }} days</span>{% endif %}
+  {%- else %}<span class="muted">Not used on any ticket yet.</span>{% endif %}</p>
+{% endmacro %}
+
+{% macro tile(it) %}
+<article class="cat-tile" data-selected="{{ 'true' if cat.selected == it.name else 'false' }}" id="w-{{ it.name }}">
+  <h3 class="cat-name"><a href="{{ cat.url(w=it.name, frag='#w-' ~ it.name) }}"{% if cat.selected == it.name %} aria-current="true"{% endif %}><code>{{ it.name }}</code></a>
+    <span class="cat-kind">{{ "core" if it.layer == "core" else "template" }} · {{ it.moment }}</span></h3>
+  <div class="cat-pv" inert>
+    {% if it.layer == "core" %}<div class="cat-pv-scale">{{ it.preview }}</div>
+    {% else %}<p class="cat-pv-note">Agent HTML template<br><span>{{ it.title }}</span></p>{% endif %}
+  </div>
+  <p class="cat-blurb">{{ it.blurb }}</p>
+</article>
+{% if cat.selected == it.name %}<aside class="cat-panel cat-inline" aria-labelledby="in-{{ it.name }}-h">{{ detail(it, "in-" ~ it.name) }}</aside>{% endif %}
+{% endmacro %}
+
+{% if html_state != "on" %}<div class="callout callout-neu" role="status"><p class="callout-title">{{ ui.icon("neu") }} Agent HTML is off in this workspace</p><p>The core types draw as shown; templates show their description and fields, and tickets show their text alternative.{% if html_state == "unsigned" %} config.json asks for it, but no current signed decision for this checkout on this machine backs it (a hand edit, another machine, a moved, copied or cloned checkout, a later off, or a workspace set up before this setting was signed).{% endif %} To turn it on, run <code>orch widget html on</code> in your own terminal.</p></div>{% endif %}
+{% if broken %}<div class="callout callout-warn" role="status"><p class="callout-title">{{ ui.icon("warn") }} {{ broken|length }} template{{ "s" if broken|length != 1 }} left out</p><ul>{% for b in broken %}<li><code>{{ b.name }}</code>: {{ b.problem }}</li>{% endfor %}</ul></div>{% endif %}
+
+<div class="cat-top">
+  <p class="muted">Small visual blocks agents put in Context, Current state, Verification and Findings. Start from what you want to show.</p>
+  <div class="cat-tasks" role="group" aria-label="Start from what you want to show">
+    {% for key, label, sub, types in cat.tasks %}
+    <a class="cat-task" href="{{ cat.url(task=key if cat.task != key else '', g='', section='') }}"{% if cat.task == key %} aria-current="true"{% endif %}><b>{{ label }}</b><span>{{ sub }}</span></a>
+    {% endfor %}
+  </div>
+  {% if cat.section %}<p class="cat-scope">Showing what suits <b>{{ cat.section }}</b>. <a class="lnk" href="{{ cat.url(section='', task='', g='') }}">Show all</a></p>{% endif %}
+  <form class="cat-bar" method="get" action="/workspace" role="search">
+    <input type="hidden" name="tab" value="widgets">
+    {% if cat.task %}<input type="hidden" name="task" value="{{ cat.task }}">{% endif %}
+    {% if cat.section %}<input type="hidden" name="section" value="{{ cat.section }}">{% endif %}
+    {% if cat.group %}<input type="hidden" name="g" value="{{ cat.group }}">{% endif %}
+    <label for="cat-q">Search</label>
+    <input id="cat-q" class="input" type="search" name="q" value="{{ cat.q }}" placeholder="chart, diff, risk…">
+    <button class="btn" type="submit">Search</button>
+    {% if cat.q %}<a class="btn btn-quiet" href="{{ cat.url(q='') }}">Clear</a>{% endif %}
+  </form>
+  <nav class="cat-groups" aria-label="Group">
+    <a href="{{ cat.url(g='', task='', section='') }}"{% if not cat.group and not cat.task and not cat.section %} aria-current="true"{% endif %}>All<span class="count">{{ cat.all_count }}</span></a>
+    {% for m, n in cat.moments %}<a href="{{ cat.url(g=m, task='', section='') }}"{% if cat.group == m %} aria-current="true"{% endif %}>{{ m|capitalize }}<span class="count">{{ n }}</span></a>{% endfor %}
+  </nav>
+  <p class="cat-sum muted">{{ cat.used }} of {{ cat.total }} used on a ticket in the last {{ unused_days }} days · Agent HTML {{ "on" if html_state == "on" else "off" }}</p>
+</div>
+
+{% if cat.detail %}
+<div class="cat">
+  <div class="cat-main">
+    {% if cat.first %}
+    <div class="cat-grid">{% for it in cat.first %}{{ tile(it) }}{% endfor %}</div>
+    {% endif %}
+    {% if cat.more %}
+    <h2 class="cat-more">{% if cat.first %}More types{% else %}Types{% endif %} ({{ cat.more|length }})</h2>
+    <div class="cat-grid">{% for it in cat.more %}{{ tile(it) }}{% endfor %}</div>
+    {% endif %}
+  </div>
+  <aside class="cat-panel cat-side" aria-label="Selected widget" aria-live="polite">{{ detail(cat.detail, "side") }}</aside>
+</div>
+{% else %}
+<p class="muted cat-empty">No widget matches{% if cat.q %} “{{ cat.q }}”{% endif %}. <a class="lnk" href="{{ cat.url(q='', task='', section='', g='') }}">Show all {{ cat.total }}</a></p>
+{% endif %}

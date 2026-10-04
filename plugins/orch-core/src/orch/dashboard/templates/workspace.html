@@ -1,6 +1,8 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
 {% import "_widgets.html" as w %}
+{% block head %}{% if tab == "widgets" %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
+<script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endif %}{% endblock %}
 {% block main %}
 {#- Four in-page tabs (visual review §7): Addons (default) · Setup · Phones · Advanced. Every panel is in the page; the
     server marks all but the chosen one `hidden` (?tab=, no JS needed), and app.js opens the panel that holds a
@@ -13,7 +15,7 @@
   </div>
 </div>
 <nav class="tabs ws-tabs" aria-label="Workspace sections">
-  {{ tab_link("addons", "Addons") }}{{ tab_link("setup", "Setup", setup_count) }}{{ tab_link("phones", "Phones") }}{{ tab_link("advanced", "Advanced") }}
+  {{ tab_link("addons", "Addons") }}{{ tab_link("setup", "Setup", setup_count) }}{{ tab_link("widgets", "Widgets") }}{{ tab_link("phones", "Phones") }}{{ tab_link("advanced", "Advanced") }}
 </nav>
 
 <div class="ws-panel" id="tab-setup" data-tab-panel="setup"{% if tab != "setup" %} hidden{% endif %}>
@@ -173,6 +175,10 @@
   {% if addon_errors %}<details><summary>Recent addon errors</summary><pre>{{ addon_errors }}</pre></details>{% endif %}
 </section>
 
+</div>
+
+<div class="ws-panel" id="tab-widgets" data-tab-panel="widgets"{% if tab != "widgets" %} hidden{% endif %}>
+{% if tab == "widgets" %}{% include "_widget_catalog.html" %}{% endif %}
 </div>
 
 <div class="ws-panel" id="tab-phones" data-tab-panel="phones"{% if tab != "phones" %} hidden{% endif %}>

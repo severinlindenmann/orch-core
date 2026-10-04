@@ -101,6 +101,31 @@ Return widgets from `orch.addons.widgets`, never HTML or strings: `Card(title, b
 
 **API 2.3 (still `requires_api: "2"`).** `Markdown(text, here, pages, widgets=False, files="")`: with `widgets=True` core draws the page's ```orch blocks like a ticket (docs/widgets.md, "Widgets on a wiki page"); `files` is your page folder, workspace-relative, where blocks name `_files/<name>` by digest. For the frame of an agent-HTML block core calls your addon object's optional `page_source(page_id) -> (text, folder) | None` (the text your page was drawn from). `ctx.page_widget_text(text, page_id, folder)` returns a page's text with each widget block replaced by its text alternative (for search), and `ctx.ticket_widget_copy(ref, sections)` the blocks of a ticket's sections with their pinned files, digest-checked, ready for a page of yours. All three are optional; an addon that does not use them is unchanged.
 
+**API 2.4 (still `requires_api: "2"`).** `RemoteResult.code` is new: every result core returns carries one of the codes below, and an addon that ignores it is unchanged (a `RemoteResult` you build yourself, as in `FakeRemote`, may leave it `""`). `orch.remote.verify.CODES` lists them.
+
+| code | status | meaning |
+| --- | --- | --- |
+| `applied` | applied | the decision was applied as the human |
+| `malformed` | pending | not a version 1 decision, a field of the wrong type, or a target or ticket request that does not check out |
+| `kind-not-allowed` | pending | a phone cannot decide this kind (move, close, import ...) |
+| `not-paired` | pending | the phone is unknown, revoked or paired with another addon |
+| `bad-signature` | pending | the signature did not verify |
+| `implausible-time` | pending | the decision's time is missing or too far in the future |
+| `kind-switched-off` | pending | the owner switched that kind off in the workspace settings |
+| `question-not-found` | pending | the ticket has no such question |
+| `refused` | pending or stale | a check core runs for every human refused the change; `message` says which |
+| `too-old` | stale | older than 14 days; never applied automatically |
+| `changed-since` | stale | the question, gate text, plan or verdict criteria changed after the phone showed them |
+| `wrong-status` | stale | a verdict for a ticket that is not in testing |
+| `wrong-round` | stale | a verdict signed for an earlier testing round |
+| `superseded` | superseded | another phone decision on the same target was applied first |
+| `already-approved` | superseded | the gate was already approved |
+| `answered-locally` | answered-locally | the question was answered on the desktop first |
+| `already-handled` | duplicate | this decision id was handled before |
+| `no-such-ticket` | unlinked | the workspace has no such ticket |
+
+`pending` results are not ledgered and may apply later; every other status is final. A later minor version may add a code: treat an unknown one like `refused`.
+
 `widgets` runs during page renders: read `view.snapshots(provider_id)`, `view.settings`, `view.ticket` (for `ticket.*` slots), `view.params` (the cleaned GET query, on `page.<name>` and `board.external` only), `view.workspace_name`. Never run commands there (`ctx.run` refuses while a page renders).
 
 ### QR codes
@@ -169,7 +194,7 @@ See QR codes under Widgets and slots.
 
 With manifest `remote_humans: true` (needs `decisions`), a human can pair a phone to your addon from Workspace & addons: a QR code and a "Copy pairing link" button, from whatever `pairing_target(view) -> PairingTarget | None` returns (read-only, runs while the page renders, like `widgets`). `PairingTarget(url, label)`: `url` must be `https://`, at most 500 characters; core appends the pairing key to it. Give the human something to scan or copy from your own page or widgets.
 
-Your phone-side flow signs a decision and hands it to core with `ctx.remote_decision(decision)` (`ProviderContext`, raises `AddonRunError` if the manifest lacks `remote_humans`). Core alone verifies the signature, the pairing, the age and the per-kind permission, and applies it as the human — your addon never sees the key and never applies anything itself. It returns a `RemoteResult(status, message, ticket=None, event_seq=None)` from `orch.remote.verify`, `status` one of: `applied`, `pending` (not applied: the phone is not paired or revoked, the signature or time did not check out, or the owner switched that kind off; you may offer it for the desktop), `stale`, `superseded`, `answered-locally`, `duplicate`, `unlinked`. In tests, use `orch.testing.FakeRemote(RemoteResult(...))` in place of `ctx.remote_decision`.
+Your phone-side flow signs a decision and hands it to core with `ctx.remote_decision(decision)` (`ProviderContext`, raises `AddonRunError` if the manifest lacks `remote_humans`). Core alone verifies the signature, the pairing, the age and the per-kind permission, and applies it as the human — your addon never sees the key and never applies anything itself. It returns a `RemoteResult(status, message, ticket=None, event_seq=None, code="")` from `orch.remote.verify`, `status` one of: `applied`, `pending` (not applied: the phone is not paired or revoked, the signature or time did not check out, or the owner switched that kind off; you may offer it for the desktop), `stale`, `superseded`, `answered-locally`, `duplicate`, `unlinked`. `code` (API 2.4) is the stable, machine-readable reason: branch on it, never on `message`, which is human text and may be reworded (codes: see API 2.4 above). In tests, use `orch.testing.FakeRemote(RemoteResult(...))` in place of `ctx.remote_decision`.
 
 Default per-workspace permissions (R21: a paired phone is the owner): `answer`, `request_changes`, `approve`, `verdict` and `ticket_request` all on, so a decision that passes every check applies at once, with no desktop step; the owner may switch a kind off on Workspace & addons. A phone never moves, closes, reopens or imports a ticket, and a decision older than 14 days is never applied (`stale`). These checks are core's, not yours. The signed approval ledger entry of a phone decision carries `via: "phone:<label>"` and `device: "<phone id>"`.
 

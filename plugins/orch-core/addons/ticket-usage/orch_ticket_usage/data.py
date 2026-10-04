@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 _PARSED: dict = {}  # path -> (size, mtime_ns, parsed); ponytail: in memory only, re-parsed after a restart
@@ -164,3 +164,68 @@ def distribute(rises, messages) -> dict[str, dict]:
                 if reset == latest:
                     e["week"] += share
     return out
+
+
+FAMILIES = ("opus", "sonnet", "haiku", "fable", "other")
+
+
+def family(model: str) -> int:
+    """Index into FAMILIES: claude-opus-5-5 -> 0; anything unknown -> other."""
+    m = model.lower()
+    return next((i for i, f in enumerate(FAMILIES[:-1]) if f in m), len(FAMILIES) - 1)
+
+
+def day_of(epoch: float) -> str:
+    """The UTC calendar day of an epoch, ISO. ponytail: UTC, not the viewer's zone, so a snapshot is the same everywhere."""
+    return datetime.fromtimestamp(epoch, timezone.utc).date().isoformat()
+
+
+def monday_of(day: str) -> str:
+    d = date.fromisoformat(day)
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def limit_history(log: list[dict], since: float, cap: int = 400) -> list[list[float]]:
+    """[[epoch, five, week]] for each reading that is a new high of the 5-hour or the weekly percentage within its
+    reset window (stale readings from other sessions are dropped, a new reset starts over). Thinned to `cap`."""
+    state = {"five": [None, None], "week": [None, None]}  # key -> [reset, top]
+    out = []
+    for r in log:
+        moved = False
+        for key in state:
+            v = r.get(key)
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                continue
+            reset, top = state[key]
+            if top is None or r.get(key + "_reset") != reset:
+                state[key] = [r.get(key + "_reset"), v]
+                moved = True
+            elif v > top:
+                state[key][1] = v
+                moved = True
+        if moved and r["ts"] >= since and state["five"][1] is not None and state["week"][1] is not None:
+            out.append([r["ts"], float(state["five"][1]), float(state["week"][1])])
+    if len(out) > cap:
+        step = -(-len(out) // cap)
+        out = out[::step][:cap - 1] + [out[-1]]
+    return out
+
+
+def pace(log: list[dict], key: str) -> dict | None:
+    """The newest `key` window of the log: {"first_ts", "last_ts", "first", "last", "n", "reset"} over its readings
+    (stale readings below the running high are skipped), or None when there is no reading."""
+    rows = [r for r in log if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool)]
+    if not rows:
+        return None
+    reset = rows[-1].get(key + "_reset")
+    first = last = None
+    n = 0
+    for r in (r for r in rows if r.get(key + "_reset") == reset):
+        if first is None:
+            first = last = r
+            n = 1
+        elif r[key] > last[key]:
+            last = r
+            n += 1
+    return {"first_ts": first["ts"], "last_ts": last["ts"], "first": float(first[key]), "last": float(last[key]),
+            "n": n, "reset": reset}

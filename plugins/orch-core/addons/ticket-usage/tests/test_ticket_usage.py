@@ -232,6 +232,133 @@ def test_page_rows_are_tickets_by_output_then_shared_then_unlinked():
     items = (it("unlinked", "u", 9999), it("shared", "s", 5000), it("ticket", "B-1", 10), it("ticket", "B-2", 300),
              {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": None})
     out = T.page([Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=items)], True)
-    table = next(w for w in out if w.kind == "table")
+    table = next(w for c in out if c.kind == "card" and c.title == "Details" for w in c.body)
     assert [r[0] for r in table.rows] == ["B-2", "B-1", "Shared orchestrator (0 tickets)", "Not linked to a ticket"]
     assert table.rows[0][1] == "Opus 5.5"
+
+
+# -- charts page --------------------------------------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from orch.addons.api import Snapshot  # noqa: E402
+from orch.addons.widgets import widget_problems  # noqa: E402
+
+NOW = data.to_epoch("2026-10-04T12:00:00Z")
+
+
+def _walk(ws):
+    for w in ws:
+        yield w
+        for c in getattr(w, "body", ()) or ():
+            yield from _walk([c])
+        if w.kind == "kv":
+            yield from _walk([v for _, v in w.rows if not isinstance(v, str)])
+
+
+def _snap(**stats):
+    base = {"id": "stats", "kind": "stats", "label": "Stats", "role": "neu", "text": "", "built": NOW, "files": 3,
+            "daily": {}, "cost_days": {}, "attrib": {"none": 0, "shared": 0, "ticket": 0}, "top": [], "history": []}
+    base.update(stats)
+    lim = {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": None, "pace": {}}
+    return [Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=(lim, base))]
+
+
+def _charts(ws):
+    return [w for w in _walk(ws) if w.kind == "chart"]
+
+
+def _valid(ws):
+    for w in _walk(ws):
+        assert widget_problems(w, slot=PAGE, manifest=MANIFEST) == [], w
+
+
+def test_daily_output_per_family_counts_each_reply_once_incl_subagents_and_weeks_cost_and_highs(tmp_path):
+    session(tmp_path, SID, [reply("a", 100, "2026-10-01T10:00:00Z"), reply("a", 150, "2026-10-01T10:00:01Z"),
+                            reply("b", 40, "2026-10-02T10:00:00Z", "claude-sonnet-5"),
+                            reply("c", 7, "2026-10-02T11:00:00Z", "mystery-1"),
+                            cost(1, 3.0, models={"claude-opus-5-5": 3.0})],
+            subs=[("x", [reply("s", 10, "2026-10-01T11:00:00Z", "claude-haiku-4-5")])])
+    session(tmp_path, OTHER, [reply("d", 5, "2026-10-01T12:00:00Z")])
+    stats = build(tmp_path, [])["stats"]
+    assert stats["daily"] == {"2026-10-01": [155, 0, 10, 0, 0], "2026-10-02": [0, 40, 0, 0, 7]}
+    assert stats["cost_days"] == {"2026-10-02": 3.0}  # booked on the day the session ended
+    assert data.monday_of("2026-10-04") == "2026-09-28" and data.monday_of("2026-10-05") == "2026-10-05"
+
+
+def test_limit_history_keeps_new_highs_per_window_with_real_timestamps(tmp_path):
+    log = [{"at": f"2026-10-04T10:0{i}:00Z", "five": five, "five_reset": 9000, "week": week, "week_reset": 99000}
+           for i, (five, week) in enumerate([(10, 40), (12, 40), (11, 41), (13, 41)])]
+    rows = data.read_limits(str(_write_log(tmp_path, log)))
+    hist = data.limit_history(rows, 0)
+    assert [(h[1], h[2]) for h in hist] == [(10, 40), (12, 40), (12, 41), (13, 41)]  # the stale 11 is not a new high
+    assert hist[1][0] - hist[0][0] == 60
+
+
+def _write_log(tmp_path, rows):
+    p = tmp_path / "limits.jsonl"
+    limits(p, rows)
+    return p
+
+
+def test_range_tabs_each_render_a_stacked_chart_within_eight_series():
+    daily = {f"2026-09-{d:02d}": [1000 * d, 50, 0, 0, 5] for d in range(10, 31)} | {"2026-10-03": [9000, 0, 0, 1, 0]}
+    for rng, n in (("week", 7), ("month", 30), ("all", None), (None, 30), ("bogus", 30)):
+        ws = T.page(_snap(daily=daily), True, {"range": rng} if rng else {}, NOW)
+        _valid(ws)
+        main = _charts(ws)[0]
+        assert main.stacked and 1 <= len(main.series) <= 8
+        if n:
+            assert len(main.labels) == n
+        tabs = next(w for w in _walk(ws) if w.kind == "tabs")
+        assert [t.current for t in tabs.items].count(True) == 1
+    caption = [w.text for w in _walk(T.page(_snap(daily=daily), True, {"range": "all"}, NOW)) if w.kind == "text"]
+    assert any("to 04 Oct, by calendar week" in t for t in caption)
+    all_labels = _charts(T.page(_snap(daily=daily), True, {"range": "all"}, NOW))[0].labels
+    assert all_labels[0].startswith("W37 · 07 Sep (from ")  # the first week is marked partial
+
+
+def test_zero_total_and_one_day_and_not_ready_states():
+    zero = T.page(_snap(daily={"2026-10-03": [0] * 5, "2026-10-04": [0] * 5}), True, {}, NOW)
+    _valid(zero)
+    assert any(w.kind == "text" and w.text == "No output in this range." for w in _walk(zero))
+    assert not any(w.kind == "chart" and w.title == "Output tokens by model" for w in _walk(zero))
+    one = T.page(_snap(daily={"2026-10-04": [500, 0, 0, 0, 0]}), True, {}, NOW)
+    _valid(one)
+    assert not any(w.kind == "tabs" for w in _walk(one)) and not _charts(one)
+    assert "Reading transcripts" in T.page([], True)[0].text
+    assert T.page(_snap(), True, {}, NOW)  # no data at all still renders
+
+
+def test_limit_cards_pace_and_recorder_off():
+    off = T.page(_snap(), True, {}, NOW)
+    assert off[0].kind == "callout" and "statusLine" in off[0].text
+    snap = _snap()
+    reading = {"first_ts": NOW - 2400, "last_ts": NOW, "first": 25.0, "last": 36.0, "n": 5, "reset": NOW + 3600}
+    snap[0].items[0].update(last={"at": "2026-10-04T12:00:00Z", "five": 36, "five_reset": NOW + 3600, "week": 41,
+                                  "week_reset": NOW + 86400 * 3},
+                            pace={"five": reading, "week": dict(reading, last_ts=NOW - 100, first_ts=NOW - 7200)})
+    out = T.page(snap, True, {}, NOW)
+    _valid(out)
+    texts = [w.text for w in _walk(out) if w.kind == "text"]
+    assert any(t.startswith("Up 11 points in 40 min. At that pace it would reach 100 % around ") and t.endswith("after the reset.") for t in texts)
+    assert any("no weekly pace yet" in t for t in texts)
+    assert any(w.kind == "time" for w in _walk(out))
+    assert T._pace_text({"n": 1, "first_ts": 0, "last_ts": 0, "first": 5, "last": 5}, "five", NOW + 1, NOW) is None
+
+
+def test_attribution_top_history_and_cost_charts():
+    snap = _snap(daily={"2026-10-03": [10, 0, 0, 0, 0], "2026-10-04": [10, 0, 0, 0, 0]},
+                 attrib={"none": 800, "shared": 100, "ticket": 100}, top=[("B-1", 70), ("B-2", 30)],
+                 history=[[NOW - 7200, 10.0, 30.0], [NOW - 3600, 20.0, 31.0], [NOW, 25.0, 32.0]],
+                 cost_days={"2026-09-30": 10.0, "2026-10-02": 5.0, "2026-10-06": 1.5})
+    out = T.page(snap, True, {}, NOW)
+    _valid(out)
+    by = {c.title: c for c in _charts(out)}
+    assert by["Output this week"].horizontal and by["Output by ticket"].labels == ("B-1", "B-2")
+    line = by["Limit percentages"]
+    assert line.style == "line" and line.x == "linear" and line.labels == (0.0, 1.0, 2.0)
+    cost = by["API-price equivalent"]
+    assert cost.labels == ("W40 · 28 Sep", "W41 · 05 Oct") and cost.series[0].values == (15.0, 1.5)
+    assert any("10 % can be tied to a single ticket. 80 % comes from sessions" in w.text for w in _walk(out) if w.kind == "text")
+    assert not any(c.title == "API-price equivalent" for c in _charts(T.page(snap, False, {}, NOW)))

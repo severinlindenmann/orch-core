@@ -7,15 +7,17 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from orch.addons.api import Snapshot
-from orch.addons.widgets import KV, Badge, Callout, Card, Countdown, MenuStatus, Table, Text, Time
+from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Countdown, Link, MenuStatus, Table, Tabs,
+                                 Text, Time)
 
-from .data import (claude_dir, cost_of, distribute, names, parse_file, read_limits, subagents, transcripts,
-                   week_rises)
+from .data import (FAMILIES, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, monday_of, names, pace,
+                   parse_file, read_limits, subagents, transcripts, week_rises)
 
 WEEK_S = 7 * 86400
+HISTORY_DAYS = 90
 UNKNOWN_PCT = "unknown, needs the status line recorder"
 
 
@@ -34,18 +36,23 @@ def build(claude, tickets, log_path, now) -> list[dict]:
     rises = week_rises(log)
     resets = [r["week_reset"] for r in log if isinstance(r.get("week_reset"), (int, float))]
     win = (resets[-1] - WEEK_S) if resets else now - WEEK_S
-    since = min([win] + [lo for lo, _, _, _ in rises])
+    horizon = now - HISTORY_DAYS * 86400
+    since = min([win, horizon] + [lo for lo, _, _, _ in rises])
     found = transcripts(claude)
     owners: dict = {}
     msgs: list = []
     costs: dict = {}  # owner -> cost record summed over its sessions
     running: set = set()
+    daily: dict = {}  # UTC day -> output tokens per model family, every reply on this machine
+    cost_days: dict = {}  # UTC day the session ended -> API-price estimate
 
     def take(owner, role, parsed):
         o = _owner(owners, owner)
         for ts, model, out in parsed["msgs"]:
             o[role][model] = o[role].get(model, 0) + out
             msgs.append((ts, owner, out))
+            if ts >= horizon:
+                daily.setdefault(day_of(ts), [0] * len(FAMILIES))[family(model)] += out
             o["first"] = ts if o["first"] is None else min(o["first"], ts)
             o["last"] = ts if o["last"] is None else max(o["last"], ts)
             if ts >= win:
@@ -63,6 +70,10 @@ def build(claude, tickets, log_path, now) -> list[dict]:
         main = parse_file(path)
         take(owner, "main", main)
         cost = cost_of(main)
+        if cost is not None:
+            ended = main["msgs"][-1][0] if main["msgs"] else path.stat().st_mtime
+            if ended >= horizon:
+                cost_days[day_of(ended)] = cost_days.get(day_of(ended), 0.0) + cost["total"]
         if cost is None:
             if main["msgs"]:
                 running.add(owner)
@@ -105,7 +116,20 @@ def build(claude, tickets, log_path, now) -> list[dict]:
         row("unlinked", "unlinked", "Not linked to a ticket")
     last = log[-1] if log else None
     items.append({"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "window_start": win,
-                  "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None})
+                  "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None,
+                  "pace": {k: pace(log, k) for k in ("five", "week")}})
+    attrib = {"none": 0, "shared": 0, "ticket": 0}
+    top: dict = {}
+    for key, o in owners.items():
+        n = total(o["week"])
+        bucket = "none" if key == "unlinked" else "shared" if key.startswith("shared:") else "ticket"
+        attrib[bucket] += n
+        if bucket == "ticket" and n:
+            top[key] = n
+    items.append({"id": "stats", "kind": "stats", "label": "Stats", "role": "neu", "text": "", "built": now,
+                  "files": len(found), "daily": daily, "cost_days": cost_days, "attrib": attrib,
+                  "top": sorted(top.items(), key=lambda kv: -kv[1])[:8],
+                  "history": limit_history(log, horizon)})
     return items
 
 
@@ -206,26 +230,183 @@ def ticket_panel(item, show_cost: bool) -> list:
     return [Card("Usage", tuple(body))]
 
 
-def page(snaps, show_cost: bool) -> list:
+RANGES = (("week", "Last 7 days"), ("month", "Last 30 days"), ("all", "Calendar weeks"))
+PAGE_URL = "/addons/ticket-usage/"
+RECORDER = ('Add "statusLine": {"type": "command", "command": "~/.claude/orch-usage/statusline.sh"} to '
+            "~/.claude/settings.json (see this addon's README). Tokens and cost below do not need it.")
+
+
+def _k(n) -> str:
+    n = float(n)
+    return f"{n / 1e6:.1f}M" if n >= 1e6 else f"{n / 1e3:.0f}k" if n >= 1e4 else f"{n / 1e3:.1f}k" if n >= 1e3 else f"{n:.0f}"
+
+
+def _d(day: str) -> str:
+    return date.fromisoformat(day).strftime("%d %b")
+
+
+def _wk(monday: str) -> str:
+    return f"W{date.fromisoformat(monday).isocalendar()[1]} · {_d(monday)}"
+
+
+def _limit_card(title, v, reset, now, pace_text):
+    if not isinstance(v, (int, float)):
+        return Card(title, (Text("unknown"),))
+    past = isinstance(reset, (int, float)) and reset <= now
+    body = [KV(((title, "0 %, reset" if past else f"{v:.0f} %"),), layout="stats")]
+    if isinstance(reset, (int, float)):
+        body.append(KV((("Resets" if not past else "Reset", Time(iso(reset), "at")),)))
+    if pace_text and not past:
+        body.append(Text(pace_text))
+    return Card(title, tuple(body), role=None if past else _role(v))
+
+
+def _pace_text(p, key, reset, now):
+    """One sentence from the readings of the newest window. Five hours: needs two points. Week: a day of data."""
+    if not p or p["n"] < 2 or p["last_ts"] <= p["first_ts"] or p["last"] <= p["first"]:
+        if key == "week":
+            return "Recording started recently, so there is no weekly pace yet. It appears after a day."
+        return None
+    span = p["last_ts"] - p["first_ts"]
+    if key == "week" and span < 86400:
+        return "Recording started recently, so there is no weekly pace yet. It appears after a day."
+    rate = (p["last"] - p["first"]) / span
+    eta = p["last_ts"] + (100 - p["last"]) / rate
+    after = isinstance(reset, (int, float)) and eta > reset
+    dur = f"{span / 3600:.1f} h" if span >= 7200 else f"{round(span / 60)} min"
+    return (f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it would reach 100 % around "
+            f"{_clock(eta)}{', after the reset' if after else ''}.")
+
+
+def _days(daily: dict, rng: str, today: str) -> tuple[list, list, str, str]:
+    """(labels, rows of 5 family totals, first day, last day) of a range; calendar days with no output are zeros."""
+    end = date.fromisoformat(today)
+    if rng == "all":
+        first = date.fromisoformat(min(daily)) if daily else end
+        start = first - timedelta(days=first.weekday())
+    else:
+        start = end - timedelta(days=6 if rng == "week" else 29)
+    days = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    cols = len(FAMILIES)
+    if rng != "all":
+        return [_d(x) for x in days], [list(daily.get(x, [0] * cols)) for x in days], days[0], days[-1]
+    weeks: dict = {}
+    for x in days:
+        w = weeks.setdefault(monday_of(x), [0] * cols)
+        for i, n in enumerate(daily.get(x, [0] * cols)):
+            w[i] += n
+    first_day = min(daily) if daily else days[0]
+    labels = [_wk(m) + (f" (from {date.fromisoformat(first_day).strftime('%a')})" if m == monday_of(first_day) and first_day != m else "")
+              for m in weeks]
+    return labels, list(weeks.values()), first_day, days[-1]
+
+
+def _usage_charts(stats: dict, params: dict, show_cost: bool, now: float) -> list:
+    daily = stats.get("daily") or {}
+    out: list = []
+    today = day_of(stats.get("built") or now)
+    if len(daily) <= 1:  # one day of data: numbers only, week and month tabs wait for more
+        row = next(iter(daily.values()), None)
+        tot = sum(row) if row else 0
+        out.append(Card("Output tokens by model", (
+            KV((("Output tokens", _k(tot)),), layout="stats") if tot else Text("No output yet."),
+            Text("Charts by week and month appear once there is more than one day of data."))))
+    else:
+        rng = params.get("range") if params.get("range") in dict(RANGES) else "month"
+        labels, rows, first, last = _days(daily, rng, today)
+        sums = [sum(r) for r in rows]
+        tot = sum(sums)
+        used = [i for i in range(len(FAMILIES)) if any(r[i] for r in rows)]
+        body: list = [Tabs(tuple(Link(t, f"{PAGE_URL}?range={k}", current=k == rng) for k, t in RANGES), label="Range")]
+        if tot:
+            busiest = max(range(len(rows)), key=lambda i: sums[i])
+            body.append(KV((("Output tokens", _k(tot)), ("On Opus", f"{round(100 * sum(r[0] for r in rows) / tot)} %"),
+                            (f"Busiest {'week' if rng == 'all' else 'day'}, {labels[busiest]}", _k(sums[busiest]))),
+                           layout="stats"))
+            body.append(Chart("Output tokens by model", tuple(labels), tuple(
+                ChartSeries(FAMILIES[i].capitalize(), tuple(r[i] for r in rows), f"series-{n + 1}")
+                for n, i in enumerate(used)), stacked=True, unit="tokens"))
+        else:
+            body.append(Text("No output in this range."))
+        body.append(Text(f"Every reply Claude Code wrote on this machine, counted once, subagents included. {_d(first)} to {_d(last)}"
+                         f"{', by calendar week' if rng == 'all' else ''}."))
+        out.append(Card("Output tokens by model", tuple(body)))
+    a = stats.get("attrib") or {}
+    wk_total = sum(a.values())
+    cards = []
+    if wk_total:
+        pc = lambda n: round(100 * n / wk_total)  # noqa: E731
+        cards.append(Card("How much of this week's output is tied to a ticket", (
+            Chart("Output this week", ("No ticket claimed", "Shared runs, not split", "Tied to one ticket"),
+                  (ChartSeries("Output tokens", (a.get("none", 0), a.get("shared", 0), a.get("ticket", 0)), "series-1"),),
+                  horizontal=True, unit="tokens"),
+            Text(f"{pc(a.get('ticket', 0))} % can be tied to a single ticket. {pc(a.get('none', 0))} % comes from sessions that claimed "
+                 "no ticket. That can still be ticket work done without a claim, so this measures attribution, not what the time was spent on."))))
+    else:
+        cards.append(Card("How much of this week's output is tied to a ticket", (Text("No Claude output found this week."),)))
+    top = [(t, n) for t, n in (stats.get("top") or []) if n]
+    cards.append(Card("Output tied to each ticket, this week", (
+        Chart("Output by ticket", tuple(t for t, _ in top), (ChartSeries("Output tokens", tuple(n for _, n in top), "series-1"),),
+              horizontal=True, unit="tokens") if top else Text("No ticket has output this week."),
+        Text("Its own sessions plus subagents that name it. Output tokens, not effort or value."))))
+    out += cards
+    hist = stats.get("history") or []
+    if len(hist) >= 2:
+        t0 = hist[0][0]
+        xs = tuple(round((h[0] - t0) / 3600, 2) for h in hist)
+        hours = len(hist) and xs[-1] < 48
+        xs = xs if hours else tuple(round(x / 24, 2) for x in xs)
+        lim = Card("Limits history", (
+            Chart("Limit percentages", xs, (ChartSeries("Week", tuple(h[2] for h in hist), "series-1"),
+                                            ChartSeries("5-hour window", tuple(h[1] for h in hist), "series-2")),
+                  style="line", x="linear", unit="%"),
+            Text(f"Status line readings, spaced by real time: {'hours' if hours else 'days'} since {_clock(t0)}. "
+                 "Only new highs within a window are drawn.")))
+    else:
+        lim = Card("Limits history", (Text("Not enough status line readings yet. This fills as you work."),))
+    cost = []
+    if show_cost:
+        weeks: dict = {}
+        for day, usd in (stats.get("cost_days") or {}).items():
+            weeks[monday_of(day)] = weeks.get(monday_of(day), 0.0) + usd
+        if weeks:
+            first = min(stats["cost_days"])
+            note = ("Claude Code's own estimate at API list prices, written when a session ends: a long session lands in the week it "
+                    f"ended. Not what your plan bills.{'' if monday_of(first) == first else f' Records start {_d(first)}, so the first week is partial.'}")
+            cost = [Card("API-price equivalent per calendar week", (
+                Chart("API-price equivalent", tuple(_wk(m) for m in sorted(weeks)),
+                      (ChartSeries("USD", tuple(round(weeks[m], 2) for m in sorted(weeks)), "series-1"),), unit="USD"),
+                Text(note)))]
+    return out + [lim] + cost
+
+
+def page(snaps, show_cost: bool, params: dict | None = None, now: float | None = None) -> list:
     items = list(snaps[0].items) if snaps else []
+    now = now if now is not None else time.time()
     if not items:
-        return [Text("Usage shows up after the first fetch; press Refresh.")]
+        return [Text("Reading transcripts… Usage shows up after the first fetch; press Refresh.")]
     limits = next((i for i in items if i["kind"] == "limits"), {})
+    stats = next((i for i in items if i["kind"] == "stats"), None)
     last = limits.get("last")
     out: list = []
     if not last:
-        out.append(Callout("neu", "No limits recorded", "Install the status line recorder from this addon's README so the "
-                           "5-hour and weekly percentages are logged. Tokens and cost below do not need it."))
+        out.append(Callout("neu", "No limits recorded", "Limits come from the status line. " + RECORDER))
     else:
-        five, week = last.get("five"), last.get("week")
-        out.append(KV((("5-hour limit", f"{five:.0f} %" if isinstance(five, (int, float)) else "unknown"),
-                       ("Weekly limit", f"{week:.0f} %" if isinstance(week, (int, float)) else "unknown")), layout="stats"))
-        times = [(label, last.get(k)) for label, k in (("5-hour limit resets", "five_reset"), ("Weekly limit resets", "week_reset"))]
-        out.append(KV(tuple((label, Time(iso(v), "at")) for label, v in times if isinstance(v, (int, float)))))
+        pc = limits.get("pace") or {}
+        out.append(Card("Limits", (
+            _limit_card("5-hour window", last.get("five"), last.get("five_reset"), now,
+                        _pace_text(pc.get("five"), "five", last.get("five_reset"), now)),
+            _limit_card("Week", last.get("week"), last.get("week_reset"), now,
+                        _pace_text(pc.get("week"), "week", last.get("week_reset"), now)),
+        ), layout="grid"))
+        if last.get("at"):
+            out.append(Text(f"Limits as of {_clock(to_epoch(last['at']))}."))
+    if stats:
+        out += _usage_charts(stats, params or {}, show_cost, now)
     rows = []
     order = {"ticket": 0, "shared": 1, "unlinked": 2}  # tickets first, then shared orchestrators, unlinked last
     for i in sorted(items, key=lambda i: (order.get(i["kind"], 3), -total(i.get("week") or {}))):
-        if i["kind"] == "limits" or not total(i["week"]):
+        if i["kind"] in ("limits", "stats") or not total(i["week"]):
             continue
         week = (i.get("pct") or {}).get("week")
         label = i["label"] if i["kind"] != "shared" else f"Shared orchestrator ({len(i['tickets'])} tickets)"
@@ -234,8 +415,8 @@ def page(snaps, show_cost: bool) -> list:
         rows.append((label, ", ".join(model_name(m) for m in i["week"]), tokens(total(i["week"])),
                      cost_text(i, True) if show_cost and i["kind"] != "unlinked" else "—",
                      "—" if week is None else f"about {week:.0f} %" if week >= 1 else "under 1 %"))
-    out.append(Table(("Ticket", "Models", "Output this week", "Estimate", "Week share"), tuple(rows),
-                     empty="No Claude output found this week. Sessions on this machine show up here once they run."))
+    out.append(Card("Details", (Table(("Ticket", "Models", "Output this week", "Estimate", "Week share"), tuple(rows),
+                     empty="No Claude output found this week. Sessions on this machine show up here once they run."),)))
     return out
 
 
@@ -297,7 +478,7 @@ class TicketUsage:
         snaps = view.snapshots("usage")
         show = view.settings.get("show_cost") is not False
         if slot == self.page:
-            return page(snaps, show)
+            return page(snaps, show, view.params)
         if slot == "ticket.code" and view.ticket is not None and snaps:
             item = next((i for i in snaps[0].items if i["id"] == f"ticket:{view.ticket.id}"), None)
             return ticket_panel(item, show) if item else []

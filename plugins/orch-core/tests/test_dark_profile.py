@@ -1,5 +1,5 @@
-"""Dark AI Factory (phase 5, core): the `factory.dark` switch, the `--dark` charter flag, the signed Dark profile and
-the permission hook answering from it."""
+"""Dark AI Factory (phase 5, core): the signed Dark switch, the `--dark` charter flag, the signed Dark profile and the
+permission hook answering from it."""
 import hashlib
 import json
 
@@ -12,12 +12,19 @@ from orch.core.canonical import canonical_json
 from orch.errors import HumanOnlyError, NotFoundError, UsageError, ValidationError
 from test_factory import _behavior, _payload, _refine, bind
 
-DARK = {"enabled": True, "dark": True}
+FACTORY = {"enabled": True}
+
+
+def _switch_on(ws, actor):
+    from orch.core.ops import Ops
+    Ops(ws, actor).set_factory_dark(True)
 
 
 @pytest.fixture
-def dws(configure):
-    return configure(factory=DARK)
+def dws(configure, human):
+    ws = configure(factory=FACTORY)
+    _switch_on(ws, human)
+    return ws
 
 
 @pytest.fixture
@@ -52,29 +59,79 @@ def _msg(out):
     return out["hookSpecificOutput"]["decision"].get("message", "")
 
 
-# -- the switch and the charter ------------------------------------------------------------------------------------
+def _forge(ws, human, kind, value, *, op="add", rid=None, checkout=None):
+    """An entry written straight into the ledger, past every check of `add`."""
+    from orch.actor import process_evidence
+    return ledger.record(ws, ticket=None, kind="dark_profile", actor=human, evidence=process_evidence(), op=op,
+                         rule_id=rid or dark_profile.rule_id(kind, value), rule_kind=kind, rule=value,
+                         checkout=checkout or ledger.checkout_id(ws))
 
-def test_dark_is_off_by_default_and_validates(ws):
-    from orch.config.load import DEFAULTS, deep_merge, validate_schema
+
+def _second_root(tmp_path, **over):
+    """A second checkout of a workspace with the same customer and id prefix (so the same workspace id)."""
+    from conftest import make_config
+    from orch.core.workspace import Workspace
+    root = tmp_path / "second checkout"
+    (root / "orchestrator").mkdir(parents=True)
+    (root / "orchestrator" / "config.json").write_text(json.dumps(make_config(**over)), encoding="utf-8")
+    return Workspace.open(root)
+
+
+# -- the switch: signed, never a config value ---------------------------------------------------------------------------
+
+def test_dark_is_off_by_default(ws, configure):
+    from orch.config.load import DEFAULTS
     assert not permits.dark_on(ws)
-    assert DEFAULTS["factory"] == {"enabled": False, "dark": False}
-    good = deep_merge(DEFAULTS, {"customer": "x", "factory": {"enabled": True, "dark": True, "max_concurrency": 2}})
-    assert validate_schema(good) == []
-    assert validate_schema(deep_merge(DEFAULTS, {"customer": "x", "factory": {"dark": "yes"}}))
-    assert validate_schema(deep_merge(DEFAULTS, {"customer": "x", "factory": {"max_concurrency": -1}}))
+    assert DEFAULTS["factory"] == {"enabled": False}
+    assert not permits.dark_on(configure(factory=FACTORY))  # factory on alone: Dark stays off
 
 
-def test_check_accepts_a_dark_config(dws):
-    from orch.config.load import validate_schema
+def test_schema_has_no_dark_key_and_checks_max_concurrency(dws):
+    from orch.config.load import DEFAULTS, deep_merge, validate_schema
     from orch.core.check import run_checks
-    assert dws.config["factory"] == DARK and validate_schema(dws.config) == []
+    assert validate_schema(deep_merge(DEFAULTS, {"customer": "x", "factory": {"enabled": True,
+                                                                                "max_concurrency": 2}})) == []
+    assert validate_schema(deep_merge(DEFAULTS, {"customer": "x", "factory": {"dark": True}}))
+    assert validate_schema(deep_merge(DEFAULTS, {"customer": "x", "factory": {"max_concurrency": -1}}))
     assert not [f for f in run_checks(dws, emit_events=False) if f.code == "config"]
 
 
-def test_dark_needs_the_factory_switch_too(configure):
-    assert not permits.dark_on(configure(factory={"enabled": False, "dark": True}))
-    assert permits.dark_on(configure(factory=DARK))
+def test_an_agent_config_edit_cannot_turn_dark_on(configure):
+    from orch.config.load import validate_schema
+    from orch.hooks.guard import evaluate
+    ws = configure(factory={"enabled": True, "dark": True})  # what an agent's Edit/Write of config.json could do
+    assert evaluate(ws, {"tool_name": "Write", "tool_input": {
+        "file_path": str(ws.home / "config.json"), "content": json.dumps(ws.config)}}).allow  # the guard lets it
+    assert not permits.dark_on(ws)  # but nothing in the config turns Dark on
+    assert validate_schema(ws.config)  # and `orch check` reports the unknown key
+    ws.config["factory"]["dark"] = True
+    assert not permits.dark_on(ws)
 
+
+def test_dark_on_is_human_only_and_anyone_may_turn_it_off(configure, human, agent, monkeypatch):
+    from orch.core.ops import Ops
+    ws = configure(factory=FACTORY)
+    with pytest.raises(HumanOnlyError):
+        Ops(ws, agent).set_factory_dark(True)
+    assert not permits.dark_on(ws)
+    with monkeypatch.context() as m, pytest.raises(HumanOnlyError, match="agent harness"):
+        m.setattr(orch_actor, "agent_harness", lambda: "claude-code")
+        Ops(ws, human).set_factory_dark(True)
+    Ops(ws, human).set_factory_dark(True)
+    assert permits.dark_on(ws)
+    assert not permits.dark_on(configure(factory={"enabled": False}))  # needs factory.enabled too
+    ws = configure(factory=FACTORY)
+    Ops(ws, agent).set_factory_dark(False)  # off takes power away: anyone
+    assert not permits.dark_on(ws)
+
+
+def test_dark_switch_is_bound_to_the_checkout(dws, tmp_path):
+    other = _second_root(tmp_path, factory=FACTORY)
+    assert ledger.workspace_id(other) == ledger.workspace_id(dws)
+    assert permits.dark_on(dws) and not permits.dark_on(other)
+
+
+# -- the charter ----------------------------------------------------------------------------------------------------------
 
 def test_old_charter_hash_is_byte_identical(dws, da):
     e = da.new("E", type="epic")
@@ -106,7 +163,7 @@ def test_dark_charter_is_signed(dws, da, dh):
 def test_dark_start_refused_with_the_switch_off(configure, agent, human):
     from conftest import human_ops
     from orch.core.ops import Ops
-    ws = configure(factory={"enabled": True})
+    ws = configure(factory=FACTORY)
     e = Ops(ws, agent).new("E", type="epic")
     _refine(Ops(ws, agent), e.id, plan=None)
     with pytest.raises(UsageError, match="Dark AI Factory is switched off"):
@@ -162,13 +219,28 @@ def _cli_epic(capsys):
     return eid
 
 
-def test_cli_dark_start(capsys, switch, configure):
-    configure(factory={"enabled": True})
+def test_cli_factory_dark_switch(capsys, switch, configure):
+    ws = configure(factory=FACTORY)
+    code, _ = _run(capsys, "factory", "dark", "on")
+    assert code != 0 and not permits.dark_on(ws)  # an agent never turns it on
+    switch.human("wrong")
+    code, _ = _run(capsys, "factory", "dark", "on")
+    assert code != 0 and not permits.dark_on(ws)
+    switch.human("DARK")
+    _ok(capsys, "factory", "dark", "on")
+    switch.agent()
+    assert json.loads(_ok(capsys, "factory", "dark", "status", "--json"))["dark"] is True  # anyone reads it
+    assert json.loads(_ok(capsys, "factory", "dark", "off", "--json"))["dark"] is False  # anyone turns it off
+    assert not permits.dark_on(ws)
+
+
+def test_cli_dark_start(capsys, switch, configure, human):
+    ws = configure(factory=FACTORY)
     eid = _cli_epic(capsys)
     switch.human(eid)
     code, out = _run(capsys, "approve", eid, "requirements", "--dark")
     assert code != 0 and "Dark AI Factory is switched off" in out.err
-    configure(factory=DARK)
+    _switch_on(ws, human)
     switch.agent()
     code, out = _run(capsys, "approve", eid, "requirements", "--dark")
     assert code != 0 and "agent harness" in out.err
@@ -176,10 +248,10 @@ def test_cli_dark_start(capsys, switch, configure):
     out = _ok(capsys, "approve", eid, "requirements", "--dark")  # --dark implies --factory
     assert "AI Factory: on" in out and "Dark: on" in out and "without asking" in out
     assert "Dark AI Factory active" in out
-    assert epics.latest_charter(configure(factory=DARK), eid)["delegate"]["dark"] is True
+    assert epics.latest_charter(ws, eid)["delegate"]["dark"] is True
 
 
-def test_cli_profile_add_list_remove(capsys, switch, dws):
+def test_cli_profile_add_list_remove(capsys, dws, switch):
     code, _ = _run(capsys, "dark", "profile", "add", "--prefix", "npm run verify")
     assert code != 0  # an agent never adds
     rid = dark_profile.rule_id("prefix", ["npm", "run", "verify"])
@@ -207,6 +279,7 @@ def test_add_and_remove_are_human_only(dws, human, agent, monkeypatch):
         dark_profile.add(dws, agent, "prefix", "npm run verify")
     e = dark_profile.add(dws, human, "prefix", "npm run verify")
     assert e["kind"] == "dark_profile" and e["op"] == "add" and e in ledger.entries(dws)
+    assert e["checkout"] == ledger.checkout_id(dws)
     with pytest.raises(HumanOnlyError):
         dark_profile.remove(dws, agent, e["rule_id"])
     with monkeypatch.context() as m, pytest.raises(HumanOnlyError, match="agent harness"):
@@ -240,6 +313,27 @@ def test_add_and_remove_are_human_only(dws, human, agent, monkeypatch):
     ("prefix", "gh pr merge", "never be in the Dark profile"),
     ("exact", "cat ~/.claude/settings.json", "never be in the Dark profile"),
     ("bogus", "x", "one of"),
+    # the program word: no assignment, no option, casefolded, versioned interpreters, wrappers and editors
+    ("prefix", ["FOO=1", "npm", "test"], "plain program"), ("prefix", ["-x", "y"], "plain program"),
+    ("prefix", "GIT push", "never a prefix"), ("prefix", "RM -r", "never a prefix"),
+    ("prefix", "/usr/bin/Rm x", "never a prefix"), ("prefix", "Python3 x.py", "exact commands"),
+    ("prefix", "python3.12 -m", "exact commands"), ("prefix", "pythonw x", "exact commands"),
+    ("prefix", "node18 x.js", "exact commands"), ("prefix", "perl5.36 x", "exact commands"),
+    ("prefix", "ruby3.2 x", "exact commands"), ("prefix", "php8 x", "exact commands"),
+    ("prefix", "nohup make", "exact commands"), ("prefix", "timeout 5", "exact commands"),
+    ("prefix", "npx jest", "exact commands"), ("prefix", "uv run", "exact commands"),
+    ("prefix", "bunx x", "exact commands"), ("prefix", "nc localhost", "exact commands"),
+    ("prefix", "open -a", "exact commands"), ("prefix", "vim x", "exact commands"),
+    ("prefix", "xcrun simctl", "exact commands"), ("prefix", "tmux ls", "exact commands"),
+    ("prefix", "gh api", "other than api"), ("prefix", "gh --repo x", "other than api"),
+    ("prefix", "git fetch", "never a prefix"), ("prefix", "git pull origin", "never a prefix"),
+    ("prefix", "git clone x", "never a prefix"), ("prefix", "git rebase -i", "never a prefix"),
+    ("prefix", "git config user.name", "never a prefix"), ("prefix", "git worktree add", "never a prefix"),
+    ("prefix", "git remote add", "never a prefix"), ("prefix", "git submodule update", "never a prefix"),
+    ("prefix", "git ls-remote x", "never a prefix"), ("prefix", "git archive x", "never a prefix"),
+    ("prefix", "git bisect run", "never a prefix"),
+    ("prefix", "npm --prefix x", "run other code"), ("prefix", "npm exec -c x", "run other code"),
+    ("prefix", "npm test --script-shell=x", "run other code"),
 ])
 def test_broad_rules_are_refused(dws, human, kind, value, why):
     with pytest.raises((ValidationError, UsageError), match=why):
@@ -247,10 +341,52 @@ def test_broad_rules_are_refused(dws, human, kind, value, why):
     assert dark_profile.rules(dws) == []
 
 
+def test_ordinary_prefix_rules_are_accepted(dws, human):
+    for rule in ("npm run verify", "make test", "gh pr view", "git status", "git diff --stat", "./scripts/check.sh x"):
+        dark_profile.add(dws, human, "prefix", rule)
+    assert len(dark_profile.rules(dws)) == 6
+
+
 def test_rule_ids_are_stable(dws, human):
     e = dark_profile.add(dws, human, "prefix", "npm  run verify")
     assert e["rule_id"] == dark_profile.rule_id("prefix", ["npm", "run", "verify"])
     assert e["rule_id"] != dark_profile.rule_id("exact", "npm run verify")
+
+
+# -- the replay: per checkout, each entry checked again --------------------------------------------------------------
+
+def test_profile_is_bound_to_the_checkout(dws, human, tmp_path):
+    other = _second_root(tmp_path, factory=FACTORY)
+    _switch_on(other, human)
+    assert ledger.workspace_id(other) == ledger.workspace_id(dws)
+    dark_profile.add(dws, human, "prefix", "npm run verify")
+    assert dark_profile.rules(dws) and dark_profile.rules(other) == []
+    assert dark_profile.match(other, "npm run verify") is None
+    _forge(other, human, "prefix", ["make", "test"], checkout="0" * 16)  # signed for no checkout here
+    assert dark_profile.rules(other) == []
+
+
+@pytest.mark.parametrize("kind,value", [
+    ("prefix", []), ("prefix", ["npm"]), ("prefix", ["npm", ""]), ("prefix", ["bash", "-c"]),
+    ("prefix", ["npm", "run;"]), ("prefix", ["FOO=1", "npm"]), ("prefix", ["git", "push"]), ("prefix", "npm run"),
+    ("prefix", [1, 2]), ("exact", ""), ("exact", "a\nb"), ("exact", 5), ("exact", ["a", "b"]), ("other", "x"),
+])
+def test_a_signed_entry_of_the_wrong_shape_is_ignored(dws, da, dh, human, kind, value):
+    _dark(da, dh)
+    _forge(dws, human, kind, value, rid=dark_profile.rule_id(kind, value))
+    assert dark_profile.rules(dws) == []
+    for command in ("npm run verify", "npm", "bash -c x", "a\nb", "x"):
+        assert dark_profile.match(dws, command) is None
+    assert _behavior(permits.hook_decision(dws, _payload("npm run verify"))) == "deny"
+
+
+def test_a_remove_counts_only_for_a_rule_in_force(dws, human):
+    rid = dark_profile.rule_id("prefix", ["make", "test"])
+    _forge(dws, human, "prefix", ["make", "test"], op="remove")
+    _forge(dws, human, "prefix", ["make", "test"])
+    assert [r["id"] for r in dark_profile.rules(dws)] == [rid]
+    _forge(dws, human, "prefix", ["make", "test"], op="remove", rid="R-unknown")
+    assert [r["id"] for r in dark_profile.rules(dws)] == [rid]
 
 
 # -- matching ---------------------------------------------------------------------------------------------------------
@@ -262,10 +398,24 @@ def test_rule_ids_are_stable(dws, human):
     ("npm run verify | sh", False), ("npm run verify\nrm -rf x", False), ("npm run verify & x", False),
     ("npm run verify ${HOME}", False), ("npm run verify \\; x", False), ("(npm run verify)", False),
     ("npm run", False), ("npm run verifyx", False), ("FOO=1 npm run verify", False), ("npm run 'verify", False),
+    # argument shapes that run other code never match a prefix rule
+    ("npm run verify --exec x", False), ("npm run verify --exec=x", False), ("npm run verify -x", False),
+    ("npm run verify -c x", False), ("npm run verify -e x", False), ("npm run verify --eval x", False),
+    ("npm run verify --upload-pack=x", False), ("npm run verify --receive-pack x", False),
+    ("npm run verify --script-shell x", False), ("npm run verify --shell=x", False),
+    ("npm run verify --prefix x", False), ("npm run verify --userconfig x", False),
+    ("npm run verify --node-options=--require=x", False), ("npm run verify --require x", False),
+    ("npm run verify --config x", False),
 ])
 def test_prefix_matches_only_a_simple_command(dws, human, command, ok):
     dark_profile.add(dws, human, "prefix", "npm run verify")
     assert (dark_profile.match(dws, command) is not None) is ok
+
+
+def test_refused_argument_shapes_can_still_match_an_exact_rule(dws, human):
+    dark_profile.add(dws, human, "exact", "pytest -x tests")
+    assert dark_profile.match(dws, "pytest -x tests") is not None
+    assert dark_profile.match(dws, "pytest -x tests/other") is None
 
 
 def test_exact_matches_only_identical_text(dws, human):
@@ -291,6 +441,15 @@ def test_hook_allows_listed_and_parks_unlisted_as_a_dark_card(dws, da, dh, human
     assert _behavior(permits.hook_decision(dws, _payload("npm run verify; make deploy"))) == "deny"
 
 
+@pytest.mark.parametrize("tool_input", [{}, {"command": 5}, {"command": None}, {"command": ""}, "npm run verify"])
+def test_hook_denies_a_missing_or_odd_command_in_a_dark_epic(dws, da, dh, human, tool_input):
+    _dark(da, dh)
+    dark_profile.add(dws, human, "prefix", "npm run verify")
+    payload = {**_payload("x"), "tool_input": tool_input}
+    assert _behavior(permits.hook_decision(dws, payload)) == "deny"
+    assert permits.open_requests(dws) == []
+
+
 def test_a_live_grant_still_allows_in_a_dark_epic(dws, da, dh, human):
     _dark(da, dh)
     permits.hook_decision(dws, _payload("make e2e"))
@@ -300,37 +459,31 @@ def test_a_live_grant_still_allows_in_a_dark_epic(dws, da, dh, human):
     assert _behavior(permits.hook_decision(dws, _payload("make e2e"))) == "deny"
 
 
-def _forge_rule(ws, human, kind, value):
-    """A rule written straight into the ledger, past every check of `add`."""
-    from orch.actor import process_evidence
-    return ledger.record(ws, ticket=None, kind="dark_profile", actor=human, evidence=process_evidence(), op="add",
-                         rule_id=dark_profile.rule_id(kind, value), rule_kind=kind, rule=value)
-
-
 @pytest.mark.parametrize("kind,value,command", [
     ("exact", "sudo make install", "sudo make install"),
     ("exact", "orch permit grant P-1", "orch permit grant P-1"),
-    ("prefix", ["git", "push"], "git push --force origin main"),
     ("prefix", ["cat", "x"], "cat x ~/.claude/settings.json"),
+    ("prefix", ["make", "x"], "make x --no-verify"),
 ])
 def test_never_grantable_is_never_allowed_even_if_listed(dws, da, dh, human, kind, value, command):
     _dark(da, dh)
-    _forge_rule(dws, human, kind, value)
+    _forge(dws, human, kind, value)
     assert dark_profile.rules(dws)
     assert dark_profile.match(dws, command) is None
     out = permits.hook_decision(dws, _payload(command))
     assert _behavior(out) == "deny" and "never granted" in _msg(out)
 
 
-def test_dark_off_means_the_profile_is_ignored(dws, da, dh, human, configure):
+def test_dark_off_means_the_profile_is_ignored(dws, da, dh, human, agent):
     _dark(da, dh)
     dark_profile.add(dws, human, "prefix", "npm run verify")
-    off = configure(factory={"enabled": True, "dark": False})
-    out = permits.hook_decision(off, _payload("npm run verify"))
+    from orch.core.ops import Ops
+    Ops(dws, agent).set_factory_dark(False)  # the brake anyone may pull
+    out = permits.hook_decision(dws, _payload("npm run verify"))
     assert _behavior(out) == "deny" and "waiting for permission" in _msg(out)
-    (r,) = permits.open_requests(off)
+    (r,) = permits.open_requests(dws)
     assert r["source"] == "harness"
-    assert permits.dark_delegation(off, store.load(off, r["epic"])[1]) is None
+    assert permits.dark_delegation(dws, store.load(dws, r["epic"])[1]) is None
 
 
 def test_a_non_dark_factory_epic_ignores_the_profile(dws, da, dh, human):
@@ -342,10 +495,10 @@ def test_a_non_dark_factory_epic_ignores_the_profile(dws, da, dh, human):
 
 def test_another_workspaces_profile_does_not_apply(dws, da, dh, human, configure):
     _dark(da, dh)
-    other = configure(customer="other", factory=DARK)
+    other = configure(customer="other", factory=FACTORY)
     dark_profile.add(other, human, "prefix", "npm run verify")
     assert dark_profile.rules(other)
-    mine = configure(factory=DARK)
+    mine = configure(factory=FACTORY)
     assert dark_profile.rules(mine) == []
     assert _behavior(permits.hook_decision(mine, _payload("npm run verify"))) == "deny"
 
@@ -358,7 +511,7 @@ def test_a_cut_ledger_disables_the_profile(dws, da, dh, human):
     lines = path.read_text(encoding="utf-8").splitlines()
     path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")  # the newest entry cut away
     assert not ledger.head_ok()
-    assert dark_profile.rules(dws) == []
+    assert dark_profile.rules(dws) == [] and not permits.dark_on(dws)
     out = permits.hook_decision(dws, _payload("npm run verify"))
     assert _behavior(out) == "deny" and "cut" in _msg(out)
 
@@ -383,10 +536,27 @@ def test_request_becomes_an_exact_rule(dws, da, dh, human, agent):
         dark_profile.add_from_request(dws, human, r["id"], expected_sha="sha256:00")
     e = dark_profile.add_from_request(dws, human, r["id"], expected_sha=r["sha"])
     assert (e["rule_kind"], e["rule"]) == ("exact", "make deploy-staging")
-    assert permits.open_requests(dws) == []  # the rule answers the card; nothing else is signed
+    assert permits.open_requests(dws) == []  # the rule hides the card; nothing else is signed
     assert not [x for x in ledger.entries(dws) if x.get("kind") in ("grant", "permit_deny")]
     assert _behavior(permits.hook_decision(dws, _payload("make deploy-staging"))) == "allow"
     assert _behavior(permits.hook_decision(dws, _payload("make deploy-staging --x"))) == "deny"
+    dark_profile.remove(dws, human, e["rule_id"])
+    assert r["id"] in [x["id"] for x in permits.open_requests(dws)]  # removing the rule brings the card back
+
+
+@pytest.mark.parametrize("how", ["paused", "switched off"])
+def test_request_to_rule_needs_an_active_dark_epic(dws, da, dh, human, agent, how):
+    from orch.core.ops import Ops
+    eid, _ = _dark(da, dh)
+    permits.hook_decision(dws, _payload("make deploy-staging"))
+    (r,) = permits.open_requests(dws)
+    if how == "paused":
+        dh.epic_pause(eid)
+    else:
+        Ops(dws, agent).set_factory_dark(False)
+    with pytest.raises(ValidationError, match="not an active Dark factory epic"):
+        dark_profile.add_from_request(dws, human, r["id"], expected_sha=r["sha"])
+    assert dark_profile.rules(dws) == []
 
 
 def test_only_an_open_dark_request_of_this_workspace(dws, da, dh, human, configure):
@@ -395,11 +565,12 @@ def test_only_an_open_dark_request_of_this_workspace(dws, da, dh, human, configu
     (r,) = permits.open_requests(dws)
     with pytest.raises(ValidationError, match="not filed by a Dark factory"):
         dark_profile.add_from_request(dws, human, r["id"], expected_sha=r["sha"])
-    other = configure(customer="other", factory=DARK)
+    other = configure(customer="other", factory=FACTORY)
     with pytest.raises(NotFoundError):
         dark_profile.add_from_request(other, human, r["id"], expected_sha=r["sha"])
-    permits.permit_deny(configure(factory=DARK), human, r["id"], expected_sha=r["sha"])
+    mine = configure(factory=FACTORY)
+    permits.permit_deny(mine, human, r["id"], expected_sha=r["sha"])
     with pytest.raises(ValidationError, match="answered already"):
-        dark_profile.add_from_request(configure(factory=DARK), human, r["id"], expected_sha=r["sha"])
+        dark_profile.add_from_request(mine, human, r["id"], expected_sha=r["sha"])
     with pytest.raises(NotFoundError):
-        dark_profile.add_from_request(dws, human, "P-00000000", expected_sha="sha256:00")
+        dark_profile.add_from_request(mine, human, "P-00000000", expected_sha="sha256:00")

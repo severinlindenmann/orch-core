@@ -54,9 +54,9 @@ DEFAULTS: dict = {
     "sprints": [],  # [{id, name, start, end}] (orch.core.sprints): planning metadata only
     "feedback": {"enabled": True},  # #37: agents may queue redacted reports about orch itself (orch feedback add)
     # AI Factory (#2, docs/factory.md): off until the human switches it on; a factory epic still needs the human's
-    # signed `orch approve <epic> requirements --factory`. `dark` (phase 5): a factory epic the human started with
-    # `--dark` answers its permission prompts from the signed Dark profile instead of cards (orch.core.dark_profile).
-    "factory": {"enabled": False, "dark": False},
+    # signed `orch approve <epic> requirements --factory`. Dark (phase 5) is not a config value: it is a signed
+    # setting of the checkout (`orch factory dark on`, orch.core.permits.dark_on).
+    "factory": {"enabled": False},
 }
 
 

@@ -253,11 +253,32 @@ A Dark factory is an AI Factory epic that never asks you for a permission while 
 above: the permission hook stays the only gate, orch still writes no harness settings (D2 B), and the runner's launch
 command allowlist is unchanged (no settings file, no skip or bypass flags, no permission mode that stops asking).
 Instead of a card for every prompt, a Dark epic's hook answers from your **Dark profile**: a signed list of shell
-commands this workspace's Dark runs may run.
+commands Dark runs in this checkout may run.
 
-**Switching it on.** Set both `factory.enabled` and `factory.dark` to `true` in `orchestrator/config.json`. With
-`factory.dark` off, a Dark epic behaves as an ordinary factory epic: the profile is ignored and every prompt is a card,
-as before. With the factory off, nothing here does anything.
+**Not running yet.** Nothing in this phase starts a Dark run. The runner arms an epic only from the dashboard's start,
+and the dashboard has no Dark choice yet (it comes in the next phase). A Dark charter you sign with `orch approve
+--dark` in the terminal is not armed, so no agent session is launched for it. What this page says about Dark sessions
+is how the hook will answer them once that start exists, and what the tests check today.
+
+**Switching it on (you only).** Set `factory.enabled` to `true` in `orchestrator/config.json`, then in your own
+terminal:
+
+```bash
+orch factory dark on       # human only: typed confirmation; refused to agents and under an agent harness
+orch factory dark status   # anyone
+orch factory dark off      # anyone: it only takes power away
+```
+
+The Dark switch is not a config value: it is a signed setting in the approval ledger, bound to this checkout (as
+`orch widget html on` is), so an agent editing `orchestrator/config.json` cannot turn it on. With Dark off, a Dark epic
+behaves as an ordinary factory epic: the profile is ignored and every prompt is a card, as before. With the factory
+off, nothing here does anything.
+
+**The brakes.** `orch factory dark off` (anyone, signed) turns every Dark epic of this checkout back into an ordinary
+factory epic at once; `orch epic pause <epic>` (yours, signed) stops one epic. Known limitation: `factory.enabled`
+itself is still a plain config value an agent can edit (as since phase 1). Switching it off only takes power away;
+switching it on still needs your signed Dark setting and a signed Dark charter before the profile answers anything. A
+signed factory switch is a follow-up.
 
 **Starting a Dark epic (you only).**
 
@@ -268,10 +289,12 @@ orch approve <epic> requirements --dark       # implies --factory
 The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
 before the typed confirmation says it plainly: Dark runs without asking you, only commands the profile lists run, and
 it releases and closes only within what the charter signs, which today is nothing: the verdict stays yours. The
-command is refused while `factory.dark` is off, under an agent harness, and without a terminal, like every approval.
+command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
-**The Dark profile** is per workspace, kept as signed ledger entries (add and remove), written only by a human
-process; the rules in force are a replay of them. A cut ledger means no rule counts.
+**The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
+written only by a human process. Another checkout of the same workspace (the same customer and id prefix), a copy or
+a clone has its own, empty profile. The rules in force are a replay of the entries, each checked again as when it was
+added: an entry that fails is ignored. A cut ledger means no rule counts.
 
 ```bash
 orch dark profile list                          # anyone may read it
@@ -290,31 +313,53 @@ refused in orch itself and by the guard.
   redirects, pipes and substitutions never match a prefix rule (a redirect defeats prefix rules in Claude's own
   matcher too); they can only match an exact rule. `npm run verify --quiet` matches `npm run verify`;
   `npm run verify > f` and `npm run verify; rm -rf x` do not.
-- **Broad rules are refused**: a prefix of fewer than two words; one that starts with a shell, interpreter, wrapper,
-  network or file-sweeping tool (`sh`, `bash`, `zsh`, `fish`, `dash`, `env`, `sudo`, `su`, `doas`, `eval`, `exec`,
-  `xargs`, `python`, `python3`, `node`, `perl`, `ruby`, `osascript`, `curl`, `wget`, `ssh`, `scp`, `rsync`,
-  `docker`, `kubectl`, `find`, `awk`, `sed`, `tee`, `dd`); `git` with an option before its subcommand; `git push`,
-  `git reset`, `git clean`, `rm` and `mv` as prefixes; anything never grantable; anything outside printable ASCII.
+- A prefix rule also never matches a command carrying an argument that makes a program run other code:
+  `--upload-pack`, `--receive-pack`, `--exec`, `--script-shell`, `--shell`, `--prefix`, `--userconfig`,
+  `--node-options`, `--require`, `--config`, `--eval` (also as `--flag=value`), and `-x`, `-c` or `-e` as a word of
+  their own. Such a command can only match an exact rule (`pytest -x` needs one).
+- **Broad rules are refused**: a prefix of fewer than two words; one whose program is not a plain name (a variable
+  assignment such as `FOO=1`, an option); one whose program (by its last path part, any case) is a shell,
+  interpreter, wrapper, editor, network or file-sweeping tool: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`,
+  `tcsh`, `pwsh`, `busybox`, `env`, `sudo`, `su`, `doas`, `eval`, `exec`, `xargs`, `nohup`, `time`, `nice`, `timeout`,
+  `watch`, `command`, `builtin`, `arch`, `xcrun`, `caffeinate`, `script`, `tmux`, `screen`, `osascript`, `open`,
+  `launchctl`, `crontab`, `at`, `python` (and `python3.12`, `pythonw`, ...), `node` (and `node18`), `perl`, `ruby`,
+  `php` (and their versions), `lua`, `tclsh`, `deno`, `bun`, `bunx`, `npx`, `uv`, `uvx`, `curl`, `wget`, `ssh`,
+  `scp`, `sftp`, `ftp`, `telnet`, `nc`, `socat`, `rsync`, `docker`, `kubectl`, `find`, `awk`, `sed`, `tee`, `dd`,
+  `vim`, `vi`, `nano`, `emacs`; `gh` without a subcommand or with `api`; `git` with an option before its subcommand,
+  or with `push`, `reset`, `clean`, `fetch`, `pull`, `clone`, `rebase`, `bisect`, `submodule`, `ls-remote`, `archive`,
+  `config`, `worktree` or `remote`; `rm` and `mv`; any of the argument shapes above; anything never grantable;
+  anything outside printable ASCII.
 
-**In a Dark session** (one the runner bound to a Dark epic, as in phase 4):
+**A prefix rule trusts the repository.** A prefix rule on a project runner (`npm run X`, `make X`, `pytest`, `python
+script.py` as an exact rule) lets the agent run any code it can write into the repository: `package.json`, the
+`Makefile`, `conftest.py` and the scripts they call are all agent-writable. Trailing arguments are passed through as
+written, except the shapes above. Prefer exact rules, and for anything that matters, a wrapper script kept outside
+the repository the agent writes to, listed by its exact command.
+
+**In a Dark session** (one the runner bound to a Dark epic, as in phase 4; see "Not running yet" above):
 
 - a never-grantable command, or a tool other than the shell, is denied as before; a never-grantable command is never
   allowed, whatever the profile holds;
 - a command a rule matches is allowed; rules are standing, nothing is used up;
 - a live grant for the exact command still allows, as before;
 - anything else is denied with "not in the Dark profile", and a card (source `dark`) is filed for you: grant or deny
-  it as usual, or add it to the profile. A rule that now covers it answers the card. Nothing is asked in the session.
+  it as usual, or add it to the profile (`--from-request`, only while its epic is an active Dark epic and Dark is on).
+  Nothing is asked in the session.
+- A rule that covers an open Dark card hides the card from your lists without signing an answer to it; removing the
+  rule brings the card back.
 
-**Waking.** Adding or removing a rule wakes the parked children of Dark epics (the runner relaunches them), the same
-way your grants do.
+**Waking.** While Dark is on, adding or removing a rule wakes the parked children of Dark epics (the runner relaunches
+them), the same way your grants do. While Dark is off, profile changes wake nothing.
 
-Not in this phase: the switch and the "Add to the Dark profile" action on the dashboard, a ring or factory list view,
-release stages, and closing children under the charter.
+Not in this phase: starting a Dark epic from the dashboard (so nothing runs yet), the Dark switch and the "Add to the
+Dark profile" action on the dashboard, a ring or factory list view, release stages, and closing children under the
+charter.
 
 ## Coming in later phases
 
-- Dark AI Factory on the dashboard: the switch, "Add to the Dark profile" on cards, the ring view and the factory
-  list; release stages and closing under the charter.
+- Dark AI Factory on the dashboard: starting a Dark epic (which arms the runner), the switch, "Add to the Dark
+  profile" on cards, the ring view and the factory list; release stages and closing under the charter.
+- A signed `factory.enabled` switch (today a plain config value).
 - The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
 - Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

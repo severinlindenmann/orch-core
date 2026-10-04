@@ -142,7 +142,7 @@ def render_charter(ws, epic, kids, delegate) -> list[str]:
                    f"{delegate['max_children']} children of size ≤ {delegate['max_size']} or {delegate['max_hours']} "
                    "hours, then they stop and tell you. Questions are not asked; permissions and the verdict stay yours.")
         if delegate.get("dark"):
-            out.append("Dark: on. Agents run without asking you: a shell command runs only if this workspace's Dark "
+            out.append("Dark: on. Agents run without asking you: a shell command runs only if this checkout's Dark "
                        "profile lists it (`orch dark profile list`); anything else is denied and becomes a card. Dark "
                        "releases and closes only within what this charter signs, and it signs no release or close: "
                        "the verdict stays yours.")

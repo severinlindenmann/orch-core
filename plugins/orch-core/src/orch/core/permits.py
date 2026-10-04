@@ -67,10 +67,19 @@ def factory_delegation(ws, epic, signed=None) -> dict | None:
     return d if d and d.get("factory") else None
 
 
+DARK_SETTING = "factory.dark"
+
+
 def dark_on(ws) -> bool:
-    """Dark AI Factory (phase 5): `factory.enabled` and `factory.dark` both on."""
-    f = ws.config.get("factory") or {}
-    return f.get("enabled") is True and f.get("dark") is True
+    """Dark AI Factory (phase 5): `factory.enabled` is on and this checkout's newest signed Dark setting says on
+    (`orch factory dark on`, human only; anyone may sign it off). Not a config value: an agent can edit the config."""
+    if not enabled(ws):
+        return False
+    from orch.core import ledger
+    try:
+        return ledger.signed_setting(ws, DARK_SETTING) is True
+    except Exception:
+        return False
 
 
 def dark_delegation(ws, epic, signed=None) -> dict | None:

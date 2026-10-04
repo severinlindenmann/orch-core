@@ -5,6 +5,7 @@ from orch.core import store
 from orch.core.events import append_event
 from orch.remote import store as phones
 from orch.remote.verify import CODES, verify_and_apply
+from test_remote_auto_apply import _together, drafted  # noqa: F401
 from test_remote_verify import NOW, _decision, _gate_decision, _signed, _verdict, asked, phone  # noqa: F401
 
 
@@ -74,7 +75,7 @@ def test_ticket_request_codes(ws, phone):  # noqa: F811
     assert _run(ws, d).code == "already-handled"
 
 
-def test_refused_code_when_core_refuses_the_intent(ws, put, phone, monkeypatch):  # noqa: F811
+def test_refused_final_code_when_core_refuses_the_intent(ws, put, phone, monkeypatch):  # noqa: F811
     from orch.addons import intents
     from orch.errors import ValidationError
     phones.set_permissions(ws.root, {"approve": True})
@@ -85,9 +86,44 @@ def test_refused_code_when_core_refuses_the_intent(ws, put, phone, monkeypatch):
         raise ValidationError("core said no")
     monkeypatch.setattr(intents, "execute", refuse)
     r = _run(ws, _gate_decision(phone, tid, t))
-    assert (r.status, r.code, r.message) == ("stale", "refused", "core said no")
+    assert (r.status, r.code, r.message) == ("stale", "refused-final", "core said no")
 
 
 @pytest.mark.parametrize("code", CODES)
 def test_codes_are_kebab_case_words(code):
     assert code == code.lower() and code.replace("-", "").isalpha()
+
+
+def test_refused_retry_is_pending_so_it_can_apply_later(ws, put, phone, monkeypatch):  # noqa: F811
+    from orch.addons import intents
+    from orch.errors import OrchError
+    phones.set_permissions(ws.root, {"approve": True})
+    tid = put("backlog", title="g", sections={"Requirements": "- a", "Acceptance criteria": "- [ ] b"})
+    t = store.load(ws, tid)[1]
+
+    def refuse(*a, **k):
+        raise OrchError("try again")
+    monkeypatch.setattr(intents, "execute", refuse)
+    r = _run(ws, _gate_decision(phone, tid, t))
+    assert (r.status, r.code) == ("pending", "refused-retry")
+
+
+def test_together_codes(ws, phone, drafted, aops, monkeypatch):  # noqa: F811
+    from orch.core.ops import Ops
+    from orch.errors import OrchError, ValidationError
+    phones.set_permissions(ws.root, {"approve": True})
+    stale = _together(phone, ws, drafted)
+    aops.set_section(drafted, "Plan", "1. something else")
+    r = _run(ws, stale)
+    assert (r.status, r.code) == ("stale", "changed-since") and "plan" in r.message
+
+    def refuse(exc):
+        def raiser(*a, **k):
+            raise exc
+        return raiser
+    monkeypatch.setattr(Ops, "approve_together", refuse(ValidationError("core said no")))
+    r = _run(ws, _together(phone, ws, drafted, letter="8"))
+    assert (r.status, r.code) == ("stale", "refused-final")
+    monkeypatch.setattr(Ops, "approve_together", refuse(OrchError("try again")))
+    r = _run(ws, _together(phone, ws, drafted, letter="9"))
+    assert (r.status, r.code) == ("pending", "refused-retry")

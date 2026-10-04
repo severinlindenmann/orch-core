@@ -113,7 +113,8 @@ Return widgets from `orch.addons.widgets`, never HTML or strings: `Card(title, b
 | `implausible-time` | pending | the decision's time is missing or too far in the future |
 | `kind-switched-off` | pending | the owner switched that kind off in the workspace settings |
 | `question-not-found` | pending | the ticket has no such question |
-| `refused` | pending or stale | a check core runs for every human refused the change; `message` says which |
+| `refused-retry` | pending | core could not apply it for a reason that may pass later; `message` says which; not ledgered |
+| `refused-final` | stale | a check core runs for every human refused the change (for example a validation or transition rule); `message` says which; ledgered, final |
 | `too-old` | stale | older than 14 days; never applied automatically |
 | `changed-since` | stale | the question, gate text, plan or verdict criteria changed after the phone showed them |
 | `wrong-status` | stale | a verdict for a ticket that is not in testing |
@@ -124,7 +125,7 @@ Return widgets from `orch.addons.widgets`, never HTML or strings: `Card(title, b
 | `already-handled` | duplicate | this decision id was handled before |
 | `no-such-ticket` | unlinked | the workspace has no such ticket |
 
-`pending` results are not ledgered and may apply later; every other status is final. A later minor version may add a code: treat an unknown one like `refused`.
+Every `pending` code (`malformed`, `kind-not-allowed`, `not-paired`, `bad-signature`, `implausible-time`, `kind-switched-off`, `question-not-found`, `refused-retry`) means nothing was applied or ledgered, and the same decision may apply later (after pairing again, switching the kind on, or on the desktop); every other status is final. A later minor version may add a code: treat an unknown one by its `status`.
 
 `widgets` runs during page renders: read `view.snapshots(provider_id)`, `view.settings`, `view.ticket` (for `ticket.*` slots), `view.params` (the cleaned GET query, on `page.<name>` and `board.external` only), `view.workspace_name`. Never run commands there (`ctx.run` refuses while a page renders).
 

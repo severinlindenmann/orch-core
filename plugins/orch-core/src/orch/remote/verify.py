@@ -30,7 +30,8 @@ STATUSES = ("applied", "pending", "stale", "superseded", "answered-locally", "du
 # human text and may be reworded; these strings never change meaning. Documented in ADDONS.md (API 2.4).
 CODES = ("applied", "malformed", "kind-not-allowed", "not-paired", "bad-signature", "implausible-time", "too-old",
          "kind-switched-off", "no-such-ticket", "question-not-found", "already-handled", "superseded",
-         "already-approved", "answered-locally", "changed-since", "wrong-status", "wrong-round", "refused")
+         "already-approved", "answered-locally", "changed-since", "wrong-status", "wrong-round",
+         "refused-retry", "refused-final")
 _DEC_ID = re.compile(r"dec_[0-9a-f]{32}")
 _LABEL_SAFE = re.compile(r"[^A-Za-z0-9 ._-]")
 _EVENT_KIND = {"answer": "question.answered", "approve": "gate.approved",
@@ -177,7 +178,7 @@ def _apply_request(ws, decision, phone) -> RemoteResult:
     try:
         t = Ops(ws, actor).new(title, ask=body)
     except OrchError as e:
-        return _pending(e.message, "refused")
+        return _pending(e.message, "refused-retry")
     from orch.actor import process_evidence
     from orch.core import ledger as signed_ledger
     try:  # signed like every other phone decision: which decision, which phone
@@ -285,12 +286,13 @@ def _apply(ws, decision, kind, target, tid, phone) -> RemoteResult:
     except (ValidationError, TransitionError) as e:
         if kind == "answer" and _answered(ws, tid, intent.qid):
             return done(RemoteResult("answered-locally", "answered on the desktop", tid, code="answered-locally"))
-        return done(RemoteResult("stale", e.message, tid, code="refused"))
+        return done(RemoteResult("stale", e.message, tid, code="refused-final"))
     except OrchError as e:
-        return _pending(e.message, "refused", tid)
+        return _pending(e.message, "refused-retry", tid)
     written = [e for e in read_events(ws, tid, after=last) if e.via == actor.via]
     seq = next((e.seq for e in written if e.kind == _EVENT_KIND[kind]), None)
-    return _record(ws, did, tid, key, kind, phone, RemoteResult("applied", f"applied from {label}", tid, seq, "applied"),
+    applied = RemoteResult("applied", f"applied from {label}", tid, seq, "applied")
+    return _record(ws, did, tid, key, kind, phone, applied,
                    event_seqs=[e.seq for e in written], shown=shown)
 
 
@@ -304,12 +306,14 @@ def _apply_together(ws, did, tid, key, phone, target, ticket_events, shown) -> R
     try:
         Ops(ws, actor).approve_together(tid, requirements_hash=target["hash"], plan_hash=target["plan_hash"])
     except (ValidationError, TransitionError) as e:
-        return _record(ws, did, tid, key, "approve", phone, RemoteResult("stale", e.message, tid, code="refused"), shown=shown)
+        refused = RemoteResult("stale", e.message, tid, code="refused-final")
+        return _record(ws, did, tid, key, "approve", phone, refused, shown=shown)
     except OrchError as e:
-        return _pending(e.message, "refused", tid)
+        return _pending(e.message, "refused-retry", tid)
     written = [e for e in read_events(ws, tid, after=last) if e.via == actor.via]
     seq = next((e.seq for e in written if e.kind == "gate.approved"), None)
-    return _record(ws, did, tid, key, "approve", phone, RemoteResult("applied", f"applied from {label}", tid, seq, "applied"),
+    applied = RemoteResult("applied", f"applied from {label}", tid, seq, "applied")
+    return _record(ws, did, tid, key, "approve", phone, applied,
                    event_seqs=[e.seq for e in written], shown=shown)
 
 

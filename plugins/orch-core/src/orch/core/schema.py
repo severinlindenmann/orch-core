@@ -13,11 +13,12 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.5.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.6.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
 # 1.5: `artifact_items`: what the ticket links (orch.core.artifacts.doc_items), names, labels and kinds only
+# 1.6: `signed`: per approved gate and for a done verdict, whether this machine's signed ledger backs it, and who
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
 _SOURCE = Path(__file__).resolve().parents[3] / "docs" / TASKS_SCHEMA_FILE  # plugin root: source checkout
@@ -70,7 +71,7 @@ def ticket_schema() -> dict:
         "title": "orch ticket",
         "type": "object",
         "required": ["schema_version", *_META_KEYS, "gates", "questions", "sections", "tasks", "needs", "claim", "artifacts",
-                     "move"],
+                     "move", "signed"],
         "properties": {
             "schema_version": {"type": "string", "pattern": r"^1\.\d+\.\d+$"},
             "id": _S, "title": _S, "status": {"enum": list(STATUSES)}, "type": {"enum": list(TYPES)},
@@ -115,6 +116,12 @@ def ticket_schema() -> dict:
             # (null for an epic). Null while no verdict is due.
             "verdict": {"type": ["object", "null"], "required": ["hash", "round"],
                         "properties": {"hash": _HASH, "round": {"type": ["integer", "null"], "minimum": 0}}},
+            # 1.6: R26 on the wire: for an approved gate (requirements, plan) and for a done ticket (verdict), whether
+            # the signed ledger on this machine backs it (`signed`) and who (`by`: you, from your phone, by delegation,
+            # accepted, closed; null when not signed). A tampered, unknown or missing ledger entry is signed false.
+            # A gate that is not approved, and a ticket that is not done, have no key. No key material, ever.
+            "signed": {"type": "object", "properties": {k: {"type": "object", "required": ["signed", "by"],
+                       "properties": {"signed": {"type": "boolean"}, "by": _NS}} for k in ("requirements", "plan", "verdict")}},
         },
         "$defs": {"tasks_view": tasks_view},
     }
@@ -161,7 +168,22 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     doc["verdict"] = verdict_target(ws, ticket, entries=entries)
     from orch.dashboard.data.cards import move_summary, ticket_card
     doc["move"] = move_summary(ticket_card(ws, ticket, entries=entries))
+    doc["signed"] = _signed(ws, ticket)
     return doc
+
+
+def _signed(ws, ticket) -> dict:
+    """1.6 `signed`: the same checks as the dashboard's chips (story.gate_signers, story.done_signer); only a
+    verified human entry is `signed`, a delegation or anything the ledger does not back is not."""
+    from orch.core.events import read_events
+    from orch.dashboard.data import story
+    out = {}
+    for gate, who in story.gate_signers(ws, ticket).items():
+        out[gate] = {"signed": who in ("you", "from your phone"), "by": who}
+    who = story.done_signer(ws, ticket, read_events(ws, ticket.id))
+    if ticket.status == "done":
+        out["verdict"] = {"signed": who is not None, "by": who}
+    return out
 
 
 def verdict_target(ws, ticket, *, entries=None) -> dict | None:

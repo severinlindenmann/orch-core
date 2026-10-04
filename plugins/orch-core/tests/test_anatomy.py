@@ -69,7 +69,7 @@ def test_schema_lists_summary_and_drops_the_legacy_sections():
     from orch.core.schema import SCHEMA_VERSION, ticket_schema
     props = ticket_schema()["properties"]["sections"]["properties"]
     assert "Summary" in props and "Proposal" not in props and "Decisions" not in props
-    assert SCHEMA_VERSION == "1.5.0"  # E2: type epic and sprint; 1.3: the verdict hash; 1.4: together (F2); 1.5: artifact_items
+    assert SCHEMA_VERSION == "1.6.0"  # E2: type epic and sprint; 1.3: the verdict hash; 1.4: together (F2); 1.5: artifact_items
 
 
 # -- Ask from the tracker -------------------------------------------------------------------------------------------

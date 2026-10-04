@@ -148,3 +148,43 @@ def test_the_documented_verdict_hash_vector_matches():
     t.set_section("Verification", "- AC1: opened 3 files in Excel")
     assert verdict_hash([t], None) == want
     assert example_document()["verdict"] is None  # the example waits on a question: no verdict due
+
+
+# 1.6 `signed`: the ledger's verdict on each approved gate and on a done ticket, never key material
+def _signed(ws, tid):
+    from orch.core import store
+    return ticket_document(ws, store.load(ws, tid)[1])["signed"]
+
+
+def test_signed_gate_and_verdict_name_a_human(ws, hops, working, put):
+    assert _signed(ws, working) == {"requirements": {"signed": True, "by": "you"}}
+    tid = put("testing", sections={"Verification": "ok"})
+    hops.verdict(tid, "done")
+    assert _signed(ws, tid)["verdict"] == {"signed": True, "by": "accepted"}
+    _validate(ticket_document(ws, store.load(ws, tid)[1]))
+
+
+def test_unsigned_approval_and_done_are_not_signed(ws, put):
+    from orch.core.gates import gate_hash
+    tid = put("open", sections={"Requirements": "r", "Acceptance criteria": "- [ ] a"})
+    path, t = store.load(ws, tid)
+    t.meta["gates"]["requirements"] = {"approved": "2026-10-01T09:00Z", "via": "tty", "hash": gate_hash(t, "requirements")}
+    store.save(ws, t, path)
+    assert _signed(ws, tid) == {"requirements": {"signed": False, "by": None}}
+    assert _signed(ws, put("backlog")) == {}  # nothing approved, nothing to attest
+    done = put("done", gates={"verify": {"verdict": "done", "at": "2026-10-05T10:00Z", "via": "tty"}})
+    assert _signed(ws, done)["verdict"] == {"signed": False, "by": None}
+
+
+def test_tampered_ledger_entry_is_not_signed(ws, working):
+    from orch.core import ledger
+    p = ledger.ledger_path(ws)
+    p.write_text(p.read_text(encoding="utf-8").replace('"kind": "gate"', '"kind": "gatx"'), encoding="utf-8")
+    assert _signed(ws, working) == {"requirements": {"signed": False, "by": None}}
+    assert "mac" not in json.dumps(ticket_document(ws, store.load(ws, working)[1])["signed"])
+
+
+def test_missing_ledger_is_not_signed(ws, working):
+    from orch.core import ledger
+    ledger.ledger_path(ws).unlink()
+    assert _signed(ws, working) == {"requirements": {"signed": False, "by": None}}

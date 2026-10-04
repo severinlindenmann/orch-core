@@ -75,3 +75,11 @@ def test_a_block_with_a_broken_file_pin_is_refused(ws, aops, working, cli):
     before = _section(ws, working, "Context")
     code, _, err = cli("widget", "repin", working, "--block", "g")
     assert code != 0 and _section(ws, working, "Context") == before
+
+
+def test_the_stale_verdict_warning_does_not_depend_on_the_status(ws, aops, working, cli):
+    _template(ws)
+    aops.set_section(working, "Verification", _block(ws))
+    _drift(ws)
+    code, out, _ = cli("widget", "repin", working, "--all")
+    assert code == 0 and "this ticket's, or its epic's) must be given fresh" in out

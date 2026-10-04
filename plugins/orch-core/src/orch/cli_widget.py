@@ -251,7 +251,7 @@ def repin(ref: str,
     diff = "\n".join(f"--- #{p['index']} {p['section']}\n" + "\n".join(
         difflib.unified_diff(p["old"].splitlines(), p["new"].splitlines(), "before", "after", lineterm=""))
         for p in plan)
-    stale = ticket.status == "testing" and any(p["section"] in VERDICT_SECTIONS for p in plan)
+    stale = any(p["section"] in VERDICT_SECTIONS for p in plan)
     if plan and not dry_run:
         ops = cli._ops(ws)
         for section in dict.fromkeys(p["section"] for p in plan):
@@ -271,9 +271,8 @@ def repin(ref: str,
     lines += [f"skipped #{s['index']}: {s['reason']}" for s in skipped]
     lines.append(f"{ticket.id}: {len(rows)} block(s) " + ("would be re-pinned" if dry_run else "re-pinned"))
     if stale:
-        lines.append("Verification or Acceptance criteria changed: any verdict read before this is stale; the human "
-                     "must read the widget again and give a fresh one." if not dry_run else
-                     "A verdict hash is bound to this ticket: re-pinning would make it stale and need a fresh verdict.")
+        lines.append("A verdict that read this section (this ticket's, or its epic's) must be given fresh"
+                     + (": re-pinning would make it stale." if dry_run else ": it is stale now."))
     cli._out(out, json_out, "\n".join(lines))
 
 

@@ -169,7 +169,7 @@ block whose template is unknown or whose file pins are broken (missing or change
 lists it as skipped. It edits ticket text, so it is not a human-only verb, and it is not a decision.
 
 Re-pinning edits the section text, so where the section is Verification or Acceptance criteria and a verdict hash was
-already bound to the ticket (it is in testing), the old verdict is stale: `repin` says so, the human has to read the
+already bound to the ticket or to its epic (whose verdict binds every open child's criteria and Verification), the old verdict is stale: `repin` says so whatever the ticket's status, the human has to read the
 widget again and give a fresh verdict, and an agent cannot give or carry it over. The verdict hash already reads
 "drift" right after the upgrade, so an earlier verdict is refused even before any re-pin.
 

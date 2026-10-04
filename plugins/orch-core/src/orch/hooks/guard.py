@@ -141,11 +141,12 @@ def _state_dir() -> Path | None:
         return None
 
 
-def _expand(raw: str) -> str:
-    """`raw` with ~ and the variables a shell would fill in; the orch state variables default to the real folders (an
-    agent's shell has them even where the hook does not)."""
+def _expand(raw: str, extra: dict | None = None) -> str:
+    """`raw` with ~ and the variables a shell would fill in: the hook's environment, the orch state variable (defaulting
+    to the real folder: an agent's shell has it even where the hook does not), and `extra` (assignments made in the
+    command itself, PWD and OLDPWD as the simulated `cd` chain has them)."""
     from orch.core.ledger import base_dir
-    env = {**os.environ, "ORCH_STATE_DIR": os.environ.get("ORCH_STATE_DIR") or str(base_dir())}
+    env = {**os.environ, "ORCH_STATE_DIR": os.environ.get("ORCH_STATE_DIR") or str(base_dir()), **(extra or {})}
     return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: env.get(m.group(1) or m.group(2), m.group(0)),
                   os.path.expanduser(raw))
 
@@ -202,12 +203,12 @@ def _link_into(full: str, base: Path, bud: _Budget) -> bool:
     return False
 
 
-def _resolved(cur: str, raw: str, bud: _Budget) -> list[Path]:
+def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> list[Path]:
     """Where `raw` (a path as written, quotes removed) points from `cur`: every glob match, else the literal path. One
     realpath each, compared as it comes. Raises _Bound past the limits."""
     import glob
     from itertools import islice
-    text = _expand(raw.strip("'\""))
+    text = _expand(raw.strip("'\""), extra)
     if len(text) > 4096 or text.count("/") > MAX_PARTS:
         raise _Bound("long")
     full = text if os.path.isabs(text) else os.path.join(cur, text)
@@ -226,60 +227,97 @@ def _resolved(cur: str, raw: str, bud: _Budget) -> list[Path]:
     return out
 
 
+_ASSIGN = re.compile(r"(?<![\w-])([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|[^\s;&|<>()]*)")
+_UNSURE_TARGET = re.compile(r"[$`]|\bCDPATH\b")
+
+
+def _prep(cmd: str) -> str:
+    """The command as the rules read it: line continuations joined, every kind of line break a newline, backslashes
+    taken out (so an escaped quote or an escaped space does not hide a path)."""
+    cmd = re.sub(r"\\\r?\n", "", cmd)
+    cmd = re.sub(r"[\r\x0b\x0c\u2028\u2029\x85]", "\n", cmd)
+    return cmd.replace("\\", "")
+
+
 def _touches_state_dir(ws, cmd: str, cwd) -> bool:
-    """The working directory, a `cd` chain, or a listing resolves into the config dir (or recursively over it), in any
-    command segment. Raises _Bound when a limit is hit."""
+    """The working directory, a `cd` chain (also inside `bash -c` and `eval` strings: the text is scanned whole, quotes
+    and all), or a listing resolves into the config dir (or recursively over it), in any command segment. Raises
+    _Bound when a limit is hit, so that the caller denies."""
     base = _state_dir()
     if base is None:
         return False
+    if len(cmd) > MAX_CMD:
+        raise _Bound("length")  # whatever it holds: nothing too long to check is let through
     bud = _Budget()
     cur = str(cwd) if cwd else os.getcwd()
-    try:
-        if _within(_real(cur), base) or _link_into(cur, base, bud):
+    for start in {cur, os.getcwd()}:  # the hook's cwd and this process's own
+        try:
+            if _within(_real(start), base) or _link_into(start, base, bud):
+                return True
+        except (OSError, RuntimeError, ValueError):
             return True
-    except (OSError, RuntimeError, ValueError):
-        return True
-    relevant = bool(_RELEVANT.search(cmd))
-    if len(cmd) > MAX_CMD:
-        if relevant:
-            raise _Bound("length")
-        return False
+    flat = _prep(cmd)
+    relevant = bool(_RELEVANT.search(flat))
+    if relevant and re.search(r"\$['\"]", flat):
+        raise _Bound("ansi-c")  # a string the rules cannot expand, next to a cd, a lister or tmux
+    extra: dict = {}
+    for m in _ASSIGN.finditer(flat):
+        extra[m.group(1)] = _expand(m.group(2).strip("'\""), extra)
+    old = os.environ.get("OLDPWD", "")
+    extra.setdefault("PWD", cur)
+    if re.search(r"(?<![\w-])CDPATH\b", flat) and _CD_TARGET.search(flat):
+        raise _Bound("CDPATH")  # a search path for cd set in the command itself: not something to guess at
     # every path-like word of every segment: through a link into the config dir, or resolving into it
     seen = 0
-    for w in _path_words(cmd):
-        if "/" not in w and not w.startswith(("~", ".")):
+    for w in _path_words(flat):
+        if "/" not in w and not w.startswith(("~", ".", "$")):
             continue
         seen += 1
         if seen > MAX_WORDS:
             raise _Bound("words")
-        full = _expand(w)
+        full = _expand(w, extra)
         if len(full) > 4096 or full.count("/") > MAX_PARTS:
             raise _Bound("long")
-        if re.search(r"[*?\[]", full):
-            continue  # globs are expanded below, for the commands that take them
         full = full if os.path.isabs(full) else os.path.join(cur, full)
+        glob_at = re.search(r"[*?\[]", full)
+        if glob_at:
+            near = _real(os.path.dirname(full[:glob_at.start()]) or "/")
+            if _within(near, base) or near in base.parents:  # a glob that can reach the config dir: expand it, bounded
+                if any(_within(h, base) for h in _resolved(cur, w, bud, extra)):
+                    return True
+            continue
         if _link_into(full, base, bud) or _within(_real(full), base):
             return True
     if not relevant:
         return False
     where = [cur]
-    for i, m in enumerate(_CD_TARGET.finditer(cmd)):
+    cdpath = [d for d in os.environ.get("CDPATH", "").split(os.pathsep) if d]
+    for i, m in enumerate(_CD_TARGET.finditer(flat)):
         if i >= MAX_CDS:
             raise _Bound("cds")
-        raw = m.group(1)
-        if _link_into(_expand(raw.strip("'\"")) if os.path.isabs(_expand(raw.strip("'\""))) else
-                      os.path.join(cur, _expand(raw.strip("'\""))), base, bud):
-            return True
-        hits = _resolved(cur, raw, bud)
+        raw = m.group(1).strip("'\"")
+        extra["PWD"], extra["OLDPWD"] = cur, old
+        target = _expand(raw, extra)
+        if _UNSURE_TARGET.search(target):
+            raise _Bound("unresolved cd target")  # an expansion, a substitution or CDPATH: not something to guess at
+        if target == "-":
+            target = old or cur
+        for c in [cur, *cdpath] if not os.path.isabs(target) else [cur]:
+            if _link_into(target if os.path.isabs(target) else os.path.join(c, target), base, bud):
+                return True
+        hits = _resolved(cur, target, bud, extra)
         if any(_within(h, base) for h in hits):
             return True
-        cur = str(hits[0])
+        for d in cdpath if not os.path.isabs(target) else []:
+            if any(_within(h, base) for h in _resolved(d, target, bud, extra)):
+                return True
+        old, cur = cur, str(hits[0])
         where.append(cur)
     try:
         root = Path(ws.root).resolve()
     except (OSError, RuntimeError):
         root = None
-    text = cmd.replace("'", " ").replace('"', " ")
+    text = flat.replace("'", " ").replace('"', " ")
     words_seen = 0
     for seg in re.split(r"[;&|\n]", text):
         words = seg.split()
@@ -294,10 +332,10 @@ def _touches_state_dir(ws, cmd: str, cwd) -> bool:
                                                   for x in words[i + 1:] if prog == "ls") or "--recursive" in words
             for arg in (x for x in words[i + 1:] if not x.startswith("-")):
                 for c in where:
-                    full = _expand(arg)
+                    full = _expand(arg, extra)
                     if _link_into(full if os.path.isabs(full) else os.path.join(c, full), base, bud):
                         return True
-                    for h in _resolved(c, arg, bud):
+                    for h in _resolved(c, arg, bud, extra):
                         if _within(h, base):
                             return True
                         if recursive and h in base.parents and not (root is not None and (h == root or h in root.parents)):
@@ -1149,17 +1187,29 @@ def _ledger_path(raw: str, cwd=None) -> bool:
         if len(raw) > 4096 or raw.count("/") > MAX_PARTS:
             return True
         text = os.path.expanduser(raw)
-        full = text if os.path.isabs(text) else os.path.join(str(cwd) if cwd else os.getcwd(), text)
-        p = _real(full)
         try:
             base = ledger.base_dir().resolve()
         except (OSError, RuntimeError):
             base = ledger.base_dir()
-        if _link_into(full, base, _Budget()):
-            return True
+        for start in {str(cwd) if cwd else os.getcwd(), os.getcwd()}:  # the hook's cwd and this process's own
+            full = text if os.path.isabs(text) else os.path.join(start, text)
+            p = _real(full)
+            if _link_into(full, base, _Budget()) or p in (
+                    base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE
+            ) or p == base / "permits" or (base / "permits") in p.parents:
+                return True
     except (OSError, RuntimeError, ValueError, _Bound):
         return True
     return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
+
+
+def _ledger_path_closed(raw: str, cwd=None) -> bool:
+    """_ledger_path, where an error in its resolution rules (symlinks, bounds) is a deny. Only this new part fails
+    closed; an unrelated error elsewhere in the guard still fails open as it always did."""
+    try:
+        return _ledger_path(raw, cwd)
+    except Exception:
+        return True
 
 
 def _filter_could_reach_ledger(pattern: str) -> bool:
@@ -1182,21 +1232,13 @@ def _bash_reaches_ledger(cmd: str) -> bool:
 
 
 def evaluate(ws, payload: dict) -> Decision:
-    """The guard's answer. An exception anywhere in the rules is a deny, never an allow."""
-    try:
-        return _evaluate(ws, payload)
-    except Exception:
-        return Decision(False, "the guard failed internally while checking this action; nothing was allowed")
-
-
-def _evaluate(ws, payload: dict) -> Decision:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
     cwd = payload.get("cwd")
     if not isinstance(tool_input, dict):
         return ALLOW
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob") and any(
-            _ledger_path(str(tool_input.get(k) or ""), cwd) for k in ("file_path", "notebook_path", "path", "pattern",
+            _ledger_path_closed(str(tool_input.get(k) or ""), cwd) for k in ("file_path", "notebook_path", "path", "pattern",
                                                                     "glob")):
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):

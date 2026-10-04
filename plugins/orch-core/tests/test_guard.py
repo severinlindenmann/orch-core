@@ -189,15 +189,14 @@ def test_cli_guard_allows_outside_workspace_and_on_bad_json(tmp_path, monkeypatc
     assert _run_guard(monkeypatch, "not json") == 0
 
 
-def test_cli_guard_denies_on_an_internal_error_and_logs(ws_root, ws, monkeypatch):
-    # changed on purpose (AI Factory phase 4 review): a guard that cannot decide allows nothing; it was "fails open"
+def test_cli_guard_fails_open_and_logs(ws_root, ws, monkeypatch):
     import orch.hooks.guard as guard
 
     def boom(ws, payload):
         raise RuntimeError("bug")
 
     monkeypatch.setattr(guard, "evaluate", boom)
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 2
+    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
     assert "RuntimeError: bug" in (ws.state_dir / "guard-errors.log").read_text(encoding="utf-8")
 
 

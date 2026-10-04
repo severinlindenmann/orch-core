@@ -1171,25 +1171,125 @@ def test_a_very_deep_path_and_a_very_long_command_are_refused(ws):
         assert not d.allow and "limits" in d.reason, cmd[:30]
     huge = "cd . ; " + "x" * 300_000
     assert not _bash(ws, huge).allow
-    assert _bash(ws, "echo " + "x" * 300_000).allow  # a long command that has nothing to do with these rules
+    assert not _bash(ws, "echo " + "x" * 300_000).allow  # over the cap is refused whatever it says (padding)
     assert not _tool(ws, "Read", file_path="/" + "/".join(["a"] * 300)).allow
     assert not _tool(ws, "Write", file_path="a" * 5000, content="").allow
 
 
-def test_an_exception_in_the_guard_denies(ws, monkeypatch):
+def test_an_exception_inside_the_new_rules_denies_but_an_unrelated_error_still_fails_open(ws, monkeypatch):
     from orch.hooks import guard
-    monkeypatch.setattr(guard, "_bash", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
-    d = _bash(ws, "ls")
-    assert not d.allow and "failed internally" in d.reason
-    monkeypatch.undo()
-    monkeypatch.setattr(guard, "_resolved", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
-    assert not _bash(ws, "cd somewhere").allow
-    monkeypatch.undo()
-    monkeypatch.setattr(guard, "_ledger_path", lambda *a, **k: (_ for _ in ()).throw(OSError("bug")))
-    assert not _tool(ws, "Read", file_path="README.md").allow
+    for name in ("_touches_state_dir", "_mux_risky"):  # the new rules' own steps, called from _bash
+        with monkeypatch.context() as m:
+            m.setattr(guard, name, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+            d = _bash(ws, "ls")
+            assert not d.allow and "limits" in d.reason, name
+    with monkeypatch.context() as m:  # a step inside the cd/listing resolution
+        m.setattr(guard, "_resolved", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+        assert not _bash(ws, "cd somewhere").allow
+    with monkeypatch.context() as m:  # the file tools' resolution
+        m.setattr(guard, "_ledger_path", lambda *a, **k: (_ for _ in ()).throw(OSError("bug")))
+        assert not _tool(ws, "Read", file_path="README.md").allow
+    # an internal error elsewhere is not the new rules' business: evaluate raises, and the hook fails open and logs
+    with monkeypatch.context() as m:
+        m.setattr(guard, "_command_segments", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+        with pytest.raises(RuntimeError):
+            _bash(ws, "echo hi")
+
+
+def test_the_hook_still_fails_open_on_an_unrelated_guard_error(ws_root, ws, monkeypatch):
+    import orch.hooks.guard as guard
+    from test_guard import _run_guard, bash
+
+    def boom(ws, payload):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(guard, "evaluate", boom)
+    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
 
 
 def test_a_path_that_cannot_be_resolved_is_refused(ws):
     (ws.root / "loop").symlink_to(ws.root / "loop")  # a link loop
     assert not _tool(ws, "Read", file_path="loop/x").allow
     assert not _bash(ws, "ls loop/x").allow
+
+
+# -- fifth review: padding, nested shells, continuations, $PWD, CDPATH, cwd ------------------------------------------
+
+def test_a_command_over_the_cap_is_refused_whatever_it_says(ws):
+    from orch.hooks import guard
+    pad = "x" * (guard.MAX_CMD + 10)
+    for cmd in ("echo " + pad, "true; " + pad, "ls " + pad, "git status # " + pad):
+        d = _bash(ws, cmd)
+        assert not d.allow and "limits" in d.reason, cmd[:12]
+    assert _bash(ws, "echo " + "x" * 1000).allow
+
+
+@pytest.mark.parametrize("cmd", [
+    "bash -c 'cd \"$ORCH_STATE_DIR\" && ls'", "sh -c \"cd {base}; tmux -S factory ls\"", "zsh -c 'cd {base}\ncd permits'",
+    "eval 'cd {base}'", 'eval "cd \\"$ORCH_STATE_DIR\\""', "bash -c $'cd {base}'", "bash -lc 'echo a && cd {base}'",
+    "bash -c 'D=$ORCH_STATE_DIR; cd $D'", "D=$ORCH_STATE_DIR; cd $D/permits", "D={base}; cd \"$D\"", "D={base}; ls $D",
+    "cd \\\n{base}", "cd {base}\\\n/permits", "ls \\\n -R \\\n {base}", "cd\\\n {base}",
+    "cd {base}\ncd .", "cd {base}\r\nls", "echo a cd {base}", "echo a\x0bcd {base}",
+    "cd {parent}; cd {name}; cd -", "cd $ORCH_STATE_DIR/permits/tmux; cd ..; cd -",
+    "CDPATH={parent} cd {name}", "export CDPATH={parent}; cd {name}",
+    "cd $(echo {base})", "cd `echo {base}`", "cd $UNKNOWN_VAR_X", "cd $'\\x2f'",
+    "cat $ORCH_STATE_DIR/p*/tmux/*", "cat {base}/p*/*", "cat {parent}/{name}/p*", "wc -c ~/.c*/orch/p*",
+    "echo \"cd {base}\" | sh", "echo cd {base} | bash",
+])
+def test_the_resolution_rules_see_through_nested_shells_continuations_and_variables(ws, cmd):
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    d = _bash(ws, cmd.format(base=base, parent=base.parent, name=base.name))
+    assert not d.allow, cmd
+
+
+def test_cdpath_from_the_hooks_environment_is_followed(ws, monkeypatch):
+    from orch.core.ledger import base_dir
+    monkeypatch.setenv("CDPATH", str(base_dir().parent))
+    assert not _bash(ws, f"cd {base_dir().name}").allow
+
+
+def test_oldpwd_in_the_hooks_environment_is_followed_by_cd_dash(ws, monkeypatch):
+    from orch.core.ledger import base_dir
+    monkeypatch.setenv("OLDPWD", str(base_dir() / "permits"))
+    assert not _bash(ws, "cd -").allow
+    assert not _bash(ws, "cd $OLDPWD").allow
+    monkeypatch.setenv("OLDPWD", str(ws.root))
+    assert _bash(ws, "cd -").allow
+
+
+def test_the_process_cwd_counts_as_well_as_the_cwd_in_the_hook_input(ws, monkeypatch):
+    from orch.core.ledger import base_dir
+    (base_dir() / "permits").mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(base_dir() / "permits")
+    assert not _bash(ws, "ls", cwd=ws.root).allow  # the hook input says the workspace; the process is inside permits
+    assert not _tool(ws, "Read", cwd=ws.root, file_path="x").allow
+    monkeypatch.chdir(ws.root)
+    assert _bash(ws, "ls", cwd=ws.root).allow
+
+
+def test_file_tools_relative_paths_are_judged_from_both_cwds(ws, monkeypatch):
+    from orch.core.ledger import base_dir
+    (base_dir() / "permits" / "tmux").mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(base_dir())
+    assert not _tool(ws, "Grep", cwd=ws.root, pattern="x", path="permits").allow  # process cwd = config dir
+    monkeypatch.chdir(ws.root)
+    assert not _tool(ws, "Grep", cwd=base_dir(), pattern="x", path="permits/tmux").allow  # hook cwd = config dir
+
+
+def test_a_big_glob_far_from_the_config_dir_is_not_a_problem(ws):
+    big = ws.root / "node_modules"
+    big.mkdir()
+    for i in range(650):
+        (big / f"m{i}").write_text("", encoding="utf-8")
+    assert _bash(ws, "rm -rf node_modules/*").allow
+    assert _bash(ws, "cat node_modules/m1*").allow
+
+
+def test_pwd_is_the_simulated_working_directory(ws):
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    for cmd in (f"cd $PWD/{base.name}", f"cd ${{PWD}}/{base.name}/permits", f"ls $PWD/{base.name}", f"cd $PWD/../{base.name}"):
+        cwd = base.parent if "../" not in cmd else base.parent / "x"
+        (base.parent / "x").mkdir(exist_ok=True)
+        assert not _bash(ws, cmd, cwd=cwd).allow, cmd

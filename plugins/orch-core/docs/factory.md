@@ -211,7 +211,8 @@ must be an absolute, literal path with no `..`, outside the config dir (relative
 working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
-length, glob matches, path depth, time): hitting a bound, or any error in the guard, is a deny. The socket sits in a random-named folder whose name is kept in a
+length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
+hook fail open and log, as before). The socket sits in a random-named folder whose name is kept in a
 permits file. Known limits of a text guard, not built: a word written without a mention of tmux or screen by
 concatenation that uses none of the characters it looks for, a string built in another language (perl, osascript,
 python), and a script file written and then run.

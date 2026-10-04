@@ -81,7 +81,13 @@ def test_ordinary_commands_stay_grantable(pushy, cmd):
     ("uv run orch --json dark profile add --exact 'make x'", False), ("orch dark profile --json add --exact x", False),
     ("echo R-1 | xargs orch dark profile remove", False), ("o''rch dark profile add --exact x", False),
     ("sh -c 'orch dark profile add --exact x'", False),
+    ("orch factory dark on", False), ("uv run orch --json factory dark on", False),
+    ("echo y | xargs orch factory dark on", False), ("o''rch factory dark on", False),
+    ("python -c 'from orch.core import dark_profile; dark_profile.add(1, 2, 3, 4)'", False),
+    ("python3 -c 'import orch.core.dark_profile as d'", False),
     ("orch dark profile list", True), ("orch dark profile list --json", True),
+    ("orch factory dark off", True), ("orch factory dark status --json", True),
+    ("uv run pytest tests/test_dark_profile.py -q", True),
 ])
 def test_guard_keeps_the_dark_profile_with_the_human(ws, cmd, allowed):
     assert _bash(ws, cmd).allow is allowed, cmd

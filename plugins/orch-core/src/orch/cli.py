@@ -29,7 +29,7 @@ app.add_typer(widget_app, name="widget")
 from orch.cli_epic import epic_app, sprint_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
-from orch.cli_permit import dark_app, permit_app  # noqa: E402  (light: commands import their own modules)
+from orch.cli_permit import dark_app, factory_app, permit_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(permit_app, name="permit")
 from orch.cli_quick import quick_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(quick_app, name="quick")
@@ -38,6 +38,7 @@ app.add_typer(worktree_app, name="worktree")
 from orch.cli_schedule import schedule_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(schedule_app, name="schedule")
 app.add_typer(dark_app, name="dark")
+app.add_typer(factory_app, name="factory")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")
@@ -775,7 +776,7 @@ def approve(ref: str, gate: Annotated[Optional[str], typer.Argument(
                                   "by default, children up to size m). Needs factory.enabled.")] = False,
             dark: Annotated[bool, typer.Option(
                 "--dark", help="Epics: start it as a Dark AI Factory (implies --factory): its shell commands run "
-                               "from the Dark profile without asking you. Needs factory.dark.")] = False,
+                               "from the Dark profile without asking you. Needs `orch factory dark on`.")] = False,
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
@@ -792,9 +793,9 @@ def approve(ref: str, gate: Annotated[Optional[str], typer.Argument(
     if dark:
         from orch.core.permits import dark_on
         if not dark_on(ws):
-            raise UsageError("Dark AI Factory is switched off in this workspace",
-                             hint="set factory.enabled and factory.dark to true in orchestrator/config.json "
-                                  "(docs/factory.md)")
+            raise UsageError("Dark AI Factory is switched off in this checkout",
+                             hint="set factory.enabled to true in orchestrator/config.json and run `orch factory dark "
+                                  "on` in your own terminal (docs/factory.md)")
     factory = factory or dark
     delegate = delegate or factory
     if (max_children is not None or max_size is not None) and not delegate:

@@ -109,7 +109,34 @@ def revoke(grant_id: str, json_out: JsonOpt = False) -> None:
     cli._out(entry, json_out, f"grant {grant_id}: revoked")
 
 
-dark_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory: the workspace's Dark profile.")
+factory_app = typer.Typer(no_args_is_help=True, help="AI Factory switches that are signed, not config values.")
+
+
+@factory_app.command("dark")
+def factory_dark(state: Annotated[str, typer.Argument(help="on | off | status")] = "status",
+                 json_out: JsonOpt = False) -> None:
+    """Dark AI Factory in this checkout. `on` is the human's decision, signed into the approval ledger (run it in
+    your own terminal); `off` anyone may run. It counts only while factory.enabled is on."""
+    from orch.core import permits
+    from orch.errors import UsageError
+    cli, ws = _ctx()
+    if state not in ("on", "off", "status"):
+        raise UsageError("expected on, off or status")
+    if state == "on":
+        from orch.actor import confirm_typed, require_human_terminal
+        require_human_terminal("turning on Dark AI Factory")
+        typer.echo("Dark AI Factory: epics you start with --dark run without asking you, from this checkout's Dark "
+                   "profile.", err=json_out)
+        cli._ops(ws, confirm_typed("DARK")).set_factory_dark(True)
+    elif state == "off":
+        cli._ops(ws).set_factory_dark(False)
+    on = permits.dark_on(ws)
+    cli._out({"dark": on, "factory": permits.enabled(ws)}, json_out,
+             "Dark AI Factory is on (signed)" if on else "Dark AI Factory is off"
+             + ("" if permits.enabled(ws) else " (factory.enabled is off)"))
+
+
+dark_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory: this checkout's Dark profile.")
 profile_app = typer.Typer(no_args_is_help=True, help="The shell commands a Dark factory epic runs without asking you.")
 dark_app.add_typer(profile_app, name="profile")
 
@@ -125,7 +152,8 @@ def profile_list(json_out: JsonOpt = False) -> None:
     from orch.core import dark_profile, permits
     cli, ws = _ctx()
     rules = dark_profile.rules(ws)
-    lines = [] if permits.dark_on(ws) else ["Dark AI Factory is switched off (factory.dark): the profile answers nothing"]
+    lines = [] if permits.dark_on(ws) else ["Dark AI Factory is switched off in this checkout: the profile answers "
+                                            "nothing (`orch factory dark status`)"]
     lines += [_rule_line(r) for r in rules] or ["the Dark profile is empty"]
     cli._out({"rules": rules, "dark": permits.dark_on(ws)}, json_out, "\n".join(lines))
 

@@ -223,18 +223,20 @@ def concurrency(ws) -> int:
     return min(DEFAULT_CONCURRENCY, v) if ok else DEFAULT_CONCURRENCY
 
 
-def wake_token(epic, child, signed) -> str:
+def wake_token(epic, child, signed, dark_marks: list | None = None) -> str:
     """What a parked child waits for: the human's answers in this epic (grants, denials, revocations) and what its
-    approvals bind (its text and gates), and in a Dark epic every change to the workspace's Dark profile. Not its
-    status: the agent moves that itself."""
+    approvals bind (its text and gates), and in a Dark epic every change to this checkout's Dark profile (`dark_marks`:
+    the MACs of its signed entries, given only while Dark is switched on; a history, so removing a rule wakes too).
+    Not its status: the agent moves that itself."""
     mine = [e for e in signed if e.get("ticket") == epic.id]
     gates = {k: bool((v or {}).get("approved")) for k, v in sorted((child.meta.get("gates") or {}).items())}
     body = [epics.child_hashes(child), gates, sorted(str(e.get("grant")) for e in mine if e.get("kind") == "grant"),
             sum(1 for e in mine if e.get("kind") == "permit_deny"),
             sum(1 for e in mine if e.get("kind") == "permit_revoke")]
     charter = next((e for e in reversed(mine) if e.get("kind") == "charter"), None)
-    if charter and isinstance(charter.get("delegate"), dict) and charter["delegate"].get("dark"):  # only Dark epics: other tokens stay as they were
-        body.append([e.get("mac") for e in signed if e.get("kind") == "dark_profile"])
+    if (dark_marks is not None and charter and isinstance(charter.get("delegate"), dict)
+            and charter["delegate"].get("dark")):  # only Dark epics with Dark on: other tokens stay as they were
+        body.append(list(dark_marks))
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
@@ -383,6 +385,9 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
         return lines
     cap = concurrency(ws)
     gone = fs.ended(ws)
+    cid = ledger.checkout_id(ws)
+    dark_marks = ([e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+                  if permits.dark_on(ws) else None)
     for entry in store.scan(ws):
         if entry.meta is None or not epics.is_epic(entry.meta) or entry.status == "done":
             continue
@@ -398,7 +403,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 continue
             if any(b["child"] == t.id for b in keep):
                 continue
-            token = wake_token(epic, t, signed)
+            token = wake_token(epic, t, signed, dark_marks)
             if any(g["child"] == t.id and g["delegation"] == d["id"] and g["wake"] == token for g in gone):
                 continue  # parked: nothing it waits for changed since it last started
             with epics.delegation_lock(d["id"]):

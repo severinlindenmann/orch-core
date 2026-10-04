@@ -434,11 +434,18 @@ def test_a_parked_child_wakes_after_a_grant_and_only_then(fws, fa, fh, human, fa
     assert permits.hook_decision(fws, _payload(b1["session"])) is None  # the old session's id is not trusted again
 
 
+def _dark_ws(configure, human):
+    from orch.core.ops import Ops
+    dws = configure(factory={"enabled": True})
+    Ops(dws, human).set_factory_dark(True)
+    return dws
+
+
 def test_a_parked_dark_child_wakes_when_the_dark_profile_changes(configure, agent, human, fake):
     from conftest import human_ops
     from orch.core import dark_profile
     from orch.core.ops import Ops
-    dws = configure(factory={"enabled": True, "dark": True})
+    dws = _dark_ws(configure, human)
     eid, (cid,), d = _started(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
     assert d["dark"] is True
     _tick(dws, human, fake)
@@ -466,9 +473,51 @@ def test_the_dark_profile_does_not_wake_an_ordinary_factory_child(fws, fa, fh, h
     permits.hook_decision(fws, _payload(b1["session"]))
     fake.names.clear()
     _tick(fws, human, fake)
-    dws = configure(factory={"enabled": True, "dark": True})
+    dws = _dark_ws(configure, human)
     dark_profile.add(dws, human, "prefix", "make e2e")
     assert _tick(dws, human, fake) == []
+
+
+def test_the_dark_profile_wakes_nothing_while_dark_is_off(configure, agent, human, fake):
+    from conftest import human_ops
+    from orch.core import dark_profile
+    from orch.core.ops import Ops
+    dws = _dark_ws(configure, human)
+    _started(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
+
+    def park():
+        (b,) = fs.bindings(dws)
+        permits.hook_decision(dws, _payload(b["session"]))
+        fake.names.clear()
+        _tick(dws, human, fake)
+        assert _tick(dws, human, fake) == []
+
+    _tick(dws, human, fake)
+    park()
+    Ops(dws, agent).set_factory_dark(False)  # off: the epic is an ordinary factory epic again (that wakes it once)
+    _tick(dws, human, fake)
+    park()
+    rule = dark_profile.add(dws, human, "prefix", "make e2e")
+    assert _tick(dws, human, fake) == []  # a profile change while Dark is off wakes nothing
+    dark_profile.remove(dws, human, rule["rule_id"])
+    assert _tick(dws, human, fake) == []
+    Ops(dws, human).set_factory_dark(True)  # on again, and the profile changed while it was off: it wakes once
+    assert _tick(dws, human, fake)[0].startswith("started")
+    park()
+    dark_profile.add(dws, human, "prefix", "make e2e")  # with Dark on, a profile change wakes it
+    assert _tick(dws, human, fake)[0].startswith("started")
+
+
+def test_wake_token_takes_the_profile_only_for_a_dark_charter_with_dark_on():
+    from types import SimpleNamespace
+    epic = SimpleNamespace(id="L-0001")
+    child = SimpleNamespace(id="L-0002", meta={}, title="c", section=lambda name: "")
+    dark = [{"ticket": "L-0001", "kind": "charter", "delegate": {"factory": True, "dark": True}}]
+    plain = [{"ticket": "L-0001", "kind": "charter", "delegate": {"factory": True}}]
+    marks = ["mac-1"]
+    t = factory_runner.wake_token
+    assert t(epic, child, dark, None) == t(epic, child, plain, marks) == t(epic, child, plain, None)
+    assert t(epic, child, dark, []) != t(epic, child, dark, marks) != t(epic, child, dark, marks + ["mac-2"])
 
 
 def test_a_child_is_started_at_most_a_few_times(fws, fa, fh, human, fake):

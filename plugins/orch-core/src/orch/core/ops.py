@@ -1290,8 +1290,8 @@ class Ops(TaskOpsMixin):
         if isinstance(delegate, dict) and delegate.get("dark"):
             from orch.core.permits import dark_on
             if delegate.get("factory") and not dark_on(self.ws):
-                raise UsageError("Dark AI Factory is switched off in this workspace",
-                                 hint="set factory.dark to true in orchestrator/config.json (docs/factory.md)")
+                raise UsageError("Dark AI Factory is switched off in this checkout",
+                                 hint="the human runs `orch factory dark on` in their own terminal (docs/factory.md)")
         delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`
         covered: dict = {}
 
@@ -1567,6 +1567,20 @@ class Ops(TaskOpsMixin):
             ledger.record_setting(self.ws, ledger.CHECKS, digests, self.actor, process_evidence())
         self._emit(None, "setting.changed", {"setting": ledger.CHECKS, "value": sorted(digests)})
         return digests
+
+    def set_factory_dark(self, on: bool) -> None:
+        """Dark AI Factory's switch for this checkout, a signed setting (orch.core.permits.dark_on), never a config
+        value. On is the human's decision; off takes power away, so anyone may sign it, and the newest entry decides."""
+        from orch.actor import process_evidence
+        from orch.core import ledger
+        from orch.core.permits import DARK_SETTING
+        if on:
+            require_human(self.actor, "turning on Dark AI Factory")
+        if self.dry_run:
+            return
+        with lock(self.ws, "config"):
+            ledger.record_setting(self.ws, DARK_SETTING, on, self.actor, process_evidence())
+        self._emit(None, "setting.changed", {"setting": DARK_SETTING, "value": on})
 
     def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None) -> Ticket:
         """One verdict for the epic: every open child must be in testing; each gets its own signed done verdict,

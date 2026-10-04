@@ -68,21 +68,34 @@ def refs(data) -> list[dict]:
     return out
 
 
+def open_args(ws, ticket_id: str, ref: str, path: Path | None) -> tuple[Path | None, Path | None]:
+    """(path, root) for a pinned read of the file `ref` names: `root` is the ticket's artifact folder (a page's `_files`
+    folder, resolved), `path` the name below it as written, unresolved, so a link anywhere along it is refused by the
+    open (`read_pinned(..., root=root)`). Unchanged when there is no root to start from."""
+    from orch.widgets.pages import FILES, PageKey
+    name = name_of(ticket_id, ref)
+    if path is None or name is None:
+        return path, None
+    if isinstance(ticket_id, PageKey):
+        root = (ticket_id.root / FILES).resolve() if ticket_id.root is not None else None
+    elif ws is not None:
+        from orch.core.query import artifact_root
+        root = artifact_root(ws, ticket_id)
+    else:
+        root = None
+    return (root / name, root) if root is not None else (path, None)
+
+
 def data_uri(ws, ticket_id: str, ref: str, digest, kinds=IMAGE_TYPES) -> str | None:
     """The file as a `data:` URI (frames and standalone documents load nothing), when it exists, is of `kinds`, is at
     most 5 MB and its bytes have sha256 `digest`. Read once (orch.core.artifacts.read_pinned): the bytes embedded are
     the bytes that were hashed, never a second read after a check."""
     from orch.core.artifacts import read_pinned
-    from orch.widgets.pages import PageKey
     path = resolve(ws, ticket_id, ref)
     kind = mimetypes.guess_type(path.name)[0] if path else None
     if path is None or kind not in kinds or not isinstance(digest, str) or len(digest) != 64:
         return None
-    root = None
-    if ws is not None and not isinstance(ticket_id, PageKey):  # a link inside the ticket's folder is refused, not followed
-        from orch.core.query import artifact_root
-        root = artifact_root(ws, ticket_id)
-        path = root / name_of(ticket_id, ref)
+    path, root = open_args(ws, ticket_id, ref, path)
     data = read_pinned(path, digest, MAX_DATA_URI, root=root)
     if data is None:
         return None

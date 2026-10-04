@@ -1655,3 +1655,9 @@ html.term-full-open { overflow: hidden; }
 .ib-track { display: block; width: 96px; flex: none; }
 .ib-track i { display: block; height: var(--s-2); min-width: var(--s-1); border-radius: var(--s-1); background: var(--series-1); }
 .reports-grid .card { min-width: 0; }
+/* ---------- AI Factory (#2, phase 3): the Ready report and the Stopped message ---------- */
+.factory-report, .factory-reasons { display: flex; flex-direction: column; gap: var(--s-3); margin: 0; padding: 0; min-width: 0; }
+.factory-child { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; padding-top: var(--s-2); border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.factory-child:first-child { border-top: 0; padding-top: 0; }
+.factory-reasons li { overflow-wrap: anywhere; }
+.factory-ready, .factory-stopped { max-width: 100%; }

@@ -294,3 +294,116 @@ def test_start_names_the_limits_from_the_defaults(fws, fa, fd):
     _refine(fa, e.id, plan=None)
     page = fd.get(f"/t/{e.id}").text
     assert 'data-factory-confirm="up to 25 children or 72 hours, size ≤ m"' in page
+
+
+# -- phase 3: the Ready report and the Stopped message ---------------------------------------------------------------
+
+PROOF = "- AC1: ran the full suite, green"
+
+
+@pytest.fixture
+def ready_epic(fws, fa, fh, close_tasks):
+    e = fa.new("Billing revamp", type="epic")
+    _refine(fa, e.id, plan=None)
+    fh.approve(e.id, "requirements", delegate={"factory": True})
+    c = fa.new("child <one>", epic=e.id)
+    _refine(fa, c.id)
+    fa.epic_auto_approve(c.id)
+    fa.claim(c.id)
+    close_tasks(fa, c.id)
+    fa.set_section(c.id, "Verification", PROOF)
+    fa.set_section(c.id, "Findings", "not built: <i>pdf</i> export")
+    fa.move(c.id, "testing")
+    return e.id, c.id
+
+
+def _card(html, marker):
+    return html.split(f'data-{marker}=', 1)[1].split("</article>", 1)[0]
+
+
+def _seen(fd):
+    return re.search(r'name="seen" value="([^"]+)"', _card(fd.get("/").text, "ready")).group(1)
+
+
+def test_ready_report_on_today_the_board_and_the_epic_page(fws, fd, ready_epic):
+    eid, cid = ready_epic
+    for url in ("/", "/board", f"/t/{eid}"):
+        card = _card(fd.get(url).text, "ready")
+        assert "Ready" in card and cid in card and "1/1 criteria" in card and PROOF in card
+        assert "not built: &lt;i&gt;pdf&lt;/i&gt; export" in card and "child &lt;one&gt;" in card  # plain text, escaped
+        assert "Accept the epic and close 1 child" in card
+    assert "AI Factory" in fd.get("/").text
+
+
+def test_the_one_tap_gives_the_epic_verdict_and_nothing_else(fws, fd, ready_epic):
+    eid, cid = ready_epic
+    seen = _seen(fd)
+    n = len(ledger.entries(fws))
+    resp = _posts(fd, f"/t/{eid}/verdict", verdict="done", seen=seen, next="/")
+    assert "err=" not in _msg(resp)
+    assert store.load(fws, eid)[1].status == "done" and store.load(fws, cid)[1].status == "done"
+    assert len(ledger.entries(fws)) == n + 2  # the child's verdict and the epic's; no grant, no approval
+    assert "data-ready=" not in fd.get("/").text
+
+
+def test_a_stale_report_is_refused(fws, fa, fd, ready_epic):
+    eid, cid = ready_epic
+    seen = _seen(fd)
+    fa.set_section(cid, "Verification", PROOF + "\n- AC1: and again, later")
+    resp = _posts(fd, f"/t/{eid}/verdict", verdict="done", seen=seen, next="/")
+    assert "err=" in _msg(resp) and store.load(fws, eid)[1].status == "open"
+
+
+def test_the_ready_tap_is_refused_to_an_agent_harness_and_without_the_cookie(fws, fd, ready_epic, monkeypatch):
+    eid, cid = ready_epic
+    seen = _seen(fd)
+    n = len(ledger.entries(fws))
+    from orch.dashboard.app import create_app
+    app = create_app(fws, "tok")
+    assert TestClient(app).post(f"/t/{eid}/verdict", data={"verdict": "done", "seen": seen},
+                                follow_redirects=False).status_code == 401
+    monkeypatch.setenv("ORCH_HARNESS", "test-agent")
+    resp = _posts(fd, f"/t/{eid}/verdict", verdict="done", seen=seen)
+    assert "err=" in _msg(resp) and "agent+harness" in _msg(resp)
+    assert store.load(fws, eid)[1].status == "open" and len(ledger.entries(fws)) == n
+
+
+def test_stopped_card_says_why_and_what_you_can_do(fws, fd, running, monkeypatch):
+    from orch import clock
+    eid, cid, r = running
+    real = clock.now()
+    monkeypatch.setattr(clock, "now", lambda: real + timedelta(hours=73))
+    for url in ("/", "/board", f"/t/{eid}"):
+        html = fd.get(url).text
+        card = _card(html, "stopped")
+        assert "Stopped" in card and "Budget used up" in card and "time budget of 72 hours used up" in card
+        assert "Approve the epic again" in card
+        assert html.count('data-budget=') == 0  # one card for the budget, not two
+
+
+def test_nothing_of_phase_three_shows_while_the_factory_is_off(ws, aops, hops, dash):
+    e = aops.new("Ordinary", type="epic")
+    _refine(aops, e.id, plan=None)
+    hops.approve(e.id, "requirements", delegate={})
+    for url in ("/", "/board", f"/t/{e.id}"):
+        html = dash.get(url).text
+        assert "data-ready=" not in html and "data-stopped=" not in html
+
+
+def test_the_report_shows_the_full_text_the_verdict_binds(fws, fa, fd, ready_epic):
+    eid, cid = ready_epic
+    long = PROOF + "\n" + "\n".join(f"- AC1: more evidence line {i} with detail" for i in range(40))
+    fa.set_section(cid, "Verification", long)
+    card = _card(fd.get("/").text, "ready")
+    assert "evidence line 39 with detail" in card and "- [ ] a" in card
+    assert "Context, not covered by your verdict" in card and "not a check: read it before you sign" in card
+    assert "verified" not in card.lower().replace("not verifiable", "")
+
+
+def test_forged_children_show_a_warning_and_no_report(fws, fa, fd, ready_epic):
+    eid, cid = ready_epic
+    path, t = store.load(fws, cid)
+    t.meta["status"] = "done"  # forged: no signed verdict behind it
+    store.save(fws, t, path)
+    html = fd.get(f"/t/{eid}").text
+    assert "data-ready=" not in html and f'data-suspect="{eid}"' in html and "Not verifiable" in html

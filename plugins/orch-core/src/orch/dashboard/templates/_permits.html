@@ -30,6 +30,57 @@
 </article>
 {% endmacro %}
 
+{#- AI Factory phase 3. The Ready report: what is live and where to look, per child its proof and what it leaves open,
+    and the one action that is yours: the epic's verdict, bound to the hash of exactly these children and their
+    evidence. Text the agents wrote is plain text here, never formatted. -#}
+{% macro ready_card(r, back, here=False) %}
+<article class="card permit-card factory-ready" data-ready="{{ r.epic }}" aria-labelledby="fr-h-{{ r.epic }}">
+  <div class="permit-head">{{ ui.status("ok", "Ready") }} <b id="fr-h-{{ r.epic }}">{{ r.title }}</b>
+    {% if not here %}<a class="lnk key" href="/t/{{ r.epic }}#factory">{{ r.epic }}</a>{% endif %}</div>
+  <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign. Nothing is closed until you give the verdict.</p>
+  <ul class="plain factory-report">
+    {% for c in r.children %}
+    <li class="factory-child" data-child="{{ c.id }}">
+      <div><a class="lnk key" href="/t/{{ c.id }}">{{ c.id }}</a> <b>{{ c.title }}</b> <span class="muted">{{ c.status }} · {{ c.proven }}/{{ c.total }} criteria · {{ c.how }}</span></div>
+      {% if c.status == "testing" %}
+      <details class="factory-bound" open><summary>What your verdict covers: criteria and verification, in full</summary>
+        <p class="muted">Acceptance criteria</p><pre class="permit-cmd" data-bound="ac">{{ c.ac }}</pre>
+        <p class="muted">Verification, as the agent wrote it</p><pre class="permit-cmd" data-bound="verification">{{ c.verification }}</pre>
+        {% if c.bound %}<p class="permit-meta">Also covered, shown on the ticket page: {{ c.bound|join(", ") }}</p>{% endif %}
+      </details>
+      {% endif %}
+      {% if c.where or c.findings %}<p class="permit-meta"><span class="muted">Context, not covered by your verdict:</span>
+        {% if c.where %}{{ c.where|join(" · ") }}{% endif %}{% if c.findings %} Left open: {{ c.findings }}{% endif %}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <div class="actions">
+    <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ r.epic }} and {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}">
+      <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ r.seen }}"><input type="hidden" name="next" value="{{ back }}">
+      <button type="submit" class="btn btn-primary">Accept the epic and close {{ r.open }} {{ "child" if r.open == 1 else "children" }}</button>
+    </form>
+    {% if not here %}<a class="btn" href="/t/{{ r.epic }}#factory">Open the epic</a>{% endif %}
+  </div>
+</article>
+{% endmacro %}
+
+{% macro suspect_note(s) %}
+<p class="permit-card factory-suspect" data-suspect="{{ s.epic }}">{{ ui.status("warn", "Not verifiable") }} {{ s.children|join(", ") }} claim{{ "s" if s.children|length == 1 }} to be in testing or done, but the records do not back it (no signed verdict, or no move into testing by the claiming session with its tasks closed). No Ready report until they do.</p>
+{% endmacro %}
+
+{#- The Stopped message: why the factory cannot go on by itself and what you can do. It offers no action of its own. -#}
+{% macro stopped_card(s, here=False) %}
+<article class="card permit-card factory-stopped" data-stopped="{{ s.epic }}" aria-labelledby="fs-h-{{ s.epic }}">
+  <div class="permit-head">{{ ui.status("warn", "Stopped") }} <b id="fs-h-{{ s.epic }}">{{ s.title }}</b>
+    {% if not here %}<a class="lnk key" href="/t/{{ s.epic }}#factory">{{ s.epic }}</a>{% endif %}</div>
+  <p>The agents cannot go on by themselves.</p>
+  <ul class="plain factory-reasons">
+    {% for r in s.reasons %}<li data-reason="{{ r.code }}"><b>{{ r.label }}</b>: {{ r.text }}.<br><span class="muted">{{ r.can }}</span></li>{% endfor %}
+  </ul>
+  {% if not here %}<div class="actions"><a class="btn" href="/t/{{ s.epic }}#factory">Open the epic</a></div>{% endif %}
+</article>
+{% endmacro %}
+
 {% macro grant_row(g, back) %}
 <li class="permit-grant" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code> <span class="muted">{{ "for this epic" if g.scope == "epic" else "once, unused" }}</span>
   <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-inline-confirm="Confirm · revoke this grant">
@@ -38,7 +89,14 @@
 {% endmacro %}
 
 {#- The cards of a permit_view: used-up budgets, then open requests. Standing grants stay on the epic page. -#}
+{% macro factory_cards(view, back) %}
+{% for s in view.suspect %}{{ suspect_note(s) }}{% endfor %}
+{% for s in view.stopped %}{{ stopped_card(s) }}{% endfor %}
+{% for r in view.ready %}{{ ready_card(r, back) }}{% endfor %}
+{% endmacro %}
+
 {% macro cards(view, back) %}
+{{ factory_cards(view, back) }}
 {% for c in view.budget %}{{ budget_card(c) }}{% endfor %}
 {% for r in view.requests %}{{ request_card(r, back) }}{% endfor %}
 {% endmacro %}

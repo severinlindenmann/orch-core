@@ -61,6 +61,17 @@ orch never commits on its own, with one exception: the wiki addon's Create page 
 
 `orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else.
 
+## Migrating a workspace from an older orch
+
+Older versions wrote four things this version no longer reads. `orch migrate` rewrites them once; it prints a diff and writes nothing until you add `--apply`, and running it again changes nothing.
+
+- `## Proposal` and `## Decisions` sections: moved into `## Context` as `###` subsections. A ticket that still has one does not load, and says so.
+- A Plan checklist (`- [ ]` items) on a ticket in progress, waiting or in testing: written as its `## Tasks`. The Plan stays. Tickets in backlog, open or done are left alone.
+- `../artifacts/<ticket>/<name>` link targets: become `artifact:<name>` (or `/a/<ticket>/<name>` for another ticket). The Log is history and is not touched.
+- Trackers whose pattern accepts a bare number (`\d+`): the pattern becomes `<prefix>-(?P<id>\d+)` (it needs a `"prefix"`) and the bare numbers in tickets' `external` keys get the prefix. If more than one tracker could own a number, nothing is changed and the command says why.
+
+Your decisions stay valid: the command never touches the approval ledger, the event log or the approved snapshots, and it refuses a rewrite that would change text an approval or verdict is bound to (an approved gate's text, or the Verification of a ticket in testing or done). Those are listed with exit code 5; you re-approve the new text yourself. `orch check` reports old artifact links until they are migrated.
+
 ## Feedback about orch
 
 When an orch command, the guard or a skill is confusing or broken, the agent rule in `AGENTS.md` asks the agent to run `orch feedback add --file orchestrator/temporary/orch-feedback.md` once and carry on (a file, because the guard denies inline text that quotes a human-only command). Agents never file issues themselves: they work in customer workspaces, and an issue is an outward action that could carry customer details. The report is redacted when it is saved (workspace paths, the customer, repo and tracker names, ticket ids, titles and ticket text, URLs and bare host names, emails, credentials (`name=value` secrets, known token prefixes, JWTs) and token-like strings are replaced by placeholders) and kept in `feedback/` in the orch config dir, outside every repository. Nothing is sent anywhere. A repeat of the same report only raises its count, and each workspace saves at most 3 new reports a day.
@@ -126,7 +137,7 @@ Instead of approving requirements or a plan, you can send them back with a messa
 
 ### Task lists
 
-Every ticket has a `## Tasks` section: the agent writes it right after claiming (`orch task add <id> --file tasks.yaml`) and works it down one task at a time (`orch task start` / `done -m "evidence"` / `skip -m` / `block -m --on`). `orch move <id> testing` refuses until every task is done or skipped with a reason, for every size. A blocking question blocks the task in progress and the answer restarts it. Tasks with `owner: human` are yours: they count in "Waiting on you" and you tick them on the ticket page. You can skip or reopen the agent's tasks but not tick them done. Plans written before task lists keep their checklist until someone runs `orch task import <id> --from-plan`. The ticket page shows the list with its progress; Board cards and Today's In flight show the progress and the current task. Format: `docs/tasks-format.md`.
+Every ticket has a `## Tasks` section: the agent writes it right after claiming (`orch task add <id> --file tasks.yaml`) and works it down one task at a time (`orch task start` / `done -m "evidence"` / `skip -m` / `block -m --on`). `orch move <id> testing` refuses until every task is done or skipped with a reason, for every size. A blocking question blocks the task in progress and the answer restarts it. Tasks with `owner: human` are yours: they count in "Waiting on you" and you tick them on the ticket page. You can skip or reopen the agent's tasks but not tick them done. A ticket in progress from before task lists gets its Plan checklist as tasks from `orch migrate`. The ticket page shows the list with its progress; Board cards and Today's In flight show the progress and the current task. Format: `docs/tasks-format.md`.
 
 ### Start agent
 

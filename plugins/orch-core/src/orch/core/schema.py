@@ -13,7 +13,7 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.5.0"  # 1.1: the Summary section; Proposal and Decisions only on old tickets. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.5.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)

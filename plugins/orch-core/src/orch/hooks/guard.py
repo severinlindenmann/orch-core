@@ -1134,7 +1134,7 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
     try:
         old = parse_ticket(old_text)
     except TicketParseError:
-        return Decision(False, "this ticket file does not parse; ask the user to repair it")
+        return Decision(False, "this ticket file does not parse (a file from an older orch needs `orch migrate`); ask the user to repair it")
     try:
         new = parse_ticket(new_text)
     except TicketParseError:

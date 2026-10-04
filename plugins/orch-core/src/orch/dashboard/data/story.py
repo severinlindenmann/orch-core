@@ -7,15 +7,14 @@ import difflib
 import re
 
 from orch.core import evidence
-from orch.core.constants import AGENT_NOTES, LEGACY_SECTIONS, SECTIONS
+from orch.core.constants import AGENT_NOTES, SECTIONS
 from orch.core.gates import HASH_VERSION, gate_hash, gate_meta, gate_parts, normalized_text
 from orch.dashboard.data.steps import CHANGES_REQUESTED, YOUR_TURN, day, when
 from orch.dashboard.data.timeline import describe, who
 
 CHAPTERS = ("asked", "agreed", "doing", "proven", "left")
 CHAPTER_TITLES = {"asked": "Asked", "agreed": "What we agreed", "doing": "Doing", "proven": "Proof so far", "left": "Left"}
-NOTE_LABELS = {"Current state": "Handoff", "Context": "Context", "Findings": "Findings",
-               "Proposal": "Proposal (older ticket)", "Decisions": "Decisions (older ticket)"}
+NOTE_LABELS = {"Current state": "Handoff", "Context": "Context", "Findings": "Findings"}
 # Events that only say "a section changed": folded on the timeline (the text itself is on the page).
 _NOISE = ("ticket.edited", "state.updated", "task.edited")
 _ITEM = re.compile(r"^(?:[-*+]|\d+[.)])\s+")
@@ -140,11 +139,11 @@ def evidence_author(events) -> dict | None:
 
 
 def agent_notes(t, events) -> list[dict]:
-    """Handoff (Current state), Context, Findings, and the legacy Proposal/Decisions of older tickets: each with who
+    """Handoff (Current state), Context, Findings: each with who
     last wrote it and when (from the events), or no author when the file was edited by hand."""
     out = []
-    extra = [s for s in t.sections if s not in (*SECTIONS, *LEGACY_SECTIONS)]  # a `## Heading` orch does not know
-    for name in (*AGENT_NOTES, *LEGACY_SECTIONS, *extra):
+    extra = [s for s in t.sections if s not in SECTIONS]  # a `## Heading` orch does not know
+    for name in (*AGENT_NOTES, *extra):
         text = t.section(name)
         if not text.strip():
             continue

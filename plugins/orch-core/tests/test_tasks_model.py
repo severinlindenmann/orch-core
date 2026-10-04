@@ -134,15 +134,6 @@ def test_needs_problems():
     assert tk.needs_problems(tk.parse("- [ ] T1 a\n- [ ] T2 b\n  - needs: T1")) == ([], None)
 
 
-def test_from_plan_maps_checkboxes_and_repo_paths():
-    plan = "Intro line.\n- [x] Inventory `hub/jobs/` first\n- [ ] Migrate\n  the gold jobs\n- [ ] Compare costs"
-    items = tk.from_plan(plan, ["hub"])
-    assert [(t.id, t.state, t.text) for t in items] == [
-        ("T1", "done", "Inventory `hub/jobs/` first"), ("T2", "todo", "Migrate the gold jobs"), ("T3", "todo", "Compare costs")]
-    assert [str(r) for r in items[0].refs] == ["file:hub/jobs/"]
-    assert tk.from_plan("1. plain", ["hub"]) == []
-
-
 def test_newly_done_agent_tasks():
     old = tk.parse("- [/] T1 a\n- [ ] T2 b\n  - owner: human")
     new = tk.parse("- [x] T1 a\n- [x] T2 b\n  - owner: human\n- [x] T3 c")

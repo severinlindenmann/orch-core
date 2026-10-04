@@ -11,7 +11,7 @@ def test_view_resolves_every_ref_kind(ws_root, configure, aops, hops, working, p
     aops.task_add(working, [
         {"text": "Migrate", "refs": ["file:hub/jobs/x.yml#L2-4", "file:hub/missing.py", "ac:2", "ac:9",
                                      f"ticket:{other}", "ext:ABC-7", "q:Q1", "static:notes/a.md",
-                                     "artifact:inv.csv", "section:Decisions", "url:https://docs.test/x — docs"]},
+                                     "artifact:inv.csv", "section:Requirements", "url:https://docs.test/x — docs"]},
         {"text": "Grant", "owner": "human", "needs": ["T1"]}])
     plan_approved(working)
     aops.task_start(working, "T1")
@@ -28,7 +28,7 @@ def test_view_resolves_every_ref_kind(ws_root, configure, aops, hops, working, p
     assert refs[("q", "Q1")]["text"] == "Which schedule?" and refs[("q", "Q1")]["answered"] is False
     assert refs[("static", "notes/a.md")]["exists"] is False
     assert refs[("artifact", "inv.csv")]["url"] == f"/a/{working}/inv.csv"
-    assert refs[("section", "Decisions")]["exists"] is True
+    assert refs[("section", "Requirements")]["exists"] is True
     assert refs[("url", "https://docs.test/x")]["label"] == "docs"
     assert v["tasks"][1]["needs_open"] == ["T1"] and v["tasks"][1]["owner"] == "human"
 

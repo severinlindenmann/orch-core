@@ -30,8 +30,9 @@ def matches(pattern, key) -> bool:
     return _fullmatch(pattern, key) is not None
 
 
-def matches_bare_number(pattern) -> bool:
-    """True for legacy patterns such as \\d+ that match a plain number; they must not be searched in free text."""
+def accepts_bare_number(pattern) -> bool:
+    """True for a pattern such as \\d+ that matches a plain number: it would match any number in free text, so a
+    tracker needs a prefix (`orch migrate` adds it to old configs)."""
     return any(matches(pattern, n) for n in _BARE_NUMBERS)
 
 
@@ -86,6 +87,9 @@ def tracker_problem(tracker: dict) -> str | None:
         compiled = re.compile(pattern)
     except (re.error, TypeError) as e:
         return f"pattern {pattern!r} is not a valid regex ({e})"
+    if accepts_bare_number(pattern):
+        return (f"pattern {pattern!r} matches a bare number; give it a prefix such as GH-(?P<id>\\d+) "
+                "(`orch migrate` does this for an old config that has a \"prefix\")")
     if _has_backreference(pattern):
         return f"pattern {pattern!r} uses a backreference (\\1 or (?P=…)), which cannot be combined with other trackers"
     try:

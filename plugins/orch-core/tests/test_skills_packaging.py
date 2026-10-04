@@ -48,7 +48,7 @@ def test_skills_teach_the_task_list():
     root = sync.skills_dir()
     work = (root / "orch-work-on-ticket" / "SKILL.md").read_text(encoding="utf-8")
     for phrase in ("orch task list <id> --json", "orch task add <id> --file", "orch task start", "orch task done",
-                   "every task done or skipped", "orch task import <id> --from-plan", "owner: human",
+                   "every task done or skipped", "owner: human",
                    "Every size needs at least one task", "means exactly this", "orch wait <id> --json"):
         assert phrase in work, phrase
     tickets = (root / "orch-tickets" / "SKILL.md").read_text(encoding="utf-8")

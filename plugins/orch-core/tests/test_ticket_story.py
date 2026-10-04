@@ -94,16 +94,13 @@ def test_summary_is_rendered_first_and_attributed(dash, put):
     assert html.index("Agent's summary") < html.index("Retry downloads before alerting") < html.index('id="asked"')
 
 
-def test_agent_notes_are_folded_attributed_and_keep_legacy_sections(dash, aops, put, working):
+def test_agent_notes_are_folded_and_attributed(dash, aops, put, working):
     aops.set_state(working, "T1 done, T2 next")
     aops.set_section(working, "Findings", "a flaky test")
     html = _page(dash, working)
     notes = html.split('id="notes"', 1)[1].split("</details>", 1)[0]
     assert "Handoff" in notes and "claude-code wrote" in notes and "T1 done, T2 next" in notes and "Findings" in notes
     assert notes.index("Handoff") < notes.index("Findings")
-    old = put("open", sections={"Proposal": "A or B", "Decisions": "we chose B"})
-    notes = _page(dash, old).split('id="notes"', 1)[1].split("</details>", 1)[0]
-    assert "Proposal (older ticket)" in notes and "Decisions (older ticket)" in notes and "written in the file" in notes
 
 
 def test_timeline_folds_runs_of_edits():

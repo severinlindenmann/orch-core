@@ -29,7 +29,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Create tasks | `orch task add <id> --file tasks.yaml` · `orch task add <id> "text" --ref file:repo/path --verify "cmd" --needs T2` |
 | Work a task | `orch task start <id> T3` · `orch task done <id> T3 -m "evidence"` |
 | Close otherwise | `orch task skip <id> T3 -m "reason"` · `orch task block <id> T3 -m "reason" --on Q2` · `orch task reopen <id> T3` |
-| Legacy Plan checklist | `orch task import <id> --from-plan` |
+| Old workspace formats | `orch migrate` (dry run, shows the diff), then `orch migrate --apply` (Proposal/Decisions, old artifact links, bare-number trackers, Plan checklists of worked tickets) |
 | Handoff note | `orch state <id> -m "..."` (rewrites Current state, shown as the Handoff) |
 | Log a step | `orch log <id> -m "..."` |
 | Ask the human | `orch ask <id> --file questions.yaml` |
@@ -76,7 +76,7 @@ A ticket file holds only the sections someone wrote; `orch section set` creates 
 - **Current state** (the Handoff) — rewrite it (don't append) at the end of every session; the next session starts from it.
 - **Verification** — evidence per criterion, one line each: `- AC2: curl returned 404 once, no retry (curl -i …)`; several criteria may share a line (`- AC1, AC3: …`), output goes indented below it. Lines without `AC<n>` are general evidence. A criterion counts as proven only with such a line, and the line must say something: a placeholder (`todo`, `TBD`, `n/a`, `?`) or a few characters is not evidence. Tick a criterion only after its line exists; orch refuses the tick otherwise, both through `orch section set` and in a direct edit of the file.
 - **Context**, **Findings** — your notes; the dashboard shows them folded under "Agent notes", with your name.
-- **Proposal**, **Decisions** — gone: approaches go into Context (or a question with options), decisions are the answered questions and approvals.
+- **Proposal**, **Decisions** — gone: approaches go into Context (or a question with options), decisions are the answered questions and approvals. A ticket file that still has them does not load until `orch migrate --apply` has moved them into Context.
 
 ## Questions file
 

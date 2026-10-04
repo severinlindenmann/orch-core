@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from orch.core import fences
-from orch.core.constants import LEGACY_SECTIONS, SECTIONS
+from orch.core.constants import SECTIONS
 from orch.errors import UsageError
 
 # The sections `orch new` fills from a body file or from their own files. Requirements and Acceptance criteria are
@@ -13,7 +13,7 @@ from orch.errors import UsageError
 SPLIT_SECTIONS = ("Summary", "Requirements", "Acceptance criteria", "Out of scope")
 GATED_EMPTY = ("Requirements", "Acceptance criteria")
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
-_CANONICAL = {s.lower(): s for s in SECTIONS + LEGACY_SECTIONS}
+_CANONICAL = {s.lower(): s for s in SECTIONS}
 
 
 def _name(raw: str) -> str:

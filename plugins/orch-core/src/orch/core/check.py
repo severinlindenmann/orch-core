@@ -34,6 +34,7 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings += _check_addons(ws)
     findings += _check_artifact_mode(ws)
     findings += _check_trackers(ws)
+    findings += _check_migration(ws)
     entries = store.scan(ws)
     findings += _check_entries(entries)
     findings += _check_event_log(ws)
@@ -152,6 +153,30 @@ def _check_trackers(ws) -> list[Finding]:
         if problem:
             name = t.get("prefix", "?") if isinstance(t, dict) else "?"
             out.append(Finding("error", "tracker-config", None, f"external_trackers[{i}] ({name}): {problem}"))
+    return out
+
+
+def _check_migration(ws) -> list[Finding]:
+    """What `orch migrate` would change is an error (it is a command away); what it would refuse is a warning, since
+    it needs a person. Old tickets and bare trackers also say so where they fail to load or fail `tracker_problem`."""
+    from orch.core import migrate
+    try:
+        result = migrate.plan(ws.home)
+    except (OSError, ValueError):
+        return []  # an unreadable config is reported by validate_schema
+    out = []
+    for item in result.items:
+        if item.ticket is not None:
+            out.append(Finding("error", "needs-migration", item.ticket, f"{item.rel}: old format ({', '.join(item.rules)}): "
+                               "run `orch migrate` (a dry run), then `orch migrate --apply`"))
+            out += [Finding("warning", "approval-voided", item.ticket, n) for n in item.notes]
+    for where, rule, why in result.refused:
+        if where.startswith("tickets/done/"):
+            why = f"history, cannot migrate ({rule}): {why}"
+        else:
+            why = f"needs a human decision ({rule}): {why}"
+        out.append(Finding("warning", "migration-refused", None, f"{where}: {why}"))
+    out += [Finding("warning", "approval-voided", None, f"{w}: {n}") for w, n in result.notes]
     return out
 
 

@@ -43,9 +43,8 @@ _KIND_BY_EXT = {
     ".zip": "build", ".whl": "build", ".tar": "build", ".gz": "build", ".jar": "build",
     ".mmd": "diagram", ".drawio": "diagram",
 }
-# Older tickets point at artifacts by path: `../artifacts/<ticket>/<name>`, or the dashboard route `/a/<ticket>/<name>`.
-# Matched on the percent-decoded path, without `?query` and `#fragment` and leading `./`.
-_LEGACY = re.compile(r"^(?:\.\./)*artifacts/([^/]+)/(.+)$")
+# A link to an artifact of any ticket is the dashboard route `/a/<ticket>/<name>`, matched on the percent-decoded
+# path without `?query` and `#fragment`; one of this ticket's own is `artifact:<name>`.
 _ROUTE = re.compile(r"^/a/([^/]+)/(.+)$")
 _URL = re.compile(r"https?://[^\s<>()\[\]`'\"|]+", re.IGNORECASE)
 # A file somebody produced, named in prose: a path or name ending in a file type people attach.
@@ -178,14 +177,13 @@ _MD = None
 
 
 def artifact_path(src: str) -> tuple[str, str] | None:
-    """(ticket, name) when `src` is an artifact path of any ticket: `artifacts/<ticket>/<name>` (after any `./` and
-    `../`) or `/a/<ticket>/<name>`, matched after dropping `?query` and `#fragment` and percent-decoding the whole
+    """(ticket, name) when `src` is an artifact path of any ticket: `/a/<ticket>/<name>`, matched after dropping `?query` and `#fragment` and percent-decoding the whole
     path, as the server decodes it. None for anything else (including `artifact:` references)."""
     from urllib.parse import unquote
     path = unquote(str(src or "").strip().split("#", 1)[0].split("?", 1)[0])
     while path.startswith("./"):
         path = path[2:]
-    m = _LEGACY.match(path) or _ROUTE.match(path)
+    m = _ROUTE.match(path)
     return (m.group(1), m.group(2)) if m and m.group(1) not in (".", "..") else None
 
 

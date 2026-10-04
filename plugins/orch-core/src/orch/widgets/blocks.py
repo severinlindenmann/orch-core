@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 from orch.core import fences
-from orch.core.constants import LEGACY_SECTIONS, SECTIONS
+from orch.core.constants import SECTIONS
 from orch.core.model import h2_title
 
 MAX_BYTES = 64 * 1024
@@ -19,7 +19,7 @@ MAX_INNER = 50  # columns: an array inside an array
 LAYERS = ("type", "widget", "html")
 # Hashed by a gate (an edit would void approval), own grammar (Tasks) or append-only (Log).
 REFUSED = ("Ask", "Summary", "Requirements", "Acceptance criteria", "Out of scope", "Plan", "Tasks", "Log")
-ALLOWED = ("Context", "Current state", "Verification", "Findings", *LEGACY_SECTIONS)
+ALLOWED = ("Context", "Current state", "Verification", "Findings")
 ID = re.compile(r"[a-z][a-z0-9-]{0,39}")  # starts with a letter: an id never reads as an index
 _FM_END = re.compile(r"^---[ \t]*$")
 _ANY_BLOCK = re.compile(r"^ {0,3}(?:`{3,}|~{3,})[ \t]*orch[ \t]*$", re.M)
@@ -74,7 +74,7 @@ class Block:
 def placement(section: str) -> bool:
     """Whether a widget may stand in `section`: the allowed ones and any extra `## Heading` orch does not know (not
     the text before the first heading)."""
-    return section in ALLOWED or bool(section) and section not in (*SECTIONS, *LEGACY_SECTIONS)
+    return section in ALLOWED or bool(section) and section not in SECTIONS
 
 
 def duplicate_ids(blocks) -> set[str]:

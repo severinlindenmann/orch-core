@@ -10,13 +10,13 @@ SECTIONS = (
     "Ask", "Summary", "Context", "Requirements", "Acceptance criteria", "Out of scope",
     "Plan", "Tasks", "Current state", "Verification", "Log", "Findings",
 )
-# Sections of old tickets that new tickets no longer get: still parsed, rendered (under Agent notes) and kept
-# in the file where they have text, but `orch section set` refuses them.
-LEGACY_SECTIONS = ("Proposal", "Decisions")
-# The order sections are written in, legacy ones at their old place.
+# Sections older orch versions wrote. A ticket file that still has text under one fails to load until `orch migrate`
+# has moved it into Context (orch.core.migrate).
+OLD_SECTIONS = ("Proposal", "Decisions")
+# The order sections are written in.
 FILE_ORDER = (
-    "Ask", "Summary", "Context", "Requirements", "Acceptance criteria", "Out of scope", "Proposal",
-    "Plan", "Tasks", "Current state", "Verification", "Decisions", "Log", "Findings",
+    "Ask", "Summary", "Context", "Requirements", "Acceptance criteria", "Out of scope",
+    "Plan", "Tasks", "Current state", "Verification", "Log", "Findings",
 )
 AGENT_NOTES = ("Current state", "Context", "Findings")
 FRONTMATTER_ORDER = (

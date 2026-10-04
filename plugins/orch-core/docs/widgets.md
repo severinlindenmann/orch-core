@@ -43,7 +43,7 @@ everywhere (drawn as code, never served to a frame, an error in `orch widget che
 
 ## Where widgets may stand
 
-Allowed: **Context, Current state, Verification, Findings**, the legacy **Proposal** and **Decisions**, and any
+Allowed: **Context, Current state, Verification, Findings**, and any
 extra `## Heading` that is not a known section.
 
 Refused: Ask, Summary, Requirements, Acceptance criteria, Out of scope, Plan (all hashed by a gate — an edit

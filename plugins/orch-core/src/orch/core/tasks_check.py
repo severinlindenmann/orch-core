@@ -1,11 +1,8 @@
 """`orch check` findings for a ticket's task list (level, code, message); check.py wraps them."""
 from __future__ import annotations
 
-import re
-
 from orch.core import tasks as tk
 
-_PLAN_CHECK = re.compile(r"^[-*+]\s+\[[ xX]\]\s", re.M)
 _REF_KINDS_CHECKED = ("file", "static", "artifact", "ticket", "ac", "q")
 MISSING_AFTER_MINUTES = 30
 
@@ -52,7 +49,4 @@ def task_findings(ws, t, status: str, entries) -> list[tuple[str, str, str]]:
             minutes = 0
         if minutes > MISSING_AFTER_MINUTES:
             out.append(("warning", "tasks-missing", f"claimed {int(minutes)} min ago and no task list yet (orch task add)"))
-    if status != "done" and not items and _PLAN_CHECK.search(t.section("Plan")):
-        out.append(("warning", "plan-checklist-legacy",
-                    f"the Plan has a checklist but there are no tasks: `orch task import {t.id} --from-plan`"))
     return out

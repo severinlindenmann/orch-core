@@ -65,7 +65,7 @@ count from the first line after the `## Tasks` heading (`Tasks line N: …`).
 | `ticket` | local ticket ID | `ref: ticket:DEMO-0042` |
 | `ext` | external key matching `external_trackers` | `ref: ext:ABC-128` |
 | `url` | http(s) URL only | `ref: url:https://docs.databricks.com/aws/en/jobs/run-serverless-jobs` |
-| `section` | a section of this ticket | `ref: section:Decisions` |
+| `section` | a section of this ticket | `ref: section:Context` |
 | `ac` | acceptance criterion number (1-based checkbox in Acceptance criteria) | `ref: ac:2` |
 | `q` | question ID | `ref: q:Q2` |
 
@@ -107,7 +107,7 @@ check looks at that literal path only.
 - A blocking question asked while an agent task is doing blocks that task with `on: Q<n>` (a doing
   `owner: human` task is never blocked); once no
   blocking question is open, the answer restarts it (back to doing).
-- A legacy Plan checklist becomes tasks only through `orch task import <ref> --from-plan`; the Plan
+- A Plan checklist of a ticket written before task lists becomes tasks through `orch migrate`; the Plan
   text and its approval stay unchanged.
 
 ## Input file (orch task add --file)

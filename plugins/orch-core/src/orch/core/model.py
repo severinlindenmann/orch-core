@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from orch.core import fences
-from orch.core.constants import FILE_ORDER, FRONTMATTER_ORDER
+from orch.core.constants import FILE_ORDER, FRONTMATTER_ORDER, OLD_SECTIONS
 from orch.errors import TicketParseError
 
 
@@ -141,7 +141,7 @@ def new_ticket(id: str, title: str, *, type: str, priority: str, size: str, crea
     return Ticket(meta=meta)  # sections appear when someone writes them; an empty one is never written
 
 
-def parse_ticket(text: str, source: str = "<string>") -> Ticket:
+def parse_ticket(text: str, source: str = "<string>", *, allow_old: bool = False) -> Ticket:
     text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         raise TicketParseError(f"{source}: missing frontmatter (file must start with ---)")
@@ -155,6 +155,11 @@ def parse_ticket(text: str, source: str = "<string>") -> Ticket:
     if not isinstance(meta, dict) or "id" not in meta:
         raise TicketParseError(f"{source}: frontmatter must be a mapping with an 'id'")
     sections, preamble = _split_body(text[end.end():])
+    if not allow_old:  # only `orch migrate` reads these
+        old = [n for n in OLD_SECTIONS if sections.get(n, "").strip()]
+        if old:
+            raise TicketParseError(f"{source}: has a ## {' and a ## '.join(old)} section from an older orch; "
+                                   "run `orch migrate` (a dry run) and then `orch migrate --apply`")
     return Ticket(meta=meta, sections=sections, preamble=preamble)
 
 

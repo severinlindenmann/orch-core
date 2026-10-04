@@ -46,11 +46,12 @@ def test_sprints_by_due_date_with_start():
     assert got[2]["start"] == "2026-09-20T00:00:00Z" and got[3]["start"] == "2026-10-04T00:00:00Z" and got[4]["start"] is None
 
 
-def test_legacy_bare_number_keys(tmp_path):
-    legacy = {"prefix": "GH", "pattern": "\\d+", "url": "https://github.com/acme/ticket-orch-demo/issues/{key}"}
-    fw = fake_workspace(tmp_path / "w", trackers=[legacy])
-    snap = IssuesProvider().fetch(fw.provider_context(M, runner=runner()), SCOPE, None)
-    assert {i["key"] for i in snap.items} >= {"1", "13"} and all(not i["key"].startswith("GH-") for i in snap.items)
+def test_a_bare_number_tracker_is_an_error(tmp_path):
+    bare = {"prefix": "GH", "pattern": "\\d+", "url": "https://github.com/acme/ticket-orch-demo/issues/{key}"}
+    fw = fake_workspace(tmp_path / "w", trackers=[bare])
+    r = runner()
+    snap = IssuesProvider().fetch(fw.provider_context(M, runner=r), SCOPE, None)
+    assert snap.health == "error" and "does not match GH-<number>" in snap.message and r.calls == []
 
 
 def test_a_tracker_that_accepts_no_key_form(tmp_path):
@@ -58,7 +59,7 @@ def test_a_tracker_that_accepts_no_key_form(tmp_path):
     fw = fake_workspace(tmp_path / "w", trackers=[odd])
     r = runner()
     snap = IssuesProvider().fetch(fw.provider_context(M, runner=r), SCOPE, None)
-    assert snap.health == "error" and "matches neither GH-<number> nor <number>" in snap.message and r.calls == []
+    assert snap.health == "error" and "does not match GH-<number>" in snap.message and r.calls == []
 
 
 def test_the_limit_marks_the_snapshot_incomplete(issues_ws, monkeypatch):

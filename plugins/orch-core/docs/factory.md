@@ -213,8 +213,11 @@ taken from the hook's working directory) and every segment of a command. A path 
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
 length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
 hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
-a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed,
-but the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
+a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
+(unless its target names orch's own environment or config place, such as `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `.config/orch`,
+or an obfuscated lookup that also names orch or config (the bare words orch, env and printenv do not count): that is judged as a cd into the config dir). A command that names the config
+location and tmux or screen anywhere in its text, interpreter strings included, is refused. Otherwise
+the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
 in the config dir (permits, sessions, ledger*, tmux, ...) is refused with its own message, and so is a bare `*` handed
 to a command that reads or lists; `rm -rf node_modules/*` and `for f in *.md` pass. The socket sits in a random-named
 folder whose name is kept in a permits file; that only stops guessing and listing. The path is visible in `ps` to

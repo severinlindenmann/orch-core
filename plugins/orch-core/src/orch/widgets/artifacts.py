@@ -77,13 +77,8 @@ def data_uri(ws, ticket_id: str, ref: str, digest, kinds=IMAGE_TYPES) -> str | N
     kind = mimetypes.guess_type(path.name)[0] if path else None
     if path is None or kind not in kinds or not isinstance(digest, str) or len(digest) != 64:
         return None
-    try:
-        if path.stat().st_size > MAX_DATA_URI:
-            return None
-    except OSError:
-        return None
-    data = read_pinned(path, digest)
-    if data is None or len(data) > MAX_DATA_URI:
+    data = read_pinned(path, digest, MAX_DATA_URI)
+    if data is None:
         return None
     return f"data:{kind};base64,{base64.b64encode(data).decode('ascii')}"
 

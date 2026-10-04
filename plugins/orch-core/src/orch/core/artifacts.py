@@ -143,28 +143,60 @@ def file_sha256(path: Path) -> str | None:
     return hit
 
 
-def read_regular(path: Path, limit: int | None = None) -> bytes | None:
-    """The bytes of a plain file, read from one hardened open, or None. The directory is opened first (never through a
-    symlink) and the file relative to it: O_NOFOLLOW, O_NONBLOCK (a FIFO cannot hang the server), O_CLOEXEC. The handle
-    must be a regular file with one link, at most `limit` bytes (default MAX_UPLOAD_BYTES); at most limit + 1 bytes are
-    ever read. Whatever the caller checks or hashes is exactly what this returns."""
+def open_regular(path: Path, root: Path | None = None, limit: int | None = None):
+    """A read-only descriptor for a plain file, or None. Every directory is opened relative to the one before it, and the
+    file relative to its parent, each with O_NOFOLLOW (so no link is followed), the file with O_NONBLOCK too (a FIFO
+    cannot hang the server), all with O_CLOEXEC. With `root` the walk starts at `root` (opened as given) and takes each
+    component of `path` below it; without, at the file's parent directory. The handle must be a regular file with one
+    link and at most `limit` bytes (default MAX_UPLOAD_BYTES), else it is closed and None is returned. The caller closes."""
     from orch.addons.manifest import MAX_UPLOAD_BYTES
     limit = MAX_UPLOAD_BYTES if limit is None else limit
     base = getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    isdir = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | base
+    path = Path(path)
+    if root is None:
+        start, parts = path.parent, [path.name]
+    else:
+        try:
+            start, parts = Path(root), list(path.relative_to(root).parts)
+        except ValueError:
+            return None
+    if not parts or any(x in ("", ".", "..") for x in parts):
+        return None
     try:
-        dfd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | base)
+        cur = os.open(start, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+                      | (base & getattr(os, "O_NOFOLLOW", 0) if root is None else 0))
     except OSError:
         return None
     try:
-        fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | base, dir_fd=dfd)
+        for name in parts[:-1]:
+            nxt = os.open(name, isdir, dir_fd=cur)
+            os.close(cur)
+            cur = nxt
+        fd = os.open(parts[-1], os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | base, dir_fd=cur)
     except OSError:
         return None
     finally:
-        os.close(dfd)
-    with os.fdopen(fd, "rb") as f:
+        os.close(cur)
+    try:
         st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > limit:
-            return None
+        if stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and st.st_size <= limit:
+            return fd
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def read_regular(path: Path, limit: int | None = None, root: Path | None = None) -> bytes | None:
+    """The bytes of a plain file (`open_regular`), or None; at most limit + 1 bytes are ever read, and a file that grew
+    past `limit` is refused. Whatever the caller checks or hashes is exactly what this returns."""
+    from orch.addons.manifest import MAX_UPLOAD_BYTES
+    limit = MAX_UPLOAD_BYTES if limit is None else limit
+    fd = open_regular(path, root, limit)
+    if fd is None:
+        return None
+    with os.fdopen(fd, "rb") as f:
         try:
             data = f.read(limit + 1)
         except OSError:
@@ -172,20 +204,20 @@ def read_regular(path: Path, limit: int | None = None) -> bytes | None:
     return data if len(data) <= limit else None
 
 
-def read_pinned(path: Path, digest: str, limit: int | None = None) -> bytes | None:
+def read_pinned(path: Path, digest: str, limit: int | None = None, root: Path | None = None) -> bytes | None:
     """The file's bytes (`read_regular`) when their sha256 starts with `digest` (a full hex digest or a prefix of at
     least 8), hashed as read, so what the caller serves is exactly what was checked; None when it cannot be read or does
     not match. Never a cached digest: a check on one read and a serve from another can see different bytes."""
     if not re.fullmatch(r"[0-9a-f]{8,64}", digest or ""):
         return None
-    data = read_regular(path, limit)
+    data = read_regular(path, limit, root)
     return data if data is not None and hashlib.sha256(data).hexdigest().startswith(digest) else None
 
 
 def max_bytes(ws) -> int:
     from orch.addons.manifest import MAX_UPLOAD_BYTES
     try:
-        mb = float(((ws.config.get("artifacts") or {}).get("max_mb")) or DEFAULT_MAX_MB)
+        mb = float((((getattr(ws, "config", None) or {}).get("artifacts") or {}).get("max_mb")) or DEFAULT_MAX_MB)
     except (TypeError, ValueError):
         mb = DEFAULT_MAX_MB
     return int(min(mb * 1024 * 1024, MAX_UPLOAD_BYTES))

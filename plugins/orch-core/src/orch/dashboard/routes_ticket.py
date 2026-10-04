@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 import re
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from orch.core import evidence, query, store, tasks_view
 from orch.core.epics import verdict_hash
@@ -229,9 +230,12 @@ def raw_page(request: Request, ref: str):
 
 @router.get("/a/{ticket}/{name:path}")
 def artifact(request: Request, ticket: str, name: str, v: str = ""):
-    target = query.artifact_file(request.app.state.ws, ticket, name)
+    ws = request.app.state.ws
+    target = query.artifact_file(ws, ticket, name)
     if target is None:
         return PlainTextResponse("not found", status_code=404)
+    root = query.artifact_root(ws, ticket)
+    target = root / name  # as named, unresolved: a link anywhere along it is refused by the open
     ext = target.suffix.lower()
     media = "text/plain; charset=utf-8" if ext == ".md" else (mimetypes.guess_type(target.name)[0] or "application/octet-stream")
     headers = {"X-Content-Type-Options": "nosniff"}
@@ -239,9 +243,24 @@ def artifact(request: Request, ticket: str, name: str, v: str = ""):
         headers["Content-Security-Policy"] = SANDBOX_CSP
     if v:  # an inline link names the content it expects (?v=<sha256 prefix>): a file swapped since is not served
         from orch.core.artifacts import read_pinned
-        data = read_pinned(target, v)  # read once, hashed as read, and exactly those bytes are sent
+        data = read_pinned(target, v, root=root)  # read once, hashed as read, and exactly those bytes are sent
         if data is None:
             return PlainTextResponse("this file changed since it was linked in the ticket; it is not shown",
                                      status_code=409, headers={"Cache-Control": "no-store"})
         return Response(data, media_type=media, headers=headers)
-    return FileResponse(target, media_type=media, headers=headers)
+    from orch.core.artifacts import open_regular
+    fd = open_regular(target, root)  # the bytes sent come from this one handle, streamed
+    if fd is None:
+        return PlainTextResponse("not found", status_code=404)
+
+    size = os.fstat(fd).st_size
+
+    def chunks():
+        left = size  # never more than the length announced, even if the file grows meanwhile
+        with os.fdopen(fd, "rb") as f:
+            while left > 0 and (block := f.read(min(1 << 16, left))):
+                left -= len(block)
+                yield block
+
+    headers["Content-Length"] = str(size)
+    return StreamingResponse(chunks(), media_type=media, headers=headers)

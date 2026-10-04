@@ -191,7 +191,7 @@ def ticket_copy(ws, ref: str, sections) -> dict:
     (read once, hashed as read). A block whose file is missing or no longer matches its digest is not copied:
     {"blocks": [(section, fenced text)], "files": {name: bytes}, "skipped": [reason]}."""
     from orch.core import store
-    from orch.core.artifacts import read_pinned
+    from orch.core.artifacts import max_bytes, read_pinned
     from orch.widgets import artifacts
     from orch.widgets.blocks import ticket_blocks
     ticket = store.load(ws, ref)[1]
@@ -207,7 +207,7 @@ def ticket_copy(ws, ref: str, sections) -> dict:
         for r in artifacts.refs(data):
             name = artifacts.name_of(ticket.id, r["ref"])
             path = artifacts.resolve(ws, ticket.id, r["ref"]) if name else None
-            blob = read_pinned(path, r["sha256"]) if path is not None and isinstance(r["sha256"], str) else None
+            blob = read_pinned(path, r["sha256"], max_bytes(ws)) if path is not None and isinstance(r["sha256"], str) else None
             if blob is None:
                 failed = f"{r['ref']} is missing or changed since the widget was written"
                 break

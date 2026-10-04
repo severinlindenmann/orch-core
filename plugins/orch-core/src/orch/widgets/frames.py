@@ -66,7 +66,7 @@ def build(body: str, data, *, libs, ctx, title: str) -> str:
 
 
 def document(block, ctx) -> str:
-    from orch.core.artifacts import read_pinned
+    from orch.core.artifacts import max_bytes, read_pinned
     from orch.widgets import artifacts, registry, render
     from orch.widgets.validate import validate
     data = block.data or {}
@@ -90,7 +90,7 @@ def document(block, ctx) -> str:
             if path is None:
                 raise LookupError(f"{data['html']} is missing")
             pin = data.get("sha256")  # only the page the block's text pins runs: the full digest, of the bytes read
-            raw = read_pinned(path, pin) if isinstance(pin, str) and len(pin) == 64 else None
+            raw = read_pinned(path, pin, max_bytes(ctx.ws)) if isinstance(pin, str) and len(pin) == 64 else None
             if raw is None:
                 raise ValueError(f"{data['html']} changed since this widget was written")
             libs = data.get("libs", [])

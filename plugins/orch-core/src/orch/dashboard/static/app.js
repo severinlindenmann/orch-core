@@ -390,7 +390,7 @@
     const f = form.elements;
     const on = f.delegate && f.delegate.checked;
     if (f.factory && f.factory.checked) {  // AI Factory: its own limits, whatever the delegation fields say
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START AI FACTORY: up to 25 children or 72 hours, size ≤ m";
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START AI FACTORY: " + form.dataset.factoryConfirm;
       return;
     }
     form.dataset.inlineConfirm = form.dataset.charterConfirm + (on

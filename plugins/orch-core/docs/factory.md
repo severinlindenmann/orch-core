@@ -104,6 +104,8 @@ the dashboard's own cookie and same-origin checks apply, and orch refuses these 
 an agent harness, as it does for the terminal commands. Each is a signed ledger entry written by the same functions
 as `orch permit ...`, with the dashboard's inline confirm (no popup), bound to the hash of the command the card shows.
 
+- The human-only check runs in the dashboard process, as for approvals: keep the dashboard link and its cookie
+  yours, because a grant lets a command run.
 - **Start**: the epic's approval form has a "Start as an AI Factory" choice (25 children or 72 hours, size m or
   smaller); it is the same signed charter approval as `orch approve <epic> requirements --factory`.
 - **Epic page**: a factory section with the state, children used out of the limit and hours left, the epic's open

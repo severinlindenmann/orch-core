@@ -31,7 +31,7 @@
 {% endmacro %}
 
 {% macro grant_row(g, back) %}
-<li class="permit-grant" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code>
+<li class="permit-grant" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code> <span class="muted">{{ "for this epic" if g.scope == "epic" else "once, unused" }}</span>
   <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-inline-confirm="Confirm · revoke this grant">
     <input type="hidden" name="next" value="{{ back }}"><button type="submit" class="btn btn-quiet">Revoke</button>
   </form></li>

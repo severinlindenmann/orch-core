@@ -162,7 +162,7 @@ def test_grant_for_the_epic_then_revoke_from_the_epic_page(fws, fd, running):
     eid, cid, r = running
     _posts(fd, f"/permits/{r['id']}/grant", sha=r["sha"], scope="epic", next=f"/t/{eid}")
     page = fd.get(f"/t/{eid}").text
-    assert "Standing grants for this epic" in page and "make &lt;deploy&gt;" in page
+    assert "Standing grants" in page and "for this epic" in page and "make &lt;deploy&gt;" in page
     (g,) = [x for x in permits.grants(fws) if x["live"]]
     assert f"/permits/grants/{g['grant']}/revoke" in page
     resp = _posts(fd, f"/permits/grants/{g['grant']}/revoke", next=f"/t/{eid}")
@@ -272,3 +272,25 @@ def test_an_agent_request_cannot_close_or_answer_its_own_card(fws, fa, fd, runni
     permits.request(fws, fa.actor, store.load(fws, cid)[1], CMD)  # the same card, not a second
     assert len(permits.open_requests(fws)) == 1
     assert not [g for g in permits.grants(fws)]
+
+
+def test_a_card_shows_the_raw_command_the_grant_binds(fws, fa, fd, running):
+    eid, cid, _ = running
+    cmd = 'echo "a\\b" > f'
+    r = permits.request(fws, fa.actor, store.load(fws, cid)[1], cmd)
+    card = fd.get("/").text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
+    assert "echo &#34;a\\b&#34; &gt; f" in card and "\\\\" not in card  # quotes and backslash as written
+
+
+def test_an_unused_once_grant_is_listed_with_revoke(fws, fd, running):
+    eid, cid, r = running
+    _posts(fd, f"/permits/{r['id']}/grant", sha=r["sha"], scope="once", next=f"/t/{eid}")
+    page = fd.get(f"/t/{eid}").text
+    assert "once, unused" in page and "/revoke" in page
+
+
+def test_start_names_the_limits_from_the_defaults(fws, fa, fd):
+    e = fa.new("Epic", type="epic")
+    _refine(fa, e.id, plan=None)
+    page = fd.get(f"/t/{e.id}").text
+    assert 'data-factory-confirm="up to 25 children or 72 hours, size ≤ m"' in page

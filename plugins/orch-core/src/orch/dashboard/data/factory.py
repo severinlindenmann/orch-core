@@ -9,10 +9,16 @@ from orch import clock
 from orch.core import epics, permits, store
 
 
+def _raw(text) -> str:
+    """Text for a card: only characters outside printable ASCII (and newlines) are escaped, so a grantable command
+    (single line, printable ASCII) reads exactly as the raw text the grant binds, quotes and backslashes included."""
+    return "".join(c if 32 <= ord(c) < 127 else c.encode("unicode_escape").decode("ascii") for c in str(text))
+
+
 def _card(r: dict) -> dict:
     return {"id": r["id"], "epic": r["epic"], "ticket": r["ticket"], "sha": r["sha"], "short": r["sha"][7:15],
-            "command": permits.shown(r["command"]), "reason": permits.shown(r["reason"]),
-            "asked_by": permits.shown(r["actor"]), "source": permits.shown(r["source"]), "at": r["at"]}
+            "command": _raw(r["command"]), "reason": _raw(r["reason"]),
+            "asked_by": _raw(r["actor"]), "source": _raw(r["source"]), "at": r["at"]}
 
 
 def permit_view(ws, epic_id: str | None = None) -> dict | None:
@@ -22,8 +28,8 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
         return None
     keep = (lambda e: e.upper() == epic_id.upper()) if epic_id else (lambda e: True)
     reqs = [_card(r) for r in permits.open_requests(ws) if keep(str(r["epic"]))]
-    grants = [{"grant": g["grant"], "epic": g["epic"], "scope": g["scope"], "command": permits.shown(g["command"])}
-              for g in permits.grants(ws) if g["live"] and g["scope"] == "epic" and keep(str(g["epic"]))]
+    grants = [{"grant": g["grant"], "epic": g["epic"], "scope": g["scope"], "command": _raw(g["command"])}
+              for g in permits.grants(ws) if g["live"] and keep(str(g["epic"]))]
     cards = [c for c in permits.budget_cards(ws) if keep(str(c["epic"]))]
     return {"requests": reqs, "grants": grants, "budget": cards,
             "any": bool(reqs or grants or cards)}
@@ -34,8 +40,10 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
     `factory` is whether the signed charter is a factory one; None-free only while the switch is on."""
     if not permits.enabled(ws):
         return None
+    limits = {"max_children": epics.FACTORY_DEFAULTS["max_children"], "max_size": epics.FACTORY_DEFAULTS["max_size"],
+              "max_hours": epics.FACTORY_DEFAULTS["max_hours"]}
     if not d or not d.get("factory"):
-        return {"factory": False}
+        return {"factory": False, "limits": limits}
     used = epics.delegated_count(ws, epic.id, d["id"], events)
     left = None
     try:
@@ -51,7 +59,7 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
         state = "budget used up"
     else:
         state = "running"
-    return {"factory": True, "state": state, "children": used, "max_children": d["max_children"],
+    return {"factory": True, "limits": limits, "state": state, "children": used, "max_children": d["max_children"],
             "hours_left": left, "max_hours": d["max_hours"]}
 
 

@@ -142,7 +142,7 @@
   {% endfor %}
   {% set base = "Confirm · epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
   {#- app.js rewrites the label when the delegation fields change, so the confirm always says what is signed. -#}
-  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}" data-inline-confirm="{{ base }} · no delegation">
+  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}"{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, size ≤ {{ e.factory.limits.max_size }}"{% endif %} data-inline-confirm="{{ base }} · no delegation">
     <input type="hidden" name="gate" value="requirements">
     <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
     {% if e.factory %}
@@ -150,7 +150,7 @@
     <fieldset class="charter-factory" id="factory-start">
       <legend class="sr-only">AI Factory</legend>
       <label><input type="checkbox" name="factory" value="1"> <b>Start as an AI Factory</b>: agents split, specify, approve and build the children without asking you</label>
-      <p class="muted">Up to 25 children or 72 hours, whichever comes first; children of size m or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
+      <p class="muted">Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
     </fieldset>
     {% endif %}
     <fieldset class="charter-delegate">
@@ -186,7 +186,7 @@
   {% for c in p.budget %}{{ pm.budget_card(c) }}{% endfor %}
   {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#factory") }}{% endfor %}
   {% if p.grants %}
-  <h4>Standing grants for this epic</h4>
+  <h4>Standing grants</h4>
   <ul class="plain permit-grants">{% for g in p.grants %}{{ pm.grant_row(g, "/t/" ~ t.id ~ "#factory") }}{% endfor %}</ul>
   {% endif %}
 </section>

@@ -27,6 +27,7 @@ class Receipt:
     timed_out: bool
     commit: str | None
     dirty: bool
+    repo: str | None
     at: str
     seconds: int
     steps: list[dict] = field(default_factory=list)  # {name, run, status: pass|fail|skip, exit, timed_out, seconds}
@@ -39,6 +40,7 @@ class Receipt:
     def record(self) -> dict:
         """What the artifact entry keeps: everything but the output, which is the receipt file itself."""
         return {"exit": self.exit, "timed_out": self.timed_out, "commit": self.commit, "dirty": self.dirty,
+                "repo": self.repo,
                 "at": self.at, "seconds": self.seconds, "steps": [dict(s) for s in self.steps]}
 
 
@@ -86,6 +88,8 @@ def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, kee
     remaining steps are skipped unless `keep_going`; after a timeout they are always skipped."""
     commit = _git(cwd, "rev-parse", "HEAD")
     dirty = bool(commit and _git(cwd, "status", "--porcelain", "--untracked-files=no"))
+    top = _git(cwd, "rev-parse", "--show-toplevel")
+    repo = Path(top).name if top else None  # which checkout it ran in, by name: never a local path
     at, start = stamp_s(), time.monotonic()
     deadline = start + timeout
     import threading
@@ -93,13 +97,13 @@ def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, kee
     if threading.current_thread() is threading.main_thread():
         previous = signal.signal(signal.SIGTERM, _on_term)
     try:
-        return _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, at, start)
+        return _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, start)
     finally:
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
 
 
-def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, at, start) -> Receipt:
+def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, start) -> Receipt:
     done: list[dict] = []
     exit_code: int | None = 0
     timed_out = stop = False
@@ -130,7 +134,7 @@ def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, at, start) 
         log = out.read()
     if size > max_bytes:
         log = CUT + log[len(CUT):]
-    return Receipt(exit_code, timed_out, commit, dirty, at, int(time.monotonic() - start), done, log)
+    return Receipt(exit_code, timed_out, commit, dirty, repo, at, int(time.monotonic() - start), done, log)
 
 
 # -- the receipt as a widget ---------------------------------------------------------------------------------------

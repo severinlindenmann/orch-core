@@ -32,8 +32,26 @@ from pathlib import Path
 
 KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other", "receipt")
 RESERVED_KINDS = ("receipt",)  # written only by `orch task done --run` (orch.core.receipts)
-_RUN_KEYS = ("exit", "timed_out", "commit", "dirty", "at", "seconds", "check")
-_STEP_KEYS = ("name", "status", "seconds")  # no command: it is in the ticket file and the receipt, not on the phone
+_INT = lambda v: isinstance(v, int) and not isinstance(v, bool)  # noqa: E731
+# A receipt's facts for the ticket document, each only when well typed (a hand edit never reaches the phone as is);
+# no command: it stays in the ticket file and the receipt itself.
+_RUN_FACTS = {
+    "exit": lambda v: v is None or _INT(v), "timed_out": lambda v: isinstance(v, bool),
+    "commit": lambda v: v is None or (isinstance(v, str) and re.fullmatch(r"[0-9a-f]{40}", v) is not None),
+    "dirty": lambda v: isinstance(v, bool), "seconds": lambda v: _INT(v) and v >= 0,
+    "at": lambda v: isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z", v) is not None,
+    "check": lambda v: v is None or (isinstance(v, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", v) is not None),
+    "repo": lambda v: v is None or (isinstance(v, str) and re.fullmatch(r"[\w.-]{1,100}", v) is not None),
+}
+
+
+def run_facts(run: dict) -> dict:
+    out = {k: run[k] for k, ok in _RUN_FACTS.items() if k in run and ok(run[k])}
+    out["steps"] = [{"name": s["name"], "status": s["status"], **({"seconds": s["seconds"]} if _INT(s.get("seconds"))
+                                                                 and s["seconds"] >= 0 else {})}
+                    for s in run.get("steps") or [] if isinstance(s, dict) and isinstance(s.get("name"), str)
+                    and 0 < len(s["name"]) <= 60 and s.get("status") in ("pass", "fail", "skip")]
+    return out
 SOURCES = ("name", "url", "static")
 DEFAULT_MAX_MB = 50
 INLINE_MAX_BYTES = 10 * 1024 * 1024  # an inline image larger than this is shown as a link
@@ -464,9 +482,7 @@ def doc_items(ticket) -> list[dict]:
             item["by"] = e["by"]
         run = e.get("run")
         if kind == "receipt" and isinstance(run, dict):
-            item["run"] = {k: run[k] for k in _RUN_KEYS if k in run}
-            item["run"]["steps"] = [{k: s[k] for k in _STEP_KEYS if k in s} for s in run.get("steps") or []
-                                    if isinstance(s, dict)]
+            item["run"] = run_facts(run)
         out.append(item)
     return out
 

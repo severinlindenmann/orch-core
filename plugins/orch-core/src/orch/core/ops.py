@@ -621,6 +621,9 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict:
             _check_artifact_targets(t, task, ac)
             known = art.find(t, fname)
+            if isinstance(known, dict) and known.get("kind") == "receipt" and _run is None:
+                raise UsageError(f"{fname} is a receipt: only `orch task done --run` writes it",
+                                 hint="attach your file under another name with --name")
             if not in_place and dest.exists() and not replace:
                 raise ValidationError(f"artifact {entry.id}/{fname} already exists",
                                       hint="pass --name to store it under another name, or --replace")

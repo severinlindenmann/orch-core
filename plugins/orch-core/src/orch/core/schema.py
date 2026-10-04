@@ -110,6 +110,7 @@ def ticket_schema() -> dict:
                                    "exit": {"type": ["integer", "null"]}, "timed_out": {"type": "boolean"},
                                    "commit": {"type": ["string", "null"]}, "dirty": {"type": "boolean"},
                                    "at": _S, "seconds": {"type": "integer", "minimum": 0}, "check": _NS,
+                                   "repo": _NS,
                                    "steps": {"type": "array", "items": {"type": "object", "properties": {
                                        "name": _S, "status": {"enum": ["pass", "fail", "skip"]},
                                        "seconds": {"type": "integer", "minimum": 0}}}}}}}}},

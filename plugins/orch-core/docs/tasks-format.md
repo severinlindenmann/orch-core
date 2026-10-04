@@ -123,11 +123,12 @@ line itself, in the directory the agent stands in, and keeps what happened:
   never run: `--run` refuses it. After a failing step the rest are skipped unless `keep_going`. The timeout covers
   the whole run: `--timeout`, else the check's own `timeout` (seconds), else 540 s, under the 600 s an agent
   harness allows one shell call. On a timeout, Ctrl-C or SIGTERM the step's whole process group is killed.
-- Receipts and who added an artifact are orch's to write: `orch artifact add --kind receipt` is refused, and the
+- Receipts and who added an artifact are orch's to write: `orch artifact add --kind receipt`, and replacing a
+  receipt's file, are refused, and the
   guard refuses an agent's edit of the ticket file that adds or changes a receipt, its `run` or any entry's `by`.
 - The receipt is an artifact of the reserved kind `receipt`, `receipt-T<n>-<UTC stamp>.log`: each step's command
   and output (the tail, within the artifact size limit). Its entry carries `run`: `exit`, `timed_out`, `commit`,
-  `dirty`, `at`, `seconds`, `check` and `steps` (`name`, `run`, `status` pass|fail|skip, `exit`, `timed_out`,
+  `dirty`, `repo` (the checkout's folder name), `at`, `seconds`, `check` and `steps` (`name`, `run`, `status` pass|fail|skip, `exit`, `timed_out`,
   `seconds`).
 - Verification gets a core `gates` widget with the id `receipt-t<n>`: a row per step with its status and time,
   the receipt and the commit as its source. The next run of the same task replaces it.

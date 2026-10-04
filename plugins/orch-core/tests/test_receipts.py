@@ -65,7 +65,7 @@ def test_the_log_keeps_only_the_tail(tmp_path):
 
 def test_the_record_names_steps_and_commands_but_holds_no_log_or_path(tmp_path):
     rec = run_steps(_one("true"), tmp_path, timeout=30, max_bytes=1000).record()
-    assert set(rec) == {"exit", "timed_out", "commit", "dirty", "at", "seconds", "steps"}
+    assert set(rec) == {"exit", "timed_out", "commit", "dirty", "repo", "at", "seconds", "steps"}
     assert rec["steps"] == [{"name": "verify", "run": "true", "status": "pass", "exit": 0, "timed_out": False,
                              "seconds": 0}]
     assert str(tmp_path) not in repr(rec)

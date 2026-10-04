@@ -1082,13 +1082,16 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _STARTUP_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
-    if "config.json" in code and _CHECKS_WORD.search(code) and _is_write(cmd):
+    # checks: only a command that itself writes and names the orch config and `checks` (not a grep next to an
+    # unrelated write, not tsconfig.json)
+    if any(_CONFIG_JSON.search(seg) and _CHECKS_WORD.search(seg) and _is_write(seg) for seg in _command_segments(code)):
         return Decision(False, _CHECKS_DENIED)
     return ALLOW
 
 
 _WIDGETS_WORD = re.compile(r"\bwidgets\b")
 _CHECKS_WORD = re.compile(r"\bchecks\b")
+_CONFIG_JSON = re.compile(r"(?<![\w-])config\.json\b")
 _CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
                   "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
                   "orchestrator/config.json")

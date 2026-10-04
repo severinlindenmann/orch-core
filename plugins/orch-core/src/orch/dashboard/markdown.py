@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from dataclasses import dataclass, field
 from html import escape
 
@@ -295,7 +296,14 @@ def _text(self, tokens, idx, options, env):
     prefix = env.get("key_prefix") if isinstance(env, dict) else None
     if not prefix or env.get("_in_link"):
         return out
-    return _key_pattern(prefix).sub(lambda m: f'<a class="lnk key" href="/t/{m.group(1).upper()}">{m.group(1)}</a>', out)
+    return _url_key_pattern(prefix).sub(
+        lambda m: f'<a class="lnk key" href="/t/{m.group(1).upper()}">{m.group(1)}</a>', out)
+
+
+@lru_cache(maxsize=16)
+def _url_key_pattern(prefix: str):
+    """keys.link_keys' pattern, but never a key that is part of a path or URL (`https://e.com/L-22`, `a.L-1`)."""
+    return re.compile(rf"(?<![\w/.:=#?&-])({re.escape(prefix)}-\d+)(?![\w-])", re.IGNORECASE)
 
 
 def _counted_open(self, tokens, idx, options, env):

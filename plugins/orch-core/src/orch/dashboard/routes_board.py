@@ -7,13 +7,14 @@ from fastapi.responses import RedirectResponse
 
 from orch.clock import now as clock_now
 from orch.core import events as events_mod
-from orch.core import query, store
+from orch.core import permits, query, store
 from orch.core.constants import PRIORITIES, PRIORITY_RANK, SIZES, STATUSES, TYPES
 from orch.dashboard import launch
 from orch.dashboard.data import agents
 from orch.dashboard.data import cards as cards_data
 from orch.dashboard.data import decisions as decisions_data
 from orch.dashboard.data import epic as epic_data
+from orch.dashboard.data import factory as factory_data
 from orch.dashboard.data import metrics, timeline, today
 from orch.addons.runtime import clean_params
 from orch.dashboard.views import as_list, page
@@ -78,7 +79,7 @@ def decisions(request: Request, q: str = "", type_: str = Query("", alias="type"
                 flight_cards=today.FLIGHT_CARDS,
                 has_tickets=bool(entries), agent_cards=agent_cards,
                 ticket_status_labels=metrics.STATUS_LABELS, ticket_status_roles=metrics.STATUS_ROLES,
-                delegated_fyi=epic_data.delegated_fyi(ws, entries, all_events),
+                delegated_fyi=epic_data.delegated_fyi(ws, entries, all_events), permits=factory_data.permit_view(ws),
                 phone_receipts=timeline.phone_receipts(ws, all_events, now=at),
                 backlog_total=sum(1 for e in entries if e.status == "backlog"),
                 away=today.away(ws, events=all_events, entries=entries, now=at), away_hours=today.AWAY_HOURS)
@@ -330,6 +331,9 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
     if group in prefs.GROUPS:
         prefs.set_group_by(ws, group)
     group_by = group if group in prefs.GROUPS else prefs.group_by(ws)
+    factory_on = permits.enabled(ws)
+    if group_by == "factory" and not factory_on:
+        group_by = "none"  # AI Factory is off: its group is not offered
     # The External tab exists only while an enabled addon fills the board.external slot.
     external_tab = request.app.state.addons.declares("board.external")
     view = view if view in ("list", "external") else "board"
@@ -392,7 +396,11 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
     list_rows.sort(key=_sort_key(sort if view == "list" or not q else "move"), reverse=dir_ == "desc" and view == "list")
     groups = []
     if group_by != "none" and not (q and view == "board"):
-        groups = epic_data.lanes(ws, group_by, items, builder.epics)
+        index = builder.epics
+        if group_by == "factory":  # only the epics whose signed charter is a factory one
+            fids = factory_data.factory_epic_ids(ws, all_entries)
+            index = {k: v for k, v in index.items() if k in fids}
+        groups = epic_data.lanes(ws, group_by, items, index)
         for g in groups:
             g["rows"] = sorted((c for c in g["cards"] if "move" in c and (c["status"] != "done" or show_done)),
                                key=_sort_key(sort), reverse=dir_ == "desc")
@@ -423,7 +431,8 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
                 active_count=active, external_tab=external_tab, external_link="/board?view=external",
                 external_params=clean_params(request.query_params, drop=("view",)) if view == "external" else {}, list_rows=list_rows, list_columns=_LIST_COLUMNS, list_sortable=_SORTABLE, list_link=list_link,
                 status_labels=metrics.STATUS_LABELS, status_roles=metrics.STATUS_ROLES,
-                group_by=group_by, groups=groups, group_labels=epic_data.GROUP_LABELS,
+                group_by=group_by, groups=groups, permits=factory_data.permit_view(ws) if view == "board" else None,
+                group_labels={k: v for k, v in epic_data.GROUP_LABELS.items() if k != "factory" or factory_on},
                 board_link="/board" + ("?" + urlencode(keep) if keep else ""),
                 list_view_link="/board?" + urlencode(filters + [("view", "list")] + keep[len(filters):]),
                 moves=moves, strip=strip_cards, strip_max=STRIP_MAX, kind_labels=decisions_data.KIND_LABELS, flow=FLOW, flow_labels=FLOW_LABELS,

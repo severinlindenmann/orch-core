@@ -10,8 +10,10 @@ from orch.core.ids import normalize_ref
 
 # A Markdown link reference definition renders as nothing but is hashed: such text is shown raw (as on Today).
 _REF_DEF = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:")
-GROUP_LABELS = {"none": "None", "epic": "Epic", "sprint": "Sprint", "label": "Label", "agent": "Agent", "repo": "Repo"}
-NONE_LABELS = {"epic": "No epic", "sprint": "No sprint", "label": "No label", "agent": "No agent", "repo": "No repo"}
+GROUP_LABELS = {"none": "None", "epic": "Epic", "sprint": "Sprint", "label": "Label", "agent": "Agent", "repo": "Repo",
+                "factory": "Factory epic"}
+NONE_LABELS = {"epic": "No epic", "sprint": "No sprint", "label": "No label", "agent": "No agent", "repo": "No repo",
+               "factory": "Not in a factory"}
 
 
 def epic_index(entries) -> dict[str, dict]:
@@ -44,8 +46,10 @@ def group_keys(ws, entry, by: str, index: dict, sprint_names: dict | None = None
     """[(key, label)] of the groups `entry` belongs to ("" = the "No …" group). A ticket with two labels or repos
     appears under each."""
     meta = entry.meta if isinstance(entry.meta, dict) else {}
-    if by == "epic":
+    if by in ("epic", "factory"):  # factory: `index` holds only the factory epics (routes_board)
         if epics.is_epic(meta):
+            if by == "factory" and entry.id.upper() not in index:
+                return [("", NONE_LABELS[by])]
             return [(entry.id, str(meta.get("title") or entry.id))]
         e = epic_of(ws, meta, index)
         return [(e["id"], e["title"] or e["id"])] if e else [("", NONE_LABELS[by])]
@@ -88,7 +92,7 @@ def lanes(ws, by: str, items: list[tuple], index: dict) -> list[dict]:
     for entry, card in items:
         for key, label in group_keys(ws, entry, by, index, names):
             g = groups.setdefault(key, {"key": key, "label": label, "cards": [], "columns": {s: [] for s in STATUSES},
-                                        "epic": index.get(key.upper()) if by == "epic" and key else None})
+                                        "epic": index.get(key.upper()) if by in ("epic", "factory") and key else None})
             g["cards"].append(card)
             g["columns"][entry.status].append(card)
     out = [groups[k] for k in _order(ws, by, list(groups))]
@@ -181,7 +185,9 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
     open_kids = [r for r in rows if r["card"]["status"] != "done"]
     from orch.core.gates import invalidated_gates
     changed = [t.id for t in kids.values() if invalidated_gates(t)]  # re-approved before any verdict
-    s.update(rows=rows, approve=approve, proof=proof, unready=[c["blocker"] for c in approve if c["blocker"]], verdict_seen=epics.verdict_hash(kids.values(), ws),
+    from orch.dashboard.data import factory
+    s.update(factory=factory.epic_status(ws, epic, s["delegation"], events), permits=factory.permit_view(ws, epic.id),
+             rows=rows, approve=approve, proof=proof, unready=[c["blocker"] for c in approve if c["blocker"]], verdict_seen=epics.verdict_hash(kids.values(), ws),
              verdict_ready=bool(open_kids) and all(r["card"]["status"] == "testing" for r in open_kids)
              and epic.status == "open" and not changed, verdict_changed=changed,
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]

@@ -1,0 +1,44 @@
+{#- AI Factory (#2, phase 2): permission cards and standing grants. Every answer is a form of its own with the page's
+    inline confirm (no popups), bound to the sha256 of the command the card shows. Command and reason arrive escaped
+    (permits.shown): nothing the agent wrote can hide in them. -#}
+{% import "_ui.html" as ui %}
+
+{% macro request_card(r, back) %}
+<article class="card permit-card" data-permit="{{ r.id }}" aria-labelledby="pc-h-{{ r.id }}">
+  <div class="permit-head">{{ ui.status("you", "Permission") }} <b class="key" id="pc-h-{{ r.id }}">{{ r.id }}</b>
+    <span class="muted">epic <a class="lnk key" href="/t/{{ r.epic }}">{{ r.epic }}</a> · <a class="lnk key" href="/t/{{ r.ticket }}">{{ r.ticket }}</a> asks</span></div>
+  <pre class="permit-cmd" aria-label="The exact command">{{ r.command }}</pre>
+  {% if r.reason %}<p class="permit-reason"><span class="muted">Reason:</span> {{ r.reason }}</p>{% endif %}
+  <p class="muted permit-meta">by {{ r.asked_by }} via {{ r.source }} · {{ r.short }}…</p>
+  <div class="actions">
+    {% for label, scope, action in (("Grant once", "once", "grant"), ("Grant for this epic", "epic", "grant"), ("Deny", "", "deny")) %}
+    <form method="post" action="/permits/{{ r.id }}/{{ action }}" class="inline-confirm-form" data-inline-confirm="Confirm · {{ label|lower }} · {{ r.id }}">
+      <input type="hidden" name="sha" value="{{ r.sha }}"><input type="hidden" name="next" value="{{ back }}">
+      {% if scope %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
+      <button type="submit" class="btn{{ ' btn-primary' if scope == 'once' }}">{{ label }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</article>
+{% endmacro %}
+
+{% macro budget_card(c) %}
+<article class="card permit-card permit-budget" data-budget="{{ c.epic }}">
+  <div class="permit-head">{{ ui.status("warn", "Budget used up") }} <a class="lnk key" href="/t/{{ c.epic }}">{{ c.epic }}</a> {{ c.title }}</div>
+  <p>{{ c.reason }}. Agents stopped on this epic; you decide how it goes on.</p>
+  <a class="btn" href="/t/{{ c.epic }}#factory">Open the epic</a>
+</article>
+{% endmacro %}
+
+{% macro grant_row(g, back) %}
+<li class="permit-grant" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code>
+  <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-inline-confirm="Confirm · revoke this grant">
+    <input type="hidden" name="next" value="{{ back }}"><button type="submit" class="btn btn-quiet">Revoke</button>
+  </form></li>
+{% endmacro %}
+
+{#- The cards of a permit_view: used-up budgets, then open requests. Standing grants stay on the epic page. -#}
+{% macro cards(view, back) %}
+{% for c in view.budget %}{{ budget_card(c) }}{% endfor %}
+{% for r in view.requests %}{{ request_card(r, back) }}{% endfor %}
+{% endmacro %}

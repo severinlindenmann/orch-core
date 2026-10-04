@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
+{% import "_permits.html" as pm %}
 {% import "_ticket_card.html" as tc %}
 {% from "_start_agent.html" import start_agent %}
 {% from "_tasks.html" import tasks_card as render_tasks %}
@@ -144,6 +145,14 @@
   <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}" data-inline-confirm="{{ base }} · no delegation">
     <input type="hidden" name="gate" value="requirements">
     <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
+    {% if e.factory %}
+    {#- AI Factory (factory.enabled): Start is this same signed approval, with the factory's limits. Yours only. -#}
+    <fieldset class="charter-factory" id="factory-start">
+      <legend class="sr-only">AI Factory</legend>
+      <label><input type="checkbox" name="factory" value="1"> <b>Start as an AI Factory</b>: agents split, specify, approve and build the children without asking you</label>
+      <p class="muted">Up to 25 children or 72 hours, whichever comes first; children of size m or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
+    </fieldset>
+    {% endif %}
     <fieldset class="charter-delegate">
       <legend class="sr-only">Delegation</legend>
       <label><input type="checkbox" name="delegate" value="1"> Let agents approve the children they add to this epic</label>
@@ -165,6 +174,24 @@
 </section>
 {% endmacro %}
 
+{% macro factory_panel(e) %}
+{% set f, p = e.factory, e.permits %}
+<section class="epic-factory" id="factory" aria-labelledby="factory-h">
+  <h3 id="factory-h">AI Factory</h3>
+  {% if not f.factory %}<p class="muted">Not started as a factory. Start it when you approve the epic, above.</p>
+  {% else %}
+  <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
+    <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
+  {% endif %}
+  {% for c in p.budget %}{{ pm.budget_card(c) }}{% endfor %}
+  {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#factory") }}{% endfor %}
+  {% if p.grants %}
+  <h4>Standing grants for this epic</h4>
+  <ul class="plain permit-grants">{% for g in p.grants %}{{ pm.grant_row(g, "/t/" ~ t.id ~ "#factory") }}{% endfor %}</ul>
+  {% endif %}
+</section>
+{% endmacro %}
+
 {% macro epic_children(e) %}
 <section class="epic-children" id="epic-children" aria-labelledby="epic-children-h">
   <h3 id="epic-children-h">Children <span class="count">{{ e.rows|length }}</span></h3>
@@ -172,6 +199,7 @@
   <div class="tc-rows">{% for r in e.rows %}{{ tc.row(r.card) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}</p>{% endfor %}</div>
   {% else %}<p class="muted">No children yet. Agents add them with <code>orch new --epic {{ t.id }}</code>; you can link existing tickets on their page or with <code>orch link &lt;ticket&gt; --epic {{ t.id }}</code>.</p>{% endif %}
 </section>
+{% if e.factory %}{{ factory_panel(e) }}{% endif %}
 {% set d = e.delegation %}
 <section class="epic-delegation" id="epic-delegation" aria-labelledby="epic-delegation-h">
   <h3 id="epic-delegation-h">Delegation</h3>

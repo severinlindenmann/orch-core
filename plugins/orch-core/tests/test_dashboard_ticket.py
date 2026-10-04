@@ -88,25 +88,21 @@ def _iframe(tid, name):
     return f'<iframe class="preview" sandbox src="/a/{tid}/{name}"'
 
 
-def test_html_artifact_a_widget_frame_draws_gets_no_second_preview(dash, put, aops, tmp_path):
+def test_html_artifact_a_widget_frame_draws_gets_no_second_preview(html_on, dash, put, aops, tmp_path):
     tid = _preview_case(put, aops, tmp_path, lambda good: good)
     body = dash.get(f"/t/{tid}").text
     assert _iframe(tid, "other.html") in body and _iframe(tid, "drawn.html") not in body
 
 
-def test_a_wrong_pin_keeps_the_artifact_preview(dash, put, aops, tmp_path):
+def test_a_wrong_pin_keeps_the_artifact_preview(html_on, dash, put, aops, tmp_path):
     tid = _preview_case(put, aops, tmp_path, lambda good: "0" * 64)
     body = dash.get(f"/t/{tid}").text
     assert _iframe(tid, "drawn.html") in body and _iframe(tid, "other.html") in body
 
 
-def test_html_off_keeps_the_artifact_preview(put, aops, tmp_path, configure, ws):
-    from fastapi.testclient import TestClient
-    from orch.dashboard.app import create_app
+def test_html_off_keeps_the_artifact_preview(dash, put, aops, tmp_path):  # no html_on: agent HTML is off
     tid = _preview_case(put, aops, tmp_path, lambda good: good)
-    client = TestClient(create_app(configure(widgets={"html": False}), "tok"))
-    assert client.get("/?token=tok").status_code == 200
-    assert _iframe(tid, "drawn.html") in client.get(f"/t/{tid}").text
+    assert _iframe(tid, "drawn.html") in dash.get(f"/t/{tid}").text
 
 
 @pytest.mark.parametrize("path", [

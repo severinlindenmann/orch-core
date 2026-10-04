@@ -282,3 +282,52 @@ def test_page_file_route_refuses_symlinks_non_media_and_a_block_with_an_error(da
     _serve(dash, text)
     assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 404
     assert dash.get(f"/wpf/wiki/{sha(html_blob)}?page=p").status_code == 404
+
+
+def test_page_file_route_serves_only_valid_unique_blocks(dash, ws):
+    ref = put_file(ws, "a.png", PNG)
+    _serve(dash, fence({**compare(ref, sha(PNG)), "bogus": 1}))  # a schema error: its file is not served
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 404
+    _serve(dash, fence({**compare(ref, sha(PNG)), "id": "x"}) + "\n\n" + fence({**compare(ref, sha(PNG)), "id": "x"}))
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 404  # an id used twice, as /wp/
+    _serve(dash, fence({**compare(ref, sha(PNG)), "id": "x"}) + "\n\n" + fence({**compare(ref, sha(PNG)), "id": "y"}))
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p").status_code == 200
+
+
+def _ranges(get, url):
+    full = get(url)
+    assert full.status_code == 200 and full.headers["accept-ranges"] == "bytes"
+    n = len(full.content)
+    for rng, code, want, cr in (("bytes=2-5", 206, full.content[2:6], f"bytes 2-5/{n}"),
+                                ("bytes=10-", 206, full.content[10:], f"bytes 10-{n - 1}/{n}"),
+                                ("bytes=-7", 206, full.content[-7:], f"bytes {n - 7}-{n - 1}/{n}"),
+                                (f"bytes=0-{n + 99}", 206, full.content, f"bytes 0-{n - 1}/{n}"),
+                                (f"bytes={n}-", 416, b"", f"bytes */{n}"),
+                                ("bytes=-0", 416, b"", f"bytes */{n}"),
+                                ("bytes=0-1,4-5", 200, full.content, None),
+                                ("bytes=5-2", 200, full.content, None),
+                                ("items=0-1", 200, full.content, None)):
+        r = get(url, headers={"Range": rng})
+        assert (r.status_code, r.content) == (code, want), rng
+        assert r.headers.get("content-range") == cr, rng
+        assert r.headers["x-content-type-options"] == "nosniff" and r.headers["accept-ranges"] == "bytes", rng
+        assert "sandbox" in r.headers["content-security-policy"], rng
+
+
+def test_page_file_route_honours_one_byte_range_of_the_verified_bytes(dash, ws):
+    ref = put_file(ws, "a.png", PNG)
+    _serve(dash, fence(compare(ref, sha(PNG))))
+    _ranges(dash.get, f"/wpf/wiki/{sha(PNG)}?page=p")
+    (ws.root / FOLDER / pages.FILES / "a.png").write_bytes(b"swapped")
+    assert dash.get(f"/wpf/wiki/{sha(PNG)}?page=p", headers={"Range": "bytes=0-3"}).status_code == 404  # no digest, no bytes
+
+
+def test_pinned_artifact_route_honours_one_byte_range(dash, ws, aops, working, tmp_path):
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42" + bytes(range(64)))
+    aops.artifact_add(working, src)
+    sha_ = next(a for a in __import__("orch.core.store", fromlist=["load"]).load(ws, working)[1].meta["artifacts"]
+                if a["name"] == "clip.mp4")["sha256"]
+    _ranges(dash.get, f"/a/{working}/clip.mp4?v={sha_}")
+    (ws.artifacts_dir / working / "clip.mp4").write_bytes(b"swapped")
+    assert dash.get(f"/a/{working}/clip.mp4?v={sha_}", headers={"Range": "bytes=0-3"}).status_code == 409

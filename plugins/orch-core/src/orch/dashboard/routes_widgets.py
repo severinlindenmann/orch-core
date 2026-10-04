@@ -98,8 +98,6 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
     video only; nosniff, no-store and `sandbox`, so an SVG opened on its own cannot run."""
     import mimetypes
 
-    from fastapi.responses import Response
-
     from orch.addons.loader import valid_name
     from orch.core.artifacts import max_bytes, read_pinned
     from orch.widgets import artifacts
@@ -115,7 +113,12 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
     text, folder = found
     ctx = page_ctx(request.app.state.ws, addon, page, folder)
-    blocks = [b for b in blocks_of(text, ctx.ticket) if not b.error and b.index < MAX_BLOCKS]
+    from orch.dashboard.ranges import ranged
+    from orch.widgets.pages import check_page
+    every = check_page(text, ctx.ticket, ctx.ws)
+    twice = duplicate_ids(every)  # as /wp/: a block whose id the page uses twice is not served
+    blocks = [b for b in every if b.index < MAX_BLOCKS and not b.error and (b.data or {}).get("id") not in twice
+              and not any(p.level == "error" and p.code not in ("widget-digest", "widget-drift") for p in b.problems)]
     refs = {r["ref"] for b in blocks for r in artifacts.refs(b.data) if r["sha256"] == digest}
     path = next((p for ref in sorted(refs) if (p := artifacts.resolve(ctx.ws, ctx.ticket.id, ref)) is not None), None)
     kind = mimetypes.guess_type(path.name)[0] if path else None
@@ -124,8 +127,8 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
     data = read_pinned(path, digest, max_bytes(ctx.ws))
     if data is None:
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
-    return Response(data, media_type=kind, headers={"Content-Security-Policy": "sandbox",
-                                                     "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+    return ranged(request, data, kind, {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff",
+                                        "Cache-Control": "no-store"})
 
 
 @router.get("/w/{ref}/{section}/{digest}")

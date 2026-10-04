@@ -2,7 +2,7 @@
 
 ## 0.4.0
 
-- The Usage page is charts: limit cards with reset time and a pace sentence, output tokens by model per day (last 7 / 30 days, or per calendar week), how much of this week's output is tied to a ticket, output per ticket, limits history with real time spacing, and the API-price equivalent per calendar week. The ticket table stays at the bottom. Days and calendar weeks are in the machine's local zone; limits history shows clock times; the menu line reads 5 h 51 % · in 3 h 11. Needs orch API 2.6 (the Chart widget, with time axis).
+- The Usage page is charts: limit cards with reset time and a pace sentence, output tokens by model per day (last 7 / 30 days, or per calendar week), how much of this week's output is tied to a ticket, output per ticket, limits history with real time spacing, and the API-price equivalent per calendar week. The ticket table stays at the bottom. Days and calendar weeks are in the machine's local zone; limits history shows clock times; the menu line reads 51% in 3 h 11. Needs orch API 2.6 (the Chart widget, with time axis).
 
 ## 0.3.0
 

@@ -201,18 +201,18 @@ def test_menu_chip_is_the_weekly_percent_coloured_by_it_with_a_five_hour_line():
     t = mk(30, 39).badge.title
     assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
     line = mk(35, 39).line
-    assert [type(p).__name__ for p in line] == ["Text", "Badge", "Text", "Countdown"]
-    assert (line[0].text, line[1].text, line[1].role, line[2].text) == ("5 h", "35 %", "ok", "·")
-    assert mk(75, 1).line[1].role == "warn" and mk(95, 1).line[1].role == "err"
+    assert [type(p).__name__ for p in line] == ["Badge", "Countdown"]
+    assert line[0].role == "ok" and line[0].text == "35%"
+    assert mk(75, 1).line[0].role == "warn" and mk(95, 1).line[0].role == "err"
 
 
 def test_menu_chip_reset_five_hour_window_no_week_and_no_data():
     now = 1_000_000.0
     st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
     assert st.badge.text == "40 %" and "5-hour 0 % · reset · week 40 %" in st.badge.title
-    assert [p.text for p in st.line] == ["5 h · reset"]
+    assert [p.text for p in st.line] == ["5h reset"]
     st = T.menu_chip(_limits_snap(five=35, week=None, five_reset=now + 60), now)
-    assert st.badge is None and st.line[1].text == "35 %"
+    assert st.badge is None and st.line[0].text == "35%"
     assert T.menu_chip(_limits_snap(), now) is None and T.menu_chip([], now) is None
     assert T.menu_chip(_limits_snap(five=None, week=None), now) is None
 

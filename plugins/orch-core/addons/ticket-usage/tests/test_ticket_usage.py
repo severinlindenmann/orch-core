@@ -202,7 +202,7 @@ def test_menu_chip_is_the_weekly_percent_coloured_by_it_with_a_five_hour_line():
     assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
     line = mk(35, 39).line
     assert [type(p).__name__ for p in line] == ["Text", "Badge", "Text", "Countdown"]
-    assert (line[0].text, line[1].text, line[1].role, line[2].text) == ("5 h", "35 %", "ok", "· resets")
+    assert line[0].text == "5h" and line[1].role == "ok" and line[1].text == "35%"
     assert mk(75, 1).line[1].role == "warn" and mk(95, 1).line[1].role == "err"
 
 
@@ -210,9 +210,9 @@ def test_menu_chip_reset_five_hour_window_no_week_and_no_data():
     now = 1_000_000.0
     st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
     assert st.badge.text == "40 %" and "5-hour 0 % · reset · week 40 %" in st.badge.title
-    assert [p.text for p in st.line] == ["5 h · reset"]
+    assert [p.text for p in st.line] == ["5h reset"]
     st = T.menu_chip(_limits_snap(five=35, week=None, five_reset=now + 60), now)
-    assert st.badge is None and st.line[1].text == "35 %"
+    assert st.badge is None and st.line[1].text == "35%"
     assert T.menu_chip(_limits_snap(), now) is None and T.menu_chip([], now) is None
     assert T.menu_chip(_limits_snap(five=None, week=None), now) is None
 
@@ -232,6 +232,158 @@ def test_page_rows_are_tickets_by_output_then_shared_then_unlinked():
     items = (it("unlinked", "u", 9999), it("shared", "s", 5000), it("ticket", "B-1", 10), it("ticket", "B-2", 300),
              {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": None})
     out = T.page([Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=items)], True)
-    table = next(w for w in out if w.kind == "table")
+    table = next(w for c in out if c.kind == "card" and c.title == "Details" for w in c.body)
     assert [r[0] for r in table.rows] == ["B-2", "B-1", "Shared orchestrator (0 tickets)", "Not linked to a ticket"]
     assert table.rows[0][1] == "Opus 5.5"
+
+
+# -- charts page --------------------------------------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from orch.addons.api import Snapshot  # noqa: E402
+from orch.addons.widgets import widget_problems  # noqa: E402
+
+NOW = data.to_epoch("2026-10-04T12:00:00Z")
+
+
+def _walk(ws):
+    for w in ws:
+        yield w
+        for c in getattr(w, "body", ()) or ():
+            yield from _walk([c])
+        if w.kind == "kv":
+            yield from _walk([v for _, v in w.rows if not isinstance(v, str)])
+
+
+def _snap(**stats):
+    base = {"id": "stats", "kind": "stats", "label": "Stats", "role": "neu", "text": "", "built": NOW, "files": 3,
+            "daily": {}, "cost_days": {}, "attrib": {"none": 0, "shared": 0, "ticket": 0}, "top": [], "history": []}
+    base.update(stats)
+    lim = {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": None, "pace": {}}
+    return [Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=(lim, base))]
+
+
+def _charts(ws):
+    return [w for w in _walk(ws) if w.kind == "chart"]
+
+
+def _valid(ws):
+    for w in _walk(ws):
+        assert widget_problems(w, slot=PAGE, manifest=MANIFEST) == [], w
+
+
+def test_daily_output_per_family_counts_each_reply_once_incl_subagents_and_weeks_cost_and_highs(tmp_path):
+    session(tmp_path, SID, [reply("a", 100, "2026-10-01T10:00:00Z"), reply("a", 150, "2026-10-01T10:00:01Z"),
+                            reply("b", 40, "2026-10-02T10:00:00Z", "claude-sonnet-5"),
+                            reply("c", 7, "2026-10-02T11:00:00Z", "mystery-1"),
+                            cost(1, 3.0, models={"claude-opus-5-5": 3.0})],
+            subs=[("x", [reply("s", 10, "2026-10-01T11:00:00Z", "claude-haiku-4-5")])])
+    session(tmp_path, OTHER, [reply("d", 5, "2026-10-01T12:00:00Z")])
+    stats = build(tmp_path, [])["stats"]
+    assert stats["daily"] == {"2026-10-01": [155, 0, 10, 0, 0], "2026-10-02": [0, 40, 0, 0, 7]}
+    assert stats["cost_days"] == {"2026-10-02": 3.0}  # booked on the day the session ended
+    assert data.monday_of("2026-10-04") == "2026-09-28" and data.monday_of("2026-10-05") == "2026-10-05"
+
+
+def test_limit_history_keeps_new_highs_per_window_with_real_timestamps(tmp_path):
+    log = [{"at": f"2026-10-04T10:0{i}:00Z", "five": five, "five_reset": 9000, "week": week, "week_reset": 99000}
+           for i, (five, week) in enumerate([(10, 40), (12, 40), (11, 41), (13, 41)])]
+    rows = data.read_limits(str(_write_log(tmp_path, log)))
+    hist = data.limit_history(rows, 0)
+    assert [(h[1], h[2]) for h in hist] == [(10, 40), (12, 40), (12, 41), (13, 41)]  # the stale 11 is not a new high
+    assert hist[1][0] - hist[0][0] == 60
+
+
+def _write_log(tmp_path, rows):
+    p = tmp_path / "limits.jsonl"
+    limits(p, rows)
+    return p
+
+
+def test_range_tabs_each_render_a_stacked_chart_within_eight_series():
+    daily = {f"2026-09-{d:02d}": [1000 * d, 50, 0, 0, 5] for d in range(10, 31)} | {"2026-10-03": [9000, 0, 0, 1, 0]}
+    for rng, n in (("week", 7), ("month", 30), ("all", None), (None, 30), ("bogus", 30)):
+        ws = T.page(_snap(daily=daily), True, {"range": rng} if rng else {}, NOW)
+        _valid(ws)
+        main = _charts(ws)[0]
+        assert main.stacked and 1 <= len(main.series) <= 8
+        if n:
+            assert len(main.labels) == n
+        tabs = next(w for w in _walk(ws) if w.kind == "tabs")
+        assert [t.current for t in tabs.items].count(True) == 1
+    caption = [w.text for w in _walk(T.page(_snap(daily=daily), True, {"range": "all"}, NOW)) if w.kind == "text"]
+    assert any("to 04 Oct, by calendar week" in t for t in caption)
+    all_labels = _charts(T.page(_snap(daily=daily), True, {"range": "all"}, NOW))[0].labels
+    assert all_labels[0].startswith("W37 · 07 Sep (from ")  # the first week is marked partial
+
+
+def test_zero_total_and_one_day_and_not_ready_states():
+    zero = T.page(_snap(daily={"2026-10-03": [0] * 5, "2026-10-04": [0] * 5}), True, {}, NOW)
+    _valid(zero)
+    assert any(w.kind == "text" and w.text == "No output in this range." for w in _walk(zero))
+    assert not _charts(zero)
+    one = T.page(_snap(daily={"2026-10-04": [500, 0, 0, 0, 0]}), True, {}, NOW)
+    _valid(one)
+    assert not any(w.kind == "tabs" for w in _walk(one)) and not _charts(one)
+    assert "Reading transcripts" in T.page([], True)[0].text
+    assert T.page(_snap(), True, {}, NOW)  # no data at all still renders
+
+
+def test_limit_cards_pace_and_recorder_off():
+    off = T.page(_snap(), True, {}, NOW)
+    assert off[0].kind == "callout" and "statusLine" in off[0].text
+    snap = _snap()
+    reading = {"first_ts": NOW - 2400, "last_ts": NOW, "first": 25.0, "last": 36.0, "n": 5, "reset": NOW + 3600}
+    snap[0].items[0].update(last={"at": "2026-10-04T12:00:00Z", "five": 36, "five_reset": NOW + 3600, "week": 41,
+                                  "week_reset": NOW + 86400 * 3},
+                            pace={"five": reading, "week": dict(reading, last_ts=NOW - 100, first_ts=NOW - 7200)})
+    out = T.page(snap, True, {}, NOW)
+    _valid(out)
+    texts = [w.text for w in _walk(out) if w.kind == "text"]
+    assert any(t.startswith("Up 11 points in 40 min. At that pace it would reach 100 % around ") and t.endswith("after the reset.") for t in texts)
+    assert any("no weekly pace yet" in t for t in texts)
+    assert any(w.kind == "time" for w in _walk(out))
+    assert T._pace_text({"n": 1, "first_ts": 0, "last_ts": 0, "first": 5, "last": 5}, "five", NOW + 1, NOW) is None
+
+
+def test_attribution_top_history_and_cost_charts():
+    snap = _snap(daily={"2026-10-03": [10, 0, 0, 0, 0], "2026-10-04": [10, 0, 0, 0, 0]},
+                 attrib={"none": 800, "shared": 100, "ticket": 100}, top=[("B-1", 70), ("B-2", 30)],
+                 history=[[NOW - 7200, 10.0, 30.0], [NOW - 3600, 20.0, 31.0], [NOW, 25.0, 32.0]],
+                 cost_days={"2026-09-30": 10.0, "2026-10-02": 5.0, "2026-10-06": 1.5})
+    out = T.page(snap, True, {}, NOW)
+    _valid(out)
+    by = {c.series[0].name: c for c in _charts(out)}
+    attrib, topc = [c for c in _charts(out) if c.horizontal]
+    assert attrib.labels == ("No ticket claimed", "Shared runs, not split", "Tied to one ticket") and topc.labels == ("B-1", "B-2")
+    line = by["Week"]
+    assert line.style == "line" and line.x == "time" and line.labels == (round(NOW - 7200), round(NOW - 3600), round(NOW))
+    cost = by["USD"]
+    assert cost.labels == ("W40 · 28 Sep", "W41 · 05 Oct") and cost.series[0].values == (15.0, 1.5)
+    assert any("10 % can be tied to a single ticket. 80 % comes from sessions" in w.text for w in _walk(out) if w.kind == "text")
+    assert not any(c.series[0].name == "USD" for c in _charts(T.page(snap, False, {}, NOW)))
+
+
+def test_days_and_weeks_follow_the_machine_zone(monkeypatch):
+    import time as _t
+    monkeypatch.setenv("TZ", "Pacific/Auckland")  # UTC+13 in October: 2026-10-03 23:00Z is already 04 Oct
+    _t.tzset()
+    assert data.day_of(data.to_epoch("2026-10-03T23:00:00Z")) == "2026-10-04"
+    assert data.monday_of(data.day_of(data.to_epoch("2026-10-04T12:00:00Z"))) == "2026-10-05"  # Sunday 12:00Z is Monday there
+
+
+def test_hostile_limit_readings_never_break_the_pace(tmp_path):
+    """Review of PR 70: Infinity or a tiny rise in the log must not raise; readings above 100 become unknown."""
+    log = tmp_path / "limits.jsonl"
+    log.write_text("\n".join([
+        '{"at": "2026-10-04T10:00:00Z", "five": 10, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:10:00Z", "five": Infinity, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:20:00Z", "five": 10.0000000000001, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:30:00Z", "five": 250, "five_reset": 1791146400}']) + "\n")
+    rows = data.read_limits(str(log))
+    assert [r["five"] for r in rows] == [10, None, 10.0000000000001, None]
+    p = data.pace(rows, "five")
+    assert "too slow" in T._pace_text(p, "five", 1791146400, 1791120000)
+    full = {"n": 2, "first_ts": 1, "last_ts": 61, "first": 90, "last": 100}
+    assert T._pace_text(full, "five", 99999, 61) == "The limit is reached; it frees up at the reset."

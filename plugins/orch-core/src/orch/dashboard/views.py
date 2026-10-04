@@ -161,6 +161,17 @@ def widget_time(at: str, style: str = "ago") -> tuple[str, str]:
 
 TEMPLATES.env.filters["ago"] = ago
 TEMPLATES.env.filters["local"] = local
+
+
+def epoch_local(seconds) -> str:
+    """Epoch seconds as the server's local wall-clock time (a time-axis chart's table row)."""
+    try:
+        return datetime.fromtimestamp(float(seconds)).strftime("%d.%m. %H:%M")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(seconds)
+
+
+TEMPLATES.env.filters["epoch_local"] = epoch_local
 TEMPLATES.env.globals["widget_time"] = widget_time
 
 

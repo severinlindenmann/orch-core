@@ -1130,7 +1130,7 @@
     const s = (Date.parse(el.dataset.until) - Date.now()) / 1000;
     if (isNaN(s)) return;
     const m = Math.floor(s / 60);
-    el.textContent = s <= 0 ? el.dataset.done : m >= 60 ? "in " + Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0") : "in " + Math.max(m, 1) + " min";
+    el.textContent = s <= 0 ? el.dataset.done : m >= 60 ? Math.floor(m / 60) + "h" + String(m % 60).padStart(2, "0") : Math.max(m, 1) + " min";
   });
   if (document.querySelectorAll && typeof setInterval === "function") {
     tick();

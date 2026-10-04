@@ -26,6 +26,8 @@ def test_a_valid_chart_passes_alone_and_in_a_card():
     assert problems(Card("Runs", (ok(stacked=True, series=(ChartSeries("A", (1, 2), "series-2", "x"),
                                                                ChartSeries("B", (1, 2), "ok-mark", "x"))),))) == []
     assert problems(ok(x="linear", labels=(0, 2.5), style="line", unit="h")) == []
+    assert problems(ok(x="time", labels=(1_790_000_000, 1_790_003_600), style="line")) == []
+    assert problems(ok(title="")) == []
 
 
 @pytest.mark.parametrize("w, needle", [
@@ -37,6 +39,8 @@ def test_a_valid_chart_passes_alone_and_in_a_card():
     (ok(labels=()), "labels"),
     (ok(labels=("a", 2)), "labels[1]"),
     (ok(x="linear"), "number"),
+    (ok(x="time"), "number"),
+    (ok(x="time", labels=(1, 2), horizontal=True), "horizontal"),
     (ok(series=()), "series"),
     (ok(series=tuple(ChartSeries(f"s{i}", (1, 2)) for i in range(9))), "series"),
     (ok(series=(ChartSeries("A", (1,)),)), "one number per label"),
@@ -104,3 +108,12 @@ def test_eight_series_never_share_a_colour():
     w = ok(labels=("a",), series=tuple(ChartSeries(f"s{i}", (i,)) for i in range(8)))
     assert problems(w) == []
     assert len({s["token"] for s in w.spec()["series"]}) == 8
+
+
+def test_an_untitled_chart_has_no_heading_but_an_aria_label_and_a_time_table_shows_clock_times(dash):
+    from orch.dashboard.views import TEMPLATES
+    w = ok(title="", x="time", style="line", labels=(1_790_000_000, 1_790_003_600))
+    html = TEMPLATES.env.from_string('{% import "_widgets.html" as w %}{{ w.widget(x, g) }}').render(
+        x=w, g=type("G", (), {"addon": "a", "uploads": ()})())
+    assert "chart-title" not in html and 'aria-label="Passed"' in html
+    assert re.search(r"<th scope=\"row\">\d\d\.\d\d\. \d\d:\d\d</th>", html)

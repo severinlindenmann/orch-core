@@ -192,14 +192,29 @@ def _ran_ticket(put, harness="claude-code", sid=SID):
 def test_ticket_page_shows_ran_on_models(dash, put, claude):
     _sub(claude, "c", model="claude-sonnet-5-5")
     html = dash.get(f"/t/{_ran_ticket(put)}").text
-    assert 'id="ran-on"' in html and "Opus 5.5" in html and "1 × Sonnet 5.5" in html
+    assert 'id="ran-on"' in html and "Claude Code" in html and "Opus 5.5" in html and "1 × Sonnet 5.5" in html
 
 
 def test_ticket_page_ran_on_missing_transcript_and_other_harness(dash, put, claude):
     html = dash.get(f"/t/{_ran_ticket(put, sid='gone')}").text
     assert "not on this machine" in html
     html = dash.get(f"/t/{_ran_ticket(put, harness='codex')}").text
-    assert 'id="ran-on"' in html and "codex" in html and "not on this machine" not in html
+    assert 'id="ran-on"' in html and "Codex" in html and "not on this machine" not in html
+
+
+def test_a_reply_logged_once_per_block_counts_once_with_its_last_usage(tmp_path):
+    """Claude Code writes one line per content block of a reply, all with the same message id."""
+    path = tmp_path / "s.jsonl"
+    first, last = _assistant([{"type": "text", "text": "a"}], out=1), _assistant([{"type": "text", "text": "b"}], out=40)
+    first["message"]["id"] = last["message"]["id"] = "msg_1"
+    other = _assistant([{"type": "text", "text": "c"}], out=5)
+    other["message"]["id"] = "msg_2"
+    _write(path, [first, last])
+    t = agentinfo.Transcript(path)
+    t.update()
+    _write(path, [other])
+    t.update()
+    assert t.models["claude-opus-5-5"] == 2 and t.tokens["output"] == 45 and t.tokens["cache_read"] == 200
 
 
 def test_ticket_page_without_sessions_has_no_ran_on(dash, put, claude):

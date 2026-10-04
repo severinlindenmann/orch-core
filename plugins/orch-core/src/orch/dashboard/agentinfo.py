@@ -53,6 +53,7 @@ class Transcript:
         self.model = None
         self.models: Counter = Counter()
         self.tokens: Counter = Counter()
+        self._usage: dict = {}  # message id → its token counts, so a reply logged several times counts once
         self.context = None
         self.tools: Counter = Counter()
         self.prs: dict = {}
@@ -107,14 +108,23 @@ class Transcript:
                 self.last_prompt = _short(content, 160)
         elif kind == "assistant":
             msg = d.get("message") or {}
+            # A reply is logged once per content block with the same message id; the last line holds its final usage.
+            mid = msg.get("id")
+            seen = mid in self._usage if mid else False
             if msg.get("model") and not str(msg["model"]).startswith("<"):
                 self.model = msg["model"]
-                self.models[msg["model"]] += 1
+                if not seen:
+                    self.models[msg["model"]] += 1
             usage = msg.get("usage") or {}
-            for key, name in (("output_tokens", "output"), ("input_tokens", "input"),
-                              ("cache_read_input_tokens", "cache_read"), ("cache_creation_input_tokens", "cache_write")):
-                if isinstance(usage.get(key), int):
-                    self.tokens[name] += usage[key]
+            counts = {name: usage[key] for key, name in (
+                ("output_tokens", "output"), ("input_tokens", "input"),
+                ("cache_read_input_tokens", "cache_read"), ("cache_creation_input_tokens", "cache_write"))
+                if isinstance(usage.get(key), int)}
+            if seen:
+                self.tokens.subtract(self._usage[mid])
+            self.tokens.update(counts)
+            if mid:
+                self._usage[mid] = counts
             if usage:
                 written = usage.get("cache_creation") or {}
                 if written.get("ephemeral_1h_input_tokens"):

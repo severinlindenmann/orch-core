@@ -205,13 +205,16 @@ def ticket_page(request: Request, ref: str, open: str = ""):
 def _ran_on(t, limit: int = 5) -> list[dict]:
     """The ticket's recorded sessions, newest first, with the models Claude Code's own transcript says ran."""
     from orch.dashboard import agentinfo
+    from orch.dashboard.data.agent_start import HARNESS_LABELS
     rows = [s for s in t.meta.get("sessions") or [] if isinstance(s, dict) and s.get("id")]
     rows.sort(key=lambda s: str(s.get("started") or ""), reverse=True)
     out = []
     for s in rows[:limit]:
         harness = str(s.get("harness") or "")
         claude = "claude" in harness.lower()
-        out.append({"harness": harness or "agent", "started": day(s.get("started")), "claude": claude,
+        # sessions record the actor name (claude-code, copilot-cli); the labels are keyed by launcher (claude, copilot)
+        label = HARNESS_LABELS.get(harness.removesuffix("-code").removesuffix("-cli"), harness)
+        out.append({"harness": label or "agent", "started": day(s.get("started")), "claude": claude,
                     "models": agentinfo.session_models(s["id"]) if claude else None})
     return out
 

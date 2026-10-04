@@ -293,8 +293,10 @@ def marked_delegated(did: str) -> int:
     """How many children delegation `did` approved, by markers (the repository's events and files cannot lower it)."""
     try:
         return sum(1 for n in os.listdir(_marker_dir()) if n.startswith(_marker(did, "")))
-    except OSError:
+    except FileNotFoundError:
         return 0
+    except OSError:
+        return 10**9  # unreadable: fail closed, the limit counts as reached
 
 
 def delegated_count(ws, epic_id: str, did: str, events, entries=None) -> int:

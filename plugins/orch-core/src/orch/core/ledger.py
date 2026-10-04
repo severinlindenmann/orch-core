@@ -179,6 +179,8 @@ def record(ws, *, ticket: str, kind: str, actor, evidence: dict | None, **fields
     turns on: ticket None, `setting` and `value`).
     Raises OrchError when it cannot be
     written, so the action it records is not applied without it."""
+    if not actor.is_human and not (kind == "setting" and fields.get("value") is False):
+        raise OrchError("a process may only sign a setting off; every other entry is a human decision")
     entry = {"workspace": workspace_id(ws), "ticket": ticket, "kind": kind, **fields, "actor": actor.to_str(),
              "via": actor.via, "at": stamp_s(), "evidence": evidence}
     if getattr(actor, "device", None):

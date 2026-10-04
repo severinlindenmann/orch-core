@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("html_on")  # agent HTML on, signed (#9)
+
 pytest.importorskip("fastapi")
 
 F = "```"

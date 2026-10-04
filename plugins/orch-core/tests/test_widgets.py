@@ -194,24 +194,24 @@ def test_agent_layers_with_html_on_and_off(ws, monkeypatch):
              "caption": "Replay of run 3"}
     t = _ticket(Findings=fence(block))
     [b] = check_ticket(t, ws=ws)
-    on = str(render_html(b, Ctx(ticket=t, ws=ws)))
+    on = str(render_html(b, Ctx(ticket=t, ws=ws, html=True)))
     m = re.search(rf'class="w-frame" data-doc-url="/w/L-0001/Findings/{b.digest}\?n=([\w-]+)" data-nonce="([\w-]+)"', on)
     assert m and m.group(1) == m.group(2) and 'data-min-height="160"' in on
     assert "renderer not installed" not in on and "Replay of run 3" in on and "agent HTML · one-off" in on
     assert '<details class="w-alt">' in on  # the frame draws: the text waits behind the toggle
     off = str(render_html(b, Ctx(ticket=t, ws=ws, html=False)))
     assert "Agent HTML is off" in off and "w-frame" not in off and '<details class="w-alt" open>' in off
-    doc = render_document(b, Ctx(ticket=t, ws=ws, nonce="abcdefgh12"))
+    doc = render_document(b, Ctx(ticket=t, ws=ws, html=True, nonce="abcdefgh12"))
     assert '<meta name="orch-frame" content="abcdefgh12">' in doc and "<p id=x>x</p>" in doc and "window.orch" in doc
     body = doc[doc.index("<body"):]  # agent HTML never carries the chrome, with or without chrome=False
     assert "<figcaption" not in body and "w-alt" not in body and "agent HTML · one-off" not in body
-    bare = render_document(b, Ctx(ticket=t, ws=ws, nonce="abcdefgh12"), chrome=False)
+    bare = render_document(b, Ctx(ticket=t, ws=ws, html=True, nonce="abcdefgh12"), chrome=False)
     assert bare[bare.index("<body"):] == body
     doc_off = render_document(b, Ctx(ticket=t, ws=ws, html=False))
     assert "<script" not in doc_off and "Replay of run 3" in doc_off and 'class="w-frame"' not in doc_off
     from orch.widgets import frames  # a hook without a renderer still says so
     monkeypatch.setattr(frames, "INSTALLED", False)
-    assert "agent HTML renderer not installed" in str(render_html(b, Ctx(ticket=t, ws=ws)))
+    assert "agent HTML renderer not installed" in str(render_html(b, Ctx(ticket=t, ws=ws, html=True)))
 
 
 def test_render_document_is_self_contained():
@@ -325,9 +325,9 @@ def test_cli_types_show_list(cli):
 
 # -- config ------------------------------------------------------------------------------------------------------
 
-def test_widgets_html_is_on_by_default_and_only_the_human_changes_it(ws, configure):
+def test_widgets_html_is_off_by_default_and_the_guard_refuses_an_agent_edit(ws, configure):
     from orch.hooks.guard import evaluate
-    assert Ctx.of(ws).html is True
+    assert Ctx.of(ws).html is False
     assert Ctx.of(configure(widgets={"html": False})).html is False
     path = str(ws.home / "config.json")
     text = (ws.home / "config.json").read_text()

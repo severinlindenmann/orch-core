@@ -27,24 +27,26 @@ FRAME_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-
 # inside the dashboard (neither works from a <meta>).
 FRAME_CSP_HEADER = f"sandbox allow-scripts; {FRAME_CSP}; frame-ancestors 'self'"
 NO_TEXT = "No text alternative given"
+HTML_OFF = "Agent HTML is off in this workspace (the human turns it on with orch widget html on)"
 
 
 @dataclass
 class Ctx:
     """What a renderer may know: the ticket, the workspace (home, artifacts, config), the theme and whether agent
-    HTML is on (`widgets.html` in the workspace config, which only the human changes)."""
+    HTML is on (`widgets.html` in the workspace config, backed by a signed human decision: Ctx.of)."""
     ticket: object = None
     ws: object = None
     theme: str = "system"
-    html: bool = True
+    html: bool = False
     standalone: bool = False  # a self-contained document: files are embedded as data: URIs, not linked as /a/…
     nonce: str = ""  # the frame's nonce from the host (GET /w/…?n=); empty: a fresh one per document
 
     @classmethod
     def of(cls, ws, ticket=None, theme: str | None = None) -> "Ctx":
+        from orch.core import ledger
         cfg = getattr(ws, "config", None) or {}
         return cls(ticket=ticket, ws=ws, theme=theme or cfg.get("dashboard", {}).get("theme", "system"),
-                   html=bool(cfg.get("widgets", {}).get("html", True)))
+                   html=ledger.widgets_html_state(ws) == "on")
 
     @property
     def home(self) -> Path | None:
@@ -126,7 +128,7 @@ def chrome(block: Block, ctx: Ctx, *, framed: bool = True, bare: bool = False) -
         alt_label = "Show numbers" if getattr(mod, "ALT", "text") == "numbers" else "Show text"
         body = "" if missing else str(mod.render_html(block, ctx))
     elif not ctx.html:
-        notes.append(note("neu", "Note", "Agent HTML is off in this workspace; the text alternative is shown"))
+        notes.append(note("neu", "Note", HTML_OFF + "; the text alternative is shown"))
         body = ""
     elif missing:
         body = ""

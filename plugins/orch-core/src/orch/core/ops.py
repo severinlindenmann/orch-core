@@ -1073,6 +1073,30 @@ class Ops(TaskOpsMixin):
 
         return self._mutate(ref, "delegation.paused", fn)
 
+    def set_widgets_html(self, on: bool) -> None:
+        """`widgets.html`: whether agent-written HTML runs in ticket widgets. Turning it on is a human decision, signed
+        into the ledger for this workspace and value (orch.core.ledger.widgets_html_state reads it back). Turning it
+        off takes power away, so anyone may, and every off is signed as well: the newest signed entry decides, so an
+        off by anyone outranks an earlier on and only a fresh human on turns it back on."""
+        import json
+        from orch.config.load import CONFIG_NAME
+        from orch.core import ledger
+        from orch.core.fsutil import atomic_write_text
+        if on:
+            require_human(self.actor, "turning on agent HTML in widgets")
+        if self.dry_run:
+            return
+        path = self.ws.home / CONFIG_NAME
+        with lock(self.ws, "config"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            from orch.actor import process_evidence
+            ledger.record_setting(self.ws, ledger.WIDGETS_HTML, on, self.actor, process_evidence())
+            widgets = raw.get("widgets") if isinstance(raw.get("widgets"), dict) else {}
+            raw["widgets"] = {**widgets, "html": on}
+            atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        self.ws.config.setdefault("widgets", {})["html"] = on
+        self._emit(None, "setting.changed", {"setting": ledger.WIDGETS_HTML, "value": on})
+
     def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None) -> Ticket:
         """One verdict for the epic: every open child must be in testing; each gets its own signed done verdict,
         then the epic is done."""

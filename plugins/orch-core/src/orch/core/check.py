@@ -55,6 +55,16 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings += _check_remote(ws, events)
     findings += _check_human_evidence(events)
     findings += _check_widgets(ws)
+    html_state = ledger.widgets_html_state(ws)
+    if html_state == "unsigned":
+        findings.append(Finding("warning", "unsigned-setting", None,
+                                "widgets.html is true in orchestrator/config.json, but no current signed decision for "
+                                "this checkout on this machine backs it, so agent HTML stays off: the human turns it "
+                                "on with `orch widget html on` in their own terminal"))
+    elif html_state == "stale":
+        findings.append(Finding("warning", "stale-setting", None,
+                                "widgets.html is false in orchestrator/config.json, but the signed on is still in "
+                                "force: run `orch widget html off` so that only a new human decision turns it on"))
     findings += _check_orphan_artifacts(ws, entries)
     findings += _check_commits(ws, entries)
     return findings

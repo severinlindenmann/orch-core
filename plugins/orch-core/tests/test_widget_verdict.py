@@ -14,6 +14,8 @@ from orch.core import store  # noqa: E402
 from orch.core.epics import verdict_hash  # noqa: E402
 from orch.errors import ValidationError  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("html_on")  # agent HTML on, signed (#9)
+
 F = "```"
 PAGE = "<p id=g>gauge v1</p><script>orch.ready()</script>"
 

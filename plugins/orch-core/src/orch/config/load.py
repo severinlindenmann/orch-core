@@ -46,9 +46,10 @@ DEFAULTS: dict = {
             "continue": "Continue ticket {key}: read the new answers/feedback first.",
         },
     },
-    # Ticket widgets (docs/widgets.md): agent-written HTML/JS in sandboxed frames. Only the human changes it: the
-    # guard refuses an agent edit of this key (hooks/guard.py, _config_edit).
-    "widgets": {"html": True},
+    # Ticket widgets (docs/widgets.md): agent-written HTML/JS in sandboxed frames. On only when a signed human decision
+    # in the approval ledger backs it (`orch widget html on`, orch.core.ledger.widgets_html_state); the guard also
+    # refuses an agent edit of this key (hooks/guard.py, _config_edit).
+    "widgets": {"html": False},
     "suggested_addons": [],
     "sprints": [],  # [{id, name, start, end}] (orch.core.sprints): planning metadata only
     "feedback": {"enabled": True},  # #37: agents may queue redacted reports about orch itself (orch feedback add)

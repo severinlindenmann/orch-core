@@ -1254,6 +1254,12 @@ class Ops(TaskOpsMixin):
 
         self._mutate(item["ticket"], "ledger.adopted", fn)
 
+    def ledger_repair(self, typed: str) -> dict:
+        """Accept the one trailing entry a crash left past the ledger's head record (`orch ledger repair`): human only."""
+        from orch.core import ledger
+        require_human(self.actor, "repairing the ledger")
+        return ledger.repair_tail(typed)
+
     def _sign_approval(self, t: Ticket, gate: str, despite: bool) -> None:
         g = t.meta["gates"][gate]
         self._ledger(t, "gate", gate=gate, hash=g["hash"], hash_v=g.get("hash_v"),

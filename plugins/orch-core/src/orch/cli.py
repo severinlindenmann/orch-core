@@ -802,6 +802,32 @@ def ledger_adopt(
     typer.echo(f"signed {signed} of {len(items)}")
 
 
+@ledger_app.command("repair")
+def ledger_repair() -> None:
+    """Accept the one signed entry a crash left past the ledger's head record. Human only.
+
+    A crash between appending a decision and rewriting the head record cuts the ledger (every chained decision then
+    counts as not verified). When the newest line is a validly signed entry numbered right after the head's count,
+    this shows it and, after you type its id, rewrites the head to include it. Any other shape is refused."""
+    from orch.actor import require_human_terminal
+    from orch.core import ledger
+    from orch.core.events import Actor
+    from orch.textsafe import visible
+    require_human_terminal("repairing the ledger")
+    tail = ledger.tail_to_repair()
+    typer.echo("The ledger ends in one signed entry that its head record does not count yet:")
+    for k in ("n", "kind", "workspace", "ticket", "gate", "qid", "verdict", "actor", "via", "at"):
+        if tail.get(k) is not None:
+            typer.echo(f"  {k}: {visible(str(tail[k]))}")
+    typer.echo("Accept it only if you made this decision just before the crash.")
+    typed = input(f"  type {tail['mac'][:8]} to accept it, Enter to cancel: ").strip()
+    if not typed:
+        typer.echo("nothing changed")
+        return
+    _ops(_ws(), Actor("human", "you", "tty")).ledger_repair(typed)
+    typer.echo("repaired: the head record now includes it")
+
+
 # -- artifacts -------------------------------------------------------------------------
 
 @artifact_app.command("add")

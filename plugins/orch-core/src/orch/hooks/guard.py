@@ -69,7 +69,7 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 # Code that drives orch from an interpreter: the word orch (not orch-core, not orch.core) and a human verb anywhere in
 # the command, or a human Actor built by hand.
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
-_HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|epic_pause"
+_HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|ledger_repair|epic_pause"
                               r"|permit_(?:grant|deny|revoke))(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal

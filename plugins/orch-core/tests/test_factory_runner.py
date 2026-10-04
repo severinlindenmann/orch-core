@@ -1,6 +1,7 @@
 """AI Factory, phase 4 (#2, #31): the runner and the session binding. A fake launcher stands in for tmux: no test
 starts a real agent or touches a real tmux server."""
 import json
+from pathlib import Path
 import os
 from datetime import timedelta
 
@@ -961,16 +962,15 @@ def test_the_launcher_runs_tmux_on_that_socket_by_its_resolved_path(monkeypatch)
     "alias t=tmux; t -L orch ls", "f(){ tmux \"$@\"; }; f -L orch ls", "function f { tmux $*; }; f ls",
     "eval 'tmux -L orch ls'", "tmux -S $HOME/.config/orch/permits/tmux/factory ls", "tmux -S ./factory ls $X",
     "cd ~/.config/orch/permits/tmux && tmux -S factory ls", "tmux -S /x/permits/tmux/factory ls",
-    "screen -S $N -X quit", "tmux ls `echo x`", "tmux -S $(echo /x) ls", "tmux -L ls; ls -L $X",
+    "screen -S $N -X quit", "tmux ls `echo x`", "tmux -S $(echo /x) ls",
     "tmux -L orch ls", "tmux -S /tmp/x/orch ls",
     # parser differentials: the guard must not depend on reading bash the way bash does
     "TMUX -S /x ls $'a'", "Tmux -L $'\\x6frch' ls", "tmux -S $'\\x2f\\x78' ls", "$'\\x74mux' -S $'\\x2fx' ls",
-    "tmux -S x \\\nls", "tmux ls\n-L orch", "tmux ls # -L mine", "tmux ls <<< $X", "tmux ls <(echo x)",
-    "tmux ls; tmux -L orch ls", "tmux ls && tmux -S /x/permits/y ls", "tmux ls || tmux -L o ls",
-    "tmux ls & tmux -L o ls", "tmux ls | cat", "{ tmux ls; }", "( tmux -L x ls )", "tmux -L \"o\"\"rch\" ls",
+    "tmux -S x \\\nls", "tmux ls <<< $X", "tmux ls <(echo x)",
+    "tmux ls; tmux -L orch ls", "tmux ls && tmux -S /x/permits/y ls", "tmux ls & tmux -L o ls", "{ tmux ls; }", "( tmux -L x ls )", "tmux -L \"o\"\"rch\" ls",
     "t''mux -L orch ls", "tm\\ux -L orch ls", "tmux 'ls' $(echo -L orch)",
     "tmux ls\\\n -L orch", "tmux -S /x/PERMITS/y ls", "tmux -S /x/Permits/y ls", "tmux -S=./a ls", "tmux -L ./*ch ls",
-    "tmux send-keys 'x' ; echo", "screen -S $'q' ls",
+    "screen -S $'q' ls",
 ])
 def test_guard_refuses_tmux_with_a_socket_that_is_not_a_literal(ws, cmd):
     from orch.hooks.guard import evaluate
@@ -1045,6 +1045,7 @@ def test_guard_allows_an_absolute_literal_socket_elsewhere(ws):
 def test_guard_refuses_listing_the_config_dir(ws, cmd):
     from orch.core.ledger import base_dir
     base = base_dir()
+    (base / "permits").mkdir(parents=True, exist_ok=True)
     assert not _bash(ws, cmd.format(base=base, parent=base.parent, name=base.name)).allow
 
 
@@ -1150,14 +1151,20 @@ def test_the_resolution_rules_hit_in_every_command_segment_not_only_the_first(ws
     assert not _bash(ws, cmd.format(base=base_dir()).replace("\\n", "\n")).allow
 
 
-def test_a_huge_glob_is_refused_not_walked(ws):
+def test_a_huge_glob_near_the_config_dir_is_refused_not_walked(ws):
+    from orch.core.ledger import base_dir
+    many = base_dir() / "permits" / "many"
+    many.mkdir(parents=True, exist_ok=True)
+    for i in range(650):
+        (many / f"f{i}").write_text("", encoding="utf-8")
+    for cmd in ("ls $ORCH_STATE_DIR/../*/permits/many/*", "cat $ORCH_STATE_DIR/../*/permits/many/f?*", "find . ; ls $ORCH_STATE_DIR/../*/permits/m*/*"):
+        d = _bash(ws, cmd)
+        assert not d.allow and "limits" in d.reason, cmd
     big = ws.root / "big"
     big.mkdir()
     for i in range(650):
         (big / f"f{i}").write_text("", encoding="utf-8")
-    for cmd in ("ls big/*", "cd big/f*", "ls big/f?*", "find . ; ls big/*"):
-        d = _bash(ws, cmd)
-        assert not d.allow and "limits" in d.reason, cmd
+    assert _bash(ws, "ls big/*").allow  # far from the config dir: a big glob is nothing to these rules
     (ws.root / "few").mkdir()
     for i in range(5):
         (ws.root / "few" / f"f{i}").write_text("", encoding="utf-8")
@@ -1191,7 +1198,7 @@ def test_an_exception_inside_the_new_rules_denies_but_an_unrelated_error_still_f
         assert not _tool(ws, "Read", file_path="README.md").allow
     # an internal error elsewhere is not the new rules' business: evaluate raises, and the hook fails open and logs
     with monkeypatch.context() as m:
-        m.setattr(guard, "_command_segments", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+        m.setattr(guard, "_runs_human_only", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
         with pytest.raises(RuntimeError):
             _bash(ws, "echo hi")
 
@@ -1231,8 +1238,13 @@ def test_a_command_over_the_cap_is_refused_whatever_it_says(ws):
     "cd \\\n{base}", "cd {base}\\\n/permits", "ls \\\n -R \\\n {base}", "cd\\\n {base}",
     "cd {base}\ncd .", "cd {base}\r\nls", "echo a cd {base}", "echo a\x0bcd {base}",
     "cd {parent}; cd {name}; cd -", "cd $ORCH_STATE_DIR/permits/tmux; cd ..; cd -",
-    "CDPATH={parent} cd {name}", "export CDPATH={parent}; cd {name}",
-    "cd $(echo {base})", "cd `echo {base}`", "cd $UNKNOWN_VAR_X", "cd $'\\x2f'",
+    "cd $(echo {base}); cat permits/x", "cd `echo {base}` && ls tmux", "cd $UNKNOWN_VAR_X && cat ledger.jsonl",
+    "cd $'\\x2f'; cat sessions/x", "CDPATH={parent} cd {name}; cat permits/x", "export CDPATH={parent}; cd {name}; ls ledger*",
+    "cd $X && cat p*", "cd $X && cat se*/a", "cd $X && cat *ledger*", "cd $X && cat l*", "cd $X && tail -f ../tmux/factory",
+    "cd $X && cat *", "cd $X && cat ?*", "cd $X && cp * /tmp/out", "cd $X && ls */", "cd $X && tar cf o.tgz *",
+    "cd $X && grep -r foo *", "cd $X && cat remote-humans.json", "cd $X && cat launch.json", "cd $X && cat factory-command.json",
+    "cd $X && cat used/abc", "cd $X && cat requests/P-1.json", "cd $X && cat armed/a", "cd $X && cat runs/a", "cd $X && cat children/a",
+    "cd $X && cat tmux.name",
     "cat $ORCH_STATE_DIR/p*/tmux/*", "cat {base}/p*/*", "cat {parent}/{name}/p*", "wc -c ~/.c*/orch/p*",
     "echo \"cd {base}\" | sh", "echo cd {base} | bash",
 ])
@@ -1293,3 +1305,55 @@ def test_pwd_is_the_simulated_working_directory(ws):
         cwd = base.parent if "../" not in cmd else base.parent / "x"
         (base.parent / "x").mkdir(exist_ok=True)
         assert not _bash(ws, cmd, cwd=cwd).allow, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd $(git rev-parse --show-toplevel)", "cd `git rev-parse --show-toplevel`", "cd $UNKNOWN_VAR_X", "cd $'\\x2f'",
+    "cd ${{TMPDIR:-/tmp}} && ls",
+    "CDPATH= cd src && ls", "CDPATH={parent} cd {name}", "export CDPATH={parent}; cd {name}",
+    'cd "$(git rev-parse --show-toplevel)" && npm test', 'cd $WT && git status', 'for d in */; do (cd "$d" && ls); done',
+    'cd "$(mktemp -d)" && ls', 'cd "$ROOT/app" && pytest', 'while read l; do cd "$l"; ls; done < dirs.txt',
+    'cd "$(git rev-parse --show-toplevel)"; for f in *.md; do echo $f; done', 'cd $X && rm -rf node_modules/*',
+    'cd $X && cat src/*.py', 'cd $X && cat *.json', 'cd $X && echo *', 'cd $X && git add . && git log --grep="tmux and permits notes"',
+    'cd $X && ls', 'cd $X && npm test', 'cd $X && cat README.md notes/todo.txt', 'cd $X && grep foo src/app.py',
+    'echo "cd $(pwd)"', 'echo "cd {base}"', "printf 'cd {base}'", "git log --grep='cd {base}'",
+])
+def test_a_cd_the_guard_cannot_work_out_is_allowed_and_the_rest_of_the_line_is_not_blocked_for_no_reason(ws, cmd):
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    d = _bash(ws, cmd.format(base=base, parent=base.parent, name=base.name))
+    assert d.allow, (cmd, d.reason)
+
+
+def test_the_unknown_cwd_denial_has_its_own_plain_text_and_the_bound_text_is_for_limits(ws):
+    d = _bash(ws, "cd $X && cat permits/x")
+    assert not d.allow and "cannot work out" in d.reason and "limits" not in d.reason
+    d = _bash(ws, "echo " + "x" * 300_000)
+    assert not d.allow and "limits" in d.reason
+
+
+@pytest.mark.parametrize("cmd", [
+    "brew list | grep tmux", 'tmux display-message -p "#S"', "man tmux", "which tmux", "echo tmux; ls", "grep -rn screen src/",
+    "cat > f <<EOF\ncd $HOME\ntmux -L $S ls\nEOF", "cat > f <<'EOF'\ntmux -S x ls; cd $X\nEOF",
+    "git log --grep='document the screen reader and tmux'", "tmux send-keys -t work 'npm test' Enter", "tmux ls | cat",
+    "tmux -L ls; ls -L $X", "tmux ls # -L mine", "tmux source-file ~/.tmux.conf", "tmux -V", "TMUX=1 tmux ls",
+    "ps aux | grep tmux", "echo $TMUX_PANE", "screen -ls", "tmux new -s work -d",
+])
+def test_only_the_tmux_command_word_and_its_own_arguments_are_judged(ws, cmd):
+    d = _bash(ws, cmd.replace("\\n", "\n"))
+    assert d.allow, (cmd, d.reason)
+
+
+def test_the_new_guard_rules_deny_nothing_a_set_of_everyday_commands_gets_without_them(ws, monkeypatch):
+    """99 everyday commands (cd with substitutions, loops, tmux and screen as ordinary tools, big heredocs, listings,
+    links, worktree moves). Whatever the guard says about each without the AI Factory rules, it says with them."""
+    from orch.hooks import guard
+    cmds = json.loads((Path(__file__).parent / "fixtures" / "guard_everyday_commands.json").read_text(encoding="utf-8"))
+    assert len(cmds) >= 99
+    with_rules = {c: _bash(ws, c).allow for c in cmds}
+    with monkeypatch.context() as m:
+        m.setattr(guard, "_touches_state_dir", lambda *a, **k: False)
+        m.setattr(guard, "_mux_risky", lambda *a, **k: False)
+        without = {c: _bash(ws, c).allow for c in cmds}
+    differ = [c for c in cmds if with_rules[c] != without[c]]
+    assert differ == []

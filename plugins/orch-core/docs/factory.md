@@ -212,8 +212,13 @@ working directory is not known to a later command). The same resolution rules co
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
 length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
-hook fail open and log, as before). The socket sits in a random-named folder whose name is kept in a
-permits file. Known limits of a text guard, not built: a word written without a mention of tmux or screen by
+hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
+a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed,
+but the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
+in the config dir (permits, sessions, ledger*, tmux, ...) is refused with its own message, and so is a bare `*` handed
+to a command that reads or lists; `rm -rf node_modules/*` and `for f in *.md` pass. The socket sits in a random-named
+folder whose name is kept in a permits file; that only stops guessing and listing. The path is visible in `ps` to
+processes of the same user, and the guard stops an agent naming it, best effort. Known limits of a text guard, not built: a word written without a mention of tmux or screen by
 concatenation that uses none of the characters it looks for, a string built in another language (perl, osascript,
 python), and a script file written and then run.
 

@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  orch-session:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

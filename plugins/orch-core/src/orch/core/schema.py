@@ -120,6 +120,9 @@ def ticket_schema() -> dict:
             # the signed ledger on this machine backs it (`signed`) and who (`by`: you, from your phone, by your epic charter, by delegation,
             # accepted, closed; null when not signed). A tampered, unknown or missing ledger entry is signed false.
             # A gate that is not approved, and a ticket that is not done, have no key. No key material, ever.
+            # 1.7: an open or backlog ticket nobody touched for dashboard.revalidate_days (orch.core.query.idle_days)
+            "revalidate": {"type": ["object", "null"], "additionalProperties": False, "required": ["idle_days"],
+                           "properties": {"idle_days": {"type": "integer", "minimum": 1}}},
             "signed": {"type": "object", "properties": {k: {"type": "object", "required": ["signed", "by"],
                        "properties": {"signed": {"type": "boolean"}, "by": _NS}} for k in ("requirements", "plan", "verdict")}},
         },
@@ -169,6 +172,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     from orch.dashboard.data.cards import move_summary, ticket_card
     doc["move"] = move_summary(ticket_card(ws, ticket, entries=entries))
     doc["signed"] = _signed(ws, ticket)
+    idle = query.idle_days(ws, m, str(m.get("status") or ""))
+    doc["revalidate"] = {"idle_days": idle} if idle else None  # 1.7: freshness, derived from `updated`
     return doc
 
 

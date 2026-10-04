@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from orch.clock import now as clock_now, parse_stamp
 from orch.core import store
 from orch.core.constants import PRIORITY_RANK, STATUSES
 from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state
@@ -38,6 +39,23 @@ def list_tickets(ws, *, status: str | None = None, label: str | None = None, ses
                 continue
         out.append(e)
     return sorted(out, key=_sort_key)
+
+
+def idle_days(ws, meta: dict, status: str, now: datetime | None = None) -> int | None:
+    """Days since an open or backlog ticket was last touched, when that is at least `dashboard.revalidate_days`
+    (0 turns it off); else None. Freshness derived, never stored: such a ticket is checked against the code again
+    before anyone builds it. It blocks nobody, so it is no need (NEEDS_ORDER)."""
+    limit = (ws.config.get("dashboard") or {}).get("revalidate_days")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0 or status not in ("backlog", "open"):
+        return None
+    try:
+        then = parse_stamp(str(meta.get("updated") or "")) if isinstance(meta.get("updated"), str) else None
+    except ValueError:
+        return None
+    if then is None:
+        return None
+    days = ((now or clock_now()) - then).days
+    return days if days >= limit else None
 
 
 def next_tickets(ws) -> list[store.Entry]:

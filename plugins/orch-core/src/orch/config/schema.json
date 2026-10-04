@@ -78,7 +78,8 @@
         "pull_seconds": {"type": "number", "minimum": 5},
         "theme": {"enum": ["system", "light", "dark"]},
         "brand": {"type": "string"},
-        "stale_minutes": {"type": "integer", "minimum": 1}
+        "stale_minutes": {"type": "integer", "minimum": 1},
+        "revalidate_days": {"type": "integer", "minimum": 0}
       }
     },
     "agents": {

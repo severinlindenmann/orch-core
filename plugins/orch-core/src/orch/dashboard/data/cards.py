@@ -418,6 +418,8 @@ class Cards:
         epic = epic_of(self.ws, meta, self.epics)
         if epic is not None and card.get("parent") and card["parent"].upper() == epic["id"].upper():
             card["parent"] = None  # shown as the epic link instead
+        from orch.core.query import idle_days
+        card["idle_days"] = idle_days(self.ws, meta, status, self.now)  # outside the static cache: it ages by itself
         card.update(move=move, code=_code(t, self._reviews_of(tid)), agent=agent, blockers=blockers,
                     mentions=_mentioned(self._mentions.get(tid, ())), epic=epic, rollup=rollup)
         return _card(card)

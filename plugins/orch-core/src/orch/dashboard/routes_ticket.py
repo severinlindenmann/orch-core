@@ -248,7 +248,8 @@ def artifact(request: Request, ticket: str, name: str, v: str = ""):
         if data is None:
             return PlainTextResponse("this file changed since it was linked in the ticket; it is not shown",
                                      status_code=409, headers={"Cache-Control": "no-store"})
-        return Response(data, media_type=media, headers=headers)
+        from orch.dashboard.ranges import ranged
+        return ranged(request, data, media, headers)
     from orch.core.artifacts import open_regular
     fd = open_regular(target, root)  # the bytes sent come from this one handle, streamed
     if fd is None:

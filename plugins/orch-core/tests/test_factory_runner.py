@@ -958,6 +958,14 @@ def test_the_launcher_runs_tmux_on_that_socket_by_its_resolved_path(monkeypatch)
     "cd ~/.config/orch/permits/tmux && tmux -S factory ls", "tmux -S /x/permits/tmux/factory ls",
     "screen -S $N -X quit", "tmux ls `echo x`", "tmux -S $(echo /x) ls", "tmux -L ls; ls -L $X",
     "tmux -L orch ls", "tmux -S /tmp/x/orch ls",
+    # parser differentials: the guard must not depend on reading bash the way bash does
+    "TMUX -S /x ls $'a'", "Tmux -L $'\\x6frch' ls", "tmux -S $'\\x2f\\x78' ls", "$'\\x74mux' -S $'\\x2fx' ls",
+    "tmux -S x \\\nls", "tmux ls\n-L orch", "tmux ls # -L mine", "tmux ls <<< $X", "tmux ls <(echo x)",
+    "tmux ls; tmux -L orch ls", "tmux ls && tmux -S /x/permits/y ls", "tmux ls || tmux -L o ls",
+    "tmux ls & tmux -L o ls", "tmux ls | cat", "{ tmux ls; }", "( tmux -L x ls )", "tmux -L \"o\"\"rch\" ls",
+    "t''mux -L orch ls", "tm\\ux -L orch ls", "tmux 'ls' $(echo -L orch)",
+    "tmux ls\\\n -L orch", "tmux -S /x/PERMITS/y ls", "tmux -S /x/Permits/y ls", "tmux -S=./a ls", "tmux -L ./*ch ls",
+    "tmux send-keys 'x' ; echo", "screen -S $'q' ls",
 ])
 def test_guard_refuses_tmux_with_a_socket_that_is_not_a_literal(ws, cmd):
     from orch.hooks.guard import evaluate
@@ -966,7 +974,8 @@ def test_guard_refuses_tmux_with_a_socket_that_is_not_a_literal(ws, cmd):
 
 def test_guard_leaves_an_agents_own_plain_tmux_alone(ws):
     from orch.hooks.guard import evaluate
-    for cmd in ("tmux ls", "tmux -L mine new-session -d -s w", "tmux -S /tmp/mine.sock ls", "screen -ls", "ls -L /tmp"):
+    for cmd in ("tmux ls", "tmux -L mine new-session -d -s w", "tmux -S /tmp/mine.sock ls", "screen -ls", "ls -L /tmp",
+                "printf '\\x41'"):
         from orch.hooks import guard
         assert not guard._mux_risky(cmd), cmd
     assert evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "ls -L $HOME"}, "cwd": str(ws.root)}).allow

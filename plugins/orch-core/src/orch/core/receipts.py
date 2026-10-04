@@ -7,6 +7,7 @@ What a run has to do differs per project, so the steps come from `checks.<name>.
 (load.check_steps); a plain verify line is one step named `verify`."""
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -103,3 +104,32 @@ def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, kee
     if size > max_bytes:
         log = CUT + log[len(CUT):]
     return Receipt(exit_code, timed_out, commit, dirty, at, int(time.monotonic() - start), done, log)
+
+
+# -- the receipt as a widget ---------------------------------------------------------------------------------------
+
+_STATUS = {"pass": "pass", "fail": "fail", "skip": "skip"}
+
+
+def gates_block(receipt: Receipt, task_id: str, check: str | None, artifact: str) -> dict:
+    """A core `gates` widget (docs/widgets.md) of one run: a row per step, its status and time. The id is per task,
+    so the next run of the same task replaces the block instead of adding one."""
+    source = f"artifact:{artifact}" + (f" · {receipt.commit[:7]}" if receipt.commit else "") \
+        + (" · uncommitted changes" if receipt.dirty else "")
+    items = [{"name": s["name"], "status": _STATUS[s["status"]],
+              **({"seconds": s["seconds"]} if s["status"] != "skip" else {})} for s in receipt.steps]
+    return {"type": "gates", "id": f"receipt-{task_id.lower()}", "title": f"{task_id} {check or 'verify'}",
+            "source": source, "items": items}
+
+
+def put_block(section_text: str, block: dict) -> str:
+    """`section_text` with the ```orch block whose id is block["id"] replaced by `block`, or `block` appended."""
+    from orch.widgets.blocks import parse_blocks
+    fence = f"```orch\n{json.dumps(block, ensure_ascii=False)}\n```"  # one line of JSON: no fence inside it
+    lines = (section_text or "").split("\n")
+    for b in parse_blocks(section_text or ""):
+        if isinstance(b.data, dict) and b.data.get("id") == block["id"]:
+            start = b.line - 1
+            end = start + len(b.raw.split("\n")) + 2  # opening fence, body, closing fence
+            return "\n".join(lines[:start] + fence.split("\n") + lines[end:])
+    return f"{section_text}\n\n{fence}" if (section_text or "").strip() else fence

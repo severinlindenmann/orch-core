@@ -110,6 +110,28 @@ check looks at that literal path only.
 - A Plan checklist of a ticket written before task lists becomes tasks through `orch migrate`; the Plan
   text and its approval stay unchanged.
 
+## Receipts (orch task done --run)
+
+`orch task done <id> T<n> --run` proves a task with a receipt instead of a sentence. orch runs the task's `verify`
+line itself, in the directory the agent stands in, and keeps what happened:
+
+- A `verify` line `check:<name>` runs the workspace's named check: `checks.<name>.steps` in
+  `orchestrator/config.json`, in order (`{"steps": [{"name": "build", "run": "npm run build"}, ...], "keep_going":
+  false}`). What verification takes differs per project, so the project says it once; an agent picks the check by
+  name and cannot change what it runs (the guard refuses an agent edit of `checks`). Any other `verify` line is one
+  step named `verify`. After a failing step the rest are skipped unless `keep_going`; `--timeout` (default 1800 s)
+  covers the whole run and kills a step's whole process group.
+- The receipt is an artifact of the reserved kind `receipt`, `receipt-T<n>-<UTC stamp>.log`: each step's command
+  and output (the tail, within the artifact size limit). Its entry carries `run`: `exit`, `timed_out`, `commit`,
+  `dirty`, `at`, `seconds`, `check` and `steps` (`name`, `run`, `status` pass|fail|skip, `exit`, `timed_out`,
+  `seconds`). `orch artifact add --kind receipt` is refused: only a run writes one.
+- Verification gets a core `gates` widget with the id `receipt-t<n>`: a row per step with its status and time,
+  the receipt and the commit as its source. The next run of the same task replaces it.
+- The task is ticked only when every step passed; its note names the receipt. A failing run keeps its receipt and
+  widget, leaves the task open and exits with code 5.
+
+Nothing runs before the claim, the plan approval and the task's own rules allow `orch task done`.
+
 ## Input file (orch task add --file)
 
 ```yaml

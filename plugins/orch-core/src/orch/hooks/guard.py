@@ -1082,10 +1082,16 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _STARTUP_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
+    if "config.json" in code and _CHECKS_WORD.search(code) and _is_write(cmd):
+        return Decision(False, _CHECKS_DENIED)
     return ALLOW
 
 
 _WIDGETS_WORD = re.compile(r"\bwidgets\b")
+_CHECKS_WORD = re.compile(r"\bchecks\b")
+_CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
+                  "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
+                  "orchestrator/config.json")
 _WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widgets) is the human's setting, signed into "
                    "the approval ledger; ask the user to run `orch widget html on` in their own terminal (anyone may "
                    "turn it off with `orch widget html off`)")
@@ -1197,7 +1203,23 @@ def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:
     before, after = _widgets_html(old_text), (None if new_text is None else _widgets_html(new_text))
     if before is not None and after is not None and before != after:
         return Decision(False, _WIDGETS_DENIED)
+    before, after = _config_key(old_text, "checks"), (None if new_text is None else _config_key(new_text, "checks"))
+    if before is not _NO_JSON and after is not _NO_JSON and before != after:
+        return Decision(False, _CHECKS_DENIED)
     return ALLOW
+
+
+_NO_JSON = object()
+
+
+def _config_key(text: str, key: str):
+    """The value of a top-level config key ({} when unset), or _NO_JSON when the text is not a JSON object."""
+    import json
+    try:
+        cfg = json.loads(text)
+    except (TypeError, ValueError):
+        return _NO_JSON
+    return cfg.get(key, {}) if isinstance(cfg, dict) else _NO_JSON
 
 
 def _approved_epic_side(ws, old: dict, new: dict) -> bool:

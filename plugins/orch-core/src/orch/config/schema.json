@@ -96,6 +96,20 @@
     "addons": {"type": "object", "additionalProperties": {"type": "object"}},
     "feedback": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
     "factory": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "checks": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,39}$"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["steps"],
+        "properties": {
+          "steps": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
+            "type": "object", "additionalProperties": false, "required": ["name", "run"],
+            "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 60},
+                           "run": {"type": "string", "minLength": 1, "maxLength": 2000}}}},
+          "keep_going": {"type": "boolean"}
+        }
+      }
+    },
     "suggested_addons": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}},
     "sprints": {
       "type": "array",

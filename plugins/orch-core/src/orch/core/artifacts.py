@@ -30,7 +30,10 @@ import re
 import stat
 from pathlib import Path
 
-KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other")
+KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other", "receipt")
+RESERVED_KINDS = ("receipt",)  # written only by `orch task done --run` (orch.core.receipts)
+_RUN_KEYS = ("exit", "timed_out", "commit", "dirty", "at", "seconds", "check")
+_STEP_KEYS = ("name", "status", "seconds")  # no command: it is in the ticket file and the receipt, not on the phone
 SOURCES = ("name", "url", "static")
 DEFAULT_MAX_MB = 50
 INLINE_MAX_BYTES = 10 * 1024 * 1024  # an inline image larger than this is shown as a link
@@ -459,6 +462,11 @@ def doc_items(ticket) -> list[dict]:
             item["ac"] = e["ac"]
         if isinstance(e.get("by"), str) and _ACTOR.match(e["by"]):
             item["by"] = e["by"]
+        run = e.get("run")
+        if kind == "receipt" and isinstance(run, dict):
+            item["run"] = {k: run[k] for k in _RUN_KEYS if k in run}
+            item["run"]["steps"] = [{k: s[k] for k in _STEP_KEYS if k in s} for s in run.get("steps") or []
+                                    if isinstance(s, dict)]
         out.append(item)
     return out
 

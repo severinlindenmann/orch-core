@@ -56,7 +56,34 @@ DEFAULTS: dict = {
     # AI Factory (#2, docs/factory.md): off until the human switches it on; a factory epic still needs the human's
     # signed `orch approve <epic> requirements --factory`.
     "factory": {"enabled": False},
+    # Named checks (orch.core.receipts): what `orch task done --run` runs for a verify line `check:<name>`, step by
+    # step. Each project says what its verification takes; the guard refuses an agent edit of this key.
+    "checks": {},
 }
+
+_CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+MAX_CHECK_STEPS = 20
+
+
+def check_steps(cfg: dict, name: str) -> tuple[list[dict], bool]:
+    """The steps ({name, run}) and keep_going of the workspace's check `name`; UsageError naming the configured
+    checks when there is none, or saying what is wrong with it."""
+    checks = cfg.get("checks") if isinstance(cfg.get("checks"), dict) else {}
+    known = ", ".join(sorted(checks)) or "none configured"
+    check = checks.get(name)
+    if not _CHECK_NAME.match(name or "") or not isinstance(check, dict):
+        raise UsageError(f"no check {name!r} in the workspace config (checks: {known})",
+                         hint="add it under `checks` in orchestrator/config.json")
+    steps = check.get("steps")
+    if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_CHECK_STEPS:
+        raise UsageError(f"check {name!r} needs 1-{MAX_CHECK_STEPS} steps")
+    out = []
+    for i, s in enumerate(steps, 1):
+        if not (isinstance(s, dict) and isinstance(s.get("name"), str) and 0 < len(s["name"].strip()) <= 60
+                and isinstance(s.get("run"), str) and 0 < len(s["run"].strip()) <= 2000):
+            raise UsageError(f"check {name!r} step {i} needs a name (1-60 characters) and a run command")
+        out.append({"name": s["name"].strip(), "run": s["run"].strip()})
+    return out, bool(check.get("keep_going"))
 
 
 def deep_merge(base: dict, override: dict) -> dict:

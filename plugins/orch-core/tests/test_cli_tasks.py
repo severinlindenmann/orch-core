@@ -120,3 +120,19 @@ def test_cli_and_dashboard_share_the_skipped_glyph():
     from orch.dashboard.data import tasks as tasks_data
     assert GLYPH["skipped"] == tasks_data.GLYPH["skipped"] == "–" and GLYPH["todo"] == "○"
     assert GLYPH == tasks_data.GLYPH
+
+
+def test_done_run_keeps_a_receipt(cli, claimed, plan_approved, ws_root, tmp_path, monkeypatch):
+    assert cli("task", "add", claimed, "prove it", "--verify", "echo from-cli")[0] == 0
+    assert cli("task", "add", claimed, "fails", "--verify", "exit 7")[0] == 0
+    plan_approved(claimed)
+    monkeypatch.setenv("ORCH_HOME", str(ws_root / "orchestrator"))
+    elsewhere = tmp_path / "checkout"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # the run happens where the agent stands, not in the workspace
+    assert cli("task", "start", claimed, "T1")[0] == 0
+    code, out, _ = cli("task", "done", claimed, "T1", "--run")
+    assert code == 0 and "receipt receipt-T1-" in out
+    assert cli("task", "start", claimed, "T2")[0] == 0
+    code, out, err = cli("task", "done", claimed, "T2", "--run")
+    assert code == 5 and "exit 7" in out + err  # a validation refusal, like any other

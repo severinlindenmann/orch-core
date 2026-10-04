@@ -143,9 +143,20 @@ def start(ref: str, task: TaskArg, json_out: JsonOpt = False) -> None:
 
 
 @task_app.command("done")
-def done(ref: str, task: TaskArg, message: MessageOpt = None, json_out: JsonOpt = False) -> None:
-    """Tick a task; -m says what proved it (required when it has a verify line)."""
+def done(ref: str, task: TaskArg, message: MessageOpt = None,
+         run: Annotated[bool, typer.Option("--run", help="Run the verify line here (a command, or check:<name> from "
+                                                         "the workspace config), keep a receipt and draw it in "
+                                                         "Verification; ticks the task only when every step passed.")] = False,
+         timeout: Annotated[int, typer.Option("--timeout", min=1, help="Seconds before --run gives up.")] = 1800,
+         json_out: JsonOpt = False) -> None:
+    """Tick a task; -m says what proved it (required when it has a verify line), or --run proves it with a receipt."""
     cli, ws = _ctx()
+    if run:
+        from orch.core import store
+        rec = cli._ops(ws).task_done_run(ref, task, cwd=Path.cwd(), timeout=timeout, note=message)
+        t = store.load(ws, ref)[1]
+        _report(t, json_out, f"{t.id}: {task.upper()} done · receipt {rec['receipt']}")
+        return
     t = cli._ops(ws).task_done(ref, task, message)
     _report(t, json_out, f"{t.id}: {task.upper()} done")
 

@@ -279,6 +279,57 @@ class TaskOpsMixin:
             return text, ({"note": note} if note else {})
         return self._task_move(ref, task_id, change)
 
+    def task_done_run(self, ref: str, task_id: str, *, cwd, timeout: int = 1800, note: str | None = None) -> dict:
+        """Run the task's verify line here (a shell command, or `check:<name>`: the workspace's named check, step by
+        step), keep the receipt as an artifact, draw it as a `gates` widget in Verification, and tick the task only
+        when every step passed. Nothing runs before the plan the agent needs is approved."""
+        import io
+        from pathlib import Path
+        from orch.config.load import check_steps
+        from orch.core import artifacts as art, receipts, store
+        _, t = store.load(self.ws, ref)
+        items = tk.ticket_tasks(t)
+        task = tk.find(items, task_id)
+        # every check `task_done` makes, before anything runs: the claim, the plan, whose task, its state, its needs
+        self._task_write_allowed(t)
+        self._may_touch(task)
+        self._plan_approved_for_agent(t)
+        if self.actor.is_human and task.owner != "human":
+            raise TransitionError(f"{task.id} is the agent's task; the agent ticks it with evidence")
+        if task.state not in ("todo", "doing"):
+            raise ValidationError(f"{task.id} is {task.state}", hint=f"orch task reopen {t.id} {task.id}")
+        waiting = tk.needs_open(task, items)
+        if waiting:
+            raise ValidationError(f"{task.id} needs {', '.join(waiting)} closed first")
+        if not task.verify:
+            raise UsageError(f"{task.id} has no verify line to run",
+                             hint=f"orch task edit {t.id} {task.id} --verify 'check:<name>' (or a command)")
+        check = task.verify[len("check:"):].strip() if task.verify.startswith("check:") else None
+        steps, keep_going = (check_steps(self.ws.config, check) if check is not None
+                             else ([{"name": "verify", "run": task.verify}], False))
+        r = receipts.run_steps(steps, Path(cwd), timeout=int(timeout), max_bytes=art.max_bytes(self.ws),
+                               keep_going=keep_going)
+        base, n = f"receipt-{task.id}-{r.at.replace('-', '').replace(':', '')}", 1
+        name = f"{base}.log"
+        while (self.ws.artifacts_dir / t.id / name).exists():  # two runs within one second
+            n += 1
+            name = f"{base}-{n}.log"
+        failed = next((s for s in r.steps if s["status"] == "fail"), None)
+        result = ("passed" if r.ok else f"{failed['name']} timed out" if failed and failed["timed_out"]
+                  else f"{failed['name']} failed with exit {failed['exit']}" if failed else f"exit {r.exit}")
+        at = f" at {r.commit[:7]}" if r.commit else ""
+        label = f"{task.id} {check or 'verify'}: {result}{at}" + (" (uncommitted changes)" if r.dirty else "")
+        self.artifact_add(t.id, Path(name), name, stream=io.BytesIO(r.log), task=task.id, label=label[:200],
+                          _run={**r.record(), "check": check})
+        block = receipts.gates_block(r, task.id, check, name)
+        self._write_section(t.id, "Verification", lambda current: receipts.put_block(current, block))
+        if not r.ok:
+            raise ValidationError(f"{task.id} {check or 'verify'}: {result}; the receipt is {name}",
+                                  hint="fix it and run again: the next run replaces the widget")
+        msg = f"receipt {name}: exit 0{at}"
+        self.task_done(t.id, task.id, f"{msg} — {note}" if note else msg)
+        return {**r.record(), "check": check, "receipt": name}
+
     def task_skip(self, ref: str, task_id: str, reason: str):
         reason = tk.one_line(reason)
         if not reason:

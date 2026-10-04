@@ -540,7 +540,7 @@ class Ops(TaskOpsMixin):
             out.append("no artifacts at all, but " + ", ".join(f"AC{n}" for n in visual)
                        + " asks for something to look at; add the screenshot or report with "
                        f"`orch artifact add {t.id} <file> --ac <n> --inline`")
-        if "```orch" not in t.section("Verification"):
+        if not self.actor.is_human and "```orch" not in t.section("Verification"):  # a nudge for agents, not the human
             out.append("Verification holds no widget; a `checks` widget with one row per acceptance criterion reads "
                        f"faster than prose (`orch widget add {t.id} --section Verification --type checks --data "
                        "'{\"rows\": [...]}' --source \"<command>\"`)")

@@ -67,7 +67,7 @@
     <a class="cat-task" href="{{ cat.url(task=key if cat.task != key else '', g='', section='') }}"{% if cat.task == key %} aria-current="true"{% endif %}><b>{{ label }}</b><span>{{ sub }}</span></a>
     {% endfor %}
   </div>
-  {% if cat.section %}<p class="cat-scope">Showing what suits <b>{{ cat.section }}</b>. <a class="lnk" href="{{ cat.url(section='', task='', g='') }}">Show all</a></p>{% endif %}
+  {% if cat.section and not cat.task %}<p class="cat-scope">Showing what suits <b>{{ cat.section }}</b>. <a class="lnk" href="{{ cat.url(section='', task='', g='') }}">Show all</a></p>{% endif %}
   <form class="cat-bar" method="get" action="/workspace" role="search">
     <input type="hidden" name="tab" value="widgets">
     {% if cat.task %}<input type="hidden" name="task" value="{{ cat.task }}">{% endif %}

@@ -10,7 +10,6 @@ replace them:
 """
 from __future__ import annotations
 
-import hashlib
 import secrets
 
 INSTALLED = True
@@ -67,6 +66,7 @@ def build(body: str, data, *, libs, ctx, title: str) -> str:
 
 
 def document(block, ctx) -> str:
+    from orch.core.artifacts import read_pinned
     from orch.widgets import artifacts, registry, render
     from orch.widgets.validate import validate
     data = block.data or {}
@@ -89,8 +89,9 @@ def document(block, ctx) -> str:
             path = artifacts.resolve(ctx.ws, tid, data["html"])
             if path is None:
                 raise LookupError(f"{data['html']} is missing")
-            raw = path.read_bytes()
-            if hashlib.sha256(raw).hexdigest() != data.get("sha256"):  # only the page the block's text pins runs
+            pin = data.get("sha256")  # only the page the block's text pins runs: the full digest, of the bytes read
+            raw = read_pinned(path, pin) if isinstance(pin, str) and len(pin) == 64 else None
+            if raw is None:
                 raise ValueError(f"{data['html']} changed since this widget was written")
             libs = data.get("libs", [])
         body = raw.decode("utf-8")

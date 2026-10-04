@@ -165,8 +165,9 @@ the runner for that delegation. Every few seconds the dashboard then, for each a
   auto-approved or covered by your charter, is size m or smaller, and is open, in progress or waiting: at most **3 at a
   time** (`factory.max_concurrency` in `orchestrator/config.json` can only lower that), at most the charter's **max
   children** distinct children, and a few launches per child. Those counts are markers beside the ledger, so editing
-  tickets cannot lower them. Sessions start in the workspace root; the agent makes its own worktree as the work skill
-  says;
+  tickets cannot lower them. A session starts in the child's own worktree when the child names exactly one that lies inside the
+  workspace (and holds no harness settings of its own), else in the workspace root, with a minimal environment (an
+  allowlist of variables; nothing the dashboard holds besides them);
 - **wakes** a child whose session ended while it was parked, when something it waits for changed: your grant, denial
   or revocation in that epic, or the child's own text or approvals. Nothing else restarts it;
 - **stops** every session of the epic, and ends its binding, when you pause the epic, edit its text, approve it again,
@@ -180,16 +181,19 @@ agent harness, like the dashboard's other human actions.
 
 **Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child)
 exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
-permission hook trusts only this record to decide which epic's grants apply; an ended or stopped session loses it at
-once. Only a human process writes it: agent processes are refused, and the guard keeps agents away from the folder.
+permission hook trusts only this record to decide which epic's grants apply, and only for a process running under the
+first process the runner recorded for that session: a copied session id gets nothing elsewhere. An ended or stopped
+session loses the record at once. Only a human process writes it: agent processes are refused, and the guard keeps
+agents away from the folder. Session ids are random, never written to events, tickets, logs or pages.
 
-**The launch command** is yours, per user, in `launch.json` in the orch config dir (never the workspace config):
+**The launch command** is yours, in `factory.json` in the orch config dir, a file the guard keeps agents from writing
+(never the workspace config, ticket text or anything else an agent can edit; the prompt is built in):
 
 ```json
-{"factory_command": ["claude", "--session-id", "{session}", "{prompt}"]}
+{"command": ["claude", "--session-id", "{session}", "{prompt}"]}
 ```
 
-That is the default. `{session}` is the id the runner bound (the agent must start under exactly that id) and `{prompt}`
+That is the default; a damaged file means the default. `{session}` is the id the runner bound (the agent must start under exactly that id) and `{prompt}`
 the child's work prompt. A command with a bypass or self-granting argument (skipping permission prompts, allowing
 tools, settings overrides) is refused and the default is used: the hook stays the only gate. Run the agents in a
 permission mode that does not prompt for file edits (see above).
@@ -200,5 +204,5 @@ mode"); the runner does not change that (D2 B).
 ## Coming in later phases
 
 - The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
-- Runner status on the epic page, a per-child worktree for the launch, and a runner limit signed into the charter.
+- Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

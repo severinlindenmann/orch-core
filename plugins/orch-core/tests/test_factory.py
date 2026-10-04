@@ -52,8 +52,10 @@ def bind(ws, human, epic_id, child_id, session=SESSION):
     """What the runner does at launch: bind the session to its epic, delegation and child (human only)."""
     from orch.core import factory_sessions
     d = epics.delegation(ws, store.load(ws, epic_id)[1])
-    return factory_sessions.bind(ws, human, session=session, epic=epic_id, delegation=d["id"], child=child_id,
-                                 name=f"fx-{child_id}", wake="")
+    b = factory_sessions.bind(ws, human, session=session, epic=epic_id, delegation=d["id"], child=child_id,
+                              name=f"fx-{child_id}", wake="")
+    factory_sessions.set_pid(ws, human, session, 4242)
+    return b
 
 
 def _payload(command, session=SESSION, tool="Bash"):

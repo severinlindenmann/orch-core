@@ -25,6 +25,14 @@ def _clean_env(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _factory_pane_pid(monkeypatch):
+    """The AI Factory hook trusts a session binding only for a process under the pid the runner recorded; tests that
+    bind a session record 4242 and run "under" it, and say otherwise by replacing this themselves."""
+    import orch.core.factory_sessions as fs
+    monkeypatch.setattr(fs, "chain_pids", lambda: {4242})
+
+
+@pytest.fixture(autouse=True)
 def _no_real_launch(monkeypatch, tmp_path_factory, _clean_env):
     """Start agent must never open a real terminal from a test: Popen in orch.dashboard.launch
     raises unless the test patches it itself (launch.subprocess is launch's own namespace, so

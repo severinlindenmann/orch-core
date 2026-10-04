@@ -19,13 +19,15 @@ class TmuxLauncher:
         r = terminals.tmux(["list-sessions", "-F", "#{session_name}"])
         return set(r.stdout.split()) if r.returncode == 0 else set()
 
-    def start(self, name: str, cwd: str, argv: list[str]) -> None:
+    def start(self, name: str, cwd: str, argv: list[str]) -> int:
         # a session inside the workspace, so Mission Control's Terminals page lists it
         cmd = launch.argv_for("tmux", cwd=cwd, command_argv=argv, name=name, script_path=None, custom=[])
         proc = launch.subprocess.Popen(cmd, start_new_session=True, stdout=launch.subprocess.DEVNULL,
                                        stderr=launch.subprocess.DEVNULL, stdin=launch.subprocess.DEVNULL)
         if proc.wait(timeout=10) != 0:
             raise UsageError(f"tmux could not start a session named {name}")
+        r = terminals.tmux(["display-message", "-p", "-t", f"={name}:", "#{pane_pid}"])
+        return int(r.stdout.strip())  # ValueError (no pid) ends the session in the caller: nothing runs unbound
 
     def stop(self, name: str) -> None:
         terminals.end(name)

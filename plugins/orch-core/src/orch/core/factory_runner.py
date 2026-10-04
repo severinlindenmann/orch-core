@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import secrets
+from pathlib import Path
 from typing import Protocol
 
 from orch.core import epics, factory_sessions as fs, ledger, permits, store
@@ -30,12 +33,66 @@ from orch.errors import OrchError
 
 DEFAULT_CONCURRENCY = 3
 RUNNABLE = ("open", "in-progress", "waiting")
+# The only variables an agent session starts with (no dashboard token, no key, nothing else the server holds). The two
+# config-dir variables are not secret: without them the agent's own orch would read another records folder.
+ENV_ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "USER", "SHELL", "TMPDIR", "ORCH_STATE_DIR", "XDG_CONFIG_HOME")
+_HARNESS_FILES = (".claude/settings.json", ".claude/settings.local.json", ".mcp.json")
 
 
 class Launcher(Protocol):
     def alive(self) -> set[str]: ...
-    def start(self, name: str, cwd: str, argv: list[str]) -> None: ...
+    def start(self, name: str, cwd: str, argv: list[str]) -> int:
+        """Start the session; returns the pid of its first process (an ancestor of everything the agent runs)."""
     def stop(self, name: str) -> None: ...
+
+
+def env_prefix(environ=None) -> list[str]:
+    """`env -i` plus the allowlisted variables, as an argv prefix: the agent starts with nothing else."""
+    environ = os.environ if environ is None else environ
+    pairs = [f"{k}={environ[k]}" for k in ENV_ALLOW if isinstance(environ.get(k), str) and environ[k]
+             and "\n" not in environ[k] and "\x00" not in environ[k]]
+    return ["env", "-i", *pairs]
+
+
+def work_prompt(key: str) -> str | None:
+    """The built-in work prompt for `key`. Never the workspace config's prompt or any ticket text: an agent can edit
+    those, and this text starts another agent."""
+    from orch.config.load import DEFAULTS
+    from orch.dashboard.data.agent_start import KEY_RE
+    if not isinstance(key, str) or not KEY_RE.fullmatch(key):
+        return None
+    return DEFAULTS["agents"]["prompts"]["work"].replace("{key}", key)
+
+
+def start_dir(ws, t) -> str:
+    """The child's own worktree when it names exactly one that resolves to a folder strictly inside the workspace
+    and carries no harness settings of its own; else the workspace root."""
+    root = Path(ws.root).resolve()
+    wts = t.meta.get("worktrees")
+    vals = list(wts.values()) if isinstance(wts, dict) else []
+    if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
+        try:
+            p = (root / vals[0]).resolve()
+            if p != root and root in p.parents and p.is_dir() and not any((p / f).exists() for f in _HARNESS_FILES):
+                return str(p)
+        except (OSError, RuntimeError, ValueError):
+            pass
+    return str(root)
+
+
+def _gate(ws, epic_id: str, did: str) -> bool:
+    """Everything a launch needs, read fresh right before it: the factory on, the ledger whole, the signed charter live
+    and current, not paused, not edited, not out of time, the epic not done, and the human's Start."""
+    try:
+        if not permits.enabled(ws) or not ledger.head_ok():
+            return False
+        epic = _ticket(ws, epic_id)
+        if epic is None or epic.status == "done":
+            return False
+        d = permits.factory_delegation(ws, epic, ledger.entries(ws))
+        return d is not None and d["id"] == did and d["active"] and fs.armed(ws, did)
+    except Exception:
+        return False
 
 
 def concurrency(ws) -> int:
@@ -94,20 +151,32 @@ def stop_reason(ws, b: dict, signed, cut: bool) -> str | None:
 
 
 def _launchable(ws, epic, d, t, signed) -> bool:
+    try:
+        permits.require_budget(ws, t)  # the same budget refusal an agent's claim meets
+    except OrchError:
+        return False
     return (t.status in RUNNABLE and not epics.is_epic(t) and epics.within_limits(t, d) is None
             and not epics.hidden_in(t) and epics.child_state(ws, epic, t, signed) in ("delegated", "covered"))
 
 
 def _launch(ws, actor, launcher, settings, epic, d, t, token, lines) -> dict | None:
-    from orch.dashboard.data import agent_start
+    """Start one session. The command is the user's launch setting with the generated id and the built-in prompt put
+    in as whole argv elements (never a shell, never ticket text), under `env -i` with the allowlisted variables."""
+    prompt = work_prompt(t.id)
+    if prompt is None or not _gate(ws, epic.id, d["id"]):
+        return None
     sid = fs.new_session_id()
-    name = f"fx-{t.id}-{sid[:8]}"
-    prompt = agent_start.build(ws, t.id, "work", "claude", settings=settings)[0]
-    argv = [a.replace("{session}", sid).replace("{prompt}", prompt) for a in settings["factory_command"]]
+    name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id: names are shown in Mission Control
+    argv = [*env_prefix(), *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in settings["factory_command"])]
     b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token)
     try:
-        launcher.start(name, str(ws.root), argv)
-    except (OrchError, OSError) as e:
+        pid = launcher.start(name, start_dir(ws, t), argv)
+        fs.set_pid(ws, actor, sid, pid)
+    except (OrchError, OSError, ValueError) as e:
+        try:
+            launcher.stop(name)
+        except (OrchError, OSError):
+            pass
         fs.end(ws, sid)
         lines.append(f"could not start {name}: {e}")
         return None

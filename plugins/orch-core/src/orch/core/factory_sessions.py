@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import uuid
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from orch.errors import HumanOnlyError, ValidationError
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MAX_LAUNCHES = 5  # per child and delegation: a child that keeps parking is the human's to look at
 _MAX_BYTES = 4096
-_KEYS = {"workspace", "session", "epic", "delegation", "child", "name", "wake", "at"}
+_KEYS = {"workspace", "session", "epic", "delegation", "child", "name", "wake", "pid", "at"}
 
 
 def _root() -> Path:
@@ -42,7 +43,9 @@ def human_check(actor, what: str) -> None:
 
 
 def new_session_id() -> str:
-    return str(uuid.uuid4())
+    """A fresh UUID (the form the harness takes) from the system's random source: 122 random bits, a bearer secret
+    until the hook has seen it. It is never written to the event log, a ticket, a log line or a page."""
+    return str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
 
 
 def _create(path: Path, body: dict | None = None) -> bool:
@@ -69,10 +72,40 @@ def bind(ws, actor, *, session: str, epic: str, delegation: str, child: str, nam
     if not isinstance(session, str) or not SESSION_ID.match(session):
         raise ValidationError("a factory session id is a UUID the runner generated")
     body = {"workspace": workspace_id(ws), "session": session, "epic": str(epic), "delegation": str(delegation),
-            "child": str(child), "name": str(name), "wake": str(wake), "at": stamp_s()}
+            "child": str(child), "name": str(name), "wake": str(wake), "pid": "", "at": stamp_s()}
     if not _create(_root() / "sessions" / f"{session}.json", body):
         raise ValidationError(f"session {session} is bound already")
     return body
+
+
+def set_pid(ws, actor, session: str, pid) -> None:
+    """Human only (the runner): record the first process of the session's tmux pane, once. The hook then trusts the
+    binding only for a process that runs under that pid, so a copied session id used elsewhere gets nothing."""
+    human_check(actor, "binding a factory session")
+    b = binding(ws, session)
+    if b is None or b["pid"] or not isinstance(pid, int) or isinstance(pid, bool) or pid < 2:
+        raise ValidationError("the session's process cannot be recorded")
+    path = _root() / "sessions" / f"{session}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({**b, "pid": str(pid)}, ensure_ascii=True), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def chain_pids() -> set[int]:
+    """The pids of this process's ancestors (tests replace it)."""
+    from orch.actor import process_chain
+    return {p for p, _ in (process_chain() or [])}
+
+
+def trusted(ws, session) -> dict | None:
+    """The binding for `session` when this process runs under the pid the runner recorded for it, else None: what the
+    permission hook trusts. Compared in constant time; a binding without a pid is not trusted yet."""
+    import hmac
+    b = binding(ws, session)
+    if b is None or not hmac.compare_digest(b["session"].encode(), str(session).encode()):
+        return None
+    return b if b["pid"].isdigit() and int(b["pid"]) in chain_pids() else None
 
 
 def _read(ws, path: Path) -> dict | None:

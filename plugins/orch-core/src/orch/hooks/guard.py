@@ -210,7 +210,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # Agents never read or write them, by any tool; best effort for Bash, as for the pairing keys.
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
 # grant) are protected the same way: removing a marker would revive a used grant.
-_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
+_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|orch[/\\]+factory\.json\b|ORCH_STATE_DIR\}?[/\\]+factory\.json\b"
                      r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs)\b"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
@@ -896,7 +896,7 @@ def _ledger_path(raw: str) -> bool:
         base = ledger.base_dir().resolve()
     except (OSError, RuntimeError):
         base = ledger.base_dir()
-    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
+    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "factory.json" or p == base / "permits" or (base / "permits") in p.parents
 
 
 def _filter_could_reach_ledger(pattern: str) -> bool:
@@ -907,7 +907,7 @@ def _filter_could_reach_ledger(pattern: str) -> bool:
         return True
     name = pattern.rsplit("/", 1)[-1]
     # the ledger files and the shapes of the permit records (a request body, a once-use marker)
-    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "P-0123ABCD.json", "0123456789abcdef"))
+    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "factory.json", "P-0123ABCD.json", "0123456789abcdef"))
 
 
 def _bash_reaches_ledger(cmd: str) -> bool:
@@ -915,7 +915,7 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
         return True
     base = str(ledger.base_dir())
-    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
+    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits", "factory.json"))
 
 
 def evaluate(ws, payload: dict) -> Decision:

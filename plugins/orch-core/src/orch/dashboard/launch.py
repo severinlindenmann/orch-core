@@ -53,24 +53,49 @@ _LAUNCHER_BIN = {"cmux": "cmux", "terminal": "open", "iterm": "open", "ghostty":
 HARNESS_NAME = re.compile(r"[a-z][a-z0-9_-]*")
 DEFAULT_HARNESSES = {"claude": ["claude", "{prompt}"], "copilot": ["copilot", "-i", "{prompt}"],
                      "codex": ["codex", "{prompt}"]}
-SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness", "factory_command")
+SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness")
 # What the AI Factory runner starts for one child (docs/factory.md): {session} is the id the runner generated and binds
-# (the harness must start its session under exactly that id), {prompt} the child's work prompt. Per user only, like
-# every launch setting.
+# (the harness must start its session under exactly that id), {prompt} the child's work prompt. It lives in its own
+# file, factory.json in the orch config dir ({"command": [...]}), which the guard keeps agents from writing: a
+# command that starts agents unattended must not be one an agent can set.
 DEFAULT_FACTORY_COMMAND = ["claude", "--session-id", "{session}", "{prompt}"]
 # An argument that would hand the agent permissions itself: the permission hook stays the only gate.
 _SELF_GRANT = re.compile(r"dangerously|bypass|allowed-?tools|permission-prompt-tool|--settings|yolo|--trust-all|--full-auto"
                          r"|--auto-approve|--yes\b", re.I)
 
 
+def factory_path() -> Path:
+    return config_dir() / "factory.json"
+
+
+def load_factory_command() -> tuple[list[str], str | None]:
+    """(argv, error): the runner's launch command from factory.json, or the default and a sentence when the file is
+    damaged or names a self-granting command. A missing file is the default. Never raises."""
+    try:
+        raw = factory_path().read_bytes()
+    except FileNotFoundError:
+        return list(DEFAULT_FACTORY_COMMAND), None
+    except OSError as e:
+        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} cannot be read ({e.strerror or e}); using the default"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        argv = data.get("command") if isinstance(data, dict) and set(data) == {"command"} else None
+    except (ValueError, UnicodeDecodeError):
+        argv = None
+    why = factory_command_error(argv)
+    if why:
+        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} is ignored: {why}; using the default"
+    return list(argv), None
+
+
 def factory_command_error(argv) -> str | None:
     """Why `argv` cannot be the runner's launch command, or None."""
     if not _argv_list(argv):
-        return "factory_command must be a non-empty list of strings"
+        return "the command must be a non-empty list of strings in a file that holds only {\"command\": [...]}"
     if not any("{session}" in a for a in argv) or not any("{prompt}" in a for a in argv):
-        return "factory_command must contain {session} and {prompt}"
+        return "the command must contain {session} and {prompt}"
     if any(_SELF_GRANT.search(a) for a in argv):
-        return "factory_command must not grant the agent permissions itself: the permission hook is the gate"
+        return "the command must not grant the agent permissions itself: the permission hook is the gate"
     return None
 
 
@@ -89,7 +114,7 @@ def config_path() -> Path:
 def _defaults() -> dict:
     return {"terminal": "auto", "terminal_command": [], "default_harness": "claude",
             "harnesses": {k: list(v) for k, v in DEFAULT_HARNESSES.items()},
-            "factory_command": list(DEFAULT_FACTORY_COMMAND), "error": None, "path": str(config_path())}
+            "error": None, "path": str(config_path())}
 
 
 def _argv_list(value) -> bool:
@@ -97,6 +122,10 @@ def _argv_list(value) -> bool:
 
 
 def load_settings() -> dict:
+    return {**_load_launch_settings(), "factory_command": load_factory_command()[0]}
+
+
+def _load_launch_settings() -> dict:
     """The user's launch settings: {terminal, terminal_command, harnesses, default_harness,
     error, path}. `error` is a sentence for the Workspace page when the file is broken; the rest
     are then the built-in defaults (nothing from a broken file is used). Never raises."""
@@ -145,11 +174,8 @@ def _load_settings(path: Path) -> dict:
     default = data.get("default_harness", "claude")
     if not isinstance(default, str) or default not in merged:
         return broken("default_harness must name a known harness")
-    factory_command = data.get("factory_command", DEFAULT_FACTORY_COMMAND)
-    if factory_command_error(factory_command):
-        return broken(factory_command_error(factory_command))
     return {**out, "terminal": terminal, "terminal_command": list(command), "harnesses": merged,
-            "default_harness": default, "factory_command": list(factory_command)}
+            "default_harness": default}
 
 
 def choose(env: Mapping[str, str], configured: str, platform: str) -> str:

@@ -25,6 +25,7 @@ class Fake:
     def start(self, name, cwd, argv):
         self.names.add(name)
         self.started.append((name, cwd, argv))
+        return 4242
 
     def stop(self, name):
         self.names.discard(name)
@@ -108,7 +109,8 @@ def test_launch_binds_one_session_per_child_before_it_starts(fws, fa, fh, human,
     (b,) = fs.bindings(fws)
     assert lines == [f"started {name}"] and name == b["name"] and cwd == str(fws.root)
     assert (b["epic"], b["delegation"], b["child"]) == (eid, d["id"], cid)
-    assert argv[:2] == ["claude", "--session-id"] and argv[2] == b["session"] and cid in argv[3]
+    i = argv.index("claude")
+    assert argv[:2] == ["env", "-i"] and argv[i + 1] == "--session-id" and argv[i + 2] == b["session"] and cid in argv[i + 3]
     assert not any("dangerously" in a or "bypass" in a for a in argv)
     assert _tick(fws, human, fake) == [] and len(fake.started) == 1  # one session per child
 
@@ -127,21 +129,31 @@ def test_default_launch_command_grants_nothing_itself():
     ([], "non-empty"),
 ])
 def test_launch_command_that_grants_itself_is_refused(argv, why):
-    path = launch.config_path()
+    path = launch.factory_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"factory_command": argv}), encoding="utf-8")
-    s = launch.load_settings()
-    assert why in s["error"] and s["factory_command"] == launch.DEFAULT_FACTORY_COMMAND
+    path.write_text(json.dumps({"command": argv}), encoding="utf-8")
+    got, error = launch.load_factory_command()
+    assert why in error and got == launch.DEFAULT_FACTORY_COMMAND
+    assert launch.load_settings()["factory_command"] == launch.DEFAULT_FACTORY_COMMAND
+
+
+def test_a_damaged_launch_file_means_the_default(fws):
+    path = launch.factory_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for raw in ("{", "[]", '{"command": ["a"], "x": 1}', '{"command": "claude"}'):
+        path.write_text(raw, encoding="utf-8")
+        assert launch.load_factory_command()[0] == launch.DEFAULT_FACTORY_COMMAND
 
 
 def test_launch_command_is_configurable_per_user(fws, fa, fh, human, fake):
-    path = launch.config_path()
+    path = launch.factory_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"factory_command": ["my-agent", "--id={session}", "{prompt}"]}), encoding="utf-8")
+    path.write_text(json.dumps({"command": ["my-agent", "--id={session}", "{prompt}"]}), encoding="utf-8")
     _started(fws, fa, fh)
     _tick(fws, human, fake)
     ((_, _, argv),) = fake.started
-    assert argv[0] == "my-agent" and argv[1] == f"--id={fs.bindings(fws)[0]['session']}"
+    i = argv.index("my-agent")
+    assert argv[i + 1] == f"--id={fs.bindings(fws)[0]['session']}"
 
 
 def test_concurrency_cap_is_three_and_config_only_lowers_it(fws, fa, fh, human, fake, configure):
@@ -211,6 +223,7 @@ def test_hook_allows_a_granted_command_only_for_the_bound_session(fws, fa, fh, h
 def test_a_binding_for_another_delegation_or_epic_answers_nothing(fws, fa, fh, human):
     eid, (cid,), d = _started(fws, fa, fh)
     fs.bind(fws, human, session=UUID, epic=eid, delegation="sha256:old", child=cid, name="fx-x")
+    fs.set_pid(fws, human, UUID, 4242)
     assert permits.hook_decision(fws, _payload(UUID)) is None
 
 
@@ -257,6 +270,7 @@ def test_the_runner_refuses_an_agent_harness(fws, fa, fh, human, agent, fake, mo
 def test_damaged_or_foreign_bindings_are_not_bindings(fws, fa, fh, human, configure):
     eid, (cid,), d = _started(fws, fa, fh)
     fs.bind(fws, human, session=UUID, epic=eid, delegation=d["id"], child=cid, name="fx-x")
+    fs.set_pid(fws, human, UUID, 4242)
     path = fs._root() / "sessions" / f"{UUID}.json"
     good = json.loads(path.read_text(encoding="utf-8"))
     for bad in ("", "{", "[]", json.dumps({**good, "workspace": "0" * 16}), json.dumps({**good, "extra": "x"}),
@@ -416,3 +430,168 @@ def test_run_once_does_nothing_without_tmux_or_the_factory(fws, monkeypatch):
     from orch.dashboard import factory_runner as dash_runner, terminals
     monkeypatch.setattr(terminals, "which", lambda name: None)
     assert dash_runner.run_once(fws, Fake()) == []
+
+
+# -- review findings: launch inputs, session secrets, credentials, gates --------------------------------------------
+
+def test_a_copied_session_id_gets_nothing_outside_its_own_process_tree(fws, fa, fh, human, fake, monkeypatch):
+    _started(fws, fa, fh)
+    _tick(fws, human, fake)
+    (b,) = fs.bindings(fws)
+    assert permits.hook_decision(fws, _payload(b["session"])) is not None
+    monkeypatch.setattr(fs, "chain_pids", lambda: {1, 99})  # another process (e.g. an agent started with the copied id)
+    assert permits.hook_decision(fws, _payload(b["session"])) is None
+
+
+def test_a_binding_without_a_recorded_pid_is_not_trusted(fws, fa, fh, human):
+    eid, (cid,), d = _started(fws, fa, fh)
+    fs.bind(fws, human, session=UUID, epic=eid, delegation=d["id"], child=cid, name="fx-x")
+    assert permits.hook_decision(fws, _payload(UUID)) is None
+    with pytest.raises(ValidationError):
+        fs.set_pid(fws, human, UUID, 1)
+    fs.set_pid(fws, human, UUID, 4242)
+    with pytest.raises(ValidationError):
+        fs.set_pid(fws, human, UUID, 4343)  # once
+
+
+def test_pid_is_written_only_by_a_human_process(fws, fa, fh, human, agent):
+    eid, (cid,), d = _started(fws, fa, fh)
+    fs.bind(fws, human, session=UUID, epic=eid, delegation=d["id"], child=cid, name="fx-x")
+    with pytest.raises(HumanOnlyError):
+        fs.set_pid(fws, agent, UUID, 4242)
+
+
+def test_an_agent_edited_workspace_config_cannot_change_the_launch(fws, fa, fh, human, fake, configure):
+    _started(fws, fa, fh)
+    evil = configure(factory={"enabled": True}, agents={"prompts": {"work": "rm -rf ~ {key}"},
+                                                        "harnesses": {"claude": ["evil", "{prompt}"]}},
+                     dashboard={"terminal": "custom", "terminal_command": ["evil"]})
+    _tick(evil, human, fake)
+    ((_, _, argv),) = fake.started
+    assert "evil" not in argv and "claude" in argv and not any("rm -rf" in a for a in argv)
+    assert argv[-1] == "Work on ticket L-0002 with the orch-work-on-ticket skill."
+
+
+def test_ticket_text_never_reaches_the_launch(fws, fa, fh, human, fake):
+    eid, (cid,), d = _started(fws, fa, fh)
+    fa.set_section(cid, "Requirements", "r")  # same text; the title is what an agent could set
+    fa.new("$(touch /tmp/x); `id` & rm -rf ~", epic=eid)
+    _tick(fws, human, fake)
+    ((_, _, argv),) = fake.started
+    assert not any(c in " ".join(argv) for c in ("$(", "`", "rm -rf", "touch"))
+
+
+def test_the_launch_command_is_not_writable_by_agents(ws):
+    from orch.core.ledger import base_dir
+    from orch.hooks.guard import evaluate
+    path = str(base_dir() / "factory.json")
+    assert not evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": path, "content": "{}"},
+                             "cwd": str(ws.root)}).allow
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": f"echo '{{}}' > {path}"},
+                             "cwd": str(ws.root)}).allow
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "echo x > ~/.config/orch/factory.json"},
+                             "cwd": str(ws.root)}).allow
+    assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(ws.root / ".vscode" / "launch.json"),
+                                                               "content": "{}"}, "cwd": str(ws.root)}).allow
+
+
+def test_the_agent_starts_with_an_allowlisted_environment_only(fws, fa, fh, human, fake, monkeypatch):
+    for k, v in {"ORCH_DASHBOARD_TOKEN": "tok-secret", "ANTHROPIC_API_KEY": "sk-secret", "AWS_SECRET_ACCESS_KEY": "x",
+                 "HOME": "/home/u", "PATH": "/usr/bin"}.items():
+        monkeypatch.setenv(k, v)
+    _started(fws, fa, fh)
+    _tick(fws, human, fake)
+    ((_, _, argv),) = fake.started
+    i = argv.index("claude")
+    assert argv[:2] == ["env", "-i"]
+    names = {a.split("=", 1)[0] for a in argv[2:i]}
+    assert names <= set(factory_runner.ENV_ALLOW) and {"HOME", "PATH"} <= names
+    assert not any("secret" in a for a in argv)
+
+
+def test_session_ids_stay_out_of_events_logs_names_and_pages(fws, fa, fh, human, fake, caplog):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orch.dashboard.app import create_app
+    _started(fws, fa, fh)
+    with caplog.at_level("DEBUG"):
+        lines = _tick(fws, human, fake)
+    (b,) = fs.bindings(fws)
+    sid = b["session"]
+    assert sid not in " ".join(lines) and sid not in caplog.text and sid[:8] not in b["name"]
+    assert sid not in (fws.state_dir / "events.jsonl").read_text(encoding="utf-8") if (fws.state_dir / "events.jsonl").exists() else True
+    permits.hook_decision(fws, _payload(sid))
+    assert sid not in json.dumps([e.__dict__ for e in __import__("orch.core.events", fromlist=["x"]).read_events(fws)], default=str)
+    c = TestClient(create_app(fws, "tok"))
+    c.get("/?token=tok")
+    for url in ("/", "/board", f"/t/{b['epic']}", f"/t/{b['child']}"):
+        assert sid not in c.get(url).text
+    assert sid not in "".join(p.read_text(encoding="utf-8") for p in fws.root.rglob("*.md"))
+
+
+def test_session_id_comes_from_the_system_random_source():
+    ids = {fs.new_session_id() for _ in range(50)}
+    assert len(ids) == 50 and all(fs.SESSION_ID.match(i) for i in ids)
+
+
+def test_start_dir_is_the_childs_worktree_inside_the_workspace_only(fws, fa, fh, tmp_path):
+    eid, (cid,), d = _started(fws, fa, fh)
+    t = store.load(fws, cid)[1]
+    wt = fws.root / "wt" / "child"
+    wt.mkdir(parents=True)
+    t.meta["worktrees"] = {"app": str(wt)}
+    assert factory_runner.start_dir(fws, t) == str(wt.resolve())
+    t.meta["worktrees"] = {"app": "wt/child"}
+    assert factory_runner.start_dir(fws, t) == str(wt.resolve())
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    for bad in (str(outside), "../elsewhere", "/", str(fws.root), "wt/missing", ""):
+        t.meta["worktrees"] = {"app": bad}
+        assert factory_runner.start_dir(fws, t) == str(fws.root.resolve()), bad
+    (fws.root / "link").symlink_to(outside)
+    t.meta["worktrees"] = {"app": "link"}
+    assert factory_runner.start_dir(fws, t) == str(fws.root.resolve())
+    (wt / ".claude").mkdir()
+    (wt / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    t.meta["worktrees"] = {"app": str(wt)}
+    assert factory_runner.start_dir(fws, t) == str(fws.root.resolve())  # its own harness settings: not used
+    t.meta["worktrees"] = {"a": str(wt), "b": str(wt)}
+    assert factory_runner.start_dir(fws, t) == str(fws.root.resolve())
+
+
+def test_every_launch_rechecks_all_the_gates_right_before_it_starts(fws, fa, fh, human, fake, monkeypatch):
+    eid, kids, d = _started(fws, fa, fh)
+    real = factory_runner._launchable
+
+    def pause_then_say_yes(*a, **kw):
+        ok = real(*a, **kw)
+        fh.epic_pause(eid)  # the human pauses between the plan and the launch
+        return ok
+
+    monkeypatch.setattr(factory_runner, "_launchable", pause_then_say_yes)
+    _tick(fws, human, fake)
+    assert not fake.started and fs.bindings(fws) == []
+
+
+@pytest.mark.parametrize("what", ["off", "cut", "unarmed", "budget", "edited", "paused"])
+def test_launch_gate_fails_closed(fws, fa, fh, configure, monkeypatch, what):
+    eid, kids, d = _started(fws, fa, fh)
+    ws = fws
+    if what == "off":
+        ws = configure(factory={"enabled": False})
+    elif what == "cut":
+        monkeypatch.setattr(ledger, "head_ok", lambda: False)
+    elif what == "unarmed":
+        assert not factory_runner._gate(fws, eid, "sha256:not-armed")
+    elif what == "budget":
+        from orch import clock
+        real = clock.now()
+        monkeypatch.setattr(clock, "now", lambda: real + timedelta(hours=73))
+    elif what == "edited":
+        fa.set_section(eid, "Requirements", "edited")
+    else:
+        fh.epic_pause(eid)
+    if what != "unarmed":
+        assert not factory_runner._gate(ws, eid, d["id"])
+    else:
+        assert factory_runner._gate(fws, eid, d["id"])

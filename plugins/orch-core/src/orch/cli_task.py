@@ -144,10 +144,11 @@ def start(ref: str, task: TaskArg, json_out: JsonOpt = False) -> None:
 
 @task_app.command("done")
 def done(ref: str, task: TaskArg, message: MessageOpt = None,
-         run: Annotated[bool, typer.Option("--run", help="Run the verify line here (a command, or check:<name> from "
+         run: Annotated[bool, typer.Option("--run", help="Run the verify line here (cmd: <command>, or check:<name> from "
                                                          "the workspace config), keep a receipt and draw it in "
                                                          "Verification; ticks the task only when every step passed.")] = False,
-         timeout: Annotated[int, typer.Option("--timeout", min=1, help="Seconds before --run gives up.")] = 1800,
+         timeout: Annotated[Optional[int], typer.Option("--timeout", min=1, help="Seconds before --run gives up "
+                                                        "(default: the check's own timeout, else 540).")] = None,
          json_out: JsonOpt = False) -> None:
     """Tick a task; -m says what proved it (required when it has a verify line), or --run proves it with a receipt."""
     cli, ws = _ctx()

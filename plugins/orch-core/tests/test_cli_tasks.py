@@ -123,8 +123,8 @@ def test_cli_and_dashboard_share_the_skipped_glyph():
 
 
 def test_done_run_keeps_a_receipt(cli, claimed, plan_approved, ws_root, tmp_path, monkeypatch):
-    assert cli("task", "add", claimed, "prove it", "--verify", "echo from-cli")[0] == 0
-    assert cli("task", "add", claimed, "fails", "--verify", "exit 7")[0] == 0
+    assert cli("task", "add", claimed, "prove it", "--verify", "cmd: echo from-cli")[0] == 0
+    assert cli("task", "add", claimed, "fails", "--verify", "cmd: exit 7")[0] == 0
     plan_approved(claimed)
     monkeypatch.setenv("ORCH_HOME", str(ws_root / "orchestrator"))
     elsewhere = tmp_path / "checkout"

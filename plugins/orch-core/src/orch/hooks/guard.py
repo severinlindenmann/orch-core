@@ -1138,7 +1138,7 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
     if _under(path, ws.state_dir.resolve()):
         return Decision(False, _USE_ORCH)
     if path == (ws.home / "config.json").resolve():
-        return _config_edit(tool, tool_input, path)
+        return _config_edit(tool, tool_input, path, ws)
     if not _under(path, ws.tickets_dir.resolve()):
         return ALLOW
     if path.name == "INDEX.md":
@@ -1158,6 +1158,10 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
     except TicketParseError:
         return Decision(False, "this edit would break the ticket's frontmatter")
     changed = _protected_changes(old.meta, new.meta, freeze_after_approval=True)
+    from orch.core.protect import artifact_facts
+    if artifact_facts(old.meta) != artifact_facts(new.meta):
+        changed.append("artifact receipts or who added an artifact (written by orch: `orch task done --run`, "
+                       "`orch artifact add`)")
     if old.meta.get("external") != new.meta.get("external"):
         changed.append("external (keys are added with `orch link --external`; a key decides who may edit the Ask)")
     if old.meta.get("parent") != new.meta.get("parent") and _approved_epic_side(ws, old.meta, new.meta):
@@ -1192,7 +1196,7 @@ def _widgets_html(text: str):
     return widgets.get("html", False) if isinstance(widgets, dict) else (False if isinstance(cfg, dict) else None)
 
 
-def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:
+def _config_edit(tool: str, tool_input: dict, path: Path, ws=None) -> Decision:
     """The workspace config is the agent's to edit (repos, prompts, ...), except `widgets.html`: whether agent-written
     HTML runs in ticket widgets is the human's call, like trusting an addon."""
     try:
@@ -1203,8 +1207,18 @@ def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:
     before, after = _widgets_html(old_text), (None if new_text is None else _widgets_html(new_text))
     if before is not None and after is not None and before != after:
         return Decision(False, _WIDGETS_DENIED)
-    before, after = _config_key(old_text, "checks"), (None if new_text is None else _config_key(new_text, "checks"))
-    if before is not _NO_JSON and after is not _NO_JSON and before != after:
+    if new_text is None:
+        return ALLOW
+    # checks: compared with the file as it is, or (when that does not parse) with the config orch last loaded, so
+    # a detour through a broken file cannot change what a check runs
+    before = _config_key(old_text, "checks")
+    if before is _NO_JSON:
+        before = (getattr(ws, "config", None) or {}).get("checks", {}) if ws is not None else _NO_JSON
+    after = _config_key(new_text, "checks")
+    if after is _NO_JSON:
+        if before not in (_NO_JSON, {}):
+            return Decision(False, _CHECKS_DENIED + " (and keep orchestrator/config.json valid JSON)")
+    elif before is not _NO_JSON and before != after:
         return Decision(False, _CHECKS_DENIED)
     return ALLOW
 

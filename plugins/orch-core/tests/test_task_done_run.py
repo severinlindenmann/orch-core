@@ -36,7 +36,7 @@ def _gates(ws, tid):
 
 
 def test_a_passing_line_ticks_the_task_and_keeps_a_receipt(ws, aops, ticket, tmp_path):
-    task = _task(aops, ticket, "echo ok")
+    task = _task(aops, ticket, "cmd: echo ok")
     rec = aops.task_done_run(ticket, task, cwd=tmp_path)
     assert rec["exit"] == 0 and _state(ws, ticket, task) == "done"
     [item] = _receipts(ws, ticket)
@@ -51,7 +51,7 @@ def test_a_passing_line_ticks_the_task_and_keeps_a_receipt(ws, aops, ticket, tmp
 
 
 def test_a_failing_line_keeps_the_receipt_and_leaves_the_task_open(ws, aops, ticket, tmp_path):
-    task = _task(aops, ticket, "exit 1")
+    task = _task(aops, ticket, "cmd: exit 1")
     with pytest.raises(ValidationError, match="exit 1"):
         aops.task_done_run(ticket, task, cwd=tmp_path)
     assert _state(ws, ticket, task) == "doing"
@@ -80,7 +80,7 @@ def test_a_named_check_runs_the_projects_steps_and_draws_a_gates_widget(ws, aops
 
 def test_the_widget_keeps_other_verification_text(ws, aops, ticket, tmp_path):
     aops.set_section(ticket, "Verification", "- AC1 measured by hand: 412 ms")
-    task = _task(aops, ticket, "true")
+    task = _task(aops, ticket, "cmd: true")
     aops.task_done_run(ticket, task, cwd=tmp_path)
     text = store.load(ws, ticket)[1].section("Verification")
     assert text.startswith("- AC1 measured by hand: 412 ms") and len(_gates(ws, ticket)) == 1
@@ -90,7 +90,7 @@ def test_the_receipt_widget_passes_widget_check_and_renders(ws, aops, ticket, tm
     from orch.widgets import Ctx, render_text
     from orch.widgets.blocks import ticket_blocks
     from orch.widgets.validate import validate
-    task = _task(aops, ticket, "true")
+    task = _task(aops, ticket, "cmd: true")
     aops.task_done_run(ticket, task, cwd=tmp_path)
     path, t = store.load(ws, ticket)
     [b] = ticket_blocks(t, path.read_text(encoding="utf-8"))
@@ -99,7 +99,7 @@ def test_the_receipt_widget_passes_widget_check_and_renders(ws, aops, ticket, tm
 
 
 def test_a_plain_line_is_one_step_named_verify(ws, aops, ticket, tmp_path):
-    task = _task(aops, ticket, "true")
+    task = _task(aops, ticket, "cmd: true")
     aops.task_done_run(ticket, task, cwd=tmp_path)
     assert [(i["name"], i["status"]) for i in _gates(ws, ticket)[0]["items"]] == [("verify", "pass")]
     assert _receipts(ws, ticket)[0]["run"]["check"] is None
@@ -119,7 +119,7 @@ def test_no_verify_line_refuses(aops, ticket, tmp_path):
 
 
 def test_nothing_runs_before_the_plan_is_approved(ws, aops, working, tmp_path):
-    _, ids = aops.task_add(working, [{"text": "Prove it", "verify": f"touch {tmp_path / 'ran'}"}])
+    _, ids = aops.task_add(working, [{"text": "Prove it", "verify": f"cmd: touch {tmp_path / 'ran'}"}])
     with pytest.raises(Exception):
         aops.task_done_run(working, ids[0], cwd=tmp_path)
     assert not (tmp_path / "ran").exists()
@@ -142,7 +142,7 @@ def test_a_bad_check_in_the_config_is_refused_on_use(aops, ticket, tmp_path, con
 def test_another_sessions_agent_runs_nothing(ws, aops, other_agent, ticket, tmp_path):
     from orch.core.ops import Ops
     from orch.errors import ClaimError
-    _, ids = aops.task_add(ticket, [{"text": "Prove it", "verify": f"touch {tmp_path / 'ran'}"}])
+    _, ids = aops.task_add(ticket, [{"text": "Prove it", "verify": f"cmd: touch {tmp_path / 'ran'}"}])
     aops.task_start(ticket, ids[0])
     with pytest.raises(ClaimError):
         Ops(ws, other_agent).task_done_run(ticket, ids[0], cwd=tmp_path)
@@ -150,7 +150,7 @@ def test_another_sessions_agent_runs_nothing(ws, aops, other_agent, ticket, tmp_
 
 
 def test_a_closed_task_runs_nothing(aops, ticket, tmp_path):
-    _, ids = aops.task_add(ticket, [{"text": "Prove it", "verify": f"touch {tmp_path / 'ran'}"}])
+    _, ids = aops.task_add(ticket, [{"text": "Prove it", "verify": f"cmd: touch {tmp_path / 'ran'}"}])
     aops.task_skip(ticket, ids[0], "not needed")
     with pytest.raises(ValidationError, match="skipped"):
         aops.task_done_run(ticket, ids[0], cwd=tmp_path)

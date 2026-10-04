@@ -279,13 +279,13 @@ class TaskOpsMixin:
             return text, ({"note": note} if note else {})
         return self._task_move(ref, task_id, change)
 
-    def task_done_run(self, ref: str, task_id: str, *, cwd, timeout: int = 1800, note: str | None = None) -> dict:
+    def task_done_run(self, ref: str, task_id: str, *, cwd, timeout: int | None = None, note: str | None = None) -> dict:
         """Run the task's verify line here (a shell command, or `check:<name>`: the workspace's named check, step by
         step), keep the receipt as an artifact, draw it as a `gates` widget in Verification, and tick the task only
         when every step passed. Nothing runs before the plan the agent needs is approved."""
         import io
         from pathlib import Path
-        from orch.config.load import check_steps
+        from orch.config.load import DEFAULT_CHECK_TIMEOUT, check_steps, check_timeout
         from orch.core import artifacts as art, receipts, store
         _, t = store.load(self.ws, ref)
         items = tk.ticket_tasks(t)
@@ -304,9 +304,18 @@ class TaskOpsMixin:
         if not task.verify:
             raise UsageError(f"{task.id} has no verify line to run",
                              hint=f"orch task edit {t.id} {task.id} --verify 'check:<name>' (or a command)")
-        check = task.verify[len("check:"):].strip() if task.verify.startswith("check:") else None
+        # only an explicit command runs: a verify line may be prose ("deploy and one green run per job")
+        line = task.verify.strip()
+        check = line[len("check:"):].strip() if line.startswith("check:") else None
+        cmd = line[len("cmd:"):].strip() if line.startswith("cmd:") else None
+        if check is None and not cmd:
+            raise UsageError(f"{task.id}'s verify line is not marked as something to run (cmd: <command> or "
+                             f"check:<name>): {line!r}",
+                             hint=f"orch task edit {t.id} {task.id} --verify 'cmd: <command>' (or 'check:<name>' "
+                                  "from the workspace config), or tick it with -m")
         steps, keep_going = (check_steps(self.ws.config, check) if check is not None
-                             else ([{"name": "verify", "run": task.verify}], False))
+                             else ([{"name": "verify", "run": cmd}], False))
+        timeout = timeout or check_timeout(self.ws.config, check) or DEFAULT_CHECK_TIMEOUT
         r = receipts.run_steps(steps, Path(cwd), timeout=int(timeout), max_bytes=art.max_bytes(self.ws),
                                keep_going=keep_going)
         base, n = f"receipt-{task.id}-{r.at.replace('-', '').replace(':', '')}", 1

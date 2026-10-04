@@ -64,6 +64,16 @@ DEFAULTS: dict = {
 
 _CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 MAX_CHECK_STEPS = 20
+# Under the 600 s an agent harness's shell call allows, so the harness never kills a run before orch does; a check
+# that needs longer says so itself (`checks.<name>.timeout`).
+DEFAULT_CHECK_TIMEOUT = 540
+
+
+def check_timeout(cfg: dict, name: str | None) -> int | None:
+    """The seconds the workspace's check `name` allows (`timeout`, 1-86400), or None when it sets none."""
+    check = (cfg.get("checks") or {}).get(name) if name and isinstance(cfg.get("checks"), dict) else None
+    t = check.get("timeout") if isinstance(check, dict) else None
+    return t if isinstance(t, int) and not isinstance(t, bool) and 1 <= t <= 86400 else None
 
 
 def check_steps(cfg: dict, name: str) -> tuple[list[dict], bool]:

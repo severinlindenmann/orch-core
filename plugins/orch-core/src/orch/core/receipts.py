@@ -58,12 +58,27 @@ def _run_one(cmd: str, cwd: Path, out, timeout: float) -> tuple[int | None, bool
     try:
         return proc.wait(timeout=max(timeout, 0.01)), False
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)  # the whole group: `npm run x` starts children of its own
-        except ProcessLookupError:
-            pass
-        proc.wait()
+        _kill(proc)
         return None, True
+    except BaseException:  # Ctrl-C, or SIGTERM from the harness (see run_steps): never leave the command behind
+        _kill(proc)
+        raise
+
+
+def _kill(proc) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)  # the whole group: `npm run x` starts children of its own
+    except ProcessLookupError:
+        pass
+    proc.wait()
+
+
+class Terminated(BaseException):
+    """SIGTERM while a run is in progress (a harness's own timeout): unwinds so the step's group is killed."""
+
+
+def _on_term(signum, frame):
+    raise Terminated()
 
 
 def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, keep_going: bool = False) -> Receipt:
@@ -73,6 +88,18 @@ def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, kee
     dirty = bool(commit and _git(cwd, "status", "--porcelain", "--untracked-files=no"))
     at, start = stamp_s(), time.monotonic()
     deadline = start + timeout
+    import threading
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGTERM, _on_term)
+    try:
+        return _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, at, start)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+
+
+def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, at, start) -> Receipt:
     done: list[dict] = []
     exit_code: int | None = 0
     timed_out = stop = False

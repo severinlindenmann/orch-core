@@ -107,7 +107,8 @@
             "type": "object", "additionalProperties": false, "required": ["name", "run"],
             "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 60},
                            "run": {"type": "string", "minLength": 1, "maxLength": 2000}}}},
-          "keep_going": {"type": "boolean"}
+          "keep_going": {"type": "boolean"},
+          "timeout": {"type": "integer", "minimum": 1, "maximum": 86400}
         }
       }
     },

@@ -559,6 +559,17 @@
     {% for addon, d in loose %}{{ ui.addon_decision(addon, d) }}{% endfor %}
   </section>
   {% endif %}
+  {% if ran_on %}
+  <section class="card" id="ran-on">
+    <h2>Ran on</h2>
+    <ul class="plain">{% for r in ran_on %}
+      <li>{{ r.harness }}{% if r.started %} <span class="muted">· {{ r.started }}</span>{% endif %}
+      {% if r.claude %}{% if r.models %}<br>{% for m, n in r.models.main %}{{ m }} <span class="muted">({{ n }})</span>{{ ", " if not loop.last }}{% else %}<span class="muted">no model recorded</span>{% endfor %}
+      {% if r.models.total %}<br><span class="muted">subagents: {% for m, n in r.models.subagents %}{{ n }} × {{ m }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+      {% else %}<br><span class="muted">not on this machine</span>{% endif %}{% endif %}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
   {% if external %}
   <section class="card" id="links">
     <h2>Links</h2>

@@ -306,7 +306,10 @@ def _ranges(get, url):
                                 ("bytes=-0", 416, b"", f"bytes */{n}"),
                                 ("bytes=0-1,4-5", 200, full.content, None),
                                 ("bytes=5-2", 200, full.content, None),
-                                ("items=0-1", 200, full.content, None)):
+                                ("items=0-1", 200, full.content, None),
+                                ("Bytes=0-3", 206, full.content[:4], "bytes 0-3/%d" % n),
+                                ("bytes=" + "9" * 5000 + "-", 200, full.content, None),
+                                ("bytes=0-" + "9" * 5000, 200, full.content, None)):
         r = get(url, headers={"Range": rng})
         assert (r.status_code, r.content) == (code, want), rng
         assert r.headers.get("content-range") == cr, rng

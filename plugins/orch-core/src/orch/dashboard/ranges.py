@@ -7,7 +7,7 @@ import re
 from fastapi import Request
 from fastapi.responses import Response
 
-_RANGE = re.compile(r"bytes=(\d*)-(\d*)")
+_RANGE = re.compile(r"bytes=(\d{0,19})-(\d{0,19})", re.IGNORECASE)  # 19 digits: int() cannot fail, longer is no match
 
 
 def ranged(request: Request, data: bytes, media: str, headers: dict) -> Response:

@@ -117,7 +117,7 @@ def ticket_schema() -> dict:
             "verdict": {"type": ["object", "null"], "required": ["hash", "round"],
                         "properties": {"hash": _HASH, "round": {"type": ["integer", "null"], "minimum": 0}}},
             # 1.6: R26 on the wire: for an approved gate (requirements, plan) and for a done ticket (verdict), whether
-            # the signed ledger on this machine backs it (`signed`) and who (`by`: you, from your phone, by delegation,
+            # the signed ledger on this machine backs it (`signed`) and who (`by`: you, from your phone, by your epic charter, by delegation,
             # accepted, closed; null when not signed). A tampered, unknown or missing ledger entry is signed false.
             # A gate that is not approved, and a ticket that is not done, have no key. No key material, ever.
             "signed": {"type": "object", "properties": {k: {"type": "object", "required": ["signed", "by"],

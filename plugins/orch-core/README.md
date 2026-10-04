@@ -175,7 +175,7 @@ Pair a phone to a `remote_humans` addon (Workspace & addons, your own QR code or
 ## Upgrading
 
 A built-in widget template that changes in an upgrade shows as "Drift" on existing tickets until each block is
-re-pinned (`orch widget check` lists them). That is intended, and a re-pin in a Verification or Acceptance criteria section needs a fresh
+re-pinned (`orch widget check` lists them; `orch widget repin` re-pins them). That is intended, and a re-pin in a Verification or Acceptance criteria section needs a fresh
 human verdict. See [docs/widgets.md](docs/widgets.md#upgrades-drift-and-re-pinning).
 
 ## Without the plugin

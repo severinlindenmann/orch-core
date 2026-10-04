@@ -1,6 +1,8 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
+{% from "_charts.html" import chart %}
 {% block main %}
+{% set n = o.needs %}
 <div class="page-head">
   <div>
     <h1>Reports</h1>
@@ -15,28 +17,63 @@
   <a href="?days={{ w }}" class="{{ 'on' if days == w }}"{% if days == w %} aria-current="true"{% endif %}>{{ days_labels[w] }}</a>
   {% endfor %}
 </div>
+{% if o.since and o.starts_in_window %}
+<p class="since">orch has recorded this workspace since <b>{{ o.since }}</b>. Charts start there instead of showing empty days.</p>
+{% endif %}
+<section class="card needs-now" aria-labelledby="now-h">
+  <h2 id="now-h">Needs you now</h2>
+  <div class="kpis">
+    <div class="kpi">
+      <div class="muted">Waiting on you</div>
+      <div class="kpi-value"><a class="lnk" href="/">{{ n.waiting }}</a></div>
+      <div class="muted">{% if n.oldest %}oldest <a class="lnk" href="/t/{{ n.oldest.ticket }}">{{ n.oldest.ticket }}</a> &middot; {{ n.oldest.what }} &middot; {{ n.oldest.age_minutes|minutes_ago }}{% else %}nothing waits on you{% endif %}</div>
+    </div>
+    <div class="kpi">
+      <div class="muted">In testing</div>
+      <div class="kpi-value"><a class="lnk" href="/board#col-testing">{{ n.testing }}</a></div>
+      <div class="muted">{{ "waiting for your verdict" if n.testing else "nothing to verify" }}</div>
+    </div>
+    <div class="kpi">
+      <div class="muted">Open questions</div>
+      <div class="kpi-value">{{ n.questions }}</div>
+      <div class="muted">{% if n.asked %}{{ n.asked }} asked, {{ n.answered }} answered{% else %}no question asked yet{% endif %}</div>
+    </div>
+    <div class="kpi">
+      <div class="muted">Agents working</div>
+      <div class="kpi-value"><a class="lnk" href="/board#col-in-progress">{{ n.working }}</a></div>
+      <div class="muted">ticket{{ "" if n.working == 1 else "s" }} in progress</div>
+    </div>
+  </div>
+</section>
+{% if o.state == "none" %}
+<section class="card" aria-labelledby="none-h">
+  <h2 id="none-h">Nothing recorded yet</h2>
+  <p class="empty">orch starts recording with the first ticket event: creating, moving or approving a ticket. Flow figures and charts appear here from then on.</p>
+</section>
+{% else %}
 <div class="kpis">
   <div class="card kpi">
     <div class="muted">Done</div>
     <div class="kpi-value">{{ r.done }}</div>
-    <div class="muted">{{ "%+d"|format(r.done - r.done_before) }} vs. the period before</div>
+    <div class="muted">{% if o.has_before %}{{ "%+d"|format(r.done - r.done_before) }} vs. the period before{% elif o.starts_in_window %}in the {{ o.days_on_record }} day{{ "" if o.days_on_record == 1 else "s" }} on record{% else %}in this period{% endif %}</div>
   </div>
   <div class="card kpi">
-    <div class="muted">Median open &rarr; done</div>
-    <div class="kpi-value">{{ r.median_days|duration("d") }}</div>
-    <div class="muted">{% if r.median_days_n %}median over {{ r.median_days_n }} done ticket{{ "" if r.median_days_n == 1 else "s" }}{% else %}no ticket done in this period{% endif %}</div>
+    <div class="muted">Claim &rarr; testing</div>
+    <div class="kpi-value">{{ o.claim_to_testing_hours|duration }}</div>
+    <div class="muted">{% if o.n_claim %}median elapsed over {{ o.n_claim }} done ticket{{ "" if o.n_claim == 1 else "s" }}, waits included{% else %}no done ticket with a claim in this period{% endif %}</div>
   </div>
   <div class="card kpi">
-    <div class="muted">Waiting on you</div>
-    <div class="kpi-value">{{ r.median_wait_hours|duration }}</div>
-    <div class="muted">{% if r.median_wait_n %}median over {{ r.median_wait_n }} answer{{ "" if r.median_wait_n == 1 else "s" }}{% else %}no question answered in this period{% endif %}</div>
+    <div class="muted">Testing &rarr; done</div>
+    <div class="kpi-value">{{ o.testing_to_done_hours|duration }}</div>
+    <div class="muted">{% if o.n_testing %}median elapsed over {{ o.n_testing }} done ticket{{ "" if o.n_testing == 1 else "s" }}{% else %}no done ticket went through testing in this period{% endif %}</div>
   </div>
   <div class="card kpi">
-    <div class="muted">Sent back</div>
-    <div class="kpi-value">{{ r.sent_back }}</div>
-    <div class="muted">of {{ r.verdicts }} verdicts</div>
+    <div class="muted">Your decisions</div>
+    <div class="kpi-value">{{ o.decisions.total }}</div>
+    <div class="muted">{{ o.decisions.gates }} gate approval{{ "" if o.decisions.gates == 1 else "s" }} &middot; {{ o.decisions.verdicts }} verdict{{ "" if o.decisions.verdicts == 1 else "s" }} &middot; {{ o.decisions.answers }} answer{{ "" if o.decisions.answers == 1 else "s" }}</div>
   </div>
 </div>
+{% endif %}
 <section class="card dist-card" aria-labelledby="dist-h">
   <div class="section-head">
     <h2 id="dist-h">Tickets by status</h2>
@@ -58,33 +95,38 @@
   <p class="empty">No tickets yet.</p>
   {% endif %}
 </section>
+{% if o.state == "ok" %}
 <div class="grid-2 reports-grid">
   <section class="card">
-    <h2>Tickets done per week</h2>
-    {% set week_text = [] %}{% for w in r.weeks %}{% set _ = week_text.append(w.w ~ " " ~ w.n ~ (" (partial)" if w.partial else "")) %}{% endfor %}
-    <div class="bars" role="img" aria-label="Tickets done per week, last 8 weeks: {{ week_text|join(', ') }}">
-      {% for w in r.weeks %}
-      <div class="bar-col" aria-hidden="true">
-        <span>{{ w.n }}</span>
-        <div class="bar-slot"><div class="bar" style="height: {{ w.h }}"></div></div>
-        <span>{{ w.w }}{% if w.partial %}<br>partial{% endif %}</span>
-      </div>
-      {% endfor %}
-    </div>
+    {{ chart(o.per_day.chart, "Created and done per day",
+       note=("Without the import: " ~ o.per_day.new ~ " new tickets and " ~ o.per_day.done ~ " done in " ~ o.per_day.days ~ " days." if o.per_day.imported else "Counted from the day orch started recording."),
+       id="chart-per-day") }}
   </section>
-  <aside>
-    <section class="card">
-      <h2>Where the time goes</h2>
-      <p class="muted">Share of a ticket's life, over tickets done in the period</p>
-      {% for s in r.split %}
-      <div class="split-row">
-        <div class="split-label"><span>{% if s.role == "you" %}{{ ui.icon("you") }} {% endif %}{{ s.name }}</span><b>{{ s.pct }}</b></div>
-        <div class="split-track"><div class="split-fill split-fill-{{ s.role }}" style="width: {{ s.pct }}"></div></div>
-      </div>
-      {% endfor %}
-    </section>
-  </aside>
+  <section class="card">
+    {{ chart(o.claim_chart, "Claim → testing, per done ticket",
+       note="Elapsed time, waits included, for the " ~ o.n_claim ~ " done ticket" ~ ("" if o.n_claim == 1 else "s") ~ " with a claim. Groups are uneven in width; tickets still in progress are not counted.",
+       id="chart-claim") }}
+  </section>
 </div>
+{% elif o.state == "one-day" %}
+<section class="card" aria-labelledby="one-h">
+  <h2 id="one-h">Today</h2>
+  <p>{{ o.per_day.new }} new{% if o.per_day.imported %}, {{ o.per_day.imported }} imported{% endif %}, {{ o.per_day.done }} done.</p>
+  <p class="muted">With one day on record the charts give way to the numbers alone.</p>
+</section>
+{% endif %}
+{% if o.state != "none" %}
+<section class="card where-time">
+  <h2>Where the time goes</h2>
+  <p class="muted">Hours across the {{ r.done }} done ticket{{ "" if r.done == 1 else "s" }}, split by status and added up, so a long ticket weighs more than a short one. "Agent working" is time in progress, not compute.</p>
+  {% for s in r.split %}
+  <div class="split-row">
+    <div class="split-label"><span>{% if s.role == "you" %}{{ ui.icon("you") }} {% endif %}{{ s.name }}</span><b>{{ s.pct }}</b></div>
+    <div class="split-track"><div class="split-fill split-fill-{{ s.role }}" style="width: {{ s.pct }}"></div></div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
 <section class="card by-type" aria-labelledby="by-type-h">
 <h2 id="by-type-h">By type</h2>
 <div class="table-wrap">
@@ -93,17 +135,18 @@
       <tr>
         <th scope="col">Type</th>
         <th scope="col">Done</th>
-        <th scope="col">Median</th>
+        <th scope="col">Median open &rarr; done</th>
         <th scope="col">Sent back</th>
         <th scope="col">Questions</th>
       </tr>
     </thead>
     <tbody>
+      {% set peak = r.types|map(attribute="done")|max if r.types else 1 %}
       {% for t in r.types %}
       <tr>
         <td class="cell-title"><b>{{ t.type }}</b></td>
-        <td data-label="Done">{{ t.done }}</td>
-        <td data-label="Median">{{ t.median_days|duration("d") }}</td>
+        <td data-label="Done"><span class="ib"><span class="ib-track" aria-hidden="true"><i style="width: {{ (t.done / peak * 100)|round|int }}%"></i></span>{{ t.done }}</span></td>
+        <td data-label="Median open → done">{{ t.median_days|duration("d") }}</td>
         <td data-label="Sent back">{{ t.sent_back }}</td>
         <td data-label="Questions">{{ t.questions }}</td>
       </tr>

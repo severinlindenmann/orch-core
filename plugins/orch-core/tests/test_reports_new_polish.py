@@ -20,7 +20,7 @@ def test_duration_has_no_false_precision(hours, text):
 def test_reports_name_the_sample_and_never_show_zero_point_zero(dash):
     html = dash.get("/reports").text
     assert "0.0 d" not in html and "0.0 h" not in html
-    assert "no ticket done in this period" in html and "no question answered in this period" in html
+    assert "Nothing recorded yet" in html and "Needs you now" in html  # an empty record shows its own state
     assert '<h2 id="by-type-h">By type</h2>' in html
     assert "Open as Markdown" in html and "Copy as Markdown" not in html
 

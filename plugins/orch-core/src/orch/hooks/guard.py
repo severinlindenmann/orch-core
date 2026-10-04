@@ -7,6 +7,7 @@ It keeps the common, one-command paths closed and gives clear reasons; the human
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -83,6 +84,409 @@ _PTY_PY = re.compile(r"\b(?:pexpect|ptyprocess)\b|\bpty\.(?:spawn|fork|openpty)\
 _ORCH_TMUX = re.compile(r"\btmux\b(?:\s+-\S+)*?\s+(?:-L\s*orch\b|-S\s*\S*/orch\b)|\bTMUX=\S*/orch\b")
 _ORCH_TMUX_DENIED = ("Mission Control's terminals (tmux -L orch) are the human's: they watch and type into them in the "
                      "dashboard; an agent does not reach another session through them")
+
+
+# The AI Factory's own tmux server sits on a socket inside the permits folder. Best effort: a text guard cannot read
+# bash the way bash does, so this makes the obvious routes fail and no more. A command that mentions tmux or screen
+# anywhere (any case, quotes and backslashes removed) is refused unless it is one plain command (no expansion,
+# substitution, grouping, redirection, comment, separator, glob or ANSI-C string, no mention of the permits folder) whose
+# every socket argument is plain: -S an absolute, normalised path with no `..` outside the config dir (never a relative
+# one: the working directory is not known to a later command), -L a plain name. Commands are also judged by what they
+# resolve to: a working directory or a `cd`/`pushd` target at or below the config dir, and a listing of it, are refused.
+# Known limits: a word written without a mention of tmux or screen by concatenation that uses none of the characters
+# above, other languages building the string (perl, osascript, python), and a script file written and then run.
+# A same-user process is not isolated from the socket by the OS.
+_MUX_WORD = re.compile(r"tmux|screen")
+_MUX_UNSURE = re.compile(r"[$`(){}<>#;&|!*?\[\]\n\r\x0b\x0c\u2028\u2029\x85]")
+_MUX_FLAG = re.compile(r"-([A-Za-z0-9]*?)([LS])(.*)", re.S)
+_MUX_ANSI_C = re.compile(r"\$'|\\[xuU0-7]")
+_ORCH_TMUX_I = re.compile(_ORCH_TMUX.pattern, re.I)
+_MUX_DENIED = ("a tmux or screen command the guard cannot show plain (variables, escapes, substitutions, separators, a "
+               "relative or unusual socket, or the permits folder) can reach the AI Factory's sessions, which are the "
+               "human's")
+_STATE_DENIED = ("the orch config dir (the ledger and the permits folder with the AI Factory's records and sockets) is "
+                 "the human's: agents do not work in it, change into it or list it")
+_LISTERS = ("ls", "dir", "vdir", "find", "stat", "du", "tree", "exa", "eza", "lsd", "fd", "ncdu", "realpath", "readlink")
+_RECURSIVE = ("find", "du", "tree", "fd", "ncdu")
+
+
+class _Bound(Exception):
+    """A limit of the resolution rules was hit (command length, glob matches, path depth, time): the answer is a deny."""
+
+
+MAX_CMD, MAX_GLOB, MAX_PARTS, MAX_CDS, MAX_WORDS, BUDGET_S = 200_000, 500, 128, 64, 20_000, 3.0
+_BOUND_DENIED = ("the guard hit one of its limits (a very long command, a huge glob, a very deep path or too much time) "
+                 "while checking a path near the orch config dir, and refuses what it cannot finish checking")  # bounds only
+
+
+class _Budget:
+    def __init__(self) -> None:
+        import time
+        self.t0, self.n = time.monotonic(), 0
+
+    def tick(self) -> None:
+        import time
+        self.n += 1
+        if self.n > 60_000 or time.monotonic() - self.t0 > BUDGET_S:
+            raise _Bound("time")
+
+
+def _state_dir() -> Path | None:
+    from orch.core.ledger import base_dir
+    try:
+        return Path(base_dir()).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _expand(raw: str, extra: dict | None = None) -> str:
+    """`raw` with ~ and the variables a shell would fill in: the hook's environment, the orch state variable (defaulting
+    to the real folder: an agent's shell has it even where the hook does not), and `extra` (assignments made in the
+    command itself, PWD and OLDPWD as the simulated `cd` chain has them)."""
+    from orch.core.ledger import base_dir
+    env = {**os.environ, "ORCH_STATE_DIR": os.environ.get("ORCH_STATE_DIR") or str(base_dir()), **(extra or {})}
+    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: env.get(m.group(1) or m.group(2), m.group(0)),
+                  os.path.expanduser(raw))
+
+
+def _real(path: str) -> Path:
+    """The realpath of `path`, once. A link loop (or anything else the system refuses) raises _Bound."""
+    import errno
+    p = os.path.realpath(path)
+    try:
+        os.stat(path)
+    except OSError as e:
+        if e.errno not in (errno.ENOENT, errno.ENOTDIR):
+            raise _Bound("path") from e
+    return Path(p)
+
+
+def _within(p: Path, base: Path) -> bool:
+    return p == base or base in p.parents
+
+
+def _link_into(full: str, base: Path, bud: _Budget) -> bool:
+    """Some component of the path `full`, taken one by one without resolving the rest, is a symlink that leads into
+    `base`. Such a path is refused even if the whole of it resolves elsewhere: the link can be swapped between this
+    check and the use, so only the path as written is judged, and never trusted because of where it points today."""
+    cur, n = "/", 0
+    for comp in full.split("/"):
+        bud.tick()
+        if comp in ("", "."):
+            continue
+        n += 1
+        if n > MAX_PARTS:
+            raise _Bound("depth")
+        if comp == "..":
+            cur = os.path.dirname(cur)
+            continue
+        cur = os.path.join(cur, comp)
+        if os.path.islink(cur) and _within(_real(cur), base):
+            return True
+    return False
+
+
+def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> list[Path]:
+    """Where `raw` (a path as written, quotes removed) points from `cur`: every glob match, else the literal path. One
+    realpath each, compared as it comes. Raises _Bound past the limits."""
+    import glob
+    from itertools import islice
+    text = _expand(raw.strip("'\""), extra)
+    if len(text) > 4096 or text.count("/") > MAX_PARTS:
+        raise _Bound("long")
+    full = text if os.path.isabs(text) else os.path.join(cur, text)
+    hits = []
+    if re.search(r"[*?\[]", text):
+        hits = list(islice(glob.iglob(full), MAX_GLOB + 1))
+        if len(hits) > MAX_GLOB:
+            raise _Bound("glob")
+    out = []
+    for h in hits or [full]:
+        bud.tick()
+        try:
+            out.append(_real(h))
+        except (RuntimeError, ValueError) as e:
+            raise _Bound("path") from e
+    return out
+
+
+_ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
+_KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
+_SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
+              "tmux", "tmux.name", "remote-humans*", "launch.json")
+# real names a glob could stand for, to ask "can this pattern reach one of them"
+_SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
+                    "ledger.head", "ledger.lock", "factory-command.json", "tmux", "tmux.name", "remote-humans.json",
+                    "launch.json")
+_READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
+            "bat", "wc", "xargs", "dir", "vdir"}
+_UNKNOWN_DENIED = ("after a cd to a place the guard cannot work out, this command names something that may be in the "
+                   "orch config dir (permits, ledger, sessions, tmux, ...): cd to a plain path first, or use an "
+                   "absolute path")
+
+
+def _prep(cmd: str) -> str:
+    """The command with line continuations joined and every kind of line break a newline."""
+    cmd = re.sub(r"\\\r?\n", "", cmd)
+    return re.sub(r"[\r\x0b\x0c  \x85]", "\n", cmd)
+
+
+def _toks(seg: str) -> list[str]:
+    import shlex
+    try:
+        return shlex.split(seg, posix=True)
+    except ValueError:
+        return seg.replace("'", " ").replace('"', " ").split()
+
+
+def _command(seg: str) -> tuple[list[str], dict]:
+    """(the words of simple command `seg` from its command word on, the assignments before it)."""
+    toks = [t for t in _toks(seg)]
+    assigns: dict = {}
+    i = 0
+    while i < len(toks):
+        t = toks[i].lstrip("({")
+        if not t:
+            i += 1
+            continue
+        m = _ASSIGN.match(t)
+        if m and not t.startswith("-"):
+            assigns[m.group(1)] = m.group(2)
+            i += 1
+        elif t in _KEYWORDS:
+            i += 1
+        else:
+            break
+    words = toks[i:]
+    if words:
+        words[0] = words[0].lstrip("({")
+    return words, assigns
+
+
+def _sensitive_component(comp: str, first: bool, reads: bool) -> bool:
+    """A path component that is, or can stand for, a name in the orch config dir. A bare glob counts only as the first
+    component and only when the command reads or lists; an extension glob (`*.md`) never counts."""
+    import fnmatch
+    if not re.search(r"[*?\[]", comp):
+        return any(fnmatch.fnmatchcase(comp, pat) for pat in _SENSITIVE)
+    if re.fullmatch(r"\*+|\?\**|\*\?+|\*+/?", comp):
+        return first and reads
+    if re.fullmatch(r"\*\.[A-Za-z0-9]+", comp):
+        return False
+    return any(fnmatch.fnmatchcase(n, comp) for n in _SENSITIVE_NAMES)
+
+
+def _unknown_word(word: str, reads: bool) -> bool:
+    if word.startswith(("/", "~")):
+        return False  # absolute: judged by the same rules as ever
+    comps = [c for c in word.split("/") if c not in ("", ".", "..")]
+    return any(_sensitive_component(c, i == 0, reads) for i, c in enumerate(comps))
+
+
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "eval"}
+_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'")
+
+
+def _with_nested(segs: list[str]) -> list[str]:
+    """`segs` plus what the segment list alone does not show: the text of an ANSI-C string given to a shell or eval
+    (decoded), and the arguments of an echo or printf when a shell that reads standard input is in the line."""
+    import codecs
+    out = list(segs)
+    bare = False
+    for seg in segs:
+        words, _ = _command(seg)
+        prog = os.path.basename(words[0]) if words else ""
+        if prog in _SHELLS:
+            if not any(a.startswith("-") and "c" in a for a in words[1:]) and prog != "eval":
+                bare = bare or len(words) == 1
+            for m in _ANSI_C.finditer(seg):
+                try:
+                    inner = codecs.decode(m.group(1).encode("latin-1", "replace"), "unicode_escape")
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                out.extend(_command_segments(inner))
+    if bare:
+        for seg in segs:
+            words, _ = _command(seg)
+            if words and os.path.basename(words[0]) in ("echo", "printf"):
+                out.extend(_command_segments(" ".join(words[1:])))
+    return out
+
+
+def _touches_state_dir(ws, cmd: str, cwd):
+    """False, True (a cd, a path or a listing resolves into the config dir), or "unknown" (the working directory is
+    not known after a cd the guard cannot work out, and a word names something that may be in the config dir). Every
+    command of the line is looked at in order: quoted text that is not a command is not one (`echo "cd x"`), but the
+    payloads of `sh -c`, `eval` and substitutions, and heredoc bodies that are code, are. Raises _Bound when a limit
+    is hit, so that the caller denies."""
+    base = _state_dir()
+    if base is None:
+        return False
+    if len(cmd) > MAX_CMD:
+        raise _Bound("length")  # whatever it holds: nothing too long to check is let through
+    bud = _Budget()
+    cur = str(cwd) if cwd else os.getcwd()
+    for start in {cur, os.getcwd()}:  # the hook's cwd and this process's own
+        try:
+            if _within(_real(start), base) or _link_into(start, base, bud):
+                return True
+        except (OSError, RuntimeError, ValueError):
+            return True
+    segs = _with_nested(_command_segments(_prep(cmd)))
+    if len(segs) > MAX_WORDS:
+        raise _Bound("words")
+    try:
+        root = Path(ws.root).resolve()
+    except (OSError, RuntimeError):
+        root = None
+    extra: dict = {}
+    unknown, cdpath_set = False, False
+    old = os.environ.get("OLDPWD", "")
+    cdpath = [d for d in os.environ.get("CDPATH", "").split(os.pathsep) if d]
+    where, cds, seen = [cur], 0, 0
+    for seg in segs:
+        bud.tick()
+        words, assigns = _command(seg)
+        extra["PWD"], extra["OLDPWD"] = cur, old
+        for k, v in assigns.items():
+            extra[k] = _expand(v, extra)
+            cdpath_set = cdpath_set or k == "CDPATH"
+        if not words:
+            continue
+        prog, args = os.path.basename(words[0]), words[1:]
+        cdpath_set = cdpath_set or any(a.startswith("CDPATH=") for a in args)
+        if prog in ("cd", "pushd", "chdir"):
+            cds += 1
+            if cds > MAX_CDS:
+                raise _Bound("cds")
+            ops = [a for a in args if a != "--" and not (a.startswith("-") and a != "-")]
+            raw = (ops[0] if ops else "~").rstrip(")};")
+            extra["PWD"], extra["OLDPWD"] = cur, old
+            target = _expand(raw, extra)
+            if target == "-":
+                target = old or cur
+            if re.search(r"[$`]", target) or cdpath_set:
+                unknown = True  # a place the guard cannot work out: allowed, but the working directory is unknown now
+                continue
+            for c in ([cur, *cdpath] if not os.path.isabs(target) else [cur]):
+                if _link_into(target if os.path.isabs(target) else os.path.join(c, target), base, bud):
+                    return True
+            hits = _resolved(cur, target, bud, extra)
+            if any(_within(h, base) for h in hits):
+                return True
+            for d in cdpath if not os.path.isabs(target) else []:
+                if any(_within(h, base) for h in _resolved(d, target, bud, extra)):
+                    return True
+            old, cur = cur, str(hits[0])
+            where.append(cur)
+            continue
+        reads = prog in _READERS or (prog in ("grep", "egrep", "fgrep") and any(
+            a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a) for a in args))
+        recursive = prog in _RECURSIVE or (prog == "ls" and any(
+            a.startswith("-") and not a.startswith("--") and "R" in a for a in args)) or "--recursive" in args
+        for w in (a.rstrip(")};") if a not in (")", "}") else a for a in args):
+            seen += 1
+            if seen > MAX_WORDS:
+                raise _Bound("words")
+            if unknown and _unknown_word(w, reads):
+                return "unknown"
+            if "/" not in w and not w.startswith(("~", ".", "$")) and prog not in _LISTERS:
+                continue
+            if w.startswith("-") and prog in _LISTERS:
+                continue
+            full = _expand(w, extra)
+            if len(full) > 4096 or full.count("/") > MAX_PARTS:
+                raise _Bound("long")
+            if unknown and not os.path.isabs(full) and not full.startswith("~"):
+                continue  # relative to a place we do not know: the sensitive-name rule above is all there is
+            if re.search(r"[$`]", full):
+                continue  # an expansion the guard cannot follow
+            joined = full if os.path.isabs(full) else os.path.join(cur, full)
+            glob_at = re.search(r"[*?\[]", joined)
+            if glob_at:
+                near = _real(os.path.dirname(joined[:glob_at.start()]) or "/")
+                if _within(near, base) or near in base.parents:  # a glob that can reach the config dir: expand, bounded
+                    if any(_within(h, base) for h in _resolved(cur, w, bud, extra)):
+                        return True
+                continue
+            if _link_into(joined, base, bud) or _within(_real(joined), base):
+                return True
+            if prog in _LISTERS:
+                for c in where:
+                    for h in _resolved(c, w, bud, extra):
+                        if _within(h, base):
+                            return True
+                        if recursive and h in base.parents and not (root is not None and (h == root or h in root.parents)):
+                            return True
+    return False
+
+
+_WRAPPERS = {"sh", "bash", "zsh", "dash", "ksh", "eval", "env", "command", "exec", "nohup", "time", "sudo", "doas",
+             "xargs", "builtin", "source", ".", "ssh", "script", "unbuffer", "expect", "watch"}
+_DEFINERS = {"alias", "function", "declare", "typeset", "export", "local", "readonly", "trap"}
+
+
+def _mux_segment_risky(seg: str) -> bool:
+    """One tmux or screen command (or a wrapper carrying one), judged as plain or not."""
+    plain = seg.replace("'", "").replace('"', "").replace("\\", "")
+    text = plain.lower()
+    if "permits" in text or _ORCH_TMUX_I.search(text):
+        return True
+    if re.search(r"[$`]", plain) or _MUX_UNSURE.search(_unquoted(seg).replace("$", "")):
+        return True
+    base = _state_dir()
+    toks = plain.split()
+    for i, tok in enumerate(toks):
+        m = _MUX_FLAG.fullmatch(tok)
+        if not m:
+            continue
+        before, letter, rest = m.groups()
+        if before:  # a cluster such as -CCS: the value belongs to a flag we cannot place
+            return True
+        value = rest if rest else (toks[i + 1] if i + 1 < len(toks) else "")
+        if letter == "L":
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+                return True
+        else:
+            if not re.fullmatch(r"/[A-Za-z0-9_./-]*", value) or ".." in value.split("/") or "//" in value:
+                return True
+            if base is not None:
+                try:
+                    if _within(_real(value), base) or _link_into(value, base, _Budget()):
+                        return True
+                except (OSError, RuntimeError, ValueError, _Bound):
+                    return True
+    return False
+
+
+def _mux_risky(cmd: str) -> bool:
+    """A tmux or screen command the guard cannot show plain. Only the command word and its own arguments count: a
+    `grep tmux`, a heredoc body, a quoted message or a `#` inside quotes is not one. Best effort."""
+    if len(cmd) > MAX_CMD and re.search(r"tmux|screen", cmd, re.I):
+        raise _Bound("length")
+    flat = _prep(cmd)
+    whole = re.search(r"tmux|screen", flat, re.I)
+    if _MUX_ANSI_C.search(flat) and _MUX_FLAG.search(flat):
+        return True
+    if not whole:
+        return False
+    if whole and re.search(r"(?<![\w-])function\s|\w\s*\(\)|(?<![\w-])alias\s", flat):
+        return True  # a function or an alias that may wrap the command: not provable
+    for seg in _command_segments(flat):
+        words, _ = _command(seg)
+        if not words:
+            continue
+        prog = os.path.basename(words[0])
+        if prog in ("tmux", "screen"):
+            if _mux_segment_risky(seg):
+                return True
+        elif (prog in _WRAPPERS or prog in _DEFINERS) and re.search(r"tmux|screen", seg, re.I):
+            if prog in _DEFINERS or _mux_segment_risky(seg):
+                return True
+        elif re.match(r"[$`]", words[0]) and whole:  # a command word the guard cannot read, and tmux is mentioned
+            if _mux_segment_risky(seg) or re.search(r"(?<![\w-])-[LS]", seg):
+                return True
+    return False
 
 
 def _pty_wrapped(text: str) -> bool:
@@ -211,7 +615,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
 # grant) are protected the same way: removing a marker would revive a used grant.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
@@ -881,22 +1285,42 @@ def _reaches_config_dir_recursively(raw_root, cwd, glob=None, type_=None) -> boo
     return bool(root) and _is_config_dir_or_ancestor(root) and _filter_could_reach_key(glob, type_)
 
 
-def _ledger_path(raw: str) -> bool:
-    """`raw` (a file tool's path or glob) names the ledger or its key, or resolves into the ledger dir."""
+def _ledger_path(raw: str, cwd=None) -> bool:
+    """`raw` (a file tool's path or glob) names the ledger or its key, or resolves into the ledger dir. Relative paths
+    are taken from the hook's cwd, resolved once, and a path with a symlink component that leads into the config dir
+    is refused as written. A path that cannot be resolved is refused."""
     if not raw:
         return False
     if _LEDGER.search(raw):
         return True
     from orch.core import ledger
     try:
-        p = Path(raw).expanduser().resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-    try:
-        base = ledger.base_dir().resolve()
-    except (OSError, RuntimeError):
-        base = ledger.base_dir()
+        if len(raw) > 4096 or raw.count("/") > MAX_PARTS:
+            return True
+        text = os.path.expanduser(raw)
+        try:
+            base = ledger.base_dir().resolve()
+        except (OSError, RuntimeError):
+            base = ledger.base_dir()
+        for start in {str(cwd) if cwd else os.getcwd(), os.getcwd()}:  # the hook's cwd and this process's own
+            full = text if os.path.isabs(text) else os.path.join(start, text)
+            p = _real(full)
+            if _link_into(full, base, _Budget()) or p in (
+                    base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE
+            ) or p == base / "permits" or (base / "permits") in p.parents:
+                return True
+    except (OSError, RuntimeError, ValueError, _Bound):
+        return True
     return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
+
+
+def _ledger_path_closed(raw: str, cwd=None) -> bool:
+    """_ledger_path, where an error in its resolution rules (symlinks, bounds) is a deny. Only this new part fails
+    closed; an unrelated error elsewhere in the guard still fails open as it always did."""
+    try:
+        return _ledger_path(raw, cwd)
+    except Exception:
+        return True
 
 
 def _filter_could_reach_ledger(pattern: str) -> bool:
@@ -925,7 +1349,7 @@ def evaluate(ws, payload: dict) -> Decision:
     if not isinstance(tool_input, dict):
         return ALLOW
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob") and any(
-            _ledger_path(str(tool_input.get(k) or "")) for k in ("file_path", "notebook_path", "path", "pattern",
+            _ledger_path_closed(str(tool_input.get(k) or ""), cwd) for k in ("file_path", "notebook_path", "path", "pattern",
                                                                     "glob")):
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):
@@ -1035,6 +1459,18 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
+    try:
+        touches = _touches_state_dir(ws, cmd, cwd)
+        risky = touches or _mux_risky(cmd)
+    except Exception:  # a limit, or anything unexpected: never an allow
+        return Decision(False, _BOUND_DENIED)
+    if touches == "unknown":
+        return Decision(False, _UNKNOWN_DENIED)
+    if touches:
+        return Decision(False, _STATE_DENIED)
+    if risky:
+        named = _ORCH_TMUX.search(cmd.replace("'", "").replace('"', ""))
+        return Decision(False, _ORCH_TMUX_DENIED if named else _MUX_DENIED)
     may = ws.config["git"]["agent_may"]
     term = ws.config["git"]["review_term"]
     for seg in _command_segments(cmd):

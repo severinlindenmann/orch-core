@@ -76,7 +76,10 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
         state = "budget used up"
     else:
         state = "running"
-    return {"factory": True, "limits": limits, "state": state, "children": used, "max_children": d["max_children"],
+    from orch.core import factory_runner, factory_sessions
+    blocker = (factory_runner.user_settings_blocker() if factory_sessions.armed(ws, d["id"]) and state == "running"
+               else None)
+    return {"factory": True, "limits": limits, "state": state, "runner_blocker": blocker, "children": used, "max_children": d["max_children"],
             "hours_left": left, "max_hours": d["max_hours"]}
 
 

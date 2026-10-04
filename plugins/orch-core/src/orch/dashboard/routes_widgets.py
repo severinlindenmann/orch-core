@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shlex
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -222,6 +224,34 @@ def example_text(name: str, example: dict) -> str:
     return "```orch\n" + json.dumps(example, indent=2, ensure_ascii=False) + "\n```"
 
 
+# The catalog's own demo media (a fake settings page) so screens, compare and video draw for real: the real renderers
+# read it through a stand-in workspace whose artifact folder is orch/widgets/demo. Real tickets are untouched.
+DEMO = Path(__file__).resolve().parents[1] / "widgets" / "demo"
+
+
+class _DemoWs:
+    home = DEMO.parent
+    artifacts_dir = DEMO
+    config: dict = {}
+
+
+def _demo(name: str) -> dict | None:
+    """The example of screens, compare or video pointing at the demo media, digests computed from the files."""
+    from orch.widgets import artifacts
+
+    def f(file: str) -> dict:
+        path = DEMO / "DEMO" / file
+        return {"path": f"artifacts/DEMO/{file}", "sha256": artifacts.sha256(path)}
+    if name == "screens":
+        return {"type": "screens", "columns": 2, "items": [{"label": "1100 px light", **f("before.png")},
+                                                           {"label": "390 px dark", **f("phone-dark.png")}]}
+    if name == "compare":
+        return {"type": "compare", "before": f("before.png"), "after": f("after.png"), "labels": ["Before", "After"]}
+    if name == "video":
+        return {"type": "video", **f("run.mp4"), "poster": f("run.png")}
+    return None
+
+
 def items(ws, theme: str = "system") -> list[dict]:
     """Every core type and template as one entry, the nine first, then the rest by name."""
     from orch.clock import now, parse_stamp
@@ -240,13 +270,16 @@ def items(ws, theme: str = "system") -> list[dict]:
     out = []
     for name, mod in registry.core_types().items():
         row = used["type"].get(name, {})
-        block = make_block("Context", 0, json.dumps(mod.EXAMPLE))
+        demo = _demo(name)
+        block = make_block("Context", 0, json.dumps(demo or mod.EXAMPLE))
         block.index = len(out)
+        pctx = Ctx(ws=_DemoWs(), ticket=SimpleNamespace(id="DEMO"), theme=theme, standalone=True) if demo \
+            else Ctx(ws=ws, theme=theme)
         desc = re.sub(rf"^`{re.escape(name)}`:\s*", "", (mod.__doc__ or "").strip().split("\n\n")[0])
         out.append({"name": name, "layer": "core", "title": name, "description": desc[:1].upper() + desc[1:],
                     "moment": mod.MOMENT, "uses": row.get("uses", 0), "tickets": row.get("tickets", []),
                     "unused": unused(row), "versions": [], "fields": schema_fields(mod.SCHEMA),
-                    "example": example_text(name, mod.EXAMPLE), "preview": render_html(block, Ctx(ws=ws, theme=theme))})
+                    "example": example_text(name, mod.EXAMPLE), "preview": render_html(block, pctx)})
     for name, spec in sorted(registry.templates(ws.home).items()):
         row = used["widget"].get(name, {})
         versions = _versions(spec)
@@ -256,8 +289,9 @@ def items(ws, theme: str = "system") -> list[dict]:
             data = json.loads((Path(spec["folder"]) / "example.json").read_text(encoding="utf-8")).get(latest, {})
         except (OSError, ValueError):
             data = {}
-        command = (f"orch widget add <id> --section Verification --widget {name}@{latest} --data "
-                   f"'{json.dumps(data, ensure_ascii=False, separators=(',', ':'))}'")
+        # example.json comes from the template (an addon may ship one): every part is quoted for the shell
+        command = ("orch widget add <id> --section Verification --widget " + shlex.quote(f"{name}@{latest}")
+                   + " --data " + shlex.quote(json.dumps(data, ensure_ascii=False, separators=(",", ":"))))
         out.append({"name": name, "layer": "widget", "title": spec.get("title") or name,
                     "description": spec.get("description", ""), "moment": spec.get("moment"),
                     "origin": spec["origin"], "libs": spec.get("libs", []), "uses": row.get("uses", 0),

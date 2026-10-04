@@ -104,3 +104,36 @@ def test_skills_and_rules_tell_agents_when_to_use_widgets():
     from orch.config.load import DEFAULTS, deep_merge
     rules = agents_rules(deep_merge(DEFAULTS, {"customer": "acme"}))
     assert "put a `checks` widget in Verification" in rules and "`options` when you ask the human to choose" in rules
+
+
+def test_screens_compare_and_video_previews_draw_the_demo_media(dash):
+    for name in ("screens", "compare", "video"):
+        body = dash.get(TAB + f"&w={name}").text
+        side = body[body.index('aria-label="Selected widget"'):]
+        assert "cannot be shown here" not in side, name
+    side = dash.get(TAB + "&w=screens").text
+    assert side.count("data:image/png;base64,") >= 2
+    assert "data:video/mp4;base64," in dash.get(TAB + "&w=video").text
+
+
+def test_template_example_command_is_shell_safe(dash, ws):
+    import html
+    import shlex
+    evil = "x'; touch /tmp/pwn; echo '"
+    folder = ws.home / "widgets" / "evil"
+    folder.mkdir(parents=True)
+    (folder / "widget.json").write_text(json.dumps({"title": "Evil", "moment": "debug", "versions": {"1": {}}}))
+    (folder / "v1.html").write_text("<p>x</p>")
+    (folder / "example.json").write_text(json.dumps({"1": {"note": evil}}))
+    body = dash.get(TAB + "&w=evil").text
+    side = body[body.index('aria-label="Selected widget"'):]
+    command = html.unescape(re.search(r'data-copy="(orch widget add [^"]*)"', side)[1])
+    assert shlex.split(command) == ["orch", "widget", "add", "<id>", "--section", "Verification", "--widget", "evil@1",
+                                    "--data", json.dumps({"note": evil}, separators=(",", ":"))]
+
+
+def test_tile_blurbs_never_end_on_a_dangling_semicolon(ws):
+    from orch.dashboard.routes_widgets import items
+    blurbs = {it["name"]: it["blurb"] for it in items(ws)}
+    assert not [n for n, b in blurbs.items() if b.endswith((";", ":", ",")) or not b]
+    assert blurbs["table"].startswith("Columns and rows") and blurbs["options"].startswith("The choices as cards")

@@ -13,12 +13,13 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.6.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.7.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
 # 1.5: `artifact_items`: what the ticket links (orch.core.artifacts.doc_items), names, labels and kinds only
 # 1.6: `signed`: per approved gate and for a done verdict, whether this machine's signed ledger backs it, and who
+# 1.7: `gates.verify.hash`: the verdict hash the verdict was given on (null when none was stored)
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
 _SOURCE = Path(__file__).resolve().parents[3] / "docs" / TASKS_SCHEMA_FILE  # plugin root: source checkout
@@ -83,7 +84,7 @@ def ticket_schema() -> dict:
             "claim": {"type": "object", "properties": {"session": _NS, "harness": _NS, "at": _NS}},
             "gates": {"type": "object", "required": ["requirements", "plan", "verify"],
                       "properties": {"requirements": gate, "plan": gate,
-                                     "verify": {"type": "object", "properties": {"verdict": _NS, "at": _NS, "via": _NS}}}},
+                                     "verify": {"type": "object", "properties": {"verdict": _NS, "at": _NS, "via": _NS, "hash": _NS}}}},
             "questions": {"type": "array", "items": question},
             "sections": {"type": "object", "additionalProperties": _S, "properties": {name: _S for name in SECTIONS}},
             # The MC2-T task-list view, by reference to the embedded schema below (never a second definition).
@@ -154,7 +155,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     doc["claim"] = {"session": claim.get("session"), "harness": claim.get("harness"), "at": claim.get("at")}
     verify = (m.get("gates") or {}).get("verify") or {}
     doc["gates"] = {"requirements": _gate(ticket, "requirements"), "plan": _gate(ticket, "plan"),
-                    "verify": {"verdict": verify.get("verdict"), "at": verify.get("at"), "via": verify.get("via")}}
+                    "verify": {"verdict": verify.get("verdict"), "at": verify.get("at"), "via": verify.get("via"),
+                               "hash": verify.get("hash")}}
     doc["questions"] = [{**copy.deepcopy(q), "hash": question_hash(q)} for q in m.get("questions") or [] if isinstance(q, dict)]
     names = list(SECTIONS) + [n for n in ticket.sections if n not in SECTIONS]
     doc["sections"] = {n: ticket.section(n) for n in names}

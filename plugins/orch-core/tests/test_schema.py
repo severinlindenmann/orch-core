@@ -226,3 +226,9 @@ def test_closed_by_a_human_is_signed_and_a_forged_close_is_not(ws, hops, put):
     p = ledger.ledger_path(ws)
     p.write_text("", encoding="utf-8")  # the signed close entry is gone, the human close event stays
     assert _signed(ws, tid)["verdict"] == {"signed": False, "by": None}
+
+
+def test_verify_hash_is_in_schema_and_document(ws, put):
+    done = put("done", gates={"verify": {"verdict": "done", "at": "2026-10-05T10:00Z", "via": "tty", "hash": "sha256:" + "a" * 64}})
+    assert ticket_document(ws, store.load(ws, done)[1])["gates"]["verify"]["hash"] == "sha256:" + "a" * 64
+    assert "hash" in ticket_schema()["properties"]["gates"]["properties"]["verify"]["properties"]

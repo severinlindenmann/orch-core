@@ -157,3 +157,34 @@ def test_legacy_entry_with_two_done_events_is_not_verified_and_adoption_fixes_it
     item = next(i for i in ledger.unsigned_items(ws, [t]) if i["kind"] == "close")
     hops.ledger_adopt(item, item["id"])
     assert _state(ws, tid) == ("closed", True, True)
+
+
+def _pre_chain(ws, tid):
+    return [f for f in run_checks(ws, emit_events=False) if f.code == "pre-chain-signature" and f.ticket == tid]
+
+
+def test_check_flags_a_done_signed_before_the_chain_and_adoption_chains_it(ws, hops, put):
+    tid = put("open")
+    hops.close(tid, "old")
+    assert not _pre_chain(ws, tid)  # a chained entry is not flagged
+    _rewrite(ws, _legacy)
+    (f,) = _pre_chain(ws, tid)
+    assert f.level == "warning" and "before the ledger chain" in f.message and "orch ledger adopt" in f.message
+    assert _state(ws, tid) == ("closed", True, True)  # still verified the old way, and no unsigned-decision
+    item = next(i for i in ledger.unsigned_items(ws, [store.load(ws, tid)[1]]) if i["kind"] == "close")
+    assert "predates the ledger chain" in item["text"]
+    hops.ledger_adopt(item, item["id"])
+    assert not _pre_chain(ws, tid) and _state(ws, tid) == ("closed", True, True)
+    assert "prev" in ledger.status_chain(ws, tid)[-1] and not ledger.unsigned_items(ws, [store.load(ws, tid)[1]])
+
+
+def test_adopting_a_pre_chain_entry_is_human_only(ws, hops, aops, put):
+    import pytest
+    from orch.errors import OrchError
+    tid = put("open")
+    hops.close(tid, "old")
+    _rewrite(ws, _legacy)
+    item = next(i for i in ledger.unsigned_items(ws, [store.load(ws, tid)[1]]) if i["kind"] == "close")
+    with pytest.raises(OrchError):
+        aops.ledger_adopt(item, item["id"])
+    assert _pre_chain(ws, tid)

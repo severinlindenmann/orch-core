@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-PAGES = ["/", "/board", "/board?view=list", "/activity", "/reports", "/widgets", "/workspace", "/new"]
+PAGES = ["/", "/board", "/board?view=list", "/activity", "/reports", "/widgets", "/workspace?tab=widgets", "/workspace", "/new"]
 
 
 @pytest.mark.parametrize("url", PAGES)

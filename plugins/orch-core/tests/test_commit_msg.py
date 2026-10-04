@@ -506,3 +506,44 @@ def test_cli_hooks_install_json(configure, ws_root, capsys):
     assert run(["hooks", "install", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["action"] == "installed" and rows[0]["repo"].endswith("hub")
+
+
+@needs_git
+@needs_sh
+def test_stage_records_under_hooks_path_delegates_and_keeps_a_foreign_hook(configure, ws_root):
+    """#38: --stage-records under a repo-owned core.hooksPath writes a tracked pre-commit that runs the local one."""
+    repo = _new_repo(ws_root, "hub")
+    _git(repo, "config", "core.hooksPath", "scripts/git-hooks")
+    ws = configure(git={"repos": {"hub": {}}})
+    got = _rows(ws, stage_records=True)["hub"]
+    tracked = repo / "scripts" / "git-hooks" / "pre-commit"
+    assert "; pre-commit installed; created scripts/git-hooks/pre-commit" in got and "commit it" in got
+    text = tracked.read_text(encoding="utf-8")
+    assert text.startswith("#!/bin/sh\n") and "# >>> orch pre-commit stage >>>" in text
+    assert str(ws_root) not in text and "ORCH_HOME" not in text and tracked.stat().st_mode & 0o111
+    local = (_common_hooks(repo) / "pre-commit").read_text(encoding="utf-8")
+    assert "hook pre-commit" in local and "ORCH_HOME" in local
+    again = _rows(ws, stage_records=True)["hub"]
+    assert "already runs it" in again and tracked.read_text(encoding="utf-8") == text  # idempotent
+    # a foreign shell pre-commit is extended after its shebang, never replaced
+    tracked.write_text("#!/bin/sh\necho theirs\n", encoding="utf-8")
+    assert "added the call to scripts/git-hooks/pre-commit" in _rows(ws, stage_records=True)["hub"]
+    body = tracked.read_text(encoding="utf-8")
+    assert body.startswith("#!/bin/sh\n# >>> orch pre-commit stage >>>") and body.endswith("echo theirs\n")
+    # not a shell script: left alone and reported
+    tracked.write_text("#!/usr/bin/env python3\nprint(1)\n", encoding="utf-8")
+    assert "pre-commit skipped: " in _rows(ws, stage_records=True)["hub"]
+    assert tracked.read_text(encoding="utf-8") == "#!/usr/bin/env python3\nprint(1)\n"
+
+
+@needs_git
+def test_stage_records_is_reported_when_hooks_path_is_not_the_repos(configure, ws_root):
+    repo = _new_repo(ws_root, "hub")
+    shared = ws_root / "shared-hooks"
+    shared.mkdir()
+    assert _git(repo, "config", "--global", "core.hooksPath", str(shared)).returncode == 0
+    ws = configure(git={"repos": {"hub": {}}})
+    got = _rows(ws, stage_records=True)["hub"]
+    assert got.startswith("skipped: core.hooksPath is set to") and "; pre-commit not installed" in got
+    assert not (shared / "pre-commit").exists()
+    assert "pre-commit" not in _rows(ws)["hub"]  # without the flag, nothing is said

@@ -1,6 +1,7 @@
 {#- Addon widgets (spec v2 §11.5, design-system spec §3.1). Autoescaped; never |safe. `g` is the SlotGroup the
     widget came from. Ticket keys of this workspace are linked by core (link_keys escapes first). -#}
 {#- Status icons come from the sprite in _icons.html (inlined once by layout.html); addons get five roles, never you. -#}
+{%- from "_charts.html" import chart as draw_chart -%}
 {%- set _ROLES = ("ok", "info", "warn", "err", "neu") -%}
 {% macro icon(role) %}<svg class="i" aria-hidden="true"><use href="#i-{{ role }}"/></svg>{% endmacro %}
 {% macro chip(role, text) %}<span class="chip chip-{{ role }}">{{ icon(role if role in _ROLES else "neu") }} {{ text }}</span>{% endmacro %}
@@ -65,6 +66,7 @@
   {%- elif x.kind == "search" %}<form method="get" action="/addons/{{ g.addon }}/" class="filters addon-search" role="search" data-live-search="#addon-page"><label class="filter-field filter-search"><span class="filter-label">Search</span><input type="search" name="{{ x.name }}" value="{{ x.value }}" placeholder="{{ x.placeholder }}"></label><button type="submit" class="btn">Search</button></form>
   {%- elif x.kind == "callout" %}<div class="callout callout-{{ x.role }}" role="{{ 'alert' if x.role == 'err' else 'status' }}"><p class="callout-title">{{ icon(x.role if x.role in _ROLES else "neu") }} {{ x.title }}</p>{% if x.text %}<p>{{ txt(x.text, g) }}</p>{% endif %}</div>
   {%- elif x.kind == "qr" %}{% set m = qr_matrix_uncached(x.text) if x.uncached else qr_matrix(x.text) %}{% if m is none %}<div class="callout callout-warn" role="status"><p class="callout-title">{{ icon("warn") }} QR code not shown</p><p>The text is too long for a QR code.</p></div>{% else %}{% set n = m|length + 8 %}<figure class="qr"><svg viewBox="0 0 {{ n }} {{ n }}" width="200" height="200" role="img" aria-label="{{ x.caption or 'QR code' }}" shape-rendering="crispEdges"><rect width="{{ n }}" height="{{ n }}" fill="#fff"/><path d="{% for x, y, w in qr_runs(m) %}M{{ x + 4 }} {{ y + 4 }}h{{ w }}v1h-{{ w }}z{% endfor %}" fill="#000"/></svg>{% if x.caption %}<figcaption>{{ x.caption }}</figcaption>{% endif %}</figure>{% endif %}
+  {%- elif x.kind == "chart" %}<section class="card addon-chart">{{ draw_chart(x.spec(), x.title) }}</section>
   {%- elif x.kind == "markdown" %}<div class="addon-markdown">{{ x.text|md_page(g.addon, x.here, x.pages, (g.ws if x.widgets and g.ws is defined else none), x.files)|safe }}</div>
   {%- elif x.kind == "time" %}<p>{{ time(x) }}</p>
   {%- else %}<p>{{ cell(x, g) }}</p>

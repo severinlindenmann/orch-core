@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shlex
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -203,8 +205,55 @@ def _versions(spec: dict) -> list[str]:
     return sorted(spec.get("versions", {}), key=lambda v: int(v) if v.isdigit() else 0)
 
 
-def library(ws, theme: str = "system") -> list[dict]:
-    """Core types and templates grouped by moment: [{"moment", "items": [entry, …]}]."""
+# The nine types the workflow needs most come first; everything else sits under "More types".
+CORE_FIRST = ("checks", "screens", "compare", "stats", "options", "callout", "table", "links", "diff")
+# Task-first entry: what the agent wants to do -> the types that do it.
+TASKS = (("prove", "Prove it works", "In Verification, one row per acceptance criterion", ("checks", "stats", "links")),
+         ("ui", "Show a UI change", "So you can judge it on a phone", ("screens", "compare", "links")),
+         ("choose", "Ask you to choose", "With the recommended option marked", ("options", "table", "callout")),
+         ("warn", "Warn about something", "A risk or a side effect you must not miss", ("callout", "diff", "table")))
+# "Widgets for this section" on a ticket: the types that earn their place there.
+SECTION_TYPES = {"Context": ("callout", "table", "chips", "flow", "risk", "links", "options"),
+                 "Current state": ("callout", "flow", "checks", "health", "stats", "links"),
+                 "Verification": ("checks", "stats", "gates", "tests", "screens", "compare", "links"),
+                 "Findings": ("callout", "diff", "table", "risk", "runs", "stats")}
+
+
+def example_text(name: str, example: dict) -> str:
+    """A fence a ticket section accepts as written: the type's own EXAMPLE (a whole block) as JSON."""
+    return "```orch\n" + json.dumps(example, indent=2, ensure_ascii=False) + "\n```"
+
+
+# The catalog's own demo media (a fake settings page) so screens, compare and video draw for real: the real renderers
+# read it through a stand-in workspace whose artifact folder is orch/widgets/demo. Real tickets are untouched.
+DEMO = Path(__file__).resolve().parents[1] / "widgets" / "demo"
+
+
+class _DemoWs:
+    home = DEMO.parent
+    artifacts_dir = DEMO
+    config: dict = {}
+
+
+def _demo(name: str) -> dict | None:
+    """The example of screens, compare or video pointing at the demo media, digests computed from the files."""
+    from orch.widgets import artifacts
+
+    def f(file: str) -> dict:
+        path = DEMO / "DEMO" / file
+        return {"path": f"artifacts/DEMO/{file}", "sha256": artifacts.sha256(path)}
+    if name == "screens":
+        return {"type": "screens", "columns": 2, "items": [{"label": "1100 px light", **f("before.png")},
+                                                           {"label": "390 px dark", **f("phone-dark.png")}]}
+    if name == "compare":
+        return {"type": "compare", "before": f("before.png"), "after": f("after.png"), "labels": ["Before", "After"]}
+    if name == "video":
+        return {"type": "video", **f("run.mp4"), "poster": f("run.png")}
+    return None
+
+
+def items(ws, theme: str = "system") -> list[dict]:
+    """Every core type and template as one entry, the nine first, then the rest by name."""
     from orch.clock import now, parse_stamp
     from orch.widgets.blocks import make_block
     from orch.widgets.validate import usage
@@ -218,46 +267,85 @@ def library(ws, theme: str = "system") -> list[dict]:
         except ValueError:
             return True
 
-    items = []
+    out = []
     for name, mod in registry.core_types().items():
         row = used["type"].get(name, {})
-        block = make_block("Context", 0, json.dumps(mod.EXAMPLE))
-        block.index = len(items)
+        demo = _demo(name)
+        block = make_block("Context", 0, json.dumps(demo or mod.EXAMPLE))
+        block.index = len(out)
+        pctx = Ctx(ws=_DemoWs(), ticket=SimpleNamespace(id="DEMO"), theme=theme, standalone=True) if demo \
+            else Ctx(ws=ws, theme=theme)
         desc = re.sub(rf"^`{re.escape(name)}`:\s*", "", (mod.__doc__ or "").strip().split("\n\n")[0])
-        items.append({"name": name, "layer": "core", "title": name, "description": desc[:1].upper() + desc[1:],
-                      "moment": mod.MOMENT, "uses": row.get("uses", 0), "tickets": row.get("tickets", []),
-                      "unused": unused(row), "versions": [], "fields": schema_fields(mod.SCHEMA),
-                      "preview": render_html(block, Ctx(ws=ws, theme=theme))})
+        out.append({"name": name, "layer": "core", "title": name, "description": desc[:1].upper() + desc[1:],
+                    "moment": mod.MOMENT, "uses": row.get("uses", 0), "tickets": row.get("tickets", []),
+                    "unused": unused(row), "versions": [], "fields": schema_fields(mod.SCHEMA),
+                    "example": example_text(name, mod.EXAMPLE), "preview": render_html(block, pctx)})
     for name, spec in sorted(registry.templates(ws.home).items()):
         row = used["widget"].get(name, {})
         versions = _versions(spec)
         latest = versions[-1] if versions else "1"
         nonce = secrets.token_urlsafe(12)
-        items.append({"name": name, "layer": "widget", "title": spec.get("title") or name,
-                      "description": spec.get("description", ""), "moment": spec.get("moment"),
-                      "origin": spec["origin"], "libs": spec.get("libs", []), "uses": row.get("uses", 0),
-                      "tickets": row.get("tickets", []), "unused": unused(row),
-                      "versions": [{"v": v, "notes": spec["versions"][v].get("notes", ""),
-                                    "uses": row.get("versions", {}).get(v, 0)} for v in versions],
-                      "fields": schema_fields(spec["versions"].get(latest, {}).get("schema") or {}),
-                      "preview": {"url": f"/w/preview/{name}@{latest}?n={nonce}", "nonce": nonce, "v": latest,
-                                  "min_height": int(spec.get("min_height") or 160)} if html_on else None})
-    order = list(registry.MOMENTS)
-    groups: dict[str, list] = {}
-    for it in items:
-        groups.setdefault(it["moment"] if it["moment"] in order else "other", []).append(it)
-    return [{"moment": m, "items": groups[m]} for m in [*order, "other"] if m in groups]
+        try:
+            data = json.loads((Path(spec["folder"]) / "example.json").read_text(encoding="utf-8")).get(latest, {})
+        except (OSError, ValueError):
+            data = {}
+        # example.json comes from the template (an addon may ship one): every part is quoted for the shell
+        command = ("orch widget add <id> --section Verification --widget " + shlex.quote(f"{name}@{latest}")
+                   + " --data " + shlex.quote(json.dumps(data, ensure_ascii=False, separators=(",", ":"))))
+        out.append({"name": name, "layer": "widget", "title": spec.get("title") or name,
+                    "description": spec.get("description", ""), "moment": spec.get("moment"),
+                    "origin": spec["origin"], "libs": spec.get("libs", []), "uses": row.get("uses", 0),
+                    "tickets": row.get("tickets", []), "unused": unused(row), "example": command,
+                    "versions": [{"v": v, "notes": spec["versions"][v].get("notes", ""),
+                                  "uses": row.get("versions", {}).get(v, 0)} for v in versions],
+                    "fields": schema_fields(spec["versions"].get(latest, {}).get("schema") or {}),
+                    "preview": {"url": f"/w/preview/{name}@{latest}?n={nonce}", "nonce": nonce, "v": latest,
+                                "min_height": int(spec.get("min_height") or 160)} if html_on else None})
+    for it in out:  # a tile's one-line blurb: the first sentence, no Markdown
+        first = re.split(r"(?<=\.)\s|\sData:", it["description"].replace("`", ""), maxsplit=1)[0].rstrip(".;:, ")
+        it["blurb"] = first if len(first) <= 110 else first[:107].rsplit(" ", 1)[0] + "…"
+    rank = {n: i for i, n in enumerate(CORE_FIRST)}
+    out.sort(key=lambda it: (rank.get(it["name"], len(rank)) if it["layer"] == "core" else len(rank), it["name"]))
+    return out
+
+
+def catalog(ws, params, theme: str = "system") -> dict:
+    """The catalog for GET params q, g (moment), task, section and w (the selected type): filters are server-side, so
+    it works without JS, and the selected entry follows them."""
+    everything = items(ws, theme)
+    q = " ".join(str(params.get("q", "")).lower().split())[:80]
+    task = next((t for t in TASKS if t[0] == params.get("task")), None)
+    section = params.get("section") if params.get("section") in SECTION_TYPES else None
+    want = set(task[3]) if task else set(SECTION_TYPES[section]) if section else None
+
+    def fits(it: dict) -> bool:
+        hay = f"{it['name']} {it['title']} {it['description']} {it['moment']}".lower()
+        return all(w in hay for w in q.split()) and (want is None or it["name"] in want)
+
+    shown = [it for it in everything if fits(it)]
+    moments = [m for m in registry.MOMENTS if any(it["moment"] == m for it in shown)]
+    group = params.get("g") if params.get("g") in moments else None
+    listed = [it for it in shown if group is None or it["moment"] == group]
+    sel = next((it for it in listed if it["name"] == params.get("w")), listed[0] if listed else None)
+    first = [it for it in listed if it["name"] in CORE_FIRST and it["layer"] == "core"]
+    from urllib.parse import urlencode
+
+    def url(frag: str = "", **over) -> str:
+        """This catalog's address with `over` changed ("" drops a key); the filters ride along."""
+        cur = {"q": q, "task": task[0] if task else "", "section": section or "", "g": group or "", **over}
+        return "/workspace?" + urlencode([("tab", "widgets"), *((k, v) for k, v in cur.items() if v)]) + frag
+    return {"q": q, "task": task[0] if task else "", "section": section or "", "group": group or "",
+            "moments": [(m, sum(1 for it in shown if it["moment"] == m)) for m in moments], "all_count": len(shown),
+            "total": len(everything), "first": first, "more": [it for it in listed if it not in first],
+            "selected": sel.get("name") if sel else None, "detail": sel, "tasks": TASKS, "url": url,
+            "used": sum(1 for it in everything if it["uses"] and not it["unused"])}
 
 
 @router.get("/widgets")
 def widgets_page(request: Request):
-    from orch.dashboard.views import _theme, page
-    from orch.widgets.render import css_names
-    ws = request.app.state.ws
-    groups = library(ws, _theme(request, ws))
-    from markupsafe import Markup
+    """The catalog lives in Workspace & addons -> Widgets; this address keeps working and keeps the filters."""
+    from urllib.parse import urlencode
 
-    from orch.widgets.render import inline
-    return page(request, "widgets.html", nav="widgets", title="Widgets", groups=groups, widget_css=css_names(),
-                inline_md=lambda text: Markup(inline(text)),
-                html_state=ledger.widgets_html_state(ws), unused_days=UNUSED_DAYS, broken=registry.template_problems(ws.home), total=sum(len(g["items"]) for g in groups))
+    from fastapi.responses import RedirectResponse
+    query = [(k, v) for k, v in request.query_params.multi_items() if k != "tab"]
+    return RedirectResponse("/workspace?" + urlencode([("tab", "widgets"), *query]), status_code=303)

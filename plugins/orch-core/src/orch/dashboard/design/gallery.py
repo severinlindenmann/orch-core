@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from orch.addons.runtime import HEALTH_ROLE, Banner
-from orch.addons.widgets import (KV, QR, Action, Badge, Callout, Card, Chips, Copy, Link, Search, Table, Tabs, Text,
-                                 Tile, Time)
+from orch.addons.widgets import (KV, QR, Action, Badge, Callout, Card, Chart, ChartSeries, Chips, Copy, Link, Search,
+                                 Table, Tabs, Text, Tile, Time)
 
 ADDON = "design-gallery"  # never a real addon: the specimen forms post nowhere useful
 ACTIONS = (("rerun", "Rerun checks"), ("ignore", "Ignore"), ("close", "Close local"))
@@ -118,6 +118,13 @@ def sections(prefix: str = "DEMO") -> tuple[Section, ...]:
         Section("qr", "QR", (
             Specimen("QR with its link", (QR("https://example.com/pair/abc", "Scan with the phone"),
                                           Link("Open the pairing page", "https://example.com/pair/abc"))),
+        )),
+        Section("charts", "Charts", (
+            Specimen("Stacked bars", (Chart("Runs per day", ("Mon", "Tue", "Wed", "Thu"),
+                                            (ChartSeries("Passed", (12, 9, 14, 11)), ChartSeries("Failed", (1, 3, 0, 2))),
+                                            stacked=True, unit="runs"),)),
+            Specimen("Line", (Chart("Open reviews", ("W1", "W2", "W3", "W4"), (ChartSeries("Open", (4, 6, 3, 5)),),
+                                    style="line", unit="reviews"),)),
         )),
         Section("tiles", "Today tiles", (
             Specimen("Tile", (Tile("Failing checks", 4, "err", sub="in 2 repos"),), slot="today.summary"),

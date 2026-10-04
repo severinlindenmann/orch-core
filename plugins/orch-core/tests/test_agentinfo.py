@@ -32,6 +32,7 @@ def claude(tmp_path, monkeypatch):
     root = tmp_path / "claude"
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(root))
     agentinfo._TRANSCRIPTS.clear()
+    agentinfo._SUB_TRANSCRIPTS.clear()
     agentinfo._TICKETS.clear()
     (root / "sessions").mkdir(parents=True)
     (root / "sessions" / f"{PID}.json").write_text(json.dumps({"pid": PID, "sessionId": SID, "status": "busy",
@@ -160,3 +161,61 @@ def test_cache_warm_then_cold_and_ttl_from_the_write(tmp_path):
     _write(log, [short])
     t.update()
     assert t.cache_ttl == 300 and t.cache_at == at + 3600  # a bad timestamp keeps the last good one
+def _sub(claude, name, model=None, meta=None):
+    sub = claude.log.parent / SID / "subagents"
+    (sub / f"agent-{name}.meta.json").write_text(json.dumps(meta or {"agentType": "Explore", "description": name}))
+    (sub / f"agent-{name}.jsonl").write_text("")
+    if model:
+        _write(sub / f"agent-{name}.jsonl", [_assistant([], model=model)])
+
+
+def test_subagent_model_comes_from_its_own_transcript_over_the_alias(ws, claude):
+    _sub(claude, "c", model="claude-sonnet-5-5", meta={"agentType": "x", "description": "c", "model": "opus"})
+    by = {s["description"]: s["model"] for s in agentinfo.info(ws, claude.session)["subagents"]}
+    assert by["c"] == "Sonnet 5.5"
+    assert by["Review L-0008"] == "sonnet"  # no assistant message yet: the caller's alias stays
+
+
+def test_session_models_groups_main_and_subagents(claude):
+    _sub(claude, "c", model="claude-sonnet-5-5")
+    _sub(claude, "d", model="claude-sonnet-5-5")
+    m = agentinfo.session_models(SID)
+    assert m["main"] == [("Opus 5.5", 1)] and m["total"] == 4
+    assert dict(m["subagents"])["Sonnet 5.5"] == 2
+    assert agentinfo.session_models("nope") is None
+
+
+def _ran_ticket(put, harness="claude-code", sid=SID):
+    return put("in-progress", sessions=[{"id": sid, "harness": harness, "model": None, "started": "2026-10-04T09:00:00Z"}])
+
+
+def test_ticket_page_shows_ran_on_models(dash, put, claude):
+    _sub(claude, "c", model="claude-sonnet-5-5")
+    html = dash.get(f"/t/{_ran_ticket(put)}").text
+    assert 'id="ran-on"' in html and "Claude Code" in html and "Opus 5.5" in html and "1 × Sonnet 5.5" in html
+
+
+def test_ticket_page_ran_on_missing_transcript_and_other_harness(dash, put, claude):
+    html = dash.get(f"/t/{_ran_ticket(put, sid='gone')}").text
+    assert "not on this machine" in html
+    html = dash.get(f"/t/{_ran_ticket(put, harness='codex')}").text
+    assert 'id="ran-on"' in html and "Codex" in html and "not on this machine" not in html
+
+
+def test_a_reply_logged_once_per_block_counts_once_with_its_last_usage(tmp_path):
+    """Claude Code writes one line per content block of a reply, all with the same message id."""
+    path = tmp_path / "s.jsonl"
+    first, last = _assistant([{"type": "text", "text": "a"}], out=1), _assistant([{"type": "text", "text": "b"}], out=40)
+    first["message"]["id"] = last["message"]["id"] = "msg_1"
+    other = _assistant([{"type": "text", "text": "c"}], out=5)
+    other["message"]["id"] = "msg_2"
+    _write(path, [first, last])
+    t = agentinfo.Transcript(path)
+    t.update()
+    _write(path, [other])
+    t.update()
+    assert t.models["claude-opus-5-5"] == 2 and t.tokens["output"] == 45 and t.tokens["cache_read"] == 200
+
+
+def test_ticket_page_without_sessions_has_no_ran_on(dash, put, claude):
+    assert 'id="ran-on"' not in dash.get(f"/t/{put('open')}").text

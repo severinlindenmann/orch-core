@@ -40,7 +40,7 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `repos` | Repositories the ticket touches. |
 | `branches` | Branches per repository. |
 | `prs` | Pull or merge requests. |
-| `gates` | `requirements` and `plan`: `{state, hash, covers, approved, via, changes_requested}`; `verify`: `{verdict, at, via}`. `covers` lists what `hash` binds, in order: section names, then frontmatter keys. Show all of it before approving. |
+| `gates` | `requirements` and `plan`: `{state, hash, covers, approved, via, changes_requested}`; `verify`: `{verdict, at, via, hash}` (1.7: `hash` is the verdict hash the verdict was given on, the one the signed verdict entry carries as `verdict_hash`; null when none was stored, as on a verdict from before hashes). `covers` lists what `hash` binds, in order: section names, then frontmatter keys. Show all of it before approving. |
 | `questions` | The questions asked on the ticket, each with its `hash` (see below). |
 | `sections` | Section name to Markdown text, every core section always present. |
 | `tasks` | The task-list view, format `orch.tasks.v1` (see Task list). |
@@ -48,10 +48,10 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `move` | 1.4: whose move it is, by the same rules as the dashboard's move chip (`orch.dashboard.data.cards`): `{who, kind, label, ref, why?, epic?}`. `who` is `you`, `agent` or `nobody`; `kind` one of `approve-requirements`, `approve-plan`, `re-approve`, `approve-epic`, `answer`, `task`, `verdict`, `repair`, `working`, `stale`, `blocked`, `ready`, `done`; `ref` the gate, question or task it is about (or null); `why` one line of rule text when the move is yours; `epic` on a `re-approve` that is the epic's. It covers what a client cannot derive without the gate hashes: a change request whose text has since changed is yours again (`approve-*`), and an epic child whose gate the epic's signed charter no longer covers is yours as `re-approve` of the epic (`epic` names it). `orch show --json` and each `orch list --json` row carry the same `move`. |
 | `claim` | The agent session holding the ticket: `{session, harness, at}`. |
 | `artifacts` | Artifact paths, relative to the ticket's artifact folder. |
-| `artifact_items` | 1.5: what the ticket links (its frontmatter `artifacts` list, see Artifacts): `{source, kind, label}` with `source` `file`, `link` or `static`, `kind` one of `screenshot`, `report`, `log`, `link`, `dataset`, `build`, `diagram`, `other`, `receipt`; a file also has `name` and `sha256`; `task` and `ac` when the artifact belongs to a task or proves a criterion. 1.7: `by`, who added it (`human:you`, `agent:<harness>:<session>`); a `receipt` (written only by `orch task done --run`, docs/tasks-format.md "Receipts") also has `run`: `{exit, timed_out, commit, dirty, repo, at, seconds, check, steps: [{name, status, seconds}]}` (`repo` is the name of the checkout it ran in, never a path; each fact only when well typed), `status` `pass`, `fail` or `skip`, `exit` null when a step timed out. The commands and the output stay in the ticket file and the receipt itself. Never a URL or a local path: a phone shows the label and kind, and may fetch a file by name where its transport offers that. |
+| `artifact_items` | 1.5: what the ticket links (its frontmatter `artifacts` list, see Artifacts): `{source, kind, label}` with `source` `file`, `link` or `static`, `kind` one of `screenshot`, `report`, `log`, `link`, `dataset`, `build`, `diagram`, `other`, `receipt`; a file also has `name` and `sha256`; `task` and `ac` when the artifact belongs to a task or proves a criterion. 1.8: `by`, who added it (`human:you`, `agent:<harness>:<session>`); a `receipt` (written only by `orch task done --run`, docs/tasks-format.md "Receipts") also has `run`: `{exit, timed_out, commit, dirty, repo, at, seconds, check, steps: [{name, status, seconds}]}` (`repo` is the name of the checkout it ran in, never a path; each fact only when well typed), `status` `pass`, `fail` or `skip`, `exit` null when a step timed out. The commands and the output stay in the ticket file and the receipt itself. Never a URL or a local path: a phone shows the label and kind, and may fetch a file by name where its transport offers that. |
 | `verdict` | 1.3: what a verdict given elsewhere must echo, `{hash, round}`, or null while no verdict is due: a ticket in testing (`round` = its testing round, as on the `verdict` need), or an open epic whose open children are all in testing (`round` null). See Verdict hash. |
 | `signed` | 1.6: whether the signed ledger on this machine backs each approved gate and a done ticket, as the dashboard's chips decide it (`orch.dashboard.data.story.gate_signers` / `done_signer`): an object with a key `requirements`, `plan` and `verdict` only where there is something to attest (an approved gate; a done ticket), each `{signed: bool, by: string or null}`. `by` is `you`, `from your phone`, `by your epic charter` (covered by the epic's signed charter) or `by delegation` for a gate, `accepted` or `closed` for the verdict. `signed` is true only for a human's own entry (or a phone's) the ledger verifies; a delegation, an unknown or tampered entry and a missing ledger are `signed: false` (`by` null, or `by delegation`). Never key material or MACs. Show `signed` only when `gates.<gate>.state` is `approved` (an invalidated gate can still have a matching ledger entry for its old hash). A mirror shows this instead of trusting the frontmatter's `approved` and `via`. |
-| `revalidate` | 1.7: `{idle_days}` when an open or backlog ticket was not touched for the workspace's `dashboard.revalidate_days` (default 30, 0 turns it off), else null. Derived from `updated` when the document is built; it blocks nobody and is no need. |
+| `revalidate` | 1.8: `{idle_days}` when an open or backlog ticket was not touched for the workspace's `dashboard.revalidate_days` (default 30, 0 turns it off), else null. Derived from `updated` when the document is built; it blocks nobody and is no need. |
 
 `state` of a gate is `pending`, `approved` or `invalidated` (approved, but the text changed since).
 
@@ -179,7 +179,7 @@ ticket's newest signed status entry is a `close`, or a done `verdict` that match
 (`verify_at`, `verdict_hash` against `gates.verify.hash`), and its `prev` is the `mac` of the entry before it. A later
 reopen or follow-up verdict ends every earlier close; the event log and the ticket file are not inputs. An entry
 from before the chain existed has no `prev`; it counts only while no later signed status entry exists and the event
-log shows exactly one done for the ticket (a review with `orch ledger adopt` signs a chained entry). A signed
+log shows exactly one done for the ticket; `orch check` reports it as `pre-chain-signature` (a warning: weaker verification, no hash binding), and a review with `orch ledger adopt` signs a chained entry in its place. A signed
 head record, `ledger.head` beside the ledger, holds the number of signed entries, the `mac` of the newest one and
 whether the ledger was already cut when it was written, signed with the same key and rewritten under the ledger's
 lock on every append; every entry written since carries `n`, its place among the signed entries. When the ledger
@@ -187,11 +187,16 @@ does not hold exactly the signed entries the head counts, its entry at that coun
 match its place, an unnumbered entry follows a numbered one, or the head record is missing, damaged or older than the newest numbered entry, the ledger was cut: every chained decision (done verdicts, closes, reopens
 and workspace settings) then counts as not verified, `orch check` reports `ledger-cut` as an error, and the head
 stays marked as cut after later appends. The human recovers by restoring the ledger and its head record from a
-backup, or by starting a new ledger (every decision then needs `orch ledger adopt`). A ledger without a head record
+backup, or by starting a new ledger (every decision then needs `orch ledger adopt`). One cut has a narrower
+repair: a crash between appending an entry and rewriting the head record leaves exactly one signed entry, numbered the
+head's count plus one, at the end. `orch ledger repair` (human only, interactive terminal) shows that entry and, after
+the human types its id, rewrites the head record to count it; every other shape (two or more trailing entries, a bad
+signature, a different number, a head already marked cut, no head record) is refused. A ledger without a head record
 counts only while no entry carries `n` (a ledger from before the head record existed): nothing that verified before
 changes, and its next append writes one. Deleting the
 head record together with every numbered entry falls back to that older mode and is not detected, and neither is
-rolling the ledger and the head record back together to an earlier consistent state: no anchor inside these files can
+rolling the ledger and the head record back together to any earlier consistent state, including the state from before
+the head record existed: no anchor inside these files can
 close either. `workspace` is the first 16 hex digits of sha256 of `"<customer>|<id prefix>"`
 from the workspace config; `mac` is HMAC-SHA256 over the canonical JSON of the other fields with the 32-byte key
 in `ledger.key`. A line with a bad `mac` is ignored. An approved gate, answered question or done verdict without a

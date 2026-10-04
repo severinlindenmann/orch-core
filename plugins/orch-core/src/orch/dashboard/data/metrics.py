@@ -378,7 +378,70 @@ def duration(hours: float | None) -> str:
     return f"{hours / 24:.1f} d"
 
 
-def report_markdown(r: dict) -> str:
+def _flow_markdown(r: dict, o: dict) -> str:
+    """The Reports page as Markdown: the same sections and numbers as the page (`flow.overview` gives `o`)."""
+    label = DAYS_LABELS.get(r["days"], f"the last {r['days']} days")
+    n = o["needs"]
+    lines = [f"# Reports — {label}", ""]
+    if o.get("since") and o.get("starts_in_window"):
+        lines += [f"Recorded since {o['since']}; the figures start there.", ""]
+    lines.append("## Needs you now")
+    oldest = n["oldest"]
+    lines.append(f"- Waiting on you: {n['waiting']}" +
+                 (f" (oldest {oldest['ticket']}, {oldest['what']}, {oldest['age_minutes']} min)" if oldest else ""))
+    lines.append(f"- In testing: {n['testing']}")
+    lines.append(f"- Open questions: {n['questions']} ({n['asked']} asked, {n['answered']} answered)")
+    lines.append(f"- Agents working: {n['working']} tickets in progress")
+    lines.append("")
+    if o["state"] == "none":
+        lines += ["Nothing recorded yet: orch starts recording with the first ticket event.", ""]
+    else:
+        delta = r["done"] - r["done_before"]
+        days_on = o["days_on_record"]
+        lines.append("## Flow")
+        lines.append(f"- Done: {r['done']}" + (f" ({delta:+d} vs. the period before)" if o["has_before"] else
+                     f" (in the {days_on} day{'' if days_on == 1 else 's'} on record)" if o["starts_in_window"] else ""))
+        lines.append(f"- Claim -> testing: {duration(o['claim_to_testing_hours'])} "
+                     f"(median elapsed over {o['n_claim']} done tickets, waits included)")
+        lines.append(f"- Testing -> done: {duration(o['testing_to_done_hours'])} "
+                     f"(median elapsed over {o['n_testing']} done tickets)")
+        d = o["decisions"]
+        lines.append(f"- Your decisions: {d['total']} ({d['gates']} gate approvals, {d['verdicts']} verdicts, "
+                     f"{d['answers']} answers)")
+        lines.append("")
+        lines.append("## Created and done per day")
+        chart = o["per_day"]["chart"]
+        if o["state"] == "one-day":
+            lines.append("- With one day on record: " + ", ".join(
+                f"{s['name'].lower()} {s['values'][0]}" for s in chart["series"]))
+        else:
+            for i, day in enumerate(chart["labels"]):
+                lines.append(f"- {md_escape(day)}: " + ", ".join(
+                    f"{s['name'].lower()} {s['values'][i]}" for s in chart["series"]))
+        lines.append("")
+        lines.append("## Claim -> testing, per done ticket")
+        claim = o["claim_chart"]
+        for bucket, count in zip(claim["labels"], claim["series"][0]["values"]):
+            lines.append(f"- {md_escape(bucket)}: {count}")
+        lines.append("")
+        lines.append("## Where the time goes")
+        lines.append(f"Hours across the {r['done']} done tickets, split by status and added up, so a long ticket "
+                     "weighs more than a short one.")
+        for s in r["split"]:
+            lines.append(f"- {md_escape(s['name'])}: {s['pct']}")
+        lines.append("")
+    lines.append("## By type")
+    for t in r["types"]:
+        md = t["median_days"]
+        lines.append(f"- {md_escape(t['type'])}: {t['done']} done, "
+                     f"{f'{md:.1f} d' if md is not None else '–'} median open -> done, "
+                     f"{t['sent_back']} sent back, {t['questions']} questions")
+    return "\n".join(lines) + "\n"
+
+
+def report_markdown(r: dict, o: dict | None = None) -> str:
+    if o is not None:
+        return _flow_markdown(r, o)
     label = DAYS_LABELS.get(r["days"], f"the last {r['days']} days")
     delta = r["done"] - r["done_before"]
     lines = [f"# Reports — {label}", ""]

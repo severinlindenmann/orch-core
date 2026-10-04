@@ -142,6 +142,10 @@ dialog, .overlay { --ctl: var(--ctl-overlay); background: var(--overlay); color:
 .menu a.item[aria-current=page] { background: var(--nav-active); color: var(--text); font-weight: 700; box-shadow: inset 3px 0 0 var(--mint); }
 .menu a.item[aria-current=page] svg { color: var(--text); }
 .menu a.item .label { flex: 1; min-width: 0; line-height: 1.25; }
+/* An addon's status line (menu_status): one muted small line under the label, coloured parts for roles. */
+.menu a.item.has-line { padding-block: var(--s-1); }
+.menu-line { display: block; font: var(--type-meta); font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ml-ok { color: var(--ok-fg); } .ml-warn { color: var(--warn-fg); } .ml-err { color: var(--err-fg); }
 /* A broken addon: a small red dot (never a ✕ in a pill), named by its aria-label. */
 .nav-dot { flex: none; width: calc(1.5 * var(--s-1)); height: calc(1.5 * var(--s-1)); border-radius: 50%; background: var(--err-mark); }
 .badge {
@@ -1287,6 +1291,70 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 .lib-fields td.lib-notes { white-space: normal; min-width: var(--s-12); }
 .lib-versions { margin: var(--s-3) 0 0; padding-left: var(--s-5); font: var(--type-meta); }
 .lib-used { margin: var(--s-2) 0 0; font: var(--type-meta); overflow-wrap: anywhere; }
+/* The widget catalog (Workspace & addons, Widgets tab): task cards, search, group links, a grid of real mini
+   previews and one detail panel (an aside from 900 px, inline under the tile below that). */
+.cat-top { display: grid; gap: var(--s-3); margin: 0 0 var(--s-4); }
+.cat-top > p { margin: 0; }
+.cat-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s-2); }
+.cat-task { display: grid; gap: var(--s-1); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--surface2); color: var(--text); text-decoration: none; }
+.cat-task:hover { background: var(--hover); }
+.cat-task b { font-weight: 700; }
+.cat-task span { font: var(--type-meta); color: var(--muted); }
+.cat-task[aria-current] { border-color: var(--link); box-shadow: 0 0 0 1px var(--link) inset; }
+.cat-scope { margin: 0; font: var(--type-meta); }
+.cat-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.cat-bar label { font: var(--type-meta); font-weight: 600; }
+.cat-bar input[type=search] { flex: 1 1 220px; min-width: 0; }
+.cat-groups { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.cat-groups a { display: inline-flex; align-items: center; min-height: var(--s-8); padding: 0 var(--s-3); border: 1px solid var(--line2);
+  border-radius: var(--r-pill); color: var(--text); text-decoration: none; font: var(--type-meta); font-weight: 600; }
+.cat-groups a:hover { background: var(--hover); }
+.cat-groups a[aria-current] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.cat-groups .count { margin-left: var(--s-1); font-weight: 500; font-variant-numeric: tabular-nums; opacity: .75; }
+.cat-sum { margin: 0; font: var(--type-meta); }
+.cat { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); align-items: start; }
+.cat-main { min-width: 0; }
+.cat-more { margin: var(--s-6) 0 var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+.cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: var(--s-3); }
+.cat-tile { position: relative; display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; padding: var(--s-3);
+  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+.cat-tile:hover { border-color: var(--line2); }
+.cat-tile[data-selected=true] { border-color: var(--link); box-shadow: 0 0 0 1px var(--link) inset; }
+.cat-name { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--s-1) var(--s-2); margin: 0; font: inherit; }
+.cat-name a { color: var(--text); text-decoration: none; font-weight: 700; }
+.cat-name a::after { content: ""; position: absolute; inset: 0; border-radius: var(--r-lg); }  /* the whole tile is the link */
+.cat-name a:focus-visible { outline: none; }
+.cat-name a:focus-visible::after { outline: 2px solid var(--link); outline-offset: 2px; }
+.cat-kind { font: var(--type-meta); color: var(--muted); }
+.cat-pv { height: 132px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface2); padding: var(--s-2); }
+.cat-pv-scale { width: 200%; transform: scale(.5); transform-origin: 0 0; pointer-events: none; }
+.cat-pv-scale .w { margin: 0; }
+.cat-pv-note { margin: 0; height: 100%; display: grid; place-content: center; text-align: center; font: var(--type-meta); color: var(--muted); }
+.cat-pv-note span { font-weight: 600; color: var(--text); }
+.cat-blurb { margin: 0; font: var(--type-meta); color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cat-panel { min-width: 0; display: grid; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line2); border-radius: var(--r-lg); background: var(--surface); }
+.cat-panel > * { margin: 0; min-width: 0; }
+.cat-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--s-1) var(--s-3); }
+.cat-head h3 { margin: 0; overflow-wrap: anywhere; }
+.cat-title { font-weight: 600; }
+.cat-desc { max-width: var(--measure); }
+.cat-avail { font: var(--type-meta); font-weight: 600; }
+.cat-avail-ok { color: var(--ok-fg); }
+.cat-avail-warn { color: var(--warn-fg); }
+.cat-preview { min-width: 0; max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-2); background: var(--surface2); }
+.cat-preview .w { margin: 0; }
+.cat-panel h4 { margin: 0; font: var(--type-meta); font-weight: 700; }
+.cat-code { margin: 0; padding: var(--s-3); max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface2); font: var(--s-3)/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cat-inline { grid-column: 1 / -1; }
+.cat-side { display: none; }
+.cat-empty { margin: var(--s-6) 0; }
+@media (min-width: 900px) {
+  .cat { grid-template-columns: minmax(0, 1fr) 360px; }
+  .cat-inline { display: none; }
+  .cat-side { display: grid; position: sticky; top: var(--s-4); max-height: calc(100vh - 2 * var(--s-4)); overflow: auto; }
+}
 /* Artifacts shown inline in a section (![alt](artifact:<name>)) and the ticket's Artifacts area: thumbnails that
    open the full file. Sizes are layout widths; the image keeps its aspect ratio. */
 .md-artifact img, .artifact-thumb img { display: block; max-width: min(100%, 480px); max-height: 320px; height: auto;
@@ -1574,3 +1642,28 @@ html.term-full-open { overflow: hidden; }
 .permit-cmd-inline { overflow-wrap: anywhere; min-width: 0; }
 .charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; }
 .factory-budget { margin-left: var(--s-2); }
+
+/* Charts (templates/_charts.html, static/charts.js) */
+.chart { margin: 0; display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; }
+.chart-title { font: var(--type-section); }
+.chart-plot { position: relative; height: 240px; min-width: 0; }
+.chart-plot canvas { max-width: 100%; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); margin: 0; padding: 0; list-style: none; font: var(--type-meta); color: var(--muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: var(--s-2); }
+.chart-swatch { display: inline-block; width: var(--s-3); height: var(--s-3); border-radius: var(--s-1); }
+.chart-note { margin: 0; font: var(--type-meta); color: var(--muted); }
+.chart-data summary { cursor: pointer; font: var(--type-meta); color: var(--muted); }
+.chart-data .table-wrap { margin-top: var(--s-2); }
+.chart-table th[scope="row"] { font-weight: 400; text-align: left; }
+.chart-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Reports: needs-you block, record start, in-cell bars */
+.since { margin: 0 0 var(--s-4); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface2); color: var(--muted); font: var(--type-meta); }
+.since b { color: var(--text); }
+.needs-now { border-color: var(--line2); }
+.needs-now h2 { margin-bottom: var(--s-3); }
+.needs-now .kpis { margin-bottom: 0; }
+.ib { display: flex; align-items: center; gap: var(--s-2); font-variant-numeric: tabular-nums; }
+.ib-track { display: block; width: 96px; flex: none; }
+.ib-track i { display: block; height: var(--s-2); min-width: var(--s-1); border-radius: var(--s-1); background: var(--series-1); }
+.reports-grid .card { min-width: 0; }

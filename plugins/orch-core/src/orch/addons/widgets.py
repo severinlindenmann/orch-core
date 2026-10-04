@@ -1,9 +1,10 @@
 """Widgets (spec v2 §11.5): plain data that core templates render with autoescape. No HTML, ever."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import ClassVar, Union
 
 ROLES = ("ok", "info", "warn", "err", "neu")  # no "you": addon items never count as needs-you
@@ -19,6 +20,12 @@ MAX_VALUE_LEN = 200
 MAX_URL_LEN = 2000
 MAX_COLUMNS = 50
 MAX_QR_LEN = 1000
+MAX_SERIES = 8  # API 2.6 Chart
+MAX_POINTS = 400  # points per series
+MAX_UNIT_LEN = 20
+CHART_STYLES = ("bar", "line")
+CHART_X = ("category", "linear", "time")
+_TOKEN = re.compile(r"[a-z][a-z0-9-]{0,39}")  # a CSS custom property name without the leading --
 _CORE_PARAMS = frozenset({"msg", "err", "token"})  # flash messages and the login token, never an addon's
 _PARAM = re.compile(r"[a-z][a-z0-9_]{0,49}")  # a Search field name: also a GET query key on the addon page
 
@@ -50,7 +57,41 @@ class Markdown:
 class Badge:
     role: str
     text: str
+    title: str = ""  # API 2.5: a tooltip, used by menu_badge (the sidebar chip); other slots ignore it
     kind: ClassVar[str] = "badge"
+
+
+@dataclass(frozen=True)
+class Countdown:
+    """API 2.5: a live "3h05" to `until` (ISO 8601 with Z or an offset), used in a MenuStatus line; after it
+    the text is `done`. Core renders the first text and a small script keeps it current."""
+    until: str
+    done: str = "reset"
+    kind: ClassVar[str] = "countdown"
+
+
+@dataclass(frozen=True)
+class MenuStatus:
+    """API 2.5: what menu_badge may return instead of a Badge: a chip (`badge`) on the menu entry and a short muted
+    `line` under its label made of Badge (small coloured text), Text and Countdown parts."""
+    badge: Badge | None = None
+    line: tuple = ()
+    kind: ClassVar[str] = "menu_status"
+
+
+def countdown_text(until: str, done: str, now: datetime | None = None) -> str | None:
+    """"3h05", "12 min" or `done`; None when `until` is not an ISO time with an offset."""
+    try:
+        t = datetime.fromisoformat(until)
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        return None
+    s = (t - (now or datetime.now(timezone.utc))).total_seconds()
+    if s <= 0:
+        return done
+    m = int(s // 60)
+    return f"{m // 60}h{m % 60:02d}" if m >= 60 else f"{max(m, 1)} min"
 
 
 @dataclass(frozen=True)
@@ -182,8 +223,56 @@ class QR:
     kind: ClassVar[str] = "qr"
 
 
+SERIES_TOKENS = tuple(f"series-{i}" for i in range(1, MAX_SERIES + 1))
+
+
+def chart_spec(labels, series, *, kind: str = "bar", stacked: bool = False, unit: str = "", x: str = "category",
+               horizontal: bool = False) -> dict:
+    """The one plain dict static/charts.js draws (and the `chart` macro writes out as a table). `series` is
+    [(name, values)], [(name, values, token)] or [(name, values, token, stack)]; a series without a token takes
+    series-1..8 in order (at most 8 series, so no colour repeats)."""
+    out = []
+    for i, s in enumerate(series):
+        name, values, token, stack = (tuple(s) + ("", ""))[:4]
+        out.append({"name": name, "values": list(values), "token": token or SERIES_TOKENS[i % len(SERIES_TOKENS)],
+                    **({"stack": stack} if stack else {})})
+    return {"kind": kind, "labels": list(labels), "series": out, "stacked": stacked, "unit": unit, "x": x,
+            "horizontal": horizontal}
+
+
+@dataclass(frozen=True)
+class ChartSeries:
+    """One series of a Chart: `values` has one number per label. `token` names a colour token (`series-1`..`series-8`,
+    or a role mark such as `ok-mark`); empty takes the next series colour."""
+    name: str
+    values: tuple
+    token: str = ""
+    stack: str = ""  # series with the same stack name stack together; empty: a stacked chart has one stack
+
+
+@dataclass(frozen=True)
+class Chart:
+    """API 2.6: a bar or line chart core draws (vendored Chart.js, colours from the theme tokens) with its numbers as
+    a table under "Show the numbers". Plain data only: at most 8 series and 400 points, numbers only. `labels` are
+    strings, or numbers when `x="linear"` (real spacing, e.g. hours since the start) or `x="time"` (epoch seconds, drawn as clock times). `stacked` stacks the series;
+    `horizontal` turns a bar chart on its side; `unit` is a short word shown after the numbers ("h", "tickets")."""
+    title: str
+    labels: tuple
+    series: tuple
+    style: str = "bar"  # "bar" or "line" (`kind` is every widget's type name)
+    stacked: bool = False
+    unit: str = ""
+    x: str = "category"
+    horizontal: bool = False
+    kind: ClassVar[str] = "chart"
+
+    def spec(self) -> dict:
+        return chart_spec(self.labels, [(s.name, s.values, s.token, s.stack) for s in self.series], kind=self.style,
+                          stacked=self.stacked, unit=self.unit, x=self.x, horizontal=self.horizontal)
+
+
 _CELLS = (Text, Badge, Link, Copy, Action, Time)
-_BLOCKS = (Text, Markdown, Badge, Link, Copy, Action, Callout, KV, Table, Card, Search, Chips, QR, Tabs, Time)
+_BLOCKS = (Text, Markdown, Badge, Link, Copy, Action, Callout, KV, Table, Card, Search, Chips, QR, Tabs, Time, Chart)
 _CHIP_ITEMS = (Text, Badge, Link)
 _SCALAR = (str, int, float)  # a `Cell`/`Tile.value` scalar; bool is deliberately excluded below
 
@@ -255,6 +344,54 @@ def _rows_of(value, where: str, field: str, out: list[str]) -> list:
         out.append(f"{where}.{field}: at most {MAX_ROWS} rows, got {len(rows)}")
         rows = rows[:MAX_ROWS]
     return rows
+
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _check_chart(w: Chart, where: str, out: list[str]) -> None:
+    if w.title != "":  # empty: no heading (the card around it names the chart)
+        _title_field(w.title, MAX_LABEL_LEN, where, "title", out)
+    if w.style not in CHART_STYLES:
+        out.append(f"{where}.style: {w.style!r} must be one of {', '.join(CHART_STYLES)}")
+    if w.x not in CHART_X:
+        out.append(f"{where}.x: {w.x!r} must be one of {', '.join(CHART_X)}")
+    _str_field(w.unit, MAX_UNIT_LEN, where, "unit", out)
+    for field in ("stacked", "horizontal"):
+        _flag(getattr(w, field), where, field, out)
+    if w.horizontal is True and w.style == "line":
+        out.append(f"{where}.horizontal: only a bar chart can be horizontal")
+    if w.x != "category" and w.horizontal is True:
+        out.append(f"{where}.horizontal: not available with x={w.x!r}")
+    if not isinstance(w.labels, (tuple, list)) or not isinstance(w.series, (tuple, list)):
+        out.append(f"{where}: labels and series must be tuples")
+        return
+    if not 1 <= len(w.labels) <= MAX_POINTS:
+        out.append(f"{where}.labels: between 1 and {MAX_POINTS} points, got {len(w.labels)}")
+    for i, label in enumerate(w.labels[:MAX_POINTS]):
+        if w.x != "category":
+            if not _number(label):
+                out.append(f"{where}.labels[{i}]: must be a number with x={w.x!r}")
+                break
+        elif not _str_field(label, MAX_LABEL_LEN, where, f"labels[{i}]", out):
+            break
+    if not 1 <= len(w.series) <= MAX_SERIES:
+        out.append(f"{where}.series: between 1 and {MAX_SERIES} series, got {len(w.series)}")
+    for i, s in enumerate(w.series[:MAX_SERIES]):
+        at = f"{where}.series[{i}]"
+        if not isinstance(s, ChartSeries):
+            out.append(f"{at}: must be a ChartSeries")
+            continue
+        _title_field(s.name, MAX_LABEL_LEN, at, "name", out)
+        if not isinstance(s.token, str) or (s.token and not _TOKEN.fullmatch(s.token)):
+            out.append(f"{at}.token: must be empty or a colour token name such as 'series-2'")
+        if not isinstance(s.stack, str) or (s.stack and not _TOKEN.fullmatch(s.stack)):
+            out.append(f"{at}.stack: must be empty or a short lowercase name such as 'created'")
+        if not isinstance(s.values, (tuple, list)) or len(s.values) != len(w.labels):
+            out.append(f"{at}.values: one number per label ({len(w.labels)})")
+        elif not all(_number(v) for v in s.values):
+            out.append(f"{at}.values: numbers only (no text, None, NaN or infinity)")
 
 
 def _check(w, manifest, where: str, out: list[str], depth: int, slot: str = "") -> None:
@@ -332,6 +469,9 @@ def _check(w, manifest, where: str, out: list[str], depth: int, slot: str = "") 
         if _str_field(w.text, MAX_QR_LEN, where, "text", out) and len(w.text.encode("utf-8")) > MAX_QR_LEN:
             out.append(f"{where}.text: must be at most {MAX_QR_LEN} bytes as UTF-8, got {len(w.text.encode('utf-8'))}")
         _str_field(w.caption, MAX_LABEL_LEN, where, "caption", out)
+
+    elif isinstance(w, Chart):
+        _check_chart(w, where, out)
 
     elif isinstance(w, Callout):
         _role_field(w.role, where, out)

@@ -72,13 +72,22 @@ def is_orch_hook(text: str) -> bool:
 # tracked) when there is one, and does nothing in a clone without orch.
 DELEGATE_BEGIN = "# >>> orch commit-msg check >>>"
 DELEGATE_END = "# <<< orch commit-msg check <<<"
-DELEGATE = (
-    f"{DELEGATE_BEGIN}\n"
-    "# Runs this clone's orch commit-message check if `orch hooks install` set one up; a clone without one skips it.\n"
-    'orch_hook="$(git rev-parse --git-common-dir)/hooks/commit-msg"\n'
-    'if [ -x "$orch_hook" ]; then "$orch_hook" "$@" || exit $?; fi\n'
-    f"{DELEGATE_END}\n"
-)
+PRE_DELEGATE_BEGIN = "# >>> orch pre-commit stage >>>"
+PRE_DELEGATE_END = "# <<< orch pre-commit stage <<<"
+
+
+def _delegate(hook: str, begin: str, end: str, what: str) -> str:
+    return (
+        f"{begin}\n"
+        f"# Runs this clone's orch {what} if `orch hooks install` set one up; a clone without one skips it.\n"
+        f'orch_hook="$(git rev-parse --git-common-dir)/hooks/{hook}"\n'
+        'if [ -x "$orch_hook" ]; then "$orch_hook" "$@" || exit $?; fi\n'
+        f"{end}\n"
+    )
+
+
+DELEGATE = _delegate(HOOK, DELEGATE_BEGIN, DELEGATE_END, "commit-message check")
+PRE_DELEGATE = _delegate("pre-commit", PRE_DELEGATE_BEGIN, PRE_DELEGATE_END, "record staging")
 _SHELL = re.compile(r"^#!\s*(?:/usr/bin/env\s+)?(?:\S*/)?(?:sh|bash|dash|zsh|ksh)(?:\s|$)")
 
 
@@ -143,9 +152,10 @@ def _install_one(repo: Path, script: str, force: bool, pre_commit: str | None = 
             return err
         if common != hooks_dir:
             target, skip = _delegate_target(repo, hooks_dir, local, local or effective)
-            if target is None:
-                return skip
-            return _install_with_hooks_path(repo, target, common, script, force)
+            got = skip if target is None else _install_with_hooks_path(repo, target, common, script, force, pre_commit)
+            if pre_commit and "; pre-commit " not in got:  # never silent: say the record hook was not installed
+                got += "; pre-commit not installed: add `orch hook pre-commit` to the hook that runs there by hand"
+            return got
     action = _write_hook(hooks_dir, script, force)
     if pre_commit and action.startswith(("installed", "updated", "unchanged")):
         action += f"; pre-commit {_write_pre_commit(hooks_dir, pre_commit)}"
@@ -215,7 +225,8 @@ def _write_hook(hooks_dir: Path, script: str, force: bool) -> str:
     return action + note
 
 
-def _install_with_hooks_path(repo: Path, tracked: Path, common: Path, script: str, force: bool) -> str:
+def _install_with_hooks_path(repo: Path, tracked: Path, common: Path, script: str, force: bool,
+                             pre_commit: str | None = None) -> str:
     """core.hooksPath points at a folder of the repo's own: the generated hook goes to <common dir>/hooks as usual
     (git does not run it from there by itself) and the core.hooksPath folder's commit-msg gets DELEGATE, which runs
     it. That commit-msg is part of the repository, so the result always says it has to be committed;
@@ -241,8 +252,9 @@ def _install_with_hooks_path(repo: Path, tracked: Path, common: Path, script: st
     action = _write_hook(common, script, force)
     if not action.startswith(("installed", "updated", "unchanged")):
         return action
+    extra = f"; pre-commit {_delegate_pre_commit(repo, tracked.parent / 'pre-commit', common, pre_commit)}" if pre_commit else ""
     if current is not None and (is_orch_hook(current) or has_delegate(current)):
-        return f"{action}; {shown} already runs it ({commit_note})"
+        return f"{action}; {shown} already runs it ({commit_note}){extra}"
     try:
         if current is None:
             tracked_dir.mkdir(parents=True, exist_ok=True)
@@ -265,7 +277,47 @@ def _install_with_hooks_path(repo: Path, tracked: Path, common: Path, script: st
                 what += " (it is not executable, so git does not run it yet: chmod +x it)"
     except OSError as e:
         return f"{action}; failed: {tracked}: {e}"
-    return f"{action if action != 'unchanged' else 'installed'}; {what} ({commit_note})"
+    return f"{action if action != 'unchanged' else 'installed'}; {what} ({commit_note}){extra}"
+
+
+def _delegate_pre_commit(repo: Path, tracked: Path, common: Path, script: str) -> str:
+    """The record staging hook under a repo-owned core.hooksPath: the generated one goes to <common dir>/hooks and
+    the tracked pre-commit there gets PRE_DELEGATE, the way commit-msg does. A foreign hook is only extended, never
+    replaced; one that is not a shell script is left to the user."""
+    try:
+        shown = tracked.relative_to(repo.resolve()).as_posix()
+    except ValueError:
+        shown = str(tracked)
+    if tracked.is_symlink():
+        return f"skipped: {tracked} is a symbolic link; add `orch hook pre-commit` to its target by hand"
+    current = None
+    try:
+        if tracked.exists():
+            current = tracked.read_text(encoding="utf-8")
+            if (PRE_DELEGATE_BEGIN not in current and not _SHELL.match(current)
+                    and not (_is_husky_hook(tracked) and not current.startswith("#!"))):
+                return f"skipped: {tracked} is not a shell script; add a call to `orch hook pre-commit` to it by hand"
+        done = _write_pre_commit(common, script)
+        if done != "installed":
+            return done
+        if current is not None and PRE_DELEGATE_BEGIN in current:
+            return f"installed; {shown} already runs it (commit it so the staging stays in place)"
+        if current is None:
+            tracked.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(tracked, PRE_DELEGATE if _is_husky_hook(tracked) else "#!/bin/sh\n" + PRE_DELEGATE)
+            tracked.chmod(0o755)
+            what = f"created {shown}"
+        else:
+            nl = "\r\n" if "\r\n" in current else "\n"
+            block = PRE_DELEGATE.replace("\n", nl)
+            head, rest = (current.partition("\n")[0] + "\n", current.partition("\n")[2]) if current.startswith("#!") else ("", current)
+            mode = stat.S_IMODE(tracked.stat().st_mode)
+            atomic_write_text(tracked, head + block + rest)
+            tracked.chmod(mode)
+            what = f"added the call to {shown}"
+    except (OSError, UnicodeDecodeError) as e:
+        return f"failed: {tracked}: {e}"
+    return f"installed; {what} (commit it so the staging stays in place)"
 
 
 def hook_state(repo: Path) -> str:

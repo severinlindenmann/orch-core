@@ -816,6 +816,32 @@ def ledger_adopt(
     typer.echo(f"signed {signed} of {len(items)}")
 
 
+@ledger_app.command("repair")
+def ledger_repair() -> None:
+    """Accept the one signed entry a crash left past the ledger's head record. Human only.
+
+    A crash between appending a decision and rewriting the head record cuts the ledger (every chained decision then
+    counts as not verified). When the newest line is a validly signed entry numbered right after the head's count,
+    this shows it and, after you type its id, rewrites the head to include it. Any other shape is refused."""
+    from orch.actor import require_human_terminal
+    from orch.core import ledger
+    from orch.core.events import Actor
+    from orch.textsafe import visible
+    require_human_terminal("repairing the ledger")
+    tail = ledger.tail_to_repair()
+    typer.echo("The ledger ends in one signed entry that its head record does not count yet:")
+    for k in ("n", "kind", "workspace", "ticket", "gate", "qid", "verdict", "actor", "via", "at"):
+        if tail.get(k) is not None:
+            typer.echo(f"  {k}: {visible(str(tail[k]))}")
+    typer.echo("Accept it only if you made this decision just before the crash.")
+    typed = input(f"  type {tail['mac'][:8]} to accept it, Enter to cancel: ").strip()
+    if not typed:
+        typer.echo("nothing changed")
+        return
+    _ops(_ws(), Actor("human", "you", "tty")).ledger_repair(typed)
+    typer.echo("repaired: the head record now includes it")
+
+
 # -- artifacts -------------------------------------------------------------------------
 
 @artifact_app.command("add")
@@ -1096,7 +1122,7 @@ def hook_pre_commit(
 def hooks_install(
     repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Install even where a commit-msg hook exists in .git/hooks (that hook is kept as commit-msg.pre-orch and runs after the orch check).")] = False,
-    stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists).")] = False,
+    stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists; under core.hooksPath it is delegated like commit-msg). A commit that names paths may not carry the staged records.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Install the commit-msg check into each repo's own hooks directory; other hooks keep working.
@@ -1203,12 +1229,34 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _run_updates(*, check_only: bool, force: bool) -> None:
+    from orch import update
+    from orch.cli_addon import review_text
+
+    def confirm(name: str) -> bool:
+        try:
+            return input(f"Type {name} to trust it, or press Enter to leave it off: ").strip() == name
+        except EOFError:
+            return False
+    update.run(check_only=check_only, ask=input, review_text=review_text, confirm=confirm, out=typer.echo, force=force)
+
+
+@app.command("update")
+def update_cmd(check_only: Annotated[bool, typer.Option("--check", help="Only say what is out of date.")] = False) -> None:
+    """Update orch-core and the custom addons: check, ask once, apply. A new addon version that asks for no new
+    permissions is trusted again; otherwise you see what changed first."""
+    from orch.actor import require_human_terminal
+    require_human_terminal("updating orch", hint="run `orch update` in your own terminal")
+    _run_updates(check_only=check_only, force=True)
+
+
 @app.command()
 def serve(
     host: Annotated[Optional[str], typer.Option("--host", help="Bind address (default from config).")] = None,
     port: Annotated[Optional[int], typer.Option("--port", help="Port (default from config).")] = None,
     lan: Annotated[bool, typer.Option("--lan", help="Listen on all interfaces, e.g. for your phone.")] = False,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser.")] = False,
+    no_update: Annotated[bool, typer.Option("--no-update", help="Do not offer to update orch and its addons.")] = False,
 ) -> None:
     """Start the local dashboard. Every write goes through the same rules as the CLI."""
     import secrets
@@ -1216,6 +1264,11 @@ def serve(
 
     from orch.actor import require_human_terminal
     require_human_terminal("starting the dashboard", hint="the dashboard is for the human: run it in your own terminal")
+    if not no_update:
+        try:
+            _run_updates(check_only=False, force=False)
+        except OrchError as e:  # an update problem never keeps the dashboard from starting
+            typer.echo(f"update skipped: {e.message}")
     try:
         import uvicorn
         from orch.dashboard.app import create_app

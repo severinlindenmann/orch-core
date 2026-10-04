@@ -510,6 +510,7 @@
     <h3>Other evidence</h3>
     {% for e in other_evidence %}<div class="proof-evidence">{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
     {% endif %}
+    <p class="muted widgets-for"><a class="lnk" href="/workspace?tab=widgets&amp;section=Verification">Widgets for this section</a></p>
     {% if actions.verdict %}{{ verdict_forms() }}{% endif %}
   {% endcall %}
   {% endif %}
@@ -523,7 +524,7 @@
     <summary><h2 class="notes-title">Agent notes</h2> <span class="muted">· {{ notes|map(attribute="label")|join(", ") }}</span></summary>
     {% for n in notes %}
     <section class="note" aria-labelledby="note-{{ loop.index }}">
-      <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span></h3>
+      <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span>{% if n.name in ("Context", "Current state", "Findings") %} <a class="lnk widgets-for" href="/workspace?tab=widgets&amp;section={{ n.name|urlencode }}">Widgets for this section</a>{% endif %}</h3>
       <div class="note-text">{{ n.text|section_md(n.name, widgets)|safe }}</div>
     </section>
     {% endfor %}
@@ -557,6 +558,17 @@
   <section class="card" id="ticket-addon-decisions">
     <h2>From addons</h2>
     {% for addon, d in loose %}{{ ui.addon_decision(addon, d) }}{% endfor %}
+  </section>
+  {% endif %}
+  {% if ran_on %}
+  <section class="card" id="ran-on">
+    <h2>Ran on</h2>
+    <ul class="plain">{% for r in ran_on %}
+      <li>{{ r.harness }}{% if r.started %} <span class="muted">· {{ r.started }}</span>{% endif %}
+      {% if r.claude %}{% if r.models %}<br>{% for m, n in r.models.main %}{{ m }} <span class="muted">({{ n }})</span>{{ ", " if not loop.last }}{% else %}<span class="muted">no model recorded</span>{% endfor %}
+      {% if r.models.total %}<br><span class="muted">subagents: {% for m, n in r.models.subagents %}{{ n }} × {{ m }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+      {% else %}<br><span class="muted">not on this machine</span>{% endif %}{% endif %}</li>{% endfor %}
+    </ul>
   </section>
   {% endif %}
   {% if external %}

@@ -8,7 +8,7 @@ from addon_fixtures import loaded
 from orch.addons import cache
 from orch.addons.api import PendingDecision, Snapshot
 from orch.addons.loader import AddonRegistry
-from orch.addons.widgets import KV, Badge, Card, Link, Search, Table, Text, Tile, Action, QR
+from orch.addons.widgets import KV, Badge, Card, Countdown, MenuStatus, Link, Search, Table, Text, Tile, Action, QR
 
 XSS = "<script>alert(1)</script>"
 OVER = {"capabilities": ["provider", "page", "settings", "panel", "decisions"],
@@ -47,6 +47,13 @@ class Demo:
             body = (Text(f"PR for {view.ticket.id}"),)
         return [Card(f"Status {XSS}", body + (Table(("Repo", "Link"), (("a/b", Link(XSS, "https://example.com")),)),
                                                Action("rerun", "Rerun failed", "a/b#1")))]
+
+    chip = None
+
+    def menu_badge(self, view):
+        if self.chip == "raise":
+            raise RuntimeError("badge boom")
+        return self.chip
 
     def decisions(self, view):
         return [PendingDecision("phone/1", "Answer from phone", "ISO 8601", ticket="L-0001"),
@@ -96,6 +103,55 @@ def _snap(health="ok", items=None, **kw):
 def test_menu_lists_the_addon_page(client):
     html = client.get("/").text
     assert "menu-addons" in html and 'href="/addons/demo/"' in html and "Demo status" in html
+
+
+@pytest.mark.parametrize("role", ["ok", "warn", "err", "neu"])
+def test_menu_badge_renders_a_chip_with_its_role_and_tooltip(client, demo, role):
+    demo.chip = Badge(role, "39 %", title="5-hour 30 % · week 39 %")
+    for url in ("/", "/addons/demo/"):
+        html = client.get(url).text
+        assert f'<span class="chip chip-{role}" title="5-hour 30 % · week 39 %" aria-label="Demo status: 5-hour 30 % · week 39 %">39 %</span>' in html
+
+
+@pytest.mark.parametrize("chip", [None, "raise", "39 %", Badge("you", "x"), Badge("ok", " ")])
+def test_menu_badge_none_or_broken_is_no_chip_and_the_page_still_renders(client, demo, chip):
+    demo.chip = chip
+    r = client.get("/addons/demo/")
+    assert r.status_code == 200 and 'class="chip chip-' not in r.text.split('class="menu-addons"')[1].split("</nav>")[0]
+
+
+def _menu(html):
+    return html.split('class="menu-addons"')[1].split("</div>")[0]
+
+
+def test_menu_status_renders_chip_and_one_status_line(client, demo):
+    from datetime import timedelta
+    until = (datetime.now(timezone.utc) + timedelta(hours=3, minutes=5, seconds=30)).isoformat()
+    demo.chip = MenuStatus(Badge("warn", "75 %"), (Text("5 h"), Badge("ok", "35 %"), Text("· resets"), Countdown(until)))
+    for url in ("/", "/addons/demo/"):
+        m = _menu(client.get(url).text)
+        assert 'class="chip chip-warn"' in m and ">75 %</span>" in m
+        assert '<span class="menu-line">' in m and '<span class="ml-ok">35 %</span>' in m and "· resets" in m
+        assert f'data-until="{until}"' in m and "3h05" in m
+
+
+def test_countdown_text_future_past_and_bad_until():
+    from orch.addons.widgets import countdown_text
+    now = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
+    assert countdown_text("2026-10-04T15:05:30Z", "reset", now) == "3h05"
+    assert countdown_text("2026-10-04T12:12:30+00:00", "reset", now) == "12 min"
+    assert countdown_text("2026-10-04T11:59:00Z", "done!", now) == "done!"
+    assert countdown_text("nonsense", "reset", now) is None and countdown_text("2026-10-04T15:00:00", "r", now) is None
+
+
+def test_menu_status_drops_bad_parts_and_plain_badge_still_works(client, demo):
+    demo.chip = MenuStatus(None, (Text("ok"), "raw", Text(" "), Countdown("nope"), Badge("you", "x"), Countdown("2020-01-01T00:00:00Z", "gone")))
+    m = _menu(client.get("/addons/demo/").text)
+    assert 'class="chip' not in m and "ok" in m and "gone" in m and "nope" not in m and "raw" not in m and "ml-you" not in m
+    demo.chip = Badge("ok", "5 %")
+    assert 'chip chip-ok' in _menu(client.get("/").text) and "menu-line" not in _menu(client.get("/").text)
+    demo.chip = "raise"
+    assert client.get("/addons/demo/").status_code == 200
 
 
 def test_addon_page_renders_widgets_escaped_with_core_csp(client, ws):
@@ -472,3 +528,5 @@ def test_menu_marks_a_broken_addon_with_a_named_red_dot(client, ws):
     item = item[:item.index("</a>")]
     assert '<span class="nav-dot" role="img" aria-label="Demo status: last fetch failed"></span>' in item
     assert "✕" not in item and "badge" not in item
+
+

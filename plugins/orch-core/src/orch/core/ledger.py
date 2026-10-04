@@ -284,6 +284,43 @@ def _write_head(key: bytes, count: int, last: str, *, broken: bool) -> None:
         raise
 
 
+def _tail_to_repair(key: bytes) -> dict:
+    """The one entry a crash between appending and rewriting the head leaves behind: the newest line, signed, numbered
+    head.count + 1, behind a ledger that matches its head exactly. Any other shape raises OrchError."""
+    signed = _read(ledger_path(), key, _stat(key_path()))
+    if len(signed) < 2 or not head_path().exists() or not _head_matches(key, signed[:-1]):
+        raise OrchError("nothing to repair: the ledger does not end in exactly one signed entry past its head record",
+                        hint="a ledger cut in any other way is restored from a backup, or replaced by a new ledger")
+    tail = signed[-1]
+    if tail.get("n") != len(signed):
+        raise OrchError("nothing to repair: the newest entry is not numbered as the next one after the head record")
+    return tail
+
+
+def tail_to_repair() -> dict:
+    key = _key(create=False)
+    if not key:
+        raise OrchError("nothing to repair: there is no ledger key")
+    return _tail_to_repair(key)
+
+
+def repair_tail(typed: str) -> dict:
+    """Accept the entry `tail_to_repair` shows by rewriting the head record to include it (the caller is a human who
+    saw it and typed the first 8 hex digits of its `mac`). Checked again under the ledger lock."""
+    key = _key(create=False)
+    if not key:
+        raise OrchError("nothing to repair: there is no ledger key")
+    try:
+        with FileLock(str(base_dir() / LOCK_FILE), timeout=10):
+            tail = _tail_to_repair(key)
+            if typed.strip().lower() != tail["mac"][:8]:
+                raise OrchError(f"the typed id does not match {tail['mac'][:8]}; nothing was repaired")
+            _write_head(key, tail["n"], tail["mac"], broken=False)
+    except (OSError, Timeout) as e:
+        raise OrchError(f"could not repair the approval ledger ({e})", hint=f"check that {base_dir()} is writable") from e
+    return tail
+
+
 _head_cache: dict[str, tuple[tuple, bool]] = {}
 
 
@@ -450,6 +487,15 @@ def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = N
     return "unverified"
 
 
+def pre_chain(ws, ticket, signed: list[dict] | None = None, events=None, *, closed: bool) -> bool:
+    """A done that counts as verified only through the older rule: the newest signed status entry has no `prev`.
+    It is weaker (no hash binding, no removed-line detection); `orch ledger adopt` re-signs it as a chained entry."""
+    signed = entries(ws) if signed is None else signed
+    chain = status_chain(ws, ticket.id, signed)
+    return (bool(chain) and "prev" not in chain[-1]
+            and done_verification(ws, ticket, closed=closed, signed=signed, events=events) == "verified")
+
+
 def unsigned_gates(ws, ticket, signed: list[dict] | None = None) -> list[str]:
     from orch.core.gates import GATE_SECTIONS
     signed = entries(ws) if signed is None else signed
@@ -542,14 +588,19 @@ def unsigned_items(ws, tickets) -> list[dict]:
                                                       lambda e, i=q.get("id"): e.data.get("qid") == i)})
         if t.status == "done":
             v = (t.meta.get("gates") or {}).get("verify") or {}
-            if v.get("verdict") == "done":
-                if done_verification(ws, t, closed=False, signed=signed, events=events) == "unverified":
-                    out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
-                                "verify_at": v.get("at"), "verdict_hash": v.get("hash"), "text": f"verdict done at {v.get('at')}",
-                                "provenance": _provenance(events, t.id, ("verdict.given",),
-                                                          lambda e: e.data.get("verdict") == "done")})
-            elif done_verification(ws, t, closed=True, signed=signed, events=events) == "unverified":
-                out.append({"ticket": t.id, "title": t.title, "kind": "close", "text": "closed (done without a verdict)",
+            closed = v.get("verdict") != "done"
+            old = pre_chain(ws, t, signed, events, closed=closed)
+            weak = old or done_verification(ws, t, closed=closed, signed=signed, events=events) == "unverified"
+            note = " (re-sign: the signed entry predates the ledger chain)" if old else ""
+            if weak and not closed:
+                out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
+                            "verify_at": v.get("at"), "verdict_hash": v.get("hash"),
+                            "text": f"verdict done at {v.get('at')}{note}",
+                            "provenance": _provenance(events, t.id, ("verdict.given",),
+                                                      lambda e: e.data.get("verdict") == "done")})
+            elif weak:
+                out.append({"ticket": t.id, "title": t.title, "kind": "close",
+                            "text": f"closed (done without a verdict){note}",
                             "provenance": _provenance(events, t.id, ("ticket.moved",),
                                                       lambda e: e.data.get("command") == "close")})
     for item in out:

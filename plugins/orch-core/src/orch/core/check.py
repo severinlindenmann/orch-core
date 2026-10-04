@@ -286,6 +286,10 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
         out.append(Finding("warning", "unsigned-decision", tid,
                            f"the ticket's done verdict or close is not in the ledger on this machine: review it with "
                            f"`orch ledger adopt {tid}`"))
+    if entry.status == "done" and ledger.pre_chain(ws, t, signed, events, closed=closed):
+        out.append(Finding("warning", "pre-chain-signature", tid,
+                           f"the done was signed before the ledger chain (weaker verification); review with "
+                           f"`orch ledger adopt {tid}`"))
     for q in t.meta.get("questions") or []:
         if isinstance(q, dict) and ledger.answer_verification(ws, t, q, signed) == "unverified":
             out.append(Finding("warning", "unsigned-decision", tid,

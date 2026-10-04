@@ -46,7 +46,7 @@ def test_addon_group_renders_when_addon_nav_given(dash):
     from orch.dashboard.views import TEMPLATES
     html = TEMPLATES.env.get_template("_menu.html").render(
         nav="", needs_count=0, setup_count=0, theme="system", brand="none", customer="c", prefix="P",
-        repo_count=0, addon_nav=[("Code reviews", "/addons/reviews", "M0 0", "")])
+        repo_count=0, addon_nav=[("Code reviews", "/addons/reviews", "M0 0", "", None)])
     assert "menu-addons" in html and 'href="/addons/reviews"' in html and "Code reviews" in html
 
 

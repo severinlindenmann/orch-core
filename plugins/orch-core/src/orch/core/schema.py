@@ -13,13 +13,14 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.7.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.8.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
 # 1.5: `artifact_items`: what the ticket links (orch.core.artifacts.doc_items), names, labels and kinds only
 # 1.6: `signed`: per approved gate and for a done verdict, whether this machine's signed ledger backs it, and who
-# 1.7: `artifact_items[].by` (who added it) and `.run` (a receipt's facts, orch task done --run); `revalidate`
+# 1.7: `gates.verify.hash`: the verdict hash the verdict was given on (null when none was stored)
+# 1.8: `artifact_items[].by` (who added it) and `.run` (a receipt's facts, orch task done --run); `revalidate`
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
 _SOURCE = Path(__file__).resolve().parents[3] / "docs" / TASKS_SCHEMA_FILE  # plugin root: source checkout
@@ -84,7 +85,7 @@ def ticket_schema() -> dict:
             "claim": {"type": "object", "properties": {"session": _NS, "harness": _NS, "at": _NS}},
             "gates": {"type": "object", "required": ["requirements", "plan", "verify"],
                       "properties": {"requirements": gate, "plan": gate,
-                                     "verify": {"type": "object", "properties": {"verdict": _NS, "at": _NS, "via": _NS}}}},
+                                     "verify": {"type": "object", "properties": {"verdict": _NS, "at": _NS, "via": _NS, "hash": _NS}}}},
             "questions": {"type": "array", "items": question},
             "sections": {"type": "object", "additionalProperties": _S, "properties": {name: _S for name in SECTIONS}},
             # The MC2-T task-list view, by reference to the embedded schema below (never a second definition).
@@ -105,7 +106,7 @@ def ticket_schema() -> dict:
                 "properties": {"source": {"enum": ["file", "link", "static"]}, "kind": _S, "label": _S, "name": _S,
                                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "task": _S,
                                "ac": {"type": "integer", "minimum": 1}, "by": _S,
-                               # 1.7: a receipt's facts; step names and statuses, never the commands or the output
+                               # 1.8: a receipt's facts; step names and statuses, never the commands or the output
                                "run": {"type": "object", "properties": {
                                    "exit": {"type": ["integer", "null"]}, "timed_out": {"type": "boolean"},
                                    "commit": {"type": ["string", "null"]}, "dirty": {"type": "boolean"},
@@ -130,7 +131,7 @@ def ticket_schema() -> dict:
             # the signed ledger on this machine backs it (`signed`) and who (`by`: you, from your phone, by your epic charter, by delegation,
             # accepted, closed; null when not signed). A tampered, unknown or missing ledger entry is signed false.
             # A gate that is not approved, and a ticket that is not done, have no key. No key material, ever.
-            # 1.7: an open or backlog ticket nobody touched for dashboard.revalidate_days (orch.core.query.idle_days)
+            # 1.8: an open or backlog ticket nobody touched for dashboard.revalidate_days (orch.core.query.idle_days)
             "revalidate": {"type": ["object", "null"], "additionalProperties": False, "required": ["idle_days"],
                            "properties": {"idle_days": {"type": "integer", "minimum": 1}}},
             "signed": {"type": "object", "properties": {k: {"type": "object", "required": ["signed", "by"],
@@ -167,7 +168,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     doc["claim"] = {"session": claim.get("session"), "harness": claim.get("harness"), "at": claim.get("at")}
     verify = (m.get("gates") or {}).get("verify") or {}
     doc["gates"] = {"requirements": _gate(ticket, "requirements"), "plan": _gate(ticket, "plan"),
-                    "verify": {"verdict": verify.get("verdict"), "at": verify.get("at"), "via": verify.get("via")}}
+                    "verify": {"verdict": verify.get("verdict"), "at": verify.get("at"), "via": verify.get("via"),
+                               "hash": verify.get("hash")}}
     doc["questions"] = [{**copy.deepcopy(q), "hash": question_hash(q)} for q in m.get("questions") or [] if isinstance(q, dict)]
     names = list(SECTIONS) + [n for n in ticket.sections if n not in SECTIONS]
     doc["sections"] = {n: ticket.section(n) for n in names}
@@ -183,7 +185,7 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     doc["move"] = move_summary(ticket_card(ws, ticket, entries=entries))
     doc["signed"] = _signed(ws, ticket)
     idle = query.idle_days(ws, m, str(m.get("status") or ""))
-    doc["revalidate"] = {"idle_days": idle} if idle else None  # 1.7: freshness, derived from `updated`
+    doc["revalidate"] = {"idle_days": idle} if idle else None  # 1.8: freshness, derived from `updated`
     return doc
 
 
@@ -286,7 +288,7 @@ def example_document() -> dict:
               "options": [{"label": "ISO 8601", "cost": "none"}, {"label": "Local time"}], "recommended": "A"}],
             [], _FIXED)
         t.meta["claim"] = {"session": "7f3c9a21", "harness": "claude-code", "at": _FIXED}
-        # 1.7: a receipt of a failing `orch task done --run` (orch.core.receipts), added by the agent
+        # 1.8: a receipt of a failing `orch task done --run` (orch.core.receipts), added by the agent
         t.meta["artifacts"] = [{
             "name": "receipt-T2-20261002T090000Z.log", "kind": "receipt", "sha256": "5" * 64, "size": 812,
             "added": _FIXED, "by": "agent:claude-code:7f3c9a21", "task": "T2",

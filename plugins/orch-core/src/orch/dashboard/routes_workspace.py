@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
-from orch import onboarding
+from orch import onboarding, update
 from orch.addons import cache, manage, userfiles
 from orch.addons.discovery import custom_addons_dir, discover, find
 from orch.addons.loader import valid_name
@@ -18,8 +18,8 @@ from orch.addons.settings import form_value, parse_settings
 from orch.core.check import record_invalidations, run_checks
 from orch.core.maintenance import tidy
 from orch.dashboard.auth import strict_same_origin
-from orch.dashboard import setup_state
-from orch.dashboard.views import HUMAN, back, confirm_page, error_text, invalidate_setup_count, page
+from orch.dashboard import routes_widgets, setup_state
+from orch.dashboard.views import HUMAN, _theme, back, confirm_page, error_text, invalidate_setup_count, page
 from orch.errors import OrchError
 from orch.hooks.install import hook_state
 from orch.remote import store as phone_store
@@ -48,7 +48,7 @@ def _repos(ws) -> list[dict]:
     return out
 
 
-TABS = ("addons", "setup", "phones", "advanced")
+TABS = ("addons", "setup", "widgets", "phones", "advanced")
 
 
 def _relative(path, root) -> str:
@@ -153,7 +153,18 @@ def workspace(request: Request):
     pairing = reveals.pop(pair_token) if isinstance(peeked, dict) and peeked.get("kind") == "pair" else None
     tab = request.query_params.get("tab", "")
     tab = tab if tab in TABS else ("phones" if pairing is not None else "addons")
-    response = page(request, "workspace.html", nav="workspace", title="Workspace & addons", tab=tab,
+    widgets = {}
+    if tab == "widgets":
+        from markupsafe import Markup
+
+        from orch.core import ledger
+        from orch.widgets import registry
+        from orch.widgets.render import css_names, inline
+        theme = _theme(request, ws)
+        widgets = dict(cat=routes_widgets.catalog(ws, request.query_params, theme), widget_css=css_names(),
+                       inline_md=lambda text: Markup(inline(text)), html_state=ledger.widgets_html_state(ws),
+                       unused_days=routes_widgets.UNUSED_DAYS, broken=registry.template_problems(ws.home))
+    response = page(request, "workspace.html", nav="workspace", title="Workspace & addons", tab=tab, **widgets,
                 checks=snap.checks, checks_error=snap.checks_error,
                 repos=[{**r, "rel": _relative(r["path"], ws.root)} for r in snap.repos],
                 theme_default=dashboard.get("theme", "system"),
@@ -218,6 +229,51 @@ async def addon_check_updates(request: Request):
     await asyncio.to_thread(userfiles.update_json, _update_path(), mutate)
     n = sum(i.has_update for i in infos)
     return back(_BACK, msg=f"{n} update(s) available" if n else "All custom addons are up to date")
+
+
+def _update_everything() -> tuple[list[str], list[str]]:
+    """(done, problems). Core is pulled and reinstalled but cannot restart a running server; an addon that asks for
+    something new is installed and left for the human to review and trust in its row."""
+    done, problems = [], []
+    try:
+        core = update.core_check()
+        if core:
+            done.append(f"orch-core updated ({core.behind} commits); restart orch serve to run it. {update.core_apply(core)}")
+    except OrchError as e:
+        problems.append(f"orch-core: {e.message}")
+    updated = set()
+    for info in manage.update_check(None):
+        if not info.has_update:
+            continue
+        try:
+            before, m, r, trusted = update.apply_addon(info.name, actor=HUMAN)
+        except OrchError as e:
+            problems.append(f"{info.name}: {e.message}")
+            continue
+        updated.add(info.name)
+        done.append(f"{info.name} {before} → {m.version}" + ("" if trusted else " (review and trust it below)"))
+    userfiles.update_json(_update_path(), lambda d: [d.pop(n, None) for n in updated])
+    return done, problems
+
+
+@router.post("/workspace/addons/update-all")
+async def addon_update_all(request: Request, ask: str = Form("")):
+    if not strict_same_origin(request):
+        return _refused()
+    if ask:
+        return confirm_page(request, action="/workspace/addons/update-all", fields=[],
+                            title="Update orch and its addons?", body="Pulls orch-core and reinstalls it, then updates"
+                            " every custom addon. An addon that asks for nothing new is trusted again; any other waits for"
+                            " your review.", confirm="Update all", cancel="Cancel", cancel_href=_BACK, nav="workspace")
+    try:
+        done, problems = await asyncio.to_thread(_update_everything)
+    except OrchError as e:
+        return back(_BACK, err=error_text(e))
+    await asyncio.to_thread(request.app.state.addons.reload)
+    invalidate_setup_count(request.app.state.ws)
+    if problems:
+        return back(_BACK, err="; ".join(problems), msg="; ".join(done) or None)
+    return back(_BACK, msg="; ".join(done) if done else "Everything is up to date")
 
 
 @router.post("/workspace/addons/{name}/enable")

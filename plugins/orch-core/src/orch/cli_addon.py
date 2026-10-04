@@ -148,12 +148,8 @@ def update(name: Annotated[str | None, typer.Argument()] = None,
         raise ValidationError(f"{len(failed)} update(s) failed or could not be checked: {', '.join(failed)}")
 
 
-@addon_app.command("trust")
-def trust(name: str) -> None:
-    """Show what changed and which permissions are new, then trust this exact version (runs the contract suite)."""
-    _human("trusting an addon")
-    from orch.addons import manage
-    r = manage.review(name)
+def review_text(r) -> str:
+    """What the human sees before being asked: new permissions, changed files, the changelog."""
     lines = [f"{r.name} {r.version} from {r.source}" + (f" (trusted before: {r.old_version})" if r.old_version else "")]
     label = {"capabilities": "capability", "binaries": "binary", "env": "env", "actions": "action",
              "uploads": "file upload action"}
@@ -172,7 +168,16 @@ def trust(name: str) -> None:
         lines.append("Changelog:")
         lines.extend(f"  {line}" for line in r.changelog.splitlines()[:20])
     lines.append("Trusting runs this code inside orch serve with your permissions. Only trust code you have read.")
-    typer.echo("\n".join(lines))
+    return "\n".join(lines)
+
+
+@addon_app.command("trust")
+def trust(name: str) -> None:
+    """Show what changed and which permissions are new, then trust this exact version (runs the contract suite)."""
+    _human("trusting an addon")
+    from orch.addons import manage
+    r = manage.review(name)
+    typer.echo(review_text(r))
     _confirm(name, "trust")
     digest = manage.trust_addon(name, seen_digest=r.digest)
     typer.echo(f"trusted {name} {r.version} ({digest[:12]}); enable it per workspace with `orch addon enable {name}`")

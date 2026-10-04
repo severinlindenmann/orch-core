@@ -10,7 +10,7 @@ from orch.addons.api import PairingTarget, PendingDecision, worst_health
 from orch.addons.loader import _log_error
 from orch.addons.manifest import MENU_ICONS
 from orch.addons.runner import rendering
-from orch.addons.widgets import Callout, widget_problems
+from orch.addons.widgets import Badge, Callout, Countdown, MenuStatus, Text, countdown_text, widget_problems
 
 HEALTH_ROLE = {"ok": "ok", "stale": "warn", "auth_required": "warn", "offline": "warn", "rate_limited": "warn",
                "error": "err", "never_fetched": "neu"}
@@ -161,17 +161,52 @@ class AddonRuntime:
         except Exception:
             return 0
 
-    def nav(self) -> list[tuple[str, str, str, str]]:
-        """Addon pages for the menu as (title, url, icon path, problem): `problem` names what is broken (a load
-        problem, or a provider whose last fetch failed) for the menu's red dot, "" when the addon is fine."""
+    def nav(self) -> list[tuple]:
+        """Addon pages for the menu as (title, url, icon path, problem, badge): `problem` names what is broken (a load
+        problem, or a provider whose last fetch failed) for the menu's red dot, "" when the addon is fine; `badge`
+        is the addon's optional menu_badge(view) chip (a Badge) or None."""
         try:
             problems = dict(self.registry.problems)
             return [(la.manifest.menu["title"], f"/addons/{la.name}/",
-                     MENU_ICONS.get(la.manifest.menu.get("icon"), MENU_ICONS["box"]), self._broken(la, problems))
+                     MENU_ICONS.get(la.manifest.menu.get("icon"), MENU_ICONS["box"]), self._broken(la, problems),
+                     self._menu_badge(la))
                     for la in self.registry if la.has("page") and la.manifest.menu]
         except Exception:
             _log_error(self.ws, "dashboard", "addon nav")
             return []
+
+    def _menu_badge(self, la):
+        """The addon's optional menu_badge(view) -> Badge | MenuStatus | None as {"badge": Badge | None, "line": [part]}
+        (a part is a dict with k = badge | text | cd); anything else, a bad part or an exception is dropped, logged."""
+        fn = getattr(la.obj, "menu_badge", None)
+        if not callable(fn):
+            return None
+        try:
+            with rendering():
+                got = fn(SlotView(self.ws, la, "menu"))
+            if isinstance(got, Badge):
+                got = MenuStatus(badge=got)
+            if not isinstance(got, MenuStatus):
+                return None
+            badge = got.badge if self._chip_ok(got.badge) else None
+            line = []
+            for p in got.line if isinstance(got.line, (tuple, list)) else ():
+                if isinstance(p, Badge) and self._chip_ok(p):
+                    line.append({"k": "badge", "role": p.role, "text": str(p.text)})
+                elif isinstance(p, Text) and str(p.text).strip():
+                    line.append({"k": "text", "text": str(p.text)})
+                elif isinstance(p, Countdown) and (t := countdown_text(p.until, str(p.done))) is not None:
+                    line.append({"k": "cd", "text": t, "until": p.until, "done": str(p.done)})
+                else:
+                    _log_error(self.ws, la.name, "menu_badge", f"dropped a line part: {p!r}")
+        except Exception:
+            _log_error(self.ws, la.name, "menu_badge")
+            return None
+        return {"badge": badge, "line": line} if badge or line else None
+
+    @staticmethod
+    def _chip_ok(b) -> bool:
+        return isinstance(b, Badge) and b.role in ("ok", "warn", "err", "neu") and bool(str(b.text).strip())
 
     def _broken(self, la, problems: dict) -> str:
         if la.name in problems:

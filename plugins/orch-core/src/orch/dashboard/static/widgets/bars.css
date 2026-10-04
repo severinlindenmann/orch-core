@@ -21,7 +21,8 @@
 
 /* runs, series, spark */
 .w-chart { display: block; width: 100%; max-width: 32rem; height: auto; overflow: visible; }
-.w-chart text { font: var(--type-meta); fill: var(--text); }
+.w-chart text { font: var(--type-meta); fill: var(--text); paint-order: stroke; stroke: var(--surface); stroke-width: 3px;
+  stroke-linejoin: round; }  /* a halo, so a label stays readable where it crosses the line or the median */
 .w-chart .w-col { fill: var(--neu-mark); }
 .w-chart .w-col.w-marked { fill: var(--warn-mark); stroke: var(--warn-fg); stroke-width: 1; }
 .w-chart .w-badge { fill: var(--warn-fg); font-weight: 700; }
@@ -66,7 +67,10 @@
   border-radius: var(--r-sm); }
 .w-lane-t > i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
 .w-gb { position: absolute; height: calc(var(--w-gh) - var(--s-1)); margin-top: 2px; background: var(--info-mark);
-  border-radius: var(--r-sm); min-width: 3px; }
+  border-radius: var(--r-sm); min-width: 3px; overflow: hidden; container-type: inline-size; }
+@container (max-width: 6rem) { .w-gv { display: none; } }  /* a bar too short for its label prints none: title and text alternative have it */
+.w-gv { display: block; padding: 0 var(--s-1); font: var(--type-meta); line-height: calc(var(--w-gh) - var(--s-1) - 2px);
+  color: var(--surface); white-space: nowrap; }  /* the interval's values, drawn only on a bar wide enough for them */
 
 /* tests */
 .w-tests { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(var(--s-12) * 1.5), 1fr)); gap: var(--s-2); margin: 0; }

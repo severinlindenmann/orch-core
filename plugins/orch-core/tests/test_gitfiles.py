@@ -214,3 +214,39 @@ def test_addon_records_dir_is_the_durable_folder(ws):
     assert ctx.records_dir == ctx.state_dir / "records"
     assert gitfiles.classify(ctx.records_dir.relative_to(ws.home).as_posix() + "/links.json") == "durable"
     assert gitfiles.classify(ctx.state_dir.relative_to(ws.home).as_posix() + "/links.json") == "local"
+
+
+@needs_git
+def test_stage_records_follows_a_staged_ticket(ws_root, ws):
+    _git_init(ws_root)
+    gitfiles.write_ignore_block(ws)
+    for rel in (".state/gates/L-0001-plan.md", ".state/events.jsonl", ".state/counter.json", ".state/needs-count",
+                ".state/addons/orch-tix/outbox.jsonl"):
+        _touch(ws.home / rel)
+    _touch(ws.home / "tickets/backlog/L-0001-x.md")
+    # no ticket staged: nothing happens
+    assert gitfiles.stage_records(ws, ws_root) == []
+    assert _git(ws_root, "diff", "--cached", "--name-only") == ""
+    _git(ws_root, "add", "--", "orchestrator/tickets")
+    assert sorted(gitfiles.stage_records(ws, ws_root, dry_run=True)) == [
+        "orchestrator/.state/counter.json", "orchestrator/.state/events.jsonl",
+        "orchestrator/.state/gates/L-0001-plan.md"]
+    assert "events.jsonl" not in _git(ws_root, "diff", "--cached", "--name-only")  # dry run stages nothing
+    assert len(gitfiles.stage_records(ws, ws_root)) == 3
+    staged = _git(ws_root, "diff", "--cached", "--name-only")
+    assert "orchestrator/.state/gates/L-0001-plan.md" in staged and "orchestrator/.state/events.jsonl" in staged
+    assert "needs-count" not in staged and "outbox" not in staged
+
+
+@needs_git
+def test_install_pre_commit_hook_only_where_none_exists(configure, ws_root):
+    from orch.hooks.install import install_hooks
+    _git_init(ws_root)
+    ws = configure(git={"repos": {".": {}}})
+    row = lambda: [a for _, a in install_hooks(ws, stage_records=True)][0]  # noqa: E731
+    assert "pre-commit installed" in row()
+    hook = ws_root / ".git/hooks/pre-commit"
+    assert hook.stat().st_mode & 0o111 and "hook pre-commit" in hook.read_text(encoding="utf-8")
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")  # a foreign hook is never replaced
+    assert "pre-commit skipped" in row()
+    assert hook.read_text(encoding="utf-8") == "#!/bin/sh\nexit 0\n"

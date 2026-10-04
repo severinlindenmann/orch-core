@@ -947,10 +947,22 @@ def hook_commit_msg(file: Annotated[Path, typer.Argument(exists=True, dir_okay=F
         raise typer.Exit(1)
 
 
+@hook_app.command("pre-commit")
+def hook_pre_commit(
+    list_only: Annotated[bool, typer.Option("--list", help="Print the record paths that would be staged; stage nothing.")] = False,
+) -> None:
+    """git pre-commit hook: a commit that stages a ticket also stages orch's own record in the state folder (gate
+    snapshots, events.jsonl, counter.json). Only `git add`; orch never commits."""
+    from orch.core.gitfiles import stage_records
+    for p in stage_records(_ws(), Path.cwd(), dry_run=list_only):
+        typer.echo(p)
+
+
 @hooks_app.command("install")
 def hooks_install(
     repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Install even where a commit-msg hook exists in .git/hooks (that hook is kept as commit-msg.pre-orch and runs after the orch check).")] = False,
+    stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists).")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Install the commit-msg check into each repo's own hooks directory; other hooks keep working.
@@ -959,7 +971,7 @@ def hooks_install(
     existing one) that runs the check; that file is part of the repo and has to be committed."""
     from orch.hooks.install import install_hooks
     ws = _ws()
-    rows = [{"repo": str(p), "action": a} for p, a in install_hooks(ws, repo or None, force=force)]
+    rows = [{"repo": str(p), "action": a} for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records)]
     _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
 
 

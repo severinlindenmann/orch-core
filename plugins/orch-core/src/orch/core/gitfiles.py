@@ -191,3 +191,22 @@ def changed_and_uncommitted(ws, paths: list[Path]) -> list[str]:
         except ValueError:
             continue
     return [p for p in view.uncommitted if p in wanted]
+
+
+def stage_records(ws, cwd: Path, *, dry_run: bool = False) -> list[str]:
+    """The pre-commit hook's work: when this commit stages a ticket file, the uncommitted durable records under
+    the state folder (gate snapshots, events.jsonl, counter.json, ...) are returned and, unless dry_run, staged
+    with `git add`. Nothing is committed; a commit in another repo than the workspace's is left alone."""
+    view = git_view(ws)
+    top = _git(cwd, "rev-parse", "--show-toplevel")
+    if view is None or not top or Path(top.strip()).resolve() != view.root:
+        return []
+    staged = _git(view.root, "diff", "--cached", "--name-only", "-z") or ""
+    tickets = (ws.home.resolve() / "tickets").relative_to(view.root).as_posix() + "/"
+    if not any(p.startswith(tickets) for p in staged.split("\0")):
+        return []
+    state = ws.state_dir.resolve().relative_to(ws.root.resolve()).as_posix() + "/"
+    paths = [p for p in view.uncommitted if p.startswith(state)]
+    if paths and not dry_run:
+        _git(view.root, "add", "--", *[(ws.root.resolve() / p).as_posix() for p in paths])
+    return paths

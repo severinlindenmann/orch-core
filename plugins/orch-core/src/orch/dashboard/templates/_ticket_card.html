@@ -105,7 +105,7 @@
 {%- set word = "ticket" if n == 1 else "tickets" -%}
 <div class="card tcard group-card" role="group" aria-labelledby="{{ gid }}-t" data-group="{{ g.key }}">
   <a class="group-head" href="/t/{{ e.id }}">
-    <span class="tc-top"><span class="id">{{ e.id }}</span><span class="tc-meta">Epic</span></span>
+    <span class="tc-top"><span class="id">{{ e.id }}</span><span class="tc-meta">EPIC</span></span>
     <span class="title" id="{{ gid }}-t">{{ e.title or e.id }}</span>
     {%- if u %}
     <span class="tc-prog"><span class="tc-pword">Children {{ u.done }}/{{ u.total }}</span><span class="tc-bar" role="img" aria-label="{{ u.done }} of {{ u.total }} children done"><i style="width: {{ (100 * u.done / u.total)|round|int if u.total else 0 }}%"></i></span></span>

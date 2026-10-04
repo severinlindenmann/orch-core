@@ -54,3 +54,15 @@ def test_another_tickets_file_is_missing_and_never_linked(dash, ws, aops, workin
     _page(dash, aops, working, tmp_path, ref="artifacts/B-9999/shot.png")
     wf = _panel(dash, working).split("widget-files", 1)[1]
     assert "gone" in wf and "<a " not in wf and "/a/B-9999" not in wf
+
+
+def test_the_count_includes_each_file_once(dash, ws, aops, working, tmp_path):
+    _page(dash, aops, working, tmp_path)  # shot.png is an artifact and pinned twice in one block
+    aops.set_section(working, "Plan", f"x\n\n{F}orch\n" + json.dumps({"type": "compare", "before": {
+        "path": "artifact:shot.png", "sha256": hashlib.sha256(b"\x89PNG-one").hexdigest()}}) + f"\n{F}")
+    assert 'Artifacts <span class="count">1</span>' in _panel(dash, working)
+
+
+def test_a_long_ref_wraps(dash, ws, aops, working, tmp_path):
+    _page(dash, aops, working, tmp_path, ref="artifact:" + "x" * 120 + ".png")
+    assert 'class="artifact-url">artifact:xxx' in _panel(dash, working)

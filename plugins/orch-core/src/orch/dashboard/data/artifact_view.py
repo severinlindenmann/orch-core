@@ -33,7 +33,7 @@ def widget_files(ws, t) -> list[dict]:
             name = wa.name_of(t.id, ref)
             state = wa.state(ws, t.id, ref, digest)
             ok = state == "ok" and name and safe_name(name) and isinstance(digest, str) and len(digest) == 64
-            out.append({"ref": ref, "section": b.section, "state": state,
+            out.append({"name": name or ref, "ref": ref, "section": b.section, "state": state,
                         "href": f"/a/{quote(t.id)}/{quote(name)}?v={digest[:16]}" if ok else None})
     return out
 
@@ -75,6 +75,6 @@ def view(ws, t) -> dict:
              {"key": "links", "title": "Links", "items": [i for i in items if i["source"] == "url"]}]
     if wfiles:
         panel.append({"key": "widgets", "title": "Widget files", "items": wfiles})
-    return {"count": len(items) + len(wfiles), "groups": [g for g in groups if g["items"]], "by_ac": by_ac, "by_task": by_task,
+    return {"count": len(items) + len({w["name"] for w in wfiles} - {i["text"] for i in items if i["source"] == "name"}), "groups": [g for g in groups if g["items"]], "by_ac": by_ac, "by_task": by_task,
             "panel": [g for g in panel if g["items"]],
             "unlinked": art.unregistered(ws, t) + art.unregistered_static(ws, t)}

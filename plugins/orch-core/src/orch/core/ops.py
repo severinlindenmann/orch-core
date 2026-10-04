@@ -708,8 +708,8 @@ class Ops(TaskOpsMixin):
             if t.status == "done":
                 raise TransitionError(f"{t.id} is done; open a follow-up instead", hint=f"orch new --from {t.id} --title ...")
             if not self.actor.is_human:
-                from orch.core.permits import factory_epic
-                epic = factory_epic(self.ws, t)
+                from orch.core.permits import charter_epic
+                epic = charter_epic(self.ws, t)
                 if epic is not None:
                     raise ValidationError(
                         f"{t.id} is part of the AI Factory epic {epic.id}: questions are not asked there",
@@ -1058,6 +1058,14 @@ class Ops(TaskOpsMixin):
             epic = epics.parent_epic(self.ws, t)
             if epic is None:
                 raise ValidationError(f"{t.id} is not a child of an epic")
+            d = epics.delegation(self.ws, epic)
+            if d is None:
+                return approve(t, epic)  # refuses
+            # the count and the marker under one lock shared by every checkout of this config dir; approve re-checks
+            with epics.delegation_lock(d["id"]):
+                return approve(t, epic)
+
+        def approve(t: Ticket, epic) -> list:
             d = epics.delegation(self.ws, epic)
             if d is None:
                 raise ValidationError(f"{epic.id} has no delegation: the human approves {t.id}",

@@ -112,10 +112,11 @@ def test_agent_does_not_ask_in_a_factory_epic(fws, fa, fh, configure):
           "recommended": "a"}]
     with pytest.raises(ValidationError, match="questions are not asked"):
         fa.ask(cid, q)
-    # switched off: the epic is an ordinary delegated epic again
+    # switched off: the switch only ever adds restrictions, so the refusal stays (flipped on purpose)
     from orch.core.ops import Ops
     off = configure(factory={"enabled": False})
-    Ops(off, fa.actor).ask(cid, q)
+    with pytest.raises(ValidationError, match="questions are not asked"):
+        Ops(off, fa.actor).ask(cid, q)
 
 
 # -- requests, grants and the hook -------------------------------------------------------------------------------
@@ -501,6 +502,47 @@ def test_child_budget_holds_with_the_switch_flipped_off(fws, fa, fh):
 def test_auto_approval_signs_nothing_into_the_ledger(fws, fa, fh):
     _, cid = _factory(fa, fh)
     assert not [e for e in ledger.entries(fws) if e.get("ticket") == cid]
+
+
+def test_unreadable_marker_dir_counts_as_the_limit(fws, fa, fh, monkeypatch):
+    eid, cid = _factory(fa, fh, max_children=5)
+    did = epics.delegation(fws, store.load(fws, eid)[1])["id"]
+    monkeypatch.setattr(epics.os, "listdir", lambda p: (_ for _ in ()).throw(PermissionError()))
+    assert epics.marked_delegated(did) >= 5
+
+
+def test_ledger_lets_a_process_sign_only_a_setting_off(fws, agent):
+    with pytest.raises(Exception, match="human"):
+        ledger.record(fws, ticket="L-0001", kind="gate", actor=agent, evidence=None)
+    with pytest.raises(Exception, match="human"):
+        ledger.record(fws, ticket=None, kind="setting", actor=agent, evidence=None, setting="x", value=True)
+    ledger.record(fws, ticket=None, kind="setting", actor=agent, evidence=None, setting="x", value=False)
+
+
+def test_concurrent_auto_approvals_at_the_limit_admit_one(fws, fh, agent):
+    import threading
+    from orch.core.ops import Ops
+    e = Ops(fws, agent).new("Epic", type="epic")
+    _refine(Ops(fws, agent), e.id, plan=None)
+    fh.approve(e.id, "requirements", delegate={"factory": True, "max_children": 1})
+    kids = []
+    for n in range(2):
+        c = Ops(fws, agent).new(f"k{n}", epic=e.id)
+        _refine(Ops(fws, agent), c.id)
+        kids.append(c.id)
+    results = []
+
+    def go(cid):
+        try:
+            Ops(fws, agent).epic_auto_approve(cid)
+            results.append("ok")
+        except Exception as x:
+            results.append(type(x).__name__)
+
+    ts = [threading.Thread(target=go, args=(k,)) for k in kids]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert results.count("ok") == 1
 
 
 def test_no_message_names_a_flag_that_does_not_exist():

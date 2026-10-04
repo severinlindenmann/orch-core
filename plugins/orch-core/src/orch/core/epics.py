@@ -22,6 +22,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from contextlib import contextmanager
+
+from filelock import FileLock, Timeout
 
 from orch.core import store
 from orch.core.canonical import canonical_json
@@ -285,6 +288,23 @@ def mark_delegated(did: str, child: str) -> None:
         pass
 
 
+@contextmanager
+def delegation_lock(did: str):
+    """One lock for every checkout and process that uses the config dir: the child count and the marker write of an
+    auto-approval happen under it, so two of them at the limit cannot both pass."""
+    d = _marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    fl = FileLock(str(d / f".{_marker(did, '')}lock"), timeout=30)
+    try:
+        fl.acquire()
+    except Timeout as e:
+        raise UsageError("another auto-approval holds the delegation", hint="retry in a moment") from e
+    try:
+        yield
+    finally:
+        fl.release()
+
+
 def is_marked(did: str, child: str) -> bool:
     return (_marker_dir() / _marker(did, child)).exists()
 
@@ -293,8 +313,10 @@ def marked_delegated(did: str) -> int:
     """How many children delegation `did` approved, by markers (the repository's events and files cannot lower it)."""
     try:
         return sum(1 for n in os.listdir(_marker_dir()) if n.startswith(_marker(did, "")))
-    except OSError:
+    except FileNotFoundError:
         return 0
+    except OSError:
+        return 10**9  # unreadable: fail closed, the limit counts as reached
 
 
 def delegated_count(ws, epic_id: str, did: str, events, entries=None) -> int:

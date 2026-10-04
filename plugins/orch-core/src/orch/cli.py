@@ -1189,12 +1189,34 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _run_updates(*, check_only: bool, force: bool) -> None:
+    from orch import update
+    from orch.cli_addon import review_text
+
+    def confirm(name: str) -> bool:
+        try:
+            return input(f"Type {name} to trust it, or press Enter to leave it off: ").strip() == name
+        except EOFError:
+            return False
+    update.run(check_only=check_only, ask=input, review_text=review_text, confirm=confirm, out=typer.echo, force=force)
+
+
+@app.command("update")
+def update_cmd(check_only: Annotated[bool, typer.Option("--check", help="Only say what is out of date.")] = False) -> None:
+    """Update orch-core and the custom addons: check, ask once, apply. A new addon version that asks for no new
+    permissions is trusted again; otherwise you see what changed first."""
+    from orch.actor import require_human_terminal
+    require_human_terminal("updating orch", hint="run `orch update` in your own terminal")
+    _run_updates(check_only=check_only, force=True)
+
+
 @app.command()
 def serve(
     host: Annotated[Optional[str], typer.Option("--host", help="Bind address (default from config).")] = None,
     port: Annotated[Optional[int], typer.Option("--port", help="Port (default from config).")] = None,
     lan: Annotated[bool, typer.Option("--lan", help="Listen on all interfaces, e.g. for your phone.")] = False,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser.")] = False,
+    no_update: Annotated[bool, typer.Option("--no-update", help="Do not offer to update orch and its addons.")] = False,
 ) -> None:
     """Start the local dashboard. Every write goes through the same rules as the CLI."""
     import secrets
@@ -1202,6 +1224,11 @@ def serve(
 
     from orch.actor import require_human_terminal
     require_human_terminal("starting the dashboard", hint="the dashboard is for the human: run it in your own terminal")
+    if not no_update:
+        try:
+            _run_updates(check_only=False, force=False)
+        except OrchError as e:  # an update problem never keeps the dashboard from starting
+            typer.echo(f"update skipped: {e.message}")
     try:
         import uvicorn
         from orch.dashboard.app import create_app

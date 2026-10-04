@@ -1573,13 +1573,8 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 .term-row > :last-child { text-align: right; min-width: 0; }
 .term-sub { margin: 0 0 var(--s-2); font: var(--type-meta); color: var(--muted); }
 .term-quote { overflow-wrap: anywhere; }
-<<<<<<< HEAD
-.term { border: 2px solid var(--line2); border-radius: var(--r-lg); overflow: hidden; background: var(--term-bg); }
-.term[data-mode="type"] { border-color: var(--mint); }
-=======
 .term { border: 2px solid var(--line2); border-radius: var(--r-lg); overflow: hidden; background: var(--term-bg); }
 .term[data-mode="type"], .term[data-mode="cli"] { border-color: var(--mint); }
->>>>>>> origin/feat/terminals
 .term[data-mode="gone"] { opacity: .6; }
 .term-box { position: relative; }
 .term .term-screen { height: clamp(200px, min(70vh, calc(100dvh - 360px)), 900px); border-radius: 0; }
@@ -1600,17 +1595,10 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
   font: var(--type-control); cursor: pointer; }
 .term-tool:hover, .term-tool:focus-visible { border-color: var(--term-dim); }
 /* Watch is read-only: no keys, no reply field, a note instead. Type shows them. */
-<<<<<<< HEAD
-.term-watch-note { margin: 0; padding: var(--s-2) var(--s-3); background: var(--term-bar); color: var(--term-dim); }
-.term-watch-note b { color: var(--term-hi); }
-.term[data-mode="type"] .term-watch-note, .term[data-mode="watch"] .term-foot, .term[data-mode="gone"] .term-foot { display: none; }
-.term-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); background: var(--term-bar); }
-=======
 .term-watch-note { margin: 0; padding: var(--s-2) var(--s-3); background: var(--term-bar); color: var(--term-dim); }
 .term-watch-note b { color: var(--term-hi); }
 .term[data-mode="type"] .term-watch-note, .term[data-mode="cli"] .term-watch-note, .term[data-mode="cli"] .term-foot, .term[data-mode="watch"] .term-foot, .term[data-mode="gone"] .term-foot { display: none; }
 .term-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); background: var(--term-bar); }
->>>>>>> origin/feat/terminals
 .term-keys { display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .term-send { flex: 1 1 260px; gap: var(--s-2); }
 .term-send input { flex: 1; min-width: 0; min-height: var(--control-h); }

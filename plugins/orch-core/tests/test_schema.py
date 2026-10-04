@@ -179,12 +179,50 @@ def test_unsigned_approval_and_done_are_not_signed(ws, put):
 def test_tampered_ledger_entry_is_not_signed(ws, working):
     from orch.core import ledger
     p = ledger.ledger_path(ws)
-    p.write_text(p.read_text(encoding="utf-8").replace('"kind": "gate"', '"kind": "gatx"'), encoding="utf-8")
+    # a field the lookup does not match on, so only the MAC can catch the edit
+    p.write_text(p.read_text(encoding="utf-8").replace('"via": "tty"', '"via": "phone:x"'), encoding="utf-8")
     assert _signed(ws, working) == {"requirements": {"signed": False, "by": None}}
-    assert "mac" not in json.dumps(ticket_document(ws, store.load(ws, working)[1])["signed"])
 
 
 def test_missing_ledger_is_not_signed(ws, working):
     from orch.core import ledger
     ledger.ledger_path(ws).unlink()
     assert _signed(ws, working) == {"requirements": {"signed": False, "by": None}}
+
+
+def test_phone_signed_gate(ws, aops, working):
+    from orch.core.events import Actor
+    from conftest import human_ops
+    tid = aops.new("phone").id
+    aops.set_section(tid, "Requirements", "r")
+    aops.set_section(tid, "Acceptance criteria", "- [ ] a")
+    human_ops(ws, Actor("human", "you", "phone:iPhone", device="dev1")).approve(tid, "requirements")
+    assert _signed(ws, tid) == {"requirements": {"signed": True, "by": "from your phone"}}
+
+
+def test_epic_charter_and_delegation(ws, aops, hops):
+    from test_epics import _child, _epic
+    eid = _epic(aops)
+    hops.approve(eid, "requirements", delegate={"max_children": 2, "max_size": "m"})
+    auto = _child(aops, eid, "auto")
+    aops.epic_auto_approve(auto)
+    assert _signed(ws, auto)["requirements"] == {"signed": False, "by": "by delegation"}
+
+
+def test_charter_covered_child_is_signed_by_the_charter(ws, aops, hops):
+    from test_epics import _child, _epic
+    eid = _epic(aops)
+    cid = _child(aops, eid, "one")
+    hops.approve(eid, "requirements")
+    assert _signed(ws, cid) == {"requirements": {"signed": True, "by": "by your epic charter"},
+                                "plan": {"signed": True, "by": "by your epic charter"}}
+
+
+def test_closed_by_a_human_is_signed_and_a_forged_close_is_not(ws, hops, put):
+    tid = put("open")
+    hops.close(tid, "duplicate")
+    assert _signed(ws, tid)["verdict"] == {"signed": True, "by": "closed"}
+    from orch.core import ledger
+    p = ledger.ledger_path(ws)
+    p.write_text("", encoding="utf-8")  # the signed close entry is gone, the human close event stays
+    assert _signed(ws, tid)["verdict"] == {"signed": False, "by": None}

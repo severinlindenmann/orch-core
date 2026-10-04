@@ -174,14 +174,18 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
 
 def _signed(ws, ticket) -> dict:
     """1.6 `signed`: the same checks as the dashboard's chips (story.gate_signers, story.done_signer); only a
-    verified human entry is `signed`, a delegation or anything the ledger does not back is not."""
+    verified human entry or a signed charter is `signed`, a delegation or anything the ledger does not back is not.
+    One ledger read serves both checks."""
+    from orch.core import ledger
     from orch.core.events import read_events
     from orch.dashboard.data import story
-    out = {}
-    for gate, who in story.gate_signers(ws, ticket).items():
-        out[gate] = {"signed": who in ("you", "from your phone"), "by": who}
-    who = story.done_signer(ws, ticket, read_events(ws, ticket.id))
+    signed = ledger.entries(ws)
+    out = {g: {"signed": who != "by delegation", "by": who} for g, who in story.gate_signers(ws, ticket, signed).items()}
+    for g, v in out.items():
+        if v["by"] is None:
+            v["signed"] = False
     if ticket.status == "done":
+        who = story.done_signer(ws, ticket, read_events(ws, ticket.id), signed)
         out["verdict"] = {"signed": who is not None, "by": who}
     return out
 

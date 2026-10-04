@@ -208,7 +208,8 @@ def gate_signers(ws, t, signed=None) -> dict:
         if state == "verified":
             entry = next((e for e in signed if e.get("kind") == "gate" and e.get("ticket") == t.id
                           and e.get("gate") == g and e.get("hash") == (gates.get(g) or {}).get("hash")), None)
-            out[g] = "from your phone" if entry is not None and str(entry.get("via") or "").startswith("phone:") else "you"
+            out[g] = ("by your epic charter" if entry is None else
+                      "from your phone" if str(entry.get("via") or "").startswith("phone:") else "you")
         else:
             out[g] = "by delegation" if state == "delegated" else None
     return out

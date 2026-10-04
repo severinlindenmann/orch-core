@@ -273,7 +273,7 @@ def test_document_lists_artifacts_by_name_label_and_kind_only(ws, aops, working,
     aops.artifact_add(working, _png(tmp_path), label="Jobs page", ac=1)
     aops.artifact_link(working, "https://dash.example.com/d/1?token=secret", label="Cost dashboard", kind="report")
     doc = ticket_document(ws, _meta(ws, working))
-    assert SCHEMA_VERSION == "1.6.0"
+    assert SCHEMA_VERSION == "1.7.0"
     sha = _meta(ws, working).meta["artifacts"][0]["sha256"]
     assert doc["artifact_items"] == [
         {"source": "file", "kind": "screenshot", "label": "Jobs page", "name": "shot.png", "sha256": sha, "ac": 1,

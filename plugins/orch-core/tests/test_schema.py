@@ -226,3 +226,15 @@ def test_closed_by_a_human_is_signed_and_a_forged_close_is_not(ws, hops, put):
     p = ledger.ledger_path(ws)
     p.write_text("", encoding="utf-8")  # the signed close entry is gone, the human close event stays
     assert _signed(ws, tid)["verdict"] == {"signed": False, "by": None}
+
+
+def test_the_17_example_shows_a_receipt_and_who_added_it():
+    import jsonschema
+    from orch.core.schema import SCHEMA_VERSION, example_document, ticket_schema
+    doc = example_document()
+    assert SCHEMA_VERSION == "1.7.0" and doc["schema_version"] == "1.7.0"
+    [item] = [i for i in doc["artifact_items"] if i["kind"] == "receipt"]
+    assert item["by"] == "agent:claude-code:7f3c9a21" and item["run"]["exit"] == 1
+    assert [s["status"] for s in item["run"]["steps"]] == ["pass", "fail"]
+    assert "run" not in item["run"]["steps"][0] and "revalidate" in doc and doc["revalidate"] is None
+    jsonschema.validate(doc, ticket_schema())

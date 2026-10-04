@@ -13,12 +13,13 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.6.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.7.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
 # 1.5: `artifact_items`: what the ticket links (orch.core.artifacts.doc_items), names, labels and kinds only
 # 1.6: `signed`: per approved gate and for a done verdict, whether this machine's signed ledger backs it, and who
+# 1.7: `artifact_items[].by` (who added it) and `.run` (a receipt's facts, orch task done --run); `revalidate`
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
 _SOURCE = Path(__file__).resolve().parents[3] / "docs" / TASKS_SCHEMA_FILE  # plugin root: source checkout
@@ -103,7 +104,15 @@ def ticket_schema() -> dict:
                 "type": "object", "required": ["source", "kind", "label"],
                 "properties": {"source": {"enum": ["file", "link", "static"]}, "kind": _S, "label": _S, "name": _S,
                                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "task": _S,
-                               "ac": {"type": "integer", "minimum": 1}, "by": _S}}},
+                               "ac": {"type": "integer", "minimum": 1}, "by": _S,
+                               # 1.7: a receipt's facts; step names and statuses, never the commands or the output
+                               "run": {"type": "object", "properties": {
+                                   "exit": {"type": ["integer", "null"]}, "timed_out": {"type": "boolean"},
+                                   "commit": {"type": ["string", "null"]}, "dirty": {"type": "boolean"},
+                                   "at": _S, "seconds": {"type": "integer", "minimum": 0}, "check": _NS,
+                                   "steps": {"type": "array", "items": {"type": "object", "properties": {
+                                       "name": _S, "status": {"enum": ["pass", "fail", "skip"]},
+                                       "seconds": {"type": "integer", "minimum": 0}}}}}}}}},
             # 1.4: whose move it is (the dashboard's move chip): who you|agent|nobody, kind (approve-requirements,
             # approve-plan, re-approve, approve-epic, answer, task, verdict, repair, working, stale, blocked, ready,
             # done), label, ref (gate, question or task, or null); why (one line, when it is yours); epic (a
@@ -276,5 +285,16 @@ def example_document() -> dict:
               "options": [{"label": "ISO 8601", "cost": "none"}, {"label": "Local time"}], "recommended": "A"}],
             [], _FIXED)
         t.meta["claim"] = {"session": "7f3c9a21", "harness": "claude-code", "at": _FIXED}
+        # 1.7: a receipt of a failing `orch task done --run` (orch.core.receipts), added by the agent
+        t.meta["artifacts"] = [{
+            "name": "receipt-T2-20261002T090000Z.log", "kind": "receipt", "sha256": "5" * 64, "size": 812,
+            "added": _FIXED, "by": "agent:claude-code:7f3c9a21", "task": "T2",
+            "label": "T2 verify: test failed with exit 1 at 1a2b3c4",
+            "run": {"exit": 1, "timed_out": False, "commit": "1a2b3c4" + "0" * 33, "dirty": False,
+                    "at": "2026-10-02T09:00:00Z", "seconds": 42, "check": "verify",
+                    "steps": [{"name": "build", "run": "npm run build", "status": "pass", "exit": 0,
+                               "timed_out": False, "seconds": 30},
+                              {"name": "test", "run": "pytest tests/test_export.py", "status": "fail", "exit": 1,
+                               "timed_out": False, "seconds": 12}]}}]
         store.save(fw.ws, t)
         return _fix_stamps(ticket_document(fw.ws, t))

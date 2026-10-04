@@ -122,8 +122,13 @@ starts or signs anything, and nothing an agent can write turns one on or hides i
 the signed ledger entries, the budget markers beside the ledger and the tickets' own state.
 
 **Ready.** Every child is in testing or done, at least one is in testing, and every acceptance criterion of every
-child in testing has evidence. The report lists, per child, how it was approved, its criteria count, its
-Verification text (where to look), its links and what its Findings leave open, all as plain text. It has one action,
+child in testing cites evidence. Status words in a ticket file can be edited, so each must be backed by a record: a
+done child by a signed verdict or close, a testing child by orch's own record of its move into testing (by the
+session that claimed it, every task closed). A child the records do not back is shown as "not verifiable" and no
+report is made. The evidence is what the agents wrote, not a check; the report says so. It lists, per child, how it
+was approved, its criteria count, and in full the acceptance criteria and Verification text your verdict covers
+(plus the artifacts those show, named); its title, links and Findings are shown apart as context your verdict does
+not cover. All as plain text. It has one action,
 yours: **Accept the epic and close its children**. That is the epic verdict that already existed (`orch verdict <epic>
 done`, or the epic page): it signs the epic's verdict hash, the hash of exactly the children and evidence the report
 showed, and is refused if any of it changed since. The report never closes a child by itself, and an agent cannot
@@ -137,14 +142,17 @@ holds, and what you can do about it; it has no action of its own. A reason is on
 - a request you denied still holds a child back (counted from your signed denials);
 - the approval ledger on this machine was cut, so no approval or grant counts.
 
-A Ready epic is never also Stopped. A child blocked in some other way, or one that failed its own checks, is not a
+Stopped is worked out on its own: a Ready epic can also be Stopped (say, the budget ran out while the work was
+done), and an edited status cannot hide a real reason. Under a cut ledger the other reasons still show, from the
+entries that still verify. A child blocked in some other way, or one that failed its own checks, is not a
 reason yet: those need the runner's records and come with it.
 
 **Where you see them.** Today (an "AI Factory" section) and the Board's Your move strip show a card each; the epic
 page shows them in its factory section. Both count as items waiting on you: they are in the Today headline, the
-menu badge, the tab title and the session-start summary, and `orch wait <epic or child>` returns when the factory
+menu badge, the tab title and the session-start summary, and `orch wait <epic>` returns when the factory
 becomes Ready or Stopped (event kind `factory.ready` or `factory.stopped`, actor `orch:factory`, derived and not
-written to the event log). A Stopped card for a used-up budget replaces the budget card.
+written to the event log; a child's own wait does not). It wakes once per state: the cursor it prints names the
+state, and passing it back as `--after` waits for the next change. A Stopped card for a used-up budget replaces the budget card.
 
 ## Coming in later phases
 

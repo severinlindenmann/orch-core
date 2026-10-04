@@ -388,3 +388,22 @@ def test_nothing_of_phase_three_shows_while_the_factory_is_off(ws, aops, hops, d
     for url in ("/", "/board", f"/t/{e.id}"):
         html = dash.get(url).text
         assert "data-ready=" not in html and "data-stopped=" not in html
+
+
+def test_the_report_shows_the_full_text_the_verdict_binds(fws, fa, fd, ready_epic):
+    eid, cid = ready_epic
+    long = PROOF + "\n" + "\n".join(f"- AC1: more evidence line {i} with detail" for i in range(40))
+    fa.set_section(cid, "Verification", long)
+    card = _card(fd.get("/").text, "ready")
+    assert "evidence line 39 with detail" in card and "- [ ] a" in card
+    assert "Context, not covered by your verdict" in card and "not a check: read it before you sign" in card
+    assert "verified" not in card.lower().replace("not verifiable", "")
+
+
+def test_forged_children_show_a_warning_and_no_report(fws, fa, fd, ready_epic):
+    eid, cid = ready_epic
+    path, t = store.load(fws, cid)
+    t.meta["status"] = "done"  # forged: no signed verdict behind it
+    store.save(fws, t, path)
+    html = fd.get(f"/t/{eid}").text
+    assert "data-ready=" not in html and f'data-suspect="{eid}"' in html and "Not verifiable" in html

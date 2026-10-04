@@ -42,7 +42,7 @@
 
 <div class="grid-2 today-main">
   <div class="decision-cards" id="decisions">
-    {% if permits and (permits.ready or permits.stopped) %}
+    {% if permits and (permits.ready or permits.stopped or permits.suspect) %}
     {#- AI Factory (off unless factory.enabled): the Ready report and the Stopped message. Part of the count above. -#}
     <section class="dc-section permit-section" id="factory-cards" aria-labelledby="factory-cards-h">
       <h2 id="factory-cards-h" class="dc-section-h">AI Factory <span class="count">{{ permits.ready|length + permits.stopped|length }}</span></h2>

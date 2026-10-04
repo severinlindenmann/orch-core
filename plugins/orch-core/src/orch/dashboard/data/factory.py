@@ -34,9 +34,10 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
     ready = [r for r in report["ready"] if keep(r["epic"])]
     stopped = [_stopped_card(s) for s in report["stopped"] if keep(s["epic"])]
     # a Stopped card says the budget is used up itself: one card for it, not two
+    suspect = [x for x in report["suspect"] if keep(x["epic"])]
     cards = [c for c in permits.budget_cards(ws) if keep(str(c["epic"])) and not any(s["epic"] == c["epic"] for s in stopped)]
-    return {"requests": reqs, "grants": grants, "budget": cards, "ready": ready, "stopped": stopped,
-            "cards_n": len(reqs) + len(cards) + len(ready) + len(stopped), "any": bool(reqs or grants or cards or ready or stopped)}
+    return {"requests": reqs, "grants": grants, "budget": cards, "ready": ready, "stopped": stopped, "suspect": suspect,
+            "cards_n": len(reqs) + len(cards) + len(ready) + len(stopped) + len(suspect), "any": bool(reqs or grants or cards or ready or stopped or suspect)}
 
 
 _CAN = {  # what the human can do, per reason (rule text, never agent prose)

@@ -5,12 +5,18 @@ agent can write turns one on or hides it: they come from the epic's signed chart
 human's send-backs and denials), the budget markers beside the ledger and the tickets' own state.
 
 - Ready: every child is in testing or done, at least one is in testing, and every criterion of every child in testing
-  has evidence. The human's one action on it is the epic verdict that already exists (`orch verdict <epic> done`, the
+  cites evidence. "In testing" and "done" are claims in files an agent can edit, so each must be backed by a record
+  the agent cannot write (a done child: a signed verdict or close) or by what orch itself observed (a testing child:
+  the move into testing by the session that claimed it, every task closed); a child without that backing is
+  reported as not verifiable and Ready does not fire. The evidence itself is what the agents wrote: the report never
+  calls it verified, the human reads it before signing. The human's one action on it is the epic verdict that already exists (`orch verdict <epic> done`, the
   epic page): it signs the epic's verdict hash, so the hash the report carries is the one `epics.verdict_hash` gives.
   The report itself accepts nothing and never closes a child.
 - Stopped: a dead end the agents cannot get out of by themselves, with the reasons: the budget is used up, a child
   was sent back by the human FAILED_TRIES times, a request the human denied still holds a child back, or the ledger on
-  this machine was cut. It says what the human can do; it offers no action of its own.
+  this machine was cut. It is computed on its own, never suppressed by Ready (a forged Ready must not hide a real
+  stop), and it keeps its other reasons under a cut ledger (entries that still verify can only add a reason). It
+  says what the human can do; it offers no action of its own.
 
 Only while `factory.enabled` is on (as the permission cards), judged by the signed charter alone.
 """
@@ -23,10 +29,17 @@ _EXCERPT = 400
 
 
 def _text(s, limit: int = _EXCERPT) -> str:
-    """Agent text for the report as one plain line: characters outside printable ASCII escaped, never rendered as
-    Markdown (the template's own escaping covers HTML)."""
+    """Agent text as one plain line: characters outside printable ASCII escaped, never rendered as Markdown (the
+    template's own escaping covers HTML)."""
     line = " ".join(str(s or "").split())[:limit]
     return "".join(c if 32 <= ord(c) < 127 else c.encode("unicode_escape").decode("ascii") for c in line)
+
+
+def _full(s) -> str:
+    """Agent text in full, line breaks kept, characters outside printable ASCII escaped: what the verdict binds, so
+    never cut."""
+    return "".join(c if c == "\n" or 32 <= ord(c) < 127 else c.encode("unicode_escape").decode("ascii")
+                   for c in str(s or "").replace("\r\n", "\n").replace("\r", "\n"))
 
 
 def _kids(ws, epic, entries):
@@ -40,79 +53,132 @@ def _kids(ws, epic, entries):
     return out
 
 
-def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
-    """The Ready report of factory epic `epic`, or None while it is not ready."""
-    if not permits.enabled(ws) or epic.status != "open":
+def finished(ws, t, signed, events) -> str | None:
+    """"testing" or "done" when the record backs the status the ticket file claims, else None. Done: a signed done
+    verdict or close that chains (ledger.done_verification). Testing: the newest move event of the ticket is the move
+    into testing, by the session that holds the claim, and every task is closed."""
+    from orch.core import ledger, tasks
+    if t.status == "done":
+        return "done" if any(ledger.done_verification(ws, t, closed=c, signed=signed, events=events) == "verified"
+                             for c in (False, True)) else None
+    if t.status != "testing":
         return None
+    moves = [e for e in events if e.ticket == t.id and e.kind == "ticket.moved"]
+    claim = t.meta.get("claim") if isinstance(t.meta.get("claim"), dict) else {}
+    session = str(claim.get("session") or "")[:8]
+    if not moves or moves[-1].data.get("to") != "testing" or not session:
+        return None
+    if not str(moves[-1].actor).startswith("agent:") or not str(moves[-1].actor).endswith(":" + session):
+        return None
+    try:
+        s = tasks.summary(tasks.ticket_tasks(t))
+    except Exception:
+        return None
+    return "testing" if s["total"] and s["closed"] == s["total"] else None
+
+
+def _ready_state(ws, epic, entries, signed, events):
+    """(report | None, [ids that claim testing or done without a record behind it])."""
+    if not permits.enabled(ws) or epic.status != "open":
+        return None, []
     from orch.core.gates import invalidated_gates
     d = permits.factory_delegation(ws, epic, signed)
     if d is None or d["epic_changed"]:
-        return None
+        return None, []
     kids = _kids(ws, epic, entries)
     if not kids or any(e.status not in ("testing", "done") for e, _ in kids):
-        return None
+        return None, []
+    events = permits._events(ws, events)
+    signed = permits._signed(ws, signed)
+    forged = [t.id for _, t in kids if finished(ws, t, signed, events) is None]
     testing = [t for e, t in kids if e.status == "testing"]
-    if not testing or any(invalidated_gates(t) for t in testing):
-        return None
+    if forged or not testing or any(invalidated_gates(t) for t in testing):
+        return None, forged
+    from orch.core.artifacts import binding
     rows = []
     for e, t in kids:
         proven, total = evidence.progress(t)
         if e.status == "testing" and (total == 0 or proven != total):
-            return None
-        rows.append({"id": t.id, "title": t.title, "status": e.status, "size": t.meta.get("size"),
+            return None, []
+        ac, ver = t.section("Acceptance criteria"), t.section("Verification")
+        rows.append({"id": t.id, "title": _text(t.title), "status": e.status, "size": t.meta.get("size"),
                      "how": epics.STATE_LABELS[epics.child_state(ws, epic, t, signed, events, entries)],
-                     "proven": proven, "total": total, "verification": _text(t.section("Verification")),
+                     "proven": proven, "total": total, "ac": _full(ac), "verification": _full(ver),
+                     "bound": sorted(dict(binding(t, [ac, ver], ws, widgets=True)) if e.status == "testing" else []),
                      "findings": _text(t.section("Findings")),
                      "where": [_text(r) for r in (t.meta.get("repos") or []) if isinstance(r, str)][:5]})
-    return {"epic": epic.id, "title": epic.title, "children": rows, "open": len(testing),
+    return {"epic": epic.id, "title": _text(epic.title), "children": rows, "open": len(testing),
             "seen": epics.verdict_hash(testing, ws), "proven": sum(r["proven"] for r in rows),
-            "total": sum(r["total"] for r in rows)}
+            "total": sum(r["total"] for r in rows)}, []
 
 
-def _ledger_cut_epic(epic, kids) -> bool:
-    """A cut ledger backs no charter, so the signed record cannot say which epics are factories: an epic with a
-    child whose gate names a delegation counts (only consulted while the ledger is cut)."""
+def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
+    """The Ready report of factory epic `epic`, or None while it is not ready (or not verifiably so)."""
+    return _ready_state(ws, epic, entries, signed, events)[0]
+
+
+def _ledger_cut_epic(kids) -> bool:
+    """A cut ledger loses the charter that says which epics are factories: an epic with a child whose gate names a
+    delegation counts (only consulted while the ledger is cut)."""
     return any(isinstance(g, dict) and g.get("delegation")
                for _, t in kids for g in (t.meta.get("gates") or {}).values())
 
 
+def _delegation(ws, epic, raw, cut):
+    """The epic's factory delegation. Whole ledger: permits.factory_delegation. Cut ledger: built from the entries
+    that still verify (they can only add a reason to stop, never lift one)."""
+    if not cut:
+        return permits.factory_delegation(ws, epic, raw)
+    charter = next((e for e in reversed(raw) if e.get("kind") == "charter" and e.get("ticket") == epic.id), None)
+    if not charter or not isinstance(charter.get("delegate"), dict) or not charter["delegate"].get("factory"):
+        return None
+    d = epics.normalize_delegate(charter["delegate"])
+    return {"id": charter.get("delegation"), **d, "epic_changed": not epics._epic_current(epic, charter),
+            "paused": any(e.get("kind") == "pause" and e.get("ticket") == epic.id
+                          and e.get("delegation") == charter.get("delegation") for e in raw),
+            "expired": epics.budget_used_up(charter, d), "at": charter.get("at")}
+
+
 def stopped(ws, epic, *, entries=None, signed=None, events=None) -> list[dict]:
-    """Why factory epic `epic` is at a dead end: [{code, label, text}], empty while it is not (also empty for a done
-    epic and for one that is Ready)."""
+    """Why factory epic `epic` is at a dead end: [{code, label, text}], empty while it is not (and for a done epic).
+    Independent of Ready."""
     if not permits.enabled(ws) or epic.status in ("backlog", "done"):
         return []
     from orch.core import ledger
-    if not ledger.head_ok():
-        kids = _kids(ws, epic, entries) or []
-        if kids and _ledger_cut_epic(epic, kids):
-            return [{"code": "ledger-cut", "label": "Ledger cut",
-                     "text": "the approval ledger on this machine is shorter than its signed head, so no approval or "
-                             "grant counts (`orch check` reports ledger-cut)"}]
-        return []
-    d = permits.factory_delegation(ws, epic, signed)
-    if d is None or ready(ws, epic, entries=entries, signed=signed, events=events):
-        return []
-    signed = permits._signed(ws, signed)
+    cut = not ledger.head_ok()
+    raw = ledger.entries(ws) if signed is None or cut else signed
+    kids = _kids(ws, epic, entries)
+    d = _delegation(ws, epic, raw, cut)
     out = []
-    reason = permits.budget_reason(ws, epic, d, events)
+    if cut and d is None and kids and _ledger_cut_epic(kids):
+        d = {}
+    if d is None:
+        return []
+    if cut:
+        out.append({"code": "ledger-cut", "label": "Ledger cut",
+                    "text": "the approval ledger on this machine is shorter than its signed head, so no approval or "
+                            "grant counts (`orch check` reports ledger-cut)"})
+    events = permits._events(ws, events)
+    reason = permits.budget_reason(ws, epic, d, events) if d else None
     if reason:
         out.append({"code": "budget", "label": "Budget used up", "text": reason})
-    kids = {e.id: e for e in epics.children(ws, epic.id, entries)}
+    by_id = {e.id: (e, t) for e, t in kids or []}
     sent_back: dict[str, int] = {}
-    for x in signed:
-        if x.get("kind") == "verdict" and x.get("verdict") == "follow-up" and x.get("ticket") in kids:
+    for x in raw:
+        if x.get("kind") == "verdict" and x.get("verdict") == "follow-up" and x.get("ticket") in by_id:
             sent_back[x["ticket"]] = sent_back.get(x["ticket"], 0) + 1
     for tid, n in sent_back.items():
-        if n >= FAILED_TRIES and kids[tid].status != "done":
+        if n >= FAILED_TRIES and finished(ws, by_id[tid][1], raw, events) != "done":
             out.append({"code": "sent-back", "label": "Sent back repeatedly",
                         "text": f"{tid} was sent back {n} times and is not finished"})
-    denied = permits.decisions(ws, signed)
+    denied = {(e["request"], e.get("command_sha")): e for e in raw
+              if e.get("kind") in ("grant", "permit_deny") and isinstance(e.get("request"), str)}
     for r in permits.requests(ws, events).values():
-        if r["epic"] != epic.id or r["ticket"] not in kids or kids[r["ticket"]].status in ("testing", "done"):
+        if r["epic"] != epic.id or r["ticket"] not in by_id or finished(ws, by_id[r["ticket"]][1], raw, events):
             continue
         if denied.get((r["id"], r["sha"]), {}).get("kind") == "permit_deny" and not any(
                 g.get("kind") == "grant" and g.get("epic") == epic.id and g.get("command_sha") == r["sha"]
-                for g in signed):
+                for g in raw):
             out.append({"code": "denied", "label": "Permission denied",
                         "text": f"you denied {r['id']} and {r['ticket']} has not finished since"})
     return out
@@ -128,23 +194,25 @@ def _epics(ws, entries):
 
 
 def cards(ws, entries=None, events=None) -> dict:
-    """{ready: [report], stopped: [{epic, title, reasons}]} over every factory epic; both empty while the factory is
-    off. Memoised per request scope."""
+    """{ready: [report], stopped: [{epic, title, reasons}], suspect: [{epic, title, children}]} over every factory
+    epic (suspect: children that claim testing or done without a record behind it); all empty while the factory is
+    off. Ready and Stopped are computed independently. Memoised per request scope."""
     if not permits.enabled(ws):
-        return {"ready": [], "stopped": []}
+        return {"ready": [], "stopped": [], "suspect": []}
 
     def compute():
         from orch.core import ledger
-        signed = ledger.entries(ws)
-        out = {"ready": [], "stopped": []}
+        raw = ledger.entries(ws)
+        out = {"ready": [], "stopped": [], "suspect": []}
         for epic in _epics(ws, entries):
-            rep = ready(ws, epic, entries=entries, signed=signed, events=events)
+            rep, forged = _ready_state(ws, epic, entries, raw, events)
             if rep:
                 out["ready"].append(rep)
-                continue
-            why = stopped(ws, epic, entries=entries, signed=signed, events=events)
+            if forged:
+                out["suspect"].append({"epic": epic.id, "title": _text(epic.title), "children": forged})
+            why = stopped(ws, epic, entries=entries, signed=raw, events=events)
             if why:
-                out["stopped"].append({"epic": epic.id, "title": epic.title, "reasons": why})
+                out["stopped"].append({"epic": epic.id, "title": _text(epic.title), "reasons": why})
         return out
     return store.memo(ws, "factory-cards", compute)
 
@@ -159,17 +227,22 @@ def items(ws, entries=None, events=None) -> list[dict]:
     return out
 
 
-def signal(ws, ticket) -> str | None:
-    """"ready" | "stopped" when `ticket` is a factory epic (or a child of one) in that state, else None: what
-    `orch wait` wakes on. Never raises."""
+def signal(ws, epic) -> tuple[str, str] | None:
+    """("stopped" if it has a reason to stop, else "ready", token) for factory epic `epic` itself, else None; the token
+    names the state (the hash the verdict would bind and the reasons), so a waiter can tell a new state from one it already saw. Never raises."""
+    import hashlib
     try:
-        epic = permits.charter_epic(ws, ticket)
-        if epic is None or not permits.enabled(ws):
+        if not permits.enabled(ws):
             return None
-        c = cards(ws)
-        key = epic.id.upper()
-        if any(r["epic"].upper() == key for r in c["ready"]):
-            return "ready"
-        return "stopped" if any(s["epic"].upper() == key for s in c["stopped"]) else None
+        epic = store.read_ticket(store.resolve(ws, epic.id).path)
+        from orch.core import ledger
+        raw = ledger.entries(ws)
+        rep, _ = _ready_state(ws, epic, None, raw, None)
+        why = stopped(ws, epic, signed=raw)
+        if not rep and not why:
+            return None
+        state = (rep["seen"] if rep else "") + "|".join(w["code"] + w["text"] for w in why)
+        return ("stopped" if why else "ready"), hashlib.sha256(state.encode()).hexdigest()[:12]
     except Exception:
         return None
+    return None

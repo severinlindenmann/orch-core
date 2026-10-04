@@ -37,14 +37,20 @@
 <article class="card permit-card factory-ready" data-ready="{{ r.epic }}" aria-labelledby="fr-h-{{ r.epic }}">
   <div class="permit-head">{{ ui.status("ok", "Ready") }} <b id="fr-h-{{ r.epic }}">{{ r.title }}</b>
     {% if not here %}<a class="lnk key" href="/t/{{ r.epic }}#factory">{{ r.epic }}</a>{% endif %}</div>
-  <p>Every child is in testing or done. {{ r.proven }} of {{ r.total }} criteria have evidence. Nothing is closed until you give the verdict.</p>
+  <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign. Nothing is closed until you give the verdict.</p>
   <ul class="plain factory-report">
     {% for c in r.children %}
     <li class="factory-child" data-child="{{ c.id }}">
       <div><a class="lnk key" href="/t/{{ c.id }}">{{ c.id }}</a> <b>{{ c.title }}</b> <span class="muted">{{ c.status }} · {{ c.proven }}/{{ c.total }} criteria · {{ c.how }}</span></div>
-      {% if c.verification %}<p class="permit-reason"><span class="muted">Where to look:</span> {{ c.verification }}</p>{% endif %}
-      {% if c.where %}<p class="permit-meta">{{ c.where|join(" · ") }}</p>{% endif %}
-      {% if c.findings %}<p class="permit-reason"><span class="muted">Left open:</span> {{ c.findings }}</p>{% endif %}
+      {% if c.status == "testing" %}
+      <details class="factory-bound" open><summary>What your verdict covers: criteria and verification, in full</summary>
+        <p class="muted">Acceptance criteria</p><pre class="permit-cmd" data-bound="ac">{{ c.ac }}</pre>
+        <p class="muted">Verification, as the agent wrote it</p><pre class="permit-cmd" data-bound="verification">{{ c.verification }}</pre>
+        {% if c.bound %}<p class="permit-meta">Also covered, shown on the ticket page: {{ c.bound|join(", ") }}</p>{% endif %}
+      </details>
+      {% endif %}
+      {% if c.where or c.findings %}<p class="permit-meta"><span class="muted">Context, not covered by your verdict:</span>
+        {% if c.where %}{{ c.where|join(" · ") }}{% endif %}{% if c.findings %} Left open: {{ c.findings }}{% endif %}</p>{% endif %}
     </li>
     {% endfor %}
   </ul>
@@ -56,6 +62,10 @@
     {% if not here %}<a class="btn" href="/t/{{ r.epic }}#factory">Open the epic</a>{% endif %}
   </div>
 </article>
+{% endmacro %}
+
+{% macro suspect_note(s) %}
+<p class="permit-card factory-suspect" data-suspect="{{ s.epic }}">{{ ui.status("warn", "Not verifiable") }} {{ s.children|join(", ") }} claim{{ "s" if s.children|length == 1 }} to be in testing or done, but the records do not back it (no signed verdict, or no move into testing by the claiming session with its tasks closed). No Ready report until they do.</p>
 {% endmacro %}
 
 {#- The Stopped message: why the factory cannot go on by itself and what you can do. It offers no action of its own. -#}
@@ -80,6 +90,7 @@
 
 {#- The cards of a permit_view: used-up budgets, then open requests. Standing grants stay on the epic page. -#}
 {% macro factory_cards(view, back) %}
+{% for s in view.suspect %}{{ suspect_note(s) }}{% endfor %}
 {% for s in view.stopped %}{{ stopped_card(s) }}{% endfor %}
 {% for r in view.ready %}{{ ready_card(r, back) }}{% endfor %}
 {% endmacro %}

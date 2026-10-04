@@ -208,7 +208,10 @@ The guard's part is a text check, not a shell. It refuses a command run from ins
 `pushd` that lands in it (resolved with variables, `..` and globs, step by step), a listing of it (`ls`, `find`, `du`,
 `stat`, `tree`, also recursive over a folder above it), and any tmux or screen command it cannot show plain: a socket
 must be an absolute, literal path with no `..`, outside the config dir (relative ones are refused, because the
-working directory is not known to a later command). The socket sits in a random-named folder whose name is kept in a
+working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
+taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
+the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
+length, glob matches, path depth, time): hitting a bound, or any error in the guard, is a deny. The socket sits in a random-named folder whose name is kept in a
 permits file. Known limits of a text guard, not built: a word written without a mention of tmux or screen by
 concatenation that uses none of the characters it looks for, a string built in another language (perl, osascript,
 python), and a script file written and then run.

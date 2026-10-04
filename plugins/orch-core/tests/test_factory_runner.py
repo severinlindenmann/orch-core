@@ -1091,3 +1091,105 @@ def test_a_recursive_listing_over_a_folder_that_holds_the_config_dir_is_refused(
         assert not _bash(ws, cmd).allow, cmd
     for cmd in (f"ls {home}", f"ls -la {home}/.config", "find . -name x"):  # one level: it does not show the folder's inside
         assert _bash(ws, cmd).allow, cmd
+
+
+# -- fourth review: every tool path, every segment, bounded, one resolution, deny on error --------------------------
+
+def _tool(ws, tool, cwd=None, **inp):
+    from orch.hooks.guard import evaluate
+    return evaluate(ws, {"tool_name": tool, "tool_input": inp, "cwd": str(cwd or ws.root)})
+
+
+@pytest.fixture
+def permits_link(ws):
+    from orch.core.ledger import base_dir
+    (base_dir() / "permits" / "tmux").mkdir(parents=True, exist_ok=True)
+    link = ws.root / "innocent"
+    link.symlink_to(base_dir() / "permits")
+    return link
+
+
+def test_a_symlink_to_the_permits_folder_is_refused_in_every_tool_and_command(ws, permits_link):
+    base = permits_link.parent
+    for cmd in ("cd innocent", "ls innocent", "cat innocent/x", "ls innocent/..", "ls -R innocent/tmux", "cd innocent/tmux",
+                "tmux -S innocent/tmux/factory ls", f"tmux -S {permits_link}/tmux/factory ls", f"cd '{permits_link}'", f'cat "{permits_link}/x"'):
+        assert not _bash(ws, cmd).allow, cmd
+    for tool, inp in (("Read", {"file_path": "innocent/x"}), ("Write", {"file_path": "innocent/x", "content": ""}),
+                      ("Edit", {"file_path": str(permits_link / "x"), "old_string": "a", "new_string": "b"}),
+                      ("MultiEdit", {"file_path": "innocent/x", "edits": []}),
+                      ("NotebookEdit", {"notebook_path": "innocent/x.ipynb", "new_source": "x"}),
+                      ("Grep", {"pattern": "x", "path": "innocent"}), ("Grep", {"pattern": "x", "path": str(permits_link)}),
+                      ("Glob", {"pattern": "*", "path": "innocent/tmux"})):
+        assert not _tool(ws, tool, cwd=base, **inp).allow, (tool, inp)
+
+
+def test_a_symlink_to_somewhere_else_is_left_alone(ws, tmp_path):
+    (tmp_path / "plain").mkdir()
+    (ws.root / "ok").symlink_to(tmp_path / "plain")
+    assert _bash(ws, "ls ok").allow and _bash(ws, "cd ok").allow
+    assert _tool(ws, "Read", file_path="ok/x").allow
+
+
+def test_relative_paths_in_file_tools_are_taken_from_the_hooks_cwd(ws):
+    from orch.core.ledger import base_dir
+    (base_dir() / "permits").mkdir(parents=True, exist_ok=True)
+    for tool, inp in (("Read", {"file_path": "permits/x"}), ("Write", {"file_path": "./permits/x", "content": ""}),
+                      ("Grep", {"pattern": "x", "path": "permits"}), ("Read", {"file_path": "ledger.jsonl"})):
+        assert not _tool(ws, tool, cwd=base_dir(), **inp).allow, (tool, inp)
+    assert _tool(ws, "Read", file_path="permits/x").allow  # the same words from the workspace mean something else
+
+
+@pytest.mark.parametrize("cmd", [
+    'echo hi; cd "$ORCH_STATE_DIR"', 'true && ls -R "$ORCH_STATE_DIR"', 'echo a | cd {base}', "echo a\\ncd {base}",
+    "false || find {base} -type s", "echo ok && echo ok2 && ls {base}/permits", "(cd {base})", "{{ cd {base}; }}",
+    "echo a; echo b; echo c; tmux -S factory ls", "echo a && tmux -Sfactory ls", "echo a | tmux -S ./factory ls",
+    "ls . ; ls $ORCH_STATE_DIR/permits",
+])
+def test_the_resolution_rules_hit_in_every_command_segment_not_only_the_first(ws, cmd):
+    from orch.core.ledger import base_dir
+    assert not _bash(ws, cmd.format(base=base_dir()).replace("\\n", "\n")).allow
+
+
+def test_a_huge_glob_is_refused_not_walked(ws):
+    big = ws.root / "big"
+    big.mkdir()
+    for i in range(650):
+        (big / f"f{i}").write_text("", encoding="utf-8")
+    for cmd in ("ls big/*", "cd big/f*", "ls big/f?*", "find . ; ls big/*"):
+        d = _bash(ws, cmd)
+        assert not d.allow and "limits" in d.reason, cmd
+    (ws.root / "few").mkdir()
+    for i in range(5):
+        (ws.root / "few" / f"f{i}").write_text("", encoding="utf-8")
+    assert _bash(ws, "ls few/*").allow
+
+
+def test_a_very_deep_path_and_a_very_long_command_are_refused(ws):
+    deep = "/".join(["a"] * 200)
+    for cmd in (f"cd {deep}", f"ls {deep}", f"cd {deep}; ls", "cd " + "x" * 5000):
+        d = _bash(ws, cmd)
+        assert not d.allow and "limits" in d.reason, cmd[:30]
+    huge = "cd . ; " + "x" * 300_000
+    assert not _bash(ws, huge).allow
+    assert _bash(ws, "echo " + "x" * 300_000).allow  # a long command that has nothing to do with these rules
+    assert not _tool(ws, "Read", file_path="/" + "/".join(["a"] * 300)).allow
+    assert not _tool(ws, "Write", file_path="a" * 5000, content="").allow
+
+
+def test_an_exception_in_the_guard_denies(ws, monkeypatch):
+    from orch.hooks import guard
+    monkeypatch.setattr(guard, "_bash", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+    d = _bash(ws, "ls")
+    assert not d.allow and "failed internally" in d.reason
+    monkeypatch.undo()
+    monkeypatch.setattr(guard, "_resolved", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+    assert not _bash(ws, "cd somewhere").allow
+    monkeypatch.undo()
+    monkeypatch.setattr(guard, "_ledger_path", lambda *a, **k: (_ for _ in ()).throw(OSError("bug")))
+    assert not _tool(ws, "Read", file_path="README.md").allow
+
+
+def test_a_path_that_cannot_be_resolved_is_refused(ws):
+    (ws.root / "loop").symlink_to(ws.root / "loop")  # a link loop
+    assert not _tool(ws, "Read", file_path="loop/x").allow
+    assert not _bash(ws, "ls loop/x").allow

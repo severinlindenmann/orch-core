@@ -111,6 +111,28 @@ _LISTERS = ("ls", "dir", "vdir", "find", "stat", "du", "tree", "exa", "eza", "ls
 _RECURSIVE = ("find", "du", "tree", "fd", "ncdu")
 
 
+class _Bound(Exception):
+    """A limit of the resolution rules was hit (command length, glob matches, path depth, time): the answer is a deny."""
+
+
+MAX_CMD, MAX_GLOB, MAX_PARTS, MAX_CDS, MAX_WORDS, BUDGET_S = 200_000, 500, 128, 64, 20_000, 3.0
+_RELEVANT = re.compile(r"(?<![\w-])(?:cd|pushd|chdir|tmux|screen|" + "|".join(_LISTERS) + r")(?![\w-])", re.I)
+_BOUND_DENIED = ("the guard hit one of its limits (a very long command, a huge glob, a very deep path or too much time) "
+                 "while checking a path near the orch config dir, and refuses what it cannot finish checking")
+
+
+class _Budget:
+    def __init__(self) -> None:
+        import time
+        self.t0, self.n = time.monotonic(), 0
+
+    def tick(self) -> None:
+        import time
+        self.n += 1
+        if self.n > 60_000 or time.monotonic() - self.t0 > BUDGET_S:
+            raise _Bound("time")
+
+
 def _state_dir() -> Path | None:
     from orch.core.ledger import base_dir
     try:
@@ -128,39 +150,127 @@ def _expand(raw: str) -> str:
                   os.path.expanduser(raw))
 
 
-def _resolved(cur: str, raw: str) -> list[Path]:
-    """Where `raw` (a path as written, quotes removed) points from `cur`: every glob match, else the literal path."""
-    import glob
-    text = _expand(raw.strip("'\""))
-    full = text if os.path.isabs(text) else os.path.join(cur, text)
-    hits = glob.glob(full) if re.search(r"[*?\[]", text) else []
-    out = []
-    for h in hits or [full]:
-        try:
-            out.append(Path(h).resolve())
-        except (OSError, RuntimeError, ValueError):
-            out.append(Path(os.path.normpath(h)))
+def _path_words(cmd: str) -> list[str]:
+    """The words of `cmd` twice over: as a shell would split them (quotes joined, so a quoted path with a space is one
+    word) and with every quote taken out (so an unbalanced quote hides nothing). Capped."""
+    import shlex
+    out = cmd.replace("'", " ").replace('"', " ").split()
+    try:
+        for tok in shlex.split(cmd, posix=True):
+            out += [x for x in re.split(r"[;&|<>()]", tok) if x]
+    except ValueError:
+        pass
+    if len(out) > 2 * MAX_WORDS:
+        raise _Bound("words")
     return out
+
+
+def _real(path: str) -> Path:
+    """The realpath of `path`, once. A link loop (or anything else the system refuses) raises _Bound."""
+    import errno
+    p = os.path.realpath(path)
+    try:
+        os.stat(path)
+    except OSError as e:
+        if e.errno not in (errno.ENOENT, errno.ENOTDIR):
+            raise _Bound("path") from e
+    return Path(p)
 
 
 def _within(p: Path, base: Path) -> bool:
     return p == base or base in p.parents
 
 
+def _link_into(full: str, base: Path, bud: _Budget) -> bool:
+    """Some component of the path `full`, taken one by one without resolving the rest, is a symlink that leads into
+    `base`. Such a path is refused even if the whole of it resolves elsewhere: the link can be swapped between this
+    check and the use, so only the path as written is judged, and never trusted because of where it points today."""
+    cur, n = "/", 0
+    for comp in full.split("/"):
+        bud.tick()
+        if comp in ("", "."):
+            continue
+        n += 1
+        if n > MAX_PARTS:
+            raise _Bound("depth")
+        if comp == "..":
+            cur = os.path.dirname(cur)
+            continue
+        cur = os.path.join(cur, comp)
+        if os.path.islink(cur) and _within(_real(cur), base):
+            return True
+    return False
+
+
+def _resolved(cur: str, raw: str, bud: _Budget) -> list[Path]:
+    """Where `raw` (a path as written, quotes removed) points from `cur`: every glob match, else the literal path. One
+    realpath each, compared as it comes. Raises _Bound past the limits."""
+    import glob
+    from itertools import islice
+    text = _expand(raw.strip("'\""))
+    if len(text) > 4096 or text.count("/") > MAX_PARTS:
+        raise _Bound("long")
+    full = text if os.path.isabs(text) else os.path.join(cur, text)
+    hits = []
+    if re.search(r"[*?\[]", text):
+        hits = list(islice(glob.iglob(full), MAX_GLOB + 1))
+        if len(hits) > MAX_GLOB:
+            raise _Bound("glob")
+    out = []
+    for h in hits or [full]:
+        bud.tick()
+        try:
+            out.append(_real(h))
+        except (RuntimeError, ValueError) as e:
+            raise _Bound("path") from e
+    return out
+
+
 def _touches_state_dir(ws, cmd: str, cwd) -> bool:
-    """The working directory, a `cd` chain, or a listing resolves into the config dir (or recursively over it)."""
+    """The working directory, a `cd` chain, or a listing resolves into the config dir (or recursively over it), in any
+    command segment. Raises _Bound when a limit is hit."""
     base = _state_dir()
     if base is None:
         return False
+    bud = _Budget()
     cur = str(cwd) if cwd else os.getcwd()
     try:
-        if _within(Path(cur).resolve(), base):
+        if _within(_real(cur), base) or _link_into(cur, base, bud):
             return True
     except (OSError, RuntimeError, ValueError):
         return True
+    relevant = bool(_RELEVANT.search(cmd))
+    if len(cmd) > MAX_CMD:
+        if relevant:
+            raise _Bound("length")
+        return False
+    # every path-like word of every segment: through a link into the config dir, or resolving into it
+    seen = 0
+    for w in _path_words(cmd):
+        if "/" not in w and not w.startswith(("~", ".")):
+            continue
+        seen += 1
+        if seen > MAX_WORDS:
+            raise _Bound("words")
+        full = _expand(w)
+        if len(full) > 4096 or full.count("/") > MAX_PARTS:
+            raise _Bound("long")
+        if re.search(r"[*?\[]", full):
+            continue  # globs are expanded below, for the commands that take them
+        full = full if os.path.isabs(full) else os.path.join(cur, full)
+        if _link_into(full, base, bud) or _within(_real(full), base):
+            return True
+    if not relevant:
+        return False
     where = [cur]
-    for m in _CD_TARGET.finditer(cmd):
-        hits = _resolved(cur, m.group(1))
+    for i, m in enumerate(_CD_TARGET.finditer(cmd)):
+        if i >= MAX_CDS:
+            raise _Bound("cds")
+        raw = m.group(1)
+        if _link_into(_expand(raw.strip("'\"")) if os.path.isabs(_expand(raw.strip("'\""))) else
+                      os.path.join(cur, _expand(raw.strip("'\""))), base, bud):
+            return True
+        hits = _resolved(cur, raw, bud)
         if any(_within(h, base) for h in hits):
             return True
         cur = str(hits[0])
@@ -170,8 +280,12 @@ def _touches_state_dir(ws, cmd: str, cwd) -> bool:
     except (OSError, RuntimeError):
         root = None
     text = cmd.replace("'", " ").replace('"', " ")
+    words_seen = 0
     for seg in re.split(r"[;&|\n]", text):
         words = seg.split()
+        words_seen += len(words)
+        if words_seen > MAX_WORDS:
+            raise _Bound("words")
         for i, w in enumerate(words):
             prog = w.rsplit("/", 1)[-1]
             if prog not in _LISTERS:
@@ -180,7 +294,10 @@ def _touches_state_dir(ws, cmd: str, cwd) -> bool:
                                                   for x in words[i + 1:] if prog == "ls") or "--recursive" in words
             for arg in (x for x in words[i + 1:] if not x.startswith("-")):
                 for c in where:
-                    for h in _resolved(c, arg):
+                    full = _expand(arg)
+                    if _link_into(full if os.path.isabs(full) else os.path.join(c, full), base, bud):
+                        return True
+                    for h in _resolved(c, arg, bud):
                         if _within(h, base):
                             return True
                         if recursive and h in base.parents and not (root is not None and (h == root or h in root.parents)):
@@ -189,6 +306,8 @@ def _touches_state_dir(ws, cmd: str, cwd) -> bool:
 
 
 def _mux_risky(cmd: str) -> bool:
+    if len(cmd) > MAX_CMD and re.search(r"tmux|screen", cmd, re.I):
+        raise _Bound("length")
     plain = cmd.replace("'", "").replace('"', "").replace("\\", "")
     text = plain.lower()
     if not _MUX_WORD.search(text):
@@ -214,9 +333,9 @@ def _mux_risky(cmd: str) -> bool:
                 return True
             if base is not None:
                 try:
-                    if _within(Path(value).resolve(), base):
+                    if _within(_real(value), base) or _link_into(value, base, _Budget()):
                         return True
-                except (OSError, RuntimeError, ValueError):
+                except (OSError, RuntimeError, ValueError, _Bound):
                     return True
     return False
 
@@ -1017,21 +1136,29 @@ def _reaches_config_dir_recursively(raw_root, cwd, glob=None, type_=None) -> boo
     return bool(root) and _is_config_dir_or_ancestor(root) and _filter_could_reach_key(glob, type_)
 
 
-def _ledger_path(raw: str) -> bool:
-    """`raw` (a file tool's path or glob) names the ledger or its key, or resolves into the ledger dir."""
+def _ledger_path(raw: str, cwd=None) -> bool:
+    """`raw` (a file tool's path or glob) names the ledger or its key, or resolves into the ledger dir. Relative paths
+    are taken from the hook's cwd, resolved once, and a path with a symlink component that leads into the config dir
+    is refused as written. A path that cannot be resolved is refused."""
     if not raw:
         return False
     if _LEDGER.search(raw):
         return True
     from orch.core import ledger
     try:
-        p = Path(raw).expanduser().resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-    try:
-        base = ledger.base_dir().resolve()
-    except (OSError, RuntimeError):
-        base = ledger.base_dir()
+        if len(raw) > 4096 or raw.count("/") > MAX_PARTS:
+            return True
+        text = os.path.expanduser(raw)
+        full = text if os.path.isabs(text) else os.path.join(str(cwd) if cwd else os.getcwd(), text)
+        p = _real(full)
+        try:
+            base = ledger.base_dir().resolve()
+        except (OSError, RuntimeError):
+            base = ledger.base_dir()
+        if _link_into(full, base, _Budget()):
+            return True
+    except (OSError, RuntimeError, ValueError, _Bound):
+        return True
     return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
 
 
@@ -1055,13 +1182,21 @@ def _bash_reaches_ledger(cmd: str) -> bool:
 
 
 def evaluate(ws, payload: dict) -> Decision:
+    """The guard's answer. An exception anywhere in the rules is a deny, never an allow."""
+    try:
+        return _evaluate(ws, payload)
+    except Exception:
+        return Decision(False, "the guard failed internally while checking this action; nothing was allowed")
+
+
+def _evaluate(ws, payload: dict) -> Decision:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
     cwd = payload.get("cwd")
     if not isinstance(tool_input, dict):
         return ALLOW
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob") and any(
-            _ledger_path(str(tool_input.get(k) or "")) for k in ("file_path", "notebook_path", "path", "pattern",
+            _ledger_path(str(tool_input.get(k) or ""), cwd) for k in ("file_path", "notebook_path", "path", "pattern",
                                                                     "glob")):
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):
@@ -1171,9 +1306,14 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
-    if _touches_state_dir(ws, cmd, cwd):
+    try:
+        touches = _touches_state_dir(ws, cmd, cwd)
+        risky = touches or _mux_risky(cmd)
+    except Exception:  # a limit, or anything unexpected: never an allow
+        return Decision(False, _BOUND_DENIED)
+    if touches:
         return Decision(False, _STATE_DENIED)
-    if _mux_risky(cmd):
+    if risky:
         named = _ORCH_TMUX.search(cmd.replace("'", "").replace('"', ""))
         return Decision(False, _ORCH_TMUX_DENIED if named else _MUX_DENIED)
     may = ws.config["git"]["agent_may"]

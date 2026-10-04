@@ -1165,8 +1165,8 @@ def guard(
     try:
         decision = guard_mod.evaluate(ws, payload)
     except Exception:
-        _guard_error(ws)  # fail open, but leave a trace
-        return
+        _guard_error(ws)  # leave a trace, and deny: a guard that could not decide allows nothing
+        decision = guard_mod.Decision(False, "the guard failed internally; nothing was allowed")
     if not decision.allow:
         reason = f"orch guard: {decision.reason}"
         if hook_json:

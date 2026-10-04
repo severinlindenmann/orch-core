@@ -78,7 +78,8 @@ def _live(s, i: dict) -> dict:
             "ticket": first["id"] if first else "", "tasks": (first or {}).get("tasks") or "",
             "more": len(claimed) - 1 if len(claimed) > 1 else 0,
             "subs": f"{active} subagent{'s' if active != 1 else ''} running" if active else "",
-            "model": i.get("model") or "", "context": agentinfo.compact(i.get("context")) if i.get("context") else ""}
+            "model": i.get("model") or "", "context": agentinfo.compact(i.get("context")) if i.get("context") else "",
+            "cache": agentinfo.cache_label(i.get("cache")), "cold": bool(i.get("cache") and not i["cache"]["warm"])}
 
 
 def _rows(ws) -> list[dict]:

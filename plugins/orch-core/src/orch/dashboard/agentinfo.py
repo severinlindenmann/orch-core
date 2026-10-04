@@ -14,10 +14,12 @@ import os
 import threading
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 ACTIVE_SECONDS = 120  # a subagent whose transcript changed this recently counts as running
 TICKETS_SECONDS = 5.0  # how long the claims-by-session index is reused
+CACHE_TTL = 300  # the prompt cache's default lifetime; a write marked ephemeral_1h lasts 3600
 
 
 def claude_dir() -> Path:
@@ -55,6 +57,8 @@ class Transcript:
         self.tools: Counter = Counter()
         self.prs: dict = {}
         self.cost = None
+        self.cache_at = None  # epoch of the last reply that read or wrote the prompt cache
+        self.cache_ttl = CACHE_TTL
 
     def update(self) -> None:
         try:
@@ -112,6 +116,15 @@ class Transcript:
                 if isinstance(usage.get(key), int):
                     self.tokens[name] += usage[key]
             if usage:
+                written = usage.get("cache_creation") or {}
+                if written.get("ephemeral_1h_input_tokens"):
+                    self.cache_ttl = 3600
+                elif written.get("ephemeral_5m_input_tokens"):
+                    self.cache_ttl = CACHE_TTL
+                try:  # a read or a write both restart the cache's clock
+                    self.cache_at = datetime.fromisoformat(d["timestamp"]).timestamp()
+                except (KeyError, TypeError, ValueError):
+                    pass
                 self.context = sum(usage.get(k) or 0 for k in
                                    ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
             texts = []
@@ -207,6 +220,25 @@ def _claims(ws) -> dict:
     return index
 
 
+def cache(t: Transcript | None, now: float | None = None) -> dict | None:
+    """Whether the next prompt finds the context in the prompt cache: warm with seconds left, or cold (it is
+    written again in full). None before the first reply."""
+    if not t or t.cache_at is None:
+        return None
+    left = int(t.cache_at + t.cache_ttl - (time.time() if now is None else now))
+    return {"warm": left > 0, "left": max(left, 0), "ttl": t.cache_ttl}
+
+
+def cache_label(c: dict | None) -> str:
+    """cache warm · 42m left · cache cold."""
+    if not c:
+        return ""
+    if not c["warm"]:
+        return "cache cold"
+    m = c["left"] // 60
+    return f"cache warm · {m}m left" if m else f"cache warm · {c['left']}s left"
+
+
 def model_label(model) -> str:
     """claude-opus-5-5 → Opus 5.5; anything unexpected stays as it is."""
     if not model:
@@ -227,7 +259,7 @@ def info(ws, session) -> dict:
 
 EMPTY = {"known": False, "session_id": None, "status": None, "title": None, "now": "", "now_kind": "", "model": "",
          "models": [], "context": None, "tokens": {}, "tools": [], "prs": [], "cost": None, "last_prompt": None,
-         "tickets": [], "subagents": [], "subagents_active": 0, "version": None, "sig": ""}
+         "tickets": [], "subagents": [], "cache": None, "subagents_active": 0, "version": None, "sig": ""}
 
 
 def _info(ws, session) -> dict:
@@ -262,6 +294,7 @@ def _info(ws, session) -> dict:
         "cost": t.cost if t else None,
         "last_prompt": t.last_prompt if t else None,
         "tickets": tickets,
+        "cache": cache(t),
         "subagents": subs,
         "subagents_active": sum(1 for s in subs if s["active"]),
         "version": sf.get("version") if sf else None,

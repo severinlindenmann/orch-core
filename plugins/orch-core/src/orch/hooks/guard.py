@@ -208,10 +208,13 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
                   "in Mission Control → Workspace & addons → Phones")
 # The approval ledger and its signing key (orch.core.ledger), in the orch config dir: the human's record of approvals.
 # Agents never read or write them, by any tool; best effort for Bash, as for the pairing keys.
-_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl)\b|orch[/\\]+ledger\b|ORCH_STATE_DIR\}?[/\\]+ledger\b"
-                     r"|\borch\.core\.ledger\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\bledger\b")
-_LEDGER_DENIED = ("the approval ledger and its key are the human's signed record of approvals and verdicts; "
-                  "agents do not read or write them")
+# The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
+# grant) are protected the same way: removing a marker would revive a used grant.
+_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
+                     r"|\bpermits[/\\]+(?:used|requests)\b"
+                     r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
+_LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
+                  "decisions; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
@@ -893,16 +896,18 @@ def _ledger_path(raw: str) -> bool:
         base = ledger.base_dir().resolve()
     except (OSError, RuntimeError):
         base = ledger.base_dir()
-    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE)
+    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE) or p == base / "permits" or (base / "permits") in p.parents
 
 
 def _filter_could_reach_ledger(pattern: str) -> bool:
     """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`)."""
     import fnmatch
-    if not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower():
+    if (not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower()
+            or "permits" in pattern.lower()):
         return True
     name = pattern.rsplit("/", 1)[-1]
-    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl"))
+    # the ledger files and the shapes of the permit records (a request body, a once-use marker)
+    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "P-0123ABCD.json", "0123456789abcdef"))
 
 
 def _bash_reaches_ledger(cmd: str) -> bool:
@@ -910,7 +915,7 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
         return True
     base = str(ledger.base_dir())
-    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE))
+    return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, "permits"))
 
 
 def evaluate(ws, payload: dict) -> Decision:

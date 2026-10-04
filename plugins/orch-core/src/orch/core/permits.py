@@ -125,66 +125,81 @@ _NEVER = (
                 r"|CLAUDE_PLUGIN_ROOT|CLAUDE_CONFIG_DIR"),
      "the harness's settings, hooks and plugins are the human's"),
     (re.compile(r"--no-verify\b|core\.hookspath", re.I), "git hooks stay on"),
-    (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"),
-     "orch's config, state and ledger are changed by orch and the human only"),
+    (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"
+                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests)\b"),
+     "orch's config, state, ledger and permit records are changed by orch and the human only"),
     (re.compile(r"\b" + _ENV_VARS + r"\s*="), "the variables that decide where orch keeps its records are fixed"),
     (re.compile(r"(?<![\w-])(?:sudo|doas|su)(?![\w-])"), "no elevated rights"),
-    (re.compile(r"\bgh\s+(?:-\S+\s+)*pr\s+(?:-\S+\s+)*merge\b"), "merging a pull request is the human's"),
-    (re.compile(r"\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*(?:\s--force(?:-with-lease)?\b|\s-[A-Za-z]*f\b|\s\+\S)"),
-     "force pushes are the human's"),
+    (re.compile(r"\bgh\s+(?:-\S+\s+)*pr\s+(?:-\S+\s+)*merge\b|\bgh\s+(?:-\S+\s+)*api\b[^;&|\n]*merge"),
+     "merging a pull request is the human's"),
+    (re.compile(r"\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*(?:\s--force(?:-with-lease)?\b|\s-[A-Za-z]*[fd]\b|\s\+\S|\s:\S"
+                r"|\s--delete\b|\s--m[i]rror\b|\s--prune\b)"),  # [i]: core sources avoid that word (test_a4_p0_docs)
+     "force pushes, pushes of every ref and deleting remote branches are the human's"),
     (re.compile(r"(?<![\w-])ch(?:mod|own|grp|flags)(?![\w-])[^;&|\n]*(?:\.config|ORCH_STATE_DIR|XDG_CONFIG_HOME|\borch\b)"),
      "orch's config dir keeps its permissions"),
+    (re.compile(r"(?<![\w-])(?:ba|z|da|k|fi)?sh\s+(?:-\S+\s+)*-\w*c\w*\b[^;&|\n]*(?:\$\(|`)"),
+     "a shell running a substituted command"),
 )
 
 
-def _removes_root(ws, command: str) -> bool:
-    """A recursive removal whose target is /, ~ (home), the workspace root or one of its parents (coarse)."""
-    if not re.search(r"(?<![\w-])rm(?![\w-])", command):
-        return False
-    try:
-        words = shlex.split(command, comments=True, posix=True)
-    except ValueError:
-        return True  # unparsable around a removal: fail closed
-    home, root = str(Path.home()), ws.root.resolve()
-    roots = {"/", "/*", "~", "~/", "~/*", "$HOME", "${HOME}", "$HOME/", "${HOME}/", home, home + "/", ".", "./", "..",
-             "*"}
+def _sweep_targets(ws, words: list[str]) -> bool:
+    """A recursive removal (rm -r, find -delete, find -exec rm) of /, home, the workspace root or one of its parents;
+    a target holding $ or a backtick counts too (its value is unknown here). Coarse, fail closed."""
+    home, root = Path.home().resolve(), ws.root.resolve()
+    roots = {"/", "/*", "~", "~/", "~/*", ".", "./", "..", "*", "./*"}
+
+    def wide(a: str) -> bool:
+        if a in roots or "$" in a or "`" in a:
+            return True
+        try:
+            p = (root / os.path.expanduser(a)).resolve()  # relative to the workspace, where the agent works
+        except (OSError, RuntimeError, ValueError):
+            return True
+        return p == home or p == root or p in root.parents or p == Path("/")
+
     for k, w in enumerate(words):
-        if w.rsplit("/", 1)[-1] != "rm":
-            continue
+        prog = w.rsplit("/", 1)[-1]
         args = words[k + 1:]
-        if not any(a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a) or a == "--recursive"
-                   for a in args):
-            continue
-        for a in args:
-            if a.startswith("-"):
-                continue
-            if a in roots:
+        if prog == "rm" and any((a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a))
+                                or a == "--recursive" for a in args):
+            if any(wide(a) for a in args if not a.startswith("-")):
                 return True
-            try:
-                p = Path(os.path.expanduser(a)).resolve()
-            except (OSError, RuntimeError):
-                return True
-            if p == Path(home).resolve() or p == root or p in root.parents:
+        if prog == "find" and ("-delete" in args or any(
+                a in ("-exec", "-execdir", "-ok", "-okdir") and k2 + 1 < len(args)
+                and args[k2 + 1].rsplit("/", 1)[-1] in ("rm", "shred", "unlink")
+                for k2, a in enumerate(args))):
+            starts = []
+            for a in args:
+                if a.startswith("-") or a in ("(", "!"):
+                    break
+                starts.append(a)
+            if not starts or any(wide(a) for a in starts):
                 return True
     return False
 
 
 def never_grantable(ws, command) -> str | None:
     """Why `command` can never be granted, or None. The guard's own denials come first (P4: a grant never overrides
-    the guard); the rest is coarse on purpose and errs towards refusing."""
+    the guard); the rest is coarse on purpose and errs towards refusing. The patterns run over the text as written
+    and as the shell would split it (quotes and escapes resolved); text the shell cannot split is refused."""
     if not isinstance(command, str) or not command.strip():
         return "not a command"
     if any(not (32 <= ord(c) < 127) for c in command):
         return "the text holds characters outside printable ASCII or spans several lines"
+    try:
+        words = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return "the text cannot be split the way a shell would"
     from orch.hooks.guard import evaluate
     decision = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ws.root)})
     if not decision.allow:
         return f"the guard denies it ({decision.reason})"
+    joined = " ".join(words)
     for pattern, why in _NEVER:
-        if pattern.search(command):
+        if pattern.search(command) or pattern.search(joined):
             return why
-    if _removes_root(ws, command):
-        return "a recursive removal of home, / or the workspace"
+    if _sweep_targets(ws, words):
+        return "a recursive removal of home, / or the workspace, or of a target only known when it runs"
     return None
 
 

@@ -55,7 +55,8 @@ runner's job, in a later phase. In a factory session:
 
 A request's command text and reason are kept beside the ledger in your orch config dir, not in the repository; the
 event log only records that a request with that id and command hash was filed. A once grant's use is recorded there
-too, so every checkout of the workspace sees it.
+too, so every checkout of the workspace sees it. The guard keeps agents away from these records as it does from
+the ledger.
 
 You answer requests in your own terminal:
 
@@ -76,7 +77,8 @@ is used up.
 Some commands are never grantable, and no request is filed for them. The list is coarse and errs towards refusing:
 anything the guard denies, orch's permission commands, starting the dashboard, the harness's own settings, hooks and
 plugins, orch's config, state and ledger, the variables that decide where orch keeps its records, elevated rights,
-merging pull requests, force pushes, sweeping recursive removals, permission changes on orch's config dir, and any
+merging pull requests, force pushes, deleting remote branches, sweeping recursive removals, a shell running a
+substituted command, permission changes on orch's config dir, and any
 command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped.
 
 ## Harness settings and auto mode

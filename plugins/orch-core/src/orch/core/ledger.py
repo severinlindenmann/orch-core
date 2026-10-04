@@ -293,18 +293,41 @@ def answer_verification(ws, ticket, q: dict, signed: list[dict] | None = None) -
     return "unverified"
 
 
-def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = None) -> str:
-    """The same for a done ticket: its human done verdict, or its human close."""
+def done_round(events, ticket_id: str) -> int:
+    """How many times the ticket has moved to done (a close or a verdict), counted from the event log. A signed close
+    or done verdict carries the number its own move made (`round`), so it confirms that one done and no later one."""
+    return len(_done_events(events, ticket_id))
+
+
+def _done_events(events, ticket_id: str) -> list:
+    return [e for e in events if e.ticket == ticket_id and e.kind in ("ticket.moved", "verdict.given")
+            and (e.data or {}).get("to") == "done"]
+
+
+def _confirms_current_done(entry: dict, dones: list) -> bool:
+    """Whether the signed `entry` confirms the ticket's current (latest) done. With a `round` it must equal that
+    done's number. An entry from before rounds existed has none: it confirms only the FIRST done after it was
+    signed, never a later one, so a reopened ticket's second done needs a fresh signature."""
+    if "round" in entry:
+        return entry["round"] == len(dones)
+    return sum(str(e.at) >= str(entry.get("at")) for e in dones) <= 1
+
+
+def done_verification(ws, ticket, *, closed: bool, signed: list[dict] | None = None, events=None) -> str:
+    """The same for a done ticket: its human done verdict, or its human close. Each signed entry confirms exactly one
+    done (see `_confirms_current_done`)."""
+    from orch.core.events import read_events
     signed = entries(ws) if signed is None else signed
+    dones = _done_events(read_events(ws, ticket.id) if events is None else events, ticket.id)
     if closed:
-        return "verified" if any(e.get("kind") == "close" and e.get("ticket") == ticket.id for e in signed) \
-            else "unverified"
+        return "verified" if any(e.get("kind") == "close" and e.get("ticket") == ticket.id
+                                 and _confirms_current_done(e, dones) for e in signed) else "unverified"
     v = (ticket.meta.get("gates") or {}).get("verify") or {}
     if v.get("verdict") != "done":
         return "none"
     for e in signed:
         if (e.get("kind") == "verdict" and e.get("ticket") == ticket.id and e.get("verdict") == "done"
-                and e.get("verify_at") == v.get("at")):
+                and e.get("verify_at") == v.get("at") and _confirms_current_done(e, dones)):
             return "verified"
     return "unverified"
 
@@ -366,7 +389,7 @@ def item_id(item: dict) -> str:
 
 # What a displayed adopt item and the item re-derived under the ticket lock must agree on, field by field.
 SIGNED_FIELDS = ("ticket", "title", "kind", "gate", "hash", "hash_v", "qid", "answer", "question_hash", "verdict", "verify_at",
-                 "text")
+                 "round", "text")
 
 
 def _provenance(events, tid: str, kinds: tuple, match) -> str:
@@ -402,13 +425,13 @@ def unsigned_items(ws, tickets) -> list[dict]:
         if t.status == "done":
             v = (t.meta.get("gates") or {}).get("verify") or {}
             if v.get("verdict") == "done":
-                if done_verification(ws, t, closed=False, signed=signed) == "unverified":
+                if done_verification(ws, t, closed=False, signed=signed, events=events) == "unverified":
                     out.append({"ticket": t.id, "title": t.title, "kind": "verdict", "verdict": "done",
-                                "verify_at": v.get("at"), "text": f"verdict done at {v.get('at')}",
+                                "verify_at": v.get("at"), "round": done_round(events, t.id), "text": f"verdict done at {v.get('at')}",
                                 "provenance": _provenance(events, t.id, ("verdict.given",),
                                                           lambda e: e.data.get("verdict") == "done")})
-            elif done_verification(ws, t, closed=True, signed=signed) == "unverified":
-                out.append({"ticket": t.id, "title": t.title, "kind": "close", "text": "closed (done without a verdict)",
+            elif done_verification(ws, t, closed=True, signed=signed, events=events) == "unverified":
+                out.append({"ticket": t.id, "title": t.title, "kind": "close", "round": done_round(events, t.id), "text": "closed (done without a verdict)",
                             "provenance": _provenance(events, t.id, ("ticket.moved",),
                                                       lambda e: e.data.get("command") == "close")})
     for item in out:

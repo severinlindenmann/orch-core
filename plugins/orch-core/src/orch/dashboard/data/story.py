@@ -223,7 +223,7 @@ def done_signer(ws, t, events, signed=None) -> str | None:
     if t.status != "done":
         return None
     closed = _closed_by_human(events, t.id)
-    if ledger.done_verification(ws, t, closed=closed, signed=signed) != "verified":
+    if ledger.done_verification(ws, t, closed=closed, signed=signed, events=events) != "verified":
         return None
     return "closed" if closed else "accepted"
 

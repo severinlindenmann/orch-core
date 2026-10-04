@@ -106,7 +106,7 @@ def overview(ws, *, days: int = 28, now: datetime | None = None) -> dict:
     window_start = at_now - timedelta(days=days)
     local_now = at_now.astimezone()
     first_day = first_at.astimezone().date()
-    today = local_now.date()
+    today = max(local_now.date(), first_day)  # a clock behind the log (skew) still gives one day, not none
     days_on_record = (today - first_day).days + 1
     out.update(
         state="one-day" if days_on_record <= 1 else "ok", first_at=first_at, since=_stamp_text(first_at),
@@ -146,7 +146,7 @@ def overview(ws, *, days: int = 28, now: datetime | None = None) -> dict:
     # --- the human's decisions ---------------------------------------------------------------------------------
     counts = {"gate.approved": 0, "verdict.given": 0, "question.answered": 0}
     for ev, at in stamped:
-        if ev.kind in counts and str(ev.actor).startswith("human") and window_start <= at <= at_now:
+        if ev.kind in counts and str(ev.actor).startswith("human:") and window_start <= at <= at_now:
             counts[ev.kind] += 1
     out["decisions"] = {"gates": counts["gate.approved"], "verdicts": counts["verdict.given"],
                         "answers": counts["question.answered"], "total": sum(counts.values())}

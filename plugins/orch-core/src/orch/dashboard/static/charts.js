@@ -1,10 +1,11 @@
 // Draws <figure class="chart" data-chart='{json}'> with the vendored Chart.js. The numbers are already in the
 // figure's <details> table, so nothing here is needed to read them. Chart.js itself is fetched (from the same
-// origin, data-lib) only when a page has a chart. Colours come from the theme's CSS tokens and are read again
+// origin) only when a page has a chart. Colours come from the theme's CSS tokens and are read again
 // when the theme changes; animation is off under prefers-reduced-motion.
 (() => {
   const reduced = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const live = new Map();  // figure -> Chart
+  const LIB = "/static/vendor/chartjs/chart.umd.min.js";
   let loading = null;
 
   const css = (name, fallback) => {
@@ -80,15 +81,17 @@
     const figs = Array.from((root || document).querySelectorAll("figure.chart[data-chart]:not([data-drawn])"));
     if (!figs.length) return;
     figs.forEach((f) => { f.dataset.drawn = "0"; });
-    load(figs[0].dataset.lib).then(() => figs.forEach(draw)).catch(() => figs.forEach((f) => {
+    const fail = (f) => {
       const plot = f.querySelector(".chart-plot");
       if (plot) plot.textContent = "The chart did not load. The numbers are below.";
       const d = f.querySelector("details");
       if (d) d.open = true;
-    }));
+    };
+    load(LIB).then(() => figs.forEach((f) => { try { draw(f); } catch (e) { fail(f); } }))
+      .catch(() => figs.forEach(fail));
   };
 
-  const redraw = () => { if (window.Chart) Array.from(live.keys()).forEach((f) => { if (f.isConnected) draw(f); else live.delete(f); }); };
+  const redraw = () => { if (window.Chart) Array.from(live.keys()).forEach((f) => { if (!f.isConnected) live.delete(f); else { try { draw(f); } catch (e) { /* the table stays */ } } }); };
 
   const watch = () => {
     start(document);

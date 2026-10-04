@@ -64,7 +64,7 @@ def test_a_chart_page_renders_the_figure_the_table_and_the_legend(dash):
     assert spec["labels"] == ["Mon", "Tue"] and [s["token"] for s in spec["series"]] == ["series-1", "series-2"]
     assert '<details class="chart-data">' in html and "<table" in html
     assert "<td class=\"num\">4.5</td>" in html and "chart-legend" in html
-    assert "vendor/chartjs/chart.umd.min.js" in html
+    assert "data-lib" not in html  # charts.js knows the one vendored path itself
 
 
 def test_a_single_series_has_no_legend():

@@ -141,5 +141,18 @@ def test_one_day_of_record_gives_the_numbers_alone(dash, ws, put):
     assert "1 new" in html
 
 
+def test_a_clock_behind_the_log_still_gives_a_page_and_markdown(ws, put):
+    from orch.dashboard.data.flow import overview
+    from orch.dashboard.data.metrics import report, report_markdown
+    t = put("backlog")
+    _events(ws, [(NOW, t, "ticket.created", {})])
+    early = NOW - timedelta(days=3)  # "now" is before the first event
+    with _pinned_local_tz("UTC"):
+        o = overview(ws, days=28, now=early)
+        md = report_markdown(report(ws, days=28, now=early), o)
+    assert o["state"] == "one-day" and len(o["per_day"]["chart"]["labels"]) == 1
+    assert "## Created and done per day" in md
+
+
 def test_pages_without_a_chart_do_not_name_the_library(dash):
     assert "chart.umd" not in dash.get("/board").text

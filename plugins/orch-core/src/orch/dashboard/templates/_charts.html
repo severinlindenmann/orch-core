@@ -3,7 +3,7 @@
     `title` names the chart; `note` is an optional line under it; `spec` is orch.dashboard.charts.spec(...). -#}
 {% macro chart(spec, title, note="", id="") -%}
   {%- set many = spec.series|length > 1 -%}
-  <figure class="chart" data-chart='{{ spec|tojson }}' data-lib="{{ static_url('vendor/chartjs/chart.umd.min.js') if static_url is defined else '/static/vendor/chartjs/chart.umd.min.js' }}"{% if id %} id="{{ id }}"{% endif %}>
+  <figure class="chart" data-chart='{{ spec|tojson }}'{% if id %} id="{{ id }}"{% endif %}>
     <figcaption class="chart-title">{{ title }}</figcaption>
     {%- if many %}
     <ul class="chart-legend">{% for s in spec.series %}<li><i class="chart-swatch" style="background: var(--{{ s.token }})" aria-hidden="true"></i>{{ s.name }}</li>{% endfor %}</ul>

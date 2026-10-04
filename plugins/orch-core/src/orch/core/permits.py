@@ -256,6 +256,8 @@ def _used(nonce) -> bool:
 
 def _signed(ws, signed):
     from orch.core import ledger
+    if not ledger.head_ok():
+        return []  # a cut ledger backs no grant
     return ledger.entries(ws) if signed is None else signed
 
 
@@ -488,6 +490,18 @@ def _session_ticket(ws, session: str | None):
     return found[0][1]
 
 
+def _claims_epic_child(ws, session) -> bool:
+    """Whether the session holds a claim on an unfinished ticket that has a parent epic (it may be a factory child:
+    with the ledger cut that cannot be told from the signed charter)."""
+    try:
+        return bool(session) and any(
+            e.status != "done" and isinstance(e.meta, dict) and e.meta.get("parent")
+            and isinstance(e.meta.get("claim"), dict) and e.meta["claim"].get("session") == session
+            for e in store.scan(ws))
+    except Exception:
+        return True  # never an opinion that could read as allow: deny
+
+
 def _decision(behavior: str, message: str | None = None) -> dict:
     d = {"behavior": behavior}
     if message:
@@ -501,6 +515,10 @@ def hook_decision(ws, payload: dict) -> dict | None:
     wait for. Never `allow` on an error."""
     if not enabled(ws):
         return None
+    from orch.core import ledger
+    if not ledger.head_ok() and _claims_epic_child(ws, payload.get("session_id")):
+        return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
+                                 "grant counts; nothing was allowed. Stop and ask the human to look at it.")
     try:
         ticket = _session_ticket(ws, payload.get("session_id"))
     except Exception:

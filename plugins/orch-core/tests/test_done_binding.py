@@ -31,8 +31,8 @@ def _done_by_hand(ws, tid, human, *, event=True, verify=None):
 
 
 def _rewrite(ws, edit, *, drop=None):
-    """Rewrite the ledger as an older version or a hand edit would have: `edit` on every entry, valid signatures
-    again, and lines for which `drop` is true removed."""
+    """Rewrite the ledger as an older version would have: `edit` on every entry, valid signatures again, lines for
+    which `drop` is true removed, and no head record."""
     key = ledger._key(create=False)
     path = ledger.ledger_path(ws)
     out = []
@@ -40,10 +40,12 @@ def _rewrite(ws, edit, *, drop=None):
         e = json.loads(line)
         if drop and drop(e):
             continue
+        e.pop("n", None)  # an older version did not number its entries
         edit(e)
         e["mac"] = ledger._mac(key, e)
         out.append(json.dumps(e))
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    ledger.head_path().unlink(missing_ok=True)  # an older version kept no head record
 
 
 def _legacy(e):

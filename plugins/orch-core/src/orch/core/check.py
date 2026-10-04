@@ -55,6 +55,12 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings += _check_remote(ws, events)
     findings += _check_human_evidence(events)
     findings += _check_widgets(ws)
+    if not ledger.head_ok():
+        findings.append(Finding("error", "ledger-cut", None,
+                                "the approval ledger on this machine is shorter than its signed head record, or ends "
+                                "differently: entries were removed or replaced, so no chained decision (a done "
+                                "verdict, a close, a workspace setting) counts as verified; stop and ask the human "
+                                "to look at it"))
     html_state = ledger.widgets_html_state(ws)
     if html_state == "unsigned":
         findings.append(Finding("warning", "unsigned-setting", None,

@@ -155,6 +155,23 @@ very bytes it would serve). The new version is never shown under the old pin. Re
 into the block, which changes the section text; in Verification that changes the verdict hash, so the human reads
 the widget again.
 
+#### Upgrades: drift and re-pinning
+
+A built-in template that changes in an upgrade makes every existing block that pins its old digest show "Drift" until
+that block is re-pinned. This is by design: the verdict hash binds the pin, so a template must never change what a
+reader or a verdict covers without somebody looking at it. Nothing is repaired automatically.
+
+There is no `orch widget` command that re-pins. To re-pin a block, run `orch widget check <ID>`, read the digest
+the drift message gives ("it now has sha256 ..."), read the template (`orch widget show <name@v>` prints its schema, example and body path) or render the ticket
+(`orch widget render <ID> --html`) to see what it draws,
+then replace the block's `"sha256"` with that digest in the section text (`orch section set <ID> <Section> --file ...`
+rewrites the whole section; copy the section out with `orch show` first). Run `orch widget check <ID>` again.
+
+Re-pinning edits the section text, so where the section is Verification or Acceptance criteria and a verdict hash was
+already bound to the ticket, the old verdict is stale: the human has to read the widget again and give a fresh verdict. An agent
+cannot give or carry it over. The verdict hash already reads "drift" right after the upgrade, so an earlier verdict is
+refused even before any re-pin.
+
 What the pin leaves out is display-only: widget.json's `title`, `description`, `moment`, `min_height` (the frame's
 starting height before the document reports its own) and each version's `schema` and `notes` (the schema only checks
 the block's data, which is in the block's own text). None of them reaches the frame document.

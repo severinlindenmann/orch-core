@@ -27,7 +27,7 @@
     el.className = el.className.replace(/term-state-\S+/, "term-state-" + (status || "none"));
   };
   const lineOf = (l) => [l.ticket ? l.ticket + (l.tasks ? " " + l.tasks + " tasks" : "") + (l.more ? " +" + l.more : "") : "",
-    l.subs, l.context ? "context " + l.context : ""].filter(Boolean).join(" · ");
+    l.subs, l.context ? "context " + l.context : "", l.cache].filter(Boolean).join(" · ");
 
   // A live stream that rests while the tab is hidden: closed on hide (the server stops polling tmux for it), opened
   // again on show, where the first event brings the screen up to date. stop() ends it for good (the session ended).
@@ -127,6 +127,9 @@
         tile.querySelector('[data-f="ticket"]').textContent = l.ticket || "no ticket";
         tile.querySelector('[data-f="tasks"]').textContent = l.tasks ? l.tasks + " tasks" : "";
         tile.querySelector('[data-f="subs"]').textContent = l.subs;
+        const cache = tile.querySelector('[data-f="cache"]');
+        cache.textContent = l.cache;
+        cache.classList.toggle("term-cache-cold", l.cold);
         const age = tile.querySelector("[data-ago]");
         age.dataset.ago = l.activity;
         age.textContent = ago(l.activity);

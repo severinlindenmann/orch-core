@@ -1486,6 +1486,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 .term-now-question { color: var(--warn-fg); }
 .term-now-none { color: var(--muted); font-weight: 500; }
 .term-meta { display: flex; flex-wrap: wrap; gap: var(--s-2); padding: var(--s-1) var(--s-4) var(--s-3); font: var(--type-meta); color: var(--muted); }
+.term-cache-cold { color: var(--warn-fg); }
 .term-ticket { font-family: var(--font-mono); color: var(--info-fg); }
 .term-tile-foot { display: flex; justify-content: space-between; gap: var(--s-2); padding: var(--s-2) var(--s-4); font: var(--type-meta);
   color: var(--muted); border-top: 1px solid var(--line); }

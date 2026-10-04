@@ -130,3 +130,33 @@ def test_the_terminal_page_has_details_and_a_read_only_watch(dash, ws, claude, m
     assert "Review L-0008" in html and "1 finished" in html and "Diagnostics" in html
     assert 'href="https://github.com/o/r/pull/258"' in html and "javascript:" not in html
     assert "$1.50" in html and "not what you pay" in html
+
+
+def test_cache_warm_then_cold_and_ttl_from_the_write(tmp_path):
+    """A reply restarts the cache clock; a 1h write keeps it warm an hour, a 5m one five minutes; none before a reply."""
+    log = tmp_path / "t.jsonl"
+    t = agentinfo.Transcript(log)
+    _write(log, [{"type": "user", "message": {"content": "hi"}}])
+    t.update()
+    assert agentinfo.cache(t) is None and agentinfo.cache_label(None) == ""
+    reply = _assistant([{"type": "text", "text": "ok"}])
+    reply["timestamp"] = "2026-10-04T16:00:00.000Z"
+    reply["message"]["usage"]["cache_creation"] = {"ephemeral_1h_input_tokens": 50, "ephemeral_5m_input_tokens": 0}
+    _write(log, [reply])
+    t.update()
+    at = t.cache_at
+    assert agentinfo.cache(t, at + 600) == {"warm": True, "left": 3000, "ttl": 3600}
+    assert agentinfo.cache_label(agentinfo.cache(t, at + 600)) == "cache warm · 50m left"
+    assert agentinfo.cache_label(agentinfo.cache(t, at + 3570)) == "cache warm · 30s left"
+    assert agentinfo.cache_label(agentinfo.cache(t, at + 3601)) == "cache cold"
+    read_only = _assistant([{"type": "text", "text": "again"}])  # a pure read keeps the lifetime it had
+    read_only["timestamp"] = "2026-10-04T17:00:00.000Z"
+    _write(log, [read_only])
+    t.update()
+    assert t.cache_ttl == 3600 and t.cache_at == at + 3600
+    short = _assistant([{"type": "text", "text": "5m"}])
+    short["timestamp"] = "not a time"
+    short["message"]["usage"]["cache_creation"] = {"ephemeral_5m_input_tokens": 9}
+    _write(log, [short])
+    t.update()
+    assert t.cache_ttl == 300 and t.cache_at == at + 3600  # a bad timestamp keeps the last good one

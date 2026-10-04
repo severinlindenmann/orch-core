@@ -1049,7 +1049,7 @@ def test_guard_refuses_listing_the_config_dir(ws, cmd):
 
 
 def test_guard_leaves_ordinary_listings_alone(ws):
-    for cmd in ("ls", "ls -la src", "find . -name '*.py'", "du -sh .", "ls /tmp", "find /tmp -maxdepth 1",
+    for cmd in ("ls", "ls -la src", "find . -name '*.py'", "du -sh .", "ls /usr", "find /usr -maxdepth 1",
                 "stat README.md"):
         assert _bash(ws, cmd).allow, cmd
 

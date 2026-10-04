@@ -220,12 +220,16 @@ def concurrency(ws) -> int:
 
 def wake_token(epic, child, signed) -> str:
     """What a parked child waits for: the human's answers in this epic (grants, denials, revocations) and what its
-    approvals bind (its text and gates). Not its status: the agent moves that itself."""
+    approvals bind (its text and gates), and in a Dark epic every change to the workspace's Dark profile. Not its
+    status: the agent moves that itself."""
     mine = [e for e in signed if e.get("ticket") == epic.id]
     gates = {k: bool((v or {}).get("approved")) for k, v in sorted((child.meta.get("gates") or {}).items())}
     body = [epics.child_hashes(child), gates, sorted(str(e.get("grant")) for e in mine if e.get("kind") == "grant"),
             sum(1 for e in mine if e.get("kind") == "permit_deny"),
             sum(1 for e in mine if e.get("kind") == "permit_revoke")]
+    charter = next((e for e in reversed(mine) if e.get("kind") == "charter"), None)
+    if charter and isinstance(charter.get("delegate"), dict) and charter["delegate"].get("dark"):  # only Dark epics: other tokens stay as they were
+        body.append([e.get("mac") for e in signed if e.get("kind") == "dark_profile"])
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 

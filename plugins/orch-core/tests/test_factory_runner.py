@@ -434,6 +434,43 @@ def test_a_parked_child_wakes_after_a_grant_and_only_then(fws, fa, fh, human, fa
     assert permits.hook_decision(fws, _payload(b1["session"])) is None  # the old session's id is not trusted again
 
 
+def test_a_parked_dark_child_wakes_when_the_dark_profile_changes(configure, agent, human, fake):
+    from conftest import human_ops
+    from orch.core import dark_profile
+    from orch.core.ops import Ops
+    dws = configure(factory={"enabled": True, "dark": True})
+    eid, (cid,), d = _started(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
+    assert d["dark"] is True
+    _tick(dws, human, fake)
+    (b1,) = fs.bindings(dws)
+    assert _behavior(permits.hook_decision(dws, _payload(b1["session"]))) == "deny"  # not in the profile: parks
+    fake.names.clear()
+    assert "ended" in _tick(dws, human, fake)[0]
+    assert _tick(dws, human, fake) == []  # nothing it waits for changed: stays parked
+    rule = dark_profile.add(dws, human, "prefix", "make e2e")
+    assert _tick(dws, human, fake)[0].startswith("started")
+    (b2,) = fs.bindings(dws)
+    assert _behavior(permits.hook_decision(dws, _payload(b2["session"]))) == "allow"
+    fake.names.clear()
+    _tick(dws, human, fake)
+    assert _tick(dws, human, fake) == []
+    dark_profile.remove(dws, human, rule["rule_id"])  # a removal changes what it waits for too
+    assert _tick(dws, human, fake)[0].startswith("started")
+
+
+def test_the_dark_profile_does_not_wake_an_ordinary_factory_child(fws, fa, fh, human, fake, configure):
+    from orch.core import dark_profile
+    _started(fws, fa, fh)
+    _tick(fws, human, fake)
+    (b1,) = fs.bindings(fws)
+    permits.hook_decision(fws, _payload(b1["session"]))
+    fake.names.clear()
+    _tick(fws, human, fake)
+    dws = configure(factory={"enabled": True, "dark": True})
+    dark_profile.add(dws, human, "prefix", "make e2e")
+    assert _tick(dws, human, fake) == []
+
+
 def test_a_child_is_started_at_most_a_few_times(fws, fa, fh, human, fake):
     eid, (cid,), d = _started(fws, fa, fh)
     for i in range(fs.MAX_LAUNCHES + 3):

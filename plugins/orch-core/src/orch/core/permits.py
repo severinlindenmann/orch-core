@@ -19,6 +19,9 @@ A factory epic is an epic whose signed charter carries a factory delegation (`or
   command classes that change who decides, where orch keeps its records, the harness's own configuration, or the
   default branch. Command text outside printable ASCII or spanning lines is never grantable either.
 
+A Dark factory epic (phase 5, dark_delegation) answers from the human's signed Dark profile instead
+(orch.core.dark_profile): a listed command is allowed, anything else is denied with a card (source "dark").
+
 Nothing here writes harness settings (owner decision D2 B): the hook answers every prompt itself. A hook cannot
 overturn an auto-mode classifier denial; an agent denied that way files `orch permit request` and the human decides,
 each time (docs/factory.md).
@@ -62,6 +65,21 @@ def factory_delegation(ws, epic, signed=None) -> dict | None:
     """The epic's delegation when it is a factory one (whatever its state), else None."""
     d = epics.delegation(ws, epic, signed)
     return d if d and d.get("factory") else None
+
+
+def dark_on(ws) -> bool:
+    """Dark AI Factory (phase 5): `factory.enabled` and `factory.dark` both on."""
+    f = ws.config.get("factory") or {}
+    return f.get("enabled") is True and f.get("dark") is True
+
+
+def dark_delegation(ws, epic, signed=None) -> dict | None:
+    """The epic's delegation when it is an active factory charter the human signed with `--dark` and the Dark switch
+    is on, else None (then the epic is an ordinary factory epic: cards, as before)."""
+    if not dark_on(ws):
+        return None
+    d = factory_delegation(ws, epic, signed)
+    return d if d and d.get("dark") and d["active"] else None
 
 
 def charter_epic(ws, t, signed=None):
@@ -340,9 +358,15 @@ def grants(ws, signed=None) -> list[dict]:
 
 
 def open_requests(ws, signed=None, events=None) -> list[dict]:
-    """Requests the human has not answered yet: what the cards show."""
+    """Requests the human has not answered yet: what the cards show. A Dark request (source "dark") whose command the
+    Dark profile now lists is answered by that rule."""
+    from orch.core import dark_profile
     done = decisions(ws, signed)
-    return [r for r in requests(ws, events).values() if (r["id"], r["sha"]) not in done]
+    out = [r for r in requests(ws, events).values() if (r["id"], r["sha"]) not in done]
+    if any(r["source"] == "dark" for r in out):
+        listed = dark_profile.rules(ws, signed)
+        out = [r for r in out if r["source"] != "dark" or dark_profile.match(ws, r["command"], listed) is None]
+    return out
 
 
 def find_live_grant(ws, epic_id: str, command: str, signed=None) -> dict | None:
@@ -541,9 +565,19 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")
     actor = Actor("agent", "claude-code", "hook", str(payload.get("session_id") or "") or None)
+    dark = dark_delegation(ws, epic) is not None
+    if dark:
+        from orch.core import dark_profile
+        if dark_profile.match(ws, command) is not None:  # a standing rule: nothing is used up
+            return _decision("allow")
     g = find_live_grant(ws, epic.id, command)
     if g is not None and use(ws, actor, g, ticket.id):
         return _decision("allow")
+    if dark:
+        r = request(ws, actor, ticket, command, reason="not in the Dark profile", source="dark")
+        return _decision("deny", f"not in the Dark profile of this workspace, so it does not run in a Dark factory "
+                                 f"(request {r['id']}). The human can add it to the Dark profile; go on with other "
+                                 f"work, or do without it and record why in the ticket.")
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
     return _decision("deny", f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
                              f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")

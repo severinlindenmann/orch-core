@@ -94,13 +94,16 @@ def epic_approved(t) -> bool:
 def normalize_delegate(delegate) -> dict | None:
     """The delegation limits as signed. A factory delegation (AI Factory, orch.core.permits) adds `factory: True` and
     a time budget `max_hours`; its defaults are 25 children or 72 hours (owner decision D5) and its children stay at
-    size m or below (D6). An ordinary delegation keeps exactly its two keys, so its charter hash is unchanged."""
+    size m or below (D6). An ordinary delegation keeps exactly its two keys, so its charter hash is unchanged. A Dark
+    factory (phase 5) adds `dark: True`, only when true, so the hash of every charter signed before is unchanged too."""
     if delegate is None or delegate is False:
         return None
     given = delegate if isinstance(delegate, dict) else {}
-    factory = bool(given.get("factory"))
+    factory, dark = bool(given.get("factory")), bool(given.get("dark"))
+    if dark and not factory:
+        raise UsageError("a Dark charter is a factory charter: --dark goes with --factory")
     d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
-    d.update({k: v for k, v in given.items() if v is not None and k != "factory"})
+    d.update({k: v for k, v in given.items() if v is not None and k not in ("factory", "dark")})
     try:
         d["max_children"] = int(d["max_children"])
     except (TypeError, ValueError):
@@ -120,6 +123,8 @@ def normalize_delegate(delegate) -> dict | None:
         if hours < 1:
             raise UsageError("the factory's hour budget must be at least 1 hour")
         out.update(factory=True, max_hours=hours)
+        if dark:
+            out["dark"] = True
     return out
 
 

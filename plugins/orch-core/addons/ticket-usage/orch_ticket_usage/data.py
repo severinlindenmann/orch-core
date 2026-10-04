@@ -6,6 +6,7 @@ does not understand and never raises. Nothing in this module runs while a page r
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -124,6 +125,10 @@ def read_limits(path: str) -> list[dict]:
         except (ValueError, KeyError, TypeError):
             continue
         if ts is not None and isinstance(row, dict):
+            for k in ("five", "week"):  # a percentage is 0..100; anything else (Infinity, NaN, a string) is unknown
+                v = row.get(k)
+                if not (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 <= v <= 100):
+                    row[k] = None
             row["ts"] = ts
             rows.append(row)
     return sorted(rows, key=lambda r: r["ts"])

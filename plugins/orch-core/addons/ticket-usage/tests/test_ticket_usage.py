@@ -371,3 +371,19 @@ def test_days_and_weeks_follow_the_machine_zone(monkeypatch):
     _t.tzset()
     assert data.day_of(data.to_epoch("2026-10-03T23:00:00Z")) == "2026-10-04"
     assert data.monday_of(data.day_of(data.to_epoch("2026-10-04T12:00:00Z"))) == "2026-10-05"  # Sunday 12:00Z is Monday there
+
+
+def test_hostile_limit_readings_never_break_the_pace(tmp_path):
+    """Review of PR 70: Infinity or a tiny rise in the log must not raise; readings above 100 become unknown."""
+    log = tmp_path / "limits.jsonl"
+    log.write_text("\n".join([
+        '{"at": "2026-10-04T10:00:00Z", "five": 10, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:10:00Z", "five": Infinity, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:20:00Z", "five": 10.0000000000001, "five_reset": 1791146400}',
+        '{"at": "2026-10-04T10:30:00Z", "five": 250, "five_reset": 1791146400}']) + "\n")
+    rows = data.read_limits(str(log))
+    assert [r["five"] for r in rows] == [10, None, 10.0000000000001, None]
+    p = data.pace(rows, "five")
+    assert "too slow" in T._pace_text(p, "five", 1791146400, 1791120000)
+    full = {"n": 2, "first_ts": 1, "last_ts": 61, "first": 90, "last": 100}
+    assert T._pace_text(full, "five", 99999, 61) == "The limit is reached; it frees up at the reset."

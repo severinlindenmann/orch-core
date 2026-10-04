@@ -43,8 +43,8 @@ def build(claude, tickets, log_path, now) -> list[dict]:
     msgs: list = []
     costs: dict = {}  # owner -> cost record summed over its sessions
     running: set = set()
-    daily: dict = {}  # UTC day -> output tokens per model family, every reply on this machine
-    cost_days: dict = {}  # UTC day the session ended -> API-price estimate
+    daily: dict = {}  # local day -> output tokens per model family, every reply on this machine
+    cost_days: dict = {}  # local day the session ended -> API-price estimate
 
     def take(owner, role, parsed):
         o = _owner(owners, owner)
@@ -270,8 +270,12 @@ def _pace_text(p, key, reset, now):
     span = p["last_ts"] - p["first_ts"]
     if key == "week" and span < 86400:
         return "Recording started recently, so there is no weekly pace yet. It appears after a day."
+    if p["last"] >= 100:
+        return "The limit is reached; it frees up at the reset."
     rate = (p["last"] - p["first"]) / span
     eta = p["last_ts"] + (100 - p["last"]) / rate
+    if not (eta < p["last_ts"] + 366 * 86400):  # a tiny rise says nothing about when it fills
+        return f"Up {p['last'] - p['first']:.0f} points in the newest window; too slow to say when it fills."
     after = isinstance(reset, (int, float)) and eta > reset
     dur = f"{span / 3600:.1f} h" if span >= 7200 else f"{round(span / 60)} min"
     return (f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it would reach 100 % around "

@@ -112,7 +112,7 @@ Return widgets from `orch.addons.widgets`, never HTML or strings: `Card(title, b
 | `kind-switched-off` | pending | the owner switched that kind off in the workspace settings |
 | `question-not-found` | pending | the ticket has no such question |
 | `refused-retry` | pending | core could not apply it for a reason that may pass later; `message` says which; not ledgered |
-| `refused-final` | stale | a check core runs for every human refused the change (for example a validation or transition rule); `message` says which; ledgered, final |
+| `refused-final` | stale | a check core runs for every human refused the change (for example a validation or transition rule, or a ticket request whose text core refuses); `message` says which; ledgered, final |
 | `too-old` | stale | older than 14 days; never applied automatically |
 | `changed-since` | stale | the question, gate text, plan or verdict criteria changed after the phone showed them |
 | `wrong-status` | stale | a verdict for a ticket that is not in testing |

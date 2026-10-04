@@ -127,3 +127,40 @@ def test_together_codes(ws, phone, drafted, aops, monkeypatch):  # noqa: F811
     monkeypatch.setattr(Ops, "approve_together", refuse(OrchError("try again")))
     r = _run(ws, _together(phone, ws, drafted, letter="9"))
     assert (r.status, r.code) == ("pending", "refused-retry")
+
+
+def _request(phone, **value):  # noqa: F811
+    d = {"v": 1, "decision_id": "dec_" + "8" * 32, "kind": "ticket_request", "value": {"title": "T", **value},
+         "at": "2026-10-02T09:41:07Z", "pair": phone.id}
+    return _signed(phone, d)
+
+
+def test_ticket_request_core_refusal_is_final_and_ledgered(ws, phone, monkeypatch):  # noqa: F811
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    from orch.remote import ledger
+
+    def refuse(*a, **k):
+        raise ValidationError("core said no")
+    monkeypatch.setattr(Ops, "new", refuse)
+    phones.set_permissions(ws.root, {"ticket_request": True})
+    d = _request(phone)
+    r = _run(ws, d)
+    assert (r.status, r.code, r.message) == ("stale", "refused-final", "core said no")
+    assert ledger.seen(ws, d["decision_id"])
+    assert _run(ws, d).code == "already-handled"
+
+
+def test_ticket_request_lock_busy_is_retry(ws, phone, monkeypatch):  # noqa: F811
+    from orch.core.ops import Ops
+    from orch.errors import LockBusyError
+    from orch.remote import ledger
+    phones.set_permissions(ws.root, {"ticket_request": True})
+
+    def busy(*a, **k):
+        raise LockBusyError("busy")
+    monkeypatch.setattr(Ops, "new", busy)
+    d = _request(phone)
+    r = _run(ws, d)
+    assert (r.status, r.code) == ("pending", "refused-retry")
+    assert not ledger.seen(ws, d["decision_id"])

@@ -22,6 +22,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from contextlib import contextmanager
+
+from filelock import FileLock, Timeout
 
 from orch.core import store
 from orch.core.canonical import canonical_json
@@ -283,6 +286,23 @@ def mark_delegated(did: str, child: str) -> None:
         os.close(os.open(d / _marker(did, child), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     except FileExistsError:
         pass
+
+
+@contextmanager
+def delegation_lock(did: str):
+    """One lock for every checkout and process sharing the config dir: the child count and the marker write of an
+    auto-approval happen under it, so two of them at the limit cannot both pass."""
+    d = _marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    fl = FileLock(str(d / f".{_marker(did, '')}lock"), timeout=30)
+    try:
+        fl.acquire()
+    except Timeout as e:
+        raise UsageError("another auto-approval holds the delegation", hint="retry in a moment") from e
+    try:
+        yield
+    finally:
+        fl.release()
 
 
 def is_marked(did: str, child: str) -> bool:

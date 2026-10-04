@@ -1055,11 +1055,14 @@ class Ops(TaskOpsMixin):
             raise UsageError("auto-approval is an agent's step under delegation; you approve with `orch approve`")
 
         def fn(t: Ticket) -> list:
-            from orch.core.locks import lock
             epic = epics.parent_epic(self.ws, t)
             if epic is None:
                 raise ValidationError(f"{t.id} is not a child of an epic")
-            with lock(self.ws, f"delegation-{epic.id}", timeout=30):  # count and marker under one lock
+            d = epics.delegation(self.ws, epic)
+            if d is None:
+                return approve(t, epic)  # refuses
+            # the count and the marker under one lock shared by every checkout of this config dir; approve re-checks
+            with epics.delegation_lock(d["id"]):
                 return approve(t, epic)
 
         def approve(t: Ticket, epic) -> list:

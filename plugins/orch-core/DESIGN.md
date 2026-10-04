@@ -25,6 +25,7 @@ Open `/design` in Mission Control to see every widget, variant and state as core
 | A command or ID to paste | `Copy` | never secrets |
 | Something outside orch | `Link` (core adds ↗ and opens a new tab) | |
 | A change outside orch | `Action` in the row it affects; `quiet=True` for the lesser one | ≤ 1 per table row, ≤ 3 per card; verb + object |
+| A trend or a comparison over time or categories | `Chart` (API 2.6, bar or line); never a Table of numbers a reader must compare by eye | ≤ 8 series, each its own colour; the numbers are always in the table under it |
 | A timestamp | `Time(at, style="ago"|"at")` with an ISO 8601 time and offset | never a formatted string or UTC text |
 | Today's number | One `Tile` with a noun label, a number and a `sub` line | `None` = unknown, not 0 |
 | A human decision | `PendingDecision` (core draws the card) | ≤ 6 choices |

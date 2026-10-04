@@ -176,6 +176,19 @@ def _transcript(session_id: str) -> Transcript | None:
         return t
 
 
+_SUB_TRANSCRIPTS: dict[str, Transcript] = {}
+
+
+def _sub_model(log: Path, alias) -> str:
+    """The model a subagent really ran on (its own transcript), else the alias the caller passed."""
+    with _LOCK:
+        t = _SUB_TRANSCRIPTS.get(str(log))
+        if t is None:
+            t = _SUB_TRANSCRIPTS[str(log)] = Transcript(log)
+        t.update()
+        return t.model or alias or ""
+
+
 def _subagents(t: Transcript, session_id: str) -> list[dict]:
     folder = t.path.parent / session_id / "subagents"
     out, now = [], time.time()
@@ -190,7 +203,7 @@ def _subagents(t: Transcript, session_id: str) -> list[dict]:
         except OSError:
             active = False
         out.append({"description": _short(data.get("description"), 80), "type": data.get("agentType") or "",
-                    "model": data.get("model") or "", "active": active})
+                    "model": model_label(_sub_model(log, data.get("model"))), "active": active})
     out.sort(key=lambda s: not s["active"])
     return out
 
@@ -247,6 +260,20 @@ def model_label(model) -> str:
     if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
         return f"{parts[0].capitalize()} {parts[1]}.{parts[2]}"
     return str(model)
+
+
+def session_models(session_id) -> dict | None:
+    """Which models ran in one Claude session: {"main": [(label, messages)], "subagents": [(label, count)], "total"}.
+    None when its transcript is not on this machine. Never raises."""
+    try:
+        t = _transcript(str(session_id or ""))
+        if t is None:
+            return None
+        subs = Counter(s["model"] or "unknown" for s in _subagents(t, str(session_id)))
+        return {"main": [(model_label(m), n) for m, n in t.models.most_common()],
+                "subagents": list(subs.most_common()), "total": sum(subs.values())}
+    except Exception:
+        return None
 
 
 def info(ws, session) -> dict:

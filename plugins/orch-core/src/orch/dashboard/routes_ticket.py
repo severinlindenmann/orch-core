@@ -153,6 +153,7 @@ def ticket_page(request: Request, ref: str, open: str = ""):
     reviews = runtime.review_index() if runtime is not None else {}
     failing = [i["url"] for i in reviews.get(t.id, []) if i.get("state", "open") == "open"
                and isinstance(i.get("checks"), dict) and i["checks"].get("state") == "failed" and isinstance(i.get("url"), str)]
+    ran_on = _ran_on(t)
     ticket_decisions = runtime.decisions_for(t.id) if runtime is not None else []
     rows = agent_rows(ws, now=at, events=ticket_events, entries=entries, needs=all_needs)
     card = Cards(ws, entries=entries, needs=all_needs, rows=rows, events=ticket_events, reviews=reviews,
@@ -195,10 +196,24 @@ def ticket_page(request: Request, ref: str, open: str = ""):
                 ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),
                 notes=story.agent_notes(t, ticket_events), timeline=story.timeline(ticket_events),
                 plan_checklist=plan_checklist(t.section("Plan")) if not task_view["tasks"] else None,
-                artifacts=_artifacts(ws, t.id), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")),
+                artifacts=_artifacts(ws, t.id), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")), ran_on=ran_on,
                 external=external, prs=prs, branches=branches, start_box=start_box, tasks_card=tasks_card,
                 ticket_decisions=ticket_decisions, epic=epic_view, together=bool(together),
                 together_questions=human_questions_in(t, "requirements") + human_questions_in(t, "plan"))
+
+
+def _ran_on(t, limit: int = 5) -> list[dict]:
+    """The ticket's recorded sessions, newest first, with the models Claude Code's own transcript says ran."""
+    from orch.dashboard import agentinfo
+    rows = [s for s in t.meta.get("sessions") or [] if isinstance(s, dict) and s.get("id")]
+    rows.sort(key=lambda s: str(s.get("started") or ""), reverse=True)
+    out = []
+    for s in rows[:limit]:
+        harness = str(s.get("harness") or "")
+        claude = "claude" in harness.lower()
+        out.append({"harness": harness or "agent", "started": day(s.get("started")), "claude": claude,
+                    "models": agentinfo.session_models(s["id"]) if claude else None})
+    return out
 
 
 def _widgets(ws, path, t):

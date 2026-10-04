@@ -101,7 +101,7 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
     from fastapi.responses import Response
 
     from orch.addons.loader import valid_name
-    from orch.core.artifacts import read_pinned
+    from orch.core.artifacts import max_bytes, read_pinned
     from orch.widgets import artifacts
     from orch.widgets.pages import blocks_of, page_ctx
     from orch.widgets.types._media import VIDEO_TYPES
@@ -121,7 +121,7 @@ def page_file_document(request: Request, addon: str, digest: str, page: str = ""
     kind = mimetypes.guess_type(path.name)[0] if path else None
     if kind not in artifacts.IMAGE_TYPES | VIDEO_TYPES:
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
-    data = read_pinned(path, digest)
+    data = read_pinned(path, digest, max_bytes(ctx.ws))
     if data is None:
         return PlainTextResponse("not found", status_code=404, headers=HEADERS)
     return Response(data, media_type=kind, headers={"Content-Security-Policy": "sandbox",

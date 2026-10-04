@@ -98,3 +98,76 @@ def test_a_swap_after_the_check_serves_the_bytes_that_were_hashed(tmp_path, monk
     monkeypatch.setattr(os, "open", swapping)
     assert read_pinned(p, _full(b"one")) == b"one" and seen
     assert read_pinned(p, _full(b"two")) is None  # now a symlink: refused
+
+
+# ---- the same open serves /a/<ticket>/<name> without ?v=
+def _folder(ws, working):
+    d = ws.artifacts_dir / working
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_unpinned_artifact_is_served_from_the_open_handle(dash, ws, working):
+    pytest.importorskip("fastapi")
+    d = _folder(ws, working)
+    (d / "sub" / "deep").mkdir(parents=True)
+    (d / "sub" / "deep" / "x.png").write_bytes(b"\x89PNG-nested")
+    r = dash.get(f"/a/{working}/sub/deep/x.png")
+    assert r.status_code == 200 and r.content == b"\x89PNG-nested"
+    assert r.headers["content-type"] == "image/png" and r.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in r.headers["content-security-policy"] and r.headers["content-length"] == "11"
+
+
+def test_unpinned_artifact_refuses_links_and_special_files(dash, ws, working, tmp_path):
+    pytest.importorskip("fastapi")
+    d = _folder(ws, working)
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"secret")
+    os.link(outside, d / "hard.txt")
+    (d / "real").mkdir()
+    (d / "real" / "ok.txt").write_bytes(b"ok")
+    (d / "link.txt").symlink_to(d / "real" / "ok.txt")
+    (d / "dlink").symlink_to(d / "real")
+    os.mkfifo(d / "pipe.txt")
+    for name in ("hard.txt", "link.txt", "dlink/ok.txt", "pipe.txt", "gone.txt"):
+        assert dash.get(f"/a/{working}/{name}").status_code == 404, name
+    assert dash.get(f"/a/{working}/real/ok.txt").content == b"ok"
+
+
+def test_nested_components_are_walked_without_following_links(tmp_path):
+    from orch.core.artifacts import read_regular
+    (tmp_path / "root" / "a" / "b").mkdir(parents=True)
+    (tmp_path / "root" / "a" / "b" / "f").write_bytes(b"x")
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "f").write_bytes(b"y")
+    root = tmp_path / "root"
+    assert read_regular(root / "a" / "b" / "f", root=root) == b"x"
+    (root / "a" / "b").rename(tmp_path / "moved")
+    (root / "a" / "b").symlink_to(tmp_path / "elsewhere")  # an intermediate component swapped for a link
+    assert read_regular(root / "a" / "b" / "f", root=root) is None
+    assert read_regular(tmp_path / "elsewhere" / "f", root=root) is None  # not under the root
+
+
+def test_a_response_dropped_unread_closes_its_file(ws, working):
+    import gc
+    from types import SimpleNamespace
+
+    from orch.dashboard.routes_ticket import artifact
+    (_folder(ws, working) / "big.bin").write_bytes(b"x" * 1000)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ws=ws)))
+    before = set(os.listdir("/dev/fd"))
+    r = artifact(request, working, "big.bin")
+    assert len(set(os.listdir("/dev/fd")) - before) == 1  # the one open handle
+    del r
+    gc.collect()
+    assert set(os.listdir("/dev/fd")) <= before
+
+
+def test_data_uri_refuses_a_link_inside_the_ticket_folder(ws, working):
+    from orch.widgets.artifacts import data_uri
+    d = _folder(ws, working)
+    (d / "a.png").write_bytes(b"\x89PNG-1")
+    (d / "l.png").symlink_to(d / "a.png")
+    sha = _full(b"\x89PNG-1")
+    assert data_uri(ws, working, f"artifacts/{working}/a.png", sha).startswith("data:image/png;base64,")
+    assert data_uri(ws, working, f"artifacts/{working}/l.png", sha) is None

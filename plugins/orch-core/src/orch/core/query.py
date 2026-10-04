@@ -84,6 +84,11 @@ def artifact_file(ws, ticket_id: str, name: str) -> Path | None:
     return None
 
 
+def artifact_root(ws, ticket_id: str) -> Path:
+    """The ticket's artifact folder, resolved: where a hardened open of one of its files starts."""
+    return (ws.artifacts_dir.resolve() / ticket_id).resolve()
+
+
 def ticket_view(ws, path: Path, ticket) -> dict:
     from orch.core import tasks_view
     return {

@@ -73,17 +73,18 @@ def data_uri(ws, ticket_id: str, ref: str, digest, kinds=IMAGE_TYPES) -> str | N
     most 5 MB and its bytes have sha256 `digest`. Read once (orch.core.artifacts.read_pinned): the bytes embedded are
     the bytes that were hashed, never a second read after a check."""
     from orch.core.artifacts import read_pinned
+    from orch.widgets.pages import PageKey
     path = resolve(ws, ticket_id, ref)
     kind = mimetypes.guess_type(path.name)[0] if path else None
     if path is None or kind not in kinds or not isinstance(digest, str) or len(digest) != 64:
         return None
-    try:
-        if path.stat().st_size > MAX_DATA_URI:
-            return None
-    except OSError:
-        return None
-    data = read_pinned(path, digest)
-    if data is None or len(data) > MAX_DATA_URI:
+    root = None
+    if ws is not None and not isinstance(ticket_id, PageKey):  # a link inside the ticket's folder is refused, not followed
+        from orch.core.query import artifact_root
+        root = artifact_root(ws, ticket_id)
+        path = root / name_of(ticket_id, ref)
+    data = read_pinned(path, digest, MAX_DATA_URI, root=root)
+    if data is None:
         return None
     return f"data:{kind};base64,{base64.b64encode(data).decode('ascii')}"
 

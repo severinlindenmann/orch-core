@@ -805,3 +805,42 @@ def test_open_question_lines_are_waived_per_child(ws, aops, hops):
     assert [s[0] for s in skipped] == [kids[1]] and "open question" in skipped[0][1]
     entry = [e for e in ledger.entries(ws) if e.get("gate") == "plan"][-1]
     assert entry["ticket"] == kids[0] and entry.get("despite_open_question") is True
+
+
+_BATCH_PROC = """
+import json, os, sys, time
+from pathlib import Path
+import orch.actor
+orch.actor.process_chain = lambda: []  # as conftest: the suite's real process tree must not decide who acts
+from orch.core.events import Actor
+from orch.core.ops import Ops
+from orch.core.workspace import Workspace
+root, go, seen = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+ops = Ops(Workspace.open(Path(root)), Actor("human", "you", "tty"))
+while not os.path.exists(go):
+    time.sleep(0.001)
+approved, skipped = ops.approve_plans(sys.argv[4], seen)
+print(json.dumps([len(approved), len(skipped)]))
+"""
+
+
+def test_two_concurrent_batches_sign_each_child_once(ws, ws_root, aops, hops, tmp_path):
+    """#49: the "already approved" check is made under the ticket lock, so two batches started at the same
+    instant never sign one child twice."""
+    import subprocess
+    import sys
+    eid, kids = _claimed_with_plans(ws, aops, hops, n=12)
+    seen = _plans_seen(ws, eid)
+    go = tmp_path / "go"
+    args = [sys.executable, "-c", _BATCH_PROC, str(ws_root), str(go), json.dumps(seen), eid]
+    procs = [subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+    go.write_text("", encoding="utf-8")
+    results = []
+    for p in procs:
+        out, err = p.communicate(timeout=120)
+        assert p.returncode == 0, err
+        results.append(json.loads(out))
+    assert sum(r[0] for r in results) == len(kids)  # each child approved by exactly one batch
+    signed = [e["ticket"] for e in ledger.entries(ws) if e["kind"] == "gate" and e.get("gate") == "plan"]
+    assert sorted(signed) == sorted(kids)
+    assert all(gate_state(_load(ws, c), "plan") == "approved" for c in kids)

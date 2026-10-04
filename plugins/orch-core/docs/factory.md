@@ -215,7 +215,7 @@ length, glob matches, path depth, time): hitting a bound, or an error inside the
 hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
 a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
 (unless its target names orch's own environment or config place, such as `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `.config/orch`,
-the word orch or an environment lookup: that is judged as a cd into the config dir). A command that names the config
+or an obfuscated lookup that also names orch or config (the bare words orch, env and printenv do not count): that is judged as a cd into the config dir). A command that names the config
 location and tmux or screen anywhere in its text, interpreter strings included, is refused. Otherwise
 the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
 in the config dir (permits, sessions, ledger*, tmux, ...) is refused with its own message, and so is a bare `*` handed

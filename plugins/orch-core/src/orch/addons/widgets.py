@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import ClassVar, Union
 
 ROLES = ("ok", "info", "warn", "err", "neu")  # no "you": addon items never count as needs-you
@@ -50,7 +50,41 @@ class Markdown:
 class Badge:
     role: str
     text: str
+    title: str = ""  # API 2.5: a tooltip, used by menu_badge (the sidebar chip); other slots ignore it
     kind: ClassVar[str] = "badge"
+
+
+@dataclass(frozen=True)
+class Countdown:
+    """API 2.5: a live "in 3 h 05" to `until` (ISO 8601 with Z or an offset), used in a MenuStatus line; after it
+    the text is `done`. Core renders the first text and a small script keeps it current."""
+    until: str
+    done: str = "reset"
+    kind: ClassVar[str] = "countdown"
+
+
+@dataclass(frozen=True)
+class MenuStatus:
+    """API 2.5: what menu_badge may return instead of a Badge: a chip (`badge`) on the menu entry and a short muted
+    `line` under its label made of Badge (small coloured text), Text and Countdown parts."""
+    badge: Badge | None = None
+    line: tuple = ()
+    kind: ClassVar[str] = "menu_status"
+
+
+def countdown_text(until: str, done: str, now: datetime | None = None) -> str | None:
+    """"in 3 h 05", "in 12 min" or `done`; None when `until` is not an ISO time with an offset."""
+    try:
+        t = datetime.fromisoformat(until)
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        return None
+    s = (t - (now or datetime.now(timezone.utc))).total_seconds()
+    if s <= 0:
+        return done
+    m = int(s // 60)
+    return f"in {m // 60} h {m % 60:02d}" if m >= 60 else f"in {max(m, 1)} min"
 
 
 @dataclass(frozen=True)

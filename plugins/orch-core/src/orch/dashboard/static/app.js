@@ -1077,4 +1077,16 @@
     window.addEventListener("pagehide", close);
     if (!document.hidden) open();
   }
+
+  // Countdowns ([data-until], the server's text stays without JS): same format as the server, every 30 s.
+  const tick = () => document.querySelectorAll("[data-until]").forEach((el) => {
+    const s = (Date.parse(el.dataset.until) - Date.now()) / 1000;
+    if (isNaN(s)) return;
+    const m = Math.floor(s / 60);
+    el.textContent = s <= 0 ? el.dataset.done : m >= 60 ? "in " + Math.floor(m / 60) + " h " + String(m % 60).padStart(2, "0") : "in " + Math.max(m, 1) + " min";
+  });
+  if (document.querySelectorAll && typeof setInterval === "function") {
+    tick();
+    setInterval(tick, 30000);
+  }
 })();

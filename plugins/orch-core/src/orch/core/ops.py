@@ -1066,6 +1066,8 @@ class Ops(TaskOpsMixin):
                                 delegation=d["id"])
                 records.append(("gate.delegated", {"gate": gate, "hash": t.meta["gates"][gate]["hash"],
                                                    "hash_v": HASH_VERSION, "epic": epic.id, "delegation": d["id"]}))
+            if not self.dry_run:
+                epics.mark_delegated(d["id"], t.id)  # the count behind the factory's child budget
             t.meta["status"] = "open"  # backlog → open on the delegated approval (the human's move otherwise)
             self._log(t, f"auto-approved {' and '.join(gates)} under the delegation of epic {epic.id}")
             return records

@@ -20,6 +20,8 @@ event matches. A signed pause stops further auto-approvals; it keeps (with their
 from __future__ import annotations
 
 import hashlib
+import os
+import re
 
 from orch.core import store
 from orch.core.canonical import canonical_json
@@ -253,9 +255,42 @@ def frontmatter_delegated(ws, epic_id: str, did: str, entries=None) -> list[str]
     return out
 
 
+def _marker_dir():
+    from orch.core.ledger import base_dir
+    return base_dir() / "permits" / "children"
+
+
+def _marker(did: str, child: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", f"{did}.{child}")
+
+
+def mark_delegated(did: str, child: str) -> None:
+    """Note, beside the ledger and outside the repository, that delegation `did` auto-approved `child` (one exclusive
+    marker per child). A marker only ever counts against the budget, so the agent's own process may write it."""
+    d = _marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        os.close(os.open(d / _marker(did, child), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        pass
+
+
+def is_marked(did: str, child: str) -> bool:
+    return (_marker_dir() / _marker(did, child)).exists()
+
+
+def marked_delegated(did: str) -> int:
+    """How many children delegation `did` approved, by markers (the repository's events and files cannot lower it)."""
+    try:
+        return sum(1 for n in os.listdir(_marker_dir()) if n.startswith(_marker(did, "")))
+    except OSError:
+        return 0
+
+
 def delegated_count(ws, epic_id: str, did: str, events, entries=None) -> int:
-    """How many children the delegation has approved: the larger of what the events and the frontmatter say."""
-    return max(len(delegated_children(events, did)), len(frontmatter_delegated(ws, epic_id, did, entries)))
+    """How many children the delegation has approved: the largest of the markers, the events and the frontmatter."""
+    return max(marked_delegated(did), len(delegated_children(events, did)),
+               len(frontmatter_delegated(ws, epic_id, did, entries)))
 
 
 def hidden_in(child) -> bool:

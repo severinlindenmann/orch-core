@@ -1,0 +1,61 @@
+{
+  "name": "before-after",
+  "title": "Before / after",
+  "description": "Two screenshots of the same screen over each other with a slider, per viewport, with the changed regions marked on request.",
+  "moment": "review",
+  "libs": [],
+  "min_height": 320,
+  "versions": {
+    "1": {
+      "notes": "Images arrive as data: URIs (orch inlines the ticket artifacts the data names). Region boxes are fractions of the image (0-1).",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["views", "summary"],
+        "properties": {
+          "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "labels": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "before": {"type": "string", "maxLength": 200},
+              "after": {"type": "string", "maxLength": 200}
+            }
+          },
+          "views": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["viewport", "before", "after"],
+              "properties": {
+                "viewport": {"type": "integer", "minimum": 200, "maximum": 3000},
+                "before": {"type": "string", "pattern": "^data:image/(png|jpeg|webp|gif|svg\\+xml);base64,[A-Za-z0-9+/=]+$"},
+                "after": {"type": "string", "pattern": "^data:image/(png|jpeg|webp|gif|svg\\+xml);base64,[A-Za-z0-9+/=]+$"},
+                "regions": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["x", "y", "w", "h", "note"],
+                    "properties": {
+                      "x": {"type": "number", "minimum": 0, "maximum": 1},
+                      "y": {"type": "number", "minimum": 0, "maximum": 1},
+                      "w": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                      "h": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                      "note": {"type": "string", "minLength": 1, "maxLength": 200}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% import "_widgets.html" as w %}
+{#- One addon's page (spec v2 §11.5): its widgets for slot page.<name>, read from the cache only. -#}
+{% block main %}
+<div class="page-head">
+  <div><h1>{{ group.title }}</h1>{{ w.banner(group.banner) }}</div>
+  {#- Refresh: secondary, busy after 1 s (app.js); rate limited, it says when it works again in visible text. -#}
+  {% if can_refresh %}{% set limited = group.banner and group.banner.health == "rate_limited" %}<div class="actions"><form method="post" action="/addons/{{ group.addon }}/refresh" data-busy="Refreshing…"><button type="submit" class="btn"{% if limited %} disabled{% endif %}><span aria-hidden="true">⟳</span> Refresh{% if limited and group.banner.retry_after %} (after {{ group.banner.retry_after|local("%H:%M") }}){% endif %}</button></form></div>{% endif %}
+</div>
+<div class="addon-page" id="addon-page">
+  {% if group.widgets %}{{ w.widgets(group.widgets, group) }}
+  {% elif group.banner and group.banner.health == "never_fetched" %}{#- first fetch: one skeleton line per section, no spinner -#}
+  <section class="card skeleton-block" aria-busy="true" aria-label="Loading {{ group.title }}"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></section>
+  {% else %}<p class="empty">Nothing to show yet.</p>{% endif %}
+</div>
+{% endblock %}

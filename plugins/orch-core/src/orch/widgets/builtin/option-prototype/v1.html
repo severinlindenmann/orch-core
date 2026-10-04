@@ -1,0 +1,114 @@
+<style>
+  .op { padding: 12px; display: grid; gap: 12px; }
+  .op-q { margin: 0; font: var(--type-item); }
+  .op-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .op-tab { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; color: var(--muted); }
+  .op-tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--text); }
+  .op-rec { margin-left: 6px; padding: 1px 6px; border-radius: var(--r-pill); background: var(--ok-bg); color: var(--ok-fg); font: var(--type-meta); }
+  .op-panel { display: grid; gap: 10px; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 620px) { .op-panel { grid-template-columns: minmax(0, 1fr); } }
+  .op-phone { border: 1px solid var(--line2); border-radius: 18px; padding: 10px; background: var(--surface2); }
+  .op-screen { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; min-height: 260px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .op-screen h3 { margin: 0 0 4px; font: var(--type-section); }
+  .op-b-heading { font: var(--type-item); margin: 4px 0 0; }
+  .op-b-text { margin: 0; }
+  .op-b-field { border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; color: var(--muted); }
+  .op-b-item { border-bottom: 1px solid var(--line); padding: 6px 0; }
+  .op-b-note { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--info-bg); color: var(--info-fg); font: var(--type-meta); }
+  .op-btns { margin-top: auto; display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; }
+  .op-btn { padding: 8px 14px; border-radius: var(--r-md); border: 1px solid var(--line2); background: var(--surface); cursor: pointer; }
+  .op-btn.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+  .op-side { display: grid; gap: 8px; font: var(--type-body); }
+  .op-side p { margin: 0; }
+  .op-path { margin: 0; padding-left: 20px; color: var(--muted); }
+  .op-path li[aria-current] { color: var(--text); font-weight: 700; }
+  .op-nav { display: flex; gap: 6px; }
+  .op-nav button { padding: 4px 10px; border-radius: var(--r-pill); border: 1px solid var(--line2); background: var(--surface); cursor: pointer; }
+  .op-nav button:disabled { opacity: .45; cursor: default; }
+  .op-foot { margin: 0; color: var(--muted); font: var(--type-meta); }
+</style>
+<div class="op">
+  <p class="op-q" id="q"></p>
+  <div class="op-tabs" role="tablist" id="tabs"></div>
+  <div class="op-panel" role="tabpanel" id="panel">
+    <div class="op-phone"><div class="op-screen" id="screen" aria-live="polite"></div></div>
+    <div class="op-side">
+      <p id="summary"></p>
+      <div class="op-nav"><button type="button" id="back">Back</button><button type="button" id="restart">Start over</button></div>
+      <ol class="op-path" id="path" aria-label="Screens in this option"></ol>
+    </div>
+  </div>
+  <p class="op-foot">A prototype: clicking through records nothing. To choose, answer the ticket's question (orch ask).</p>
+</div>
+<script>
+(function () {
+  var d = orch.data, $ = function (id) { return document.getElementById(id); };
+  var opt = 0, history = [];
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  $("q").textContent = d.question;
+
+  var tabs = d.options.map(function (o, i) {
+    var t = el("button", "op-tab", o.title);
+    t.type = "button"; t.setAttribute("role", "tab"); t.id = "tab-" + o.id;
+    if (o.id === d.recommended) t.appendChild(el("span", "op-rec", "recommended"));
+    t.addEventListener("click", function () { select(i); });
+    t.addEventListener("keydown", function (e) {
+      var k = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (k) { e.preventDefault(); select((opt + k + d.options.length) % d.options.length); tabs[opt].focus(); }
+    });
+    $("tabs").appendChild(t);
+    return t;
+  });
+
+  function screenOf(o, id) { for (var i = 0; i < o.screens.length; i++) if (o.screens[i].id === id) return o.screens[i]; return null; }
+
+  function show() {
+    var o = d.options[opt], s = screenOf(o, history[history.length - 1]) || o.screens[0];
+    var box = $("screen"); box.textContent = "";
+    box.appendChild(el("h3", null, s.title));
+    (s.blocks || []).forEach(function (b) { box.appendChild(el(b.kind === "heading" ? "h4" : b.kind === "text" || b.kind === "note" ? "p" : "div", "op-b-" + b.kind, b.text)); });
+    var btns = el("div", "op-btns");
+    (s.buttons || []).forEach(function (b) {
+      var x = el("button", "op-btn" + (b.primary ? " primary" : ""), b.label);
+      x.type = "button";
+      var target = screenOf(o, b.to);
+      if (!target) { x.disabled = true; x.title = "No screen " + b.to; }
+      x.addEventListener("click", function () { history.push(b.to); show(); });
+      btns.appendChild(x);
+    });
+    box.appendChild(btns);
+    $("back").disabled = history.length < 2;
+    var path = $("path"); path.textContent = "";
+    o.screens.forEach(function (sc) {
+      var li = el("li", null, sc.title);
+      if (sc === s) li.setAttribute("aria-current", "step");
+      path.appendChild(li);
+    });
+  }
+
+  function select(i) {
+    opt = i; history = [d.options[i].screens[0].id];
+    tabs.forEach(function (t, j) { t.setAttribute("aria-selected", String(j === i)); t.tabIndex = j === i ? 0 : -1; });
+    $("panel").setAttribute("aria-labelledby", tabs[i].id);
+    $("summary").textContent = d.options[i].summary || "";
+    show();
+  }
+  $("back").addEventListener("click", function () { if (history.length > 1) { history.pop(); show(); } });
+  $("restart").addEventListener("click", function () { select(opt); });
+
+  var text = [d.question];
+  d.options.forEach(function (o) {
+    text.push("Option " + o.title + (o.id === d.recommended ? " (recommended)" : "") + (o.summary ? ": " + o.summary : "") +
+      " Screens: " + o.screens.map(function (s) {
+        var go = (s.buttons || []).map(function (b) { var t = screenOf(o, b.to); return b.label + " → " + (t ? t.title : b.to); });
+        return s.title + (go.length ? " [" + go.join("; ") + "]" : "");
+      }).join(", ") + ".");
+  });
+  text.push("Choosing happens by answering the ticket's question, not here.");
+  orch.text(text.join("\n"));
+  var start = 0;
+  d.options.forEach(function (o, i) { if (o.id === d.recommended) start = i; });
+  select(start);
+  orch.ready();
+})();
+</script>

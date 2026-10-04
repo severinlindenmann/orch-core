@@ -1,0 +1,105 @@
+{#- Addon widgets (spec v2 §11.5, design-system spec §3.1). Autoescaped; never |safe. `g` is the SlotGroup the
+    widget came from. Ticket keys of this workspace are linked by core (link_keys escapes first). -#}
+{#- Status icons come from the sprite in _icons.html (inlined once by layout.html); addons get five roles, never you. -#}
+{%- set _ROLES = ("ok", "info", "warn", "err", "neu") -%}
+{% macro icon(role) %}<svg class="i" aria-hidden="true"><use href="#i-{{ role }}"/></svg>{% endmacro %}
+{% macro chip(role, text) %}<span class="chip chip-{{ role }}">{{ icon(role if role in _ROLES else "neu") }} {{ text }}</span>{% endmacro %}
+{% macro txt(s, g) %}{% if link_keys is defined and g.key_prefix is defined %}{{ link_keys(s, g.key_prefix) }}{% else %}{{ s }}{% endif %}{% endmacro %}
+{% macro time(c) %}{% set t = widget_time(c.at, c.style) if widget_time is defined else (c.at, c.at) %}<time datetime="{{ c.at }}" title="{{ t[0] }}">{{ t[1] }}</time>{% endmacro %}
+{% macro action(c, g) %}{% set up = c.action in g.uploads %}<form method="post" action="/addons/{{ g.addon }}/actions/{{ c.action }}" class="inline{{ ' upload' if up }}"{% if up %} enctype="multipart/form-data"{% endif %} data-dialog="{{ c.confirm if c.confirm is not none else g.confirms.get(c.action, c.label ~ '?') }}" data-dialog-body="{{ g.title }} does this outside orch." data-dialog-confirm="{{ c.label }}">{% if not up %}<input type="hidden" name="ask" value="1">{% endif %}<input type="hidden" name="target" value="{{ c.target }}">{% if up %}<input type="file" name="file" required aria-label="{{ c.label }}"{% if g.uploads[c.action] %} accept="{{ g.uploads[c.action] }}"{% endif %}>{% endif %}<button type="submit" class="btn{{ ' btn-quiet' if c.quiet }}">{{ c.label }}</button></form>{% endmacro %}
+{% macro cell(c, g) -%}
+  {%- if c is none %}<span class="muted">—</span>
+  {%- elif c.kind is not defined %}{% if c is string %}{{ txt(c, g) }}{% else %}{{ c }}{% endif %}
+  {%- elif c.kind == "text" %}{{ txt(c.text, g) }}
+  {%- elif c.kind == "badge" %}{{ chip(c.role, c.text) }}
+  {%- elif c.kind == "link" %}{% set ext = c.url.startswith("http") %}<a class="lnk" href="{{ c.url }}"{% if ext %} target="_blank" rel="noopener"{% endif %}>{{ c.text }}{% if ext %} ↗{% endif %}</a>
+  {%- elif c.kind == "copy" %}<button type="button" class="btn copy-fix" data-copy="{{ c.text }}">{{ c.label }}</button>
+  {%- elif c.kind == "action" %}{{ action(c, g) }}
+  {%- elif c.kind == "time" %}{{ time(c) }}
+  {%- endif %}
+{%- endmacro %}
+{#- One table cell's classes: the key column titles a stacked row; a Badge or Link names itself (no label
+    prefix); numbers align right; empty cells are hidden when stacked; an Action gets its own line. -#}
+{% macro cell_class(c, j, key) -%}
+  {%- if j == key %}cell-key
+  {%- elif c is none %}cell-empty
+  {%- elif c.kind is defined and c.kind in ("badge", "link") %}no-prefix
+  {%- elif c.kind is defined and c.kind == "action" %}cell-action
+  {%- elif c is number %}num
+  {%- elif (c is string or c.kind is defined and c.kind == "text") and (c.text if c.kind is defined else c)|length > 40 %}cell-text
+  {%- endif %}
+{%- endmacro %}
+{% macro table(x, g) -%}
+  {%- set n = x.columns|length %}{% set size = "s" if n <= 3 else ("m" if n <= 5 else ("l" if n <= 8 else "xl")) -%}
+  <div class="table-wrap"><table class="table wtable cols-{{ size }}" data-cols="{{ n }}" role="table"><thead role="rowgroup"><tr role="row">{% for c in x.columns %}<th scope="col" role="columnheader"{% if loop.index0 == x.key|default(0) %} class="cell-key"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead><tbody role="rowgroup">
+    {%- for row in x.rows %}<tr role="row">{% for c in row %}{% set cls = cell_class(c, loop.index0, x.key|default(0)) %}<td role="cell"{% if cls %} class="{{ cls }}"{% endif %} data-label="{{ x.columns[loop.index0] }}">{{ cell(c, g) }}</td>{% endfor %}</tr>
+    {%- else %}<tr role="row"><td role="cell" colspan="{{ n }}" class="empty">{{ x.empty }}</td></tr>{% endfor %}</tbody></table></div>
+{%- endmacro %}
+{#- A sequence of widgets: consecutive Actions share one wrapping cluster (design-system spec §3.1 Action). -#}
+{% macro widgets(items, g, depth=0) -%}
+  {#- Two or more Chips rows side by side: each shows its label as visible text, not only to screen readers. -#}
+  {%- set chips_n = items|selectattr("kind", "defined")|selectattr("kind", "equalto", "chips")|list|length %}
+  {%- for b in items %}
+    {%- set act = b.kind is defined and b.kind == "action" %}
+    {%- set prev_act = not loop.first and loop.previtem.kind is defined and loop.previtem.kind == "action" %}
+    {%- set next_act = not loop.last and loop.nextitem.kind is defined and loop.nextitem.kind == "action" %}
+    {%- if act and not prev_act %}<div class="cluster widget-actions">{% endif %}
+    {{- widget(b, g, depth, chips_n) }}
+    {%- if act and not next_act %}</div>{% endif %}
+  {%- endfor %}
+{%- endmacro %}
+{% macro widget(x, g, depth=0, chips_n=1) -%}
+  {%- if x.kind == "card" %}<section class="card addon-card{{ ' card-' ~ x.role if x.role }}{{ ' card-grid' if x.layout == 'grid' }}">
+    {%- set tag = "h2" if depth == 0 else "h3" %}<{{ tag }}>{% if x.href %}<a class="lnk card-link" href="{{ x.href }}">{{ x.title }}<span class="chev" aria-hidden="true">›</span></a>{% else %}{{ x.title }}{% endif %}</{{ tag }}>
+    {%- if x.layout == "grid" %}<div class="widget-grid">{% endif %}
+    {{- widgets(x.body, g, depth + 1) }}
+    {%- if x.layout == "grid" %}</div>{% endif %}</section>
+  {%- elif x.kind == "kv" and x.layout == "stats" %}<dl class="kv-stats">{% for k, v in x.rows %}<div><dd>{% if v.kind is defined and v.kind == "badge" %}<span class="stat-badge stat-{{ v.role }}">{{ icon(v.role if v.role in _ROLES else "neu") }} {{ v.text }}</span>{% else %}{{ cell(v, g) }}{% endif %}</dd><dt>{{ k }}</dt></div>{% endfor %}</dl>
+  {%- elif x.kind == "chips" %}{% if x.label and chips_n > 1 %}<div class="chips-row"><span class="filter-label" aria-hidden="true">{{ x.label }}</span>{% endif %}<ul class="widget-chips"{% if x.label %} aria-label="{{ x.label }}"{% endif %}>{% for c in x.items %}<li>
+    {%- if c.kind == "link" %}<a class="filter-chip{{ ' on' if c.current }}" href="{{ c.url }}"{% if c.current %} aria-current="true"{% endif %}{% if c.url.startswith("http") %} target="_blank" rel="noopener"{% endif %}>{{ c.text }}{% if c.url.startswith("http") %} ↗{% endif %}</a>
+    {%- elif c.kind == "badge" %}{{ chip(c.role, c.text) }}
+    {%- else %}<span class="chip-text">{{ c.text }}</span>{% endif %}</li>{% endfor %}</ul>{% if x.label and chips_n > 1 %}</div>{% endif %}
+  {%- elif x.kind == "tabs" %}<nav class="widget-tabs"{% if x.label %} aria-label="{{ x.label }}"{% endif %}><ul class="tabs">{% for c in x.items %}<li><a{% if c.current %} class="on"{% endif %} href="{{ c.url }}"{% if c.current %} aria-current="page"{% endif %}>{{ c.text }}</a></li>{% endfor %}</ul></nav>
+  {%- elif x.kind == "kv" %}<dl class="kv">{% for k, v in x.rows %}<dt>{{ k }}</dt><dd>{{ cell(v, g) }}</dd>{% endfor %}</dl>
+  {%- elif x.kind == "table" %}{{ table(x, g) }}
+  {%- elif x.kind == "search" %}<form method="get" action="/addons/{{ g.addon }}/" class="filters addon-search" role="search" data-live-search="#addon-page"><label class="filter-field filter-search"><span class="filter-label">Search</span><input type="search" name="{{ x.name }}" value="{{ x.value }}" placeholder="{{ x.placeholder }}"></label><button type="submit" class="btn">Search</button></form>
+  {%- elif x.kind == "callout" %}<div class="callout callout-{{ x.role }}" role="{{ 'alert' if x.role == 'err' else 'status' }}"><p class="callout-title">{{ icon(x.role if x.role in _ROLES else "neu") }} {{ x.title }}</p>{% if x.text %}<p>{{ txt(x.text, g) }}</p>{% endif %}</div>
+  {%- elif x.kind == "qr" %}{% set m = qr_matrix_uncached(x.text) if x.uncached else qr_matrix(x.text) %}{% if m is none %}<div class="callout callout-warn" role="status"><p class="callout-title">{{ icon("warn") }} QR code not shown</p><p>The text is too long for a QR code.</p></div>{% else %}{% set n = m|length + 8 %}<figure class="qr"><svg viewBox="0 0 {{ n }} {{ n }}" width="200" height="200" role="img" aria-label="{{ x.caption or 'QR code' }}" shape-rendering="crispEdges"><rect width="{{ n }}" height="{{ n }}" fill="#fff"/><path d="{% for x, y, w in qr_runs(m) %}M{{ x + 4 }} {{ y + 4 }}h{{ w }}v1h-{{ w }}z{% endfor %}" fill="#000"/></svg>{% if x.caption %}<figcaption>{{ x.caption }}</figcaption>{% endif %}</figure>{% endif %}
+  {%- elif x.kind == "markdown" %}<div class="addon-markdown">{{ x.text|md_page(g.addon, x.here, x.pages)|safe }}</div>
+  {%- elif x.kind == "time" %}<p>{{ time(x) }}</p>
+  {%- else %}<p>{{ cell(x, g) }}</p>
+  {%- endif %}
+{%- endmacro %}
+{#- The core health line (design-system States): fresh is a muted "Updated 2 min ago" (no chip); stale keeps the data
+    readable with a warn icon and the time; rate limited and never fetched are quiet lines too. Login needed, error and
+    offline are one callout at the top, with the login command to copy when the message names one. `compact` (the
+    Workspace addon list) keeps every state to one line. -#}
+{% macro login_callout(message) -%}
+  <div class="callout callout-warn addon-health" role="status" data-health="auth_required"><p class="addon-banner callout-title">{{ icon("warn") }} Login needed</p>
+  {%- if message %}<p>{{ message }}</p>{% endif %}
+  {%- set cmd = login_command(message) if login_command is defined else "" %}
+  {%- if cmd %}<p class="cluster"><code>{{ cmd }}</code> <button type="button" class="btn copy-fix" data-copy="{{ cmd }}">Copy</button></p>{% endif %}</div>
+{%- endmacro %}
+{% macro banner(b, compact=false) -%}
+  {%- if b %}
+  {%- set callout = not compact and b.health in ("auth_required", "error", "offline") %}
+  {%- set title -%}
+    {%- if b.health == "ok" %}Updated <time datetime="{{ b.fetched_at.isoformat() if b.fetched_at else '' }}" title="{{ b.fetched_at|local if b.fetched_at else '' }}">{{ b.fetched_at|ago }}</time>
+    {%- elif b.health == "stale" %}Last updated {{ b.fetched_at|local("%H:%M") }}
+    {%- elif b.health == "rate_limited" %}Rate limited{% if b.retry_after %} · resets {{ b.retry_after|local("%H:%M") }}{% endif %}
+    {%- elif b.health == "auth_required" %}Login needed
+    {%- elif b.health == "offline" %}Offline
+    {%- elif b.health == "never_fetched" %}Not fetched yet
+    {%- else %}Fetch failed{% endif %}
+  {%- endset %}
+  {%- if callout and b.health == "auth_required" %}{{ login_callout(b.message) }}
+  {%- elif callout %}<div class="callout callout-{{ 'err' if b.health == 'error' else 'warn' }} addon-health" role="{{ 'alert' if b.health == 'error' else 'status' }}" data-health="{{ b.health }}"><p class="addon-banner callout-title">{{ icon("err" if b.health == "error" else "warn") }} {{ title }}</p>
+    {%- if b.message %}<p>{{ b.message }}</p>{% endif %}<p class="muted">The last good data stays below.</p></div>
+  {%- else %}<p class="addon-banner addon-health-{{ b.health }}" data-health="{{ b.health }}">
+    {%- if b.health in ("stale", "auth_required", "offline", "rate_limited") %}{{ icon("warn") }} {% elif b.health == "error" %}{{ icon("err") }} {% endif %}{{ title }}
+    {%- if b.message and b.health != "ok" %} · {{ b.message }}{% endif %}
+    {%- if b.complete is defined and b.complete is false and b.health in ("ok", "stale") %} · Showing part of the data{% endif %}</p>
+  {%- endif %}
+  {%- if b.login is defined and b.login and not compact %}{{ login_callout(b.login) }}{% endif %}
+  {%- endif %}
+{%- endmacro %}

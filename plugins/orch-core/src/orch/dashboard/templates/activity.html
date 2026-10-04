@@ -1,0 +1,121 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% block main %}
+{% set status_role = {"working": "info", "waiting": "you", "stale": "warn"} %}
+<div class="page-head">
+  <div>
+    <h1>Activity</h1>
+    <p>Agents now, then everything that happened, newest first.</p>
+  </div>
+  <div>
+    <a class="btn" href="/activity.md?category={{ category }}{% if before %}&amp;before={{ before }}{% endif %}">Open as Markdown</a>
+  </div>
+</div>
+
+<section class="card" aria-labelledby="agents-now">
+  <div class="section-head">
+    <h2 id="agents-now">Agents now · {{ counts["all"] }}</h2>
+    <span class="muted">A claim with no activity counts as stale.</span>
+  </div>
+  <div class="tabs" role="group" aria-label="Agent status">
+    {% for key in ("all", "working", "waiting", "stale") %}
+    <a href="{{ link(status_=key) }}" class="{{ 'on' if status == key }}"{% if status == key %} aria-current="true"{% endif %}>{{ "All" if key == "all" else labels[key] }} {{ counts[key] }}</a>
+    {% endfor %}
+  </div>
+  {% if rows %}
+  <div class="table-wrap">
+    <table class="table agents-table">
+      <thead>
+        <tr>
+          <th scope="col">Agent</th>
+          <th scope="col">Session</th>
+          <th scope="col">Ticket</th>
+          <th scope="col">Status</th>
+          <th scope="col">Claimed</th>
+          <th scope="col">Last activity</th>
+          <th scope="col" class="col-actions"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td data-label="Agent"><b>{{ r.harness }}</b></td>
+          <td data-label="Session">{{ r.session[:8] }}</td>
+          <td class="wrap"><a class="lnk" href="/t/{{ r.ticket }}">{{ r.ticket }}</a> {{ r.title }}</td>
+          <td class="no-prefix" data-label="Status">{{ ui.status(status_role[r.status], labels[r.status]) }}</td>
+          <td data-label="Claimed">{{ r.claimed_at|local }}</td>
+          <td data-label="Last activity">{{ r.last_at|ago }}</td>
+          {#- Start agent is the stale row's real next step; Release is quiet: destructive, behind an in-page dialog. -#}
+          <td class="cell-action col-actions">
+            <div class="row">
+              {% if r.status == "stale" %}<a class="btn" href="/t/{{ r.ticket }}#start-agent-{{ r.ticket }}">Start agent</a>{% endif %}
+              <form method="post" action="/t/{{ r.ticket }}/release" data-dialog="Release {{ r.harness or 'the agent' }}'s claim on {{ r.ticket }}?" data-dialog-body="{{ r.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><input type="hidden" name="next" value="/activity">
+                <button class="btn btn-quiet" type="submit" aria-label="Release claim on {{ r.ticket }}">Release…</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No agent holds a ticket right now.</p>
+  {% endif %}
+  <details class="recent-sessions">
+    <summary>Recent sessions</summary>
+    {% if recent %}
+    <ul class="decision-list">
+      {% for s in recent %}
+      <li><span class="muted">{{ s.ended|local }}</span> <b>{{ s.harness }}</b> on <a class="lnk" href="/t/{{ s.ticket }}">{{ s.ticket }}</a> <span class="muted">({{ s.minutes }} min)</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No sessions yet.</p>
+    {% endif %}
+  </details>
+</section>
+
+<section id="timeline" class="activity-feed" aria-labelledby="timeline-h">
+  <h2 id="timeline-h">Timeline</h2>
+  <div class="tabs" role="group" aria-label="Category">
+    <a href="{{ link(category_='all', fragment='#timeline') }}" class="{{ 'on' if category == 'all' }}"{% if category == 'all' %} aria-current="true"{% endif %}>All</a>
+    {% for key in categories %}
+    <a href="{{ link(category_=key, fragment='#timeline') }}" class="{{ 'on' if category == key }}"{% if category == key %} aria-current="true"{% endif %}>{{ category_labels[key] }}</a>
+    {% endfor %}
+  </div>
+  {% if tl.groups %}
+  {#- One row per event: time, category as quiet text (not a chip), who and what, the ticket with its title. Runs of
+      the same actor doing the same kind of thing fold into one line with a disclosure. -#}
+  {% macro tl_row(i) %}<span class="time">{{ i.time|local("%H:%M") }}</span>
+        <span class="tl-cat muted">{{ category_labels.get(i.category, "") if i.category else "" }}</span>
+        <span class="tl-what"><b>{{ i.who }}</b> {{ i.what }}</span>
+        {% if i.ticket %}<a class="lnk tl-ticket" href="/t/{{ i.ticket }}" title="{{ titles.get(i.ticket, '') }}"><span class="key">{{ i.ticket }}</span>{% if titles.get(i.ticket) %}<span class="tl-title"> · {{ titles[i.ticket] }}</span>{% endif %}</a>{% else %}<span></span>{% endif %}{% endmacro %}
+  {% for g in tl.groups %}
+  <section class="card">
+    <h3>{{ g.label }}</h3>
+    <ol class="timeline-list">
+      {% for e in g.entries %}
+      {% if e.run %}
+      <li class="tl-run"><details>
+        <summary><span class="time">{{ e.time|local("%H:%M") }}</span>
+          <span class="tl-cat muted">{{ category_labels.get(e.category, "") if e.category else "" }}</span>
+          <span class="tl-what"><b>{{ e.who }}</b> {{ e.what }} <span class="muted">· {{ e.count }} times{% if e.tickets|length > 1 %} on {{ e.tickets|length }} tickets{% elif e.tickets %} on {{ e.tickets[0] }}{% endif %}</span></span>
+          <span class="tl-show muted">Show</span></summary>
+        <ol class="timeline-list">{% for i in e['items'] %}<li>{{ tl_row(i) }}</li>{% endfor %}</ol>
+      </details></li>
+      {% else %}
+      <li>{{ tl_row(e) }}</li>
+      {% endif %}
+      {% endfor %}
+    </ol>
+  </section>
+  {% endfor %}
+  {% if tl.older %}
+  <p><a class="lnk" href="{{ link(before_=tl.older, fragment='#timeline') }}">Older</a></p>
+  {% endif %}
+  {% else %}
+  <p class="empty">Nothing has happened yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

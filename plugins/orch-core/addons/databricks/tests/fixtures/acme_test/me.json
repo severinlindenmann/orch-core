@@ -1,0 +1,3 @@
+{"note": "composed demo data",
+ "argv": ["databricks", "current-user", "me", "--profile", "acme_test", "-o", "json"],
+ "stdout_json": {"active": true, "displayName": "Demo User", "id": "100000000000001", "userName": "dev@example.com"}}

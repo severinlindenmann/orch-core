@@ -1,0 +1,52 @@
+{
+  "name": "ci-timeline",
+  "title": "CI timeline",
+  "description": "CI runs one under another, each with its jobs as lanes on a shared time scale, so a slow or failing job stands out across runs.",
+  "moment": "report",
+  "libs": [],
+  "min_height": 240,
+  "versions": {
+    "1": {
+      "notes": "start and duration of each job are measured from the start of its run, in the given unit (s or min).",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["runs"],
+        "properties": {
+          "unit": {"enum": ["s", "min"]},
+          "runs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 30,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["label", "jobs"],
+              "properties": {
+                "label": {"type": "string", "minLength": 1, "maxLength": 200},
+                "note": {"type": "string", "maxLength": 500},
+                "jobs": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 50,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "start", "duration", "status"],
+                    "properties": {
+                      "name": {"type": "string", "minLength": 1, "maxLength": 200},
+                      "start": {"type": "number", "minimum": 0},
+                      "duration": {"type": "number", "minimum": 0},
+                      "status": {"enum": ["pass", "fail", "skip", "cancelled"]}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

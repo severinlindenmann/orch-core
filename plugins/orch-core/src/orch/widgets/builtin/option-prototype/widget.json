@@ -1,0 +1,83 @@
+{
+  "name": "option-prototype",
+  "title": "Option prototype",
+  "description": "A clickable low-fidelity prototype per option: tabs for the options, each a few screens whose buttons go to another screen.",
+  "moment": "decide",
+  "libs": [],
+  "min_height": 420,
+  "versions": {
+    "1": {
+      "notes": "Clicking through records nothing; the person picks an option by answering the ticket's question (orch ask).",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"},
+          "label": {"type": "string", "minLength": 1, "maxLength": 200}
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "options"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 500},
+          "recommended": {"$ref": "#/$defs/id"},
+          "options": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "title", "screens"],
+              "properties": {
+                "id": {"$ref": "#/$defs/id"},
+                "title": {"$ref": "#/$defs/label"},
+                "summary": {"type": "string", "maxLength": 1000},
+                "screens": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 12,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["id", "title"],
+                    "properties": {
+                      "id": {"$ref": "#/$defs/id"},
+                      "title": {"$ref": "#/$defs/label"},
+                      "blocks": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["kind", "text"],
+                          "properties": {
+                            "kind": {"enum": ["heading", "text", "field", "item", "note"]},
+                            "text": {"type": "string", "minLength": 1, "maxLength": 500}
+                          }
+                        }
+                      },
+                      "buttons": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["label", "to"],
+                          "properties": {
+                            "label": {"$ref": "#/$defs/label"},
+                            "to": {"$ref": "#/$defs/id"},
+                            "primary": {"type": "boolean"}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

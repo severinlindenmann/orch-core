@@ -1,0 +1,30 @@
+- [x] T1 Inventory the 14 jobs and their cluster settings
+  - ref: file:dbt-models/resources/jobs/
+  - ref: artifact:job-inventory.csv
+  - note: 14 jobs, 3 with spark_conf overrides
+- [x] T2 Check every job for serverless blockers (init scripts, RDD API, custom JARs)
+  - ref: static:DEMO-0043/serverless-notes.md — findings per job
+  - ref: url:https://docs.databricks.com/aws/en/compute/serverless/limitations
+- [-] T3 Rewrite init scripts as environment dependencies
+  - why: T2 found no job with init scripts
+- [x] T4 Add the serverless environment spec to the bundle
+  - ref: file:dbt-models/databricks.yml#L40-58
+  - verify: `databricks bundle validate -t dev`
+  - note: validate OK, 0 warnings
+- [/] T5 Switch the gold-layer jobs to serverless in dev
+  - ref: file:dbt-models/resources/jobs/gold/
+  - ref: ac:1
+  - verify: `databricks bundle deploy -t dev` and one green run per job
+  - note: 8 of 14 jobs switched
+- [!] T6 Switch the prod schedules
+  - ref: ticket:DEMO-0042
+  - needs: T5
+  - why: prod runs read finance.*; SELECT not granted yet
+  - on: DEMO-0042
+- [ ] T7 Compare one week of run costs, old vs serverless
+  - ref: ac:3
+  - verify: cost query saved as artifact cost-compare.csv
+  - needs: T5, T6
+  - added: 2026-10-02T09:14Z after plan approval
+- [ ] T8 Grant the job service principal SELECT on finance.*
+  - owner: human

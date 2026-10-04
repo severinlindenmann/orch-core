@@ -1,0 +1,60 @@
+{
+  "name": "decision-matrix",
+  "title": "Decision matrix",
+  "description": "Options scored against weighted criteria; the reader changes the weights and the ranking recomputes.",
+  "moment": "decide",
+  "libs": [],
+  "min_height": 260,
+  "versions": {
+    "1": {
+      "notes": "Each option has one score per criterion, in criteria order, on the scale min..max (default 0..10, higher is better). Weights are 0..5. Changing weights here records nothing.",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {"id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"}},
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criteria", "options"],
+        "properties": {
+          "scale": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["min", "max"],
+            "properties": {"min": {"type": "number"}, "max": {"type": "number"}}
+          },
+          "pick": {"$ref": "#/$defs/id"},
+          "criteria": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "label", "weight"],
+              "properties": {
+                "id": {"$ref": "#/$defs/id"},
+                "label": {"type": "string", "minLength": 1, "maxLength": 200},
+                "weight": {"type": "integer", "minimum": 0, "maximum": 5},
+                "why": {"type": "string", "maxLength": 500}
+              }
+            }
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "label", "scores"],
+              "properties": {
+                "id": {"$ref": "#/$defs/id"},
+                "label": {"type": "string", "minLength": 1, "maxLength": 200},
+                "scores": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "number"}}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

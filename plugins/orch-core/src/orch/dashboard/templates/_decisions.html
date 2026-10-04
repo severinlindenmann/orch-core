@@ -1,0 +1,311 @@
+{#- Decision cards (design system DecisionCard), one macro per card so Today and the one-by-one groom view draw the
+    same card. `card(d, back_to, kind_labels, addon_inline, card_anchor)` with `d` a data.decisions.Decision.
+    Rules: the full gated text before any Approve, the hash posted is the hash shown, the open-question override
+    sits inside the same confirm; approve and verdict confirm inline (data-inline-confirm, app.js), release in a
+    dialog (data-dialog), answers and messages are sent after a 5 s Undo (data-delayed-send). No textarea is open
+    by default: "Request changes…", "Send back…" and "Write another answer…" are folded. Everything posts as a
+    plain form without JS. -#}
+{% import "_ui.html" as ui %}
+
+{% macro changes(d, back_to) %}
+<details class="dc-more">
+  <summary class="btn btn-quiet" data-key-changes>Request changes…</summary>
+  <form method="post" action="/t/{{ d.ticket }}/request-changes" class="stack dc-fold" data-delayed-send="Sending your change request to {{ d.ticket }}">
+    <input type="hidden" name="gate" value="{{ d.gate }}">
+    <input type="hidden" name="seen" value="{{ d.seen }}">
+    <input type="hidden" name="next" value="{{ back_to }}">
+    <label for="rc-{{ d.ticket }}-{{ d.gate }}">Tell the agent what to change in the {{ d.gate }}.</label>
+    <input id="rc-{{ d.ticket }}-{{ d.gate }}" name="message" placeholder="What should change?" required>
+    <button type="submit" class="btn">Request changes</button>
+  </form>
+</details>
+{% endmacro %}
+
+{% macro gated_block(gate, seen_short, gate_parts, gate_meta, scope=None) %}
+{#- Everything the approval hash binds, in full (#20): never an excerpt above an Approve button. -#}
+<div class="dc-gated gate-text" data-gate="{{ gate }}">
+  <p class="dc-gated-head"><b>{{ gate|capitalize }} · full text you approve</b> <span class="muted">{{ seen_short }}</span></p>
+  {% for p in gate_parts %}
+  <section class="gate-part" data-gate-part="{{ p.name }}">
+    {% if gate_parts|length > 1 %}<h4>{{ p.name }}</h4>{% endif %}
+    {% if not p.text.strip() %}<p class="muted">Empty.</p>
+    {% elif p.raw %}<p class="muted">Shown as plain text: it has link definitions that formatted text would hide.</p>
+    <pre class="gate-raw">{{ p.text }}</pre>
+    {% else %}{{ p.text|md(scope)|safe }}{% endif %}
+  </section>
+  {% endfor %}
+  {% if gate_meta %}<p class="gate-meta">{% for m in gate_meta %}<span data-gate-part="{{ m.name }}">{{ m.name }}: <b>{{ m.value }}</b></span>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro gated_text(d) %}{{ gated_block(d.gate, d.seen_short, d.gate_parts, d.gate_meta, d.art) }}{% endmacro %}
+
+{% macro questions_override(lines) %}
+<p class="hint">{{ "A line reads" if lines|length == 1 else lines|length ~ " lines read" }} as an open question for you. Request changes so the agent asks with <code>orch ask</code>, or approve if none is a question for you:</p>
+<ul class="hint-lines">{% for line in lines %}<li>&ldquo;{{ line[:120] }}&rdquo;</li>{% endfor %}</ul>
+<label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+  I read {{ "it" if lines|length == 1 else "them all" }}: {{ "this is" if lines|length == 1 else "none is" }} a question for me</label>
+{% endmacro %}
+
+{% macro question_override(question) %}
+<p class="hint">A line reads as an open question for you: &ldquo;{{ question[:80] }}&rdquo;. Request changes so the agent asks it with <code>orch ask</code>, or approve if it is not a question for you.</p>
+<label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+  I read it: this is not a question for me</label>
+{% endmacro %}
+
+{% macro options(d, q, back_to, send_label) %}
+{#- Numbered options (1–9 focus them from the keyboard; Enter sends after the Undo window), the recommended one
+    first and marked; any other answer is folded. -#}
+{% if q.options %}
+<form method="post" action="/t/{{ d.ticket }}/answer" class="decision-answer" data-delayed-send="{{ send_label }}">
+  <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
+  <input type="hidden" name="next" value="{{ back_to }}">
+  {% if q.multi %}
+  <div class="opts">
+    {% for opt in q.options %}
+    <label class="opt-row{{ ' rec' if opt.key == q.recommended }}"><input type="checkbox" name="value" value="{{ opt.key }}"{{ ' checked' if opt.key == q.recommended }} data-option="{{ loop.index }}">
+      <span><span class="opt-n">{{ loop.index }}</span> · {{ opt.label }}</span>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</label>
+    {% endfor %}
+  </div>
+  <button type="submit" class="btn">Send answer</button>
+  {% else %}
+  <div class="opts">
+    {% for opt in q.options %}
+    <div class="opt-row{{ ' rec' if opt.key == q.recommended }}"><button type="submit" class="btn opt" name="value" value="{{ opt.key }}" data-option="{{ loop.index }}"><span class="opt-n">{{ loop.index }}</span> · {{ opt.label }}</button>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</form>
+<details class="dc-more">
+  <summary class="btn btn-quiet">Write another answer…</summary>
+  <form method="post" action="/t/{{ d.ticket }}/answer" class="stack dc-fold decision-other" data-delayed-send="{{ send_label }}">
+    <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
+    <input type="hidden" name="next" value="{{ back_to }}">
+    <label for="other-{{ d.ticket }}-{{ q.id }}">Other answer</label>
+    <input id="other-{{ d.ticket }}-{{ q.id }}" name="value" required>
+    <button type="submit" class="btn">Send other answer</button>
+  </form>
+</details>
+{% else %}
+<form method="post" action="/t/{{ d.ticket }}/answer" class="stack decision-answer" data-delayed-send="{{ send_label }}">
+  <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
+  <input type="hidden" name="next" value="{{ back_to }}">
+  <label for="ans-{{ d.ticket }}-{{ q.id }}">Your answer</label>
+  <input id="ans-{{ d.ticket }}-{{ q.id }}" name="value" required>
+  <button type="submit" class="btn">Send answer</button>
+</form>
+{% endif %}
+{% endmacro %}
+
+{#- The single-gate Approve, bound to the hash of the full text shown above it (`d.seen`); its own inline confirm. -#}
+{% macro approve_form(d, back_to, kind_labels) %}
+<form method="post" action="/t/{{ d.ticket }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ d.gate }} {{ d.seen_short|replace('sha256 ', '') }}"
+      data-receipt="{{ d.gate|capitalize }} of {{ d.ticket }} approved ({{ d.seen_short|replace('sha256 ', '') }})">
+  <input type="hidden" name="gate" value="{{ d.gate }}">
+  <input type="hidden" name="seen" value="{{ d.seen }}">
+  <input type="hidden" name="next" value="{{ back_to }}">
+  {% if d.question and not d.together %}{{ question_override(d.question) }}{% endif %}
+  {% if d.together %}<button type="submit" class="btn">Approve requirements only</button>
+  {% else %}<button type="submit" class="btn btn-primary" data-key-primary>{{ ("Re-approve " ~ d.gate) if d.kind == "re-approve" else kind_labels.get(d.kind, d.kind) }}</button>{% endif %}
+</form>
+{% endmacro %}
+
+{#- Accept (inline confirm) and the folded Send back, both bound to the verdict hash of what the card shows. -#}
+{% macro verdict_forms(d, back_to) %}
+<form method="post" action="/t/{{ d.ticket }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ d.ticket }} as done"
+      data-receipt="{{ d.ticket }} accepted and done">
+  <input type="hidden" name="next" value="{{ back_to }}"><input type="hidden" name="seen" value="{{ d.seen }}">
+  <button type="submit" class="btn btn-primary" name="verdict" value="done" data-key-primary>Accept, mark done</button>
+</form>
+<details class="dc-more">
+  <summary class="btn btn-quiet" data-key-changes>Send back…</summary>
+  <form method="post" action="/t/{{ d.ticket }}/verdict" class="stack dc-fold" data-delayed-send="Sending {{ d.ticket }} back to the agent">
+    <input type="hidden" name="next" value="{{ back_to }}"><input type="hidden" name="seen" value="{{ d.seen }}">
+    <input type="hidden" name="verdict" value="follow-up">
+    <label for="sb-{{ d.ticket }}">Not done yet? Tell the agent what is missing.</label>
+    <input id="sb-{{ d.ticket }}" name="message" placeholder="What is missing?" required>
+    <button type="submit" class="btn">Send back</button>
+  </form>
+</details>
+{% endmacro %}
+
+{#- One criterion as a checklist row: mark, text and its evidence, and the evidence tile beside it. The images the
+    evidence shows (bound, pinned by hash: markdown.pinned_images) are drawn once, in the tile, each linking to its
+    full file; the evidence text keeps everything else. More than four images: shown inline as before, the tile only
+    says the criterion is proven. Dashed and empty while the proof is missing. -#}
+{% macro criterion(c, scope=None, widgets=None) %}
+{% set pics = c.evidence|join("\n")|pinned(scope, 5) if c.proven else [] %}
+{% set tiled = pics and pics|length <= 4 %}
+<li class="proof-{{ 'ok' if c.proven else 'open' }} proof-row">
+  <span class="proof-mark" aria-hidden="true">{{ "✓" if c.proven else "○" }}</span>
+  <div><p><b class="ac-n">AC{{ c.n }}</b> {{ c.text|md_inline|safe }} <span class="sr-only">{{ "has evidence" if c.proven else "no evidence yet" }}</span></p>
+    {% if c.proven %}{% for e in c.evidence %}<div class="proof-evidence{{ ' ev-tiled' if tiled }}">{{ e|section_md("Verification", widgets, scope)|safe }}</div>{% endfor %}
+    {% else %}<p class="muted">No evidence yet{% if c.ticked %}; ticked without a Verification line{% endif %}.</p>{% endif %}</div>
+  {% if tiled %}<span class="ev-tile proof-tile ev-tile-ok">{% for pic in pics %}<a class="ev-img" href="{{ pic.href }}" target="_blank" rel="noopener"><img src="{{ pic.href }}" alt="{{ pic.alt }}" loading="lazy" decoding="async"></a>{% endfor %}</span>
+  {% else %}<span class="ev-tile proof-tile{{ ' ev-tile-ok' if c.proven else ' ev-tile-missing' }}" aria-hidden="true"><span class="ev-cap">{{ ("✓ AC" ~ c.n) if c.proven else "no evidence yet" }}</span></span>{% endif %}
+</li>
+{% endmacro %}
+
+{% macro card(d, back_to, kind_labels, addon_inline, card_anchor) %}
+{% set role = "err" if d.kind == "broken" else ("warn" if d.kind == "stale-claim" else ("neu" if d.scope != "blocking" else "you")) %}
+{% set cid = d.ticket ~ "-" ~ d.kind ~ ("-" ~ d.detail if d.kind == "task" else "") %}
+<article class="decision-card decision dc-{{ role }}" id="d-{{ cid }}" tabindex="-1" data-decision data-ticket="{{ d.ticket }}"
+         data-kind="{{ d.kind }}" data-scope="{{ d.scope }}" data-group="{{ d.group or '' }}" aria-labelledby="dh-{{ cid }}">
+  <div class="dc-head">
+    {{ ui.status(role, ("Approve requirements + plan" if d.together and d.kind == "approve-requirements" else kind_labels.get(d.kind, d.kind)) ~ ((" " ~ d.gate) if d.kind == "re-approve" and d.gate else "")) }}
+    <a class="lnk key" href="/t/{{ d.ticket }}" data-open>{{ d.ticket }}</a>
+    <h3 id="dh-{{ cid }}">{{ d.title or d.ticket }}</h3>
+    {% if d.unsigned %}<span title="not in the approval ledger on this machine: review it with orch ledger adopt">{{ ui.status("warn", "unsigned " ~ d.unsigned|join(", ")) }}</span>{% endif %}
+    {% if d.age_minutes is not none %}<span class="dc-age muted">{{ d.age_minutes|minutes_ago }}</span>{% endif %}
+    {% if d.artifacts %}<a class="lnk muted dc-artifacts" href="/t/{{ d.ticket }}#ticket-artifacts">▢ {{ d.artifacts }} artifact{{ "s" if d.artifacts != 1 }}</a>{% endif %}
+  </div>
+  {% if d.why %}<p class="dc-why muted">{{ d.why }}</p>{% endif %}
+
+  {% if d.kind in ("answer", "confirm") %}
+    {% for q in d.questions %}
+    <div class="question" id="dq-{{ d.ticket }}-{{ q.id }}">
+      <p class="q-text"><b>{{ q.id }}</b> {{ q.text }}</p>
+      {% if d.kind == "confirm" and q.recommended %}<p class="dc-ff muted">{{ d.harness or "The agent" }} went with {{ q.recommended }}. Confirm it, or pick another option.</p>{% endif %}
+      {{ options(d, q, back_to, ("Sending your answer to " if d.kind == "answer" else "Sending your confirmation to ") ~ d.ticket) }}
+      {% for addon, a in addon_inline.get((d.ticket|upper, q.id), []) %}{{ ui.addon_decision(addon, a) }}{% endfor %}
+    </div>
+    {% endfor %}
+    <div class="cluster dc-actions"><a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a></div>
+
+  {% elif d.charter %}
+    {#- E2: an epic's approval is its charter (the epic and every open child, requirements and plan). It is read and
+        confirmed in full on the epic page; this card (and its keyboard primary) only opens that view. -#}
+    <p class="dc-ff muted dc-wide">{{ d.excerpt }}</p>
+    <div class="cluster dc-actions dc-wide">
+      <a class="btn btn-primary" href="/t/{{ d.ticket }}#epic-approve" data-key-primary>Review the epic and its children ›</a>
+    </div>
+
+  {% elif d.kind in ("approve-requirements", "approve-plan", "re-approve") %}
+    {% if d.diff %}
+    <div class="gate-diff" role="group" aria-label="Changed since you approved">
+      <p class="dc-gated-head"><b>Changed since you approved{% if d.approved_day %} on {{ d.approved_day }}{% endif %}</b></p>
+      <pre class="diff">{% for x in d.diff %}<span class="diff-{{ x.kind }}">{{ {"add": "+ ", "del": "- ", "ctx": "  ", "gap": ""}[x.kind] }}{{ x.text }}</span>{% endfor %}</pre>
+    </div>
+    {% elif d.kind == "re-approve" %}<p class="muted">The approved text was not kept; read the full text below.</p>{% endif %}
+    {#- M: requirements and plan side by side (stacked in a narrow card), each in full with its pinned images. -#}
+    {% if d.together and not d.hint %}<div class="dc-wide dc-pair">{% endif %}
+    {% if d.gate_parts is not none %}<div class="dc-wide">{{ gated_text(d) }}</div>{% endif %}
+    {% if d.together and not d.hint %}<div class="dc-wide">{{ gated_block("plan", d.together.seen_short, d.together.gate_parts, d.together.gate_meta, d.art) }}</div></div>{% endif %}
+    {% if d.hint %}
+    {#- Ops.approve would refuse this gate now: say why and offer the real move, never an Approve. -#}
+    <p class="hint">{{ d.hint.text }}</p>
+    <div class="cluster dc-actions">
+      {% if d.hint.action and d.hint.action.kind == "move" %}
+      <form method="post" action="/t/{{ d.ticket }}/move" class="inline-confirm-form" data-inline-confirm="Confirm · move to {{ d.hint.action.to }}">
+        <input type="hidden" name="to" value="{{ d.hint.action.to }}">
+        <input type="hidden" name="next" value="{{ back_to }}">
+        <button type="submit" class="btn btn-primary" data-key-primary>{{ d.hint.action.label }}</button>
+      </form>
+      {% endif %}
+      {{ changes(d, back_to) }}
+      <a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a>
+    </div>
+    {% else %}
+    <p class="dc-ff muted dc-wide">{{ d.feedforward }}</p>
+    <div class="cluster dc-actions dc-wide">
+      {% if d.together %}
+      {#- F2: both gates in one confirm, each bound to the hash of the text shown above. -#}
+      {% set qs = d.together.questions %}
+      <form method="post" action="/t/{{ d.ticket }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ d.seen_short|replace('sha256 ', '') }} + plan {{ d.together.seen_short|replace('sha256 ', '') }}"
+            data-receipt="Requirements and plan of {{ d.ticket }} approved">
+        <input type="hidden" name="seen" value="{{ d.seen }}">
+        <input type="hidden" name="seen_plan" value="{{ d.together.seen }}">
+        <input type="hidden" name="next" value="{{ back_to }}">
+        {% if qs %}{{ questions_override(qs) }}{% endif %}
+        <button type="submit" class="btn btn-primary" data-key-primary>Approve requirements and plan</button>
+      </form>
+      {% endif %}
+      {{ approve_form(d, back_to, kind_labels) }}
+      {{ changes(d, back_to) }}
+      <a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a>
+    </div>
+    {#- Phone width: the card links to the ticket's read-and-approve view (full text, then a bottom confirm). -#}
+    {% if d.together %}<a class="btn btn-primary dc-phone" href="/t/{{ d.ticket }}#approve-together">Read requirements and plan, then approve ›</a>
+    {% else %}<a class="btn btn-primary dc-phone" href="/t/{{ d.ticket }}#gate-{{ d.gate }}">Read {{ d.gate }} and approve ›</a>{% endif %}
+    {% endif %}
+    {% set anchor = card_anchor(d) %}
+    {% if anchor %}{% for addon, a in addon_inline.get((d.ticket|upper, anchor), []) %}{{ ui.addon_decision(addon, a) }}{% endfor %}{% endif %}
+
+  {% elif d.kind == "verdict" %}
+    {% if d.criteria %}
+    <ol class="proof dc-proof" aria-label="Acceptance criteria and their evidence">
+      {% for c in d.criteria[:3] %}{{ criterion(c, d.art, d.widgets) }}{% endfor %}
+    </ol>
+    {% if d.criteria|length > 3 %}
+    <details class="dc-more"><summary class="btn btn-quiet">Show {{ d.criteria|length - 3 }} more criteria</summary>
+      <ol class="proof dc-proof">{% for c in d.criteria[3:] %}{{ criterion(c, d.art, d.widgets) }}{% endfor %}</ol>
+    </details>
+    {% endif %}
+    {% else %}<p class="muted">No acceptance criteria as checkboxes, so nothing to prove item by item.</p>{% endif %}
+    {% if d.verification.strip() %}
+    <details class="dc-more"><summary class="btn btn-quiet">Verification notes</summary><div class="gate-body">{{ d.verification|section_md("Verification", d.widgets, d.art)|safe }}</div></details>
+    {% else %}<p class="muted">No Verification section yet.</p>{% endif %}
+    <p class="dc-ff muted">{{ d.feedforward }}</p>
+    <div class="cluster dc-actions">
+      {{ verdict_forms(d, back_to) }}
+      <a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a>
+    </div>
+    {% set anchor = card_anchor(d) %}
+    {% if anchor %}{% for addon, a in addon_inline.get((d.ticket|upper, anchor), []) %}{{ ui.addon_decision(addon, a) }}{% endfor %}{% endif %}
+
+  {% elif d.kind == "task" %}
+    {% if d.task.text %}<p>{{ d.task.text }}</p>{% endif %}
+    <div class="cluster dc-actions">
+      {% if d.task.verify %}
+      <details class="dc-more">
+        <summary class="btn btn-primary" data-key-primary>Mark {{ d.task.id }} done…</summary>
+        <form method="post" action="/t/{{ d.ticket }}/task" class="stack dc-fold">
+          <input type="hidden" name="task" value="{{ d.task.id }}"><input type="hidden" name="action" value="done">
+          <input type="hidden" name="next" value="{{ back_to }}">
+          <label for="tv-{{ d.ticket }}-{{ d.task.id }}">What proved it? <span class="muted">{{ d.task.verify }}</span></label>
+          <input id="tv-{{ d.ticket }}-{{ d.task.id }}" name="message" required>
+          <button type="submit" class="btn btn-primary">Mark {{ d.task.id }} done</button>
+        </form>
+      </details>
+      {% else %}
+      <form method="post" action="/t/{{ d.ticket }}/task">
+        <input type="hidden" name="task" value="{{ d.task.id }}"><input type="hidden" name="action" value="done">
+        <input type="hidden" name="next" value="{{ back_to }}">
+        <button type="submit" class="btn btn-primary" data-key-primary>Mark {{ d.task.id }} done</button>
+      </form>
+      {% endif %}
+      <a class="btn btn-quiet" href="/t/{{ d.ticket }}#task-{{ d.task.id }}">Open task</a>
+    </div>
+
+  {% elif d.kind == "stale-claim" %}
+    <p>{{ ui.status("warn", d.detail) }}</p>
+    <p class="dc-ff muted">{{ d.feedforward }}</p>
+    <div class="cluster dc-actions">
+      <form method="post" action="/t/{{ d.ticket }}/release" data-dialog="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?"
+            data-dialog-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim">
+        <input type="hidden" name="ask" value="1">
+        <input type="hidden" name="next" value="{{ back_to }}">
+        <button type="submit" class="btn btn-primary" data-key-primary>Release claim…</button>
+      </form>
+      <a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a>
+    </div>
+
+  {% else %}
+    <p class="hint">{{ d.excerpt }}</p>
+    <div class="cluster dc-actions"><a class="btn btn-quiet" href="/t/{{ d.ticket }}">Open ticket</a></div>
+  {% endif %}
+</article>
+{% endmacro %}
+
+{% macro row(d, scope, kind_labels) %}
+{#- A decision past the first few: one line that opens it in the one-by-one view (full text and actions there). -#}
+{% set role = "err" if d.kind == "broken" else ("neu" if d.scope != "blocking" else "you") %}
+<li class="dc-row" data-ticket="{{ d.ticket }}" data-kind="{{ d.kind }}" data-group="{{ d.group or '' }}"{% if d.why %} title="{{ d.why }}"{% endif %}>
+  {{ ui.status(role, kind_labels.get(d.kind, d.kind) ~ ((" " ~ d.gate) if d.kind == "re-approve" and d.gate else "")) }}
+  <a class="lnk key" href="/t/{{ d.ticket }}">{{ d.ticket }}</a>
+  <span class="dc-row-title">{{ d.title or d.ticket }}</span>
+  {% if d.unsigned %}{{ ui.status("warn", "unsigned") }}{% endif %}
+  {% if d.age_minutes is not none %}<span class="muted">{{ d.age_minutes|minutes_ago }}</span>{% endif %}
+  <a class="btn btn-quiet" href="/groom?scope={{ scope }}&amp;at={{ d.cid }}">Review ›</a>
+</li>
+{% endmacro %}

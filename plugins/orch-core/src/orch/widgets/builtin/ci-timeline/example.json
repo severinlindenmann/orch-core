@@ -1,0 +1,28 @@
+{
+  "1": {
+    "unit": "s",
+    "runs": [
+      {"label": "Run 412 (main, before)", "note": "Illustrative example: build and test ran one after the other.", "jobs": [
+        {"name": "install", "start": 0, "duration": 64, "status": "pass"},
+        {"name": "build", "start": 64, "duration": 142, "status": "pass"},
+        {"name": "test (sqlite)", "start": 206, "duration": 188, "status": "pass"},
+        {"name": "test (postgres)", "start": 394, "duration": 231, "status": "pass"},
+        {"name": "lint", "start": 625, "duration": 41, "status": "pass"}
+      ]},
+      {"label": "Run 418 (branch)", "note": "Tests split into parallel jobs; postgres failed on a missing DATABASE_URL.", "jobs": [
+        {"name": "install", "start": 0, "duration": 61, "status": "pass"},
+        {"name": "build", "start": 61, "duration": 139, "status": "pass"},
+        {"name": "test (sqlite)", "start": 61, "duration": 176, "status": "pass"},
+        {"name": "test (postgres)", "start": 61, "duration": 34, "status": "fail"},
+        {"name": "lint", "start": 61, "duration": 39, "status": "pass"}
+      ]},
+      {"label": "Run 421 (branch)", "jobs": [
+        {"name": "install", "start": 0, "duration": 58, "status": "pass"},
+        {"name": "build", "start": 58, "duration": 137, "status": "pass"},
+        {"name": "test (sqlite)", "start": 58, "duration": 181, "status": "pass"},
+        {"name": "test (postgres)", "start": 58, "duration": 226, "status": "pass"},
+        {"name": "lint", "start": 58, "duration": 40, "status": "pass"}
+      ]}
+    ]
+  }
+}

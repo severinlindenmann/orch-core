@@ -1,0 +1,32 @@
+{
+  "me": "demo.user@example.com",
+  "items": [
+    {"id": "env:int", "type": "env", "label": "int", "role": "ok", "text": "signed in as demo.user@example.com",
+     "profile": "acme-int", "host": "https://adb-1111111111111111.11.azuredatabricks.net", "me": "demo.user@example.com", "connect_version": "16.4.2"},
+    {"id": "run:9001", "type": "run", "label": "acme-ingest-daily", "name": "acme-ingest-daily", "role": "err", "text": "failed",
+     "state": "failed", "run_id": "9001", "job_id": "501", "owners": ["demo.user@example.com"],
+     "url": "https://adb-1111111111111111.11.azuredatabricks.net/#job/501/run/9001",
+     "started_minutes_ago": 42, "ended_minutes_ago": 35, "message": "Task load_meter_readings failed: table acme_int.bronze.meter_readings not found"},
+    {"id": "run:9002", "type": "run", "label": "acme-dbt-build", "name": "acme-dbt-build", "role": "info", "text": "running",
+     "state": "running", "run_id": "9002", "job_id": "502", "owners": ["demo.user@example.com"],
+     "url": "https://adb-1111111111111111.11.azuredatabricks.net/#job/502/run/9002", "started_minutes_ago": 6, "message": ""},
+    {"id": "run:9003", "type": "run", "label": "acme-quality-checks", "name": "acme-quality-checks", "role": "ok", "text": "succeeded",
+     "state": "succeeded", "run_id": "9003", "job_id": "503", "owners": ["demo.user@example.com"],
+     "url": "https://adb-1111111111111111.11.azuredatabricks.net/#job/503/run/9003", "started_minutes_ago": 180, "ended_minutes_ago": 171, "message": ""},
+    {"id": "pipeline:p-int-1", "type": "pipeline", "label": "acme-meter-pipeline", "name": "acme-meter-pipeline", "role": "warn",
+     "text": "running for 3 h", "pipeline_id": "p-int-1", "owners": ["demo.user@example.com"],
+     "url": "https://adb-1111111111111111.11.azuredatabricks.net/pipelines/p-int-1", "last_update_minutes_ago": 190},
+    {"id": "pipeline:p-int-2", "type": "pipeline", "label": "acme-tariffs-pipeline", "name": "acme-tariffs-pipeline", "role": "ok",
+     "text": "last update completed", "pipeline_id": "p-int-2", "owners": ["demo.user@example.com"],
+     "url": "https://adb-1111111111111111.11.azuredatabricks.net/pipelines/p-int-2", "last_update_minutes_ago": 60},
+    {"id": "warehouse:w-int", "type": "warehouse", "label": "acme-int-sql", "name": "acme-int-sql", "role": "neu", "text": "stopped",
+     "access": "can_use", "reason": "listed by warehouses list", "http_path": "/sql/1.0/warehouses/w-int", "size": "2X-Small",
+     "auto_stop": 10, "owners": ["demo.user@example.com"]},
+    {"id": "cluster:c-int-1", "type": "cluster", "label": "acme-int-dev", "name": "acme-int-dev", "role": "ok", "text": "running",
+     "access": "can_use", "reason": "dedicated to you", "dbr": "16.4", "auto_stop": 30, "cluster_id": "0101-000000-intdev", "owners": ["demo.user@example.com"]},
+    {"id": "cluster:c-int-2", "type": "cluster", "label": "acme-int-shared", "name": "acme-int-shared", "role": "neu", "text": "terminated",
+     "access": "unknown", "reason": "shared cluster; its permissions are not read", "dbr": "15.4", "auto_stop": 60, "cluster_id": "0101-000000-intshared", "owners": []},
+    {"id": "drift:int", "type": "drift", "label": "int", "role": "warn", "text": "int is 3 commits ahead of prod",
+     "deployed": 4, "total": 4, "changed": 0, "commit": "a1b2c3d", "ahead_of": "prod", "ahead": 3, "deployed_minutes_ago": 300}
+  ]
+}

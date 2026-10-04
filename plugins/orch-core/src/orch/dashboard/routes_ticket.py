@@ -1,0 +1,247 @@
+from __future__ import annotations
+
+import mimetypes
+import re
+
+from fastapi import APIRouter, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
+
+from orch.core import evidence, query, store, tasks_view
+from orch.core.epics import verdict_hash
+from orch.core.events import read_events
+from orch.core.gates import GATE_SECTIONS, approved_snapshot, gate_hash, gate_state, invalidated_gates, plan_required
+from orch.core.protect import agent_wrote_ask, ask_author
+from orch.clock import now as clock_now
+from orch.core.lifecycle import allowed_targets
+from orch.dashboard.data import artifact_view, story
+from orch.dashboard.data import tasks as tasks_data
+from orch.dashboard.data.agent_start import suggest as suggest_start
+from orch.dashboard.data.agents import agent_rows
+from orch.dashboard.data.cards import Cards
+from orch.dashboard.data.steps import can_approve, day, meta_line, plan_checklist, steps, when, your_move
+from orch.dashboard.views import HUMAN, as_dict, as_list, page
+from orch.widgets.render import css_names
+from orch.errors import NotFoundError, TicketParseError, UsageError
+
+router = APIRouter()
+
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+# Every artifact except PDF is served sandboxed: an agent-authored document (html, xhtml, xml, svg, ...)
+# must not run scripts or submit forms with the dashboard's origin. Images and media still display.
+SANDBOX_CSP = ("sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; media-src 'self'; "
+               "form-action 'none'")
+
+
+def load_or_error(request: Request, ref: str, entries: list[store.Entry] | None = None):
+    """(ws, path, ticket, None) on success, or (ws, None, None, error_response). `entries` (a
+    `store.scan`) may be shared with the rest of the request; it is scanned here when not given."""
+    ws = request.app.state.ws
+    try:
+        entry = store.resolve(ws, ref, entries)
+        path = entry.path
+        ticket = store.read_ticket(path, path.relative_to(ws.home).as_posix())
+        return ws, path, ticket, None
+    except NotFoundError as e:
+        return ws, None, None, page(request, "error.html", 404, nav="board", title="Not found",
+                                    heading="Not found", message=e.message)
+    except TicketParseError as e:
+        entry = store.resolve(ws, ref, entries)
+        raw = entry.path.read_text(encoding="utf-8", errors="replace")
+        return ws, None, None, page(request, "error.html", 422, nav="board", title=f"{entry.id} cannot be read",
+                                    heading=f"{entry.id} cannot be read",
+                                    message=e.message, raw=raw)
+    except UsageError as e:  # e.g. two files with the same id
+        return ws, None, None, page(request, "error.html", 409, nav="board", title="Ambiguous ticket",
+                                    heading="Ambiguous ticket", message=e.message)
+
+
+def _artifacts(ws, ticket_id: str) -> list[dict]:
+    base = ws.artifacts_dir / ticket_id
+    out = []
+    for p in query.artifact_list(ws, ticket_id):
+        name = p.relative_to(base).as_posix()
+        ext = p.suffix.lower()
+        kind = ("image" if ext in IMAGE_EXT else "html" if ext in (".html", ".htm")
+                else "markdown" if ext == ".md" else "pdf" if ext == ".pdf" else "file")
+        out.append({"name": name, "url": f"/a/{ticket_id}/{name}", "kind": kind, "size": p.stat().st_size})
+    return out
+
+
+def _safe_url(url) -> str | None:
+    """Only plain web links become clickable; `javascript:` and other schemes stay text."""
+    return url if isinstance(url, str) and url.lower().startswith(("http://", "https://")) else None
+
+
+def _links(items) -> list[dict]:
+    return [{**x, "url": _safe_url(x.get("url"))} for x in as_list(items) if isinstance(x, dict)]
+
+
+_PR_NUMBER = re.compile(r"/(?:pull|pulls|pr|merge_requests)/(\d+)(?:[/?#]|$)")
+
+
+def _pr_label(pr: dict) -> str:
+    """"repo #N · state" for the Code panel. `orch link` writes state "draft" as a placeholder that nothing
+    refreshes, so "draft" is left out (a ready PR read "draft"); the live state comes from a code-review
+    addon. A state someone set by hand (open, merged, closed) still shows."""
+    match = _PR_NUMBER.search(str(pr.get("url") or ""))
+    name = str(pr.get("repo") or "PR") + (f" #{match.group(1)}" if match else "")
+    state = pr.get("state")
+    return f"{name} · {state}" if isinstance(state, str) and state and state != "draft" else name
+
+
+def _question_view(q: dict) -> dict:
+    rec = q.get("recommended")
+    rec_keys = rec if isinstance(rec, list) else ([rec] if rec not in (None, "") else [])
+    answer = q.get("answer")
+    answered = answer not in (None, "")
+    shown = ", ".join(answer) if isinstance(answer, list) else (str(answer) if answered else "")
+    from orch.core.questions import question_hash
+    # qhash: the question as shown; the answer form posts it and Ops.answer refuses a question that changed since
+    return {**q, "rec_keys": [str(k) for k in rec_keys], "answered_flag": answered, "answer_text": shown,
+            "qhash": question_hash(q)}
+
+
+@router.get("/t/{ref}")
+def ticket_page(request: Request, ref: str, open: str = ""):
+    # One scan per request, shared by the load, needs_you, blockers, agent rows, the card and the menu badge.
+    entries = store.scan(request.app.state.ws)
+    ws, path, t, error = load_or_error(request, ref, entries)
+    if error:
+        return error
+    skip = tuple(ws.config["gates"]["plan_skip_sizes"])
+    blockers = query.open_blockers(ws, t, entries)
+    gate_seen = {g: gate_hash(t, g) for g in GATE_SECTIONS}
+    from orch.core.gates import human_questions_in
+    gate_question = {g: (human_questions_in(t, g) or [None])[0] for g in GATE_SECTIONS}
+    from orch.core import ledger
+    gate_unsigned = set(ledger.unsigned_gates(ws, t))
+    task_view = tasks_view.view(ws, t, entries)
+    working = t.status in ("in-progress", "waiting")
+    tasks_card = (tasks_data.card(task_view, can_edit=working, plan_text=t.section("Plan"))
+                  if task_view["tasks"] or task_view["error"] or working else None)
+    all_needs = query.needs_you(ws, entries=entries)
+    needs = [i for i in all_needs if str(i.get("ticket", "")).upper() == t.id.upper()]
+    questions = sorted((_question_view(q) for q in t.meta.get("questions") or [] if isinstance(q, dict)),
+                       key=lambda q: q["answered_flag"])
+    claim = as_dict(t.meta.get("claim"))
+    external = _links(t.meta.get("external"))
+    prs = [{**pr, "label": _pr_label(pr)} for pr in _links(t.meta.get("prs"))]
+    branches = as_dict(t.meta.get("branches"))
+    # allow_override: a gate whose text still reads as a question for the human can be approved with the explicit
+    # "not a question for me" checkbox (the server checks it, Ops.approve)
+    can = {g: can_approve(t, g, plan_skip_sizes=skip, allow_override=True) for g in GATE_SECTIONS}
+    actions = {
+        # never offer an Approve that Ops.approve would refuse (or that a pending change request blocks)
+        "approve_requirements": can["requirements"],
+        "approve_plan": can["plan"],
+        "verdict": t.status == "testing",
+        "accept": t.status == "testing" and not invalidated_gates(t),  # a changed gate is re-approved first
+        "moves": allowed_targets(t, HUMAN, plan_skip_sizes=skip, open_blockers=blockers),
+        "release": bool(claim.get("session")),
+    }
+    # F2: requirements and plan drafted together: one confirm approves both (each bound to its own hash)
+    together = next((i for i in needs if i.get("kind") == "approve-requirements" and i.get("together")), None) \
+        if can["requirements"] and t.meta.get("type") != "epic" else None
+    gates = {g: gate_state(t, g) for g in GATE_SECTIONS}
+    # A PR opened while the plan still needs approval is worth a warning (spec §4.4).
+    pr_early = bool(t.meta.get("prs")) and plan_required(ws, t) and gates["plan"] != "approved"
+    ticket_events = read_events(ws, t.id)
+    at = clock_now()
+    runtime = getattr(request.app.state, "addons", None)
+    reviews = runtime.review_index() if runtime is not None else {}
+    failing = [i["url"] for i in reviews.get(t.id, []) if i.get("state", "open") == "open"
+               and isinstance(i.get("checks"), dict) and i["checks"].get("state") == "failed" and isinstance(i.get("url"), str)]
+    ticket_decisions = runtime.decisions_for(t.id) if runtime is not None else []
+    rows = agent_rows(ws, now=at, events=ticket_events, entries=entries, needs=all_needs)
+    card = Cards(ws, entries=entries, needs=all_needs, rows=rows, events=ticket_events, reviews=reviews,
+                 mentions=runtime.mention_index() if runtime is not None else None,
+                 now=at).for_ticket(t, tasks=None if task_view["error"] else _task_items(t))
+    start_box = suggest_start(ws, t, needs_items=needs, now=at, events=ticket_events, rows=rows, failing_prs=failing,
+                             request=request)
+    move = your_move(t, needs, plan_skip_sizes=skip, moves=actions["moves"])
+    chapter = story.current_chapter(t, card)
+    gate_views = {g: story.gate_view(ws, t, g, card, can_approve=can[g], seen=gate_seen[g],
+                                     snapshot=approved_snapshot(ws, t.id, g), question=gate_question[g],
+                                     unsigned=g in gate_unsigned) for g in GATE_SECTIONS}
+    stale = bool(card["agent"]) and card["agent"]["status"] == "stale"
+    epic_view = None
+    if t.meta.get("type") == "epic":
+        from orch.dashboard.data.epic import page_data
+        all_events = read_events(ws)  # the delegation's audit spans the children's events
+        epic_view = page_data(ws, t, entries=entries, needs=all_needs, events=all_events,
+                              builder=Cards(ws, entries=entries, needs=all_needs, events=all_events, now=at,
+                                            reviews=reviews))
+    # The status card answers blocking questions in place; other open questions are answered in Agreed.
+    card_qids = {q["id"] for q in questions if not q["answered_flag"] and q.get("blocking", True)} \
+        if (move.get("action") or {}).get("kind") == "answer" else set()
+    step_list = steps(t, plan_skip_sizes=skip)
+    ask_by = ask_author(t, ticket_events)
+    widgets, ac_chips = _widgets(ws, path, t)
+    return page(request, "ticket.html", nav="board", title=f"{t.id} {t.title}", needs=all_needs,
+                widgets=widgets, ac_chips=ac_chips, widget_css=css_names(),
+                waiting=query.waiting(ws, entries=entries, needs=all_needs, now=at), t=t, meta=t.meta,
+                path=path.relative_to(ws.home).as_posix(), card=card, chapter=chapter, open_all=open == "all",
+                chapter_titles=story.CHAPTER_TITLES, chapters=story.CHAPTERS,
+                steps=step_list, journey=story.journey(t, card, step_list, ticket_events, ask_by,
+                                                        story.gate_signers(ws, t),
+                                                        story.done_signer(ws, t, ticket_events)), move=move, stale=stale,
+                meta_line=meta_line(t, needs, at, events=ticket_events), created_day=day(t.meta.get("created")),
+                gate_views=gate_views, pr_early=pr_early, questions=questions, card_qids=card_qids, actions=actions,
+                verdict_seen=verdict_hash([t], ws) if actions["verdict"] else "", invalidated=invalidated_gates(t),
+                criteria=evidence.criteria(t), other_evidence=evidence.other_evidence(t),
+                evidence_by=story.evidence_author(ticket_events),
+                ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),
+                notes=story.agent_notes(t, ticket_events), timeline=story.timeline(ticket_events),
+                plan_checklist=plan_checklist(t.section("Plan")) if not task_view["tasks"] else None,
+                artifacts=_artifacts(ws, t.id), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")),
+                external=external, prs=prs, branches=branches, start_box=start_box, tasks_card=tasks_card,
+                ticket_decisions=ticket_decisions, epic=epic_view, together=bool(together),
+                together_questions=human_questions_in(t, "requirements") + human_questions_in(t, "plan"))
+
+
+def _widgets(ws, path, t):
+    """The ticket's ```orch blocks for `section_md` (parsed from the file as read, so errors name its lines) and the
+    verdict chip per criterion projected from the `checks` blocks in Verification."""
+    from markupsafe import Markup
+
+    from orch.dashboard.markdown import section_widgets
+    from orch.widgets.types.checks import projection, verdict_chip
+    chips = {n: Markup(verdict_chip(v["verdict"])) for n, v in projection(t).items()}
+    return section_widgets(ws, t, path.read_text(encoding="utf-8", errors="replace")), chips
+
+
+def _task_items(t):
+    from orch.core import tasks as tk
+    return tk.ticket_tasks(t)
+
+
+@router.get("/t/{ref}/raw")
+def raw_page(request: Request, ref: str):
+    ws = request.app.state.ws
+    try:
+        entry = store.resolve(ws, ref)
+    except UsageError as e:
+        return page(request, "error.html", 404, nav="board", title="Not found", heading="Not found", message=e.message)
+    return page(request, "raw.html", nav="board", title=f"{entry.id} raw file", tid=entry.id, path=entry.path.relative_to(ws.home).as_posix(),
+                text=entry.path.read_text(encoding="utf-8", errors="replace"),
+                editable=entry.meta is not None)  # the editor needs a file that parses
+
+
+@router.get("/a/{ticket}/{name:path}")
+def artifact(request: Request, ticket: str, name: str, v: str = ""):
+    target = query.artifact_file(request.app.state.ws, ticket, name)
+    if target is None:
+        return PlainTextResponse("not found", status_code=404)
+    ext = target.suffix.lower()
+    media = "text/plain; charset=utf-8" if ext == ".md" else (mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if ext != ".pdf":  # the browser's PDF viewer needs to run; everything else is locked down
+        headers["Content-Security-Policy"] = SANDBOX_CSP
+    if v:  # an inline link names the content it expects (?v=<sha256 prefix>): a file swapped since is not served
+        from orch.core.artifacts import read_pinned
+        data = read_pinned(target, v)  # read once, hashed as read, and exactly those bytes are sent
+        if data is None:
+            return PlainTextResponse("this file changed since it was linked in the ticket; it is not shown",
+                                     status_code=409, headers={"Cache-Control": "no-store"})
+        return Response(data, media_type=media, headers=headers)
+    return FileResponse(target, media_type=media, headers=headers)

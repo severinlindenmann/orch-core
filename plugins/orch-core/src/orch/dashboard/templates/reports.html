@@ -1,0 +1,118 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Reports</h1>
+    <p>How work flows through this workspace.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/reports.md?days={{ days }}">Open as Markdown</a>
+  </div>
+</div>
+<div class="tabs" role="group" aria-label="Filter">
+  {% for w in windows %}
+  <a href="?days={{ w }}" class="{{ 'on' if days == w }}"{% if days == w %} aria-current="true"{% endif %}>{{ days_labels[w] }}</a>
+  {% endfor %}
+</div>
+<div class="kpis">
+  <div class="card kpi">
+    <div class="muted">Done</div>
+    <div class="kpi-value">{{ r.done }}</div>
+    <div class="muted">{{ "%+d"|format(r.done - r.done_before) }} vs. the period before</div>
+  </div>
+  <div class="card kpi">
+    <div class="muted">Median open &rarr; done</div>
+    <div class="kpi-value">{{ r.median_days|duration("d") }}</div>
+    <div class="muted">{% if r.median_days_n %}median over {{ r.median_days_n }} done ticket{{ "" if r.median_days_n == 1 else "s" }}{% else %}no ticket done in this period{% endif %}</div>
+  </div>
+  <div class="card kpi">
+    <div class="muted">Waiting on you</div>
+    <div class="kpi-value">{{ r.median_wait_hours|duration }}</div>
+    <div class="muted">{% if r.median_wait_n %}median over {{ r.median_wait_n }} answer{{ "" if r.median_wait_n == 1 else "s" }}{% else %}no question answered in this period{% endif %}</div>
+  </div>
+  <div class="card kpi">
+    <div class="muted">Sent back</div>
+    <div class="kpi-value">{{ r.sent_back }}</div>
+    <div class="muted">of {{ r.verdicts }} verdicts</div>
+  </div>
+</div>
+<section class="card dist-card" aria-labelledby="dist-h">
+  <div class="section-head">
+    <h2 id="dist-h">Tickets by status</h2>
+    {% if dist_total %}<span class="muted">{{ dist_total }} ticket{{ "" if dist_total == 1 else "s" }} now</span>{% endif %}
+  </div>
+  {% if dist %}
+  {% set dist_text = [] %}{% for d in dist %}{% set _ = dist_text.append(status_labels[d.name] ~ " " ~ d.n) %}{% endfor %}
+  <div class="dist" role="img" aria-label="Tickets by status: {{ dist_text|join(', ') }}, of {{ dist_total }}">
+    {% for d in dist %}
+    <a class="dist-seg dist-seg-{{ d.role }} dist-{{ d.name }}" href="/board{{ '?show_done=1' if d.name == 'done' }}#col-{{ d.name }}" tabindex="-1" aria-hidden="true" style="flex-grow: {{ d.n }}" title="{{ status_labels[d.name] }} {{ d.n }}"></a>
+    {% endfor %}
+  </div>
+  <ul class="dist-labels">
+    {% for d in dist %}
+    <li><a href="/board{{ '?show_done=1' if d.name == 'done' }}#col-{{ d.name }}">{{ ui.status(d.role, status_labels[d.name] ~ " " ~ d.n) }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No tickets yet.</p>
+  {% endif %}
+</section>
+<div class="grid-2 reports-grid">
+  <section class="card">
+    <h2>Tickets done per week</h2>
+    {% set week_text = [] %}{% for w in r.weeks %}{% set _ = week_text.append(w.w ~ " " ~ w.n ~ (" (partial)" if w.partial else "")) %}{% endfor %}
+    <div class="bars" role="img" aria-label="Tickets done per week, last 8 weeks: {{ week_text|join(', ') }}">
+      {% for w in r.weeks %}
+      <div class="bar-col" aria-hidden="true">
+        <span>{{ w.n }}</span>
+        <div class="bar-slot"><div class="bar" style="height: {{ w.h }}"></div></div>
+        <span>{{ w.w }}{% if w.partial %}<br>partial{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  <aside>
+    <section class="card">
+      <h2>Where the time goes</h2>
+      <p class="muted">Share of a ticket's life, over tickets done in the period</p>
+      {% for s in r.split %}
+      <div class="split-row">
+        <div class="split-label"><span>{% if s.role == "you" %}{{ ui.icon("you") }} {% endif %}{{ s.name }}</span><b>{{ s.pct }}</b></div>
+        <div class="split-track"><div class="split-fill split-fill-{{ s.role }}" style="width: {{ s.pct }}"></div></div>
+      </div>
+      {% endfor %}
+    </section>
+  </aside>
+</div>
+<section class="card by-type" aria-labelledby="by-type-h">
+<h2 id="by-type-h">By type</h2>
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col">Type</th>
+        <th scope="col">Done</th>
+        <th scope="col">Median</th>
+        <th scope="col">Sent back</th>
+        <th scope="col">Questions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in r.types %}
+      <tr>
+        <td class="cell-title"><b>{{ t.type }}</b></td>
+        <td data-label="Done">{{ t.done }}</td>
+        <td data-label="Median">{{ t.median_days|duration("d") }}</td>
+        <td data-label="Sent back">{{ t.sent_back }}</td>
+        <td data-label="Questions">{{ t.questions }}</td>
+      </tr>
+      {% endfor %}
+      {% if not r.types %}
+      <tr><td colspan="5" class="empty">No tickets done in this period yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+</section>
+{% endblock %}

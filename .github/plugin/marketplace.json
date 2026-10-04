@@ -1,0 +1,13 @@
+{
+  "name": "orch-core",
+  "metadata": { "description": "orch-core for GitHub Copilot CLI: local Markdown tickets with human approvals for agent work.", "version": "1.0.0" },
+  "owner": { "name": "Severin Lindenmann" },
+  "plugins": [
+    {
+      "name": "orch-core",
+      "source": "./plugins/orch-core",
+      "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
+      "version": "0.1.0"
+    }
+  ]
+}

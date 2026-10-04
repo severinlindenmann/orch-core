@@ -1,0 +1,184 @@
+# orch-core
+
+**Agent work steered through local Markdown tickets, with a human gate at every step.** Tickets live as Markdown files in `orchestrator/tickets/` inside your repository. Agents create, refine and work on them through the `orch` command. Requirements, plan, answers and the final verdict always come from you. A guard hook stops agents from editing ticket status directly, running human-only commands, starting the dashboard, or running git actions the workspace does not allow.
+
+## What it does
+
+- **`orch` CLI**: tickets (`new`, `show`, `claim`, `log`, `ask`, `move`, …), human-only gates (`approve`, `request-changes`, `answer`, `verdict`), `check`, `doctor` and a local dashboard (`orch serve`).
+- **Skills**: `orch-tickets`, `orch-refine-ticket`, `orch-work-on-ticket` and `orch-setup`, which guides the onboarding.
+- **Hooks** (Claude Code): a PreToolUse guard and a SessionStart hook that prints the active rules, your claimed tickets and what is waiting on you.
+- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key and rejects AI attribution lines.
+
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). The bundled `bin/orch` runs the CLI with `uv run`.
+- Claude Code with plugin support. GitHub Copilot is also supported, see below.
+
+## Install
+
+```bash
+claude plugin marketplace add severinlindenmann/orch-core
+claude plugin install orch-core@orch-core
+```
+
+If orch-core is also available from another marketplace you use, install it from only one of them. `orch init` and `orch instructions sync` enable whichever orch-core the repository already names, else the one this orch runs from, and never add a second.
+
+Then, in the repository you work in, say *"set up orch here"* or run `/orch-core:setup`. The orch-setup skill asks one question at a time (customer, ticket prefix, external tracker, git host, what agents may do, repos). It runs `orch init` and the follow-up steps only after you say yes.
+
+## The CLI in your own terminal
+
+Approvals, answers and `orch serve` must come from you, not from an agent, so they run in your own terminal. Install the CLI there once (the tool is called `orch-core`, the command is `orch`):
+
+```bash
+uv tool install "<plugin folder>[dashboard]"
+```
+
+`orch doctor` prints this command with the real plugin folder filled in.
+
+## GitHub Copilot
+
+```bash
+copilot plugin marketplace add severinlindenmann/orch-core
+copilot plugin install orch-core@orch-core
+```
+
+Copilot loads the skills, but it cannot run the plugin's hooks or `bin/orch`. So install the CLI in your terminal first (see above). Then set up with `--harness copilot`, which writes `.github/copilot-instructions.md` and skill copies in `.agents/skills`. There is no guard hook under Copilot; the commit check and `orch check` still apply.
+
+## Switching an existing workspace to plugin mode
+
+A workspace set up earlier with harness `claude` has its own `orch guard` hooks in `.claude/settings.json` and skill copies in `.claude/skills`. With the plugin active as well, everything runs twice, and `orch doctor` reports this as `harness`. To fix it:
+
+1. In `orchestrator/config.json`, change `"harnesses": ["claude"]` to `["claude-plugin"]`. Keep any other harnesses, such as `"copilot"`.
+2. Run `orch instructions sync`. It removes the orch hooks from `.claude/settings.json` and enables the plugin there.
+3. Delete the leftover copies `orch doctor` lists under `skill-copies`, such as `.claude/skills/orch-tickets` or the old `tickets`, `refine-ticket` and `work-on-ticket`.
+
+## What goes into git
+
+orch never commits. The files it writes are either shared records or local to one machine:
+
+- **Commit** (shared records every clone needs): `orchestrator/config.json`, `AGENTS.orch.md`, `tickets/`, `artifacts/`, `static/`, `.state/counter.json`, `.state/events.jsonl` (the event log `orch check` and the receipts read), `.state/gates/`, `.state/remote/ledger.jsonl` (which phone decisions were applied), each addon's `.state/addons/<name>/records/`, and what `orch instructions sync` writes outside `orchestrator/` (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, …).
+- **Local** (caches, locks, spools, per-machine state): `temporary/`, `.state/locks/`, `.state/index.json`, the error logs, `.state/needs-count`, `.state/run/`, every `*.lock`, and the rest of `.state/addons/` (snapshots, cursors, inbox and outbox). The approval ledger and its key live outside the repository, in the orch config dir.
+
+`orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else.
+
+## Feedback about orch
+
+When an orch command, the guard or a skill is confusing or broken, the agent rule in `AGENTS.md` asks the agent to run `orch feedback add --file orchestrator/temporary/orch-feedback.md` once and carry on (a file, because the guard denies inline text that quotes a human-only command). Agents never file issues themselves: they work in customer workspaces, and an issue is an outward action that could carry customer details. The report is redacted when it is saved (workspace paths, the customer, repo and tracker names, ticket ids, titles and ticket text, URLs and bare host names, emails, credentials (`name=value` secrets, known token prefixes, JWTs) and token-like strings are replaced by placeholders) and kept in `feedback/` in the orch config dir, outside every repository. Nothing is sent anywhere. A repeat of the same report only raises its count, and each workspace saves at most 3 new reports a day.
+
+In your own terminal, `orch feedback list` and `orch feedback show <id>` show the queue; `orch feedback file <id> [--note "…"]` prints the exact issue text and, after you type FILE (in capitals), creates it on the orch-core repository with your own `gh` login (`--note` adds your own words, unredacted). `orch feedback dismiss <id>` keeps a report but marks it done. Set `"feedback": {"enabled": false}` in `orchestrator/config.json` to drop the rule from `AGENTS.md` (after `orch instructions sync`) and make `orch feedback add` save nothing.
+
+## Mission Control (the dashboard)
+
+`orch serve` (in your own terminal) prints a link with a one-time token and opens **Mission Control** in the browser. Everything is served locally, fonts and logos included, and every write goes through the same rules as the CLI.
+
+| Page | What it shows |
+|---|---|
+| Today (`/`) | One headline ("2 decisions, then the agents run on their own", with the agents working and the ideas in the backlog), then what waits for you, blocking first: questions to answer, plans and re-approvals on tickets an agent works on, requirements a refine agent waits on, your last tasks, verdicts and claims whose agent went silent. Each card says in one line why it waits on you, shows the full text it binds and one primary action (when the agent drafted requirements and plan, "Approve requirements and plan": both texts in full side by side with their pinned images, both hashes bound, two signed approvals; a verdict is a checklist of the criteria with an evidence tile each). Requirements and plan an agent drafted together for a backlog ticket stand below the decisions under **Ready to start**, with their own count; Request changes, Send back and other answers are folded. Backlog requirements fold into one line ("120 to groom") with Show list and Groom one by one (`/groom`, one ticket at a time with Previous/Next). Non-blocking questions the agent went ahead on appear lower down as Confirm items, and human tasks while the agent still has work as "when you have a moment". The headline, the menu badge, the tab title and the SessionStart hook all count only the blocking items. A changed gate that cannot be approved in the ticket's status shows the real move instead (for example "Move back to backlog"). Below, **In flight** lists the open, in-progress, waiting and testing tickets that do not need you, with their steps, Current state and the agent on it; one shared Start agent panel serves them all. Side column: **While you were away** (the last day from orch's events only: decisions your paired phone applied as receipts, tasks agents finished with their artifact count, new backlog ideas) and **Working now**. |
+| Board (`/board`) | **Your move** on top: one card per decision, four to a row ("+N more" in the List past eight), acted on in place where the full text is on the card (never on a ticket with an approval the ledger on this machine does not hold: that card shows "unsigned" and opens the ticket): an answer's numbered options, a short plan in full with Approve plan, a verdict whose Accept sits inside the expanded criteria and evidence; requirements, requirements + plan, re-approvals and an epic open their full-text approve view on the ticket. Below, the agents' flow: Ready, Working, Waiting and Testing (an empty lane is a narrow rail with its count), and Done as a "7 done this week" rail that opens the List filtered on done (`/board?view=list&status=done`); drop a card on it to close the ticket. The Backlog is a drawer under the flow with its priority counts, folded by default (the choice is remembered per user), sorted by priority, then age, with ideas an agent filed marked "agent idea". Search filters as you type (no reload, the box keeps focus; Enter and plain links work without JS too), with repo and Group by in view and type, priority, external key and label under More filters. Each card says its progress in words and a bar ("Tasks 3/5", "PR #31 ✓ checks", "AC 1/3", "2 artifacts"), its epic as a chip and the agent as initials with its last action; the move chip shows only when the move is yours (pink: Approve plan, Answer Q1, Verdict) or something is wrong (Stale, Blocked). The List and the compact rows keep the gate strip (`R✓ P● · T 1/4 · AC 0/3`), with words for screen readers. Drag a card to another column to move it; a move a gate refuses shows the reason. Without JavaScript, every card links to its ticket. The List tab (`/board?view=list`) shows the same tickets as a sortable table, your moves first. **Group by** none, epic, sprint, label, agent or repo turns the Board into swimlanes and the List into sections; the choice is remembered per workspace (in `dashboard.json` in the orch config dir, not in the repository). A child shows its epic above the title. On a phone Your move is a list of rows that open the ticket and the lanes stack. |
+| Activity (`/activity`) | Agents now on top (active claims as Working, Waits for you or Stale, with Start agent on stale ones and a quiet Release, plus recent sessions), then the events, newest first, 50 a page, grouped by day and filterable by category; runs of the same event by the same actor fold into one line ("claimed the ticket · 8 times"); `/activity.md` opens it as Markdown. The old `/agents` and `/timeline` URLs redirect here. |
+| Reports (`/reports`) | Done count, lead time, waiting time and sent-back rate for 7 days, 4 weeks or a quarter, tickets by status (each segment links to the Board), done per week, where the time goes, per type; `/reports.md` exports it. |
+| Workspace & addons (`/workspace`) | Four tabs. Addons (the default): each addon with its trust and health, an Enabled here switch, its settings folded under it, Check for updates and suggestions from this repo. Setup: checks with copyable fixes, repositories (paths relative to the workspace) and their commit check, Start agent settings, branding, keyboard shortcuts and density (comfortable or compact, per workspace, kept with your other per-user choices). Phones: pairing, and which kinds a paired phone applies (all by default). Advanced: `orch check` findings, static/, housekeeping, the config (folded) and a link to `/design`. |
+| Ticket (`/t/<key>`) and New ticket (`/new`) | The ticket as a story: a header with the move, the agent's summary, PR and agent, and a journey bar (Asked → Agreed → Doing → Proven → Done, each with its date and who; Agreed names you only when the approval ledger on this machine holds the approval, else it says "approval not signed here"; five segments on a phone); a status card saying what is next; then Asked (the human's words), What we agreed (approvals with their hash, answered questions, the full gated text above every Approve, and a diff for a re-approve), Doing (tasks with their artifacts, and code), Proof so far (each acceptance criterion with its evidence and an evidence tile, dashed while the proof is missing, and the verdict) and Left; an Artifacts panel in the side column (screenshots and diagrams as a grid, reports and files, links, each tied to its task or criterion, and files not linked yet); the agent's notes folded and attributed; the timeline from orch's events. Approve, Accept and moves confirm in place (press twice, Esc cancels); releasing a claim, trusting an addon, revoking a phone, tidying and addon actions ask in an in-page dialog (a confirm page without JS). Answers, change requests, send-backs and comments wait 5 s with Undo (z) before they are sent; one that is not recorded (refused, signed out, no connection) says why in place and the form comes back. Approvals and verdicts have no undo. Nothing asks with a browser popup. Move, raw file, upload, comment and release sit in the ⋯ menu; `?open=all` expands everything. The new-ticket form. |
+| Design system (`/design`) | Not in the menu: every addon widget, core primitive and state as Mission Control draws it, light and dark, at page, aside and phone widths (`?theme=light|dark`, `?density=compact`). The reference for `DESIGN.md`. |
+
+The menu switches between Light, Dark and Auto (follows the system). Your choice is stored in the `orch_theme` cookie. Below 900 px the menu turns into a top bar (the page title and Today's count) whose Menu button opens the items in a drawer; Esc closes it. A "Skip to content" link is the first stop for the keyboard on every page.
+
+Settings in `orchestrator/config.json` under `dashboard`:
+
+| Key | Values | Default |
+|---|---|---|
+| `theme` | `system`, `light`, `dark`: the theme used when you have not picked one in the menu | `system` |
+| `brand` | `none`: the plain Mission Control icon and favicon; `mission-control`: the colour ones | `none` |
+| `stale_minutes` | Minutes without activity on a claimed ticket before Agents shows it as Stale (integer ≥ 1) | `120` |
+
+### Who is the human
+
+Approve, request changes, answer, verdict, reopen, close, pausing an epic's delegation and moves to `open`, `backlog`, `in-progress` or `done` are yours alone. What stands behind that, from strongest to weakest:
+
+- **Your confirmation and the approval ledger.** A human action needs an interactive terminal and a typed confirmation, or the dashboard (`orch serve`, which only you start). `orch approve`, `answer`, `verdict`, `request-changes`, `move` and `epic pause` check everything first (gate name, `-m`, the ticket's state) and ask for the typed id only when the action would succeed. The write is bound to what the check showed you: an approval, answer or change request to its hash (the gated text or the question is printed first), a verdict to the hash of the criteria and evidence it prints, a move to the ticket file as it was, so a change made while you type is refused. Every human decision, from the dashboard, an addon or a phone too, carries such a hash, and a done verdict is refused while an approval it rests on covers text that changed since. The check runs outside the ticket lock; the write repeats every check inside it. `--dry-run` prints what would happen and writes nothing; it needs no terminal (a script or a non-interactive shell may run it), but it is yours like the command itself: inside an agent harness it is refused, and the guard keeps agents away from these commands altogether. Each approval, answer, verdict and close is then signed into one ledger per user outside the repository: `ledger.jsonl` in the orch config dir (`$ORCH_STATE_DIR`, else `$XDG_CONFIG_HOME/orch`, else `~/.config/orch`). Each line names its workspace (an id from the config's customer and ticket prefix, so worktrees and moved folders keep matching) and carries an HMAC from a per-user key (`ledger.key`, mode 0600). An agent proceeds (claim, task start/done, move to testing) only on approvals and blocking answers the ledger holds; nothing in the repository, such as an old stamp, a hash version or the event log, makes a decision count as signed. `orch check` reports what the ledger does not hold (`unsigned-decision`). A decision made before the ledger existed, on another machine or in a clone is not in this machine's ledger: review it with `orch ledger adopt <id>` (or `--workspace`), which shows the full gated text, its id and what `events.jsonl` says, and signs only what you confirm by typing its id. If you did not make it, request changes instead. The dashboard marks such approvals "unsigned".
+- **Agent detection.** orch treats a caller as an agent when its environment carries an agent harness's markers or when any ancestor process (PID 1 included) is a known agent harness (Claude Code, Copilot CLI, Codex, Gemini CLI, Cursor agent, aider, …); on macOS and Linux an unreadable process tree counts as an agent. Human actions are refused under an agent, whatever way the code reached them. This raises the bar; it is not a proof: a process the agent detaches from its own tree, or one started outside it (for example typed into a terminal you opened), is not caught by ancestry. `orch doctor` prints what orch detected and the process chain.
+- **The guard (Claude Code only, best effort).** It denies human-only commands in the spellings it can read, commands that strip the harness markers, and access to the ledger and its key. A shell offers endless indirections (shell functions and aliases, encoded text, scripts written first and run later, interpreters) and string matching cannot see them all.
+- **The audit.** Every human event records the process evidence, and `orch check` reports a human event written under an agent harness (`human-action-from-agent`). orch numbers events 1, 2, 3, … under the events lock. A line in `events.jsonl` whose seq jumps far ahead (more than 1000), repeats, goes back or is not an integer is ignored by every reader and cursor (`orch wait`, addon events); a smaller gap, as a git merge or a trimmed log leaves it, is accepted. `orch check` reports each such line with its line number (`event-log-tampered`: an error for a far jump, a warning otherwise).
+
+The remaining limit is honest: code that runs as your user outside the guard's view can read any file your user can, the ledger key included. The same goes for the event log in the repository, which an epic's delegation counts auto-approvals in: such code could add events, though not approvals beyond the signed limits. The event log also tells whether an agent wrote a ticket's Ask itself (it may then fix that Ask until the requirements are approved); such code could forge that too, for a ticket still in backlog and never approved; an approved ticket keeps its Ask either way. Edits made in an editor outside orch leave no event either: an agent-written Ask that you retyped by hand (not through `orch section set` or the dashboard) stays editable by agents until you approve the requirements. Stopping that needs OS-level isolation (a separate user or sandbox for agents), which orch does not provide.
+
+Approvals bind what you saw. The requirements approval covers the Summary (when there is one), Requirements, Acceptance criteria, Out of scope and the ticket's `size` and `type` (hash version 2; approvals made before keep their version and stay valid). After it, agents cannot change size or type. A gate with a blocking question open cannot be approved. A gate whose text has a line that reads as an open question for you (the marker is described in `docs/ticket-schema.md`) is approved only when you say so: `orch approve <id> <gate> --despite-open-question`, or the checkbox on the dashboard; the event and the ledger record it. Today's approval cards show the full text the approval binds, not an excerpt (a section with Markdown link definitions is shown as plain text, so nothing hashed is hidden).
+
+Until you approve the plan (sizes with a plan gate), an agent may add tasks but cannot start or finish them.
+
+The ticket's `## Log` is plain text in the file and only a mirror: agents may append to it but not change or remove lines, and not write lines in your name. `orch check` reports a Log line that claims a human action with no matching event (`unverified-log-line`). The ticket page's Activity comes from the event log; the raw Log is labelled as unverified file text. Agents do not write shell startup files, `.envrc` or git hooks. Git commands are not policed beyond commit, push and review rules: whatever a checkout or merge does to ticket files, an agent still proceeds only on decisions the ledger holds, and `orch check` reports the rest.
+
+### Epics and sprints
+
+An epic (`orch new --type epic`) groups children: `orch new --epic <epic> …`, or `orch link <id> --epic <epic>` (`--no-epic` to take it out). It has requirements and acceptance criteria but no plan or tasks; its page shows the story plus the children (each with its state against your approval), the rolled-up strip (children done, how many wait for you, criteria proven) and the delegation.
+
+Approving an epic (on its page, or `orch approve <epic> requirements` after `orch epic show <epic>`) is one decision over the epic and every open child's requirements and plan, all shown in full (plans folded). Agents then claim and work those children to testing without asking again. A child whose requirements or plan change, a child added later, or one moved into or out of the epic is "changed since epic approval" until you approve the epic again (agents stop on it meanwhile: no claim, task work or move to testing); that view opens only what changed. The same holds for any ticket: once its approved requirements or plan change, an agent stops until you approve again, and Today shows the re-approval instead of a verdict. Once an epic is approved, only you move tickets into or out of it.
+
+Delegation is your opt-in at that approval (the checkbox, or `--delegate [--max-children N] [--max-size m]`): agents may then approve children they add themselves (`orch epic auto-approve`), at most 10 by default and only up to size `m` (you may choose another limit, up to `l`, in the form or with the flags; the confirmation and the signed entry show it). Only children an agent created qualify, once each; larger ones, children you created, nested epics and changes to the epic's own text still wait for you. Each auto-approval is listed on Today as a quiet note (not counted as waiting on you), on the epic page and in `orch check`. Pause delegation on the epic page or with `orch epic pause <epic>` (yours alone): it stops further auto-approvals; the children auto-approved until then stay approved as they were (a later change to one of them waits for you). In the terminal, `orch approve <epic>` and `orch verdict <epic> done` print everything they bind (every child's requirements and plan, or criteria and evidence) before you type the confirmation, and refuse if anything changed in between. Verdicts stay yours: per child as usual, or once for the epic when all its open children are in testing (that closes them all, or none if one changed meanwhile). The epic verdict is given on the desktop (dashboard or `orch verdict <epic> done`); a paired phone gives verdicts only on tickets in testing.
+
+Artifacts: agents link every file or URL they produce for a ticket with `orch artifact add <id> <file>` or `orch artifact add <id> --url <http(s) link>` (`--kind`, `--label`, `--task T3`, `--ac 2`, `--inline`). The list lives in the ticket's frontmatter `artifacts`; `orch artifact scan <id>` links files put straight into `orchestrator/artifacts/<id>/`, and `orch check` warns about unlinked files and URLs. `orch artifact list <id> --json` prints one object per artifact (`name`, `url` or `static`, plus `kind`, `label`, `task`, `ac`, `sha256`, `size`, `added`; a file in the folder that is not linked has `"unlinked": true`); before this it printed `<ticket>/<name>` strings. A section can show a linked image inline with `![what it shows](artifact:<name>)`; such an image in a gated section is part of the approval (see `docs/ticket-schema.md`).
+
+Sprints are planning only: define them in `orchestrator/config.json` as `"sprints": [{"id": "S1", "name": "Sprint 1", "start": "2026-10-01", "end": "2026-10-14"}]`, then `orch new --sprint S1`, `orch link <id> --sprint S1`, `orch sprint list` and `orch sprint current`.
+
+### Request changes
+
+Instead of approving requirements or a plan, you can send them back with a message: Request changes on the Today card or the ticket page, or `orch request-changes <ref> <gate> -m "..."` (`gate` is `requirements` or `plan`; human only, like `approve`). The ticket leaves your list until the agent edits that gate's section; a reply in the Log alone does not clear the request. While the request is pending, the dashboard offers no Approve for that gate. `orch approve` in your terminal still works as your override and clears the request.
+
+### Task lists
+
+Every ticket has a `## Tasks` section: the agent writes it right after claiming (`orch task add <id> --file tasks.yaml`) and works it down one task at a time (`orch task start` / `done -m "evidence"` / `skip -m` / `block -m --on`). `orch move <id> testing` refuses until every task is done or skipped with a reason, for every size. A blocking question blocks the task in progress and the answer restarts it. Tasks with `owner: human` are yours: they count in "Waiting on you" and you tick them on the ticket page. You can skip or reopen the agent's tasks but not tick them done. Plans written before task lists keep their checklist until someone runs `orch task import <id> --from-plan`. The ticket page shows the list with its progress; Board cards and Today's In flight show the progress and the current task. Format: `docs/tasks-format.md`.
+
+### Start agent
+
+The Start agent box on the ticket page and Today's shared panel (each In flight card's Start agent… fills it) opens a terminal running an agent on the ticket, or copies the prompt or command. Agents only start when you click.
+
+Keyboard: j/k move between decisions, 1–9 pick an answer option, a arms the primary (Enter confirms), c opens Request changes or Send back, o opens the ticket, z undoes a held answer, g t / g b / g a go to Today, Board, Activity, ? lists the keys, Ctrl+K or ⌘K opens the command palette (pages, decisions, tickets; "ok" or "sign off" find approvals). Keys never fire while you type and never approve on their own; turn them off per workspace in Workspace & addons.
+
+What gets launched is set per user in `~/.config/orch/launch.json` (or `$XDG_CONFIG_HOME/orch/launch.json`), never in `orchestrator/config.json`. Agents can write the workspace config, so terminal settings found there are ignored and the Workspace page warns about them. All keys are optional. A missing file means the defaults; a broken one means the defaults plus a Workspace warning.
+
+| Key | Values | Default |
+|---|---|---|
+| `terminal` | `auto` (cmux, iTerm, Ghostty or Terminal from the environment `orch serve` runs in; `x-terminal-emulator` on Linux; `wt.exe` on Windows), `cmux`, `terminal`, `iterm`, `ghostty`, `linux`, `windows`, `tmux` (Mission Control's own Terminals, below), `custom`, `none` (hides Open in terminal) | `auto` |
+| `terminal_command` | argv for `custom`. Placeholders inside each element: `{cwd}`, `{command}` (the agent command as one shell string), `{script}` (a 0700 script that `cd`s and runs the command), `{name}` (ticket key). `{cwd_q}`, `{script_q}` and `{name_q}` are the shell-quoted forms, for elements a shell parses | `[]` |
+| `harnesses` | name → argv with `{prompt}`, merged over the defaults | `claude` → `["claude", "{prompt}"]`, `copilot` → `["copilot", "-i", "{prompt}"]`, `codex` → `["codex", "{prompt}"]` |
+| `default_harness` | a known harness | `claude` |
+
+`orchestrator/config.json` may set `agents.default_harness` (a known harness only) and `agents.prompts` (`refine`, `work`, `fix-checks`, `continue`; only `{key}` and `{pr}` are filled in). Before you click, the box shows the prompt, the command and, for `custom`, the launcher.
+
+### Terminals
+
+Mission Control can run the agents itself. This is the default addon `terminals`, **off until you enable it** per workspace in Workspace & addons, and it needs tmux (`brew install tmux`). While it is off, the menu item, the button below and every `/terminals` page are absent, and `"terminal": "tmux"` in `launch.json` is refused. While it is on, the setup checks report whether tmux and the agent CLI are installed. Its settings pick the Agent CLI (Claude Code only for now) and whether agents start in Mission Control by default. Once it is on, the Start agent box has a second button, **Open in Mission Control**, which runs the same command detached in orch's own tmux server (`tmux -L orch`, separate from any tmux of yours). `"terminal": "tmux"` in `launch.json` makes it the default. **Terminals** in the menu shows every such session started in this workspace as a live tile. **New scratch session** starts the default harness without a ticket.
+
+Open a tile to watch it full size. The session is fitted to your window, so the agent draws for your screen (with two browsers on one session, the last one to resize wins). **Watch** is read-only and sends nothing. **Type** shows the key buttons (Esc, Ctrl-C, Shift-Tab, arrows, Enter) and the reply field, with the cursor in the reply field; click the screen itself to type straight into the agent. **Readable** (the default) shows the screen at a size you pick with A−/A+, following the live bottom; **Whole pane** scales the whole window into the box. **End session…** stops it. Screens are snapshots (`capture-pane`, one tmux call for all tiles), streamed a few times a second while they change and every few seconds while they do not; a hidden tab pauses its stream. They are not a full terminal emulator. The same session stays reachable from any terminal: `tmux -L orch attach -t <name>`. Sessions started elsewhere (a cmux tab, Terminal.app) are not shown. Terminals answer only on this machine: a request from the network (`orch serve --lan`) or to a Host that is not loopback gets none of it. Agents may not run `tmux -L orch`: the guard refuses it, and agents started here run without `$TMUX`, so a plain `tmux` inside a session does not reach the others. The guard rule is a pattern match like the rest of the guard, not a proof. orch's tmux server counts as an agent harness for agent detection, so nothing running in a Terminals session passes for your own terminal: approvals and the other human actions stay in the dashboard's own forms or a terminal you opened. Today shows a Terminals tile with how many run.
+
+To try it with sample data: `uv run python scripts/seed_demo.py /tmp/mc-demo`, then `cd /tmp/mc-demo && orch serve`.
+
+### Addons
+
+Addons add pages and panels to Mission Control (code reviews, issues, status, wiki, ...). Five default addons ship with the plugin, all off until you enable them: GitHub code reviews (`github-reviews`) and GitHub issues (`github-issues`), both needing `gh` signed in (`gh auth login`); Databricks (`databricks`: workspaces, failed runs, pipelines, compute for local development; read-only through the `databricks` CLI, you map each environment to a profile); wiki (`wiki`: related pages on tickets, "may need an update" hints, a Wiki page; GitHub wiki now, Confluence later); and Terminals (`terminals`: run, watch and type into agent sessions in Mission Control, needs tmux; see Terminals above). For GitHub issue keys, use a tracker such as `GH-(?P<id>\d+)` with `https://github.com/<owner>/<repo>/issues/{id}`. Default addons ship in `addons/` and are trusted with the plugin; custom addons are installed with `orch addon install <folder | git URL>` and run only after you trust that version. Enable an addon per workspace in Workspace & addons (or `orch addon enable <name>` in your own terminal). Agents cannot install, trust or enable addons. To write one, read `ADDONS.md` and start from `addon-template/`. `orchestrator/config.json` can only suggest addons (`suggested_addons`); the old `addons` key is ignored and `orch check` warns about it.
+
+### Phones
+
+Pair a phone to a `remote_humans` addon (Workspace & addons, your own QR code or "Copy pairing link") so it can answer, approve, request changes, give a verdict or request a new ticket for you from wherever that addon's own app or chat surface runs — never by moving a ticket. A paired phone is you: a decision that passes core's checks (pairing, signature, age, the hash of the exact text it was given for, the testing round) applies at once, with no second step on the desktop, and is signed into your approval ledger with `via` `phone:<name>` and the phone's id. Today shows what your phone applied as receipts ("Approved requirements of ACME-12 from your phone (iPhone) 08:12"). Every kind is on by default; switch one off in Workspace → Phones to keep it for the desktop. A revoked or unknown phone, a bad signature or a changed text never applies. Revoke a phone any time. Agents never see the pairing key and never wait on a phone directly: they call `orch wait <ref>` to block (agent-callable, read-only) until you decide, by phone or on the desktop, whichever comes first.
+
+## Without the plugin
+
+For a repository where the plugin is not available, install the CLI from this folder (`uv tool install "<plugin folder>[dashboard]"`) and run `orch init` in the repo, for example:
+
+```bash
+orch init --customer acme --prefix ACM --harness claude --harness copilot --repo app
+```
+
+With harness `claude`, orch writes the skills to `.claude/skills` and the `orch guard` / SessionStart hooks to `.claude/settings.json`. Nothing refers to the plugin, and the files can be committed to the customer repo.
+
+## Development
+
+| Task | Command (from this folder) |
+|---|---|
+| Set up | `uv sync --extra dev --extra dashboard` |
+| Tests | `uv run pytest -q` |
+| After touching `pyproject.toml` | `uv lock` (the wrapper and CI run with `--frozen` / `--locked`) |
+| Addon template | `uv run orch addon check addon-template --strict && uv run pytest -q addon-template/tests` |
+| Design tokens | edit `src/orch/dashboard/static/tokens.json`, then `uv run python -m orch.dashboard.design.build` (a test fails when `tokens.css` drifts) |
+
+CI (`.github/workflows/orch-core.yml`) runs the tests on Ubuntu and Windows with Python 3.11 and 3.13.

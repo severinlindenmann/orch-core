@@ -1,0 +1,3 @@
+{"note": "composed: the CLI's message when the refresh token is no longer valid (not captured live)",
+ "argv": ["databricks", "current-user", "me", "--profile", "acme_test", "-o", "json"], "returncode": 1,
+ "stderr": "Error: default auth: databricks-cli: cannot get access token: oauth2: \"invalid_grant\" \"Refresh token is invalid\". Try logging in again with `databricks auth login --profile acme_test` before retrying.\n"}

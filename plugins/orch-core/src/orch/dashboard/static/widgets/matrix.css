@@ -1,0 +1,8 @@
+/* matrix */
+.w-matrix th[scope=row] { white-space: nowrap; }
+.w-matrix td { white-space: nowrap; }
+.w-mx-tick { font-weight: 700; }
+.w-mx-bar { display: inline-block; width: calc(var(--s-1) * 5 * 3); height: var(--s-2); margin-right: var(--s-2); border-radius: var(--r-pill);
+  vertical-align: baseline; background: linear-gradient(to right, var(--info-mark) calc(var(--v) * 20%), var(--line) 0); }
+.w-mx-total { font-weight: 700; }
+.w-mx-pick th, .w-mx-pick td { background: var(--ok-bg); color: var(--ok-fg); }

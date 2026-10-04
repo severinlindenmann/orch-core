@@ -1,0 +1,17 @@
+{
+  "1": {
+    "scale": {"min": 0, "max": 10},
+    "pick": "sqlite",
+    "criteria": [
+      {"id": "setup", "label": "Setup effort", "weight": 3, "why": "Illustrative: one person maintains this."},
+      {"id": "concurrency", "label": "Concurrent writers", "weight": 2},
+      {"id": "backup", "label": "Backup and restore", "weight": 4},
+      {"id": "cost", "label": "Running cost", "weight": 2}
+    ],
+    "options": [
+      {"id": "sqlite", "label": "SQLite file", "scores": [10, 4, 9, 10]},
+      {"id": "postgres", "label": "Managed Postgres", "scores": [6, 10, 8, 4]},
+      {"id": "json", "label": "JSON files", "scores": [9, 2, 6, 10]}
+    ]
+  }
+}

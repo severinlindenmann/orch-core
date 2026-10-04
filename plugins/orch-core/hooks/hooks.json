@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|Read|Grep|Glob|NotebookEdit",
+        "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" guard --hook-json"}]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" hook session-start"}]
+      }
+    ]
+  }
+}

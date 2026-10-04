@@ -1,0 +1,183 @@
+{% extends "layout.html" %}
+{% import "_widgets.html" as w %}
+{% import "_ui.html" as ui %}
+{% import "_ticket_card.html" as tc %}
+{#- The design-system gallery (design-system spec §5.2): fixtures from orch.dashboard.design.gallery, each drawn in
+    page, aside and phone container frames, in light and dark. Static specimens: no addon code runs. -#}
+{% macro framed(theme) %}{% for label, width in frames %}<figure class="ds-frame" data-theme="{{ theme }}" style="width: {{ width }}px">
+  <figcaption>{{ label }} · {{ width }} px · {{ theme }}</figcaption>
+  <div class="addon-slot" inert>{{ caller(label) }}</div></figure>{% endfor %}{% endmacro %}
+{% block main %}
+<div class="page-head">
+  <div><h1>Design system</h1>
+    <p>Every addon widget and core primitive as Mission Control draws it. Frames are real container widths, so the layout you see is the layout an addon gets. Read DESIGN.md for the rules.</p></div>
+  <div class="actions">
+    <a class="btn{{ ' btn-primary' if themes|length == 2 }}" href="/design?density={{ density }}">Both themes</a>
+    <a class="btn{{ ' btn-primary' if themes == ('light',) }}" href="/design?theme=light&amp;density={{ density }}">Light</a>
+    <a class="btn{{ ' btn-primary' if themes == ('dark',) }}" href="/design?theme=dark&amp;density={{ density }}">Dark</a>
+    <a class="btn btn-quiet" href="/design?density={{ 'comfortable' if density == 'compact' else 'compact' }}{% if themes|length == 1 %}&amp;theme={{ themes[0] }}{% endif %}">{{ "Comfortable density" if density == "compact" else "Compact density" }}</a>
+  </div>
+</div>
+<nav aria-label="Gallery sections"><ul class="tabs ds-toc">
+  <li><a href="#tokens">Tokens</a></li><li><a href="#primitives">Core primitives</a></li><li><a href="#states">States</a></li>
+  {% for s in sections %}<li><a href="#{{ s.id }}">{{ s.title }}</a></li>{% endfor %}<li><a href="#health">Health lines</a></li>
+</ul></nav>
+
+<div class="ds-gallery" data-density="{{ density }}">
+
+<section id="tokens" class="ds-section">
+  <h2>Tokens</h2>
+  <div class="ds-themes">{% for theme in themes %}<div class="ds-theme" data-theme="{{ theme }}">
+    <h3>{{ theme|capitalize }}</h3>
+    <ul class="ds-swatches" aria-label="Roles in {{ theme }}">{% for r in roles %}<li class="ds-role">
+      <span class="ds-swatch" style="background: var(--{{ r }}-bg)"></span><span class="ds-swatch" style="background: var(--{{ r }}-mark)"></span>
+      <span style="color: var(--{{ r }}-fg)"><b>{{ r }}</b></span> {{ ui.status(r, r) }}</li>{% endfor %}</ul>
+    <ul class="ds-swatches" aria-label="Surfaces and lines in {{ theme }}">{% for t in ("bg", "surface", "surface2", "raised", "overlay", "hover", "nav-active", "line", "line2", "ctl", "text", "muted", "link", "primary", "danger", "mint", "focus") %}
+      <li><span class="ds-swatch" style="background: var(--{{ t }})"></span> <code>--{{ t }}</code></li>{% endfor %}</ul>
+    <div class="ds-type">
+      <p style="font: var(--type-title)">Title 28 · one per page</p>
+      <p style="font: var(--type-section)">Section 18 · card titles</p>
+      <p style="font: var(--type-item)">Item 15 · key and title</p>
+      <p style="font: var(--type-body)">Body 14 · running text and table cells, with a <a href="#tokens">link in running text</a>.</p>
+      <p style="font: var(--type-control)">Control 14 (16 on phone)</p>
+      <p style="font: var(--type-meta)">Meta 12 · time, labels, chips</p>
+    </div>
+    <ul class="ds-scale" aria-label="Spacing">{% for n in (1, 2, 3, 4, 5, 6, 8, 10, 12) %}<li><span class="ds-bar" style="width: var(--s-{{ n }})"></span> <code>--s-{{ n }}</code></li>{% endfor %}</ul>
+    <ul class="ds-scale" aria-label="Radii">{% for r in ("sm", "md", "lg", "pill") %}<li><span class="ds-radius" style="border-radius: var(--r-{{ r }})"></span> <code>--r-{{ r }}</code></li>{% endfor %}</ul>
+    <p class="muted">Motion: <code>--dur-1</code> 100 ms press · <code>--dur-2</code> 200 ms state · <code>--dur-3</code> 280 ms layout; all 0 with reduced motion.</p>
+  </div>{% endfor %}</div>
+</section>
+
+<section id="primitives" class="ds-section">
+  <h2>Core primitives</h2>
+  <p class="muted">Core draws these; addons never do (no primary button, no pink, no dialogs).</p>
+  <div class="ds-themes">{% for theme in themes %}<div class="ds-theme" data-theme="{{ theme }}">
+    <h3>Status chips</h3>
+    <p class="cluster">{% for r in roles %}{{ ui.status(r, {"ok": "Done", "info": "Working", "you": "Needs you", "warn": "Stale", "err": "Failed", "neu": "Draft"}[r]) }}{% endfor %}</p>
+    <h3>Buttons</h3>
+    <div class="cluster"><button type="button" class="btn btn-primary">Approve plan</button><button type="button" class="btn">Rerun checks</button><button type="button" class="btn btn-quiet">Cancel</button><button type="button" class="btn btn-danger">Revoke phone</button></div>
+    <div class="cluster ds-gap"><button type="button" class="btn btn-primary" disabled aria-describedby="why-{{ theme }}">Approve plan</button><span class="muted" id="why-{{ theme }}">Read the plan first.</span></div>
+    <h3>Decision card</h3>
+    <article class="decision-card" aria-labelledby="dc-{{ theme }}">
+      <div class="dc-head">{{ ui.status("you", "Approve plan") }}<a class="lnk key" href="/design#primitives">{{ prefix }}-0004</a><h4 id="dc-{{ theme }}">Retry login when the token expires</h4><time class="dc-age muted" datetime="2026-10-03T14:20:00Z">12 min ago</time></div>
+      <div class="dc-gated"><p class="dc-gated-head"><b>Plan · full text</b> <span class="muted">sha256 ab1e…7f</span></p>
+        <ol><li>Catch the 401 in the client and refresh the token once.</li><li>Retry the request; on a second 401 show the login screen.</li><li>Add a test for both paths.</li></ol></div>
+      <p class="dc-ff muted">Lets claude-code start. Does not approve PR #22.</p>
+      <div class="cluster"><button type="button" class="btn btn-primary">Approve plan</button><button type="button" class="btn btn-quiet">Request changes…</button></div>
+    </article>
+    <h3>Ticket card · S row</h3>
+    <div class="tc-rows">{% for c in ticket_cards %}{{ tc.row(c) }}{% endfor %}</div>
+    <h3>Ticket card · M board card</h3>
+    <div class="board ds-cards">{% for c in ticket_cards %}<div class="col">{{ tc.board_card(c) }}</div>{% endfor %}</div>
+    <h3>Ticket card · L header</h3>
+    <div class="ticket-head">{{ tc.header(ticket_cards[1], "02.10", "- Add meter_type to the marts and backfill the history.") }}</div>
+    <h3>Your move card (Board strip)</h3>
+    <div class="ym-grid ds-ym">
+      <article class="card ym-card" aria-labelledby="ym-ds-{{ theme }}">
+        <div class="ym-head">{{ ui.status("you", "Answer Q1") }}<a class="lnk key ym-key" href="/design#primitives">{{ prefix }}-0004</a></div>
+        <h4 class="ym-title" id="ym-ds-{{ theme }}">Rotate the service principal secret</h4>
+        <div class="ym-body"><p class="ym-q"><b>Q1</b> Rotate every 90 or 180 days?</p>
+          <div class="opts"><div class="opt-row"><button type="button" class="btn opt"><span class="opt-n">1</span> · 90 days</button> {{ ui.status("ok", "recommended") }}</div>
+            <div class="opt-row"><button type="button" class="btn opt"><span class="opt-n">2</span> · 180 days</button></div></div></div>
+      </article>
+      <article class="card ym-card" aria-labelledby="ym-ds2-{{ theme }}">
+        <div class="ym-head">{{ ui.status("you", "Verdict") }}<a class="lnk key ym-key" href="/design#primitives">{{ prefix }}-0012</a></div>
+        <h4 class="ym-title" id="ym-ds2-{{ theme }}">Drop the legacy tariff view</h4>
+        <div class="ym-body"><ul class="ym-tiles" aria-label="Acceptance criteria">
+          <li class="ev-tile ev-tile-ok"><span class="ev-cap"><span aria-hidden="true">✓</span> AC1</span></li>
+          <li class="ev-tile ev-tile-ok"><span class="ev-cap"><span aria-hidden="true">✓</span> AC2</span></li>
+          <li class="ev-tile ev-tile-missing"><span class="ev-cap"><span aria-hidden="true">○</span> AC3</span></li></ul>
+          <div class="cluster ym-actions"><button type="button" class="btn btn-primary">Check the proof…</button></div></div>
+      </article>
+    </div>
+    <p class="muted">Acts in place only where the full text is on the card; Accept sits inside the expanded proof. At phone width a row that opens the ticket.</p>
+    <h3>Rail lane and Done rail</h3>
+    <div class="flow ds-flow">
+      <section class="col lane lane-rail" aria-label="Waiting: no tickets"><span class="rail-mark rail-neu">{{ ui.icon("neu") }}</span><b class="rail-n" aria-hidden="true">0</b><span class="rail-label" aria-hidden="true">Waiting</span></section>
+      <a class="lane-rail rail-done" href="/design#primitives" aria-label="7 done in the last 7 days: open them in the List"><span class="rail-mark rail-ok">{{ ui.icon("ok") }}</span><b class="rail-n" aria-hidden="true">7</b><span class="rail-label" aria-hidden="true">Done this week</span></a>
+    </div>
+    <h3>Journey bar</h3>
+    <ol class="journey" aria-label="Journey example">
+      <li class="jstage jstage-done"><b class="jstage-name"><span aria-hidden="true">✓</span> Asked</b><span class="jstage-note muted">01.10 · from GH-30</span></li>
+      <li class="jstage jstage-done"><b class="jstage-name"><span aria-hidden="true">✓</span> Agreed</b><span class="jstage-note muted">02.10 · req + plan, you</span></li>
+      <li class="jstage jstage-now"><b class="jstage-name"><span aria-hidden="true">◐</span> Doing</b><span class="jstage-note muted">tasks 3/5 · PR #31</span></li>
+      <li class="jstage jstage-todo"><b class="jstage-name"><span aria-hidden="true">○</span> Proven</b><span class="jstage-note muted">AC 1/3</span></li>
+      <li class="jstage jstage-todo"><b class="jstage-name"><span aria-hidden="true">○</span> Done</b><span class="jstage-note muted">your verdict</span></li>
+    </ol>
+    <h3>Evidence tiles</h3>
+    <ul class="ev-tiles" aria-label="Evidence tiles">
+      <li class="ev-tile ev-tile-ok"><span class="ev-cap">✓ AC1</span></li>
+      <li class="ev-tile ev-tile-missing"><span class="ev-cap">no evidence yet</span></li>
+    </ul>
+    <h3>Artifacts panel</h3>
+    <section class="card art-panel" aria-labelledby="art-ds-{{ theme }}">
+      <h4 id="art-ds-{{ theme }}">Artifacts <span class="count">3</span></h4>
+      <h5 class="artifact-kind">Reports and files</h5>
+      <ul class="plain artifact-list"><li class="artifact-item"><span class="artifact-text">backfill-dry-run.csv <a class="chip" href="/design#primitives">T2</a></span></li></ul>
+      <h5 class="artifact-kind">Links</h5>
+      <ul class="plain artifact-list"><li class="artifact-item"><span class="artifact-text"><a class="lnk" href="/design#primitives">PR #31 ↗</a> <a class="chip" href="/design#primitives">AC2</a></span></li></ul>
+      <h5 class="artifact-kind">Not linked yet</h5>
+      <p class="muted">notes.txt (not linked)</p>
+    </section>
+    <h3>Inline confirm, armed</h3>
+    <div class="inline-confirm"><button type="button" class="btn btn-primary is-armed">Confirm · plan ab1e…7f</button><button type="button" class="btn btn-quiet">Cancel</button>
+      <p class="muted" aria-live="polite">Press again to confirm. Esc cancels.</p></div>
+    <h3>Dialog</h3>
+    <div class="dialog-sheet overlay" role="group" aria-labelledby="dlg-{{ theme }}">
+      <h4 id="dlg-{{ theme }}">Release claude-code's claim on {{ prefix }}-0019?</h4>
+      <p>The ticket goes back to open and any agent can claim it. claude-code's branch and notes stay.</p>
+      <label class="field-col">Reason <input type="text" value="No activity for 3 h"></label>
+      <div class="cluster dialog-actions"><button type="button" class="btn">Keep claim</button><button type="button" class="btn btn-primary">Release claim</button></div>
+    </div>
+    <h3>Receipt and message bar</h3>
+    <p class="receipt" role="status"><span class="receipt-mark" aria-hidden="true">✓</span> Plan approved (ab1e…7f) · claude-code can start · 14:32</p>
+    <p class="receipt receipt-pending" role="status"><span class="receipt-mark" aria-hidden="true">○</span> Sending answer to {{ prefix }}-0005 in 6 s · <button type="button" class="btn btn-quiet">Undo</button></p>
+    <div class="msg-bar msg-ok" role="status"><span aria-hidden="true">✓</span> Trusted github-reviews 0.1.0. Enable it per workspace below.</div>
+  </div>{% endfor %}</div>
+</section>
+
+<section id="states" class="ds-section">
+  <h2>States</h2>
+  <div class="ds-themes">{% for theme in themes %}<div class="ds-theme" data-theme="{{ theme }}">
+    <h3>Empty</h3><p class="muted">No pull request needs your review. 5 are yours · 1 has failing checks.</p>
+    <h3>Inbox zero</h3>
+    <div class="card inbox-zero"><span class="iz-mark" aria-hidden="true">✓</span><div><b>Nothing needs you right now</b><p class="muted">2 agents working · 4 tickets in backlog</p></div></div>
+    <h3>Stale</h3><p class="stale-line"><span aria-hidden="true">▲</span> Last updated 10:42 · retrying at 10:55</p>
+    <h3>Login needed</h3>
+    <div class="callout callout-warn" role="status"><p class="callout-title"><span aria-hidden="true">▲</span> Login needed for 1 repo</p><p>gh has no access to acme/infra.</p></div>
+    <h3>Loading (first fetch only)</h3>
+    <div class="skeleton-block" aria-busy="true" aria-label="Loading"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div>
+    <h3>Error</h3>
+    <div class="callout callout-err" role="alert"><p class="callout-title"><span aria-hidden="true">✕</span> Fetch failed</p><p>The last good data from 10:42 is shown as stale. See Workspace › Addons › Errors.</p></div>
+    <h3>Never fetched and partial</h3><p class="muted">Not fetched yet · Showing part of the data</p>
+  </div>{% endfor %}</div>
+</section>
+
+{% for s in sections %}
+<section id="{{ s.id }}" class="ds-section">
+  <h2>{{ s.title }}</h2>
+  {% for sp in s.specimens %}
+  <article class="ds-specimen">
+    <h3>{{ sp.title }} <span class="muted ds-slot">{{ sp.slot }}</span></h3>
+    {% if sp.note %}<p class="muted">{{ sp.note }}</p>{% endif %}
+    {% for theme in themes %}<div class="ds-row">{% call(label) framed(theme) %}
+      {%- if sp.slot == "today.summary" %}<ul class="summary">{% for tile in sp.widgets %}<li class="sum sum-{{ tile.role }}"><div class="sum-link">
+        <span class="sum-head"><span class="sum-mark">{{ ui.icon(tile.role if tile.role in ("ok", "info", "warn", "err", "neu") else "neu") }}</span> {{ tile.label }} <b class="sum-num">{{ "unknown" if tile.value is none else tile.value }}</b></span>
+        {% if tile.sub %}<span class="sum-sub">{{ tile.sub }}</span>{% endif %}</div></li>{% endfor %}</ul>
+      {%- else %}{{ w.widgets(sp.widgets, g) }}{% endif %}
+    {%- endcall %}</div>{% endfor %}
+  </article>
+  {% endfor %}
+</section>
+{% endfor %}
+
+<section id="health" class="ds-section">
+  <h2>Health lines</h2>
+  <p class="muted">Core draws one per addon page and slot group; addons only return the right Snapshot health.</p>
+  {% for theme in themes %}<div class="ds-theme" data-theme="{{ theme }}"><ul class="plain">
+    {% for b in banners %}<li><code>{{ b.health }}</code> {{ w.banner(b) }}</li>{% endfor %}
+  </ul></div>{% endfor %}
+</section>
+
+</div>
+{% endblock %}

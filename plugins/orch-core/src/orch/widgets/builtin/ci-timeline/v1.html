@@ -1,0 +1,75 @@
+<style>
+  .ct { padding: 12px; display: grid; gap: 14px; }
+  .ct-axis, .ct-lane { display: grid; grid-template-columns: minmax(90px, 28%) minmax(0, 1fr) 52px; gap: 8px; align-items: center; }
+  .ct-ticks { position: relative; height: 16px; font: var(--type-meta); color: var(--muted); }
+  .ct-ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .ct-ticks span:first-child { transform: none; }
+  .ct-run { display: grid; gap: 4px; }
+  .ct-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .ct-head b { font: var(--type-item); }
+  .ct-head .st { font: var(--type-meta); }
+  .ct-head .ok { color: var(--ok-fg); } .ct-head .bad { color: var(--err-fg); }
+  .ct-head .tot { font: var(--type-meta); color: var(--muted); }
+  .ct-note { margin: 0; font: var(--type-meta); color: var(--muted); }
+  .ct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--type-meta); }
+  .ct-name i { font-style: normal; display: inline-block; width: 14px; font-weight: 800; }
+  .ct-pass i { color: var(--ok-mark); } .ct-fail i { color: var(--err-mark); } .ct-skip i, .ct-cancelled i { color: var(--neu-mark); }
+  .ct-lane svg { display: block; width: 100%; height: 14px; }
+  .ct-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .ct-bar { rx: 2; }
+  .ct-pass .ct-bar { fill: var(--ok-mark); } .ct-fail .ct-bar { fill: var(--err-mark); }
+  .ct-skip .ct-bar, .ct-cancelled .ct-bar { fill: var(--neu-mark); opacity: .5; }
+  .ct-dur { text-align: right; font: var(--type-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  @media (max-width: 420px) { .ct-axis, .ct-lane { grid-template-columns: minmax(64px, 30%) minmax(0, 1fr) 54px; gap: 6px; } }
+</style>
+<div class="ct" id="root"></div>
+<script>
+(function () {
+  var d = orch.data, unit = d.unit || "s", runs = d.runs, SVG = "http://www.w3.org/2000/svg";
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function svg(tag, attrs) { var n = document.createElementNS(SVG, tag); for (var k in attrs) n.setAttribute(k, attrs[k]); return n; }
+  function fmt(v) { if (unit === "min") return (v < 10 ? v.toFixed(1) : Math.round(v)) + " min"; var t = Math.round(v); return t >= 60 ? Math.floor(t / 60) + "m" + (t % 60 ? " " + (t % 60) + "s" : "") : t + " s"; }
+  var ICON = { pass: "✓", fail: "✗", skip: "–", cancelled: "⊘" };
+  function end(r) { return Math.max.apply(null, r.jobs.map(function (j) { return j.start + j.duration; })); }
+  var max = Math.max.apply(null, runs.map(end)) || 1;
+  var step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600].filter(function (s) { return max / s <= (window.innerWidth < 560 ? 3 : 6); })[0] || max / 4;
+  var ticks = []; for (var t = 0; t <= max + 1e-9; t += step) ticks.push(t);
+  var root = document.getElementById("root");
+
+  var axis = el("div", "ct-axis"); axis.setAttribute("aria-hidden", "true");
+  axis.appendChild(el("span")); var tk = el("div", "ct-ticks");
+  ticks.forEach(function (t) { var s = el("span", null, fmt(t)); s.style.left = (t / max * 100) + "%"; tk.appendChild(s); });
+  axis.appendChild(tk); axis.appendChild(el("span")); root.appendChild(axis);
+
+  runs.forEach(function (r) {
+    var box = el("section", "ct-run"), head = el("div", "ct-head");
+    var failed = r.jobs.filter(function (j) { return j.status === "fail"; });
+    head.appendChild(el("b", null, r.label));
+    head.appendChild(el("span", "st " + (failed.length ? "bad" : "ok"), failed.length ? "✗ " + failed.length + " failed" : "✓ passed"));
+    head.appendChild(el("span", "tot", fmt(end(r))));
+    box.appendChild(head);
+    if (r.note) box.appendChild(el("p", "ct-note", r.note));
+    r.jobs.forEach(function (j) {
+      var lane = el("div", "ct-lane ct-" + j.status);
+      var name = el("span", "ct-name"); name.appendChild(el("i", null, ICON[j.status])); name.appendChild(document.createTextNode(j.name));
+      name.title = j.name + ": " + j.status;
+      var s = svg("svg", { viewBox: "0 0 1000 14", preserveAspectRatio: "none", role: "img", "aria-label": j.name + " " + j.status + ", from " + fmt(j.start) + " for " + fmt(j.duration) });
+      ticks.forEach(function (t) { var x = t / max * 1000; s.appendChild(svg("line", { x1: x, x2: x, y1: 0, y2: 14, class: "ct-grid" })); });
+      s.appendChild(svg("rect", { class: "ct-bar", x: j.start / max * 1000, y: 2, height: 10, width: Math.max(3, j.duration / max * 1000) }));
+      lane.appendChild(name); lane.appendChild(s); lane.appendChild(el("span", "ct-dur", j.status === "skip" ? "skipped" : fmt(j.duration)));
+      box.appendChild(lane);
+    });
+    root.appendChild(box);
+  });
+
+  var text = runs.map(function (r) {
+    var failed = r.jobs.filter(function (j) { return j.status === "fail"; });
+    var slow = r.jobs.slice().sort(function (a, b) { return b.duration - a.duration; })[0];
+    return r.label + ": " + fmt(end(r)) + ", " + (failed.length ? failed.length + " failed (" + failed.map(function (j) { return j.name; }).join(", ") + ")" : "all passed") +
+      "; longest job " + slow.name + " " + fmt(slow.duration) + "." + (r.note ? " " + r.note : "") +
+      " Jobs: " + r.jobs.map(function (j) { return j.name + " " + j.status + " " + fmt(j.duration); }).join(", ") + ".";
+  });
+  orch.text(text.join("\n"));
+  orch.ready();
+})();
+</script>

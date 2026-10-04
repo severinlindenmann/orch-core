@@ -1,0 +1,8 @@
+/* risk */
+.w-risks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--s-12) * 3)), 1fr)); gap: var(--s-2);
+  list-style: none; margin: 0; padding: 0; }
+.w-risk { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: baseline; padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm); background: var(--w-bg); color: var(--w-fg); border-left: 3px solid var(--w-mark); min-width: 0; }
+.w-risk-f { font: var(--type-item); overflow-wrap: anywhere; }
+.w-risk-w { font: var(--type-meta); }
+.w-risk-n { flex-basis: 100%; overflow-wrap: anywhere; }

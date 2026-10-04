@@ -1,0 +1,545 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% import "_ticket_card.html" as tc %}
+{% from "_start_agent.html" import start_agent %}
+{% from "_tasks.html" import tasks_card as render_tasks %}
+{% import "_artifacts.html" as art %}
+{% block head %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
+<script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
+{#- The ticket as a story (#16): header (L card), status card, then Asked → Agreed → Doing → Proven → Left, the
+    agent's notes, and an aside with the timeline (from events), links and files. Every gated text is shown in
+    full above its Approve button; Approve, Accept and moves confirm inline (app.js), and without JS the plain
+    POST is still checked by the server against the hash of the text shown. -#}
+
+{% macro approve_form(gv, label, primary=true) %}
+<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ gv.gate }} {{ gv.seen_short|replace('sha256 ', '') }}">
+  <input type="hidden" name="gate" value="{{ gv.gate }}">
+  <input type="hidden" name="seen" value="{{ gv.seen }}">
+  {% if gv.question %}
+  <p class="hint">A line reads as an open question for you: &ldquo;{{ gv.question[:80] }}&rdquo;. Request changes so the agent asks it with <code>orch ask</code>, or approve if it is not a question for you.</p>
+  <label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+    I read it: &ldquo;{{ gv.question[:80] }}&rdquo; is not a question for me</label>
+  {% endif %}
+  <button type="submit" class="btn{{ ' btn-primary' if primary }}">{{ label }}</button>
+</form>
+{% endmacro %}
+
+{% macro together_form(req, plan) %}
+{#- F2: requirements and plan in one confirm; both texts are shown in full in their sections above, and each hash
+    posted is the hash of the text shown. -#}
+<form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ req.seen_short|replace('sha256 ', '') }} + plan {{ plan.seen_short|replace('sha256 ', '') }}">
+  <input type="hidden" name="seen" value="{{ req.seen }}">
+  <input type="hidden" name="seen_plan" value="{{ plan.seen }}">
+  {#- every open-question line of both gates: the one override box covers them all -#}
+  {% set qs = together_questions %}
+  {% if qs %}
+  <p class="hint">{{ "A line reads" if qs|length == 1 else qs|length ~ " lines read" }} as an open question for you. Request changes so the agent asks with <code>orch ask</code>, or approve if none is a question for you:</p>
+  <ul class="hint-lines">{% for line in qs %}<li>&ldquo;{{ line[:120] }}&rdquo;</li>{% endfor %}</ul>
+  <label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+    I read {{ "it" if qs|length == 1 else "them all" }}: {{ "this is" if qs|length == 1 else "none is" }} a question for me</label>
+  {% endif %}
+  <button type="submit" class="btn btn-primary">Approve requirements and plan</button>
+</form>
+{% endmacro %}
+
+{% macro move_form(to, label, primary=false) %}
+<form method="post" action="/t/{{ t.id }}/move" class="inline-confirm-form" data-inline-confirm="Confirm · move to {{ to }}">
+  <input type="hidden" name="to" value="{{ to }}">
+  <button type="submit" class="btn{{ ' btn-primary' if primary }}">{{ label }}</button>
+</form>
+{% endmacro %}
+
+{#- One "Request changes" form per gate and page: the Your-move bar, a hint line and the epic's charter form may all
+    offer it for the same gate, and its ids must stay unique; the first place keeps it. -#}
+{% set changes_shown = namespace(gates=[]) %}
+{% macro changes_form(gate) %}{% if gate not in changes_shown.gates %}{% set _ = changes_shown.gates.append(gate) %}
+<details class="ym-more" id="{{ gate }}-changes">
+  <summary class="btn btn-quiet">Request changes…</summary>
+  <form method="post" action="/t/{{ t.id }}/request-changes" class="stack" data-delayed-send="Sending your change request to {{ t.id }}">
+    <input type="hidden" name="gate" value="{{ gate }}">
+    <input type="hidden" name="seen" value="{{ gate_views[gate].seen }}">
+    <label for="{{ gate }}-changes-message">Tell the agent what to change in the {{ gate }}.</label>
+    <input id="{{ gate }}-changes-message" name="message" placeholder="What should change?" required>
+    <button type="submit" class="btn">Request changes</button>
+  </form>
+</details>{% endif %}
+{% endmacro %}
+
+{% macro verdict_forms() %}
+<div class="cluster story-actions">
+  {% if actions.accept %}
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ t.id }} as done">
+    <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ verdict_seen }}">
+    <button type="submit" class="btn btn-primary">Accept, mark done</button>
+  </form>
+  {% else %}<p class="muted">No verdict yet: {{ invalidated|join(" and ") }} changed after approval. Re-approve first (see above), or send it back.</p>{% endif %}
+  <details class="ym-more" id="send-back">
+    <summary class="btn btn-quiet">Send back…</summary>
+    <form method="post" action="/t/{{ t.id }}/verdict" class="stack" data-delayed-send="Sending {{ t.id }} back to the agent">
+      <input type="hidden" name="verdict" value="follow-up"><input type="hidden" name="seen" value="{{ verdict_seen }}">
+      <label for="verdict-message">Not done yet? Tell the agent what is missing.</label>
+      <input id="verdict-message" name="message" placeholder="What is missing?" required>
+      <button type="submit" class="btn">Send back</button>
+    </form>
+  </details>
+</div>
+{% endmacro %}
+
+{% macro question_form(q) %}
+<div class="question" id="q-{{ q.id }}">
+  <p><b>{{ q.id }}</b> {{ q.text }}{% if q.get("blocking", True) %} {{ ui.status("warn", "blocking") }}{% endif %}</p>
+  {% if q.get("why") %}<p class="muted">{{ q.why }}</p>{% endif %}
+  <form method="post" action="/t/{{ t.id }}/answer" data-delayed-send="Sending your answer to {{ t.id }}">
+    <input type="hidden" name="qid" value="{{ q.id }}">
+    <input type="hidden" name="qhash" value="{{ q.qhash }}">
+    {% if q.get("type") == "text" %}
+      <textarea name="value" required aria-label="Answer">{{ q.rec_keys[0] if q.rec_keys else "" }}</textarea>
+    {% else %}
+    <div class="opts">
+      {% for o in q.get("options") or [] %}
+      <label class="{{ 'rec' if o.key in q.rec_keys }}">
+        <input type="{{ 'checkbox' if q.get('type') == 'multi' else 'radio' }}" name="value" value="{{ o.key }}"
+               {{ 'checked' if o.key in q.rec_keys }} {{ 'required' if q.get('type') != 'multi' }}>
+        <span><b>{{ o.key }}</b> {{ o.label }}{% if o.get("cost") %} <span class="muted">— {{ o.cost }}</span>{% endif %}
+        {% if o.key in q.rec_keys %}{{ ui.status("ok", "recommended") }}{% endif %}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <input name="note" placeholder="Note for the agent (optional)" aria-label="Note">
+    <button type="submit" class="btn btn-primary">Answer {{ q.id }}</button>
+  </form>
+  {% for addon, d in ticket_decisions if d.anchor == q.id %}{{ ui.addon_decision(addon, d) }}{% endfor %}
+</div>
+{% endmacro %}
+
+{#- E2: an epic's approval is its charter: the epic's requirements (shown in the gate above) and, per child, its
+    requirements and plan as hashed. One inline confirm; the delegation checkbox sits inside the form. -#}
+{% macro gated_text(s) %}{% if s.raw %}<p class="muted">Shown as plain text: it has link definitions that formatted text would hide.</p><pre class="gate-raw">{{ s.text }}</pre>{% elif s.text.strip() %}{{ s.text|md|safe }}{% else %}<p class="muted">Empty.</p>{% endif %}{% endmacro %}
+
+{% macro charter_form(e, epic_question) %}
+{% set questions = ([epic_question] if epic_question else []) + (e.approve|map(attribute="question")|select|list) %}
+<section class="gate charter" id="epic-approve" aria-labelledby="epic-approve-h">
+  <div class="gate-head"><h3 id="epic-approve-h">{{ "Re-approve the epic" if e.approved else "Approve the epic" }}</h3>
+    <span class="muted">charter {{ e.charter.content_hash[7:15] }}</span></div>
+  <p class="muted">One decision: the epic's requirements above and, for every open child below, its requirements and plan as shown. Agents then work the covered children to testing without asking again. A child that changes, joins or leaves later waits for you.</p>
+  {% if e.approved %}<p class="muted">Only what changed since your last approval is open; unchanged children are folded.</p>{% endif %}
+  {% if e.diff.epic_changed %}<p>{{ ui.status("warn", "the epic's own text changed since your approval") }}</p>{% endif %}
+  {% for rid in e.diff.removed %}<p class="muted">{{ rid }} left the epic since your approval.</p>{% endfor %}
+  {% for c in e.approve %}
+  <details class="charter-child{{ ' charter-unready' if c.blocker }}" data-child="{{ c.id }}"{% if c.change != "unchanged" or not e.approved or c.blocker %} open{% endif %}>
+    <summary><b class="key">{{ c.id }}</b> {{ c.title }} <span class="muted">· {{ (c.size or "")|upper }} · {{ c.status }}{% if e.approved %} · {{ c.change }}{% endif %}</span>{% if c.blocker %} {{ ui.status("warn", "not ready") }}{% endif %}</summary>
+    {% if c.blocker %}<p class="hint">Not ready: {{ c.blocker }}. The epic can be approved once it is refined or taken out of the epic.</p>{% endif %}
+    {% for s in c.requirements %}<div class="gate-part" data-gate-part="{{ c.id }} {{ s.name }}"><h4>{{ s.name }}</h4>{{ gated_text(s) }}</div>{% endfor %}
+    {% if c.meta %}<p class="gate-meta">{% for m in c.meta %}<span data-gate-part="{{ c.id }} {{ m.name }}">{{ m.name }}: <b>{{ m.value }}</b></span>{{ " · " if not loop.last }}{% endfor %}</p>{% endif %}
+    <details class="charter-plan"><summary>Plan</summary>
+      {% if c.plan.strip() %}{{ gated_text({"text": c.plan, "raw": c.plan_raw}) }}{% else %}<p class="muted">No plan yet: its plan is approved later (or with the next epic approval).</p>{% endif %}
+    </details>
+  </details>
+  {% else %}
+  <p class="muted">No open children yet: approving covers the epic only. Children added later need your approval.</p>
+  {% endfor %}
+  {% set base = "Confirm · epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
+  {#- app.js rewrites the label when the delegation fields change, so the confirm always says what is signed. -#}
+  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}" data-inline-confirm="{{ base }} · no delegation">
+    <input type="hidden" name="gate" value="requirements">
+    <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
+    <fieldset class="charter-delegate">
+      <legend class="sr-only">Delegation</legend>
+      <label><input type="checkbox" name="delegate" value="1"> Let agents approve the children they add to this epic</label>
+      <div class="row">
+        <label>at most <input name="max_children" type="number" min="1" value="10" inputmode="numeric"> children</label>
+        <label>of size up to <select name="max_size">{% for s in ("xs", "s", "m", "l") %}<option value="{{ s }}" {{ 'selected' if s == 'm' }}>{{ s }}{{ " (default)" if s == "m" }}</option>{% endfor %}</select></label>
+      </div>
+      <p class="muted">Their approvals show on Today as a quiet note. Changes to this epic's own text still wait for you, and you can pause the delegation at any time.</p>
+    </fieldset>
+    {% if questions %}
+    <p class="hint">A line reads as an open question for you: &ldquo;{{ questions[0][:80] }}&rdquo;. Request changes so the agent asks it with <code>orch ask</code>, or approve if it is not a question for you.</p>
+    <label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+      I read it: &ldquo;{{ questions[0][:80] }}&rdquo; is not a question for me</label>
+    {% endif %}
+    {% if e.unready %}<p class="hint" id="epic-approve-why">Cannot approve yet: {{ e.unready|join("; ") }}.</p>{% endif %}
+    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}>{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</button>
+  </form>
+  {{ changes_form("requirements") }}
+</section>
+{% endmacro %}
+
+{% macro epic_children(e) %}
+<section class="epic-children" id="epic-children" aria-labelledby="epic-children-h">
+  <h3 id="epic-children-h">Children <span class="count">{{ e.rows|length }}</span></h3>
+  {% if e.rows %}
+  <div class="tc-rows">{% for r in e.rows %}{{ tc.row(r.card) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}</p>{% endfor %}</div>
+  {% else %}<p class="muted">No children yet. Agents add them with <code>orch new --epic {{ t.id }}</code>; you can link existing tickets on their page or with <code>orch link &lt;ticket&gt; --epic {{ t.id }}</code>.</p>{% endif %}
+</section>
+{% set d = e.delegation %}
+<section class="epic-delegation" id="epic-delegation" aria-labelledby="epic-delegation-h">
+  <h3 id="epic-delegation-h">Delegation</h3>
+  {% if not d %}<p class="muted">None: you approve every child. You can turn it on when you approve the epic.</p>
+  {% else %}
+  <p>{% if d.paused %}{{ ui.status("neu", "paused") }}{% elif d.epic_changed %}{{ ui.status("warn", "suspended: the epic changed") }}{% else %}{{ ui.status("info", "active") }}{% endif %}
+    Agents may approve up to {{ d.max_children }} children they add, of size up to {{ d.max_size }}.</p>
+  {% if d.active %}
+  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · pause the delegation">
+    <button type="submit" class="btn">Pause delegation</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+<section class="epic-audit" id="epic-audit" aria-labelledby="epic-audit-h">
+  <h3 id="epic-audit-h">Auto-approvals <span class="count">{{ e.auto_approvals|length }}</span></h3>
+  {% if e.auto_approvals %}
+  <ul class="plain">{% for a in e.auto_approvals %}
+    <li><a class="lnk key" href="/t/{{ a.ticket }}">{{ a.ticket }}</a> {{ a.title }} <span class="muted">· {{ a.gate }} auto-approved by {{ a.actor }} · {{ a.at|local }}</span>{% if not a.valid %} {{ ui.status("warn", "no longer valid: waits for you") }}{% endif %}</li>
+  {% endfor %}</ul>
+  {% else %}<p class="muted">None.</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% macro epic_verdict(e) %}
+<section class="epic-verdict" id="epic-verdict" aria-labelledby="epic-verdict-h">
+  <h3 id="epic-verdict-h">The epic's verdict</h3>
+  {% for c in e.proof %}
+  <div class="charter-child"><p><a class="lnk key" href="/t/{{ c.id }}">{{ c.id }}</a> {{ c.title }}</p>
+    {% if c.criteria %}<ol class="proof" aria-label="{{ c.id }}: criteria and evidence">
+    {% for k in c.criteria %}<li class="proof-{{ 'ok' if k.proven else 'open' }}"><span class="proof-mark" aria-hidden="true">{{ "✓" if k.proven else "○" }}</span>
+      <div><p><b class="ac-n">AC{{ k.n }}</b> {{ k.text|md_inline|safe }} <span class="sr-only">{{ "has evidence" if k.proven else "no evidence yet" }}</span></p>
+        {% for ev in k.evidence %}<div class="proof-evidence">{{ ev|section_md("Verification", c.widgets, c.art)|safe }}</div>{% endfor %}</div></li>{% endfor %}
+    </ol>{% else %}<p class="muted">No acceptance criteria as checkboxes.</p>{% endif %}
+    {% for ev in c.other %}<div class="proof-evidence">{{ ev|section_md("Verification", c.widgets, c.art)|safe }}</div>{% endfor %}
+  </div>
+  {% endfor %}
+  {% if e.verdict_ready %}
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ t.id }} and {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}">
+    <input type="hidden" name="verdict" value="done">
+    <input type="hidden" name="seen" value="{{ e.verdict_seen }}"><button type="submit" class="btn btn-primary">Accept the epic and close {{ e.proof|length }} {{ "child" if e.proof|length == 1 else "children" }}</button>
+  </form>
+  <p class="muted">Or give the verdict per child on its page.</p>
+  {% elif e.verdict_changed %}<p class="muted">No verdict yet: {{ e.verdict_changed|join(", ") }} changed after approval. Re-approve the epic first, then give the verdict.</p>
+  {% else %}<p class="muted">One verdict for the epic is offered when all its open children are in testing ({{ e.rollup.testing }} of {{ e.rollup.total - e.rollup.done }} now). Until then, give verdicts per child.</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% macro chapter_block(key, summary_text="") %}
+{% set is_current = key == chapter %}
+<details class="chapter chapter-{{ key }}{{ ' chapter-current' if is_current }}" id="{{ key }}"{% if is_current or open_all %} open{% endif %} data-wide-open>
+  <summary><span class="chapter-num" aria-hidden="true">{{ chapters.index(key) + 1 }}</span><h2 class="chapter-title">{{ chapter_titles[key] }}</h2>
+    {%- if summary_text %}<span class="chapter-sum muted">{{ summary_text }}</span>{% endif %}
+    {%- if is_current %}<span class="sr-only"> (current)</span>{% endif %}</summary>
+  <div class="chapter-body">{{ caller() }}</div>
+</details>
+{% endmacro %}
+
+{% block main %}
+<div class="ticket-top">
+  <p class="crumb"><a class="lnk" href="/board">← Board</a></p>
+  <div class="actions head-links">
+    <a class="btn btn-quiet" href="/t/{{ t.id }}/edit">Edit</a>
+    <details class="more-menu" id="more">
+      <summary class="btn btn-quiet"><span aria-hidden="true">⋯</span><span class="sr-only">More actions</span></summary>
+      <div class="more-body">
+        <a class="lnk" href="/t/{{ t.id }}/raw">Raw file</a>
+        {% if actions.moves %}
+        <form method="post" action="/t/{{ t.id }}/move" class="row" id="move">
+          <label class="sr-only" for="move-to">Move to</label>
+          <select id="move-to" name="to">{% for s in actions.moves %}<option>{{ s }}</option>{% endfor %}</select>
+          <button type="submit" class="btn">Move</button>
+        </form>
+        {% endif %}
+        {% if actions.release and not stale %}
+        <form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
+        {% endif %}
+        <form method="post" action="/t/{{ t.id }}/comment" class="stack" id="comment" data-delayed-send="Adding your comment to {{ t.id }}">
+          <label for="comment-text">Comment for the agent</label>
+          <textarea id="comment-text" name="text" rows="3" placeholder="Add a comment to the log" required></textarea>
+          <button type="submit" class="btn">Add comment</button>
+        </form>
+        <form method="post" action="/t/{{ t.id }}/artifacts" enctype="multipart/form-data" class="stack" id="upload">
+          <label for="upload-files">Add files</label>
+          <input id="upload-files" type="file" name="files" multiple required>
+          <button type="submit" class="btn">Upload</button>
+        </form>
+        {% if start_box and start_box.disabled %}
+        <details class="more-start"><summary class="lnk">Start another agent ▸</summary>{{ start_agent(start_box, t.id) }}</details>
+        {% endif %}
+      </div>
+    </details>
+  </div>
+</div>
+
+<header class="ticket-head">
+  {{ tc.header(card, created_day, t.section("Summary")) }}
+  {% if meta_line or blockers %}<p class="meta-line muted">{{ meta_line }}{% if blockers %}{% if meta_line %} · {% endif %}<span class="meta-warn">{{ ui.icon("warn") }} blocked by {{ blockers|join(", ") }}</span>{% endif %}</p>{% endif %}
+  {#- M: the journey, Asked → Agreed → Doing → Proven → Done, each with its date and who/what (data.story.journey);
+      at phone width five segments with a one-line caption. -#}
+  {% set jwords = {"done": "done", "now": "in progress", "todo": "not yet"} %}
+  <ol class="journey" aria-label="Journey">
+    {% for j in journey %}
+    <li class="jstage jstage-{{ j.state }}"{% if j.current %} aria-current="step"{% endif %}>
+      <b class="jstage-name"><span aria-hidden="true">{{ {"done": "✓", "now": "◐", "todo": "○"}[j.state] }}</span> {{ j.name }}</b><span class="sr-only"> {{ jwords[j.state] }}</span>
+      <span class="jstage-note{{ ' jstage-warn' if j.warn else ' muted' }}">{% if j.day %}{{ j.day }} · {% endif %}{% if j.warn %}{{ ui.icon("warn") }} {% endif %}{{ j.note }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="journey-caption muted" aria-hidden="true">{% for j in journey %}{{ j.name }}{% if j.state == "done" %} ✓{% endif %}{{ " · " if not loop.last }}{% endfor %}</p>
+</header>
+
+{% if t.status != "done" %}
+{% set human = move.kind == "human" %}
+{% set a = move.action or {} %}
+<section class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
+  <p class="status-label" id="status-title">{% if human %}{{ tc.move_chip(card.move) }}{% elif stale %}{{ ui.status("warn", "No activity") }}{% else %}{{ ui.icon("neu") }} Agent's move{% endif %}</p>
+  <p class="ym-text">{{ move.text }}</p>
+  {% if not human and card.agent %}<p class="muted">{{ tc.agent_line(card) }}</p>{% endif %}
+  <div class="cluster ym-actions">
+    {% if a.kind == "approve" and epic %}<a class="btn" href="#epic-approve">Read the epic and its children, then approve below</a>
+    {% elif a.kind == "approve" and a.together and together %}<a class="btn" href="#approve-together">Read the requirements and the plan, then approve both below</a>
+    {% elif a.kind == "approve" %}<a class="btn" href="#gate-{{ a.gate }}">Read the {{ a.gate }} and approve below</a>{% endif %}
+    {% if a.kind == "verdict" %}<a class="btn" href="#proven">Check the proof and give the verdict below</a>{% endif %}
+    {% if a.kind in ("repair", "task") %}<a class="btn btn-primary" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
+    {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
+    {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
+    {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}
+  </div>
+  {% if card_qids %}{% for q in questions if q.id in card_qids %}{{ question_form(q) }}{% endfor %}{% endif %}
+  {% for m in move.more %}
+  <div class="ym-hint">
+    <p>{{ m.text }}</p>
+    <div class="cluster ym-actions">
+      {% if m.action.kind == "move" %}{{ move_form(m.action.to, m.action.label) }}{% endif %}
+      {{ changes_form(m.action.gate) }}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% if start_box and not start_box.disabled %}{{ start_agent(start_box, t.id) }}{% endif %}
+{% endif %}
+
+<div class="ticket-grid">
+<article class="story" aria-label="Ticket story">
+  <p class="story-tools"><a class="lnk" href="?open=all#asked">Expand all</a></p>
+
+  {% call chapter_block("asked", ("from " ~ card.external.key) if card.external else (("created " ~ created_day) if created_day else "")) %}
+    {% if t.section("Ask").strip() %}
+    <div class="asked-text">{{ t.section("Ask")|section_md("Ask", widgets)|safe }}</div>
+    {#- Who wrote it comes from the ticket's single creation event and human edits (orch.core.protect.ask_author, #24). -#}
+    {% set ext_link %}{% if card.external %}{% if card.external.url %}<a class="lnk" href="{{ card.external.url }}" target="_blank" rel="noopener">{{ card.external.key }} ↗</a>{% else %}{{ card.external.key }}{% endif %}{% endif %}{% endset %}
+    <p class="muted story-meta">
+    {%- if ask_by.by == "tracker" -%}
+      Imported from {% if card.external and card.external.key == ask_by.key %}{{ ext_link }}{% else %}{{ ask_by.key }}{% endif %}. Only you change it.
+    {%- elif ask_by.by == "agent" -%}
+      Written by {{ ask_by.agent }}{% if card.external %}, linked to {{ ext_link }}{% endif %} (not your words).
+      {% if ask_agent_editable %}The agent may still edit it until you approve the requirements.{% else %}Only you change it now.{% endif %}
+    {%- elif ask_by.by == "you" -%}
+      Asked by you{% if card.external %}, linked to {{ ext_link }}{% endif %}. Only you change it.
+    {%- else -%}
+      Author not recorded{% if card.external %}, linked to {{ ext_link }}{% endif %}. Only you change it.
+    {%- endif -%}
+    </p>
+    {% else %}
+    <p class="muted">No Ask recorded{% if card.external %}; the request is in {% if card.external.url %}<a class="lnk" href="{{ card.external.url }}" target="_blank" rel="noopener">{{ card.external.key }} ↗</a>{% else %}{{ card.external.key }}{% endif %}{% endif %}.</p>
+    {% endif %}
+  {% endcall %}
+
+  {% set req, plan = gate_views.requirements, gate_views.plan %}
+  {% set agreed_sum = [] %}
+  {% for gv in ((req,) if epic else (req, plan)) %}{% set _ = agreed_sum.append(gv.glyph ~ " " ~ gv.gate ~ ((" " ~ gv.approved_day) if gv.state == "approved" and gv.approved_day else "")) %}{% endfor %}
+  {% call chapter_block("agreed", agreed_sum|join(" · ")) %}
+    {% for gv in ((req,) if epic else (req, plan)) %}
+    <section class="gate gate-{{ gv.state }}" id="gate-{{ gv.gate }}" aria-labelledby="gate-{{ gv.gate }}-h">
+      <div class="gate-head">
+        <h3 id="gate-{{ gv.gate }}-h">{{ gv.gate|capitalize }}</h3>
+        {% if gv.state == "you" %}<span class="gate-state muted">{{ ui.icon("you") }} waits for you</span>
+        {% else %}{{ ui.status(gv.role, gv.word) }}{% endif %}
+        {% if gv.unsigned %}<span title="not in the approval ledger on this machine: review it with orch ledger adopt">{{ ui.status("warn", "unsigned") }}</span>{% endif %}
+        {% if gv.state == "approved" %}<span class="muted gate-record">{% if gv.approved_at %}<time datetime="{{ gv.approved_at.isoformat() }}" title="{{ gv.approved_at|ago }}">{{ gv.approved_at|local }}</time>{% endif %}{% if gv.via %} · {{ gv.via|via }}{% endif %} · {{ gv.hash }}</span>{% endif %}
+      </div>
+      {% if gv.gate == "plan" and tasks_card and (tasks_card.added_since or tasks_card.plan_note) %}
+      <p class="muted plan-tasks-note">{% if tasks_card.added_since %}{{ tasks_card.added_since }} task{{ "s" if tasks_card.added_since != 1 }} added since approval.{% endif %}{% if tasks_card.plan_note %} Progress is tracked in Tasks.{% endif %}</p>
+      {% endif %}
+      {% if gv.changes %}<p class="muted">You asked for changes{% if gv.changes.get("message") %}: “{{ gv.changes.message }}”{% endif %}. The agent updates the {{ gv.gate }} next.</p>{% endif %}
+      {% if not gv.filled %}
+      <p class="muted">{% if gv.gate == "plan" and gv.state == "skipped" %}No plan gate for size {{ card.size|upper }}.{% else %}Not written yet.{% endif %}</p>
+      {% else %}
+      {% if gv.diff is not none %}
+      <div class="gate-diff" role="group" aria-label="Changed since you approved">
+        <p class="dc-gated-head"><b>Changed since you approved{% if gv.approved_day %} on {{ gv.approved_day }}{% endif %}</b></p>
+        <pre class="diff">{% for d in gv.diff %}<span class="diff-{{ d.kind }}">{{ {"add": "+ ", "del": "- ", "ctx": "  ", "gap": ""}[d.kind] }}{{ d.text }}</span>{% endfor %}</pre>
+      </div>
+      {% elif gv.reapprove %}<p class="muted">The approved text was not kept; read the full text below.</p>{% endif %}
+      <details class="gate-text"{% if gv.open or gv.state in ("invalidated", "changes", "pending") or open_all %} open{% endif %}>
+        <summary>{% for s in gv.sections if s.text.strip() %}{{ s.name }} ({{ s.count }}){{ " · " if not loop.last }}{% endfor %}{% for m in gv.meta %} · {{ m.name }} {{ m.value }}{% endfor %}{% if gv.open %} · full text{% endif %}</summary>
+        <div class="{{ 'dc-gated' if gv.open else 'gate-body' }}">
+          {% if gv.open %}<p class="dc-gated-head"><b>{{ gv.gate|capitalize }} · full text</b> <span class="muted">{{ gv.seen_short }}</span></p>{% endif %}
+          {% for s in gv.sections %}
+          <div class="gate-part" data-gate-part="{{ s.name }}">
+          {% if gv.sections|length > 1 %}<h4>{{ s.name }}</h4>{% endif %}
+          {#- The gated text exactly as hashed: the whole section as Markdown (nested bullets, prose, plain bullets),
+              never a digest of it. The AC numbering is only a key beside it. -#}
+          {% if s.name == "Plan" and plan_checklist and not gv.open %}
+          <ul class="checklist">
+            {% for i in plan_checklist %}<li class="check-{{ i.state }}"><span class="check-mark" aria-hidden="true">{{ {"done": "✓", "now": "◐", "todo": "○"}[i.state] }}</span><span><span class="sr-only">{{ {"done": "done:", "now": "in progress:", "todo": "to do:"}[i.state] }}</span> {{ i.text|md_inline|safe }}
+              {%- if i.subs %}<ul class="check-subs">{% for sub in i.subs %}<li>{{ sub|md_inline|safe }}</li>{% endfor %}</ul>{% endif %}</span></li>{% endfor %}
+          </ul>
+          {% elif s.raw %}<p class="muted">Shown as plain text: it has link definitions that formatted text would hide.</p>
+          <pre class="gate-raw">{{ s.text }}</pre>
+          {% elif s.text.strip() %}{{ s.text|section_md(s.name, widgets)|safe }}{% else %}<p class="muted">Empty.</p>{% endif %}
+          {% if s.criteria %}<p class="muted ac-key">The checkboxes are AC1–AC{{ s.criteria|length }}, in this order; Verification cites them by number.</p>{% endif %}
+          </div>
+          {% endfor %}
+          {% if gv.meta %}<p class="gate-meta">{% for m in gv.meta %}<span data-gate-part="{{ m.name }}">{{ m.name }}: <b>{{ m.value }}</b></span>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+        </div>
+      </details>
+      {% if gv.can_approve and not epic %}
+      <p class="dc-ff muted">{% if gv.gate == "requirements" %}Approving moves {{ t.id }} to open, so an agent can claim it.{% else %}Lets {{ card.agent.harness if card.agent else "the agent" }} work the tasks.{% if card.code %} Does not approve {{ card.code.label }}.{% endif %}{% endif %}</p>
+      {% if together and gv.gate == "requirements" %}
+      <div class="cluster story-actions">{{ approve_form(gv, "Approve requirements only", false) }}{{ changes_form(gv.gate) }}</div>
+      {% else %}
+      <div class="cluster story-actions">{{ approve_form(gv, ("Re-approve " if gv.reapprove else "Approve ") ~ gv.gate) }}{{ changes_form(gv.gate) }}</div>
+      {% endif %}
+      {% if gv.gate == "plan" and pr_early %}<p class="muted">{{ ui.icon("warn") }} A PR was opened before this approval.</p>{% endif %}
+      {% endif %}
+      {% endif %}
+    </section>
+    {% endfor %}
+    {% if together and not epic %}
+    <section class="gate approve-together" id="approve-together" aria-labelledby="approve-together-h">
+      <div class="gate-head"><h3 id="approve-together-h">Requirements and plan</h3><span class="muted">{{ req.seen_short }} · {{ plan.seen_short }}</span></div>
+      <p class="dc-ff muted">The agent drafted both; their full text is above. Approving both moves {{ t.id }} to open with its plan approved, so an agent can claim it and work the tasks. Does not accept the work.</p>
+      <div class="cluster story-actions">{{ together_form(req, plan) }}{{ changes_form("plan") }}</div>
+    </section>
+    {% endif %}
+    {% if epic and t.status in ("backlog", "open") and (actions.approve_requirements or epic.reapprove) %}{{ charter_form(epic, req.question) }}{% endif %}
+    {% set answered = questions|selectattr("answered_flag")|list %}
+    {% set still_open = questions|rejectattr("answered_flag")|list %}
+    {% if questions %}
+    <section class="gate" id="questions" aria-labelledby="questions-h">
+      <div class="gate-head"><h3 id="questions-h">Questions</h3><span class="muted">{{ answered|length }} answered{% if still_open %} · {{ still_open|length }} open{% endif %}</span></div>
+      {% for q in still_open %}
+        {% if q.id in card_qids %}<p class="muted"><b>{{ q.id }}</b> {{ q.text }} · answer it in the card above</p>
+        {% else %}{{ question_form(q) }}{% endif %}
+      {% endfor %}
+      {% for q in answered %}
+      <div class="question" id="q-{{ q.id }}">
+        <p><b>{{ q.id }}</b> {{ q.text }}</p>
+        <p>Answer: <b>{{ q.answer_text }}</b>{% if q.get("note") %} — {{ q.note }}{% endif %}
+          <span class="muted">({{ q.get("via")|via }}, {{ q.get("answered")|local }})</span></p>
+        {% for addon, d in ticket_decisions if d.anchor == q.id %}{{ ui.addon_decision(addon, d) }}{% endfor %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+  {% endcall %}
+
+  {% if epic %}
+  {% call chapter_block("doing", "children " ~ epic.rollup.done ~ "/" ~ epic.rollup.total ~ " done") %}{{ epic_children(epic) }}{% endcall %}
+  {% call chapter_block("proven", ("AC " ~ epic.rollup.ac_proven ~ "/" ~ epic.rollup.ac_total) if epic.rollup.ac_total else "") %}{{ epic_verdict(epic) }}{% endcall %}
+  {% else %}
+  {% call chapter_block("doing", ("T " ~ card.tasks.closed ~ "/" ~ card.tasks.total) if card.tasks else "") %}
+    {% if card.agent %}<p>{{ tc.agent_line(card) }}</p>{% endif %}
+    {% if tasks_card %}{{ render_tasks(tasks_card, t, artifact_view.by_task) }}{% else %}<p class="muted">No tasks yet. The agent writes them after claiming the ticket{% if card.gates.plan.state != "skipped" %} and you approve the plan{% endif %}.</p>{% endif %}
+    <section class="story-code" id="code" aria-labelledby="code-h">
+      <h3 id="code-h">Code</h3>
+      {% if pr_early %}<p>{{ ui.status("warn", "PR before plan approval") }}</p>{% endif %}
+      {% if branches or prs %}
+      <ul class="plain">
+        {% for repo, branch in branches.items() %}<li>{{ repo }} <code>{{ branch }}</code></li>{% endfor %}
+        {% for pr in prs %}
+        <li>{% if pr.url %}<a class="lnk" href="{{ pr.url }}" target="_blank" rel="noopener">{{ pr.label }} ↗</a>{% else %}{{ pr.label }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="muted">No branch or review linked yet{% if t.status in ("in-progress", "waiting") %}; the agent links them with <code>orch link {{ t.id }} --pr &lt;number&gt;</code>{% endif %}.</p>
+      {% endif %}
+      {{ ui.slot(addon_slot("ticket.code", t)) }}
+    </section>
+  {% endcall %}
+
+  {% call chapter_block("proven", ("AC " ~ card.ac.proven ~ "/" ~ card.ac.total) if card.ac.total else "no criteria") %}
+    {% if criteria %}
+    <ol class="proof" aria-label="Acceptance criteria and their evidence">
+      {% for c in criteria %}
+      <li class="proof-{{ 'ok' if c.proven else 'open' }} proof-row">
+        <span class="proof-mark" aria-hidden="true">{{ "✓" if c.proven else "○" }}</span>
+        <div><p><b class="ac-n">AC{{ c.n }}</b> {{ c.text|md_inline|safe }} <span class="sr-only">{{ "has evidence" if c.proven else "no evidence yet" }}</span>
+          {%- set chip = (ac_chips or {}).get(c.n) %}{% if chip %} {{ chip }} <span class="w-from">the agent's check</span>{% endif %}</p>
+          {% if c.proven %}{% for e in c.evidence %}<div class="proof-evidence">{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
+          <p class="muted proof-by">{% if evidence_by %}evidence by {{ evidence_by.who }}{% if evidence_by.at %} · <time datetime="{{ evidence_by.at.isoformat() }}" title="{{ evidence_by.at|local }}">{{ evidence_by.at|ago }}</time>{% endif %}{% else %}evidence written in the file{% endif %} · your verdict decides</p>
+          {% else %}<p class="muted">No evidence yet{% if c.ticked %}; ticked without a Verification line{% endif %}.</p>{% endif %}
+          {{ art.for_criterion(artifact_view.by_ac.get(c.n), t.id) }}</div>
+        {#- M: the evidence tile: the first bound image the evidence shows, else one the criterion's artifacts link;
+            dashed and empty while the proof is missing. -#}
+        {% set pics = c.evidence|join("\n")|pinned(none, 1) if c.proven else [] %}
+        {% set linked = (artifact_view.by_ac.get(c.n) or [])|selectattr("image")|list %}
+        <span class="ev-tile proof-tile{{ ' ev-tile-ok' if c.proven else ' ev-tile-missing' }}" aria-hidden="true">{% if pics %}<img src="{{ pics[0].href }}" alt="" loading="lazy" decoding="async">{% elif linked %}<img src="{{ linked[0].href }}" alt="" loading="lazy" decoding="async">{% elif c.proven %}<span class="ev-cap">✓ AC{{ c.n }}</span>{% else %}<span class="ev-cap">no evidence yet</span>{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">No acceptance criteria as checkboxes, so nothing to prove item by item.</p>
+    {% endif %}
+    {% if other_evidence %}
+    <h3>Other evidence</h3>
+    {% for e in other_evidence %}<div class="proof-evidence">{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
+    {% endif %}
+    {% if actions.verdict %}{{ verdict_forms() }}{% endif %}
+  {% endcall %}
+  {% endif %}
+
+  {% call chapter_block("left") %}
+    <p>{{ card.left }}</p>
+  {% endcall %}
+
+  {% if notes %}
+  <details class="agent-notes" id="notes"{% if open_all %} open{% endif %}>
+    <summary><h2 class="notes-title">Agent notes</h2> <span class="muted">· {{ notes|map(attribute="label")|join(", ") }}</span></summary>
+    {% for n in notes %}
+    <section class="note" aria-labelledby="note-{{ loop.index }}">
+      <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span></h3>
+      <div class="note-text">{{ n.text|section_md(n.name, widgets)|safe }}</div>
+    </section>
+    {% endfor %}
+  </details>
+  {% endif %}
+</article>
+
+<aside class="ticket-aside" aria-label="Artifacts, timeline and links">
+  {{ art.panel(artifact_view, t.id, artifacts) }}
+  <section class="card" id="log" aria-labelledby="timeline-h">
+    <h2 id="timeline-h">Timeline</h2>
+    {% if timeline %}
+    <ol class="timeline activity">
+      {% for row in timeline %}
+      <li><span class="muted">{% if row.at %}<time datetime="{{ row.raw_at }}" title="{{ row.at|ago }}">{{ row.at|local }}</time>{% else %}{{ row.raw_at }}{% endif %}</span>
+        <span><b>{{ row.who }}</b> {{ row.what }}</span></li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">No activity yet.</p>
+    {% endif %}
+    <details class="show-log">
+      <summary>Show log</summary>
+      {{ t.section("Log")|section_md("Log", widgets)|safe }}
+      <p class="muted hint">Raw text from the ticket file, not verified: the timeline above comes from orch's event log. Times in the log are UTC.</p>
+    </details>
+  </section>
+  {% set qids = questions|map(attribute="id")|list %}
+  {% set loose = ticket_decisions|rejectattr("1.anchor", "in", qids)|list %}
+  {% if loose %}
+  <section class="card" id="ticket-addon-decisions">
+    <h2>From addons</h2>
+    {% for addon, d in loose %}{{ ui.addon_decision(addon, d) }}{% endfor %}
+  </section>
+  {% endif %}
+  {% if external %}
+  <section class="card" id="links">
+    <h2>Links</h2>
+    <ul class="plain">{% for x in external %}<li>{% if x.url %}<a class="lnk" href="{{ x.url }}" target="_blank" rel="noopener">{{ x.key }} ↗</a>{% else %}{{ x.key }}{% endif %}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+  {{ ui.slot(addon_slot("ticket.sync", t)) }}
+  {{ ui.slot(addon_slot("ticket.external", t)) }}
+  {{ ui.slot(addon_slot("ticket.pages", t)) }}
+</aside>
+</div>
+{% endblock %}

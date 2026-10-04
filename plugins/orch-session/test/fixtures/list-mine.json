@@ -1,0 +1,215 @@
+[
+  {
+    "id": "L-0001",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "title": "Working ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0003",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "title": "Plan ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "you",
+      "kind": "approve-plan",
+      "label": "Approve plan",
+      "ref": "plan",
+      "why": "The agent stopped before its tasks; it starts once you approve the plan."
+    }
+  },
+  {
+    "id": "L-0004",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "title": "Changed plan ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "you",
+      "kind": "re-approve",
+      "label": "Re-approve plan",
+      "ref": "plan",
+      "why": "The plan changed after your approval; the work waits until you approve it again."
+    }
+  },
+  {
+    "id": "L-0005",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "title": "Changes ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0006",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Human task ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "you",
+      "kind": "task",
+      "label": "Do T2",
+      "ref": "T2",
+      "why": "A task in the plan is yours; the agent waits for it."
+    }
+  },
+  {
+    "id": "L-0007",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Ready ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0009",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Follow-up ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0010",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "No tasks ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0011",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Blocked task ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0013",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Blocked-by ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "nobody",
+      "kind": "blocked",
+      "label": "Blocked by L-0012",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0015",
+    "status": "in-progress",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Epic child",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "agent",
+      "kind": "working",
+      "label": "Working · claude-code 0 min",
+      "ref": null
+    }
+  },
+  {
+    "id": "L-0002",
+    "status": "waiting",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Question ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "you",
+      "kind": "answer",
+      "label": "Answer Q1",
+      "ref": "Q1",
+      "why": "The agent asked a blocking question and waits for your answer."
+    }
+  },
+  {
+    "id": "L-0008",
+    "status": "testing",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "title": "Testing ticket",
+    "external": [],
+    "error": null,
+    "move": {
+      "who": "you",
+      "kind": "verdict",
+      "label": "Verdict",
+      "ref": null,
+      "why": "The work is in testing; only you accept it or send it back."
+    }
+  }
+]

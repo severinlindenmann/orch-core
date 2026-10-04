@@ -1,0 +1,30 @@
+<style>
+  .mm { padding: 12px; overflow-x: auto; }
+  .mm svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+</style>
+<div class="mm" id="out" role="img"></div>
+<script>
+(function () {
+  var d = orch.data, out = document.getElementById("out"), n = 0, done = false;
+  out.setAttribute("aria-label", d.alt || "Diagram");
+  orch.text(d.alt ? d.alt + "\n\nDiagram source:\n" + d.source : "Diagram source (Mermaid):\n" + d.source);
+  function draw() {
+    var dark = orch.theme.dark;
+    mermaid.initialize({
+      startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default",
+      fontFamily: getComputedStyle(document.body).fontFamily,
+      themeVariables: { background: orch.theme.var("--surface") }
+    });
+    n += 1;
+    return mermaid.render("orch-mermaid-" + n, d.source).then(function (r) {
+      out.innerHTML = r.svg;  // mermaid's own sanitised SVG (securityLevel strict)
+      if (!done) { done = true; orch.ready(); }
+      orch.resize();
+    }).catch(function (e) {
+      orch.error("Mermaid could not draw this diagram: " + String((e && e.message) || e).slice(0, 300));
+    });
+  }
+  window.addEventListener("orch:theme", draw);
+  draw();
+})();
+</script>

@@ -1,0 +1,6 @@
+{
+  "1": {
+    "alt": "Illustrative example: a ticket moves from backlog to open once the human approves requirements and plan, then to in progress, testing and done; testing can send it back to in progress.",
+    "source": "flowchart LR\n  backlog[Backlog] -->|human approves requirements + plan| open[Open]\n  open -->|agent claims| prog[In progress]\n  prog -->|code merged| test[Testing]\n  test -->|human: done| done[Done]\n  test -->|human: changes| prog"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "terminals",
+  "title": "Terminals",
+  "version": "0.1.0",
+  "requires_api": "2",
+  "kind": "in-process",
+  "description": "Run, watch and type into agent sessions in Mission Control (needs tmux).",
+  "capabilities": ["provider", "panel", "settings"],
+  "slots": ["today.summary"],
+  "binaries": ["tmux"],
+  "env": [],
+  "entry": "orch_terminals:create",
+  "settings_schema": [
+    {"key": "harness", "label": "Agent CLI that Terminals runs (Claude Code only for now)", "type": "select", "options": ["claude"], "default": "claude"},
+    {"key": "open_here", "label": "Start agents in Mission Control by default (Open in terminal stays as the second button)", "type": "bool", "default": true}
+  ],
+  "actions": []
+}

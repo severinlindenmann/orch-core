@@ -1,0 +1,94 @@
+{#- M (v4 Board): the Your move strip card, the rail lane and the Backlog drawer summary. A strip card acts in place only
+    where the full gated text is on the card: an answer (numbered options, bound to the question hash), a short plan
+    (its full text and the same approve form as the decision card), a verdict (Accept sits inside the expanded
+    criteria and evidence). Requirements, a requirements + plan pair, re-approvals and an epic's charter open their
+    full-text approve view on the ticket page. Every form is the decision card's own macro: same hashes, same
+    inline confirm, no popups. -#}
+{% import "_ui.html" as ui %}
+{% import "_decisions.html" as dc %}
+
+{% macro thumb(pic, cls="ym-thumb") -%}
+<a class="{{ cls }}" href="{{ pic.href }}" target="_blank" rel="noopener"><img src="{{ pic.href }}" alt="{{ pic.alt }}" loading="lazy" decoding="async"></a>
+{%- endmacro %}
+
+{% macro approve_href(d) -%}
+/t/{{ d.ticket }}#{{ "epic-approve" if d.charter else ("approve-together" if d.together else "gate-" ~ d.gate) }}
+{%- endmacro %}
+
+{% macro move_card(s, kind_labels, back_to="/board") %}
+{%- set c, d = s.card, s.d -%}
+<article class="card ym-card" data-ym="{{ c.id }}" data-move="{{ c.move.what }}" aria-labelledby="ym-h-{{ c.id }}">
+  <div class="ym-head">{{ ui.status("you", c.move.label) }}{% if d is not none and d.unsigned %}<span title="not in the approval ledger on this machine: review it with orch ledger adopt">{{ ui.status("warn", "unsigned " ~ d.unsigned|join(", ")) }}</span>{% endif %}<a class="lnk key ym-key" href="/t/{{ c.id }}">{{ c.id }}</a></div>
+  <h3 class="ym-title" id="ym-h-{{ c.id }}">{{ c.title }}</h3>
+  {#- Phone width: one row per decision that opens the ticket (the strip body is hidden there). -#}
+  <a class="ym-phone" href="/t/{{ c.id }}"><span class="sr-only">{{ c.move.label }} on </span>{{ c.id }} <span aria-hidden="true">›</span></a>
+  <div class="ym-body">
+  {%- if d is not none and d.unsigned %}
+    {#- R25: an approval on this ticket is not in the ledger on this machine: nothing is acted on here. -#}
+    <p class="muted ym-why">An approval of this ticket is not in the approval ledger on this machine. Review it on the ticket.</p>
+    <a class="btn btn-primary" href="/t/{{ c.id }}">Open the ticket</a>
+  {%- elif d is none %}
+    {% if c.move.why %}<p class="muted ym-why">{{ c.move.why }}</p>{% endif %}
+    <a class="btn btn-primary" href="{{ ('/t/' ~ c.move.epic ~ '#epic-approve') if c.move.epic else ('/t/' ~ c.id) }}">Review &amp; approve</a>
+  {%- elif d.kind in ("answer", "confirm") and d.questions %}{% set q = d.questions[0] %}
+    {% if d.questions|length > 1 %}<a class="lnk muted" href="/t/{{ d.ticket }}">+{{ d.questions|length - 1 }} more {{ "question" if d.questions|length == 2 else "questions" }} on the ticket</a>{% endif %}
+    <p class="ym-q"><b>{{ q.id }}</b> {{ q.text }}</p>
+    {{ dc.options(d, q, back_to, "Sending your answer to " ~ d.ticket) }}
+  {%- elif s.inline_plan %}
+    {{ dc.gated_text(d) }}
+    <div class="cluster ym-actions">{{ dc.approve_form(d, back_to, kind_labels) }}{{ dc.changes(d, back_to) }}</div>
+  {%- elif d.kind in ("approve-requirements", "approve-plan", "re-approve", "approve-epic") %}
+    {%- set texts = (d.gate_parts or [])|map(attribute="text")|list + ((d.together or {}).get("gate_parts") or [])|map(attribute="text")|list %}
+    {%- set pics = texts|join("\n\n")|pinned(d.art, 1) %}
+    {% if pics %}{{ thumb(pics[0]) }}{% endif %}
+    {% if d.why %}<p class="muted ym-why">{{ d.why }}</p>{% endif %}
+    <div class="cluster ym-actions"><a class="btn btn-primary" href="{{ approve_href(d) }}">Review &amp; approve</a>{% if s.counts %}<span class="muted ym-count">{{ s.counts }}</span>{% endif %}</div>
+  {%- elif d.kind == "verdict" %}
+    {% if d.criteria %}
+    <ul class="ym-tiles" aria-label="Acceptance criteria">
+      {% for k in d.criteria[:3] %}{% set pics = k.evidence|join("\n")|pinned(d.art, 1) %}
+      <li class="ev-tile{{ ' ev-tile-ok' if k.proven else ' ev-tile-missing' }}">{% if pics and k.proven %}{{ thumb(pics[0], "ev-img") }}{% endif %}<span class="ev-cap"><span aria-hidden="true">{{ "✓" if k.proven else "○" }}</span> AC{{ k.n }}<span class="sr-only"> {{ "has evidence" if k.proven else "no evidence yet" }}</span></span></li>
+      {% endfor %}
+      {% if d.criteria|length > 3 %}<li class="ev-tile ev-tile-more"><span class="ev-cap">+{{ d.criteria|length - 3 }}</span></li>{% endif %}
+    </ul>
+    {% endif %}
+    {#- Accept only after the whole proof is shown: every criterion with its evidence and the Verification notes. -#}
+    <details class="ym-proof">
+      <summary class="btn btn-primary">Check the proof…</summary>
+      {% if d.criteria %}<ol class="proof dc-proof" aria-label="Acceptance criteria and their evidence">{% for k in d.criteria %}{{ dc.criterion(k, d.art, d.widgets) }}{% endfor %}</ol>
+      {% else %}<p class="muted">No acceptance criteria as checkboxes, so nothing to prove item by item.</p>{% endif %}
+      {% if d.verification.strip() %}<div class="gate-body ym-verification"><p class="dc-gated-head"><b>Verification</b></p>{{ d.verification|section_md("Verification", d.widgets, d.art)|safe }}</div>
+      {% else %}<p class="muted">No Verification section yet.</p>{% endif %}
+      <div class="cluster ym-actions">{{ dc.verdict_forms(d, back_to) }}</div>
+    </details>
+  {%- elif d.kind == "task" and d.task %}
+    {% if d.task.text %}<p>{{ d.task.text }}</p>{% endif %}
+    <a class="btn btn-primary" href="/t/{{ d.ticket }}#task-{{ d.task.id }}">Open {{ d.task.id }}</a>
+  {%- else %}
+    {% if d.excerpt %}<p class="muted ym-why">{{ d.excerpt }}</p>{% endif %}
+    <a class="btn btn-primary" href="/t/{{ d.ticket }}">Open the ticket</a>
+  {%- endif %}
+  </div>
+</article>
+{% endmacro %}
+
+{#- An empty lane as a narrow rail: still a drop target (data-status), its count and name readable (vertical text is
+    decorative; the aria-label carries it). -#}
+{% macro rail(status, label, role, suffix="", label_prefix="") %}
+<section class="col lane lane-rail" id="col-{{ status }}{{ suffix }}" data-status="{{ status }}" aria-label="{{ label_prefix }}{{ label }}: no tickets">
+  <span class="rail-mark rail-{{ role }}">{{ ui.icon(role) }}</span><b class="rail-n" aria-hidden="true">0</b><span class="rail-label" aria-hidden="true">{{ label }}</span>
+</section>
+{% endmacro %}
+
+{#- Done as a rail: how many tickets were closed in the last `days` days, linking to the List filtered on done. -#}
+{#- Still a drop target (data-status): dropping a card here asks the server to close it, as the Done lane did. -#}
+{% macro done_rail(n, href, days=7, label_prefix="") %}
+<a class="lane lane-rail rail-done" href="{{ href }}" data-status="done" aria-label="{{ label_prefix }}{{ n }} done in the last {{ days }} days: open them in the List">
+  <span class="rail-mark rail-ok">{{ ui.icon("ok") }}</span><b class="rail-n" aria-hidden="true">{{ n }}</b><span class="rail-label" aria-hidden="true">Done this week</span>
+</a>
+{% endmacro %}
+
+{% macro backlog_summary(n, counts) -%}
+<span class="drawer-sub muted">not started, nobody waits · by priority</span>
+<span class="drawer-chips">{% for p in counts %}<span class="chip chip-{{ 'warn' if p.hot else 'neu' }}">{% if p.hot %}{{ ui.icon("warn") }} {% endif %}{{ p.priority }} {{ p.n }}</span>{% endfor %}</span>
+{%- endmacro %}

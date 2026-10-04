@@ -1,0 +1,2 @@
+{"argv": ["git", "status", "--porcelain=v2", "--branch"], "returncode": 0,
+ "stdout": "# branch.oid 1a2b3c4d\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -0\n1 .M N... 100644 100644 100644 1a2b 1a2b README.md\n"}

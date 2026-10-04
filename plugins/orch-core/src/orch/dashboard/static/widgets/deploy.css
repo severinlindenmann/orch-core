@@ -1,0 +1,7 @@
+/* deploy */
+.w-dep { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-3); }
+.w-dep-env { font: var(--type-stat); }
+.w-dep-sha { background: var(--surface2); padding: 0 var(--s-2); border-radius: var(--r-sm); }
+.w-dep-at { font: var(--type-meta); color: var(--muted); }
+.w-dep-u { min-width: 0; overflow-wrap: anywhere; }
+.w-dep a { color: var(--link); }

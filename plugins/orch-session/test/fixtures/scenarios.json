@@ -1,0 +1,15 @@
+{
+  "working": "L-0001",
+  "answer": "L-0002",
+  "approve_plan": "L-0003",
+  "re_approve": "L-0004",
+  "changes": "L-0005",
+  "human_task": "L-0006",
+  "ready": "L-0007",
+  "verdict": "L-0008",
+  "follow_up": "L-0009",
+  "no_tasks": "L-0010",
+  "blocked_task": "L-0011",
+  "blocked_by": "L-0013",
+  "epic_child": "L-0015"
+}

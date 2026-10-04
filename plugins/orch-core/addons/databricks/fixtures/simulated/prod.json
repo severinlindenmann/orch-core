@@ -1,0 +1,18 @@
+{
+  "me": "demo.user@example.com",
+  "items": [
+    {"id": "env:prod", "type": "env", "label": "prod", "role": "ok", "text": "signed in as demo.user@example.com",
+     "profile": "acme-prod", "host": "https://adb-2222222222222222.12.azuredatabricks.net", "me": "demo.user@example.com", "connect_version": "16.4.2"},
+    {"id": "run:8001", "type": "run", "label": "acme-ingest-daily", "name": "acme-ingest-daily", "role": "ok", "text": "succeeded",
+     "state": "succeeded", "run_id": "8001", "job_id": "401", "owners": ["demo.user@example.com"],
+     "url": "https://adb-2222222222222222.12.azuredatabricks.net/#job/401/run/8001", "started_minutes_ago": 300, "ended_minutes_ago": 280, "message": ""},
+    {"id": "pipeline:p-prod-1", "type": "pipeline", "label": "acme-meter-pipeline", "name": "acme-meter-pipeline", "role": "ok",
+     "text": "last update completed", "pipeline_id": "p-prod-1", "owners": ["demo.user@example.com"],
+     "url": "https://adb-2222222222222222.12.azuredatabricks.net/pipelines/p-prod-1", "last_update_minutes_ago": 240},
+    {"id": "warehouse:w-prod", "type": "warehouse", "label": "acme-prod-sql", "name": "acme-prod-sql", "role": "ok", "text": "running",
+     "access": "can_use", "reason": "listed by warehouses list", "http_path": "/sql/1.0/warehouses/w-prod", "size": "Small",
+     "auto_stop": 20, "owners": ["demo.user@example.com"]},
+    {"id": "drift:prod", "type": "drift", "label": "prod", "role": "neu", "text": "prod runs 9f8e7d6, 3 commits behind int",
+     "deployed": 4, "total": 4, "changed": 0, "commit": "9f8e7d6", "ahead_of": null, "ahead": null, "deployed_minutes_ago": 4320}
+  ]
+}

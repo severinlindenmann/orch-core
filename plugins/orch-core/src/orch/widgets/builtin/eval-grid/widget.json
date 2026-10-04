@@ -1,0 +1,56 @@
+{
+  "name": "eval-grid",
+  "title": "Eval grid",
+  "description": "Eval cases against variants (prompt versions, models, branches), pass or fail per cell, with what the change fixed and broke.",
+  "moment": "verify",
+  "libs": [],
+  "min_height": 220,
+  "versions": {
+    "1": {
+      "notes": "baseline and compare default to the first and last variant; fixed = not passing in baseline and passing in compare, broke = the reverse.",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {"id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$"}},
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["variants", "cases"],
+        "properties": {
+          "baseline": {"$ref": "#/$defs/id"},
+          "compare": {"$ref": "#/$defs/id"},
+          "variants": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "label"],
+              "properties": {"id": {"$ref": "#/$defs/id"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
+            }
+          },
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "results"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1, "maxLength": 200},
+                "label": {"type": "string", "maxLength": 200},
+                "note": {"type": "string", "maxLength": 500},
+                "results": {
+                  "type": "object",
+                  "maxProperties": 12,
+                  "propertyNames": {"$ref": "#/$defs/id"},
+                  "additionalProperties": {"enum": ["pass", "fail", "error", "skip"]}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

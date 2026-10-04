@@ -1,0 +1,5 @@
+/* health */
+.w-health { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-3); padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm); background: var(--w-bg); color: var(--w-fg); border-left: 3px solid var(--w-mark); }
+.w-health-word { font: var(--type-stat); white-space: nowrap; }
+.w-health-why { flex: 1 1 calc(var(--s-12) * 3); min-width: 0; overflow-wrap: anywhere; }

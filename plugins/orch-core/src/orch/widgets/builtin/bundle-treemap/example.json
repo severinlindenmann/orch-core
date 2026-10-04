@@ -1,0 +1,21 @@
+{
+  "1": {
+    "unit": "kB",
+    "base_label": "main",
+    "head_label": "branch",
+    "files": [
+      {"path": "assets/vendor/charts.js", "base": 182.4, "head": 64.1},
+      {"path": "assets/app.js", "base": 96.2, "head": 104.8},
+      {"path": "assets/vendor/framework.js", "base": 88.0, "head": 88.0},
+      {"path": "assets/pages/settings.js", "base": 21.5, "head": 26.9},
+      {"path": "assets/pages/board.js", "base": 34.7, "head": 33.9},
+      {"path": "assets/pages/ticket.js", "base": 28.3, "head": 28.4},
+      {"path": "assets/vendor/date-lib.js", "base": 0, "head": 18.6},
+      {"path": "assets/vendor/moment.js", "base": 67.3, "head": 0},
+      {"path": "assets/styles.css", "base": 41.0, "head": 43.2},
+      {"path": "assets/pages/reports.js", "base": 12.4, "head": 12.4},
+      {"path": "assets/icons.svg", "base": 9.8, "head": 7.1},
+      {"path": "assets/pages/login.js", "base": 4.2, "head": 4.2}
+    ]
+  }
+}

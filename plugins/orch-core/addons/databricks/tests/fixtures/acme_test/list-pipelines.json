@@ -1,0 +1,14 @@
+{"note": "composed demo data; the latest update of Daily meter export failed",
+ "argv": ["databricks", "pipelines", "list-pipelines", "--limit", "100", "--profile", "acme_test", "-o", "json"],
+ "stdout_json": [
+  {"creator_user_name": "anna.beispiel@example.com", "name": "Daily meter export", "pipeline_id": "00000000-0000-4000-8000-000000000011",
+   "run_as_user_name": "anna.beispiel@example.com", "state": "IDLE",
+   "latest_updates": [{"creation_time": "2026-08-18T09:29:12.571Z", "state": "FAILED", "update_id": "00000000-0000-4000-8000-000000000021"},
+                      {"creation_time": "2026-08-18T09:18:45.834Z", "state": "COMPLETED", "update_id": "00000000-0000-4000-8000-000000000022"}]},
+  {"creator_user_name": "dev@example.com", "name": "[dev demo_user] Build silver tables",
+   "pipeline_id": "00000000-0000-4000-8000-000000000013", "run_as_user_name": "dev@example.com", "state": "IDLE"},
+  {"creator_user_name": "alex.demo@example.com", "name": "[dev alex_demo] Ingest meter readings",
+   "pipeline_id": "00000000-0000-4000-8000-000000000012", "run_as_user_name": "alex.demo@example.com", "state": "IDLE"},
+  {"creator_user_name": "carla.test@example.com", "name": "Weather lookup", "pipeline_id": "00000000-0000-4000-8000-000000000014",
+   "run_as_user_name": "carla.test@example.com", "state": "IDLE"}
+ ]}

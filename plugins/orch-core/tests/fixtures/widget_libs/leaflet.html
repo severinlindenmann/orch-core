@@ -1,0 +1,10 @@
+<div id="c" style="height: 200px"></div>
+<script>
+try {
+  var m = L.map("c", {zoomControl: false, attributionControl: false}).setView([47.37, 8.54], 13);
+  L.polyline(orch.data.line, {color: orch.theme.var("--info-mark") || "#36c"}).addTo(m);
+  L.circle(orch.data.line[0], {radius: 150}).addTo(m);
+  orch.text("Leaflet: a line of " + orch.data.line.length + " points, no tiles");
+  orch.ready();
+} catch (e) { orch.error("leaflet: " + e.message); }
+</script>

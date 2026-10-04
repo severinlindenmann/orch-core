@@ -1,0 +1,121 @@
+{
+  "L-0012": {
+    "who": "agent",
+    "what": "ready",
+    "label": "Ready",
+    "role": "neu",
+    "ref": null
+  },
+  "L-0014": {
+    "who": "agent",
+    "what": "working",
+    "label": "0/1 children done",
+    "role": "info",
+    "ref": null
+  },
+  "L-0001": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0003": {
+    "who": "you",
+    "what": "approve-plan",
+    "label": "Approve plan",
+    "role": "you",
+    "ref": "plan"
+  },
+  "L-0004": {
+    "who": "you",
+    "what": "re-approve",
+    "label": "Re-approve plan",
+    "role": "you",
+    "ref": "plan"
+  },
+  "L-0005": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0006": {
+    "who": "you",
+    "what": "task",
+    "label": "Do T2",
+    "role": "you",
+    "ref": "T2"
+  },
+  "L-0007": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0009": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0010": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0011": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0013": {
+    "who": "nobody",
+    "what": "blocked",
+    "label": "Blocked by L-0012",
+    "role": "warn",
+    "ref": null
+  },
+  "L-0015": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0016": {
+    "who": "agent",
+    "what": "working",
+    "label": "Working · claude-code 0 min",
+    "role": "info",
+    "ref": null
+  },
+  "L-0002": {
+    "who": "you",
+    "what": "answer",
+    "label": "Answer Q1",
+    "role": "you",
+    "ref": "Q1"
+  },
+  "L-0008": {
+    "who": "you",
+    "what": "verdict",
+    "label": "Verdict",
+    "role": "you",
+    "ref": null
+  },
+  "L-0017": {
+    "who": "nobody",
+    "what": "done",
+    "label": "Done",
+    "role": "ok",
+    "ref": null
+  }
+}

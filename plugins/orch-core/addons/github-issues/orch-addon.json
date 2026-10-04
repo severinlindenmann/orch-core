@@ -1,0 +1,23 @@
+{
+  "name": "github-issues",
+  "title": "GitHub issues",
+  "version": "0.1.0",
+  "requires_api": "2",
+  "kind": "in-process",
+  "description": "GitHub issues of the workspace's GitHub trackers on Board · External: Mine, Import, out-of-sync fixes and milestones as sprints.",
+  "capabilities": ["provider", "panel", "settings"],
+  "slots": ["board.external", "ticket.external"],
+  "binaries": ["gh"],
+  "env": ["GH_HOST", "GH_TOKEN", "GH_CONFIG_DIR"],
+  "entry": "github_issues:create",
+  "settings_schema": [
+    {"key": "default_filter", "label": "Default filter on Board · External", "type": "select",
+     "options": ["mine", "sprint", "all"], "default": "mine"}
+  ],
+  "actions": [
+    {"id": "import", "label": "Import", "confirm": "Import this issue as a backlog ticket?", "tickets": true},
+    {"id": "close_local", "label": "Close local", "confirm": "Close the local ticket? The issue is closed in GitHub.", "tickets": true},
+    {"id": "reopen_local", "label": "Reopen local", "confirm": "Reopen the local ticket? The issue is open again in GitHub.", "tickets": true},
+    {"id": "ignore", "label": "Ignore", "confirm": "Ignore this difference until the issue changes again?"}
+  ]
+}

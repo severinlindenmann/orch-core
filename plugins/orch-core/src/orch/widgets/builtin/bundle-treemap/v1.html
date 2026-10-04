@@ -1,0 +1,113 @@
+<style>
+  .bt { padding: 12px; display: grid; gap: 10px; }
+  .bt-head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+  .bt-head b { font: var(--type-stat); }
+  .bt-head span { font: var(--type-meta); color: var(--muted); }
+  .bt-up { color: var(--err-fg); } .bt-down { color: var(--ok-fg); }
+  .bt-map svg { display: block; width: 100%; }
+  .bt-tile rect { stroke: var(--surface); stroke-width: 2; }
+  .bt-grew rect { fill: var(--err-bg); } .bt-new rect { fill: var(--err-bg); stroke-dasharray: 4 2; stroke: var(--err-mark); stroke-width: 1.5; }
+  .bt-shrank rect { fill: var(--ok-bg); } .bt-removed rect { fill: var(--ok-bg); stroke-dasharray: 4 2; stroke: var(--ok-mark); stroke-width: 1.5; }
+  .bt-same rect { fill: var(--neu-bg); }
+  .bt-tile text { font: 600 11px var(--font-body); fill: var(--text); pointer-events: none; }
+  .bt-tile text.d { font-weight: 800; }
+  .bt-grew text.d, .bt-new text.d { fill: var(--err-fg); } .bt-shrank text.d, .bt-removed text.d { fill: var(--ok-fg); }
+  .bt-tile:focus { outline: none; } .bt-tile:focus rect { stroke: var(--focus); stroke-width: 3; }
+  .bt-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font: var(--type-meta); color: var(--muted); }
+  .bt-key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .bt-list { margin: 0; padding-left: 20px; font: var(--type-body); }
+  .bt-list code { font: 12px var(--font-mono); overflow-wrap: anywhere; }
+  .bt-sel { min-height: 1.5em; margin: 0; font: var(--type-meta); }
+</style>
+<div class="bt">
+  <div class="bt-head" id="head"></div>
+  <div class="bt-map" id="map"></div>
+  <p class="bt-sel" id="sel" aria-live="polite"></p>
+  <div class="bt-key" aria-hidden="true">
+    <span><i style="background: var(--err-bg); border: 1px solid var(--err-mark)"></i>grew / new (dashed)</span>
+    <span><i style="background: var(--ok-bg); border: 1px solid var(--ok-mark)"></i>shrank / removed (dashed)</span>
+    <span><i style="background: var(--neu-bg); border: 1px solid var(--neu-mark)"></i>unchanged</span>
+  </div>
+  <ol class="bt-list" id="list" aria-label="Largest changes"></ol>
+</div>
+<script>
+(function () {
+  var d = orch.data, unit = d.unit || "kB", SVG = "http://www.w3.org/2000/svg";
+  var bl = d.base_label || "base", hl = d.head_label || "head";
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function svg(tag, attrs) { var n = document.createElementNS(SVG, tag); for (var k in attrs) n.setAttribute(k, attrs[k]); return n; }
+  function num(v) { var a = Math.abs(v); return (a >= 100 ? Math.round(v) : a >= 10 ? v.toFixed(1) : v.toFixed(2)).toString().replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") + " " + unit; }
+  function delta(v) { return v === 0 ? "±0" : (v > 0 ? "+" : "−") + num(Math.abs(v)); }
+  function kind(f) {
+    if (f.base === 0 && f.head > 0) return "new";
+    if (f.head === 0 && f.base > 0) return "removed";
+    var g = (f.head - f.base) / f.base;
+    return g > 0.01 ? "grew" : g < -0.01 ? "shrank" : "same";
+  }
+  var WORD = { "new": "new", removed: "removed", grew: "grew", shrank: "shrank", same: "unchanged" };
+  var files = d.files.map(function (f) { return { path: f.path, base: f.base, head: f.head, size: Math.max(f.head, f.base * (f.head === 0 ? 1 : 0)), d: f.head - f.base, k: kind(f) }; })
+    .filter(function (f) { return f.size > 0; }).sort(function (a, b) { return b.size - a.size; });
+  var tb = d.files.reduce(function (s, f) { return s + f.base; }, 0), th = d.files.reduce(function (s, f) { return s + f.head; }, 0);
+
+  var head = $("head");
+  var b = el("b", th > tb ? "bt-up" : th < tb ? "bt-down" : null, delta(th - tb)); head.appendChild(b);
+  head.appendChild(el("span", null, (tb ? (th > tb ? "+" : th < tb ? "−" : "±") + Math.abs((th - tb) / tb * 100).toFixed(1) + "% · " : "") + bl + " " + num(tb) + " → " + hl + " " + num(th)));
+
+  function squarify(items, x, y, w, h) {
+    var total = items.reduce(function (s, i) { return s + i.size; }, 0), k = w * h / total, out = [], row = [], rest = items.slice();
+    function worst(r, side) {
+      var s = 0, mx = 0, mn = Infinity;
+      r.forEach(function (i) { var a = i.size * k; s += a; mx = Math.max(mx, a); mn = Math.min(mn, a); });
+      return Math.max(side * side * mx / (s * s), s * s / (side * side * mn));
+    }
+    function lay(r) {
+      var s = r.reduce(function (t, i) { return t + i.size * k; }, 0);
+      if (w >= h) { var cw = s / h, yy = y; r.forEach(function (i) { var ih = i.size * k / cw; out.push({ f: i, x: x, y: yy, w: cw, h: ih }); yy += ih; }); x += cw; w -= cw; }
+      else { var rh = s / w, xx = x; r.forEach(function (i) { var iw = i.size * k / rh; out.push({ f: i, x: xx, y: y, w: iw, h: rh }); xx += iw; }); y += rh; h -= rh; }
+    }
+    while (rest.length) {
+      var side = Math.min(w, h), next = rest[0];
+      if (!row.length || worst(row.concat([next]), side) <= worst(row, side)) { row.push(next); rest.shift(); }
+      else { lay(row); row = []; }
+    }
+    if (row.length) lay(row);
+    return out;
+  }
+
+  function describe(f) { return f.path + ": " + WORD[f.k] + ", " + bl + " " + num(f.base) + " → " + hl + " " + num(f.head) + " (" + delta(f.d) + ")"; }
+  var lastW = 0;
+  function draw() {
+    var W = Math.floor($("map").clientWidth); if (!W || W === lastW) return; lastW = W;
+    var H = Math.round(Math.min(460, Math.max(220, W * 0.55)));
+    var s = svg("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "group", "aria-label": "Treemap of " + files.length + " files, area is size on " + hl });
+    squarify(files, 0, 0, W, H).forEach(function (t) {
+      var g = svg("g", { class: "bt-tile bt-" + t.f.k, tabindex: "0", role: "img", "aria-label": describe(t.f) });
+      g.appendChild(svg("rect", { x: t.x, y: t.y, width: Math.max(0, t.w), height: Math.max(0, t.h) }));
+      var title = svg("title", {}); title.textContent = describe(t.f); g.appendChild(title);
+      if (t.w > 64 && t.h > 34) {
+        var name = t.f.path.split("/").pop(), max = Math.floor((t.w - 10) / 6.2);
+        var a = svg("text", { x: t.x + 5, y: t.y + 15 }); a.textContent = name.length > max ? name.slice(0, max - 1) + "…" : name; g.appendChild(a);
+        var c = svg("text", { x: t.x + 5, y: t.y + 29, class: "d" }); c.textContent = t.f.k === "removed" ? "removed" : t.f.k === "new" ? "new " + num(t.f.head) : delta(t.f.d); g.appendChild(c);
+      }
+      g.addEventListener("focus", function () { $("sel").textContent = describe(t.f); });
+      g.addEventListener("mouseenter", function () { $("sel").textContent = describe(t.f); });
+      s.appendChild(g);
+    });
+    $("map").textContent = ""; $("map").appendChild(s);
+  }
+
+  var changes = files.filter(function (f) { return f.k !== "same"; }).sort(function (a, b) { return Math.abs(b.d) - Math.abs(a.d); });
+  changes.slice(0, 8).forEach(function (f) {
+    var li = el("li"); li.appendChild(el("code", null, f.path));
+    li.appendChild(el("span", f.d > 0 ? "bt-up" : "bt-down", " " + (f.k === "new" ? "new, " + num(f.head) : f.k === "removed" ? "removed, " + num(f.base) : delta(f.d))));
+    $("list").appendChild(li);
+  });
+
+  orch.text("Bundle " + bl + " " + num(tb) + " → " + hl + " " + num(th) + " (" + delta(th - tb) + "), " + files.length + " files.\n" +
+    (changes.length ? "Changes, largest first:\n" + changes.map(describe).join("\n") : "No file changed size by more than 1%."));
+  window.addEventListener("resize", draw);
+  draw();
+  orch.ready();
+})();
+</script>

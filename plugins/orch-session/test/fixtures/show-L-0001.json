@@ -1,0 +1,159 @@
+{
+  "id": "L-0001",
+  "title": "Working ticket",
+  "status": "in-progress",
+  "path": "tickets/in-progress/L-0001-working-ticket.md",
+  "meta": {
+    "id": "L-0001",
+    "title": "Working ticket",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "status": "in-progress",
+    "created": "2026-10-04T07:42Z",
+    "updated": "2026-10-04T07:42Z",
+    "external": [],
+    "repos": [],
+    "branches": {},
+    "worktrees": {},
+    "prs": [
+      {
+        "repo": "repo",
+        "url": "https://github.com/acme/repo/pull/12",
+        "state": "draft"
+      }
+    ],
+    "parent": null,
+    "blocked_by": [],
+    "follow_ups": [],
+    "labels": [],
+    "gates": {
+      "requirements": {
+        "approved": "2026-10-04T07:42Z",
+        "via": "tty",
+        "hash": "sha256:da8bb7c647cd2ebd9f5aa761ad0f41cb5a71c894e4acd0dc8d9ebf09a6c5e564",
+        "hash_v": 2
+      },
+      "plan": {
+        "approved": "2026-10-04T07:42Z",
+        "via": "tty",
+        "hash": "sha256:8f0842f9fa35ca099882adae21871305ade41b487b2a5dfbeeccbd06683d9ee9",
+        "hash_v": 2
+      },
+      "verify": {
+        "verdict": null,
+        "at": null,
+        "via": null
+      }
+    },
+    "questions": [],
+    "claim": {
+      "session": "fixture-session-0001",
+      "harness": "claude-code",
+      "at": "2026-10-04T07:42Z"
+    },
+    "sessions": [
+      {
+        "id": "fixture-session-0001",
+        "harness": "claude-code",
+        "model": null,
+        "started": "2026-10-04T07:42Z"
+      }
+    ]
+  },
+  "sections": {
+    "Requirements": "r",
+    "Acceptance criteria": "- [ ] a\n- [ ] b",
+    "Plan": "1. do it",
+    "Tasks": "- [x] T1 first\n  - added: 2026-10-04T07:42Z after plan approval\n- [/] T2 second\n  - added: 2026-10-04T07:42Z after plan approval\n- [ ] T3 third\n  - added: 2026-10-04T07:42Z after plan approval",
+    "Log": "- 2026-10-04T07:42Z [claude-code fixt] created\n- 2026-10-04T07:42Z [claude-code fixt] updated Requirements\n- 2026-10-04T07:42Z [claude-code fixt] updated Acceptance criteria\n- 2026-10-04T07:42Z [claude-code fixt] updated Plan\n- 2026-10-04T07:42Z [you] approved requirements → open\n- 2026-10-04T07:42Z [claude-code fixt] claimed (open → in-progress)\n- 2026-10-04T07:42Z [you] approved plan\n- 2026-10-04T07:42Z [claude-code fixt] added T1, T2, T3 after plan approval\n- 2026-10-04T07:42Z [claude-code fixt] started T1\n- 2026-10-04T07:42Z [claude-code fixt] T1 done\n- 2026-10-04T07:42Z [claude-code fixt] started T2"
+  },
+  "gates": {
+    "requirements": "approved",
+    "plan": "approved"
+  },
+  "artifacts": [],
+  "tasks": {
+    "format": "orch.tasks.v1",
+    "ticket": "L-0001",
+    "status": "in-progress",
+    "error": null,
+    "summary": {
+      "total": 3,
+      "todo": 1,
+      "doing": 1,
+      "done": 1,
+      "skipped": 0,
+      "blocked": 0,
+      "closed": 1
+    },
+    "doing": "T2",
+    "next": "T2",
+    "open": [
+      "T2",
+      "T3"
+    ],
+    "can_move_to_testing": false,
+    "plan_approved": "2026-10-04T07:42Z",
+    "added_since_approval": 3,
+    "tasks": [
+      {
+        "id": "T1",
+        "state": "done",
+        "text": "first",
+        "owner": "agent",
+        "needs": [],
+        "needs_open": [],
+        "refs": [],
+        "verify": null,
+        "why": null,
+        "on": null,
+        "on_ref": null,
+        "note": null,
+        "added": "2026-10-04T07:42Z",
+        "added_after_approval": true,
+        "waits_on_you": false
+      },
+      {
+        "id": "T2",
+        "state": "doing",
+        "text": "second",
+        "owner": "agent",
+        "needs": [],
+        "needs_open": [],
+        "refs": [],
+        "verify": null,
+        "why": null,
+        "on": null,
+        "on_ref": null,
+        "note": null,
+        "added": "2026-10-04T07:42Z",
+        "added_after_approval": true,
+        "waits_on_you": false
+      },
+      {
+        "id": "T3",
+        "state": "todo",
+        "text": "third",
+        "owner": "agent",
+        "needs": [],
+        "needs_open": [],
+        "refs": [],
+        "verify": null,
+        "why": null,
+        "on": null,
+        "on_ref": null,
+        "note": null,
+        "added": "2026-10-04T07:42Z",
+        "added_after_approval": true,
+        "waits_on_you": false
+      }
+    ]
+  },
+  "move": {
+    "who": "agent",
+    "kind": "working",
+    "label": "Working · claude-code 0 min",
+    "ref": null
+  }
+}

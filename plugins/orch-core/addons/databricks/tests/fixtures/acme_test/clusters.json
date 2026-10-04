@@ -1,0 +1,8 @@
+{"note": "composed demo data",
+ "argv": ["databricks", "clusters", "list", "--limit", "100", "--profile", "acme_test", "-o", "json"],
+ "stdout_json": [
+  {"autotermination_minutes": 30, "cluster_id": "0101-000000-demo0001", "cluster_name": "Demo-SingleNode", "cluster_source": "UI",
+   "creator_user_name": "alex.demo@example.com", "data_security_mode": "USER_ISOLATION", "is_single_node": true,
+   "node_type_id": "Standard_D4ds_v5", "num_workers": 0, "spark_version": "16.4.x-scala2.13", "state": "TERMINATED",
+   "state_message": "Inactive cluster terminated (inactive for 30 minutes)."}
+ ]}

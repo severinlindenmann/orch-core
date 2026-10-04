@@ -1,0 +1,270 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% import "_widgets.html" as w %}
+{% block main %}
+{#- Four in-page tabs (visual review §7): Addons (default) · Setup · Phones · Advanced. Every panel is in the page; the
+    server marks all but the chosen one `hidden` (?tab=, no JS needed), and app.js opens the panel that holds a
+    #fragment (an action's redirect to #phones or #trust-x). -#}
+{% macro tab_link(key, label, count=0) %}<a href="/workspace{{ '' if key == 'addons' else '?tab=' ~ key }}" class="{{ 'on' if tab == key }}" data-tab="{{ key }}"{% if tab == key %} aria-current="true"{% endif %}>{{ label }}{% if count %} <span class="badge badge-warn" aria-label="{{ count }} open">{{ count }}</span>{% endif %}</a>{% endmacro %}
+<div class="page-head">
+  <div>
+    <h1>Workspace &amp; addons</h1>
+    <p>{{ customer }} · {{ prefix }} · {{ repo_count }} repositories</p>
+  </div>
+</div>
+<nav class="tabs ws-tabs" aria-label="Workspace sections">
+  {{ tab_link("addons", "Addons") }}{{ tab_link("setup", "Setup", setup_count) }}{{ tab_link("phones", "Phones") }}{{ tab_link("advanced", "Advanced") }}
+</nav>
+
+<div class="ws-panel" id="tab-setup" data-tab-panel="setup"{% if tab != "setup" %} hidden{% endif %}>
+<div class="grid-2">
+  <section class="card">
+    <h2>Setup checks</h2>
+    {% if checks_error %}<p>{{ ui.status("err", checks_error) }}</p>{% endif %}
+    {% if checks %}
+    <ul class="checks">
+      {% for c in checks %}
+      <li>
+        {% if c.ok %}<span class="mark mark-ok">{{ ui.icon("ok") }}</span>
+        {% else %}<span class="mark mark-warn">{{ ui.icon("warn") }}</span>{% endif %}
+        <span class="detail"><b>{{ c.code }}</b> {{ c.message }}
+          {% if c.fix %}<code>{{ c.fix }}</code>{% endif %}
+        </span>
+        {% if c.fix %}<button type="button" class="btn copy-fix" data-copy="{{ c.fix }}">Copy fix</button>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No setup checks could be run.</p>{% endif %}
+  </section>
+
+  <aside>
+    <section class="card">
+      <h2>Repositories</h2>
+      {% if repos %}
+      <ul class="repos">
+        {% for r in repos %}
+        <li>
+          <span class="detail"><b>{{ r.name }}</b><br><span class="path" title="{{ r.path }}">{{ r.rel }}</span></span>
+          {% if r.hook == "installed" %}{{ ui.status("ok", "commit check on") }}
+          {% else %}{{ ui.status("warn", "commit check " ~ r.hook) }}{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}<p class="empty">No repositories configured.</p>{% endif %}
+    </section>
+
+    <section class="card" aria-labelledby="agent-start-h">
+      <h2 id="agent-start-h">Start agent</h2>
+      {% for lw in launch_warnings %}<p>{{ ui.status("warn", lw) }}</p>{% endfor %}
+      <p>Open in terminal uses <b>{{ terminal }}</b></p>
+      <p>Default harness <b>{{ default_harness }}</b></p>
+      <p class="muted">Agents only start when you start them, from a ticket or Today. Terminal and harness commands are set per user in <code>{{ launch_path }}</code>; the default harness and prompt texts in orchestrator/config.json.</p>
+    </section>
+
+    <section class="card">
+      <h2>Branding</h2>
+      <p>Icon <b>{{ "Mission Control (colour)" if brand == "mission-control" else "Plain" }}</b></p>
+      <p>Default theme <b>{{ theme_default }}</b></p>
+      <p class="muted">change in orchestrator/config.json</p>
+    </section>
+
+    <section class="card" id="shortcuts" aria-labelledby="shortcuts-h">
+      <h2 id="shortcuts-h">Keyboard shortcuts</h2>
+      <p>{{ "On" if shortcuts else "Off" }} in this workspace. <span class="muted">j and k move between decisions, ? lists every key. They never fire while you type and never approve on their own.</span></p>
+      <form method="post" action="/workspace/shortcuts"><input type="hidden" name="on" value="{{ '0' if shortcuts else '1' }}"><button type="submit" class="btn">{{ "Turn shortcuts off" if shortcuts else "Turn shortcuts on" }}</button></form>
+    </section>
+
+    <section class="card" id="density" aria-labelledby="density-h">
+      <h2 id="density-h">Density</h2>
+      <p class="muted">Compact fits more rows and cards on a screen; touch screens keep 44 px targets either way.</p>
+      <form method="post" action="/workspace/density" class="seg-options" role="group" aria-label="Density">
+        {% for value, text in (("comfortable", "Comfortable"), ("compact", "Compact")) %}
+        <button type="submit" name="density" value="{{ value }}" class="btn" aria-pressed="{{ 'true' if density == value else 'false' }}">{{ text }}</button>
+        {% endfor %}
+      </form>
+    </section>
+  </aside>
+</div>
+</div>
+
+<div class="ws-panel" id="tab-addons" data-tab-panel="addons"{% if tab != "addons" %} hidden{% endif %}>
+{% if suggested %}
+<section class="card" aria-labelledby="suggested-h">
+  <h2 id="suggested-h">Suggested by this repo</h2>
+  <ul class="plain">
+    {% for s in suggested %}
+    <li><b>{{ s.title }}</b> <code>{{ s.name }}</code> ·
+      {% if s.can_enable %}<form method="post" action="/workspace/addons/{{ s.name }}/enable" class="inline"><input type="hidden" name="enabled" value="1"><button type="submit" class="btn">Enable?</button></form>
+      {% elif s.found %}{{ ui.status("neu", "trust it first") }}{% else %}{{ ui.status("neu", "not installed") }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">orchestrator/config.json can only suggest addons. Nothing is enabled until you click.</p>
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="addons-h" id="addons">
+  <div class="section-head">
+    <h2 id="addons-h">Addons</h2>
+    <span class="muted">Enable is per workspace and only for you. A custom addon runs only after you trust this exact version. Addons are never loaded from orchestrator/.</span>
+    {% if has_custom %}<form method="post" action="/workspace/addons/check-updates"><button type="submit" class="btn">Check for updates</button></form>{% endif %}
+  </div>
+  {% if addon_rows %}
+  {#- One row per addon: who it is, its trust and health, a real switch for Enabled here, and its settings in a
+      disclosure under it (labels above their fields). -#}
+  <ul class="addon-list">
+    {% for a in addon_rows %}
+    <li class="addon-row" id="addon-{{ a.name }}">
+      <div class="addon-row-head">
+        <div class="addon-who">
+          <b>{{ a.title }}</b> <code>{{ a.name }}</code>
+          <p class="muted addon-meta">{{ a.kind }} · {{ a.version or "no version" }} · {{ a.source }}</p>
+        </div>
+        <div class="addon-state">
+          {{ ui.status(a.trust_role, a.trust_label) }}
+          {% if a.health %}{{ w.banner(a.health, compact=true) }}{% endif %}
+        </div>
+        <form method="post" action="/workspace/addons/{{ a.name }}/enable" class="switch-form"><input type="hidden" name="enabled" value="{{ '0' if a.enabled else '1' }}">
+          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.enabled else 'false' }}"{% if not a.enabled and not a.can_enable %} disabled aria-describedby="why-{{ a.name }}"{% endif %}><span class="switch-track" aria-hidden="true"></span>Enabled here</button>
+          {% if not a.enabled and not a.can_enable %}<span class="muted switch-why" id="why-{{ a.name }}">Trust it first</span>{% endif %}
+        </form>
+      </div>
+      {% if a.error %}<p>{{ ui.status("err", a.error) }}</p>{% endif %}{% if a.problem %}<p>{{ ui.status("warn", a.problem) }}</p>{% endif %}
+      {% if a["update"] %}<p class="cluster">{{ ui.status("info", a["update"].message) }} <button type="button" class="btn copy-fix" data-copy="orch addon update {{ a.name }}">Copy update command</button></p>{% endif %}
+      {% if a.enabled and a.background_capable %}
+      <form method="post" action="/workspace/addons/{{ a.name }}/background" class="switch-form addon-background"><input type="hidden" name="on" value="{{ '0' if a.background else '1' }}">
+        <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.background else 'false' }}"><span class="switch-track" aria-hidden="true"></span>Keep syncing while Mission Control runs</button>
+        <span class="muted">Off: it syncs only while a Mission Control tab is open.</span></form>
+      {% endif %}
+      {% if a.fields or a.settings_groups %}
+      <details class="addon-settings" id="settings-{{ a.name }}-d">
+        <summary class="btn btn-quiet">Settings</summary>
+        <form method="post" action="/workspace/addons/{{ a.name }}/settings" class="stack" aria-label="{{ a.title }} settings">
+          {% for f in a.fields %}
+            {% if f.type == "bool" %}<label class="check-row"><input type="checkbox" name="{{ f.key }}" value="1"{% if f.value %} checked{% endif %}> {{ f.label }}</label>
+            {% elif f.type == "select" %}<label class="field-col">{{ f.label }} <select name="{{ f.key }}">{% for o in f.options %}<option value="{{ o }}"{% if o == f.value %} selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
+            {% elif f.type == "map" %}<label class="field-col">{{ f.label }} <textarea name="{{ f.key }}" rows="4" placeholder="key = value">{{ f.value }}</textarea></label>
+            {% else %}<label class="field-col">{{ f.label }} <input type="text" name="{{ f.key }}" value="{{ f.value }}"></label>{% endif %}
+          {% endfor %}
+          {{ ui.slot(a.settings_groups) }}
+          {% if a.fields %}<button type="submit" class="btn btn-primary">Save settings</button>{% endif %}
+        </form>
+      </details>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% for a in addon_rows if a.review %}
+  <details class="trust-review" id="trust-{{ a.name }}"{% if a.trust == "changed" %} open{% endif %}>
+    <summary>{{ "Re-trust" if a.trust == "changed" else "Trust" }} {{ a.title }} {{ a.version }}</summary>
+    <p>From <code>{{ a.review.source }}</code>{% if a.review.old_version %} · trusted before: {{ a.review.old_version }}{% endif %}</p>
+    <ul class="plain">
+      {% for kind, values in a.review.added.items() %}{% for v in values %}<li>{{ ui.status("warn", "new " ~ kind_label[kind] ~ ": " ~ v) }}</li>{% endfor %}{% endfor %}
+      {% if a.review.remote_humans_added %}<li>{{ ui.status("warn", "new permission: paired phones may answer and decide for you (remote_humans)") }}</li>{% endif %}
+      {% if a.review.api_change %}<li>{{ ui.status("warn", "requires_api " ~ a.review.api_change[0] ~ " → " ~ a.review.api_change[1]) }}</li>{% endif %}
+    </ul>
+    <p>Changed files ({{ a.review.changed|length }})</p>
+    <ul class="plain">{% for c in a.review.changed[:50] %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
+    {% if a.review.changelog %}<details><summary>Changelog</summary><pre>{{ a.review.changelog }}</pre></details>{% endif %}
+    <p class="muted">Trusting runs this code inside orch serve with your permissions. Only trust code you have read.</p>
+    <form method="post" action="/workspace/addons/{{ a.name }}/trust" data-dialog="Trust {{ a.name }} {{ a.version }}?" data-dialog-body="It runs inside Mission Control with your permissions. Read what changed above before you trust it." data-dialog-confirm="Trust this version"><input type="hidden" name="ask" value="1"><input type="hidden" name="seen" value="{{ a.review.digest }}"><button type="submit" class="btn btn-primary">Trust this version</button></form>
+  </details>
+  {% endfor %}
+  {% else %}<p class="empty">No addons found.</p>{% endif %}
+  {% if addon_errors %}<details><summary>Recent addon errors</summary><pre>{{ addon_errors }}</pre></details>{% endif %}
+</section>
+
+</div>
+
+<div class="ws-panel" id="tab-phones" data-tab-panel="phones"{% if tab != "phones" %} hidden{% endif %}>
+{% if pairing_targets or phones %}
+<section class="card" aria-labelledby="phones-h" id="phones">
+  <h2 id="phones-h">Phones</h2>
+  <p>A paired phone is you: its signed answers, approvals, change requests, verdicts and ticket requests apply at once, with no second step here. Each one is checked first (pairing, signature, the exact text it was given for) and signed into your approval ledger with the phone's name.</p>
+  {% if pairing %}
+  <div class="callout callout-info pairing" role="status">
+    {{ w.widget(qr_widget(pairing.url, "Scan with the phone"), none) }}
+    <p>Check code on the phone: <b>{{ pairing.code }}</b></p>
+    <p><button type="button" class="btn btn-primary copy-fix" data-copy="{{ pairing.url }}">Copy pairing link</button></p>
+    <p class="muted">iPhone: copy the pairing link and paste it into Settings → Pair in {{ pairing.target }} on the phone. Android: scan the code. Pair only if the phone shows the same check code. Shown once.</p>
+  </div>
+  {% endif %}
+  {% if pairing_targets %}
+  <form method="post" action="/workspace/phones/pair" class="filters">
+    <label>Pair with <select name="addon">{% for name, t in pairing_targets %}<option value="{{ name }}">{{ t.label }}</option>{% endfor %}</select></label>
+    <label>Phone name <input type="text" name="label" value="Phone" maxlength="40" required></label>
+    <button type="submit" class="btn">Pair a phone</button>
+  </form>
+  {% endif %}
+  {% if phones %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th scope="col">Phone</th><th scope="col">Addon</th><th scope="col">Paired</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Revoke</span></th></tr></thead>
+      <tbody>
+      {% for p in phones %}
+      <tr>
+        <td class="cell-title"><b>{{ p.label }}</b></td>
+        <td data-label="Addon"><code>{{ p.addon }}</code></td>
+        <td data-label="Paired">{{ p.paired_at }}</td>
+        <td class="no-prefix" data-label="Status">{% if p.revoked_at %}{{ ui.status("neu", "revoked " ~ p.revoked_at) }}{% else %}{{ ui.status("ok", "paired") }}{% endif %}</td>
+        <td>{% if not p.revoked_at %}<form method="post" action="/workspace/phones/{{ p.id }}/revoke" data-dialog="Revoke {{ p.label }}?" data-dialog-body="Its decisions stop applying. Pair it again to use it." data-dialog-confirm="Revoke phone" data-dialog-cancel="Keep phone" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  <form method="post" action="/workspace/phones/permissions" class="stack">
+    <h3>What a paired phone applies</h3>
+    {% for k, label in (("answer", "Answers apply directly"), ("request_changes", "Change requests apply directly"), ("approve", "Approvals apply directly"), ("verdict", "Verdicts apply directly"), ("ticket_request", "Ticket requests apply directly")) %}
+    <label><input type="checkbox" name="{{ k }}" value="1"{% if phone_permissions[k] %} checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+    <p class="muted">A phone never moves, closes or reopens a ticket. A kind you switch off is not applied from the phone; decide it here instead.</p>
+    <button type="submit" class="btn">Save phone permissions</button>
+  </form>
+</section>
+{% else %}
+<section class="card"><h2>Phones</h2><p class="empty">No addon here pairs phones. An addon that does (such as a phone companion) adds pairing here once it is enabled.</p></section>
+{% endif %}
+</div>
+
+<div class="ws-panel" id="tab-advanced" data-tab-panel="advanced"{% if tab != "advanced" %} hidden{% endif %}>
+<section class="card">
+  <h2>orch check <span class="count">{{ findings|length }}</span></h2>
+  {% if findings %}
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th scope="col">Level</th><th scope="col">Ticket</th><th scope="col">Code</th><th scope="col">Message</th></tr></thead>
+    <tbody>
+    {% for f in findings %}
+    <tr><td class="no-prefix" data-label="Level">{{ ui.status({"error": "err", "warning": "warn"}.get(f.level, "neu"), f.level) }}</td><td class="no-prefix" data-label="Ticket">{% if f.ticket %}<a class="lnk" href="/t/{{ f.ticket }}">{{ f.ticket }}</a>{% endif %}</td><td data-label="Code">{{ f.code }}</td><td class="wrap">{{ f.message }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">All good.</p>{% endif %}
+</section>
+
+{% if static_files %}
+<section class="card">
+  <h2>static/ <span class="count">{{ static_files|length + static_hidden }}</span></h2>
+  <ul>{% for f in static_files %}<li><code>{{ f }}</code></li>{% endfor %}</ul>
+  {% if static_hidden %}<p class="muted">… and {{ static_hidden }} more</p>{% endif %}
+</section>
+{% endif %}
+
+  <section class="card">
+    <h2>Housekeeping</h2>
+    <p>{{ temp_count }} file(s), {{ temp_kb }} KB in temporary/. Files older than {{ max_age }} days are removed by Tidy.</p>
+    <form method="post" action="/workspace/tidy" data-dialog="Delete old files from temporary/?" data-dialog-body="Files older than {{ max_age }} days and old Start agent run scripts are removed. Tickets, artifacts and the event log are not touched." data-dialog-confirm="Tidy now" data-dialog-cancel="Keep files"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Tidy now</button></form>
+  </section>
+<section class="card">
+  <h2>Configuration</h2>
+  <p class="muted">Read-only here: edit orchestrator/config.json.</p>
+  <details class="config-raw"><summary>Show config.json</summary><pre>{{ config_text }}</pre></details>
+</section>
+<section class="card">
+  <h2>Design gallery</h2>
+  <p class="muted">Every widget and core component in both themes, for addon authors: <a class="lnk" href="/design">open the gallery</a>.</p>
+</section>
+</div>
+{% endblock %}

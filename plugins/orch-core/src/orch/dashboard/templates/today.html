@@ -1,0 +1,236 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% import "_decisions.html" as dc %}
+{% import "_ticket_card.html" as tc %}
+{% from "_tasks.html" import task_now %}
+{#- Today (#11/#17, Main / Moments drafts): what blocks an agent first, then what can wait, then the backlog folded
+    into one line; inbox zero when nothing blocks. Every count is query.counts() of query.waiting(), the same
+    number as the tab title, the menu badge and the SessionStart hook. -#}
+{% block main %}
+{% set n = summary.waiting %}
+<div class="page-head today-head">
+  <div>
+    {#- M: one headline instead of three tiles: how many decisions stand between the agents and running on their own. -#}
+    {% if n %}
+    <h1>{{ n }} {{ "decision" if n == 1 else "decisions" }}, then the agents run on their own</h1>
+    {% else %}
+    <h1>Nothing is waiting on you</h1>
+    {% endif %}
+    {% if has_tickets %}<p class="today-sub">{{ summary.working }} {{ "agent" if summary.working == 1 else "agents" }} working{% if summary.silent %}, {{ summary.silent }} silent{% endif %} · <a class="lnk" href="/board?backlog=open#col-backlog">{{ backlog_total }} {{ "idea" if backlog_total == 1 else "ideas" }} in the backlog</a>{% if n and summary.oldest_minutes is not none %} · oldest wait {{ summary.oldest_minutes|minutes_ago }}{% endif %}</p>
+    {% else %}<p>No approvals, questions or verdicts are open. New ones show up here.</p>{% endif %}
+    {% if shortcuts and all_decisions %}<p class="kbd-hint muted" data-kbd-hint><kbd>j</kbd> <kbd>k</kbd> move · <kbd>1</kbd>–<kbd>9</kbd> answer · <kbd>a</kbd> then <kbd>↵</kbd> approve · <kbd>?</kbd> all keys · <kbd>⌘K</kbd></p>{% endif %}
+  </div>
+</div>
+<div class="receipts" id="receipts" aria-live="polite"></div>
+
+{% if has_tickets %}
+{% set addon_tiles = addon_slot("today.summary") %}
+{% if addon_tiles %}
+{#- Addon tiles (today.summary) keep their row; core's own numbers are the headline above. -#}
+<ul class="summary summary-addons" aria-label="From addons">
+  {% for g in addon_tiles %}{% for tile in g.widgets %}
+  <li class="sum sum-{{ tile.role }}">{% if tile.href %}<a class="sum-link" href="{{ tile.href }}">{% else %}<div class="sum-link">{% endif %}
+    <span class="sum-head"><span class="sum-mark">{{ ui.icon(tile.role if tile.role in ("ok", "info", "warn", "err", "neu") else "neu") }}</span> {{ tile.label }} <b class="sum-num">{{ "unknown" if tile.value is none else tile.value }}</b></span>
+    {% if tile.sub %}<span class="sum-sub">{{ tile.sub }}</span>{% endif %}{% if tile.href %}</a>{% else %}</div>{% endif %}</li>
+  {% endfor %}{% endfor %}
+</ul>
+{% endif %}
+
+<div class="grid-2 today-main">
+  <div class="decision-cards" id="decisions">
+    {% if n %}
+    <section class="dc-section" aria-labelledby="waiting-h">
+      <h2 id="waiting-h" class="dc-section-h">Waiting on you <span class="count">{{ n }}</span></h2>
+      {% for g in blocking %}
+      {% if g.label %}<div class="dc-group" data-group="{{ g.key }}" role="group" aria-label="{{ g.label }}"><h3 class="dc-group-h">{{ g.label }} <span class="muted">{{ g.decisions|length }}</span></h3>{% endif %}
+      {% set rows = g.decisions|rejectattr("cid", "in", full)|list %}
+      {% for d in g.decisions if d.cid in full %}{{ dc.card(d, "/", kind_labels, addon_inline, card_anchor) }}{% endfor %}
+      {% if rows %}<ul class="dc-rows" aria-label="More decisions">{% for d in rows %}{{ dc.row(d, "blocking", kind_labels) }}{% endfor %}</ul>{% endif %}
+      {% if g.label %}</div>{% endif %}
+      {% endfor %}
+      {% if stale %}
+      <section class="card stale-claims" aria-labelledby="stale-h">
+        <h3 id="stale-h">{{ ui.status("warn", "No activity") }} {{ stale_total }} {{ "claim" if stale_total == 1 else "claims" }} gone silent</h3>
+        <p class="dc-ff muted">Releasing puts a ticket back to open; any agent can claim it. Branch and notes stay.</p>
+        <ul class="dc-rows">
+          {% for d in stale %}
+          <li class="dc-row" data-ticket="{{ d.ticket }}" data-kind="stale-claim">
+            <a class="lnk key" href="/t/{{ d.ticket }}">{{ d.ticket }}</a> <span class="dc-row-title">{{ d.title }}</span>
+            <span class="muted">{{ d.detail }}</span>
+            <form method="post" action="/t/{{ d.ticket }}/release" data-dialog="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?" data-dialog-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn-quiet">Release claim…</button></form>
+          </li>
+          {% endfor %}
+        </ul>
+        {% if stale_total > stale|length %}<a class="lnk" href="/activity?status=stale">All {{ stale_total }} on Activity →</a>{% endif %}
+      </section>
+      {% endif %}
+    </section>
+    {% else %}
+    <div class="card inbox-zero">
+      <span class="iz-mark"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg></span>
+      <div><b>Nothing needs you right now</b>
+        <p class="muted">{% if summary.working %}{{ summary.working }} {{ "agent is" if summary.working == 1 else "agents are" }} working. {% endif %}You will see the next decision here as soon as one asks.</p>
+        {% if summary.backlog %}<p><a class="lnk" href="/groom">{{ summary.backlog }} {{ "requirement" if summary.backlog == 1 else "requirements" }} in the backlog · groom a few</a></p>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if ready %}
+    {#- M: requirements and plan the agent drafted together: one approval and an agent can start. Nothing blocks on
+        them, so they are not counted with the decisions above (headline, badge and tab title count those). -#}
+    <section class="dc-section ready-section" id="ready" aria-labelledby="ready-h">
+      <h2 id="ready-h" class="dc-section-h">Ready to start <span class="count">{{ ready|length }}</span> <span class="muted">approve requirements and plan together, then an agent can start</span></h2>
+      {% for d in ready if d.cid in full %}{{ dc.card(d, "/", kind_labels, addon_inline, card_anchor) }}{% endfor %}
+      {% set rows = ready|rejectattr("cid", "in", full)|list %}
+      {% if rows %}<ul class="dc-rows" aria-label="More ready to start">{% for d in rows %}{{ dc.row(d, "backlog", kind_labels) }}{% endfor %}</ul>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if later %}
+    <section class="dc-section" aria-labelledby="later-h">
+      <h2 id="later-h" class="dc-section-h">When you have a moment <span class="count">{{ summary.later }}</span> <span class="muted">no agent waits on these</span></h2>
+      {% for d in later if d.cid in full %}{{ dc.card(d, "/", kind_labels, addon_inline, card_anchor) }}{% endfor %}
+      {% set rows = later|rejectattr("cid", "in", full)|list %}
+      {% if rows %}<ul class="dc-rows" aria-label="More for later">{% for d in rows %}{{ dc.row(d, "later", kind_labels) }}{% endfor %}</ul>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if backlog %}
+    <section class="card backlog-line" aria-labelledby="backlog-h">
+      <div class="bl-head">
+        <h2 id="backlog-h">{{ ui.icon("neu") }} Backlog <b>{{ summary.backlog }}</b> to groom</h2>
+        <span class="muted">none of them blocks an agent{% if summary.backlog_oldest_minutes is not none %} · oldest {{ summary.backlog_oldest_minutes|minutes_ago }}{% endif %}</span>
+      </div>
+      <div class="cluster">
+        <a class="btn" href="/groom">Groom one by one</a>
+        <details class="bl-list">
+          <summary class="btn btn-quiet">Show list</summary>
+          <ul class="bl-rows">
+            {% for d in backlog %}
+            <li><a class="lnk key" href="/t/{{ d.ticket }}">{{ d.ticket }}</a> <span class="bl-title">{{ d.title }}</span>
+              <span class="muted">{{ kind_labels.get(d.kind, d.kind) }}{% if d.priority %} · {{ d.priority }}{% endif %}{% if d.age_minutes is not none %} · {{ d.age_minutes|minutes_ago }}{% endif %}</span>
+              <a class="btn btn-quiet" href="/groom?at={{ d.ticket }}">Review</a></li>
+            {% endfor %}
+          </ul>
+        </details>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+  <aside>
+    {#- M: what happened without you (orch's events and verified phone decisions only, fixed phrases), then who works
+        now. -#}
+    <section class="panel away" id="away" aria-labelledby="away-h">
+      <h2 id="away-h">While you were away</h2>
+      {% if phone_receipts or away.tasks or away.ideas %}
+      <ul class="plain away-list">
+        {% if phone_receipts %}
+        {#- R21: what a paired phone applied (verified decisions only), as receipts: nothing left to do here. -#}
+        <li><section class="phone-receipts" id="phone-receipts" aria-label="Decided from your phone">
+          {% for r in phone_receipts %}<p class="receipt{{ ' receipt-pending' if r.unverified }}"><span class="receipt-mark" aria-hidden="true">✓</span> <a class="lnk" href="/t/{{ r.ticket }}">{{ r.text }}</a> <span class="muted">{{ r.via }} <time datetime="{{ r.at.isoformat() }}" title="{{ r.at|ago }}">{{ r.at|local("%H:%M") }}</time></span>{% if r.unverified %} {{ ui.status("warn", "unverified") }}{% endif %}</p>{% endfor %}
+        </section></li>
+        {% endif %}
+        {% for x in away.tasks %}<li class="away-row">{{ ui.icon("info") }} <span>{{ x.who }} finished {{ x.task }} on <a class="lnk key" href="/t/{{ x.ticket }}#task-{{ x.task }}">{{ x.ticket }}</a>{% if x.artifacts %} <span class="muted">· {{ x.artifacts }} artifact{{ "s" if x.artifacts != 1 }}</span>{% endif %} <time class="muted" datetime="{{ x.at.isoformat() }}" title="{{ x.at|local }}">{{ x.at|ago }}</time></span></li>{% endfor %}
+        {% if away.ideas %}<li class="away-row">{{ ui.icon("neu") }} <a class="lnk" href="/board?backlog=open#col-backlog">{{ away.ideas }} new {{ "idea" if away.ideas == 1 else "ideas" }} in the backlog</a></li>{% endif %}
+      </ul>
+      {% else %}<p class="empty">Nothing new in the last {{ away_hours }} hours.</p>{% endif %}
+    </section>
+    <section class="panel working-now" id="working-now" aria-labelledby="working-now-h">
+      <h2 id="working-now-h">Working now</h2>
+      {% if agent_cards %}
+      <ul class="plain wn-list">{% for c in agent_cards %}{% set a = c.agent %}
+        <li class="wn-row"><span class="tc-av tc-av-{{ a.status if a else 'working' }}" title="{{ a.harness if a else 'agent' }}" aria-hidden="true">{{ (a.harness if a else "agent")|initials }}</span>
+          <span class="wn-text"><a class="lnk key" href="/t/{{ c.id }}">{{ c.id }}</a> {{ c.title }}
+            <span class="muted wn-meta"><span class="sr-only">{{ a.harness if a else "agent" }}: </span>{% if a and a.status == "stale" %}silent{% elif c.tasks %}{{ c.tasks.closed }} of {{ c.tasks.total }} tasks{% else %}{{ a.last_action if a and a.last_action else "working" }}{% endif %}{% if a and a.last %} · <time datetime="{{ a.last.isoformat() }}">{{ a.last|ago }}</time>{% endif %}</span></span></li>
+      {% endfor %}</ul>
+      {% else %}
+      <p class="empty">No agent holds a ticket right now.</p>
+      {% endif %}
+      <a class="lnk" href="/activity">Activity →</a>
+    </section>
+    {% if delegated_fyi.rows %}
+    {#- E2: children agents approved under an epic's delegation. Not decisions: shown quietly, the full text one click away. -#}
+    <section class="panel delegated-fyi" id="delegated-fyi" aria-labelledby="delegated-fyi-h">
+      <h2 id="delegated-fyi-h">Auto-approved under delegation <span class="count">{{ delegated_fyi.total }}</span></h2>
+      <p class="muted">Not counted as waiting on you. Pause a delegation on its epic's page.</p>
+      <ul class="plain">
+        {% for r in delegated_fyi.rows %}
+        <li><a class="lnk key" href="/t/{{ r.ticket }}">{{ r.ticket }}</a> {{ r.title }}
+          <span class="muted">· {{ r.gates|join(" and ") }} by {{ r.actor }} · epic <a class="lnk" href="/t/{{ r.epic.id }}">{{ r.epic.id }}</a></span>
+          {% if not r.valid %}{{ ui.status("warn", "waits for you") }}{% endif %}</li>
+        {% endfor %}
+        {% for m in delegated_fyi.more %}<li><a class="lnk" href="/t/{{ m.epic.id }}#epic-audit">+{{ m.n }} more in {{ m.epic.id }}</a></li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </aside>
+</div>
+{% else %}
+<div class="grid-2 today-empty">
+  <section class="panel">
+    <h2>Start with a ticket</h2>
+    <p class="muted">Describe what should be done. An agent refines it into requirements, and you approve them.</p>
+    <a class="btn btn-primary" href="/new">Create first ticket</a>
+  </section>
+  <section class="panel">
+    <h2>What happens next</h2>
+    <ol class="next-steps">
+      <li>You start an agent. It turns the ask into requirements and asks what is unclear.</li>
+      <li>You approve the requirements, then the plan.</li>
+      <li>The agent does the work and links branch and PR.</li>
+      <li>You give the verdict. Only then is the ticket done.</li>
+    </ol>
+  </section>
+</div>
+{% endif %}
+
+{% set from_addons = addon_loose %}
+{% set addon_groups = addon_slot("today.from_addons") %}
+{% if from_addons or addon_groups %}
+<section class="panel from-addons" aria-labelledby="from-addons-h">
+  <h2 id="from-addons-h">From addons</h2>
+  <p class="muted">Not counted as waiting on you.</p>
+  {% if from_addons %}<ul class="plain">
+  {% for addon, d in from_addons %}
+    <li>{{ ui.addon_decision(addon, d) }}</li>
+  {% endfor %}
+  </ul>{% endif %}
+  {{ ui.slot(addon_groups) }}
+</section>
+{% endif %}
+
+{% if in_flight %}
+{% set step_words = {"done": "done", "current": "current step", "todo": "not started", "skipped": "skipped"} %}
+{% set step_icons = {"done": "✓", "todo": "○", "skipped": "○"} %}
+<details class="panel in-flight" data-remember="today-in-flight">
+  <summary>In flight · {{ in_flight|length }} <span class="muted">where we left off</span></summary>
+  <div class="flight-cards">
+    {% for t in in_flight[:flight_cards] %}
+    <article class="flight-card">
+      <div class="flight-head">
+        <div class="flight-title">
+          <h3><a class="lnk" href="/t/{{ t.id }}">{{ t.title }}</a></h3>
+          <div class="chips"><b class="id">{{ t.id }}</b>{{ ui.status(ticket_status_roles.get(t.status, "neu"), ticket_status_labels.get(t.status, t.status)) }}</div>
+        </div>
+        {% if t.agent %}{{ ui.status(t.agent.role, t.agent.text) }}{% else %}{{ ui.status("neu", "No agent") }}{% endif %}
+      </div>
+      <ol class="steps steps-mini" aria-label="Steps">
+        {% for s in t.steps %}
+        <li class="step step-{{ s.state }}"{% if s.state == "current" %} aria-current="step"{% endif %}>
+          <span class="step-name">{% if s.state == "current" %}<span class="step-now">Now</span>{% else %}<span aria-hidden="true">{{ step_icons[s.state] }}</span>{% endif %}
+            {% if s.name == "Requirements" %}<span aria-hidden="true">Req.</span><span class="sr-only">Requirements</span>{% else %}{{ s.name }}{% endif %}</span>
+          <span class="sr-only">{{ step_words[s.state] }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+      {% if t.tasks %}{{ task_now(t.tasks) }}{% elif t.next %}<div class="flight-next"><span class="flight-label">Next</span><div>{{ t.next }}</div></div>{% endif %}
+      {% if t.start %}<div class="row">{% if t.start.warning %}{{ ui.status("warn", t.start.warning) }}{% endif %}<a class="btn" href="/?start={{ t.id }}#start-agent" data-start-panel="{{ t.id }}"{% if start_panel and start_panel.key == t.id %} aria-current="true"{% endif %}>Start agent…</a></div>{% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% if in_flight|length > flight_cards %}<p class="muted flight-more">{{ in_flight|length - flight_cards }} more in flight: <a class="lnk" href="/board">see them on the Board →</a></p>{% endif %}
+  {#- One Start agent panel for the page (not one per card): a card's "Start agent…" swaps in its ticket. -#}
+  <div id="start-agent" class="start-agent-shared">{% include "_start_agent_panel.html" %}</div>
+</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,11 @@
+{
+  "name": "orch-session",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Shows the orch tickets this session holds: status line, band above the prompt, /orch pane and hand-over toasts.",
+  "author": {
+    "name": "Severin Lindenmann",
+    "url": "https://github.com/severinlindenmann"
+  },
+  "types": "./types/index.d.ts"
+}

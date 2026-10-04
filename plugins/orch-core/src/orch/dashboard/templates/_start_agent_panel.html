@@ -1,0 +1,6 @@
+{#- Today's one shared Start agent panel (B measured one per card at 1.3 MB): `start_panel` on Today, or `s` from
+    GET /t/<id>/agent/panel, which app.js swaps in when a card's "Start agent…" is pressed. -#}
+{% from "_start_agent.html" import start_agent %}
+{% set p = s if s is defined else start_panel %}
+{% if p %}{{ start_agent(p, p.key, next if next is defined and next else "/") }}
+{% else %}<p class="muted">Nothing to start here right now: every ticket in flight is being worked on or waits for you.</p>{% endif %}

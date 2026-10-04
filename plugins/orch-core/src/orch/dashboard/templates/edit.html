@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block main %}
+<p class="crumb"><a class="lnk" href="/board">Board</a> / <a class="lnk" href="/t/{{ tid }}">{{ tid }}</a> / edit</p>
+<div class="page-head">
+  <div>
+    <h1>Edit {{ tid }}</h1>
+    <p>Status, gates, claims and answers can only change through the buttons on the ticket page.</p>
+  </div>
+</div>
+{% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
+<form class="card stack" method="post" action="/t/{{ tid }}/edit">
+  <input type="hidden" name="mtime" value="{{ mtime }}">
+  <textarea class="raw" name="text" spellcheck="false" aria-label="Ticket file">{{ text }}</textarea>
+  <div class="actions"><button type="submit" class="btn btn-primary">Save</button> <a class="btn btn-quiet" href="/t/{{ tid }}">Cancel</a></div>
+</form>
+{% endblock %}

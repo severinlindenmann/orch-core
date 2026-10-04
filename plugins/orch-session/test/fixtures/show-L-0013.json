@@ -1,0 +1,98 @@
+{
+  "id": "L-0013",
+  "title": "Blocked-by ticket",
+  "status": "in-progress",
+  "path": "tickets/in-progress/L-0013-blocked-by-ticket.md",
+  "meta": {
+    "id": "L-0013",
+    "title": "Blocked-by ticket",
+    "type": "feature",
+    "priority": "normal",
+    "size": "xs",
+    "status": "in-progress",
+    "created": "2026-10-04T07:43Z",
+    "updated": "2026-10-04T07:43Z",
+    "external": [],
+    "repos": [],
+    "branches": {},
+    "worktrees": {},
+    "prs": [],
+    "parent": null,
+    "blocked_by": [
+      "L-0012"
+    ],
+    "follow_ups": [],
+    "labels": [],
+    "gates": {
+      "requirements": {
+        "approved": "2026-10-04T07:43Z",
+        "via": "tty",
+        "hash": "sha256:97654293812852895a3e4887ca49d5404da45240f7bcbf3bd2b3bf54c20dab22",
+        "hash_v": 2
+      },
+      "plan": {
+        "approved": null,
+        "via": null,
+        "hash": null
+      },
+      "verify": {
+        "verdict": null,
+        "at": null,
+        "via": null
+      }
+    },
+    "questions": [],
+    "claim": {
+      "session": "fixture-session-0001",
+      "harness": "claude-code",
+      "at": "2026-10-04T07:43Z"
+    },
+    "sessions": [
+      {
+        "id": "fixture-session-0001",
+        "harness": "claude-code",
+        "model": null,
+        "started": "2026-10-04T07:43Z"
+      }
+    ]
+  },
+  "sections": {
+    "Requirements": "r",
+    "Acceptance criteria": "- [ ] a\n- [ ] b",
+    "Plan": "1. do it",
+    "Log": "- 2026-10-04T07:43Z [claude-code fixt] created\n- 2026-10-04T07:43Z [claude-code fixt] updated Requirements\n- 2026-10-04T07:43Z [claude-code fixt] updated Acceptance criteria\n- 2026-10-04T07:43Z [claude-code fixt] updated Plan\n- 2026-10-04T07:43Z [you] approved requirements → open\n- 2026-10-04T07:43Z [claude-code fixt] claimed (open → in-progress)"
+  },
+  "gates": {
+    "requirements": "approved",
+    "plan": "pending"
+  },
+  "artifacts": [],
+  "tasks": {
+    "format": "orch.tasks.v1",
+    "ticket": "L-0013",
+    "status": "in-progress",
+    "error": null,
+    "summary": {
+      "total": 0,
+      "todo": 0,
+      "doing": 0,
+      "done": 0,
+      "skipped": 0,
+      "blocked": 0,
+      "closed": 0
+    },
+    "doing": null,
+    "next": null,
+    "open": [],
+    "can_move_to_testing": false,
+    "plan_approved": null,
+    "added_since_approval": 0,
+    "tasks": []
+  },
+  "move": {
+    "who": "nobody",
+    "kind": "blocked",
+    "label": "Blocked by L-0012",
+    "ref": null
+  }
+}

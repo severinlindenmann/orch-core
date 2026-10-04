@@ -1,0 +1,19 @@
+{
+  "name": "orch-core",
+  "owner": { "name": "Severin Lindenmann", "url": "https://github.com/severinlindenmann" },
+  "metadata": { "description": "orch-core: local Markdown tickets with human approvals for agent work." },
+  "plugins": [
+    {
+      "name": "orch-core",
+      "source": "./plugins/orch-core",
+      "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
+      "category": "productivity"
+    },
+    {
+      "name": "orch-session",
+      "source": "./plugins/orch-session",
+      "description": "Shows the orch tickets this session holds inside Claude Code: status line, band above the prompt, /orch pane and toasts.",
+      "category": "productivity"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "id": "L-0004",
+  "title": "Changed plan ticket",
+  "status": "in-progress",
+  "path": "tickets/in-progress/L-0004-changed-plan-ticket.md",
+  "meta": {
+    "id": "L-0004",
+    "title": "Changed plan ticket",
+    "type": "feature",
+    "priority": "normal",
+    "size": "m",
+    "status": "in-progress",
+    "created": "2026-10-04T07:42Z",
+    "updated": "2026-10-04T07:42Z",
+    "external": [],
+    "repos": [],
+    "branches": {},
+    "worktrees": {},
+    "prs": [],
+    "parent": null,
+    "blocked_by": [],
+    "follow_ups": [],
+    "labels": [],
+    "gates": {
+      "requirements": {
+        "approved": "2026-10-04T07:42Z",
+        "via": "tty",
+        "hash": "sha256:da8bb7c647cd2ebd9f5aa761ad0f41cb5a71c894e4acd0dc8d9ebf09a6c5e564",
+        "hash_v": 2
+      },
+      "plan": {
+        "approved": "2026-10-04T07:42Z",
+        "via": "tty",
+        "hash": "sha256:8f0842f9fa35ca099882adae21871305ade41b487b2a5dfbeeccbd06683d9ee9",
+        "hash_v": 2
+      },
+      "verify": {
+        "verdict": null,
+        "at": null,
+        "via": null
+      }
+    },
+    "questions": [],
+    "claim": {
+      "session": "fixture-session-0001",
+      "harness": "claude-code",
+      "at": "2026-10-04T07:42Z"
+    },
+    "sessions": [
+      {
+        "id": "fixture-session-0001",
+        "harness": "claude-code",
+        "model": null,
+        "started": "2026-10-04T07:42Z"
+      }
+    ]
+  },
+  "sections": {
+    "Requirements": "r",
+    "Acceptance criteria": "- [ ] a\n- [ ] b",
+    "Plan": "1. do it differently",
+    "Log": "- 2026-10-04T07:42Z [claude-code fixt] created\n- 2026-10-04T07:42Z [claude-code fixt] updated Requirements\n- 2026-10-04T07:42Z [claude-code fixt] updated Acceptance criteria\n- 2026-10-04T07:42Z [claude-code fixt] updated Plan\n- 2026-10-04T07:42Z [you] approved requirements → open\n- 2026-10-04T07:42Z [claude-code fixt] claimed (open → in-progress)\n- 2026-10-04T07:42Z [you] approved plan\n- 2026-10-04T07:42Z [claude-code fixt] updated Plan"
+  },
+  "gates": {
+    "requirements": "approved",
+    "plan": "invalidated"
+  },
+  "artifacts": [],
+  "tasks": {
+    "format": "orch.tasks.v1",
+    "ticket": "L-0004",
+    "status": "in-progress",
+    "error": null,
+    "summary": {
+      "total": 0,
+      "todo": 0,
+      "doing": 0,
+      "done": 0,
+      "skipped": 0,
+      "blocked": 0,
+      "closed": 0
+    },
+    "doing": null,
+    "next": null,
+    "open": [],
+    "can_move_to_testing": false,
+    "plan_approved": "2026-10-04T07:42Z",
+    "added_since_approval": 0,
+    "tasks": []
+  },
+  "move": {
+    "who": "you",
+    "kind": "re-approve",
+    "label": "Re-approve plan",
+    "ref": "plan",
+    "why": "The plan changed after your approval; the work waits until you approve it again."
+  }
+}

@@ -1,0 +1,50 @@
+{#- Start agent box (spec §7). Reusable: `{% from "_start_agent.html" import start_agent %}` then
+    `{{ start_agent(s, ref, next) }}` with `s` = agent_start.suggest(...) (None renders nothing),
+    `ref` the ticket id and `next` an optional same-origin path to return to after the POST.
+    The box's id is "start-agent-<ref>", so several boxes can share a page (Today).
+    Previews and copy buttons show the server-rendered text; app.js only swaps in the text of
+    the harness/mode picked (every combination is rendered below, nothing is requested). -#}
+{% import "_ui.html" as ui %}
+{% macro start_agent(s, ref, next=None) %}
+{% if s %}
+<section class="start-agent" id="start-agent-{{ ref }}" aria-label="Start agent for {{ ref }}">
+  <div class="sa-head"><b>Start agent</b><span class="muted">Agents only start when you start them.</span></div>
+  {% if s.disabled %}<p class="sa-note" id="sa-why-{{ ref }}">{{ ui.status(s.disabled_role or "you", s.disabled) }}</p>{% endif %}
+  {% if s.warning %}<p class="sa-note">{{ ui.status("warn", s.warning) }}</p>{% endif %}
+  <form method="post" action="/t/{{ ref }}/agent/start" class="sa-form" data-agent-start>
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <div class="sa-selects">
+      <label class="sa-field">Harness
+        <select name="harness">{% for h in s.harnesses %}<option value="{{ h.value }}"{% if h.value == s.harness %} selected{% endif %}>{{ h.label }}</option>{% endfor %}</select>
+      </label>
+      <label class="sa-field">Mode (auto)
+        <select name="mode">{% for m in s.modes %}<option value="{{ m.value }}"{% if m.value == s.mode %} selected{% endif %}>{{ m.label }}</option>{% endfor %}</select>
+      </label>
+    </div>
+    <div class="sa-field"><span>Prompt · read-only</span><pre class="sa-pre" aria-label="Prompt preview" data-preview="prompt">{{ s.prompt }}</pre></div>
+    <div class="sa-field"><span>Command</span><pre class="sa-pre" aria-label="Command preview" data-preview="command">{{ s.command }}</pre></div>
+    <div class="row">
+      {#- Terminals addon (issue #40): "Open in Mission Control" is the primary when its "start here by default" is on -#}
+      {% set mc_first = s.mission_control and s.mission_control_first %}
+      {% set off = ' disabled aria-describedby="sa-why-' ~ ref ~ '"' if s.disabled else '' %}
+      {% if mc_first %}
+      <button type="submit" class="btn btn-primary" name="where" value="tmux"{{ off|safe }}>Open in Mission Control</button>
+      {% endif %}
+      {% if s.terminal != "none" %}
+      <button type="submit" class="btn{{ '' if mc_first else ' btn-primary' }}" name="where" value=""{{ off|safe }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v14H4zM8 10l3 2-3 2M13 15h4"></path></svg> {{ "Open in Mission Control" if s.terminal == "tmux" else "Open in terminal" }}</button>
+      {% endif %}
+      {% if s.mission_control and not mc_first %}
+      <button type="submit" class="btn" name="where" value="tmux"{{ off|safe }}>Open in Mission Control</button>
+      {% endif %}
+      <button type="button" class="btn" data-copy="{{ s.prompt }}" data-copy-of="prompt">Copy prompt</button>
+      <button type="button" class="btn" data-copy="{{ s.command }}" data-copy-of="command">Copy command</button>
+    </div>
+    {% if s.launcher %}<div class="sa-field"><span>Launcher</span><pre class="sa-pre" aria-label="Launcher preview" data-preview="launcher">{{ s.launcher }}</pre></div>{% endif %}
+    <span class="muted sa-foot">Terminal: {{ s.terminal_label }} · set in {{ s.launch_path }}</span>
+    <ul class="sa-options" hidden>
+      {% for o in s.options %}<li data-harness="{{ o.harness }}" data-mode="{{ o.mode }}" data-prompt="{{ o.prompt }}" data-command="{{ o.command }}" data-launcher="{{ o.launcher or '' }}"></li>{% endfor %}
+    </ul>
+  </form>
+</section>
+{% endif %}
+{% endmacro %}

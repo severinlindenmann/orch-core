@@ -1,0 +1,10 @@
+{"note": "composed demo data",
+ "argv": ["databricks", "warehouses", "list", "--profile", "acme_test", "-o", "json"],
+ "stdout_json": [
+  {"auto_stop_mins": 5, "cluster_size": "2X-Small", "creator_name": "alex.demo@example.com", "enable_serverless_compute": true,
+   "id": "a1b2c3d4e5f60001", "name": "analytics", "num_clusters": 0, "state": "STOPPED", "warehouse_type": "PRO",
+   "odbc_params": {"hostname": "adb-3333333333333333.13.azuredatabricks.net", "path": "/sql/1.0/warehouses/a1b2c3d4e5f60001", "port": 443, "protocol": "https"}},
+  {"auto_stop_mins": 10, "cluster_size": "Small", "creator_name": "alex.demo@example.com", "enable_serverless_compute": true,
+   "id": "a1b2c3d4e5f60002", "name": "Serverless Starter Warehouse", "num_clusters": 0, "state": "STOPPED", "warehouse_type": "PRO",
+   "odbc_params": {"hostname": "adb-3333333333333333.13.azuredatabricks.net", "path": "/sql/1.0/warehouses/a1b2c3d4e5f60002", "port": 443, "protocol": "https"}}
+ ]}

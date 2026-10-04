@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% block head %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
+<script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
+{#- The widget library (docs/widgets.md): every core type and template, grouped by the moment it serves, with a live
+    preview of its example, its fields, where it is used and its versions. Templates run in the same sandboxed frame
+    a ticket uses (GET /w/preview/<name>@<v>); core types are drawn inline from their EXAMPLE. -#}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Widgets</h1>
+    <p>{{ total }} core types and templates agents can put in Context, Current state, Verification and Findings.</p>
+  </div>
+</div>
+{% if not html_on %}<div class="callout callout-neu" role="status"><p class="callout-title">{{ ui.icon("neu") }} Agent HTML is off in this workspace</p><p>Templates show their description and fields; tickets show their text alternative.</p></div>{% endif %}
+{% if broken %}<div class="callout callout-warn" role="status"><p class="callout-title">{{ ui.icon("warn") }} {{ broken|length }} template{{ "s" if broken|length != 1 }} left out</p><ul>{% for b in broken %}<li><code>{{ b.name }}</code>: {{ b.problem }}</li>{% endfor %}</ul></div>{% endif %}
+<nav class="tabs lib-jump" aria-label="Moments">
+  {% for g in groups %}<a href="#m-{{ g.moment }}">{{ g.moment|capitalize }}<span class="count">{{ g["items"]|length }}</span></a>{% endfor %}
+</nav>
+{% for g in groups %}
+<section class="lib-group" id="m-{{ g.moment }}" aria-labelledby="m-{{ g.moment }}-h">
+  <h2 id="m-{{ g.moment }}-h">{{ g.moment|capitalize }}</h2>
+  {% for it in g["items"] %}
+  <article class="card lib-item" id="lib-{{ it.layer }}-{{ it.name }}" aria-labelledby="lib-{{ it.layer }}-{{ it.name }}-h">
+    <div class="lib-head">
+      <h3 id="lib-{{ it.layer }}-{{ it.name }}-h"><code>{{ it.name }}</code>{% if it.layer == "widget" and it.title != it.name %} <span class="lib-title">{{ it.title }}</span>{% endif %}</h3>
+      <span class="lib-chips">
+        <span class="chip chip-neu">{{ "core type" if it.layer == "core" else ("template · " ~ it.origin) }}</span>
+        {% if it.uses %}{{ ui.status("ok", it.uses ~ (" use" if it.uses == 1 else " uses")) }}{% endif %}
+        {% if it.unused %}{{ ui.status("neu", "Unused for " ~ unused_days ~ " days") }}{% endif %}
+      </span>
+    </div>
+    {% if it.description %}<p class="lib-desc">{{ inline_md(it.description) }}</p>{% endif %}
+    {% if it.libs %}<p class="muted lib-meta">Libraries: {{ it.libs|join(", ") }}</p>{% endif %}
+    {% if it.layer == "core" %}{{ it.preview }}
+    {% elif it.preview %}
+    <figure class="w w-t-widget" data-layer="widget">
+      <figcaption class="w-head"><span class="w-title">Example</span><span class="w-chip">agent HTML · {{ it.name }}@{{ it.preview.v }}</span></figcaption>
+      <div class="w-body"><div class="w-frame" data-doc-url="{{ it.preview.url }}" data-nonce="{{ it.preview.nonce }}" data-min-height="{{ it.preview.min_height }}" data-title="{{ it.title }} example"></div></div>
+      <details class="w-alt"><summary>Show text</summary><pre class="w-text">No text alternative given</pre></details>
+    </figure>
+    {% endif %}
+    {% if it.fields %}
+    <details class="lib-fields">
+      <summary>Fields ({{ it.fields|length }})</summary>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th scope="col">Field</th><th scope="col">Type</th><th scope="col">Required</th><th scope="col">Notes</th></tr></thead>
+        <tbody>{% for f in it.fields %}<tr><td data-label="Field"><code>{{ f.name }}</code></td><td data-label="Type">{{ f.type }}</td><td data-label="Required">{{ "yes" if f.required else "no" }}</td><td class="lib-notes" data-label="Notes">{{ f.notes }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+    {% endif %}
+    {% if it.versions %}
+    <ul class="lib-versions" aria-label="Versions">
+      {% for v in it.versions %}<li><b>v{{ v.v }}</b> <span class="muted">{{ v.uses }} use{{ "" if v.uses == 1 else "s" }}</span>{% if v.notes %} · {{ v.notes }}{% endif %}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p class="lib-used">{% if it.tickets %}Used on {% for t in it.tickets %}<a class="lnk" href="/t/{{ t }}">{{ t }}</a>{{ ", " if not loop.last }}{% endfor %}{% else %}<span class="muted">Not used on any ticket yet.</span>{% endif %}</p>
+  </article>
+  {% endfor %}
+</section>
+{% endfor %}
+{% endblock %}

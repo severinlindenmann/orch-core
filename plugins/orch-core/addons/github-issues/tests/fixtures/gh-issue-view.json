@@ -1,0 +1,2 @@
+{"argv": ["gh", "issue", "view", "9", "--repo", "acme/ticket-orch-demo", "--json", "body"],
+ "stdout_json": {"body": "Late exports are dropped.\n## Steps\nRe-run the job."}}

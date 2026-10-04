@@ -1,0 +1,13 @@
+{% import "_widgets.html" as w %}
+{#- Core statuses: the six roles (you is core's alone), an SVG icon from the sprite, then the words. -#}
+{% macro icon(role) %}<svg class="i" aria-hidden="true"><use href="#i-{{ role }}"/></svg>{% endmacro %}
+{% macro status(role, text) %}<span class="chip chip-{{ role }}">{{ icon(role) }} {{ text }}</span>{% endmacro %}
+{#- Addon widget slot: `groups` is addon_slot("ticket.code", t) etc. (list of SlotGroup). Renders nothing when empty. -#}
+{% macro slot(groups) %}{% for g in groups %}<div class="addon-slot" data-addon="{{ g.addon }}">{{ w.banner(g.banner) }}{{ w.widgets(g.widgets, g) }}</div>{% endfor %}{% endmacro %}
+{#- One addon PendingDecision with its choice buttons (Today "From addons", decision cards, the ticket page). -#}
+{% macro addon_decision(addon, d) %}<div class="addon-decision" data-addon="{{ addon }}">
+  {{ status(d.role, d.title) }}{% if d.ticket %} · <a class="lnk" href="/t/{{ d.ticket }}">{{ d.ticket }}</a>{% endif %}
+  {% if d.body %}<p>{{ d.body }}</p>{% endif %}
+  {% if d.stale %}<p>{{ status("warn", "stale: the question changed since") }}</p>{% endif %}
+  <div class="actions">{% for value, label in d.choices %}<form method="post" action="/addons/{{ addon }}/decisions" class="inline"><input type="hidden" name="id" value="{{ d.id }}"><input type="hidden" name="choice" value="{{ value }}"><button type="submit" class="btn"{% if d.stale and value == "apply" %} disabled{% endif %}>{{ label }}</button></form>{% endfor %}</div>
+</div>{% endmacro %}

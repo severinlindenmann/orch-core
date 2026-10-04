@@ -1,0 +1,27 @@
+name: orch-session
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Unit tests against the committed orch-core output
+        run: node --test plugins/orch-session/test/*.spec.ts
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - run: uv sync --locked --extra dev --extra dashboard
+        working-directory: plugins/orch-core
+      - name: Unit tests against fresh output of this orch-core
+        run: |
+          uv run --project plugins/orch-core python plugins/orch-session/test/make_fixtures.py "$RUNNER_TEMP/fixtures"
+          ORCH_SESSION_FIXTURES="$RUNNER_TEMP/fixtures" node --test plugins/orch-session/test/*.spec.ts

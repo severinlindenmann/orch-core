@@ -1,0 +1,97 @@
+{#- Task lists (MC2-T, TasklistV3): the ticket page card, the progress bar, Board and Today summaries.
+    Task text and verify lines go through md_inline (no raw HTML); everything else is autoescaped. -#}
+{% import "_ui.html" as ui %}
+
+{% macro task_bar(p) -%}
+<span class="task-bar" role="img" aria-label="{{ p.progress.aria }}">
+  {%- if p.segments %}{% for s in p.segments %}<span class="seg seg-{{ s }}"></span>{% endfor %}
+  {%- else %}{% for s, n in p.bar %}<span class="seg seg-{{ s }}" style="flex-grow: {{ n }}"></span>{% endfor %}{% endif -%}
+</span>
+{%- endmacro %}
+
+{% macro task_progress(p) -%}
+<span class="task-progress">{{ task_bar(p) }}<span class="task-count">{{ p.progress.short }}</span>
+  {%- if p.blocked %} {{ ui.status("warn", p.blocked ~ " blocked") }}{% endif %}</span>
+{%- endmacro %}
+
+{% macro task_now(f) -%}
+<div class="flight-next task-now">
+  <span class="flight-label">{{ f.label }}</span>
+  {% if f.now %}<div><b class="task-id">{{ f.now.id }}</b> {{ f.now.text|md_inline|safe }}</div>{% endif %}
+  <div class="task-now-progress">{{ task_bar(f) }} <span class="muted">{{ f.progress.text }}</span></div>
+  {% if f.blocked %}<div>{{ ui.status("warn", f.blocked) }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro _task_form(t, r, a) %}
+<form method="post" action="/t/{{ t.id }}/task" class="stack{{ ' inline-confirm-form' if a.action == 'reopen' }}"{% if a.action == "reopen" %} data-inline-confirm="Confirm · reopen {{ r.id }}"{% endif %}>
+  <input type="hidden" name="task" value="{{ r.id }}">
+  <input type="hidden" name="action" value="{{ a.action }}">
+  {% if a.message %}<label for="task-{{ r.id }}-{{ a.action }}">{{ a.message }}</label>
+  <input id="task-{{ r.id }}-{{ a.action }}" name="message"{{ " required" if a.required }}>{% endif %}
+  <button type="submit" class="btn{{ ' btn-primary' if a.action == 'done' }}">{{ a.label }}</button>
+</form>
+{% endmacro %}
+
+{% macro tasks_card(c, t, arts=none) %}
+<section class="card section tasks-card" id="tasks" aria-labelledby="tasks-title">
+  <div class="tasks-head">
+    <h2 id="tasks-title">Tasks</h2>
+    {% if c.rows %}<p class="tasks-progress">{{ c.progress.text }}</p>{{ task_bar(c) }}{% endif %}
+  </div>
+  {% if c.error %}
+  <p>{{ ui.status("err", "Tasks section cannot be read") }} {{ c.error }}</p>
+  <p><a class="btn" href="/t/{{ t.id }}/raw">Repair the file</a></p>
+  {% elif not c.rows %}
+  <p class="muted">No tasks yet. The agent writes the task list right after claiming the ticket.</p>
+  {% else %}
+  <ol class="tasks" aria-label="Tasks">
+    {% for r in c.rows %}
+    <li class="task task-{{ r.state }}" id="task-{{ r.id }}"{% if r.state == "doing" %} aria-current="step"{% endif %}>
+      <span class="task-mark" aria-hidden="true">{{ r.glyph }}</span>
+      <div class="task-body">
+        <p class="task-line"><b class="task-id">{{ r.id }}</b> <span class="sr-only">{{ r.word }}:</span>
+          <span class="task-text">{{ r.text|md_inline|safe }}</span>
+          {%- if r.chip %} {% if r.chip.url %}<a class="chip chip-{{ r.chip.role }}" href="{{ r.chip.url }}"><span aria-hidden="true">{{ r.chip.icon }}</span> {{ r.chip.text }}</a>{% else %}{{ ui.status(r.chip.role, r.chip.text) }}{% endif %}{% endif %}
+          {%- if r.owner == "human" %} <span class="chip chip-neu task-tag">human task</span>{% endif %}
+          {%- if r.added_after_approval %} <span class="chip chip-neu task-tag">added after approval</span>{% endif %}
+          {%- for i in (arts or {}).get(r.id, []) %} <a class="chip chip-neu task-art" href="{{ i.href if i.href else '#artifacts' }}"{% if i.href %} target="_blank" rel="noopener{{ ' noreferrer' if i.source == 'url' }}"{% endif %}><span aria-hidden="true">{{ "▦" if i.image else ("↗" if i.source == "url" else "▤") }}</span> {{ i.label }}{% if i.ac %} → AC{{ i.ac }}{% endif %}</a>{% endfor %}</p>
+        {% if r.why %}<p class="task-why muted">{{ "Reason" if r.state == "skipped" else "Why" }}: {{ r.why }}</p>{% endif %}
+        {% if r.state == "todo" and r.needs_open %}<p class="muted">waits for {{ r.needs_open|join(", ") }}</p>{% endif %}
+        {% if r.refs %}
+        <ul class="task-refs">
+          {% for ref in r.refs %}
+          <li>{% if ref.url %}<a class="chip chip-link task-ref" href="{{ ref.url }}"{% if ref.external %} target="_blank" rel="noopener"{% endif %}><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.text }}</a>
+            {%- else %}<span class="chip chip-neu task-ref"><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.text }}</span>{% endif %}
+            {%- if ref.missing %} {{ ui.status("warn", "missing") }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        {% if r.verify and not r.closed %}<p class="task-verify"><span class="task-label">Verify</span> {{ r.verify|md_inline|safe }}</p>{% endif %}
+        {% if r.note %}<p class="task-note muted">{{ "Last note" if r.state == "doing" else "Note" }}: {{ r.note }}</p>{% endif %}
+        {% if r.actions %}
+        <details class="task-menu">
+          <summary class="btn">Actions<span class="sr-only"> for {{ r.id }}</span></summary>
+          {% for a in r.actions %}{{ _task_form(t, r, a) }}{% endfor %}
+        </details>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if c.open %}<p class="muted tasks-rule">Testing needs {{ c.open|join(", ") }} closed (done, or skipped with a reason).</p>{% endif %}
+  {% endif %}
+  {% if c.can_edit and not c.error %}
+  <details class="task-add">
+    <summary class="btn">Add task</summary>
+    <form method="post" action="/t/{{ t.id }}/task/add" class="stack">
+      <label for="task-add-text">Task, one line</label>
+      <input id="task-add-text" name="text" required>
+      <label for="task-add-owner">Who does it?</label>
+      <select id="task-add-owner" name="owner"><option value="agent">The agent</option><option value="human">Me</option></select>
+      <button type="submit" class="btn">Add task</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endmacro %}

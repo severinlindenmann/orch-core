@@ -1,0 +1,10 @@
+{
+  "name": "orch-core",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
+  "author": {
+    "name": "Severin Lindenmann",
+    "url": "https://github.com/severinlindenmann"
+  }
+}

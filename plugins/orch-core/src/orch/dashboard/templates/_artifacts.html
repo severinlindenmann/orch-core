@@ -1,0 +1,67 @@
+{#- The ticket's artifacts (data.artifact_view): grouped by kind with thumbnails for images, each naming the task or
+    criterion it proves; files in the ticket's folder that it does not link are listed apart. A web link shows its
+    full URL as text next to the link and is never loaded. -#}
+{% import "_ui.html" as ui %}
+
+{% macro item(i, tid) -%}
+<li class="artifact-item artifact-{{ i.kind }}">
+  {%- if i.image %}<a class="artifact-thumb" href="{{ i.href }}" target="_blank" rel="noopener"><img src="{{ i.href }}" alt="{{ i.label }}" loading="lazy" decoding="async"></a>{% endif %}
+  <span class="artifact-text">
+  {%- if i.href and i.source == "url" %}<a class="lnk" href="{{ i.href }}" target="_blank" rel="noopener noreferrer">{{ i.label if i.label != i.text else "link" }} ↗</a> <span class="muted artifact-url">{{ i.text }}</span>
+  {%- elif i.href %}<a class="lnk" href="{{ i.href }}" target="_blank" rel="noopener">{{ i.label }}</a>{% if i.label != i.text %} <span class="muted">{{ i.text }}</span>{% endif %}
+  {%- else %}{{ i.label }}{% if i.label != i.text %} <span class="muted">{{ i.text }}</span>{% endif %}{% endif %}
+  {%- if i.state %} {{ ui.status("warn", "gone" if i.state == "missing" else "changed since linked") }}{% endif %}
+  {%- if i.task %} <a class="chip" href="#task-{{ i.task }}">{{ i.task }}</a>{% endif %}
+  {%- if i.ac %} <a class="chip" href="#proven">AC{{ i.ac }}</a>{% endif %}
+  </span>
+</li>
+{%- endmacro %}
+
+{% macro area(av, tid) %}
+<section class="story-artifacts" id="ticket-artifacts" aria-labelledby="ticket-artifacts-h">
+  <h3 id="ticket-artifacts-h">Artifacts <span class="count">{{ av.count }}</span></h3>
+  {% for g in av.groups %}
+  <h4 class="artifact-kind">{{ g.title }}</h4>
+  <ul class="plain artifact-list">{% for i in g["items"] %}{{ item(i, tid) }}{% endfor %}</ul>
+  {% else %}
+  <p class="muted">Nothing linked yet. The agent adds every screenshot, report, log or link with <code>orch artifact add {{ tid }}</code>.</p>
+  {% endfor %}
+  {% if av.unlinked %}
+  <p>{{ ui.status("warn", av.unlinked|length ~ " file(s) not linked") }} <span class="muted">in the ticket's folder; <code>orch artifact scan {{ tid }}</code> links them:</span></p>
+  <ul class="plain artifact-list">{% for n in av.unlinked %}<li class="muted">{{ n }} (not linked)</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+{% endmacro %}
+
+{% macro for_criterion(items, tid) %}
+{% if items %}<ul class="plain artifact-list artifact-proof" aria-label="Artifacts for this criterion">{% for i in items %}{{ item(i, tid) }}{% endfor %}</ul>{% endif %}
+{% endmacro %}
+
+{#- M: the ticket's Artifacts panel (aside): screenshots and diagrams as a thumbnail grid, files and links as rows,
+    each tied to the task or criterion it proves, then the files in the folder that are not linked yet. -#}
+{% macro panel(av, tid, previews=()) %}
+<section class="card art-panel" id="artifacts" aria-labelledby="ticket-artifacts">
+  <h2 id="ticket-artifacts">Artifacts <span class="count">{{ av.count }}</span></h2>
+  {% for g in av.panel %}
+  <h3 class="artifact-kind">{{ g.title }}</h3>
+  {% if g.key == "images" %}
+  <ul class="plain art-grid">{% for i in g["items"] %}<li class="art-tile"><a class="artifact-thumb" href="{{ i.href }}" target="_blank" rel="noopener"><img src="{{ i.href }}" alt="{{ i.label }}" loading="lazy" decoding="async"></a>
+    <span class="art-cap">{% if i.ac %}<a class="chip" href="#proven">AC{{ i.ac }}</a>{% endif %}{% if i.task %}<a class="chip" href="#task-{{ i.task }}">{{ i.task }}</a>{% endif %}{% if not i.ac and not i.task %}<span class="muted">{{ i.label }}</span>{% endif %}</span></li>{% endfor %}</ul>
+  {% else %}
+  <ul class="plain artifact-list">{% for i in g["items"] %}{{ item(i, tid) }}{% endfor %}</ul>
+  {% endif %}
+  {% else %}
+  <p class="muted">Nothing linked yet. The agent adds every screenshot, report, log or link with <code>orch artifact add {{ tid }}</code>.</p>
+  {% endfor %}
+  {% if av.unlinked %}
+  <h3 class="artifact-kind">Not linked yet</h3>
+  <p>{{ ui.status("warn", av.unlinked|length ~ " file(s) not linked") }} <span class="muted">in the ticket's folder; <code>orch artifact scan {{ tid }}</code> links them:</span></p>
+  {#- Not linked: names only, never a thumbnail (an image is shown only through the binding, pinned by its hash). -#}
+  <ul class="plain artifact-list">{% for n in av.unlinked %}<li class="muted"><span aria-hidden="true">▤</span> {{ n }} <span class="sr-only">(not linked)</span></li>{% endfor %}</ul>
+  {% endif %}
+  {% for f in previews if f.kind == "html" %}
+  <iframe class="preview" sandbox src="{{ f.url }}" title="{{ f.name }}"></iframe>
+  {% endfor %}
+  <p class="muted art-note">Every file and link the agent made, tied to the task or criterion it proves.</p>
+</section>
+{% endmacro %}

@@ -1,0 +1,74 @@
+{#- The shell's navigation (design-system Navigation): a 248 px sidebar from 900 px; below it a sticky top bar (icon,
+    page title, Today's count, Menu) whose Menu opens the same items in a <dialog> drawer (early.js: focus stays in
+    the drawer, Esc closes it, focus returns to Menu). Without JS the open <details> shows the items inline. -#}
+{%- set items = [
+  ("today", "Today", "/", "today", needs_count, "hot"),
+  ("board", "Board", "/board", "board", 0, ""),
+  ("activity", "Activity", "/activity", "activity", 0, ""),
+  ("reports", "Reports", "/reports", "reports", 0, ""),
+  ("widgets", "Widgets", "/widgets", "widgets", 0, ""),
+] -%}
+{%- macro badge_label(tone, n) -%}
+  {%- if tone == "hot" %}{{ n }} {{ "decision waits" if n == 1 else "decisions wait" }} on you
+  {%- else %}{{ n }} setup {{ "item" if n == 1 else "items" }} open{% endif %}
+{%- endmacro -%}
+{%- macro item(key, label, href, icon, badge=0, tone="", path=false, broken="") -%}
+      <a class="item" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>
+        {% if path %}<svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ icon }}"/></svg>
+        {%- else %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}
+        <span class="label">{{ label }}</span>
+        {% if broken %}<span class="nav-dot" role="img" aria-label="{{ label }}: {{ broken }}"></span>{% endif %}
+        {% if badge and badge > 0 %}<span class="badge{{ ' badge-' ~ tone if tone }}" aria-label="{{ badge_label(tone, badge) }}">{{ badge }}</span>{% endif %}
+      </a>
+{%- endmacro -%}
+<nav class="menu" aria-label="Main">
+  <div class="menu-brand">
+    <div class="menu-brand-row">
+      <img class="menu-icon" src="{{ static_url('brand/' ~ ('mc-icon-plain.svg' if brand == 'none' else 'mc-icon.svg')) }}" alt="" width="40" height="40">
+      <span class="menu-title">Mission Control</span>
+      <span class="menu-page" aria-hidden="true">{{ page_title }}</span>
+    </div>
+  </div>
+  <details class="menu-more" open>
+    <summary><svg class="i-ui" aria-hidden="true"><use href="#i-menu"/></svg> Menu{% if needs_count %} <span class="badge badge-hot" aria-label="{{ badge_label('hot', needs_count) }}">{{ needs_count }}</span>{% endif %}</summary>
+    <div class="menu-body">
+      <a class="btn menu-new" href="/new"{% if nav == "new" %} aria-current="page"{% endif %}>
+        <svg class="i-ui" aria-hidden="true"><use href="#i-new"/></svg>New ticket</a>
+      {% for key, label, href, icon, badge, tone in items %}
+      {{ item(key, label, href, icon, badge, tone) }}
+      {% endfor %}
+      {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
+      {% if addon_nav %}
+      <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
+        <p class="menu-group" id="menu-addons-h">Addons</p>
+        {% for label, href, icon, broken in addon_nav %}
+        {{ item("addon:" ~ href, label, href, icon, path=true, broken=broken) }}
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="menu-foot">
+        {#- open setup items: the link lands on the Setup tab that lists them -#}
+        {{ item("workspace", "Workspace & addons", "/workspace?tab=setup" if setup_count else "/workspace", "workspace", setup_count, "warn") }}
+        <div class="menu-ws">
+          <p class="menu-ws-name"><b>{{ customer }} · {{ prefix }}</b>
+            <span>{{ repo_count }} repo{{ "" if repo_count == 1 else "s" }}</span></p>
+          {% if other_workspaces %}
+          <p class="menu-switcher">
+            {% for other in other_workspaces %}
+            <a href="{{ other.url }}">{{ other.name }}{% if other.needs %} <span class="badge badge-hot" aria-label="{{ other.name }}: {{ other.needs }} waiting on you">{{ other.needs }}</span>{% endif %}</a>
+            {% endfor %}
+          </p>
+          {% endif %}
+          <form method="post" action="/theme" class="theme-switch" role="group" aria-label="Theme">
+            {% for value, text in (("light", "Light"), ("dark", "Dark"), ("system", "Auto")) %}
+            <button type="submit" name="theme" value="{{ value }}" aria-pressed="{{ 'true' if theme == value else 'false' }}"><svg class="i-ui" aria-hidden="true"><use href="#i-{{ value }}"/></svg>{{ text }}</button>
+            {% endfor %}
+          </form>
+        </div>
+      </div>
+    </div>
+  </details>
+  <dialog class="menu-drawer overlay" aria-label="Menu">
+    <div class="drawer-head"><b>Menu</b><button type="button" class="btn btn-quiet drawer-close" aria-label="Close menu"><svg class="i-ui" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+  </dialog>
+</nav>

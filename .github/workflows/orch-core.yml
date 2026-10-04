@@ -1,0 +1,37 @@
+name: orch-core
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/orch-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - run: uv sync --locked --extra dev --extra dashboard
+      - run: uv run pytest -q
+      - name: Addon template passes orch addon check --strict and its own tests
+        run: |
+          uv run orch addon check addon-template --strict
+          uv run pytest -q addon-template/tests
+      - name: Every default addon passes orch addon check --strict
+        shell: bash
+        run: |
+          shopt -s nullglob
+          n=0
+          for manifest in addons/*/orch-addon.json; do
+            dir="${manifest%/orch-addon.json}"
+            n=$((n + 1))
+            uv run orch addon check "$dir" --strict
+            if [ -d "$dir/tests" ]; then uv run pytest -q "$dir/tests"; fi
+          done
+          echo "checked $n default addon(s)"

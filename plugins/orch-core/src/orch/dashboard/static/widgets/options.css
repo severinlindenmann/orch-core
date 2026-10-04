@@ -1,0 +1,14 @@
+/* options; .w-rec (the "Recommended" word and star) is shared with matrix */
+.w-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--s-12) * 4)), 1fr)); gap: var(--s-3);
+  list-style: none; margin: 0; padding: 0; }
+.w-opt { min-width: 0; padding: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface2); }
+.w-opt-pick { border: 2px solid var(--ok-mark); background: var(--ok-bg); color: var(--ok-fg); }
+.w-rec { display: inline-block; font: var(--type-meta); color: var(--ok-fg); background: var(--ok-bg); border-radius: var(--r-pill);
+  padding: 0 var(--s-2); }
+.w-opt-pick .w-rec { display: block; background: none; padding: 0 0 var(--s-1); }
+.w-opt-t { font: var(--type-item); margin: 0 0 var(--s-2); overflow-wrap: anywhere; }
+.w-opt-f { display: grid; gap: var(--s-1); margin: 0; }
+.w-opt-f div { display: flex; gap: var(--s-2); }
+.w-opt-f dt { font: var(--type-meta); min-width: var(--s-10); opacity: .8; }
+.w-opt-f dd { margin: 0; overflow-wrap: anywhere; }
+.w-opt-n { margin: var(--s-2) 0 0; overflow-wrap: anywhere; }

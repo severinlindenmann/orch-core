@@ -1,0 +1,108 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{#- One terminal (issue #40). Watch (the default) sends nothing; Type shows the keys and the reply
+    field (the cursor goes there); CLI hides both and sends every key pressed on the page, like an attached terminal. Keys
+    go to /terminals/<name>/keys. Every mode fits the tmux window to this view. "Readable" shows
+    the screen at a readable size, following its bottom; "Whole pane" scales the whole window into the box. The screen
+    is server-rendered escaped HTML, refreshed over /terminals/<name>/stream by terminal.js; so is the summary line.
+    The details panel is what agentinfo read when the page loaded. -#}
+{% set labels = {"waiting": "waiting for you", "busy": "busy", "idle": "idle"} %}
+{% block main %}
+<p><a class="lnk" href="/terminals">← Terminals</a></p>
+{% if not s %}
+<section class="card"><p>No terminal named <b>{{ term_name }}</b> runs in this workspace. It may have ended.</p></section>
+{% else %}
+<div class="page-head">
+  <div>
+    <h1>{{ info.title or s.name }}</h1>
+    <p class="muted"><span class="term-state term-state-{{ live.status or 'none' }}" data-f="state">{{ labels.get(live.status, "running") }}</span>
+      <span class="mono">{{ s.name }}</span> · <code>tmux -L orch attach -t {{ s.name }}</code></p>
+  </div>
+  <div class="row">
+    <div class="term-mode" role="group" aria-label="Mode">
+      <button type="button" class="btn" data-mode="watch" aria-pressed="true">Watch</button>
+      <button type="button" class="btn" data-mode="type" aria-pressed="false">Type</button>
+      <button type="button" class="btn" data-mode="cli" aria-pressed="false" title="Every key goes straight to the session">CLI</button>
+    </div>
+    <button type="button" class="btn" data-details aria-expanded="true" aria-controls="term-details">Details</button>
+    <form method="post" action="/terminals/{{ s.name }}/end" data-dialog="End {{ s.name }}?" data-dialog-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-dialog-confirm="End session" data-dialog-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>
+  </div>
+</div>
+
+<p class="term-summary" data-summary data-sig="{{ live.sig }}" data-name="{{ s.name }}">
+  <b data-f="now">{{ live.now or "No agent activity read yet" }}</b>
+  <span class="muted" data-f="line">{% if live.ticket %}{{ live.ticket }}{% if live.tasks %} {{ live.tasks }} tasks{% endif %}{% if live.more %} +{{ live.more }}{% endif %} · {% endif %}{% if live.subs %}{{ live.subs }} · {% endif %}{% if live.context %}context {{ live.context }}{% endif %}</span>
+</p>
+
+<div class="term-layout">
+<section class="term" data-term="{{ s.name }}" data-mode="watch">
+  <div class="term-bar"><span class="term-state-text" role="status">watching · read-only</span>
+    <span class="term-view" role="group" aria-label="View">
+      <button type="button" data-view="readable" aria-pressed="true">Readable</button>
+      <button type="button" data-view="whole" aria-pressed="false">Whole pane</button>
+    </span>
+    <button type="button" class="term-tool" data-zoom="-1" aria-label="Smaller text">A−</button>
+    <button type="button" class="term-tool" data-zoom="1" aria-label="Larger text">A+</button>
+    <button type="button" class="term-tool term-full" data-full aria-pressed="false" aria-label="Fullscreen" title="Fullscreen"><svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div>
+  <div class="term-box">
+    <pre class="term-screen" tabindex="0" aria-label="Screen of {{ s.name }}" data-cols="{{ screen.cols }}" data-rows="{{ screen.rows }}">{{ screen.trim|safe }}</pre>
+    <span class="term-cols" data-more-cols hidden></span>
+    <button type="button" class="term-live" data-jump hidden>Jump to live ↓</button>
+  </div>
+  <p class="term-watch-note">Read-only. Switch to <b>Type</b> to answer or press keys.</p>
+  <div class="term-foot">
+  <div class="term-keys" aria-label="Keys">
+    {% for key, label in (("Escape", "Esc"), ("C-c", "Ctrl-C"), ("BTab", "Shift-Tab"), ("Up", "↑"), ("Down", "↓"), ("Enter", "Enter")) %}
+    <button type="button" class="btn" data-key="{{ key }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <form class="term-send row" data-term-send>
+    <label class="sr-only" for="term-text">Text to send</label>
+    <input id="term-text" name="text" autocomplete="off" placeholder="Type a reply, Enter sends it">
+    <button type="submit" class="btn btn-primary">Send</button>
+  </form>
+  </div>
+</section>
+
+<aside class="term-details card" id="term-details" aria-label="Details">
+  <section>
+    <h2>Tickets</h2>
+    {% for t in info.tickets %}
+    <p class="term-row"><a class="lnk mono" href="/t/{{ t.id }}">{{ t.id }}</a><span>{{ t.status }}{% if t.tasks %} · {{ t.tasks }} tasks{% endif %}</span></p>
+    <p class="term-sub">{{ t.title }}</p>
+    {% else %}<p class="muted">No ticket claimed by this session.</p>{% endfor %}
+  </section>
+  <section>
+    <h2>Subagents</h2>
+    {% set running = info.subagents | selectattr("active") | list %}{% set finished = info.subagents | rejectattr("active") | list %}
+    {% for a in running %}<p class="term-row"><span>{{ a.description or a.type }}</span><span class="term-state term-state-busy">running{% if a.model %} · {{ a.model }}{% endif %}</span></p>{% endfor %}
+    {% if finished %}<details><summary>{{ finished|length }} finished</summary>
+      {% for a in finished %}<p class="term-row"><span>{{ a.description or a.type }}</span><span class="muted">{{ a.model }}</span></p>{% endfor %}
+    </details>{% endif %}
+    {% if not info.subagents %}<p class="muted">None.</p>{% endif %}
+  </section>
+  <section>
+    <h2>Session</h2>
+    <p class="term-row"><span class="muted">Model</span><span>{{ info.model or "—" }}{% for m, n in info.models[1:] %} · {{ m }}{% endfor %}</span></p>
+    <p class="term-row"><span class="muted">Context now</span><span>{{ compact(info.context) }} tokens</span></p>
+    {% if info.last_prompt %}<p class="term-row"><span class="muted">Last prompt</span><span class="term-quote">“{{ info.last_prompt }}”</span></p>{% endif %}
+    {% if info.prs %}<p class="term-row"><span class="muted">PRs</span><span>{% for p in info.prs %}{% if p.url %}<a class="lnk" href="{{ p.url }}">#{{ p.number }}</a>{% else %}#{{ p.number }}{% endif %}{{ " " if not loop.last }}{% endfor %}</span></p>{% endif %}
+    <p class="term-row"><span class="muted">Running for</span><span data-ago="{{ s.created }}"></span></p>
+    {% if info.version %}<p class="term-row"><span class="muted">Claude Code</span><span>{{ info.version }}</span></p>{% endif %}
+  </section>
+  <section>
+    <details>
+      <summary>Diagnostics</summary>
+      <p class="term-row"><span class="muted">Output tokens</span><span>{{ compact(info.tokens.get("output")) }}</span></p>
+      <p class="term-row"><span class="muted">Cache read · write</span><span>{{ compact(info.tokens.get("cache_read")) }} · {{ compact(info.tokens.get("cache_write")) }}</span></p>
+      {% if info.tools %}<p class="term-row"><span class="muted">Tool calls</span><span>{% for n, c in info.tools %}{{ n }} {{ c }}{{ " · " if not loop.last }}{% endfor %}</span></p>{% endif %}
+      {% if info.cost %}<p class="term-row"><span class="muted">API-equivalent</span><span>${{ "%.2f"|format(info.cost.usd or 0) }}{% if info.cost.added is not none %} · +{{ info.cost.added }} −{{ info.cost.removed }} lines{% endif %}</span></p>
+      <p class="term-sub">From Claude Code’s last cost record, not live; on a subscription it is not what you pay.</p>{% endif %}
+    </details>
+  </section>
+  <p class="term-sub">As read when this page opened. The line above the screen stays live.</p>
+</aside>
+</div>
+{% endif %}
+<script src="{{ static_url('terminal.js') }}" defer></script>
+{% endblock %}

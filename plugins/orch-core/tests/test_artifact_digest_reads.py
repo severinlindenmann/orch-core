@@ -47,3 +47,54 @@ def test_the_route_hashes_what_it_sends_not_a_cached_digest(dash, ws, aops, work
     monkeypatch.setattr(artifacts, "file_sha256", lambda path: sha)
     r = dash.get(f"/a/{working}/shot.png?v={sha[:16]}")
     assert r.status_code == 409 and b"PNG-two" not in r.content
+
+
+# ---- one hardened open for every pinned read (issue 12)
+def _full(b):
+    return hashlib.sha256(b).hexdigest()
+
+
+def test_pinned_read_refuses_symlinks_file_and_directory(tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "f.bin").write_bytes(b"x")
+    (tmp_path / "flink").symlink_to(tmp_path / "real" / "f.bin")
+    (tmp_path / "dlink").symlink_to(tmp_path / "real")
+    assert read_pinned(tmp_path / "real" / "f.bin", _full(b"x")) == b"x"
+    assert read_pinned(tmp_path / "flink", _full(b"x")) is None
+    assert read_pinned(tmp_path / "dlink" / "f.bin", _full(b"x")) is None
+
+
+def test_pinned_read_refuses_a_hard_link(tmp_path):
+    (tmp_path / "a").write_bytes(b"x")
+    os.link(tmp_path / "a", tmp_path / "b")
+    assert read_pinned(tmp_path / "a", _full(b"x")) is None
+
+
+def test_pinned_read_does_not_block_on_a_fifo(tmp_path):
+    os.mkfifo(tmp_path / "pipe")
+    assert read_pinned(tmp_path / "pipe", "0" * 64) is None
+
+
+def test_pinned_read_is_capped(tmp_path):
+    (tmp_path / "big").write_bytes(b"x" * 11)
+    assert read_pinned(tmp_path / "big", _full(b"x" * 11), limit=10) is None
+    assert read_pinned(tmp_path / "big", _full(b"x" * 11), limit=11) == b"x" * 11
+
+
+def test_a_swap_after_the_check_serves_the_bytes_that_were_hashed(tmp_path, monkeypatch):
+    p = tmp_path / "f"
+    p.write_bytes(b"one")
+    real_open, seen = os.open, []
+
+    def swapping(path, flags, *a, **k):
+        fd = real_open(path, flags, *a, **k)
+        if path == "f":  # right after the handle is taken, replace the name with a symlink to other bytes
+            seen.append(1)
+            (tmp_path / "other").write_bytes(b"two")
+            p.rename(tmp_path / "moved")
+            p.symlink_to(tmp_path / "other")
+        return fd
+
+    monkeypatch.setattr(os, "open", swapping)
+    assert read_pinned(p, _full(b"one")) == b"one" and seen
+    assert read_pinned(p, _full(b"two")) is None  # now a symlink: refused

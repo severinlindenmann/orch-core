@@ -25,7 +25,9 @@ Entries, one source key each:
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 from pathlib import Path
 
 KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other")
@@ -141,17 +143,43 @@ def file_sha256(path: Path) -> str | None:
     return hit
 
 
-def read_pinned(path: Path, digest: str) -> bytes | None:
-    """The file's bytes when their sha256 starts with `digest` (a full hex digest or a prefix of at least 8), read once
-    and hashed as read, so what the caller serves is exactly what was checked; None when it cannot be read or does not
-    match. Never a cached digest: a check on one read and a serve from another can see different bytes."""
-    if not re.fullmatch(r"[0-9a-f]{8,64}", digest or ""):
-        return None
+def read_regular(path: Path, limit: int | None = None) -> bytes | None:
+    """The bytes of a plain file, read from one hardened open, or None. The directory is opened first (never through a
+    symlink) and the file relative to it: O_NOFOLLOW, O_NONBLOCK (a FIFO cannot hang the server), O_CLOEXEC. The handle
+    must be a regular file with one link, at most `limit` bytes (default MAX_UPLOAD_BYTES); at most limit + 1 bytes are
+    ever read. Whatever the caller checks or hashes is exactly what this returns."""
+    from orch.addons.manifest import MAX_UPLOAD_BYTES
+    limit = MAX_UPLOAD_BYTES if limit is None else limit
+    base = getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        data = path.read_bytes()
+        dfd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | base)
     except OSError:
         return None
-    return data if hashlib.sha256(data).hexdigest().startswith(digest) else None
+    try:
+        fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | base, dir_fd=dfd)
+    except OSError:
+        return None
+    finally:
+        os.close(dfd)
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > limit:
+            return None
+        try:
+            data = f.read(limit + 1)
+        except OSError:
+            return None
+    return data if len(data) <= limit else None
+
+
+def read_pinned(path: Path, digest: str, limit: int | None = None) -> bytes | None:
+    """The file's bytes (`read_regular`) when their sha256 starts with `digest` (a full hex digest or a prefix of at
+    least 8), hashed as read, so what the caller serves is exactly what was checked; None when it cannot be read or does
+    not match. Never a cached digest: a check on one read and a serve from another can see different bytes."""
+    if not re.fullmatch(r"[0-9a-f]{8,64}", digest or ""):
+        return None
+    data = read_regular(path, limit)
+    return data if data is not None and hashlib.sha256(data).hexdigest().startswith(digest) else None
 
 
 def max_bytes(ws) -> int:

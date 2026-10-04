@@ -204,6 +204,22 @@ def test_gantt_packs_overlaps_onto_rows_and_keeps_zero_length_visible():
     assert 'width:0.8%' in html
 
 
+def test_gantt_bars_carry_their_values_for_the_stylesheet_to_show_when_there_is_room():
+    html = html_of({"type": "gantt", "unit": "min", "lanes": {"a": [[0, 12.5]]}})
+    assert '<span class="w-gv" aria-hidden="true">0–12.5 min</span>' in html
+
+
+def test_runs_columns_stay_slim_with_few_values():
+    html = html_of({"type": "runs", "values": [1, 2, 3]})
+    assert all(float(w) <= 28 for w in re.findall(r'class="w-col"[^>]* width="([\d.]+)"', html))
+
+
+def test_series_labels_never_touch_each_other_and_high_low_win():
+    html = html_of({"type": "series", "unit": "ms", "points": [[1, 100], [2, 300], [3, 10], [4, 290], [5, 50], [6, 120]]})
+    vals = re.findall(r'class="w-val"[^>]*>([^<]+)<', html)
+    assert "300 ms" in vals and "10 ms" in vals and "100 ms" not in vals  # first dropped: it would touch the high
+
+
 def test_tests_show_delta_and_names():
     html = html_of({"type": "tests", "added": 3, "fixed": 0, "broke": 2, "names": {"broke": ["t::a", "t::b"]}})
     assert "w-r-err" in html and "w-zero" in html and "t::a" in html and "broke" in html

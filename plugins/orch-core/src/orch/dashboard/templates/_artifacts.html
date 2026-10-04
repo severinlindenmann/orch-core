@@ -64,7 +64,7 @@
   {#- Not linked: names only, never a thumbnail (an image is shown only through the binding, pinned by its hash). -#}
   <ul class="plain artifact-list">{% for n in av.unlinked %}<li class="muted"><span aria-hidden="true">▤</span> {{ n }} <span class="sr-only">(not linked)</span></li>{% endfor %}</ul>
   {% endif %}
-  {% for f in previews if f.kind == "html" %}
+  {% for f in previews if f.kind == "html" and not f.drawn %}
   <iframe class="preview" sandbox src="{{ f.url }}" title="{{ f.name }}"></iframe>
   {% endfor %}
   <p class="muted art-note">Every file and link the agent made, tied to the task or criterion it proves.</p>

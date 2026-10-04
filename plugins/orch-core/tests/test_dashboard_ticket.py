@@ -71,6 +71,17 @@ def test_artifact_headers(dash, ws, put, aops, tmp_path):
     assert f'<iframe class="preview" sandbox src="/a/{tid}/report.html"' in dash.get(f"/t/{tid}").text
 
 
+def test_html_artifact_a_widget_block_draws_gets_no_second_preview(dash, ws, put, aops, tmp_path):
+    block = '```orch\n{"html": "artifact:drawn.html", "sha256": "' + "0" * 64 + '"}\n```'
+    tid = put("open", sections={"Summary": block})
+    for name in ("drawn.html", "other.html"):
+        (tmp_path / name).write_text("<p>x</p>", encoding="utf-8")
+        aops.artifact_add(tid, tmp_path / name)
+    body = dash.get(f"/t/{tid}").text
+    assert f'<iframe class="preview" sandbox src="/a/{tid}/other.html"' in body
+    assert f'<iframe class="preview" sandbox src="/a/{tid}/drawn.html"' not in body
+
+
 @pytest.mark.parametrize("path", [
     "..%2F..%2Fconfig.json",
     "%2e%2e/%2e%2e/config.json",

@@ -18,7 +18,8 @@ SCHEMA = {"properties": {"unit": UNIT, "values": {"type": "array", "minItems": 1
           "required": ["values"]}
 EXAMPLE = {"type": "runs", "title": "Cold start, ms", "unit": "ms", "values": [412, 405, 398, 880, 401, 409],
            "marks": {"4": "disk cache was cold"}}
-W, H, TOP, BOT = 360, 150, 26, 4  # viewBox units; the text stays readable when the chart scales to 390 px
+MAX_BW = 28
+W, H, TOP, BOT = 360, 150, 26, 4 # viewBox units; the text stays readable when the chart scales to 390 px
 
 
 def _marks(d) -> dict[int, str]:
@@ -30,7 +31,7 @@ def render_html(block, ctx) -> str:
     vals, marks = d["values"], _marks(d)
     n, top = len(vals), max(vals) or 1
     slot = W / n
-    bw = slot * 0.7
+    bw = min(slot * 0.7, MAX_BW)  # few runs stay slim columns, not slabs
     med = statistics.median(vals)
     shown = set(range(1, n + 1)) if n <= 12 else {vals.index(max(vals)) + 1, vals.index(min(vals)) + 1, *marks}
     cols = []

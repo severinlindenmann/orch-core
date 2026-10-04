@@ -86,13 +86,13 @@ def test_a_linked_branch_is_enough(aops, hops, working, close_tasks, repo):
     _ready(aops, hops, working, close_tasks)
     aops.link(working, repo="harness", branch="feature/x")
     aops.move(working, "testing")
-    assert aops.warnings == []
+    assert [w for w in aops.warnings if "Verification holds no widget" not in w] == []
 
 
 def test_no_warning_in_a_workspace_without_repos(aops, hops, working, close_tasks):
     _ready(aops, hops, working, close_tasks)
     aops.move(working, "testing")
-    assert aops.warnings == []
+    assert [w for w in aops.warnings if "Verification holds no widget" not in w] == []
 
 
 def test_dashboard_move_shows_the_warning(ws, aops, hops, working, close_tasks, repo, dash):

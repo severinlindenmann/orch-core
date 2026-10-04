@@ -118,8 +118,9 @@ When you notice something outside the approved scope, add it to `## Findings`, f
 ## Widgets
 
 A widget is a small visual block, a ```` ```orch ```` fence holding one JSON object, that saves the human reading:
-measured numbers, a verdict per criterion, the files a change touches. Use one when a table, a few headline numbers
-or a check table says it faster than prose; otherwise write prose.
+measured numbers, a verdict per criterion, the files a change touches. Default to one for Verification: a `checks` widget with one row per acceptance criterion. Add
+`screens` or `compare` for a UI change, `stats` for measured numbers, `options` when you ask the human to choose, and
+`callout`, `table` or `diff` when a warning or a list of changes reads faster than prose. Write prose only when none fits.
 
 - **Where:** Context, Current state, Verification, Findings (and extra `## Headings`). Never in Ask, Summary,
   Requirements, Acceptance criteria, Out of scope, Plan (a gate hashes them), Tasks or Log: there it shows as code.

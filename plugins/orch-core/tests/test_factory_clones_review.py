@@ -181,15 +181,38 @@ def test_the_commit_gate_refuses_other_dirs_config_and_refs(fws, run, cmd):
     assert not guard.allow and _behavior(hook) == "deny", cmd
 
 
-@pytest.mark.parametrize("cmd", ["git push origin fx/{c}", "git push origin HEAD:refs/heads/fx/{c}", COMMIT])
-def test_the_sessions_own_branch_still_passes(fws, run, cmd):
+@pytest.mark.parametrize("cmd", [COMMIT, "git checkout fx/{c}", "git switch -q fx/{c}", "git add a.txt",
+                                 "git restore a.txt", "git --no-pager log -p", "git status", "git branch --show-current",
+                                 "git diff HEAD", "git rev-parse HEAD", "git ls-files", "git blame a.txt"])
+def test_the_allowlist_passes_the_sessions_own_work(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower())
     assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
 
 
-@pytest.mark.parametrize("cmd", ["git branch --show-current", "git tag -l", "git fetch origin", "git status"])
-def test_reading_branches_and_tags_is_not_a_commit(cmd):
-    assert not permits._git_commit(cmd)
+@pytest.mark.parametrize("cmd", [
+    "git push origin fx/{c}", "git push origin HEAD:refs/heads/fx/{c}", "git push /tmp/x fx/{c}",
+    "git push https://example.invalid/x.git fx/{c}", "git fetch origin", "git fetch --update-head-ok origin main",
+    "git remote add x /tmp/x", "git remote set-url origin /tmp/x", "git config user.name x", "git tag -l",
+    "git reset --hard main", "git submodule update", "git gc --prune=now", "git reflog expire --all",
+    "git am p.patch", "git apply --directory=x p.patch", "git checkout main", "git switch other",
+    "git checkout -b fx/{c}-2", "git --git-d=/tmp/x status", "git --work-t=/tmp status", "git -C /tmp status",
+    "git --exec-path=/tmp status", "git --namespace=x status", "git -c core.pager=x log", "git ci -m x",
+    "env git push origin fx/{c}", "command git push origin fx/{c}", "sh -c 'git push origin fx/{c}'",
+    "bash -lc \"git remote add x /tmp\"", "GIT_DIR=x git status", "GIT_TRACE=1 git status",
+])
+def test_everything_else_is_refused_by_default(fws, run, cmd):
+    cmd = cmd.replace("{c}", run["cid"].lower())
+    assert permits._git_commit(cmd), cmd
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny", cmd
+
+
+def test_reads_pass_for_a_session_in_the_shared_checkout_and_writes_do_not(fws, run):
+    b = {**run["b"], "start": str(fws.root.resolve())}  # a planner or a no-commit child
+    assert permits.commit_refusal(fws, b, fws.root, "git status") is None
+    assert permits.commit_refusal(fws, b, fws.root, "git log --oneline") is None
+    assert permits.commit_refusal(fws, b, fws.root, COMMIT)
 
 
 # -- 8: commit messages are checked by the release --------------------------------------------------------------

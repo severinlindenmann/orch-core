@@ -312,28 +312,30 @@ Every other session (a workspace that is not a git checkout: every child starts 
 baseline cannot create a branch) is told not to commit: it leaves its changes in the working tree and says so with
 `orch log`.
 
-Whatever the prompt says, a runner-bound session's command that may make or move a commit or a ref (the word `git`
-and `commit`, `commit-tree`, `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `pull`, `update-ref`, `symbolic-ref`,
-`stash`, `replace` or `notes` anywhere in its text, quotes and backslashes taken out, so wrappers such as `env`, `sh -c`
-or an alias count; a git option that redirects it, `-c` included, so `git -c alias.p=push p` counts; any `GIT_*=`
-assignment; or a `git branch`, `tag`, `push`, `fetch`, `checkout`, `switch` or `worktree` that writes a ref) is refused
-unless the folder the runner started it in passes the rule above, the session's folder is that folder or below it in
-the same git checkout, the command carries nothing that points git at other folders, config or refs (`-C`, `-c`,
-`--git-dir`, `--work-tree`, `--config-env`, `--exec-path`, `--namespace`, any `GIT_*=` assignment such as `GIT_DIR`,
-`GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` or `GIT_INDEX_FILE`, a `cd` or `pushd`), and it writes no ref but the
-session's own branch: `update-ref`, `symbolic-ref`, `replace`, `notes`, `fast-import`, `send-pack`, `filter-branch` and
-the like are refused, `branch` and `tag` only list, `checkout` and `switch` create or reset no branch (`-b`, `-B`, `-c`,
-`-C`, `--orphan`), `worktree` only lists, `push` names the session's own branch and nothing else (a bare `git push`
-follows the user's `push.default` and is refused; no `--all`, `--mirror`, `--tags`, `--delete`, `--prune`), and
-`fetch` writes no local ref (no `:` refspec). One function answers each of these questions and both the guard (which
-runs on every command: PreToolUse runs in every permission mode, so an allow rule, auto mode or bypass does not skip
-it) and the permission hook call it. The command is read two ways, as the shell splits it and as its plain text
-(quotes and backslashes out, line continuations joined, split at blanks and shell operators, so a `sh -c "git push
-..."` payload or `$(which git)` is seen), and a refusal in either reading refuses. A session whose binding exists but
-does not verify is refused. Anything that cannot be read is a refusal; the coarse reading can refuse a commit whose
-message text reads like such a command ("git push now"). These are text checks of the command line: a variable
-holding `git`, a git alias from the user's own config, and a script the agent writes and then runs are not seen (see
-the guard's known limits).
+Whatever the prompt says, every git command of a runner-bound session goes through one allowlist (`commit_refusal`),
+which the guard (on every command: PreToolUse runs in every permission mode, so an allow rule, auto mode or bypass
+does not skip it) and the permission hook both call. A command is git's when the word `git` appears in it (any case,
+any path, `git.exe`, behind `env`, `command`, `sh -c`, `$(which git)`, ...), or when it sets any `GIT_*=` variable.
+Allowed, and nothing else:
+
+- reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, and `branch` that
+  only lists (`--show-current`, `--list`, `-a`, `-r`, `-v`);
+- `add` and `restore`, from the folder the runner started the session in or below it;
+- `commit`, and `checkout` or `switch` of the session's own branch, only when that folder passes the rule above (the
+  child's own clone or linked worktree) and the session's folder is that folder or below it in the same git checkout.
+
+Refused by default: everything else (`push` in any form, to any remote, URL or path; `fetch`, `remote`, `config`,
+`update-ref`, `symbolic-ref`, `tag`, `reset`, `worktree`, `submodule`, `filter-branch`, `gc`, `reflog`, `am`, `apply`,
+`merge`, `rebase`, an alias, ...), any option before the verb but `--no-pager` (so `-C`, `--git-dir`, `--work-tree`,
+`--exec-path`, `--namespace` and their abbreviations such as `--git-d=`), any `-c` or `--config-env` and any `cd` or
+`pushd` in a line that runs git, and any `GIT_*=` assignment (`GIT_DIR`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`,
+`GIT_INDEX_FILE`, ...). The command is read two ways, as the shell splits it and as its plain text (quotes and
+backslashes out, line continuations joined, split at blanks and shell operators), and it passes only when both readings
+pass. A session whose binding exists but does not verify is refused, and anything that cannot be read is a refusal.
+The cost of reading the plain text: a commit message or an `orch log` note that names a git command outside the list
+("git push later") is refused too; say it another way. These are text checks of the command line: a variable holding
+`git`, a git alias from the user's own config, and a script the agent writes and then runs are not seen (see the
+guard's known limits).
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,

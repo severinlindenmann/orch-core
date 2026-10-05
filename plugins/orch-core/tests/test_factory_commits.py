@@ -89,9 +89,17 @@ def test_every_commit_form_is_gated(cmd):
     assert permits._git_commit(cmd), cmd
 
 
-@pytest.mark.parametrize("cmd", ["git log --oneline", "git status", "orch log L-1 -m x", "git show HEAD"])
-def test_reading_commands_are_not_commits(cmd):
-    assert not permits._git_commit(cmd)
+@pytest.mark.parametrize("cmd", ["git log --oneline", "git status", "git show HEAD", "git diff",
+                                 "git branch --show-current"])
+def test_reading_commands_pass_the_gate_anywhere_in_the_start_folder(session, cmd):
+    ws, b = session["ws"], session["b"]
+    assert permits.commit_refusal(ws, b, session["wt"], cmd) is None
+    guard, hook = _both(ws, b, cmd, session["wt"])
+    assert guard.allow, guard.reason
+
+
+def test_a_command_without_git_is_not_gated():
+    assert not permits._git_commit("orch log L-1 -m x") and not permits._git_commit("make test")
 
 
 def test_the_shared_checkout_never_commits_whatever_its_branch(session, monkeypatch):

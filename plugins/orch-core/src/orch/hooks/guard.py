@@ -1639,7 +1639,8 @@ def _bash_reaches_ledger(cmd: str) -> bool:
 
 
 def _factory_commit(ws, payload: dict, command: str) -> Decision | None:
-    """An AI Factory session the runner bound may commit only in its own worktree (orch.core.permits.commit_refusal).
+    """An AI Factory session the runner bound runs only the allowlisted git commands, and commits only in its own work
+    tree (orch.core.permits.commit_refusal, the one function the permission hook calls too).
     Checked here, in every permission mode (an allow rule, auto mode or bypass never reach the PermissionRequest hook,
     which checks it again). A session whose binding exists but does not verify is refused; any other session is left
     alone."""

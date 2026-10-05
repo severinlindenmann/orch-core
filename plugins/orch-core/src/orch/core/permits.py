@@ -596,73 +596,47 @@ def hook_decision(ws, payload: dict) -> dict | None:
                                  f"File it with `orch permit request`, then `orch wait {ticket.id}`.")
 
 
+_MOVES_REFS = re.compile(r"(?<![\w-])(?:commit|commit-tree|merge|cherry-pick|revert|am|rebase|pull|update-ref|stash)"
+                         r"(?![\w-])")
+_ELSEWHERE = re.compile(r"(?<![\w-])(?:-C|--git-dir|--work-tree)(?![\w-])|GIT_(?:DIR|WORK_TREE)\s*="
+                        r"|(?<![\w-])(?:cd|pushd)(?![\w-])")
+
+
 def _git_commit(command) -> bool:
-    """Whether `command` runs `git commit`: a simple command `git commit ...`, or, for any other text, both words
-    anywhere (fail closed: such a command gets the branch check too)."""
-    from orch.core import dark_profile
+    """Whether `command` may make or move a commit: the word git and a verb that does so (commit, commit-tree, merge,
+    cherry-pick, revert, am, rebase, pull, update-ref, stash) anywhere in its text with quotes and backslashes taken
+    out (so wrappers, aliases and `"g"it` count), or a GIT_DIR / GIT_WORK_TREE assignment. Coarse on purpose: such a
+    command gets the commit checks."""
     if not isinstance(command, str):
         return False
-    words = dark_profile.simple_tokens(command)
-    if words is not None:
-        return dark_profile._prog(words[0]) == "git" and "commit" in words[1:]
-    return bool(re.search(r"(?<![\w-])git(?![\w-])", command) and re.search(r"(?<![\w-])commit(?![\w-])", command))
+    t = re.sub(r"[\\'\"]", "", command)
+    return bool(re.search(r"GIT_(?:DIR|WORK_TREE)\s*=", t)
+                or (re.search(r"(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t)))
 
 
-def _git_dirs(start: Path) -> tuple[Path, Path] | None:
-    """(the git dir, the common git dir) of the checkout holding `start`, read from files only; None when not found."""
-    from orch.core.fsutil import read_regular_file
-    for d in (start, *start.parents):
-        dot = d / ".git"
-        if dot.is_dir():
-            return dot, dot
-        raw = read_regular_file(dot, 4096)
-        if raw is not None:
-            if not raw.startswith(b"gitdir:"):
-                return None
-            gitdir = (d / raw[7:].decode("utf-8", "replace").strip()).resolve()
-            common = read_regular_file(gitdir / "commondir", 4096)
-            return gitdir, ((gitdir / common.decode("utf-8", "replace").strip()).resolve() if common else gitdir)
-    return None
-
-
-def default_branches(ws, common: Path) -> set[str]:
-    """main, master, the release recipe's base when one is set, and what origin/HEAD names (read from files)."""
-    from orch.core.fsutil import read_regular_file
-    out = {"main", "master"}
+def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
+    """Why runner-bound session `b` must not run commit command `command` now, or None. Allowed only in the folder
+    the runner started it in (the session's own worktree: factory_runner.own_worktree, the rule its prompt follows),
+    from that folder or below it, with nothing that points git elsewhere (-C, --git-dir, --work-tree, GIT_DIR,
+    GIT_WORK_TREE, a cd). Everything that cannot be read is a refusal."""
+    from orch.core import factory_runner
     try:
-        from orch.core import factory_release
-        rec, _ = factory_release.load(ws)
-        if rec and isinstance(rec.get("base"), str):
-            out.add(rec["base"])
-    except Exception:
-        pass
-    raw = read_regular_file(common / "refs" / "remotes" / "origin" / "HEAD", 4096)
-    if raw and raw.startswith(b"ref: refs/remotes/origin/"):
-        out.add(raw[25:].decode("utf-8", "replace").strip())
-    return out
-
-
-def commit_refusal(ws, cwd) -> str | None:
-    """Why a runner-bound session must not commit in `cwd`, or None: HEAD there is a default branch, detached, or
-    cannot be read (fail closed)."""
-    from orch.core.fsutil import read_regular_file
-    try:
-        if not cwd:
-            return "the session's folder is not known"
-        found = _git_dirs(Path(str(cwd)).resolve())
-        if found is None:
-            return "no git checkout was found for the session's folder"
-        gitdir, common = found
-        head = read_regular_file(gitdir / "HEAD", 4096)
-        if head is None:
-            return "HEAD cannot be read"
-        if not head.startswith(b"ref: refs/heads/"):
-            return "HEAD is detached"
-        branch = head[16:].decode("utf-8", "replace").strip()
-        if branch in default_branches(ws, common):
-            return f"HEAD is the default branch {shown(branch)}"
+        if _ELSEWHERE.search(re.sub(r"[\\'\"]", "", str(command))):
+            return "a commit command may not point git at another folder (-C, --git-dir, --work-tree, GIT_DIR, cd)"
+        start = Path(str(b["start"])).resolve()
+        here = Path(str(cwd)).resolve() if cwd else start
+        if here != start and start not in here.parents:
+            return "the session's folder is not inside the folder the runner started it in"
+        for d in (here, *here.parents):  # the checkout git would use: the first .git upwards must be the start's
+            if os.path.lexists(d / ".git"):
+                if d != start:
+                    return "the session's folder is in another git checkout than the one it was started in"
+                break
+        why = factory_runner.own_worktree(ws, start, b["child"])
+        if why:
+            return f"the session runs in {start}, and {why}"
     except Exception as e:
-        return f"HEAD cannot be read ({type(e).__name__})"
+        return f"orch could not check where it would commit ({type(e).__name__})"
     return None
 
 
@@ -677,10 +651,10 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
     if why:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")
-    if _git_commit(command):
+    if _git_commit(command):  # the second layer: the guard (PreToolUse) runs the same check in every mode
         from orch.core import factory_sessions
         b = factory_sessions.binding(ws, payload.get("session_id"))
-        why = commit_refusal(ws, payload.get("cwd") or (b or {}).get("start"))
+        why = commit_refusal(ws, b, payload.get("cwd"), command) if b else "the session's binding cannot be read"
         if why:
             return _decision("deny", f"git commit is refused here: {why}. Leave your changes in the working tree and "
                                      f"say so with orch log {ticket.id}; do not retry it in another form.")

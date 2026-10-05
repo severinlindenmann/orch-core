@@ -260,18 +260,29 @@ option either prompt names against the CLI, every git verb against real git, and
 baselines match each command it tells the agent to run. A prompt is advice: a model can still ignore it, and then
 its chained command stops for a card as before.
 
-**Commits.** Only a session that starts in a worktree of its own (see "Where and how a session runs") is told to
-commit, on that worktree's branch: `git add FILES` and a `git commit` in the workspace's own commit format, rendered
-at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when `commit.rollback`
-is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why: ..." -m "Risk:
-..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config whose subject or
-labels are not plain words gets no commit instruction. A session in the shared checkout (a child that names no
-worktree starts in the workspace root, and the baseline cannot create a branch) is told not to commit: it leaves its
-changes in the working tree and says so with `orch log`. Whatever the prompt says, the permission hook refuses `git
-commit` for a runner-bound session whose folder's HEAD is a default branch (`main`, `master`, the release recipe's
-base, or what `origin/HEAD` names), is detached, or cannot be read; the denial says to leave the changes in the
-working tree. Known limit: the hook only answers what Claude Code asks it about, so a `git commit` your own user-scope
-allow rules let through is not checked.
+**Commits.** One rule (`own_worktree`) decides where a child's session starts in a worktree, whether its prompt
+tells it to commit, and whether a commit may run: the one worktree the child names must be a linked git worktree
+below the workspace root (its `.git` a file naming a git dir in the common git dir's `worktrees/` folder), not keep its
+refs in reftable, have HEAD on a real branch, and that branch must not be a default branch and must name the child
+(its id as a word). Default branches, compared without case: `main`, `master`, the release recipe's base, and what
+every remote's `HEAD` names; a recipe that exists but cannot be loaded leaves the default unknown, so nothing passes.
+Only such a session is told to commit, on that branch: `git add FILES` and a `git commit` in the workspace's own commit
+format, rendered at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when
+`commit.rollback` is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why:
+..." -m "Risk: ..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config
+whose subject or labels are not plain words gets no commit instruction. Every other session (a child that names no
+such worktree starts in the workspace root, and the baseline cannot create a branch) is told not to commit: it leaves
+its changes in the working tree and says so with `orch log`.
+
+Whatever the prompt says, a runner-bound session's command that may make or move a commit (the word `git` and
+`commit`, `commit-tree`, `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `pull`, `update-ref` or `stash` anywhere
+in its text, quotes and backslashes taken out, so wrappers such as `env`, `sh -c` or an alias count; or a `GIT_DIR` /
+`GIT_WORK_TREE` assignment) is refused unless the folder the runner started it in passes the rule above, the session's
+folder is that folder or below it with no other git checkout in between, and the command carries nothing that points
+git elsewhere (`-C`, `--git-dir`, `--work-tree`, `GIT_DIR`, `GIT_WORK_TREE`, a `cd` or `pushd`). The guard checks this
+on every command (PreToolUse runs in every permission mode, so an allow rule, auto mode or bypass does not skip it),
+and the permission hook checks it again; a session whose binding exists but does not verify is refused. Anything that
+cannot be read is a refusal.
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,
@@ -375,9 +386,9 @@ private folder), not on the Terminals' socket, so these sessions are not in Miss
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
 path only when owned by you or root and not writable by group or others (nor their folders). The agent gets `env -i` with a fixed PATH (the
 folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
-session starts in the child's worktree only when the child names exactly one, below the workspace's
-`.claude/worktrees` folder (where `orch worktree add` puts it) or a git worktree in the workspace whose branch names
-the child; otherwise in the workspace root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
+session starts in the child's worktree only when the child names exactly one and it is the child's own (a linked
+git worktree in the workspace on a non-default branch that names the child: see "Commits"); otherwise in the workspace
+root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
 so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
 
 The guard's part is a text check, not a shell. It refuses a command run from inside the orch config dir, a `cd` or

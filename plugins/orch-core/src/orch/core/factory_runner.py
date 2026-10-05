@@ -606,24 +606,91 @@ def _branch_of(p: Path) -> str | None:
     return head[16:].decode("utf-8", "replace").strip()
 
 
+_NO_RECIPE = "no release recipe for this workspace"
+
+
+def default_branches(ws, common: Path) -> set[str] | None:
+    """The default branches, casefolded: main, master, the release recipe's base, and the branch every remote's HEAD
+    names (refs/remotes/<remote>/HEAD, read from files). None when a recipe exists but cannot be loaded (its base is
+    unknown, so nothing is known to be safe)."""
+    from orch.core import factory_release
+    from orch.core.fsutil import read_regular_file
+    out = {"main", "master"}
+    rec, why = factory_release.load(ws)
+    if rec is None and why != _NO_RECIPE:
+        return None
+    if rec is not None:
+        out.add(str(rec.get("base") or "main").casefold())
+    try:
+        remotes = sorted((common / "refs" / "remotes").iterdir())
+    except OSError:
+        remotes = []
+    for r in remotes:
+        raw = read_regular_file(r / "HEAD", 4096)
+        prefix = f"ref: refs/remotes/{r.name}/".encode()
+        if raw and raw.startswith(prefix):
+            out.add(raw[len(prefix):].decode("utf-8", "replace").strip().casefold())
+    return out
+
+
+def own_worktree(ws, path, child: str) -> str | None:
+    """Why `path` is not the child's own worktree, or None. The one rule for where a session starts in a worktree,
+    is told to commit, and may commit (the permission hook and the guard): a folder below the workspace root whose
+    `.git` is a gitfile naming a gitdir in the common git dir's `worktrees/` folder (a linked worktree), no reftable
+    refs, HEAD on a real branch that names the child (its id as a word) and is not a default branch (default_branches).
+    Read from files only; anything unreadable is a reason."""
+    from orch.core.fsutil import read_regular_file
+    try:
+        root, p = Path(ws.root).resolve(), Path(str(path)).resolve()
+        if p == root or root not in p.parents:
+            return "it is not a folder below the workspace root"
+        dot = p / ".git"
+        if dot.is_symlink() or not dot.is_file():
+            return "it is not a linked git worktree (no .git file)"
+        link = read_regular_file(dot, 4096)
+        if link is None or not link.startswith(b"gitdir:"):
+            return "it is not a linked git worktree"
+        gitdir = (p / link[7:].decode("utf-8", "replace").strip()).resolve()
+        common_raw = read_regular_file(gitdir / "commondir", 4096)
+        if common_raw is None:
+            return "its git dir names no common dir"
+        common = (gitdir / common_raw.decode("utf-8", "replace").strip()).resolve()
+        if gitdir.parent != common / "worktrees":
+            return "its git dir is not one of the repository's worktrees"
+        if os.path.lexists(common / "reftable") or os.path.lexists(gitdir / "reftable"):
+            return "the repository keeps its refs in reftable, which orch cannot read"
+        head = read_regular_file(gitdir / "HEAD", 4096)
+        if head is None or not head.startswith(b"ref: refs/heads/"):
+            return "its HEAD is detached or cannot be read"
+        branch = head[16:].decode("utf-8", "replace").strip()
+        if not branch or branch == ".invalid":
+            return "its HEAD names no real branch"
+        defaults = default_branches(ws, common)
+        if defaults is None:
+            return "the release recipe cannot be loaded, so the default branch is not known"
+        if branch.casefold() in defaults:
+            return f"its branch {permits.shown(branch)} is a default branch"
+        if not re.search(rf"(?<![a-z0-9]){re.escape(str(child).lower())}(?![a-z0-9])", branch.lower()):
+            return f"its branch {permits.shown(branch)} does not name {child}"
+    except (OSError, RuntimeError, ValueError) as e:
+        return f"it cannot be read ({type(e).__name__})"
+    return None
+
+
 def start_dir(ws, t) -> str | None:
-    """Where the child's session starts. The child's own worktree when it names exactly one that lies below the
-    workspace's `.claude/worktrees` folder, or is a git worktree inside the workspace whose branch names the child; else
-    the workspace root (the field is agent-written). None (refuse to launch) when that worktree carries a harness
-    settings or MCP file that is not identical to the workspace's own."""
+    """Where the child's session starts: the one worktree the child names when it is the child's own (own_worktree,
+    the same rule the commit checks use); else the workspace root (the field is agent-written). None (refuse to
+    launch) when that worktree carries a harness settings or MCP file that is not identical to the workspace's own."""
     root = Path(ws.root).resolve()
     wts = t.meta.get("worktrees")
     vals = list(wts.values()) if isinstance(wts, dict) else []
     if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
         try:
             p = (root / vals[0]).resolve()
-            if p != root and root in p.parents and p.is_dir():
-                branch = _branch_of(p)
-                named = bool(branch) and re.search(rf"(?<![a-z0-9]){re.escape(t.id.lower())}(?![a-z0-9])", branch.lower())
-                if (root / ".claude" / "worktrees").resolve() in p.parents or named:
-                    if any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES):
-                        return None
-                    return str(p)
+            if p.is_dir() and own_worktree(ws, p, t.id) is None:
+                if any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES):
+                    return None
+                return str(p)
         except (OSError, RuntimeError, ValueError):
             pass
     return str(root)

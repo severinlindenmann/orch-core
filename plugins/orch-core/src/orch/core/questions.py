@@ -31,35 +31,58 @@ def _as_text(node) -> None:
         node.tag = _STR_TAG
 
 
-def _keep_option_text(node) -> None:
-    if not isinstance(node, yaml.MappingNode):
+MAX_ASK_NODES = 20000  # distinct YAML nodes in a question file: far above any real one, a bound on hostile input
+
+
+def _keep_option_text(root) -> None:
+    """Walk the node graph once (aliases share nodes, so a node is visited once whatever points at it: an alias bomb
+    or a recursive alias cannot make this exponential or endless) and keep option labels and keys as written."""
+    seen: set[int] = set()
+    todo = [root]
+    while todo:
+        node = todo.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if len(seen) > MAX_ASK_NODES:
+            raise ValidationError(f"invalid question file: more than {MAX_ASK_NODES} YAML nodes")
         if isinstance(node, yaml.SequenceNode):
-            for item in node.value:
-                _keep_option_text(item)
-        return
-    for k, v in node.value:
-        if isinstance(k, yaml.ScalarNode) and k.value == "options" and isinstance(v, yaml.SequenceNode):
-            for opt in v.value:
-                if isinstance(opt, yaml.MappingNode):
-                    for ok, ov in opt.value:
-                        if isinstance(ok, yaml.ScalarNode) and ok.value in ("label", "key"):
-                            _as_text(ov)
+            todo.extend(node.value)
+        elif isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                if isinstance(k, yaml.ScalarNode) and k.value == "options" and isinstance(v, yaml.SequenceNode):
+                    seen.add(id(v))
+                    for opt in v.value:
+                        if isinstance(opt, yaml.MappingNode):
+                            seen.add(id(opt))
+                            for ok, ov in opt.value:
+                                if isinstance(ok, yaml.ScalarNode) and ok.value in ("label", "key"):
+                                    _as_text(ov)
+                                else:
+                                    todo.append(ov)
+                        elif isinstance(opt, yaml.ScalarNode):
+                            _as_text(opt)
+                        else:
+                            todo.append(opt)
                 else:
-                    _as_text(opt)
-        else:
-            _keep_option_text(v)
+                    todo.append(v)
 
 
 def _load_ask_yaml(text: str):
-    loader = yaml.SafeLoader(text)
-    try:
-        node = loader.get_single_node()
-        if node is None:
-            return None
-        _keep_option_text(node)
-        return loader.construct_document(node)
-    finally:
-        loader.dispose()
+    from orch.core import model  # the same loader as every other orch YAML file (C loader when available)
+    for cls in (model._Loader, model._PyLoader):
+        loader = cls(text)
+        try:
+            node = loader.get_single_node()
+            if node is None:
+                return None
+            _keep_option_text(node)
+            return loader.construct_document(node)
+        except yaml.YAMLError:
+            if cls is model._PyLoader:
+                raise
+        finally:
+            loader.dispose()
 
 
 def parse_ask_file(text: str) -> list:

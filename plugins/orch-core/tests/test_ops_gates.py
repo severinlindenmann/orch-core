@@ -222,3 +222,23 @@ def test_addon_context_show_is_read_only(ws, aops):
     t = AddonContext(ws, "tix").show(tid.replace("L-000", ""))
     assert t.id == tid and t.title == "Backup"
     assert len(read_events(ws)) == before
+
+
+def test_yaml_alias_bomb_is_fast_and_recursive_alias_is_clean():
+    import time
+    lines = ["questions:", "  - text: x", "    options: &l0 [a, b]"]
+    bomb = ["x: &a0 [z, z, z, z, z, z, z, z, z, z]"] + [f"x{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]" for i in range(1, 30)]
+    t = time.time()
+    try:
+        qs = parse_ask_file("\n".join(lines + ["    meta:"] + ["      " + b for b in bomb]))
+        assert qs[0]["options"]
+    except ValidationError:
+        pass
+    assert time.time() - t < 1
+    for doc in ("questions: &a [*a]", "questions:\n  - text: x\n    options: &a [*a, *a]"):
+        try:
+            build_questions(parse_ask_file(doc), [], "t")
+        except ValidationError:
+            pass  # rejected cleanly, never a RecursionError or a hang
+    q, = build_questions(parse_ask_file("questions:\n  - text: x\n    options: [{key: A, label: No}, {key: B, label: Yes}]"), [], "t")
+    assert [o["label"] for o in q["options"]] == ["No", "Yes"]

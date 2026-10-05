@@ -162,6 +162,10 @@ def timeline(events, limit: int = 50) -> list[dict]:
     for e in reversed(events):
         noise = e.kind in _NOISE and not any((e.data or {}).get(k) for k in ("branch", "pr", "worktree", "external", "raw"))
         actor = who(e)
+        if e.kind == "ledger.adopted" and rows and rows[-1]["kind"] == "ledger.adopted":
+            rows[-1]["adopted"] += 1  # `orch ledger adopt` writes one event per decision: one line says it
+            rows[-1]["first"] = when(e.at)
+            continue
         if noise and rows and rows[-1]["folded"] and rows[-1]["who"] == actor:
             row = rows[-1]
             row["count"] += 1
@@ -174,8 +178,10 @@ def timeline(events, limit: int = 50) -> list[dict]:
             break
         section = (e.data or {}).get("section") or ("Handoff" if e.kind == "state.updated" else (e.data or {}).get("task"))
         rows.append({"at": when(e.at), "raw_at": e.at, "who": actor, "what": describe(e), "folded": noise, "count": 1,
-                     "sections": [section] if noise and section else [], "first": when(e.at), "kind": e.kind})
+                     "sections": [section] if noise and section else [], "first": when(e.at), "kind": e.kind, "adopted": 1})
     for row in rows:
+        if row["adopted"] > 1:
+            row["what"] = f"adopted {row['adopted']} earlier decisions into the ledger"
         if row["folded"] and row["count"] > 1:
             row["what"] = "edited " + (", ".join(row["sections"]) if row["sections"] else "the ticket") + f" · {row['count']} edits"
     return rows

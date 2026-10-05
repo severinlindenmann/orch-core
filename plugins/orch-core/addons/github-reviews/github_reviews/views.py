@@ -105,6 +105,11 @@ class Data:
         times = [s.fetched_at for s in self.prs.values() if s.health != "never_fetched" and s.fetched_at]
         return max(times) if times else None
 
+    def label(self, scope: str) -> str:
+        """The repo as a page names it: the workspace's own repo as "Harness (name)"."""
+        repo = next((r for r in self.repos if r.name == scope), None)
+        return repo.label if repo is not None else scope
+
     def scopes(self) -> list[str]:
         names = [r.name for r in self.repos]
         return names + sorted(s for s in set(self.prs) | set(self.local) if s not in names)
@@ -130,8 +135,8 @@ def _url(view, **query) -> str:
     return f"/addons/{view.addon}/" + (f"?{q}" if q else "")
 
 
-def _ref(scope, item) -> str:
-    return f"{scope} #{item.get('number')}"
+def _ref(d: Data, scope, item) -> str:
+    return f"{d.label(scope)} #{item.get('number')}"
 
 
 def _provider(snap, remote: dict):
@@ -178,10 +183,10 @@ def _repo_card(d: Data, scope: str) -> Card:
     counts = KV((("open PRs", len(items) if known else None),
                  ("need review", need_review if known else None),
                  ("failing", Badge("err", str(failing)) if failing else failing)), layout="stats")
-    body = tuple(w for w in (Chips(tuple(x for x in who if x is not None), label=f"{scope}: repository", show_label=False),
-                             Chips(tuple(x for x in state if x is not None), label=f"{scope}: local state", show_label=False),
+    body = tuple(w for w in (Chips(tuple(x for x in who if x is not None), label=f"{d.label(scope)}: repository", show_label=False),
+                             Chips(tuple(x for x in state if x is not None), label=f"{d.label(scope)}: local state", show_label=False),
                              counts) if not isinstance(w, Chips) or w.items)
-    return Card(scope, body, role="warn" if snap is not None and snap.health not in ("ok", "never_fetched") else None)
+    return Card(d.label(scope), body, role="warn" if snap is not None and snap.health not in ("ok", "never_fetched") else None)
 
 
 def _login_help(d: Data) -> list:
@@ -206,8 +211,8 @@ def _filters(d: Data, state: str, repo: str) -> Card:
     states = tuple(Link(f"{label} {_count_label(pool, key, d)}", _url(d.view, state=key, repo=repo), current=key == state)
                    for key, label in STATES)
     repos = (Link("All repos", _url(d.view, state=state), current=not repo),) + tuple(
-        Link(s, _url(d.view, state=state, repo=s), current=s == repo) for s in d.scopes())
-    return Card(f"Showing: {_STATE_LABEL[state]}" + (f" in {repo}" if repo else ""),
+        Link(d.label(s), _url(d.view, state=state, repo=s), current=s == repo) for s in d.scopes())
+    return Card(f"Showing: {_STATE_LABEL[state]}" + (f" in {d.label(repo)}" if repo else ""),
                 (Chips(states, label="Filter by state"), Chips(repos, label="Filter by repository")))
 
 
@@ -249,7 +254,7 @@ def _lists(d: Data, state: str, repo: str) -> list:
             continue
         rows = tuple(_row(d, i) for i in d.items(scope) if matches(i, state, d.me))
         if rows:
-            out.append(Card(scope, (Table(COLUMNS, rows, empty="No pull requests match this filter. Pick another filter above."),)))
+            out.append(Card(d.label(scope), (Table(COLUMNS, rows, empty="No pull requests match this filter. Pick another filter above."),)))
     if not out:  # an empty state is plain text, not a callout (DESIGN.md: one callout per page, for situations)
         out.append(Text(f"Nothing in {_STATE_LABEL[state]}. Pick another filter above, or wait for the next refresh."))
     return out
@@ -264,7 +269,7 @@ def _multi_repo(d: Data):
     if not multi:
         return None
     order = d.links.merge_order(list(multi))
-    rows = tuple((Link(tid, f"/t/{tid}"), ", ".join(_ref(s, i) for s, i in prs)) for tid, prs in sorted(multi.items()))
+    rows = tuple((Link(tid, f"/t/{tid}"), ", ".join(_ref(d, s, i) for s, i in prs)) for tid, prs in sorted(multi.items()))
     text = ("Suggested merge order: " + " → ".join(order)) if order else \
         "No merge order suggested: these tickets have no blocked_by links between them."
     return Card("One ticket, several repos", (Table(("Ticket", "Pull requests"), rows), Text(text)))
@@ -323,10 +328,10 @@ def today_items(view) -> list:
         tickets = d.tickets(item)
         first = tickets[0] if tickets else None
         if matches(item, "review", d.me):
-            rows.append((Link(f"Review requested on {_ref(scope, item)}", url) if _http(url) else f"Review requested on {_ref(scope, item)}",
+            rows.append((Link(f"Review requested on {_ref(d, scope, item)}", url) if _http(url) else f"Review requested on {_ref(d, scope, item)}",
                          Link(first.id, f"/t/{first.id}") if first else None))
         if checks_state(item) == "failed" and ((d.me and item.get("author") == d.me) or first is not None):
-            rows.append((Link(f"Checks failing on {_ref(scope, item)}", url) if _http(url) else f"Checks failing on {_ref(scope, item)}",
+            rows.append((Link(f"Checks failing on {_ref(d, scope, item)}", url) if _http(url) else f"Checks failing on {_ref(d, scope, item)}",
                          Link("Ask agent to fix", f"/t/{first.id}#start-agent-{first.id}") if first else None))
     return [Card("Code reviews", (Table(("Item", "Next"), tuple(rows)),))] if rows else []
 
@@ -341,7 +346,7 @@ def ticket_prs(view) -> list:
         if any(t.id == ticket.id for t in d.tickets(item)):
             url = item.get("url")
             review = Badge("neu", "draft") if item.get("draft") is True else Badge(*REVIEWS.get(item.get("review"), REVIEWS["none"]))
-            rows.append((Link(_ref(scope, item), url) if _http(url) else _ref(scope, item), Badge(*CHECKS[checks_state(item)]), review))
+            rows.append((Link(_ref(d, scope, item), url) if _http(url) else _ref(d, scope, item), Badge(*CHECKS[checks_state(item)]), review))
     return [Table(("PR", "Checks", "Review"), tuple(rows))] if rows else []
 
 

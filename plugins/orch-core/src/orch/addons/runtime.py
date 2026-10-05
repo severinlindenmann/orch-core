@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from datetime import datetime
 
 from orch.addons import cache
@@ -49,12 +50,29 @@ class Banner:
     message: str = ""
     complete: bool = True  # False: some scope returned only part of its data ("Showing part of the data")
     login: str = ""  # a scope's login-needed message when another state is worse, so the login still shows
+    stalled: bool = False  # never_fetched for longer than LOADING_TIMEOUT: "Not loaded yet", not "Loading..."
 
 
-def banner_for(snapshots) -> Banner:
+LOADING_TIMEOUT = 120.0  # seconds a page may say "Loading..." before it says "Not loaded yet"
+_waiting: dict[str, float] = {}  # addon name -> monotonic time its page was first seen waiting for a first fetch
+_clock = time.monotonic
+
+
+def _stalled(key: str | None, waiting: bool) -> bool:
+    if key is None:
+        return False
+    if not waiting:
+        _waiting.pop(key, None)
+        return False
+    return _clock() - _waiting.setdefault(key, _clock()) >= LOADING_TIMEOUT
+
+
+def banner_for(snapshots, key: str | None = None) -> Banner:
+    """`key` (the addon name) lets a first fetch that never arrives turn "Loading..." into "Not loaded yet"."""
     real = [s for s in snapshots if s.health != "never_fetched"]
     if not real:
-        return Banner("never_fetched", "neu")
+        return Banner("never_fetched", "neu", stalled=_stalled(key, True))
+    _stalled(key, False)
     worst = worst_health(s.health for s in real)
     s = next(x for x in real if x.health == worst)
     oldest = min(x.fetched_at for x in real)
@@ -233,7 +251,7 @@ class AddonRuntime:
     def _banner(self, la) -> Banner | None:
         if not la.has("provider"):
             return None
-        return banner_for(cache.read_snapshots(self.ws, la.name))
+        return banner_for(cache.read_snapshots(self.ws, la.name), la.name)
 
     def _widgets(self, la, slot: str, ticket=None, params=None) -> tuple:
         fn = getattr(la.obj, "widgets", None)

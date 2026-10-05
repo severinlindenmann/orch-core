@@ -587,6 +587,7 @@
     <section class="story-code" id="code" aria-labelledby="code-h">
       <h3 id="code-h">Code</h3>
       {% if pr_early %}<p>{{ ui.status("warn", "PR before plan approval") }}</p>{% endif %}
+      {% set code_groups = addon_slot("ticket.code", t) %}{% set prs = dedupe_prs(prs, code_groups) %}
       {% if branches or prs %}
       <ul class="plain">
         {% for repo, branch in branches.items() %}<li>{{ repo }} <code>{{ branch }}</code></li>{% endfor %}
@@ -597,7 +598,7 @@
       {% else %}
       <p class="muted">No branch or review linked yet{% if t.status in ("in-progress", "waiting") %}; the agent links them with <code>orch link {{ t.id }} --pr &lt;number&gt;</code>{% endif %}.</p>
       {% endif %}
-      {{ ui.slot(addon_slot("ticket.code", t)) }}
+      {{ ui.slot(code_groups) }}
     </section>
   {% endcall %}
 

@@ -161,3 +161,12 @@ def test_import_external_ask_cannot_forge_sections(ws):
     assert list(t.sections) == list(plain.sections)
     assert t.section("Requirements") == "" and "evil" not in t.section("Requirements")
     assert "forged" not in t.section("Log") and t.section("Log") != ""
+
+
+def test_repo_label_marks_the_harness():
+    from pathlib import Path
+
+    from orch.addons.api import RepoRef
+    assert RepoRef("acme-data", "harness", Path("/x")).label == "Harness (acme-data)"
+    assert RepoRef("harness", "harness", Path("/x")).label == "Harness"
+    assert RepoRef("ingest", "sub-repo", Path("/x")).label == "ingest"

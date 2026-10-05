@@ -117,6 +117,30 @@ def test_timeline_folds_runs_of_edits():
                                          "edited Requirements, Acceptance criteria · 3 edits", "created the ticket"]
 
 
+def test_timeline_folds_consecutive_ledger_adopted():
+    from orch.core.events import Event
+    from orch.dashboard.data.story import timeline
+    ev = [Event(1, "2026-10-01T09:00Z", "L-1", "ticket.created", "agent:claude-code:s", "cli", {})]
+    ev += [Event(n, f"2026-10-01T09:0{n}Z", "L-1", "ledger.adopted", "human:you", "cli", {}) for n in (2, 3, 4, 5)]
+    rows = timeline(ev)
+    assert [r["what"] for r in rows] == ["adopted 4 earlier decisions into the ledger", "created the ticket"]
+    assert [r["what"] for r in timeline(ev[:2])] == ["adopted an earlier decision into the ledger", "created the ticket"]
+
+
+def test_code_panel_lists_a_pr_once_and_names_the_harness_repo(dash, put):
+    from orch.dashboard.routes_ticket import dedupe_prs
+    pr = {"repo": "demo", "url": "https://github.com/a/b/pull/3"}
+    assert dedupe_prs([pr, dict(pr, repo="other"), {"repo": "x", "url": "https://github.com/a/c/pull/1"}]) == \
+        [pr, {"repo": "x", "url": "https://github.com/a/c/pull/1"}]
+    from orch.addons.widgets import Link, Table
+    from orch.addons.runtime import SlotGroup
+    group = SlotGroup("a", "A", (Table(("PR",), ((Link("b #3", pr["url"]),),)),))
+    assert dedupe_prs([pr], [group]) == []
+    tid = put("in-progress", sections=REQ, prs=[pr, dict(pr)], branches={"demo": "feat/x"})
+    code = _page(dash, tid).split('id="code-h"', 1)[1].split("</section>", 1)[0]
+    assert code.count("github.com/a/b/pull/3") == 1
+
+
 def test_start_agent_panel_only_when_an_agent_can_start(dash, put):
     from orch.clock import stamp
     ready = put("open", sections=REQ)

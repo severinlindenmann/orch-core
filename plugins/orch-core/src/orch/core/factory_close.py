@@ -9,14 +9,21 @@ It closes only when all of this holds, read fresh under the workspace's release 
 and Dark switched on, the ledger whole, the epic open, its charter live (not paused, edited or out of budget), Dark,
 armed and signed with `close`; the Ready report holds; every release stage the charter signs is proven and not out of
 date, and no sensitive path stopped it; no permission card of the epic is open; no Stopped reason; and the coverage
-check (epic_coverage_ok). Each condition is read from the ledger, the runner's own records or orch's records behind a
-ticket's status, never from a field an agent writes as such.
+check (epic_coverage_ok). What is read from agent-written text: the Ready report (the children's criteria and their
+Verification lines), the stricter evidence rules over those same lines, and the coverage check (file names in the
+epic's and the children's text). What is read only from records an agent cannot write as such: the charter, its
+pause and budget (the ledger), the switches, armed, the release stages, the sensitive stop and the close markers (the
+runner's records), the open cards, and each status as orch's records back it. The text conditions say what the agents
+claimed, never that it was built.
 
 It gives the verdict through the same Ops path the human's Accept uses (`Ops.verdict(epic, "done")`, which closes
 the children too), bound to the hash of exactly the evidence the Ready report showed, as the dashboard's human actor
 with `via` "dark-charter", so the signed ledger entry and the events say it was the charter's. Once per delegation: an
-intent marker is created exclusively before it acts, so it never closes twice (also not after a Reopen) and a crash in
-between leaves the verdict to the human.
+intent marker is created exclusively before it acts, so it never closes twice (also not after a Reopen). A verdict
+refused because the evidence changed between the Ready report and the verdict (hash mismatch) records a failed
+outcome and ends the auto-close for that charter: the human closes it. A crash before the verdict leaves the verdict
+to the human; a crash after the verdict but before the outcome record leaves a done epic that `orch check` reports
+as charter-verdict-unbacked.
 """
 from __future__ import annotations
 

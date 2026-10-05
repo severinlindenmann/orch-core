@@ -1022,7 +1022,8 @@ redirects); the nudge depends on Claude Code's current screen markers.
 A Dark epic can release its own work, up to a stage you sign at its start: **merge** (each child's branch), **dev**
 (merge, then a deploy to your dev environment) or **prod** (merge, dev, then the recipe's production stage, never
 before its release window opens; see "The production stage" below). Nothing is closed by the release: the verdict
-stays yours. The runner (the dashboard you started) runs the stages; an agent cannot start, change or skip one.
+stays yours, unless the charter also signs `close` ("Closing by itself", below), which gives it in your place for
+that run. The runner (the dashboard you started) runs the stages; an agent cannot start, change or skip one.
 
 **The recipe is yours, on this machine.** It lives in `factory-release.json` in the permits folder of your orch config
 dir, next to `factory-command.json` and under the same guard: agents can neither read nor write it, it is never
@@ -1438,8 +1439,11 @@ hashes were signed, keeps the "unsigned-decision" warning.
 
 **Once.** Before it acts the runner creates an intent record for that charter exclusively (in the guarded release
 records, `close.<delegation>.intent`), then an outcome record. So it closes at most once per charter: never again after
-you reopen it, and a crash between the intent and the verdict leaves the verdict to you. Approving the epic again
-signs a new charter.
+you reopen it, and a crash between the intent and the verdict leaves the verdict to you. If the evidence changed
+between the Ready report and the verdict (its hash no longer matches), the verdict is refused, a failed outcome is
+recorded, and the auto-close is over for that charter: it is safe (nothing closed) and the verdict is yours. A crash
+after the verdict but before the outcome record leaves the epic done without that record: `orch check` reports it as
+"charter-verdict-unbacked" (a warning), so look at it. Approving the epic again signs a new charter.
 
 **Reopen.** The run view's Reopen (yours, with a reason) first pauses the epic's delegation (signed), so the runner
 releases, merges and starts nothing more under that charter, then reopens the epic; its children stay done. With every

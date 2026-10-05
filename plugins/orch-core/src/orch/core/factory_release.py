@@ -23,7 +23,8 @@ human started), never by an agent.
   intent without an outcome (and no live holder) is "unknown": never run again automatically. At most one automatic
   attempt per stage and unit; the human's Retry allows one more.
 - **Production** runs after dev is proven and not out of date, on the commit dev was proven on, and never before the
-  stage's release window opens (hours since the last proven production of the workspace, from the runner's own record).
+  stage's release window opens (hours since the last production attempt of the workspace, begun or ended, from the
+  runner's own records).
   When its live check fails and the charter signs `rollback`, the recipe's rollback runs once, then its own check.
 
 The records, outcomes and the lock live beside the ledger and rest on same-user trust (docs/factory.md). Every reader
@@ -55,7 +56,7 @@ TARGET_STAGE = {"merge": "merge", "dev": "dev", "prod": "production"}  # a chart
 RELEASE_CODES = ("sensitive", "release-failed", "release-unknown", "release-stale", "production-failed",
                  "rolled-back", "rollback-failed", "release-blocked", "rollback-missing")
 FUTURE_SKEW = 300  # seconds a record's time may lie ahead of this clock before it counts as unreadable
-DEFAULT_WINDOW = 20  # hours between two proven productions of one workspace, unless the recipe says more or less
+DEFAULT_WINDOW = 20  # hours after any production attempt of a workspace (begun or ended) before the next may begin
 MAX_WINDOW = 720
 FILE = "factory-release.json"
 MAX_FILE = 64 * 1024
@@ -668,7 +669,8 @@ def _units(ws, epic, entries=None) -> list[str]:
 
 
 def _window_path(ws) -> Path:
-    """The runner's record of the last proven production of this workspace (guarded, written only by the runner)."""
+    """The runner's record of the last production attempt of this workspace, written when its commands begin,
+    whatever comes of them (guarded, written only by the runner)."""
     return fs._root() / "release-records" / f"production-last-{fs._key(ws, 'production-last')}.json"
 
 

@@ -356,6 +356,7 @@ def test_ready_card_says_it_closes_by_itself_instead_of_accept(fws, closing, hum
     assert "the merge stage is proven by its check" in card and "Accept the epic" in card  # Accept stays yours
     assert "nothing is executed or verified by the factory" in card
     assert "coverage is checked as text mentions only" in card
+    assert "the verdict stays yours" not in html and "in place of your verdict for this run" in html  # release box
     assert "Closing by itself" in html and "It closes by itself when everything is proven" in html
 
 

@@ -42,7 +42,11 @@ example `/Users/<you>/orch-live-test/remote.git`), then:
 orch factory release set --file recipe.json   # shows the recipe and the pinned script; type RELEASE
 ```
 
-Turn the factory on: set `factory.enabled` to `true` in `orchestrator/config.json`, then
+Turn the factory on, and let the workers commit in their clones: in `orchestrator/config.json` set
+`factory.enabled` to `true` and `git.agent_may.commit` to `true` (`"git": {"agent_may": {"commit": true}}`). Commit
+that change and push it (`git push ~/orch-live-test/remote.git main`): each child's clone starts from `main` as the
+bare remote has it, never from your local `main`, so a commit you have not pushed is not in any child (and a local
+`main` that shares no history with the remote's gets no clone at all, with "share no history" in the run view). Then
 
 ```bash
 orch factory dark on                            # type the confirmation
@@ -50,15 +54,24 @@ orch dark profile add --baseline                # orch's agent verbs
 orch dark profile add --baseline git-basic      # so workers can commit on their branches
 ```
 
+Each child runs in a clone of its own outside the workspace, below `<your orch config dir>-clones` (for
+`~/.config/orch` that is `~/.config/orch-clones`). Claude Code asks once whether to trust a folder it has not seen,
+and a session the runner starts there would wait at that dialog: open Claude once in `~/.config/orch-clones` (make
+the folder first if it is not there) and accept it. The dashboard's readiness check "clones trust" says whether it
+is accepted.
+
 Start the dashboard from the terminal whose PATH holds `~/orch-live-test/bin` (`orch serve`).
 
 ## Run it
 
 1. New ticket, Mode **Dark AI Factory**. Ask for something tiny that names its files (for example `a.txt` and
    `b.txt` with a line each: an epic that names no file is never closed by itself), type **dark**, choose Release
-   up to **Production**, tick **Roll back production by itself if its check fails**, type **production**, and tick **Close the epic by itself when everything is proven**. Read the confirm: it names the
-   stages, the window, the rollback and that the close replaces your verdict for this run.
-2. The planner splits the epic, workers build each child on its own branch and move it to testing.
+   up to **Production**, tick **Roll back production by itself if its check fails**, type **production**, and tick
+   **Close the epic by itself when everything is proven**. Read the confirm: it names the stages, the window, the
+   rollback and that the close replaces your verdict for this run.
+2. The planner splits the epic; each worker builds its child in its own clone, on the branch `fx/<child>`, commits
+   there and moves the child to testing. A child whose branch has no commit of its own is not merged ("the child's
+   branch has no commits of its own").
 3. Once the epic is Ready, the runner merges each child into `main` of the bare remote, deploys dev, then production
    (the window is open the first time), and then closes the epic by itself.
 
@@ -92,4 +105,13 @@ What to look at:
 
 ## Clean up
 
-Stop the dashboard, `orch factory release clear`, `orch factory dark off`, and remove `~/orch-live-test`.
+Stop the dashboard, then:
+
+```bash
+orch factory clones list               # the clones the runner made for this workspace
+orch factory clones clean <child>      # once per child: removes its clone and record (type the id to confirm)
+orch factory release clear
+orch factory dark off
+```
+
+and remove `~/orch-live-test`.

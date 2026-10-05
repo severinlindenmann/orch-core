@@ -15,6 +15,7 @@
   <a href="{{ list_view_link }}" class="{{ 'on' if view == 'list' }}"{% if view == "list" %} aria-current="true"{% endif %}>List <span class="count">{{ active_count }}</span></a>
   {% if external_tab %}<a href="{{ external_link }}" class="{{ 'on' if view == 'external' }}"{% if view == "external" %} aria-current="true"{% endif %}>External</a>{% endif %}
 </nav>
+{% if unknown_status %}<p role="status">{{ ui.status("info", "Unknown status filter “" ~ unknown_status ~ "”, showing all tickets.") }}</p>{% endif %}
 {% if view != "external" %}
 {#- Search, repository and Group by stay visible; type, priority, external key and label sit behind "More filters"
     (open while one of them is set). With JS a changed select applies at once, so the Filter button goes away. -#}

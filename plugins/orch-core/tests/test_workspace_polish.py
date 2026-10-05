@@ -68,7 +68,7 @@ def test_addon_row_has_a_switch_and_its_settings_in_a_disclosure(client, ws):
     row = html[html.index('<li class="addon-row" id="addon-alpha">'):]
     row = row[:row.index("</li>")]
     assert re.search(r'<button type="submit" class="switch" role="switch" aria-checked="false"><span class="switch-track" '
-                     r'aria-hidden="true"></span>Enabled here</button>', row)
+                     r'aria-hidden="true"></span>Enabled here: off</button>', row)
     assert "turn on" not in row and "turn off" not in row
     settings = row[row.index('<details class="addon-settings"'):]
     assert '<summary class="btn btn-quiet">Settings</summary>' in settings
@@ -119,3 +119,4 @@ def test_density_and_motion_tokens_are_honoured():
     css = (static / "app.css").read_text(encoding="utf-8")
     assert "animation: drawer-in var(--dur-3)" in css and "transition: transform var(--dur-2)" in css
     assert re.search(r"@media \(prefers-reduced-motion: reduce\) \{[^@]*animation: none", css)
+

@@ -30,7 +30,9 @@
         {% if c.ok %}<span class="mark mark-ok">{{ ui.icon("ok") }}</span>
         {% else %}<span class="mark mark-warn">{{ ui.icon("warn") }}</span>{% endif %}
         <span class="detail"><b>{{ c.code }}</b> {{ c.message }}
-          {% if c.fix %}<code>{{ c.fix }}</code>{% endif %}
+          {#- A long command (git add of 30+ files) hides behind a disclosure; Copy fix still copies all of it. -#}
+          {% if c.fix and c.fix|length > 120 %}<details class="fix-long"><summary>Show command</summary><code>{{ c.fix }}</code></details>
+          {% elif c.fix %}<code>{{ c.fix }}</code>{% endif %}
         </span>
         {% if c.fix %}<button type="button" class="btn copy-fix" data-copy="{{ c.fix }}">Copy fix</button>{% endif %}
       </li>
@@ -127,7 +129,7 @@
           {% if a.health %}{{ w.banner(a.health, compact=true) }}{% endif %}
         </div>
         <form method="post" action="/workspace/addons/{{ a.name }}/enable" class="switch-form"><input type="hidden" name="enabled" value="{{ '0' if a.enabled else '1' }}">
-          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.enabled else 'false' }}"{% if not a.enabled and not a.can_enable %} disabled aria-describedby="why-{{ a.name }}"{% endif %}><span class="switch-track" aria-hidden="true"></span>Enabled here</button>
+          <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.enabled else 'false' }}"{% if not a.enabled and not a.can_enable %} disabled aria-describedby="why-{{ a.name }}"{% endif %}><span class="switch-track" aria-hidden="true"></span>Enabled here: {{ "on" if a.enabled else "off" }}</button>
           {% if not a.enabled and not a.can_enable %}<span class="muted switch-why" id="why-{{ a.name }}">Trust it first</span>{% endif %}
         </form>
       </div>

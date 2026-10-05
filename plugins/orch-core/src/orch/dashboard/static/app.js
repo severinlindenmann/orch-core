@@ -92,6 +92,7 @@
     const hash = host.hash();
     if (!hash || hash.length < 2 || !root.querySelector || !document.getElementById) return;
     const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target && target.tagName === "DETAILS") target.open = true;  // a redirect back to an addon's Settings keeps it open
     const panel = target && target.closest && target.closest("[data-tab-panel][hidden]");
     if (!panel) return;
     document.querySelectorAll("[data-tab-panel]").forEach((p) => { p.hidden = p !== panel; });

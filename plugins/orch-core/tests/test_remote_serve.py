@@ -141,7 +141,43 @@ def make_loop(ws, host, said=None, app=None, **kw):
     args = dict(say=(said if said is not None else []).append, poll_wait=1, heartbeat_s=0.05, keepalive_s=0.3,
                 frame_s=0.05, beat=lambda ws: {"sessions": 0, "in_progress": 0, "needs_you": 0, "factory": "none"})
     args.update(kw)
-    return HostLoop(app, host, [sys.executable, FAKE, "bridge-host", "--workspace", WS_HEX], ws, **args)
+    loop = HostLoop(app, host, [sys.executable, FAKE, "bridge-host", "--workspace", WS_HEX], ws, **args)
+    _LOOPS.append(loop)
+    return loop
+
+
+_LOOPS: list = []  # every loop a test built, stopped by arun whatever happened
+_RUNNER: list = [None]  # arun's own task, which the leak checks leave out
+
+
+@pytest.fixture(autouse=True)
+def _forget_loops():
+    yield
+    _LOOPS.clear()
+TEST_TIMEOUT = 30.0  # seconds per test body: a regression fails fast instead of stalling CI
+
+
+def arun(main, timeout: float = TEST_TIMEOUT):
+    """asyncio.run for these tests: the body gets `timeout` seconds, and afterwards (passed, failed or timed out)
+    every loop it built is stopped and its fake child killed, so a failing test never hangs the suite."""
+    async def guarded():
+        _RUNNER[0] = asyncio.current_task()
+        try:
+            return await asyncio.wait_for(main, timeout)
+        finally:
+            loops, _LOOPS[:] = list(_LOOPS), []
+            for loop in loops:
+                try:
+                    await asyncio.wait_for(loop.stop(), 10)
+                except BaseException:  # noqa: BLE001 - clean-up goes on whatever the stop did
+                    pass
+                proc = loop.child.proc
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+            for t in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
+                t.cancel()
+    return asyncio.run(guarded())
 
 
 def no_backoff(loop, delays):
@@ -160,7 +196,7 @@ async def started(loop):
 async def finish(loop, task):
     await loop.stop()
     await asyncio.wait_for(task, 10)
-    left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and t is not _RUNNER[0]]
     assert not left, left  # no task leaks
 
 
@@ -181,7 +217,7 @@ def test_a_page_at_look_comes_back_sealed_and_signed(ws, fake, put):
         assert not any(c[0].flags & E.F_REFUSAL for c in chunks)
         assert all("set-cookie" not in k.lower() for k, _ in chunks[0][1]["headers"])
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_device_below_the_routes_scope_gets_a_sealed_refusal_and_nothing_runs(ws, fake, put):
@@ -196,7 +232,7 @@ def test_a_device_below_the_routes_scope_gets_a_sealed_refusal_and_nothing_runs(
         (h, meta, _), = fake.chunks(rid)
         assert h.flags & E.F_REFUSAL and meta == {"refusal": "forbidden_scope"}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
     from orch.core import store
     assert "hello-from-phone" not in store.resolve(ws, tid).path.read_text()
 
@@ -218,7 +254,7 @@ def test_a_replay_is_answered_from_the_record_and_never_runs_again(ws, fake, put
         again = fake.chunks(rid)[len(first):]
         assert [m for _, m, _ in again] == [m for _, m, _ in first] and first[0][1]["status"] == 303
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
     text = store.resolve(ws, tid).path.read_text()
     assert text.count("only-once") == 1
 
@@ -245,7 +281,7 @@ def test_a_revocation_between_the_decision_and_the_run_runs_nothing(ws, fake, pu
         (h, meta, _), = fake.chunks(rid)
         assert h.flags & E.F_REFUSAL and meta == {"refusal": "revoked"}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
     assert "never-written" not in store.resolve(ws, tid).path.read_text()
 
 
@@ -266,7 +302,7 @@ def test_when_finish_says_no_the_stored_refusal_is_sent_instead_of_the_result(ws
         (h, meta, data), = fake.chunks(rid)
         assert h.flags & E.F_REFUSAL and meta == {"refusal": "revoked"} and data == b""
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_large_response_is_split_into_chunks_of_at_most_256_kib(ws):
@@ -304,7 +340,7 @@ def test_revocation_mid_stream_ends_it_with_the_stored_refusal(ws, fake):
         assert h.flags & E.F_REFUSAL and h.flags & E.F_STREAM and meta == {"refusal": "revoked"}
         await until(lambda: rid not in host.streams and rid not in loop._streams)  # noqa: SLF001 - closed on both
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_revoke_through_the_host_closes_the_stream_at_once(ws, fake):
@@ -319,7 +355,7 @@ def test_revoke_through_the_host_closes_the_stream_at_once(ws, fake):
         await until(lambda: fake.chunks(rid)[-1][0].flags & E.F_LAST, timeout=3)
         assert fake.chunks(rid)[-1][1] == {"refusal": "revoked"}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_the_kill_switch_closes_streams_says_goodbye_and_keeps_nothing_running(ws, fake):
@@ -343,7 +379,7 @@ def test_the_kill_switch_closes_streams_says_goodbye_and_keeps_nothing_running(w
         assert (v.result, v.code) == ("refuse", "stopped")
         await asyncio.wait_for(task, 10)
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_the_request_store_quota_answers_busy(ws, fake):
@@ -356,7 +392,7 @@ def test_the_request_store_quota_answers_busy(ws, fake):
         await until(lambda: all(fake.chunks(r) for r in rids))
         assert [fake.chunks(r)[-1][1].get("refusal") for r in rids].count("busy") == 1
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_more_streams_than_the_device_cap_are_refused_busy(ws, fake, monkeypatch):
@@ -373,7 +409,7 @@ def test_more_streams_than_the_device_cap_are_refused_busy(ws, fake, monkeypatch
         (h, meta, _), = fake.chunks(two)
         assert meta == {"refusal": "busy"} and h.flags & E.F_STREAM and h.flags & E.F_REFUSAL
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_device_cancel_ends_its_stream(ws, fake):
@@ -390,7 +426,7 @@ def test_a_device_cancel_ends_its_stream(ws, fake):
         h, meta, _ = fake.chunks(rid)[-1]
         assert meta == {} and not h.flags & E.F_REFUSAL
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 @pytest.mark.parametrize("code,word", [("host_taken", "--take-over"), ("lease_lost", "took this workspace over"),
@@ -409,7 +445,7 @@ def test_a_fatal_mailbox_answer_stops_the_link_with_its_message(ws, fake, code, 
         assert any(word in s for s in said), said
         assert not fake.ops("goodbye")  # another host is live, or TIX refused us: no goodbye in its name
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_retryable_errors_back_off_from_one_second_to_a_ten_second_cap(ws, fake):
@@ -425,7 +461,7 @@ def test_retryable_errors_back_off_from_one_second_to_a_ten_second_cap(ws, fake)
         assert delays == [1.0, 2.0, 4.0, 8.0, 10.0, 10.0]
         assert loop.link.status()["last_error"] is None
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_response_chunk_refused_for_rate_is_retried(ws, fake):
@@ -441,7 +477,7 @@ def test_a_response_chunk_refused_for_rate_is_retried(ws, fake):
         await until(lambda: len(fake.ops("respond")) == 3)  # two refused, then taken
         assert delays == [1.0, 2.0] and {x["rid"] for x in fake.ops("respond")} == {rid}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_the_transport_child_dying_stops_the_link(ws, fake):
@@ -454,7 +490,7 @@ def test_the_transport_child_dying_stops_the_link(ws, fake):
         await asyncio.wait_for(task, 10)
         assert loop.link.status()["last_error"] == "transport_exited"
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_stream_frames_are_coalesced_to_the_latest_at_most_every_frame_interval(ws, fake):
@@ -484,7 +520,7 @@ def test_stream_frames_are_coalesced_to_the_latest_at_most_every_frame_interval(
         frames = [d for _, m, d in fake.chunks(rid)[1:] if d]
         assert len(frames) < 5 and frames[-1] == b"data: 29\n\n"
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_an_idle_stream_gets_keepalives(ws, fake):
@@ -497,7 +533,7 @@ def test_an_idle_stream_gets_keepalives(ws, fake):
         await until(lambda: sum(1 for _, m, _ in fake.chunks(rid) if m == {"keepalive": True}) >= 2)
         await finish(loop, task)
         assert fake.chunks(rid)[-1][1] == {"refusal": "stopped"}  # a shutdown ends it `stopped`
-    asyncio.run(main())
+    arun(main())
 
 
 # -- F: the factory-epic rule, end to end ----------------------------------------------------------------------------
@@ -527,7 +563,7 @@ def test_an_operate_device_is_refused_alike_under_a_running_factory_epic(configu
         assert {s for s, _ in answers} == {403} and len({body for _, body in answers}) == 1  # uniform
         assert b"fresh confirmation" in answers[0][1]
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
     assert store.resolve(fws, child.id).path.read_text() == before
 
 
@@ -620,7 +656,7 @@ def test_the_loop_sends_heartbeats_with_those_fields(ws, fake):
         hb = fake.ops("heartbeat")[0]
         assert {k: v for k, v in hb.items() if k not in ("id", "op")} == presence.heartbeat(ws)
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 # -- the lifespan: started beside the runner, goodbye on shutdown, nothing left behind -------------------------------
@@ -641,9 +677,9 @@ def test_the_app_runs_the_loop_in_its_lifespan_and_says_goodbye_on_shutdown(ws, 
         assert app.state.bridge_link.status()["state"] == "stopped"
         ops = [x.get("op") for x in fake.log() if "op" in x]
         assert ops[-2:] == ["goodbye", "release"] and fake.log()[-1] == {"eof": True}
-        left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        left = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and t is not _RUNNER[0]]
         assert not left, left
-    asyncio.run(main())
+    arun(main())
 
 
 def test_without_the_remote_flag_the_app_has_no_bridge(ws):
@@ -928,7 +964,7 @@ def test_a_stream_head_is_checked_again_before_it_is_sealed(ws, fake):
         (h, meta, _), = fake.chunks(rid)  # only the refusal: no head went out
         assert h.flags & E.F_REFUSAL and h.flags & E.F_STREAM and "refusal" in meta
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_stream_frame_the_app_produced_before_a_revocation_is_not_sent(ws, fake):
@@ -944,7 +980,7 @@ def test_a_stream_frame_the_app_produced_before_a_revocation_is_not_sent(ws, fak
         assert len(chunks) == 2 and "status" in chunks[0][1]  # the head, then the refusal: the frame never left
         assert chunks[1][0].flags & E.F_REFUSAL and chunks[1][2] == b""
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def _big_app(ws, size):
@@ -974,7 +1010,7 @@ def test_a_page_too_large_to_store_is_checked_once_more_before_it_is_sent(ws, fa
         (h, meta, data), = fake.chunks(rid)
         assert h.flags & E.F_REFUSAL and "refusal" in meta and data == b""
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_page_too_large_to_store_is_sent_while_still_authorised(ws, fake):
@@ -988,7 +1024,7 @@ def test_a_page_too_large_to_store_is_sent_while_still_authorised(ws, fake):
         await until(lambda: fake.chunks(rid) and fake.chunks(rid)[-1][0].flags & E.F_LAST)
         assert len(b"".join(d for _, _, d in fake.chunks(rid))) == 100 * 1024
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_an_envelope_delivered_under_another_mailbox_id_is_dropped(ws, fake):
@@ -1005,7 +1041,7 @@ def test_an_envelope_delivered_under_another_mailbox_id_is_dropped(ws, fake):
         await asyncio.sleep(0.2)
         assert {x["rid"] for x in fake.ops("respond")} == {ok}  # nothing answered for either id of the first
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_the_origin_scope_comes_from_the_decision_not_from_the_request(ws, fake, put):
@@ -1023,7 +1059,7 @@ def test_the_origin_scope_comes_from_the_decision_not_from_the_request(ws, fake,
         body = b"".join(d for _, _, d in fake.chunks(rid))
         assert fake.chunks(rid)[0][1]["status"] == 403 and NO_WAY.encode() in body and FRESH.encode() not in body
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_end_run_never_replaces_a_finished_outcome(ws):
@@ -1157,7 +1193,7 @@ def test_close_streams_from_another_thread_ends_the_stream(ws, fake):
         await until(lambda: fake.chunks(rid)[-1][0].flags & E.F_LAST, timeout=3)
         assert fake.chunks(rid)[-1][1] == {"refusal": "revoked"}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_an_unknown_error_code_from_the_child_reads_as_protocol(fake):
@@ -1175,7 +1211,7 @@ def test_an_unknown_error_code_from_the_child_reads_as_protocol(fake):
             await child.call("poll", wait=0)
         assert e.value.code == "rate_limited"
         await child.close()
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_failed_beat_sends_nothing_and_the_next_one_goes_out(ws, fake):
@@ -1193,7 +1229,7 @@ def test_a_failed_beat_sends_nothing_and_the_next_one_goes_out(ws, fake):
         await until(lambda: fake.ops("heartbeat"))
         assert len(beats) >= 2 and fake.ops("heartbeat")[0]["needs_you"] == 1
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
 
 
 def test_a_crash_in_the_loop_shows_as_an_error_and_leaves_nothing_running(ws, fake):
@@ -1211,4 +1247,103 @@ def test_a_crash_in_the_loop_shows_as_an_error_and_leaves_nothing_running(ws, fa
         assert (st["state"], st["last_error"], st["host_online"]) == ("error", "loop_crashed", False)
         assert any("failed" in s for s in said) and fake.log()[-1] == {"eof": True}
         await finish(loop, task)
-    asyncio.run(main())
+    arun(main())
+
+
+def test_close_streams_from_a_worker_thread_runs_on_the_loops_thread(ws, fake):
+    """What the Remote tab does (its routes run in worker threads): the stream table is only ever touched on the
+    loop's own thread, and the stream still ends at once."""
+    import threading
+    host, a = make_host(), Device_(KEY_A)
+
+    async def main():
+        loop = make_loop(ws, host, keepalive_s=60)
+        threads, real = [], loop._close_streams  # noqa: SLF001
+
+        def spy(rids, code):
+            threads.append(threading.get_ident())
+            return real(rids, code)
+        loop._close_streams = spy  # noqa: SLF001
+        task = await started(loop)
+        rid = fake.request(_stream(a))
+        await until(lambda: len(fake.chunks(rid)) >= 2)
+        ended = host.revoke(did(KEY_A))
+        await asyncio.to_thread(loop.close_streams, ended, "revoked")  # the loop keeps running meanwhile
+        await until(lambda: fake.chunks(rid)[-1][0].flags & E.F_LAST, timeout=3)
+        assert fake.chunks(rid)[-1][1] == {"refusal": "revoked"}
+        assert threads and set(threads) == {threading.get_ident()}  # this coroutine runs on the loop's thread
+        await finish(loop, task)
+    arun(main())
+
+
+@pytest.mark.parametrize("method,arg", [("close_stream", "ab" * 16), ("end_lease", "cd" * 16)])
+def test_stream_and_lease_changes_wait_for_the_host_lock(ws, method, arg):
+    """close_stream and end_lease change the tables revoke and set_scope iterate under the host lock: they take it too
+    (a Remote tab revoke on another thread holds it while it walks the streams)."""
+    import threading
+    host = make_host()
+    host.streams[arg], host.leases[arg] = "x", 1
+    held, release, done = threading.Event(), threading.Event(), threading.Event()
+
+    def holder():
+        with host._lock:  # noqa: SLF001 - what Host.revoke holds while it walks the tables
+            held.set()
+            release.wait(5)
+    t = threading.Thread(target=holder)
+    t.start()
+    held.wait(5)
+    worker = threading.Thread(target=lambda: (getattr(host, method)(arg), done.set()))
+    worker.start()
+    try:
+        assert not done.wait(0.3)  # still waiting for the lock
+        assert arg in (host.streams if method == "close_stream" else host.leases)
+    finally:
+        release.set()
+        t.join()
+        worker.join(5)
+    assert done.is_set() and arg not in (host.streams if method == "close_stream" else host.leases)
+
+
+def test_revoke_from_a_worker_thread_never_races_the_loops_stream_changes(ws):
+    """The Remote tab revokes and rescopes on a worker thread while the loop opens and closes streams: the host lock
+    covers both, so neither side ever sees a table changing under it."""
+    import sys as _sys
+    import threading
+    host, a = make_host(scope_a="look"), Device_(KEY_A)
+    errors, stop = [], threading.Event()
+
+    def hammer():
+        i = 0
+        while not stop.is_set():
+            try:
+                k = signatures.private_key((1000 + i).to_bytes(32, "big"))
+                d = host.registry.add(Device(did(k), signatures.public_bytes(k), "look", "x", 0), now_ms())
+                host.set_scope(d.id, "decide")
+                host.revoke(d.id)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+            i += 1
+    old = _sys.getswitchinterval()
+    _sys.setswitchinterval(1e-6)
+    t = threading.Thread(target=hammer)
+    t.start()
+    try:
+        open_rids = []
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            e = a.envelope(http("GET", "/events"), stream_flag=True)
+            v = host.check(e, E.Header.decode(e).rid.hex())
+            if v.result == "accept":
+                open_rids.append(v.rid)
+            if len(open_rids) > 50:
+                for r in open_rids[:25]:
+                    host.close_stream(r)
+                    host.end_lease(did(KEY_A))
+                del open_rids[:25]
+    except Exception as e:  # noqa: BLE001
+        errors.append(e)
+    finally:
+        _sys.setswitchinterval(old)
+        stop.set()
+        t.join()
+    assert not errors, errors[:3]

@@ -97,9 +97,10 @@ What this change does not guard:
 
 - The relay tool's own files. For TIX, the master key and the device token sit in the workspace's sharing
   configuration, which orch-core does not guard. An agent that can read them can derive the workspace channel key
-  without `bridge-key` at all, so the `bridge-key` rule protects less than it may seem. What a stolen channel key or
-  relay access gains is limited: every request still needs a registered device's signature, so it allows denial of
-  service and reading traffic metadata, not acting as a device.
+  without `bridge-key` at all, so the `bridge-key` rule protects less than it may seem. A stolen channel key lets its
+  holder read every bridge envelope it obtains, terminal output included (spec D1); it cannot act as a device,
+  because every request still needs a registered device's signature. Relay access without the key gives denial of
+  service and traffic metadata.
 - The relay tool itself. When it lies inside the workspace (as the sharing skill usually does), an agent can change
   it, and `--remote` then runs that code with this device's relay credentials. The start warns about this; keeping
   the tool outside every workspace avoids it.

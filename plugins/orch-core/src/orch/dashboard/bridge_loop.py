@@ -23,9 +23,12 @@ stored. Mailbox errors back off from 1 s to a 10 s cap; host_taken, lease_lost, 
 no_space stop the loop with a message (the local dashboard keeps running). A heartbeat with counts only goes out every
 `heartbeat_s`; a clean stop sends a goodbye and releases the lease.
 
-Host methods are called on the event loop's own thread, one at a time, so the library's in-memory state is never
-touched by two threads. ponytail: their file writes (fsync) block the loop for a moment per request; move them to one
-worker thread if that ever shows in page latency.
+This loop calls the Host's methods on the event loop's own thread; the Remote tab calls Host.revoke and Host.set_scope
+from the dashboard's worker threads. Every Host method that reads or changes its in-memory state takes the host lock
+(then, inside it, the registry lock), so the two never interleave. This loop's own stream table (`_streams`) is
+touched only on the loop's thread: close_streams hands a call from another thread over with call_soon_threadsafe.
+ponytail: the Host's file writes (fsync) block the loop for a moment per request; move them to one worker thread if
+that ever shows in page latency.
 """
 from __future__ import annotations
 

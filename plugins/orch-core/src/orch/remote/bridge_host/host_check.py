@@ -508,10 +508,14 @@ class Host:
     # -- streams, leases, revocation, the kill switch ------------------------------------------------------------------
 
     def close_stream(self, rid: str) -> None:
-        self.streams.pop(rid, None)
+        """Under the host lock, like every other change to the streams: the Remote tab revokes from a worker thread
+        while the host loop closes streams on its own. Takes no other lock."""
+        with self._lock:
+            self.streams.pop(rid, None)
 
     def end_lease(self, did: str) -> None:
-        self.leases.pop(did, None)
+        with self._lock:
+            self.leases.pop(did, None)
 
     def _end_device(self, did: str, code: str) -> list[str]:
         now = self.clock()

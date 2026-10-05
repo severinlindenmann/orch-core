@@ -57,3 +57,53 @@ def test_negative_evidence_never_closes_the_epic(fws, ready, fa, human):
     assert fc.tick(fws, human) == [] and store.load(fws, eid)[1].status == "open"
     bl = fc.blockers(fws, epic, permits.factory_delegation(fws, epic))
     assert [b["code"] for b in bl] == ["evidence"] and "could not" in bl[0]["text"] and not bl[0]["pending"]
+
+
+
+# -- round 2 --------------------------------------------------------------------------------------------------------
+
+def _missing(verification, ac=AC2):
+    return [n for n, _ in evidence.strict_missing(_t(verification, ac))]
+
+
+def test_a_doubt_line_blocks_its_criterion_whatever_another_line_says():
+    assert _missing("- AC1: could not verify on prod, skipped\n- AC1: ran `make test`, 12 passed\n"
+                    "- AC2: out.csv has 3 rows") == [1]
+    assert _missing("- AC1, AC2: blocked, could not run anything\n- AC1: ran `make a`\n- AC2: ran `make b`") == [1, 2]
+    assert _missing("- notes: AC2 is not implemented yet\n- AC1: ran `make a`\n- AC2: ran `make b`") == [2]
+
+
+@pytest.mark.parametrize("line", ["- AC1: Verified and/or confirmed manually by reading it",
+                                  "- AC1: Works as expected on day 1 of use",
+                                  "- AC1: Looks right, checked it 2 times"])
+def test_prose_with_a_slash_or_a_bare_number_is_not_concrete(line):
+    assert _missing(line, "## Acceptance criteria\n\n- [ ] one\n") == [1]
+
+
+@pytest.mark.parametrize("line", ["- AC1: Not implemented yet in src/app.py", "- AC1: Doesn't work in src/app.py",
+                                  "- AC1: isn't wired in src/app.py", "- AC1: won't load src/app.py",
+                                  "- AC1: `make test` fails", "- AC1: src/app.py partially done",
+                                  "- AC1: pending review of src/app.py", "- AC1: assuming src/app.py is used",
+                                  "- AC1: not applicable to src/app.py", "- AC1: unable to open src/app.py",
+                                  "- AC1: cannot open src/app.py"])
+def test_the_extended_doubt_list(line):
+    assert _missing(line, "## Acceptance criteria\n\n- [ ] one\n") == [1], line
+
+
+@pytest.mark.parametrize("line", ["- AC1: `grep -rn TODO src` prints nothing",
+                                  "- AC1: `orch check` reports no unverified-verdict finding",
+                                  "- AC1: pytest tests/test_x.py::test_rows passes",
+                                  "- AC1: `make test` 12 passed in 40 ms"])
+def test_doubt_words_inside_backticks_or_identifiers_do_not_count(line):
+    assert _missing(line, "## Acceptance criteria\n\n- [ ] one\n") == [], line
+
+
+def test_a_blocked_in_plain_prose_still_blocks_as_documented():
+    line = "- AC1: `pytest tests/test_x.py` asserts the route returns 403 when access is blocked"
+    assert _missing(line, "## Acceptance criteria\n\n- [ ] one\n") == [1]
+
+
+def test_no_criteria_is_missing_and_out_of_range_citations_count_for_nothing():
+    assert evidence.strict_missing(_t("- AC1: ran `make test`", "## Acceptance criteria\n\n")) == [
+        (0, "the ticket has no acceptance criteria")]
+    assert _missing("- AC0: ran `make a` on src/a.py\n- AC99: ran `make b` on src/b.py") == [1, 2]

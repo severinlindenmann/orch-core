@@ -1128,22 +1128,29 @@ always there beside it: you can give the verdict yourself at any time. A stage t
 by another epic or a window that cannot be read is never shown as something the runner gets past by itself.
 
 **The close rules for evidence.** The Ready report counts a criterion as cited when a Verification line names it and
-says something; you read that before you Accept. A close nobody reads needs more, so closing by itself also requires,
-for every criterion of every child in testing, at least one top-level Verification line that:
+says something; you read that before you Accept. A close nobody reads needs more. For every criterion of every child
+in testing:
 
-- cites exactly that criterion, in its prefix only: `- AC2: ...` (a line citing several, `- AC1, AC2: ...`, or a
-  criterion named only inside the text, counts for none);
-- says something (not a placeholder);
-- holds none of these words: could not, couldn't, can't, cannot, unable, unverified, untested, blocked, skip, skipped,
-  TODO, to do, TBD, FIXME, WIP, not verified/tested/checked/run/yet/done/possible/working/able/reproduced, didn't,
-  wasn't, no access, failed to, n/a, should work, probably, maybe, assume, assumed;
-- names something concrete: a file or path, a command in backticks, a test name, a URL or a number.
+- **No doubt.** Any top-level Verification line (with its indented lines) that mentions the criterion anywhere (in
+  its prefix or its text, alone or with others) and holds one of these words blocks it, whatever another line says:
+  could not, couldn't, can't, cannot, unable, unverified, untested, blocked, skip, skipped, skips, TODO, to do, TBD,
+  FIXME, WIP, not verified/tested/checked/run/yet/done/possible/working/able/reproduced/implemented/applicable, did
+  not, didn't, was not, wasn't, does not, doesn't, isn't, won't, no access, failed to, n/a, should work, probably,
+  maybe, assume, assumed, assuming, fails, failing, pending, partially. Words inside backticks or inside a hyphenated
+  identifier do not count (`` `grep -rn TODO src` ``, an `unverified-verdict` finding).
+- **One proving line.** At least one line cites exactly that criterion, in its prefix only (`- AC2: ...`; a line
+  citing several, or naming it only in its text, proves none), says something, and names something concrete: a command
+  in backticks, a test name (`test_x`, `name.test.ts`, `pytest path::name`), a URL, a path or file with a known
+  extension, or a number next to a unit (`12 passed`, `3 rows`, `40 ms`). A bare number or a slash in prose is not
+  concrete.
+- A child with no acceptance criteria never closes by itself.
 
 It closes on what the agents wrote under these rules: **nothing is executed or verified by the factory** (and with no
 release signed, nothing is deployed or run either). The limits, stated plainly: the word list is fixed English, so
-other languages and other phrasing pass; "concrete" is only a pattern (a number anywhere counts); nothing checks that
-the text is true. A criterion that fails these rules keeps the epic open ("Not closed by itself: the evidence of ...")
-and you can still Accept it yourself.
+other languages and other phrasing pass; a doubt word in plain prose blocks even when the sentence means the opposite
+("the route returns 403 when access is blocked" blocks: put such text in backticks, or rephrase); "concrete" is only a
+pattern; nothing checks that the text is true. A criterion that fails these rules keeps the epic open ("Not closed by
+itself: the evidence of ...") and you can still Accept it yourself.
 
 **How it closes.** Through the same verdict the Ready report's Accept gives (`orch verdict <epic> done`): it closes
 the children and the epic, bound to the hash of exactly the evidence the Ready report showed, and is refused if any of

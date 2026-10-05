@@ -12,7 +12,7 @@
   "entry": "orch_wiki:create",
   "menu": {"title": "Wiki", "icon": "book"},
   "settings_schema": [
-    {"key": "provider", "label": "Wiki provider", "type": "select", "options": ["github-wiki", "local", "confluence"], "default": "github-wiki"},
+    {"key": "provider", "label": "Wiki provider", "type": "select", "options": ["github-wiki", "local"], "default": "github-wiki"},
     {"key": "repos", "label": "GitHub repos whose wiki to read (owner/name, comma-separated; empty = the harness repo's GitHub origin)", "type": "text", "default": ""},
     {"key": "folder", "label": "Local wiki folder, inside the workspace (provider local)", "type": "text", "default": "orchestrator/wiki"}
   ],

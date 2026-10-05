@@ -141,7 +141,7 @@ def test_page_list_search_and_hints_use_the_local_pages(wiki):
     assert rows[0][0] == Link("Why we chose X", "/addons/wiki/?page=decisions%2FDEMO-0009")
     found = render(fw, addon, "page.wiki", params={"q": "nightly"})
     [res] = [w for w in found if isinstance(w, Card) and w.title == "Results for nightly"]
-    assert [r[0].text for r in res.body[0].rows] == ["Why we chose X"]
+    assert [w.text for w in res.body if isinstance(w, Link) and w.text != "Clear search"] == ["Why we chose X"]
     # related pages on a ticket: Home mentions DEMO-0001
     [panel] = render(fw, addon, "ticket.pages", ticket(fw, "DEMO-0001"))
     assert any(isinstance(w, Table) and w.rows[0][0].text == "Home" for w in panel.body)
@@ -430,9 +430,11 @@ def test_search_reads_a_widgets_text_not_its_json(wiki):
     refresh(fw, addon)
     found = render(fw, addon, "page.wiki", params={"q": "zebra"})
     [res] = [w for w in found if isinstance(w, Card) and w.title == "Results for zebra"]
-    assert [r[0].text for r in res.body[0].rows] == ["W"]
+    assert [w.text for w in res.body if isinstance(w, Link) and w.text != "Clear search"] == ["W"]
+    assert "**zebra**" in next(w.text for w in res.body if w.kind == "markdown")  # the passage that matched, highlighted
     gone = render(fw, addon, "page.wiki", params={"q": "callout"})  # a JSON value, not text the widget shows
-    assert not any(isinstance(w, Card) and w.title == "Results for callout" and w.body[0].rows for w in gone)
+    [none] = [w for w in gone if isinstance(w, Card) and w.title == "Results for callout"]
+    assert not any(isinstance(w, Link) and w.text != "Clear search" for w in none.body)
     keyed = {i["id"]: i for i in refresh(fw, addon).items}["w"]
     assert "{" not in keyed["excerpt"]
 

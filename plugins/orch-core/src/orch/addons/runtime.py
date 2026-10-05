@@ -264,8 +264,8 @@ class AddonRuntime:
                 if name not in la.manifest.slots:
                     continue
                 widgets = self._widgets(la, name, ticket, params)
-                # the banner is never shown in today.summary, and on other slots only when health is not ok
-                banner = None if name == "today.summary" else self._banner(la)
+                # the banner is never shown in today.summary or guide.section, and on other slots only when health is not ok
+                banner = None if name in ("today.summary", "guide.section") else self._banner(la)
                 if banner is not None and banner.health == "ok" and not always_banner:
                     banner = None
                 if widgets or banner is not None:

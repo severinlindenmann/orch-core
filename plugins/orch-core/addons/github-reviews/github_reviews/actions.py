@@ -9,6 +9,7 @@ from orch.addons.api import Intent
 from orch.errors import ValidationError
 
 from .gh import classify
+from .pending import record
 from .views import failed_runs
 
 _REPO = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
@@ -42,8 +43,10 @@ def act(action_id, target, ctx) -> Intent:
             raise ValidationError(f"{target} has no failed GitHub Actions run to rerun")
         for run in runs:
             _gh(ctx, ["gh", "run", "rerun", run, "--failed", "--repo", repo])
+        record(ctx.addon.state_dir, target)
         return Intent("none", reason=f"Rerun started for {len(runs)} failed run(s) on {target}")
     if item.get("draft") is not True:
         raise ValidationError(f"{target} is not a draft")
     _gh(ctx, ["gh", "pr", "ready", str(item["number"]), "--repo", repo])
+    record(ctx.addon.state_dir, target)
     return Intent("none", reason=f"{target} is ready for review")

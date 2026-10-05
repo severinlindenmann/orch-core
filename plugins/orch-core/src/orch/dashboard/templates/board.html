@@ -96,8 +96,10 @@
 
 <div id="board-results">
 {% if view == "external" %}
-{% set external_groups = addon_slot("board.external", none, external_params) %}
-{% if external_groups %}{{ ui.slot(external_groups) }}{% else %}<section class="card"><p class="empty">Nothing from outside tools yet. Enabled addons show their items here after their first fetch.</p></section>{% endif %}
+{% set external_groups = addon_slot("board.external", none, external_params, true) %}
+{% if external_groups %}{#- each provider addon: how old its data is (the banner) and a Refresh, so stale cannot pass for live -#}
+<div class="actions">{% for g in external_groups if g.banner %}<form method="post" action="/addons/{{ g.addon }}/refresh" data-busy="Refreshing…"><button type="submit" class="btn"{% if g.banner.health == "rate_limited" %} disabled{% endif %}><span aria-hidden="true">⟳</span> Refresh {{ g.title }}</button></form>{% endfor %}</div>
+{{ ui.slot(external_groups) }}{% else %}<section class="card"><p class="empty">Nothing from outside tools yet. Enabled addons show their items here after their first fetch.</p></section>{% endif %}
 {% elif view == "list" %}
 {% macro list_table(rows) %}
 <div class="table-wrap">

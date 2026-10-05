@@ -43,8 +43,11 @@ def test_external_tab_shows_mine_sprint_and_out_of_sync(mc):
     _, client = mc
     html = client.get("/board?view=external").text
     assert 'href="/board?view=external"' in html and "GitHub issues · Mine" in html and "GH-11" in html
-    assert "Sprint · Sprint 42" in html and "Out of sync" in html
-    assert 'action="/addons/github-issues/actions/close_local"' in html and 'data-dialog="Close the local ticket?' in html
+    assert "Sprint 42" in html and "Sprint · Sprint 42" not in html and "Out of sync" in html
+    assert 'action="/addons/github-issues/actions/close_local"' in html and 'data-dialog="Close DEMO-0002 ' in html
+    assert "GitHub status" in html and "Changes only the local ticket in orch" in html and "GitHub milestones" in html
+    # GI-04: freshness and a Refresh are on the External tab itself
+    assert "Updated" in html and 'action="/addons/github-issues/refresh"' in html
 
 
 def test_ticket_page_shows_the_issue(mc):

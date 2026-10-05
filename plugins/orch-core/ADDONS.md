@@ -165,7 +165,7 @@ def resolve(self, decision_id, choice, ctx):
 | `verdict` | `ref, value (done|follow-up), reason, expected_hash` | the verdict hash the human saw (the ticket document's `verdict.hash`); follow-up needs a reason; comes only from `resolve` |
 | `move` | `ref, value (status)` | comes only from `resolve` |
 | `new` | `value (title), reason (the Ask)` | no `ref` (the ticket does not exist yet); only from `resolve()` of an addon declaring `decisions`; lands in backlog |
-| `import` | `ref (external key), value (title)`, optional `data={"ask": <issue text>}` | actions with `tickets: true` only; idempotent by key; the issue text (at most 20 000 characters) becomes the new ticket's Ask, neutralised so it can never open a section |
+| `import` | `ref (external key), value (title)`, optional `data={"ask": <issue text>, "type": <ticket type>, "priority": <priority>}` (type and priority apply only when orch knows them; never an epic) | actions with `tickets: true` only; idempotent by key; the issue text (at most 20 000 characters) becomes the new ticket's Ask, neutralised so it can never open a section |
 | `close`, `reopen` | `ref, reason` | actions with `tickets: true` only; close moves any status but done to done, reopen moves done to open (requirements still approved) or backlog; the reason is logged |
 | `none` | `reason?` | changes nothing; same as returning a string (shown as the message) or `None` |
 

@@ -887,6 +887,8 @@ details > summary { cursor: pointer; }
   .wtable.cols-l td.num { text-align: left; }
   .wtable.cols-l .chip { white-space: normal; }
 }
+/* Free text in a wide addon table wraps at a readable width instead of stretching the table past its card. */
+.wtable td.cell-text { min-width: 12em; max-width: 32em; }
 /* Narrow containers (< 400): KV rows stack, stats go 2-up, action rows and Copy go full width, cards pad 16. */
 @container (max-width: 399px) {
   .kv { grid-template-columns: minmax(0, 1fr); gap: 0; }

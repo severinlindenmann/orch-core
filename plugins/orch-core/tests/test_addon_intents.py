@@ -127,6 +127,17 @@ def test_approve_needs_the_hash_the_human_saw(client, addon, put, ws):
     assert read_events(ws)[-1].kind == "addon.decision" and read_events(ws)[-1].data["intent"] == "approve"
 
 
+def test_import_applies_a_known_type_and_priority_only(client, addon, ws):
+    """GI-01: an imported chore must not become a feature; unknown values and epics fall back to the defaults."""
+    addon.ticket = None
+    for key, data in (("GH-1", {"type": "chore", "priority": "high"}), ("GH-2", {"type": "epic", "priority": "bogus"})):
+        addon.result = Intent("import", ref=key, value=f"Issue {key}", data=data)
+        assert "Imported" in _act(client, "import", key)
+    metas = {x["external"][0]["key"]: x for x in (e.meta for e in store.scan(ws)) if x.get("external")}
+    assert (metas["GH-1"]["type"], metas["GH-1"]["priority"]) == ("chore", "high")
+    assert (metas["GH-2"]["type"], metas["GH-2"]["priority"]) == ("feature", "normal")
+
+
 def test_ticket_intents_only_for_actions_declared_with_tickets(client, addon, ws):
     addon.ticket = None
     addon.result = Intent("import", ref="GH-7", value="Imported issue")

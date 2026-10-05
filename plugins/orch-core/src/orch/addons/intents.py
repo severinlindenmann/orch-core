@@ -91,7 +91,8 @@ def execute(ws, intent: Intent, *, allowed_ref: str | None, tickets: bool, actor
             raise ValidationError("an import intent needs the title in value")
         ask = intent.data.get("ask")
         ask = ask[:MAX_ASK_TEXT] if isinstance(ask, str) else ""
-        return f"Imported {ref.upper()} as {_import(ws, ops, ref, title, intent.reason, ask)}"
+        kind_of = {k: v for k in ("type", "priority") if isinstance((v := intent.data.get(k)), str) and v}
+        return f"Imported {ref.upper()} as {_import(ws, ops, ref, title, intent.reason, ask, **kind_of)}"
     if kind == "close":
         t = ops.close(ref, intent.reason)
         return f"Closed {t.id}"
@@ -119,11 +120,15 @@ def _new(ws, actor, intent: Intent, *, decisions: bool) -> str:
     return f"Created {t.id} in backlog"
 
 
-def _import(ws, ops, key: str, title: str, reason: str = "", ask: str = "") -> str:
+def _import(ws, ops, key: str, title: str, reason: str = "", ask: str = "", type: str | None = None,
+            priority: str | None = None) -> str:
     """The ticket for an external key; an existing one if a ticket already has that key (idempotent). `reason`
     (e.g. "Imported from <url>") is logged on a newly created ticket, never on one that already existed. `ask` (the
-    issue's own text) becomes the new ticket's Ask through `neutral_text`, so it can never forge a section."""
+    issue's own text) becomes the new ticket's Ask through `neutral_text`, so it can never forge a section. `type` and
+    `priority` (from the issue's labels) apply when they are ones orch knows; anything else keeps the default, and
+    an epic is never made by an import."""
     from orch.core import store
+    from orch.core.constants import PRIORITIES, TYPES
     from orch.core.model import neutral_text
 
     wanted = key.strip().upper()
@@ -131,7 +136,12 @@ def _import(ws, ops, key: str, title: str, reason: str = "", ask: str = "") -> s
         for x in (entry.meta or {}).get("external") or []:
             if isinstance(x, dict) and str(x.get("key", "")).upper() == wanted:
                 return entry.id
-    ticket = ops.new(title, external=wanted, ask=neutral_text(ask.strip()))
+    chosen = {}
+    if type in TYPES and type != "epic":
+        chosen["type"] = type
+    if priority in PRIORITIES:
+        chosen["priority"] = priority
+    ticket = ops.new(title, external=wanted, ask=neutral_text(ask.strip()), **chosen)
     if reason:
         ops.log(ticket.id, reason)
     return ticket.id

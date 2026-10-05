@@ -50,7 +50,7 @@ def test_template_installs_trusts_enables_and_renders(ws, monkeypatch):
     c = TestClient(create_app(ws, "tok"))
     c.get("/?token=tok")
     html = c.get("/addons/hello-status/").text
-    assert "<h1>Hello status</h1>" in html and "Not fetched yet" in html and "Hello, acme" in html
+    assert "<h1>Hello status</h1>" in html and "Loading…" in html and "Hello, acme" in html
 
 
 def test_addons_md_covers_the_guide():

@@ -6,16 +6,18 @@ from urllib.parse import urlencode
 
 from orch.addons.widgets import KV, Action, Badge, Callout, Card, Chips, Link, Table, Text, Tile
 
+from .pending import pending
+
 STATES = (("review", "Needs your review"), ("mine", "Yours"), ("failing", "Checks failing"), ("draft", "Drafts"),
           ("all", "All open"))
 _STATE_LABEL = dict(STATES)
 CHECKS = {"passed": ("ok", "checks passed"), "failed": ("err", "checks failing"), "pending": ("info", "checks running"),
           "cancelled": ("neu", "checks cancelled"), "none": ("neu", "no checks")}
 REVIEWS = {"approved": ("ok", "approved"), "changes_requested": ("warn", "changes requested"),
-           "required": ("info", "review required"), "none": ("neu", "no review yet")}
+           "required": ("info", "review required"), "none": ("neu", "review required")}
 MERGE = {"conflict": ("warn", "merge conflict")}
 SIZES = ((10, "XS"), (50, "S"), (250, "M"), (1000, "L"))
-COLUMNS = ("PR", "Title", "Author", "Checks", "Review", "Merge", "Size", "Ticket", "Action", "Agent")
+COLUMNS = ("PR", "Title", "Checks", "Review", "Next")  # DESIGN.md: at most 5 columns on a page
 _NO_PROVIDER = ("no provider for this host", "no remote named origin")
 
 
@@ -44,13 +46,13 @@ def failed_runs(item) -> list[str]:
     return [r for r in runs if isinstance(r, str) and r.isdigit()] if isinstance(runs, list) else []
 
 
-def size_label(item) -> str:
+def size_label(item, files: bool = True) -> str:
     add, dele = _int(item.get("additions")), _int(item.get("deletions"))
     if add is None or dele is None:
         return "size unknown"
     chip = next((label for limit, label in SIZES if add + dele < limit), "XL")
-    files = _int(item.get("changed_files"))
-    return f"{chip} · +{add} −{dele}" + (f" · {files} files" if files is not None else "")
+    n = _int(item.get("changed_files"))
+    return f"{chip} · +{add} −{dele}" + (f" · {n} file{'' if n == 1 else 's'}" if files and n is not None else "")
 
 
 def matches(item, state: str, me) -> bool:
@@ -97,6 +99,11 @@ class Data:
         if self._links is None:
             self._links = self.view.links()
         return self._links
+
+    def fetched_at(self, item=None):
+        """When the newest good fetch landed (the age of everything this page shows); None before the first one."""
+        times = [s.fetched_at for s in self.prs.values() if s.health != "never_fetched" and s.fetched_at]
+        return max(times) if times else None
 
     def scopes(self) -> list[str]:
         names = [r.name for r in self.repos]
@@ -171,8 +178,8 @@ def _repo_card(d: Data, scope: str) -> Card:
     counts = KV((("open PRs", len(items) if known else None),
                  ("need review", need_review if known else None),
                  ("failing", Badge("err", str(failing)) if failing else failing)), layout="stats")
-    body = tuple(w for w in (Chips(tuple(x for x in who if x is not None), label=f"{scope}: repository"),
-                             Chips(tuple(x for x in state if x is not None), label=f"{scope}: local state"),
+    body = tuple(w for w in (Chips(tuple(x for x in who if x is not None), label=f"{scope}: repository", show_label=False),
+                             Chips(tuple(x for x in state if x is not None), label=f"{scope}: local state", show_label=False),
                              counts) if not isinstance(w, Chips) or w.items)
     return Card(scope, body, role="warn" if snap is not None and snap.health not in ("ok", "never_fetched") else None)
 
@@ -211,17 +218,28 @@ def _row(d: Data, item: dict) -> tuple:
     state = checks_state(item)
     review = Badge("neu", "draft") if item.get("draft") is True else Badge(*REVIEWS.get(item.get("review"), REVIEWS["none"]))
     target = f"{_str(item.get('repo'))}#{item.get('number')}"
+    what = f"{target} \"{_str(item.get('title'))[:80]}\""
     action = None
-    if state == "failed" and failed_runs(item):
-        action = Action("rerun_failed", "Rerun failed", target)
+    if pending(d.view.state_dir, target, d.fetched_at(item)):
+        action = Text("Rerun requested" if state == "failed" else "Marked ready")
+    elif state == "failed" and failed_runs(item):
+        action = Action("rerun_failed", "Rerun failed", target, confirm=f"Rerun the failed checks of {what}?",
+                        detail="Asks GitHub to run the failed checks again. Nothing in your tickets changes.")
     elif item.get("draft") is True:
-        action = Action("mark_ready", "Mark ready", target)
+        action = Action("mark_ready", "Mark ready", target, confirm=f"Mark {what} ready for review?",
+                        detail="Takes the pull request out of draft on GitHub and lets reviewers be notified.")
     merge = MERGE.get(item.get("mergeable"))
     number = f"#{item.get('number')}"
-    return (Link(number, url) if _http(url) else number, _str(item.get("title")), _str(item.get("author")) or None,
-            Badge(*CHECKS[state]), review, Badge(*merge) if merge else None, size_label(item),
-            Link(first.id, f"/t/{first.id}") if first else None, action,
-            Link("Ask agent to fix", f"/t/{first.id}#start-agent-{first.id}") if state == "failed" and first else None)
+    author = _str(item.get("author"))
+    big = size_label(item, files=False) if (_int(item.get("additions")) or 0) + (_int(item.get("deletions")) or 0) >= 1000 else ""
+    title = " · ".join(x for x in (_str(item.get("title")), f"by {author}" if author and d.me and author != d.me else "",
+                                   "merge conflict" if merge else "", big,
+                                   first.id if first and first.id not in _str(item.get("title")) else "") if x)
+    if action is None and state == "failed" and first:
+        action = Link("Ask agent to fix", f"/t/{first.id}#start-agent-{first.id}")
+    elif action is None and first:
+        action = Link(first.id, f"/t/{first.id}")
+    return (Link(number, url) if _http(url) else number, title, Badge(*CHECKS[state]), review, action)
 
 
 def _lists(d: Data, state: str, repo: str) -> list:
@@ -231,7 +249,7 @@ def _lists(d: Data, state: str, repo: str) -> list:
             continue
         rows = tuple(_row(d, i) for i in d.items(scope) if matches(i, state, d.me))
         if rows:
-            out.append(Card(scope, (Table(COLUMNS, rows),)))
+            out.append(Card(scope, (Table(COLUMNS, rows, empty="No pull requests match this filter. Pick another filter above."),)))
     if not out:  # an empty state is plain text, not a callout (DESIGN.md: one callout per page, for situations)
         out.append(Text(f"Nothing in {_STATE_LABEL[state]}. Pick another filter above, or wait for the next refresh."))
     return out
@@ -252,14 +270,35 @@ def _multi_repo(d: Data):
     return Card("One ticket, several repos", (Table(("Ticket", "Pull requests"), rows), Text(text)))
 
 
+def _loading(d: Data) -> bool:
+    """Before the first fetch there is nothing to count: dashes and "0" would read as a real, empty result."""
+    snaps = list(d.prs.values())
+    return all(s.health == "never_fetched" for s in snaps) if snaps else not d.local
+
+
 def page(view) -> list:
     d = Data(view)
-    state = view.params.get("state", "review")
-    state = state if state in _STATE_LABEL else "review"
+    if _loading(d):
+        return [Card("Loading pull requests...", (Text("The first fetch from GitHub is running; this page fills in "
+                                                       "when it finishes. Press Refresh to check again."),))]
+    asked = view.params.get("state")
+    notes = []
+    state = asked if asked in _STATE_LABEL else "review"
+    if asked and asked not in _STATE_LABEL:
+        notes.append(Text(f"Unknown filter {asked!r}; showing {_STATE_LABEL[state]}."))
     repo = view.params.get("repo", "")
-    repo = repo if repo in d.scopes() else ""
+    if repo and repo not in d.scopes():
+        notes.append(Text(f"Unknown repository {repo!r}; showing all repositories."))
+        repo = ""
+    if asked is None and not any(matches(i, state, d.me) for s, i in d.all_items() if not repo or s == repo):
+        # the landing view must not be empty just because you opened every pull request yourself
+        fallback = next((k for k in ("mine", "all") if any(matches(i, k, d.me) for s, i in d.all_items()
+                                                          if not repo or s == repo)), None)
+        if fallback is not None:
+            notes.append(Text(f"Nothing needs your review right now; showing {_STATE_LABEL[fallback]}."))
+            state = fallback
     out = [Card("Repositories", tuple(_repo_card(d, s) for s in d.scopes()), layout="grid"), *_login_help(d),
-           _filters(d, state, repo), *_lists(d, state, repo)]
+           *notes, _filters(d, state, repo), *_lists(d, state, repo)]
     multi = _multi_repo(d)
     if multi is not None:
         out.append(multi)

@@ -964,6 +964,10 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
             if verb == "commit" and not any(a in ("-m", "--message") or a.startswith("--message=")
                                             or re.fullmatch(r"-[aqvs]*m.*", a) for a in args):
                 return "git commit needs its message with -m here (no editor is opened in a factory session)"
+            if verb == "commit":  # the message as the release will check it, now, while the agent can fix it
+                why = commit_message_refusal(ws, b, args)
+                if why:
+                    return why
     except Exception as e:
         return f"orch could not check this git command ({type(e).__name__}); it is refused"
     return None
@@ -989,6 +993,54 @@ CD_HINT = "run the orch command from your current folder, without cd"
 _GIT_ADD_COMMIT = re.compile(r"\s*(?:\S*/)?git\s+add\b[^;&|]*(?:&&|;)\s*(?:\S*/)?git\s+commit\b")
 GIT_HINT = "run git add and git commit as two separate commands"
 _CHAIN_HINTS = ((_CD_ORCH, CD_HINT), (_GIT_ADD_COMMIT, GIT_HINT))
+
+
+def commit_message(args: list[str]) -> str:
+    """The message a `git commit` with these arguments records: every -m value a paragraph, subject first."""
+    vals, i = [], 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a in ("-m", "--message"):
+            if i < len(args):
+                vals.append(args[i])
+                i += 1
+        elif a.startswith("--message="):
+            vals.append(a[len("--message="):])
+        elif re.fullmatch(r"-[aqvs]*m.*", a):
+            rest = a[a.index("m") + 1:]
+            if rest:
+                vals.append(rest)
+            elif i < len(args):
+                vals.append(args[i])
+                i += 1
+    return "\n\n".join(vals)
+
+
+def commit_message_refusal(ws, b: dict, args: list[str]) -> str | None:
+    """Why the message of this `git commit` would be refused by orch's commit-msg check (orch.hooks.commit_msg
+    check_message, the one function the release's message_refusal uses too), or None. The refusal is fixed text: what
+    the workspace's format needs and a command to run, with at most the first 80 escaped characters of the problem."""
+    from orch.hooks.commit_msg import check_message
+    problems = check_message(ws, commit_message(args))
+    if not problems:
+        return None
+    return (f"the commit message is refused ({shown(problems[0])[:80]}). " + commit_needs(ws, b.get("child")))
+
+
+def commit_needs(ws, key) -> str:
+    """'Your commit message needs: ... Run: git commit -m ...' from the workspace's commit format (fixed text)."""
+    from orch.core import factory_runner
+    from orch.instructions.render import body_names
+    try:
+        labels = [str(x) for x in body_names(ws.config)]
+    except Exception:
+        labels = []
+    lines = (", then " + ", ".join(f"{x}:" for x in labels[:-1]) + (" and " if len(labels) > 1 else "")
+             + f"{labels[-1]}: lines") if labels else ""
+    example = factory_runner.commit_worked(ws, str(key)) if key else None
+    return ("Your commit message needs: a subject starting with the ticket key" + lines + "."
+            + (f" Run: {example}" if example else ""))
 
 
 def bash_gate(ws, b: dict, payload) -> str | None:

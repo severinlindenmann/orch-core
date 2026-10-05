@@ -328,3 +328,48 @@ def release_doubles(ws, rec: dict, epic, kids: list[str], found: dict) -> tuple[
             return [], f"what {k} adds could not be listed"
         per[k] = got
     return double_adds(per), None
+
+
+# -- told while the agent still runs: `orch move <child> testing` from its own session ------------------------------
+
+def move_refusal(ws, t) -> str | None:
+    """Why child `t` (with a runner-made clone) may not move to testing yet, as fixed text naming what to do, or None:
+    work in its clone that is not committed, a commit message orch's commit-msg check refuses (the release refuses it
+    later), or a file it adds that another child adds too (the merge would conflict). The release checks the same
+    things later; this says it while the agent can still fix it."""
+    from orch.core import epics, factory_clones, factory_release as fr, permits
+    if factory_clones.record(ws, t.id) is None:
+        return None
+    st = uncommitted(ws, t.id)
+    if st is None:
+        return None
+    if not st["ok"]:
+        return "orch could not read your clone's state: try the move again in a moment"
+    if st["lines"]:
+        paths = ", ".join(permits.shown(ln[3:])[:80] for ln in st["lines"][:5])
+        return (f"your clone has work that is not committed ({paths}): commit it (git add, then git commit, as two "
+                "commands) or delete what does not belong, then move again")
+    sha, _, why = child_tree(ws, t)
+    if sha is None:
+        return f"orch could not read your branch ({permits.shown(why)[:120]}): try the move again in a moment"
+    rec = _git_rec(ws)
+    base = _base_sha(ws, rec) if rec else None
+    if not base:
+        return None  # no release recipe: nothing is merged, so nothing more to check here
+    bad = fr.message_refusal(ws, rec, sha)
+    if bad:
+        return (f"your branch has {bad}: the release would refuse it. Say so with orch log and do not move it; the "
+                "human fixes the message")
+    mine = adds(ws, rec, sha, base) or set()
+    epic = epics.parent_epic(ws, t)
+    for e in (epics.children(ws, epic.id) if epic is not None else []):
+        if e.id == t.id:
+            continue
+        other = fr._ticket(ws, e.id)
+        tip = child_tree(ws, other)[0] if other is not None else None
+        both = sorted(mine & (adds(ws, rec, tip, base) or set())) if tip else []
+        if both:
+            return (f"you add {both[0]}, which {e.id} adds too: only one child creates a file, and the merge would "
+                    f"conflict. Delete it with your file tools, then git add {both[0]} and git commit (two commands), "
+                    "then move again")
+    return None

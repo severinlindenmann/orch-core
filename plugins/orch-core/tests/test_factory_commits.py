@@ -12,7 +12,8 @@ from orch.hooks.guard import evaluate
 from test_factory_runner import _behavior, _payload, _tick, _trusted_programs, fake  # noqa: F401
 from test_factory_planner import _child, _epic
 
-COMMIT = 'git commit -m "x" -m "What: y"'
+# a commit the gate allows: its message fits the workspace format ({C}: the bound child, filled in by _both)
+COMMIT = 'git commit -m "{C} work" -m "What: y" -m "Why: z" -m "Risk: low"'
 
 
 def _git(*args, cwd):
@@ -55,7 +56,8 @@ def session(repo, agent, human, fake):  # noqa: F811
 
 def _both(ws, b, command, cwd=None):
     """(the guard's answer, the permission hook's answer) for the bound session running `command` in `cwd`."""
-    p = {**_payload(b["session"], command), **({"cwd": str(cwd)} if cwd is not None else {})}
+    p = {**_payload(b["session"], command.replace("{C}", str(b.get("child")))),
+         **({"cwd": str(cwd)} if cwd is not None else {})}
     return evaluate(ws, p), permits.hook_decision(ws, p)
 
 

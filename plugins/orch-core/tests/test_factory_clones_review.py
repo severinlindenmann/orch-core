@@ -215,7 +215,7 @@ def test_the_commit_gate_refuses_other_dirs_config_and_refs(fws, run, cmd):
 @pytest.mark.parametrize("cmd", [COMMIT, "git add a.txt", "git --no-pager log -p", "git status", "git branch --show-current",
                                  "git diff HEAD", "git rev-parse HEAD", "git ls-files", "git blame a.txt"])
 def test_the_allowlist_passes_the_sessions_own_work(fws, run, cmd):
-    cmd = cmd.replace("{c}", run["cid"].lower())
+    cmd = cmd.replace("{c}", run["cid"].lower()).replace("{C}", run["cid"])
     assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
 
 
@@ -247,7 +247,10 @@ def test_reads_pass_for_a_session_in_the_shared_checkout_and_writes_do_not(fws, 
 
 # -- 8: commit messages are checked by the release --------------------------------------------------------------
 
-def test_a_child_commit_with_a_bad_message_fails_the_merge(fws, fa, fh, human, close_tasks, remote):  # noqa: F811
+def test_a_child_commit_with_a_bad_message_fails_the_merge(fws, fa, fh, human, close_tasks, remote,
+                                                           monkeypatch):  # noqa: F811
+    from orch.core import factory_built
+    monkeypatch.setattr(factory_built, "move_refusal", lambda ws, t: None)  # the release's own check, past the move's
     fr.set_recipe(fws, human, _recipe(remote))
     eid, d = _epic(fa, fh, human, fws, release="merge")
     cid = _child(fa, eid)
@@ -387,7 +390,10 @@ def test_every_spelling_is_gated_and_both_gates_agree(fws, run, cmd):
     assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
 
 
-def test_a_message_cannot_hide_behind_a_separator(fws, fa, fh, human, close_tasks, remote):  # noqa: F811
+def test_a_message_cannot_hide_behind_a_separator(fws, fa, fh, human, close_tasks, remote,
+                                                  monkeypatch):  # noqa: F811
+    from orch.core import factory_built
+    monkeypatch.setattr(factory_built, "move_refusal", lambda ws, t: None)  # the release's own check, past the move's
     fr.set_recipe(fws, human, _recipe(remote))
     eid, d = _epic(fa, fh, human, fws, release="merge")
     cid = _child(fa, eid)
@@ -426,8 +432,9 @@ def test_an_allowed_verb_with_an_argument_that_changes_it_is_refused(fws, run, c
     "git status --porcelain", "git status --porcelain=v2", "git status -uno", "git status -s",
     "git log -5 --oneline", "git log -n 3", "git log -n3", "git log --format=%h", 'git log --format "%h %s"',
     "git log main..HEAD", 'git show "HEAD^"', "git rev-parse --git-dir", "git rev-parse --show-toplevel",
-    "git diff --cached --stat", "git diff -U3", "git diff -- src/a.py", 'git commit -am "{C} x" -m "What: y"',
-    'git commit -m "{C} Fix the /api path" -m "What: y"', "git commit -mshort", "git add src/a.py docs/",
+    "git diff --cached --stat", "git diff -U3", "git diff -- src/a.py", 'git commit -am "{C} x" -m "What: y" -m "Why: z" -m "Risk: low"',
+    'git commit -m "{C} Fix the /api path" -m "What: y" -m "Why: z" -m "Risk: low"', 'git commit -m"{C} short" -m "What: y" -m "Why: z" -m "Risk: low"',
+    "git add src/a.py docs/",
     "git ls-tree -r HEAD", "git blame -L 1,2 a.txt", "git --no-pager log",
 ])
 def test_an_allowed_verb_with_its_listed_options_passes(fws, run, cmd):
@@ -631,7 +638,8 @@ def test_the_fourth_scan_spellings_are_refused_by_both_gates(fws, run, cmd):
     assert not guard.allow and _behavior(hook) == "deny", cmd
 
 
-@pytest.mark.parametrize("cmd", ['git commit -am "{C} x" -m "What: y"', "git commit --message=x", "git commit -mx",
+@pytest.mark.parametrize("cmd", ['git commit -am "{C} x" -m "What: y" -m "Why: z" -m "Risk: low"',
+                                 'git commit --message="{C} x" -m "What: y" -m "Why: z" -m "Risk: low"', 'git commit -m"{C} x" -m "What: y" -m "Why: z" -m "Risk: low"',
                                  'orch log L-0002 -m "line one\nline two names git"'])
 def test_a_commit_with_its_message_and_multi_line_data_still_pass(fws, run, cmd):
     cmd = cmd.replace("{C}", run["cid"])

@@ -556,6 +556,11 @@ class Ops(TaskOpsMixin):
             raise UsageError(f"unknown status {to!r}", hint="one of: " + ", ".join(STATUSES))
 
         self.warnings = []
+        if to == "testing" and not self.actor.is_human:  # a factory child: what the release refuses later, now
+            from orch.core import factory_built
+            why = factory_built.move_refusal(self.ws, store.load(self.ws, store.resolve(self.ws, ref).id)[1])
+            if why:
+                raise ValidationError(f"not moved to testing: {why}")
 
         def fn(t: Ticket) -> dict:
             frm = t.status

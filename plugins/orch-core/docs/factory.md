@@ -1137,6 +1137,20 @@ redirects); the nudge depends on Claude Code's current screen markers.
   in the next round; a nudge an earlier attempt left in the box is cleared before a new one. Workers also ran `git
   add f && git commit ...`, a chain no rule matches: the prompt now says to run them as two separate plain commands,
   and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands".
+- *A commit message the release refused (the fifth run).* A worker committed a subject with What: and Why: but no
+  Risk: line, in its clone, where no commit-msg hook runs; only the release's merge stage refused it, and the human
+  amended it by hand. Now the commit gate checks every `git commit` of a bound session with orch's own commit-msg
+  check (the same function the release uses): its -m values, each a paragraph, subject first. A refusal says the
+  check's first problem (at most 80 escaped characters of it), what the workspace's format needs, and a worked
+  command to run, through the guard and the permission hook alike. Only -m/--message, -a, -q, -v, -s and
+  --allow-empty are allowed (no -F, --amend, --no-verify, -c/-C, --fixup, --squash, -e or --template). The clone
+  worker's prompt carries that worked example, derived from the workspace's commit format.
+- *What the release checks later, and when the agent hears of it.* Commit message: at commit time (the gate) and at
+  `orch move <child> testing`. Work not committed in its clone, and a file another child adds too: at `orch move
+  <child> testing`, which a factory session's agent cannot pass while either holds (a fixed reason says what to
+  do); a human's move is never held, and the Ready report, the release and the close still check. Sensitive paths:
+  only at the release (the paths are the recipe's, which agents cannot read). Named files in a commit: at Ready and
+  the release (whether a child should hold a file is the epic's split, not the child's own knowledge).
 
 ## Release recipe (phase 6)
 

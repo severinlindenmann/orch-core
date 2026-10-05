@@ -713,7 +713,28 @@ def commit_form(ws, key: str) -> str | None:
     return "git commit " + " ".join(f'-m "{p}"' for p in [subject, *(f"{x}: ..." for x in labels)])
 
 
-def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | None = None) -> str | None:
+# Sample paragraphs of a worked commit example: plain sentences (no ; $ ` \ or quotes), whatever the labels are.
+_WORKED = {"What": "Adds the file this ticket asks for.", "Why": "The ticket asks for it.",
+           "Risk": "Low. A new file only.", "Rollback": "Delete the file."}
+
+
+def commit_worked(ws, key: str) -> str | None:
+    """A worked `git commit` for `key` in the workspace's format (commit_form with sample sentences), or None."""
+    form = commit_form(ws, key)
+    if form is None:
+        return None
+    from orch.instructions.render import body_names
+    out = form.replace('"' + str(ws.config["commit"]["subject"]).replace("{key}", key)
+                       .replace("{summary}", "short summary") + '"',
+                       '"' + str(ws.config["commit"]["subject"]).replace("{key}", key)
+                       .replace("{summary}", "Add the requested file") + '"')
+    for x in body_names(ws.config):
+        out = out.replace(f'"{x}: ..."', f'"{x}: {_WORKED.get(str(x), "One short plain sentence.")}"')
+    return out
+
+
+def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | None = None,
+                        worked: str | None = None) -> str | None:
     """The built-in prompt of a child's session (its key validated as a ticket key). `commit`: commit_form for a
     session that starts in a work tree of its own, None for one in the shared checkout (it is told not to commit).
     `clone_tmp`: the workspace's temporary folder (absolute) for a session in the child's clone: the files it hands
@@ -725,6 +746,9 @@ def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | No
         if not isinstance(clone_tmp, str) or not os.path.isabs(clone_tmp) or not clone_tmp.isprintable():
             return None
         part = CLONE_COMMIT.replace("{form}", commit) if commit else CLONE_NO_COMMIT
+        if commit and worked:  # the clone runs no commit-msg hook: the format, worked, before the first commit
+            part += (" orch checks the message when you commit, as the release does, and refuses one that does not "
+                     f"fit: for example `{worked}`.")
         # the one path a clone worker needs: where the file it hands orch goes, as a file path, never a folder to enter
         text = FACTORY_WORK_PROMPT.replace(_TMP, f"in {clone_tmp}, outside this clone (give the Write tool and --file "
                                                  f"that full path, {clone_tmp}/{{key}}-verification.md; never write it "
@@ -1010,7 +1034,8 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False, actor=None,
     clone = factory_clones.in_root(Path(cwd).resolve())
     prompt = planner_prompt(t.id) if planner else factory_work_prompt(
         t.id, commit_form(ws, t.id) if str(Path(cwd).resolve()) != root else None,
-        clone_tmp=str(Path(ws.temporary_dir).resolve()) if clone else None)
+        clone_tmp=str(Path(ws.temporary_dir).resolve()) if clone else None,
+        worked=commit_worked(ws, t.id) if clone else None)
     claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
     if claude is None or env_bin is None:
         lines.append(f"{t.id} not started: claude or env was not found at a trusted path (owned by you or root, not "

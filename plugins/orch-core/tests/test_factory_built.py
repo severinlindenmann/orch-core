@@ -15,8 +15,12 @@ ASKED = "One page elephants.html that reads elephants.json"
 
 
 @pytest.fixture(autouse=True)
-def _fresh():
+def _fresh(monkeypatch):
+    """A fresh cache; and no move precheck: these tests put children in testing in states the precheck refuses (a
+    session from before it, or a human's move) to prove the Ready report, the release and the close catch them too.
+    tests/test_factory_move_precheck.py tests the precheck itself."""
     fb._CACHE.clear()
+    monkeypatch.setattr(fb, "move_refusal", lambda ws, t: None)
     yield
     fb._CACHE.clear()
 

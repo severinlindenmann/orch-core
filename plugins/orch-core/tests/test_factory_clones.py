@@ -24,7 +24,8 @@ def _msg(cid):
 from test_factory_runner import Fake, _behavior, _payload
 
 pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="needs git")
-COMMIT = 'git commit -m "x" -m "What: y"'
+# a commit the gate allows: its message fits the workspace format ({C}: the bound child, filled in by _both)
+COMMIT = 'git commit -m "{C} work" -m "What: y" -m "Why: z" -m "Risk: low"'
 REAL_RESOLVE = factory_runner.resolve_bin
 
 
@@ -121,7 +122,7 @@ def run(fws, fa, fh, human):
 
 
 def _both(ws, b, command, cwd):
-    p = {**_payload(b["session"], command), "cwd": str(cwd)}
+    p = {**_payload(b["session"], command.replace("{C}", str(b.get("child")))), "cwd": str(cwd)}
     return evaluate(ws, p), permits.hook_decision(ws, p)
 
 
@@ -406,8 +407,9 @@ def _committed_clone(fws, fa, fh, human, remote, release="merge"):
 
 
 def test_a_child_without_commits_of_its_own_is_refused_and_never_closes(fws, fa, fh, human, close_tasks,
-                                                                         remote):  # noqa: F811
-    from orch.core import factory_close
+                                                                         remote, monkeypatch):  # noqa: F811
+    from orch.core import factory_built, factory_close
+    monkeypatch.setattr(factory_built, "move_refusal", lambda ws, t: None)  # past the move's precheck
     fr.set_recipe(fws, human, _recipe(remote))
     eid, d = _epic(fa, fh, human, fws, release="merge")
     cid = _child(fa, eid)
@@ -683,8 +685,9 @@ def test_the_clone_prompts_git_steps_pass_the_profile_and_the_commit_gate_one_by
 
 
 
-@pytest.mark.parametrize("cmd", ['git add elephants.json && git commit -m "{cid} data" -m "What: x"',
-                                 "git add a.json; git commit -m x", "git add . && git commit -q -m y"])
+@pytest.mark.parametrize("cmd", ['git add elephants.json && git commit -m "{cid} data" -m "What: x" -m "Why: z" -m "Risk: low"',
+                                 'git add a.json; git commit -m "{cid} x" -m "What: x" -m "Why: z" -m "Risk: low"',
+                                 'git add . && git commit -q -m "{cid} y" -m "What: x" -m "Why: z" -m "Risk: low"'])
 def test_a_chained_git_add_and_commit_is_denied_with_how_to_run_them(fws, run, cmd):  # noqa: F811
     cid, clone, b = run["cid"], run["clone"], run["b"]
     cmd = cmd.replace("{cid}", cid)

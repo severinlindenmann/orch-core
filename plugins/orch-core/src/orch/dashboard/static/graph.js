@@ -62,7 +62,8 @@
     const base = (f) => f.slice(Math.max(f.lastIndexOf("/"), f.indexOf(":")) + 1);
     const short = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + "…" : s || "");
 
-    const params = new URLSearchParams(location.search);
+    const host = window.orchHost;  // static/app.js: the only place that touches the address bar and storage
+    const params = new URLSearchParams(host.search());
     const state = { view: fig.dataset.view || "code", focus: fig.dataset.focus || "", sel: fig.dataset.focus || "", q: "", epic: "", done: true, only: false };
     if (!state.focus) {
       const hot = (id) => [...tf.get(id).keys()].filter((f) => collide.has(f)).length;  // a ticket in a collision first
@@ -487,7 +488,8 @@
       const p = new URLSearchParams();
       if (state.view !== "code") p.set("view", state.view);
       if (state.sel && tickets.has(state.sel)) p.set("t", state.sel);
-      try { history.replaceState(history.state, "", "/graph" + (p.toString() ? "?" + p : "")); } catch (e) { /* not allowed: fine */ }
+      const next = "/graph" + (p.toString() ? "?" + p : "");
+      try { host.pageHistory.replace(next); document.documentElement.dataset.path = next; } catch (e) { /* not allowed: fine */ }
       const local = tabs.find((a) => a.dataset.view === "local");
       if (local) local.setAttribute("href", "/graph?view=local" + (state.focus ? "&t=" + encodeURIComponent(state.focus) : ""));
     }
@@ -527,5 +529,6 @@
     setView(state.view);
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+  // app.js (the host adapter) is deferred after this file: wait for it
+  if (document.readyState !== "loading" && window.orchHost) start(); else document.addEventListener("DOMContentLoaded", start);
 })();

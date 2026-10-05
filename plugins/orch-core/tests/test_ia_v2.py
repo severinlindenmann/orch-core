@@ -9,7 +9,7 @@ def test_menu_order_and_labels(dash):
     html = dash.get("/").text
     nav = html[html.index('<nav class="menu"'):html.index("</nav>")]
     labels = re.findall(r'class="item[^"]*"[^>]*>.*?<span class="label">([^<]+)</span>', nav, re.S)
-    assert labels[:4] == ["Today", "Board", "Activity", "Reports"] and "Workspace &amp; addons" in nav
+    assert labels[:5] == ["Today", "Board", "Graph", "Activity", "Reports"] and "Workspace &amp; addons" in nav
 
 
 def test_no_addon_group_without_addons(dash):

@@ -68,7 +68,8 @@ _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledge
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
                   r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
                   r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
-                  r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
+                  r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
+                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -219,11 +220,11 @@ def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> li
 _ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 _KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
 _SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
-              "factory-release*", "release-records", "release-repos", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans*", "launch.json")
+              "factory-release*", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans*", "launch.json")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
 _SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
                     "ledger.head", "ledger.lock", "factory-command.json", "factory-release.json",
-                    "factory-release.json.lock", "release-records", "release-repos", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans.json",
+                    "factory-release.json.lock", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans.json",
                     "launch.json")
 _READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
             "bat", "wc", "xargs", "dir", "vdir"}
@@ -527,11 +528,13 @@ _APP_HUMAN = re.compile(
     + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove|prune)" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
+    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"clones" + _Q
     + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
 _HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
                          r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
                          r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
-                         r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
+                         r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
+                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, changing the Dark profile or the release recipe and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
@@ -573,7 +576,7 @@ def _human_only_tokens(seg: str) -> bool:
             return True
         if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
             return True
-        if len(rest) >= 2 and rest[0] == "factory" and rest[1] == "release":
+        if len(rest) >= 2 and rest[0] == "factory" and rest[1] in ("release", "clones"):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -650,9 +653,9 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # (orch.core.dark_profile) is driven from code no more than the permits module.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
                      r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release"
-                     r"|release-records|release-repos|nudges|early-ends|tmux)\b"
-                     r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release)\b"
-                     r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release)\b")
+                     r"|release-records|release-repos|child-clones|nudges|early-ends|tmux)\b"
+                     r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release|factory_clones)\b"
+                     r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release|factory_clones)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")

@@ -922,10 +922,10 @@ def _rev(ws, rec, ref: str) -> str | None:
     return sha if r.get("code") == 0 and _SHA.fullmatch(sha) else None
 
 
-def fetch_child(ws, rec, branch: str) -> str | None:
-    """Fetch `branch` from the workspace checkout into the release repository (objects and that one ref, nothing else), and return
-    its commit, or None."""
-    src = workspace_repo(ws)
+def fetch_child(ws, rec, branch: str, src: Path | None = None) -> str | None:
+    """Fetch `branch` from `src` (the child's runner-made clone, see child_source; else the workspace checkout) into
+    the release repository (objects and that one ref, nothing else), and return its commit, or None."""
+    src = src or workspace_repo(ws)
     if src is None or not valid_branch(branch):
         return None
     r = _git(ws, rec, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", str(src),
@@ -950,6 +950,18 @@ def checkout(ws, rec, sha: str) -> bool:
         if _git(ws, rec, *args).get("code") != 0:
             return False
     return True
+
+
+def child_source(ws, t) -> tuple[str | None, Path | None, str]:
+    """(branch, the repository to fetch it from, "") of child `t`: for a child the runner made a clone for, the
+    branch and clone its record names (the runner's record, never a ticket field); else child_branch from the
+    workspace checkout (the fallback for children with a worktree of their own). (None, None, why) otherwise."""
+    from orch.core import factory_clones
+    rec = factory_clones.record(ws, t.id)
+    if rec is not None:
+        return rec["branch"], Path(rec["path"]), ""
+    branch, why = child_branch(ws, t)
+    return branch, workspace_repo(ws) if branch else None, why
 
 
 def child_branch(ws, t) -> tuple[str | None, str]:
@@ -992,8 +1004,8 @@ def changed_paths(ws, rec, sha: str) -> list[str] | None:
 
 
 def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
-    """({child: (branch, sha)}, {child: [sensitive paths]}, {child: why it could not be checked}) for every child
-    ticket in `kids`, in the runner's release repository against the base fetched from the recipe's remote."""
+    """({child: (branch, sha, source)}, {child: [sensitive paths]}, {child: why it could not be checked}) for every
+    child ticket in `kids`, in the runner's release repository against the base fetched from the recipe's remote."""
     found, hits, errors = {}, {}, {}
     try:
         ensure_repo(ws, rec)
@@ -1003,16 +1015,16 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
     if base_sha is None:
         return {}, {}, {t.id: "the base could not be fetched from the recipe's remote" for t in kids}
     for t in kids:
-        branch, why = child_branch(ws, t)
+        branch, src, why = child_source(ws, t)
         if branch is None:
             errors[t.id] = why
             continue
         if branch == rec["base"]:
             errors[t.id] = f"{t.id}'s branch is the base branch"
             continue
-        sha = fetch_child(ws, rec, branch)
+        sha = fetch_child(ws, rec, branch, src)
         if sha is None:
-            errors[t.id] = f"{t.id}'s branch could not be fetched from the workspace"
+            errors[t.id] = f"{t.id}'s branch could not be fetched from {src}"
             continue
         paths = changed_paths(ws, rec, sha)
         if paths is None:
@@ -1021,7 +1033,7 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         bad = [p for p in paths if sensitive(p, rec["sensitive_paths"])]
         if bad:
             hits[t.id] = bad[:20]
-        found[t.id] = (branch, sha)
+        found[t.id] = (branch, sha, src)
     return found, hits, errors
 
 
@@ -1124,11 +1136,11 @@ def _mark_stale(ws, rec, epic, kids) -> list[str]:
         if us["state"] != "proven" or not us.get("sha"):
             continue
         t = _ticket(ws, k)
-        branch = child_branch(ws, t)[0] if t is not None else None
+        branch, src, _ = child_source(ws, t) if t is not None else (None, None, "")
         if branch is None:
             continue
         ensure_repo(ws, rec)
-        tip = fetch_child(ws, rec, branch)
+        tip = fetch_child(ws, rec, branch, src)
         if tip is not None and tip != us["sha"]:
             _write(_dir(ws, epic.id) / _name("merge", k, us["attempt"], "stale"), {"was": us["sha"], "now": tip})
             lines.append(f"{epic.id}: the merge of {k} is out of date: its branch changed after it was merged")
@@ -1189,11 +1201,12 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     from orch.core.factory_report import _full
     name = s["name"]
     child = s["per"] == "child"
+    src = None
     try:
         if child:
             if unit not in found:
                 return f"{epic.id}: {name} of {unit} not started: its branch was not checked this round", False
-            branch, sha = found[unit]
+            branch, sha, src = found[unit]
             ctx = _context(epic.id, wsid, rec, unit, branch, sha)
         else:
             ctx = _context(epic.id, wsid, rec)
@@ -1217,7 +1230,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     # the work area: the checked commit for a child stage; for dev, the remote base as it is now (the merged work)
     extra = {}
     if child:
-        if fetch_child(ws, rec, ctx["branch"]) != ctx["sha"] or not checkout(ws, rec, ctx["sha"]):
+        if fetch_child(ws, rec, ctx["branch"], src) != ctx["sha"] or not checkout(ws, rec, ctx["sha"]):
             return f"{epic.id}: {name} of {unit} not started: its branch moved since it was checked", False
         extra["sha"] = ctx["sha"]
     else:
@@ -1238,7 +1251,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
             why = "stopped before the next command: the epic may no longer release (paused, edited, out of budget, " \
                   "switched off or the ledger cut)"
             break
-        if child and fetch_child(ws, rec, ctx["branch"]) != ctx["sha"]:
+        if child and fetch_child(ws, rec, ctx["branch"], src) != ctx["sha"]:
             why = "stopped before the next command: the branch moved since it was checked"
             break
         _refresh(ws, epic.id, s["timeout"])

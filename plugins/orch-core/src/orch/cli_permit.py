@@ -215,6 +215,43 @@ def release_retry(epic: str,
     cli._out({"epic": eid, "stage": stage, "unit": unit}, json_out, text)
 
 
+clones_app = typer.Typer(no_args_is_help=True, help="The runner's per-child clones on this machine (human only).")
+factory_app.add_typer(clones_app, name="clones")
+
+
+@clones_app.command("list")
+def clones_list(json_out: JsonOpt = False) -> None:
+    """The clones the runner made for this workspace's children. Human only; the runner never deletes one."""
+    from orch.actor import require_human_terminal
+    from orch.core import factory_clones
+    cli, ws = _ctx()
+    require_human_terminal("listing the child clones")
+    rows = factory_clones.listing(ws)
+    cli._out({"clones": rows}, json_out, "\n".join(f"{r['child']}  {r['branch']}  {r['path']}" for r in rows)
+             or "no child clones")
+
+
+@clones_app.command("clean")
+def clones_clean(child: str, json_out: JsonOpt = False) -> None:
+    """Delete one child's clone and the runner's record of it, work that was not released included. Human only:
+    needs the child id typed; refused while a session runs in it."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_clones, factory_sessions
+    from orch.errors import UsageError
+    cli, ws = _ctx()
+    require_human_terminal("removing a child's clone")
+    cid = child.upper()
+    rec = factory_clones.record(ws, cid)
+    if rec is None:
+        raise UsageError(f"the runner has no clone of {cid}")
+    if any(b["child"] == cid for b in factory_sessions.bindings(ws)):
+        raise UsageError(f"a session of {cid} runs in its clone: stop the run first")
+    typer.echo(f"Deleting the clone of {cid} at {rec['path']} (branch {rec['branch']}), with any work in it that was "
+               "not released:", err=json_out)
+    had = factory_clones.clean(ws, confirm_typed(cid), cid)
+    cli._out({"child": cid, "removed": had}, json_out, f"the clone of {cid} was removed" if had else "nothing removed")
+
+
 dark_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory: this checkout's Dark profile.")
 profile_app = typer.Typer(no_args_is_help=True, help="The shell commands a Dark factory epic runs without asking you.")
 dark_app.add_typer(profile_app, name="profile")

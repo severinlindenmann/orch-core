@@ -629,7 +629,8 @@ def test_the_agent_starts_with_an_allowlisted_environment_only(fws, fa, fh, huma
     i = argv.index("/opt/test/claude")
     assert argv[:2] == ["/opt/test/env", "-i"]
     names = {a.split("=", 1)[0] for a in argv[2:i]}
-    assert names <= set(factory_runner.ENV_ALLOW) | {"PATH"} and {"HOME", "PATH"} <= names
+    assert names <= set(factory_runner.ENV_ALLOW) | {"PATH", "ORCH_HOME"} and {"HOME", "PATH", "ORCH_HOME"} <= names
+    assert f"ORCH_HOME={fws.home.resolve()}" in argv[2:i]  # set by the runner, never forwarded from the dashboard
     assert not any("secret" in a for a in argv)
 
 

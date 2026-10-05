@@ -276,10 +276,14 @@ def _probe(argv: list[str], stdin: str, cwd: str, timeout: float = PROBE_BUDGET)
 
 
 def agent_writable(ws, path) -> bool:
-    """Whether `path` (as written or after links) lies in the workspace, which agents write: every session's start
-    folder (start_dir) is the workspace root or below it. Any error is a yes."""
+    """Whether `path` (as written or after links) lies in the workspace or in the runner's child clones, which agents
+    write: every session's start folder (start_dir) is the workspace root, below it, or a child's clone. Any error is a
+    yes."""
+    from orch.core import factory_clones
     try:
-        roots = {Path(os.path.abspath(ws.root)), Path(ws.root).resolve()}
+        clones = factory_clones.root()
+        roots = {Path(os.path.abspath(ws.root)), Path(ws.root).resolve(), Path(os.path.abspath(clones)),
+                 clones.resolve()}
         forms = {Path(os.path.abspath(path)), Path(os.path.realpath(path))}
     except (OSError, ValueError, TypeError):
         return True
@@ -491,6 +495,22 @@ def readiness(ws, settings, environ=None) -> list[dict]:
     out.append(_check("trust", trusted,
                       f"Claude Code has not recorded the trust dialog for {root} ({why}): a new session would stop "
                       "at it. Open Claude once in this folder and accept the trust dialog"))
+    from orch.core import factory_clones
+    from orch.core.factory_release import workspace_repo
+    if workspace_repo(ws) is not None:  # children get clones of their own: git, and the trust of the clones folder
+        git = resolve_bin("git")
+        seen = f"{git} lies inside the workspace" if git else resolve_why("git")[1]
+        out.append(_check("git", git is not None and not agent_writable(ws, git),
+                          f"git was not found at a trusted path outside the workspace ({seen}): a child gets no "
+                          "clone of its own and is not started. Install git outside the workspace and restart the "
+                          "dashboard"))
+        croot = factory_clones.root()
+        croot.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ok, why = _trusted_folder(environ, croot)
+        out.append(_check("clones trust", ok,
+                          f"Claude Code has not recorded the trust dialog for {croot}, where the runner makes each "
+                          f"child's clone ({why}): a child's session would stop at it. Open Claude once in that "
+                          "folder and accept the trust dialog"))
     deny = ((data or {}).get("permissions") or {}).get("deny") if isinstance((data or {}).get("permissions"), dict) \
         else None
     lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
@@ -605,6 +625,16 @@ COMMIT_HERE = ("Commit your work on this worktree's branch with `git add FILES` 
                "paragraph: replace the dots with short plain sentences).")
 NO_COMMIT = ("Do not commit: this session runs in the shared checkout, not in a worktree of its own. Leave your "
              "changes in the working tree and say so with `orch log {key} -m \"...\"`.")
+# A session in the child's runner-made clone (factory_clones): its working folder is a separate copy of the repository.
+CLONE_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}, on its own "
+                "branch. Commit your work there with `git add FILES` and `{form}` (each -m is one paragraph: replace "
+                "the dots with short plain sentences). Never push: the runner takes the commits from this clone. Your "
+                "tickets live in the workspace, not in this clone, and orch commands work on them as usual.")
+CLONE_NO_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}. Do not "
+                   "commit: the workspace's commit format is not plain words. Leave your changes in this clone's "
+                   "working tree and say so with `orch log {key} -m \"...\"`. Your tickets live in the workspace, not "
+                   "in this clone, and orch commands work on them as usual.")
+_TMP = "under orchestrator/temporary"
 _SUBJECT_OK = re.compile(r"[A-Za-z0-9 \[\]()#:.,_/-]{1,100}")
 _LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
 
@@ -628,12 +658,20 @@ def commit_form(ws, key: str) -> str | None:
     return "git commit " + " ".join(f'-m "{p}"' for p in [subject, *(f"{x}: ..." for x in labels)])
 
 
-def factory_work_prompt(key: str, commit: str | None = None) -> str | None:
+def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | None = None) -> str | None:
     """The built-in prompt of a child's session (its key validated as a ticket key). `commit`: commit_form for a
-    session that starts in a worktree of its own, None for one in the shared checkout (it is told not to commit)."""
+    session that starts in a work tree of its own, None for one in the shared checkout (it is told not to commit).
+    `clone_tmp`: the workspace's temporary folder (absolute) for a session in the child's clone: the files it hands
+    orch must lie in the workspace, so the prompt names that folder by its path."""
     from orch.dashboard.data.agent_start import KEY_RE
     if not isinstance(key, str) or not KEY_RE.fullmatch(key):
         return None
+    if clone_tmp is not None:
+        if not isinstance(clone_tmp, str) or not os.path.isabs(clone_tmp) or not clone_tmp.isprintable():
+            return None
+        part = CLONE_COMMIT.replace("{form}", commit) if commit else CLONE_NO_COMMIT
+        text = FACTORY_WORK_PROMPT.replace(_TMP, f"in the workspace folder {clone_tmp} (that absolute path)")
+        return text.replace("{commit}", part).replace("{key}", key)
     part = COMMIT_HERE.replace("{form}", commit) if commit else NO_COMMIT
     return FACTORY_WORK_PROMPT.replace("{commit}", part).replace("{key}", key)
 
@@ -694,12 +732,26 @@ def default_branches(ws, common: Path) -> set[str] | None:
     return out
 
 
-def own_worktree(ws, path, child: str) -> str | None:
-    """Why `path` is not the child's own worktree, or None. The one rule for where a session starts in a worktree,
-    is told to commit, and may commit (the permission hook and the guard): a folder below the workspace root whose
-    `.git` is a gitfile naming a gitdir in the common git dir's `worktrees/` folder (a linked worktree), no reftable
-    refs, HEAD on a real branch that names the child (its id as a word) and is not a default branch (default_branches).
-    Read from files only; anything unreadable is a reason."""
+def own_work_tree(ws, path, child: str) -> str | None:
+    """Why `path` is not the child's own work tree, or None. The one rule for where a session starts outside the
+    shared checkout, is told to commit, and may commit (start_dir, the prompt, the guard and the permission hook):
+    either the child's runner-made clone (factory_clones.own_clone: the recorded folder, HEAD on the branch the runner
+    made for it, not a default branch) or the child's linked worktree of the workspace (_own_worktree)."""
+    from orch.core import factory_clones
+    try:
+        p = Path(str(path)).resolve()
+    except (OSError, RuntimeError, ValueError) as e:
+        return f"it cannot be read ({type(e).__name__})"
+    if factory_clones.in_root(p):
+        return factory_clones.own_clone(ws, p, child)
+    return _own_worktree(ws, p, child)
+
+
+def _own_worktree(ws, path, child: str) -> str | None:
+    """Why `path` is not the child's own linked worktree, or None: a folder below the workspace root whose `.git` is a
+    gitfile naming a gitdir in the common git dir's `worktrees/` folder, no reftable refs, HEAD on a real branch that
+    names the child (its id as a word) and is not a default branch (default_branches). Read from files only;
+    anything unreadable is a reason."""
     from orch.core.fsutil import read_regular_file
     try:
         root, p = Path(ws.root).resolve(), Path(str(path)).resolve()
@@ -738,22 +790,30 @@ def own_worktree(ws, path, child: str) -> str | None:
     return None
 
 
+def _harness_ok(root: Path, p: Path) -> bool:
+    return not any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES)
+
+
 def start_dir(ws, t) -> str | None:
-    """Where the child's session starts: the one worktree the child names when it is the child's own (own_worktree,
-    the same rule the commit checks use); else the workspace root (the field is agent-written). None (refuse to
-    launch) when that worktree carries a harness settings or MCP file that is not identical to the workspace's own."""
+    """Where the child's session starts: the one worktree the child names when it is the child's own, else the clone
+    the runner recorded for it when it is the child's own (own_work_tree, the same rule the commit checks use); else
+    the workspace root (the worktree field is agent-written; the clone record is the runner's). None (refuse to
+    launch) when that folder carries a harness settings or MCP file that is not identical to the workspace's own."""
+    from orch.core import factory_clones
     root = Path(ws.root).resolve()
     wts = t.meta.get("worktrees")
     vals = list(wts.values()) if isinstance(wts, dict) else []
     if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
         try:
             p = (root / vals[0]).resolve()
-            if p.is_dir() and own_worktree(ws, p, t.id) is None:
-                if any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES):
-                    return None
-                return str(p)
+            if p.is_dir() and not factory_clones.in_root(p) and own_work_tree(ws, p, t.id) is None:
+                return str(p) if _harness_ok(root, p) else None
         except (OSError, RuntimeError, ValueError):
             pass
+    rec = factory_clones.record(ws, t.id)
+    if rec is not None and own_work_tree(ws, rec["path"], t.id) is None:
+        p = Path(rec["path"]).resolve()
+        return str(p) if _harness_ok(root, p) else None
     return str(root)
 
 
@@ -845,17 +905,33 @@ def _launchable(ws, epic, d, t, signed) -> bool:
             and not epics.hidden_in(t) and epics.child_state(ws, epic, t, signed) in ("delegated", "covered"))
 
 
-def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | None:
+def _ready(ws, settings, epic, d, t, lines, planner: bool = False, actor=None) -> tuple | None:
     """Everything a launch needs, checked before a launch is counted (a missing program or a refused worktree must not
     use up a child's or the planner's launches): (prompt, cwd, claude, env), or None. `planner`: `t` is the epic
-    itself, the planner's prompt is used and the session starts in the workspace root."""
+    itself, the planner's prompt is used and the session starts in the workspace root. A child with no worktree of its
+    own in a workspace that is a git checkout gets its own clone (factory_clones.ensure; `actor`: the runner)."""
+    from orch.core import factory_clones
+    from orch.core.factory_release import workspace_repo
     root = str(Path(ws.root).resolve())
     cwd = root if planner else start_dir(ws, t)
+    if cwd == root and not planner and actor is not None and workspace_repo(ws) is not None:
+        path, why = factory_clones.ensure(ws, actor, t.id)
+        if path is None:
+            lines.append(f"{t.id} not started: its clone could not be prepared: {why}")
+            return None
+        cwd = start_dir(ws, t)
+        if cwd == root:  # made, but it does not pass the rule the commit checks use: never a silent shared start
+            why = f"its clone is not its own work tree: {own_work_tree(ws, path, t.id)}"
+            factory_clones._note_failure(ws, t.id, why)
+            lines.append(f"{t.id} not started: {why}")
+            return None
     if cwd is None:
-        lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")
+        lines.append(f"{t.id} not started: its work tree carries harness settings the workspace does not")
         return None
+    clone = factory_clones.in_root(Path(cwd).resolve())
     prompt = planner_prompt(t.id) if planner else factory_work_prompt(
-        t.id, commit_form(ws, t.id) if str(Path(cwd).resolve()) != root else None)
+        t.id, commit_form(ws, t.id) if str(Path(cwd).resolve()) != root else None,
+        clone_tmp=str(Path(ws.temporary_dir).resolve()) if clone else None)
     claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
     if claude is None or env_bin is None:
         lines.append(f"{t.id} not started: claude or env was not found at a trusted path (owned by you or root, not "
@@ -883,7 +959,13 @@ def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple
         command = with_model(command, settings.get("planner_model"))
     sid = fs.new_session_id()
     name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id
-    argv = [*env_prefix(env_bin, bins), claude,
+    # ORCH_HOME: the agent's orch commands and the hooks act on this workspace's ticket store wherever the session runs
+    # (a child's clone or worktree holds a copy of orchestrator/ of its own)
+    home = str(Path(ws.home).resolve())
+    if "\n" in home or "\x00" in home:
+        lines.append(f"{t.id} not started: the workspace path cannot be passed to the session")
+        return None
+    argv = [*env_prefix(env_bin, bins), f"ORCH_HOME={home}", claude,
             *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in command[1:])]
     b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token,
                 start=str(cwd))
@@ -1231,7 +1313,9 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 continue  # parked: nothing it waits for changed since it last started
             if not_ready():
                 return lines
-            ready = _ready(ws, settings, epic, d, t, lines)
+            if fs.runs(ws, d["id"], t.id) == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
+                continue  # checked again under the lock; here so no clone is made for a child that cannot start
+            ready = _ready(ws, settings, epic, d, t, lines, actor=actor)
             if ready is None:
                 continue  # checked before its marker: a refused launch uses up none of its launches
             with epics.delegation_lock(d["id"]):

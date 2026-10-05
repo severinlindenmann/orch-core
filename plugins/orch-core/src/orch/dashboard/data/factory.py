@@ -142,7 +142,8 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
-           "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
+           "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
+           "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
 
 
@@ -227,6 +228,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
     early = None
     planner_on = any(factory_sessions.is_planner(b) for b in running)
+    clones = _clone_failures(ws, kids)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
     if lit[-1]:
         state, headline = "finished", "You gave the verdict"
@@ -255,6 +257,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "planning", "A planner session is splitting the epic into children"
     elif not running and (early := _early(ws, d, bound)):
         state, headline = "early", "A session ended right after it started"
+    elif not running and clones:
+        state, headline = "noclone", "The runner could not make a child's clone of the repository"
     elif not kids:
         state, headline = "nokids", "Waiting for children"
     elif any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
@@ -283,6 +287,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
             "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
+            "clones": clones,
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel,
@@ -336,6 +341,21 @@ def _early(ws, d, bound) -> list[dict]:
                 if not any(g["delegation"] == d["id"] and g["child"] == e["child"] and g["at"] > e["at"] for g in later)]
     except Exception:
         return []
+
+
+def _clone_failures(ws, kids) -> list[dict]:
+    """Why the runner could not make the clone of a child that could still start ({child, why, at}), from its own
+    records; escaped plain text."""
+    from orch.core import factory_clones, factory_runner
+    out = []
+    try:
+        for _, t in kids or []:
+            f = factory_clones.failure(ws, t.id) if t.status in factory_runner.RUNNABLE else None
+            if f:
+                out.append({"child": t.id, "why": factory_report._text(f["why"], 400), "at": f["at"]})
+    except Exception:
+        return []
+    return out
 
 
 def _bound(ws) -> list[dict]:

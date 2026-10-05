@@ -1,4 +1,4 @@
-"""AI Factory: where a runner-bound session may commit. One rule (factory_runner.own_worktree) decides where a child's
+"""AI Factory: where a runner-bound session may commit. One rule (factory_runner.own_work_tree) decides where a child's
 session starts in a worktree, whether its prompt tells it to commit, and whether the guard (every permission mode) and
 the permission hook (a second layer) let a commit run: only in the child's own linked git worktree, on a branch that
 names the child and is not a default branch. Real git repositories on disk; no agent, no tmux."""

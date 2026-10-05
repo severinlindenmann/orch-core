@@ -174,7 +174,7 @@ _NEVER = (
      "the harness's settings, hooks and plugins are the human's"),
     (re.compile(r"--no-verify\b|core\.hookspath", re.I), "git hooks stay on"),
     (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"
-                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release|release-records|release-repos|nudges|early-ends|tmux)\b"),
+                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release|release-records|release-repos|child-clones|nudges|early-ends|tmux)\b"),
      "orch's config, state, ledger and permit records are changed by orch and the human only"),
     (re.compile(r"\b" + _ENV_VARS + r"\s*="), "the variables that decide where orch keeps its records are fixed"),
     (re.compile(r"(?<![\w-])(?:sudo|doas|su)(?![\w-])"), "no elevated rights"),
@@ -616,7 +616,8 @@ def _git_commit(command) -> bool:
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     """Why runner-bound session `b` must not run commit command `command` now, or None. Allowed only in the folder
-    the runner started it in (the session's own worktree: factory_runner.own_worktree, the rule its prompt follows),
+    the runner started it in (the session's own work tree, a linked worktree or the child's runner-made clone:
+    factory_runner.own_work_tree, the rule its prompt follows),
     from that folder or below it, with nothing that points git elsewhere (-C, --git-dir, --work-tree, GIT_DIR,
     GIT_WORK_TREE, a cd). Everything that cannot be read is a refusal."""
     from orch.core import factory_runner
@@ -632,7 +633,7 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
                 if d != start:
                     return "the session's folder is in another git checkout than the one it was started in"
                 break
-        why = factory_runner.own_worktree(ws, start, b["child"])
+        why = factory_runner.own_work_tree(ws, start, b["child"])
         if why:
             return f"the session runs in {start}, and {why}"
     except Exception as e:

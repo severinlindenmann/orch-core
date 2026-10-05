@@ -430,3 +430,18 @@ def test_the_plugin_probe_writes_nothing_in_the_plugin_or_the_workspace(ws, tmp_
     assert sorted(str(p) for p in root.rglob("*")) == before  # the install folder is untouched
     assert sorted(str(p) for p in ws.root.rglob("*")) == ws_before  # and so is the workspace
     assert (base_dir() / "permits" / "plugin-data" / "venv-made").is_file()  # the runner's own data folder
+
+
+def test_a_git_workspace_needs_git_and_the_clones_folder_trusted(ws, env):
+    from orch.core import factory_clones
+    assert "git" not in _failing(ws) and "clones trust" not in _failing(ws)  # not a git checkout: no clones
+    subprocess.run(["git", "init", "-q"], cwd=ws.root, check=True)
+    f = _failing(ws)
+    assert "git was not found" in f["git"]["why"] and "Open Claude once in that folder" in f["clones trust"]["why"]
+    assert str(factory_clones.root()) in f["clones trust"]["why"] and factory_clones.root().is_dir()
+    env["bins"]["git"] = "/usr/bin/git"
+    projects = {str(p.resolve()): {"hasTrustDialogAccepted": True} for p in (ws.root, factory_clones.root())}
+    (env["dir"] / ".claude.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
+    assert _failing(ws) == {}
+    env["bins"]["git"] = str(ws.root / "bin" / "git")
+    assert "lies inside the workspace" in _failing(ws)["git"]["why"]

@@ -277,8 +277,11 @@ option either prompt names against the CLI, every git verb against real git, and
 baselines match each command it tells the agent to run. A prompt is advice: a model can still ignore it, and then
 its chained command stops for a card as before.
 
-**Commits.** One rule (`own_worktree`) decides where a child's session starts in a worktree, whether its prompt
-tells it to commit, and whether a commit may run: the one worktree the child names must be a linked git worktree
+**Commits.** One rule (`own_work_tree`) decides where a child's session starts outside the shared checkout, whether
+its prompt tells it to commit, and whether a commit may run. It accepts the child's own runner-made clone (see
+"Per-child clones": the folder the runner's record names for exactly this child, its `.git` a plain folder without
+alternates or reftable, HEAD on the branch the runner made for it, `fx/<child>`, which is not a default branch, the
+base it was made from included), or the child's own linked worktree: the one worktree the child names must be a linked git worktree
 below the workspace root (its `.git` a file naming a git dir in the common git dir's `worktrees/` folder), not keep its
 refs in reftable, have HEAD on a real branch, and that branch must not be a default branch and must name the child
 (its id as a word). Default branches, compared without case: `main`, `master`, the release recipe's base, and what
@@ -287,9 +290,13 @@ Only such a session is told to commit, on that branch: `git add FILES` and a `gi
 format, rendered at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when
 `commit.rollback` is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why:
 ..." -m "Risk: ..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config
-whose subject or labels are not plain words gets no commit instruction. Every other session (a child that names no
-such worktree starts in the workspace root, and the baseline cannot create a branch) is told not to commit: it leaves
-its changes in the working tree and says so with `orch log`.
+whose subject or labels are not plain words gets no commit instruction. A session in its clone is told that its folder
+is a separate clone made for the child, to commit there in that format, never to push, that its tickets live in the
+workspace (orch commands work on them as usual), and to write the files it hands orch under the workspace's
+`orchestrator/temporary`, named by its absolute path (orch reads a bound session's files only inside the workspace).
+Every other session (a workspace that is not a git checkout: every child starts in the workspace root, and the
+baseline cannot create a branch) is told not to commit: it leaves its changes in the working tree and says so with
+`orch log`.
 
 Whatever the prompt says, a runner-bound session's command that may make or move a commit (the word `git` and
 `commit`, `commit-tree`, `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `pull`, `update-ref` or `stash` anywhere
@@ -424,10 +431,14 @@ runner cannot use `tmux`, `env` or `claude`, it says so: once on the dashboard's
 run view and epic page, with the path it saw and why it was refused ("tmux was not found at a trusted path: ..."),
 never only "Waiting for children". The runner's own lines (sessions started, refused, stopped, nudged) are printed on
 the terminal that runs the dashboard. The agent gets `env -i` with a fixed PATH (the
-folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
-session starts in the child's worktree only when the child names exactly one and it is the child's own (a linked
-git worktree in the workspace on a non-default branch that names the child: see "Commits"); otherwise in the workspace
-root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
+folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of
+variables, nothing else the dashboard holds, plus `ORCH_HOME` set by the runner (never forwarded) to the workspace's
+`orchestrator` folder: the agent's orch commands, the guard and the permission hook then act on the workspace's own
+tickets and compute the workspace's checkout id wherever the session runs (a clone or worktree carries its own copy of
+`orchestrator/`, and its own `.git`). A session starts in the child's worktree only when the child names exactly one
+and it is the child's own (a linked git worktree in the workspace on a non-default branch that names the child: see
+"Commits"); otherwise, in a workspace that is a git checkout, in the child's own clone ("Per-child clones"); otherwise
+in the workspace root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
 so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
 
 The guard's part is a text check, not a shell. It refuses a command run from inside the orch config dir, a `cd` or
@@ -493,6 +504,86 @@ no planner model.
 (user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a
 `.claude/settings.json`, `.claude/settings.local.json` or `.mcp.json` that is not identical to the workspace's own.
 Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text.
+The same holds for a child's clone.
+
+### Per-child clones
+
+Each child that names no linked worktree of its own gets a separate clone of the workspace's repository, made and
+owned by the runner (the dashboard process you started), so its work lands on a branch of its own that the release
+can take. Nothing of this runs for a workspace that is not a git checkout (its children start in the workspace root
+and are told not to commit, as before).
+
+**What runs where.**
+
+- The clone lives at `<orch config dir>-clones/<workspace id>/<child id>/repo` (for `~/.config/orch`,
+  `~/.config/orch-clones/...`): outside the workspace and outside the orch config dir. Not in the permits folder: the
+  guard refuses every tool and command that reaches the orch config dir (a session working there could not run a
+  single command), and the clone's work tree must be the session's to write.
+- The runner's record of it (child -> clone path, branch, base, source) is in `permits/child-clones/` of the orch
+  config dir: written only by the runner, guarded like the rest of the permits folder (agents' tools and commands
+  cannot read or write it; a command naming it is never grantable). The path is derived from the validated workspace
+  and child ids, never from ticket text, and a record whose path or branch is not the derived one does not count.
+  The ticket's own `branches` and `worktrees` fields are agent-written and are used only for a child with a linked
+  worktree of its own (the fallback from before clones).
+- At the child's first launch the runner runs, by argv, `git clone --local --no-hardlinks --no-checkout
+  --no-recurse-submodules --template= <workspace repository> <clone>` with the release step's git isolation (no user or
+  system git config: `GIT_CONFIG_GLOBAL` an empty file of the runner's, `GIT_CONFIG_NOSYSTEM`, `GIT_ATTR_NOSYSTEM`, an
+  empty `HOME`; `-c core.hooksPath=/dev/null`, `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
+  `core.protectHFS`/`protectNTFS` on, `--no-replace-objects`) and a time limit of 300 seconds (a repository too large to
+  copy in that time fails with that reason, it does not hang). It then writes the clone's `.git/config` itself (no
+  includes, aliases, filters or credential helpers; `hooksPath=/dev/null`, `fsmonitor=false`, `symlinks`,
+  `protectHFS`/`protectNTFS`; `origin` the workspace path with `pushurl` set to a path that cannot work) and removes its
+  hooks folder, and checks out the base's tip onto a new branch `fx/<child id>` (lower case; it names the child as a
+  word, the release's branch rule), without submodules. The base is the release recipe's `base` when this workspace
+  has a recipe, else the branch the workspace checkout's HEAD names (a damaged recipe or a detached HEAD: no clone).
+- The session starts with its working directory in the clone and `ORCH_HOME` set to the workspace (above). It commits
+  there on `fx/<child id>`; the guard and the permission hook let a commit run only from that clone, on that branch
+  (see "Commits"). It never pushes.
+- The release fetches the child's branch from the clone, not from the workspace (objects and that one ref, pinned by
+  commit, with the same isolation and classification as before; see "Release recipe").
+
+**What `git clone` reads from the workspace, which agents write.** `--local` copies the source's object files and refs
+(a copy, not hard links); no `upload-pack` runs, and none of the source's config, hooks, attributes or `info` files is
+used or copied (the test suite plants a hooks path, fsmonitor, filters, a textconv, aliases, an include, an ssh
+command and `uploadpack.packObjectsHook` in the workspace, all of which leave a marker if run, and checks that none
+runs and none reaches the clone). A source whose `.git` is not a plain folder (the workspace is itself a linked
+worktree), that borrows objects from elsewhere (`objects/info/alternates`: the clone would keep reading them) or keeps
+its refs in reftable, or a clone that comes out with sha256 objects, is refused. The tree that is checked out is
+agent-written: a `.gitattributes` names filters and drivers that are not configured, so none runs; `.gitmodules` is
+never read (no submodules); symlinks are checked out as symlinks (the guard judges file tool paths after links, as in
+the workspace). Git LFS pointers stay pointers: the user's LFS filter is in the git config the runner does not use.
+When the release fetches from the clone, `upload-pack` runs in the clone, with the config the runner wrote.
+
+**What is agent-writable.** The clone's work tree, by the session's file tools and commands, like the workspace. Its
+`.git` is protected by the guard's `.git` rules (file tools never write a path with a `.git` component; shell writes
+into `.git` files, and `git config` of a key that runs a program, are denied), and the runner writes its config again
+at every launch. Other children's clones are just as writable to a session as any folder of your user (best effort,
+as everywhere): the commit gate refuses a commit from any folder but the session's own clone, and the release takes
+only the recorded branch of the recorded clone, pinned by commit and classified before anything merges.
+
+**Lifecycle.** A clone is made at the child's first launch and reused at every later one (its config written again;
+its branch and commits kept). The runner never deletes a clone. A folder already at a clone's path that the runner has
+no record of is never touched: the child is not started, and the run view says why ("The runner could not make a
+child's clone of the repository", with the reason), as for any clone that cannot be made (no git at a trusted path,
+a failed or timed-out clone, a missing base); a failed attempt removes only what that attempt created, and the runner
+tries again in its next round.
+
+**Cleaning up (you only).** In your own terminal, refused to agents and under an agent harness:
+
+```bash
+orch factory clones list            # every clone the runner made for this workspace: child, branch, path
+orch factory clones clean <child>   # deletes that clone and its record, unreleased work included; needs the id typed
+```
+
+`clean` is refused while a session runs in the clone. Removing a clone folder by hand works too: remove the record's
+folder and its record goes stale (the next launch then refuses to reuse the missing clone until you run `clean`).
+
+**Cost.** `--no-hardlinks` copies every object once per child: fine for a small repository; for a large one (several
+GB) each child costs that much disk and up to the 300-second limit to copy, and fails clearly past it.
+
+**Readiness.** For a workspace that is a git checkout, two more blocking checks: *git* (found at a trusted path outside
+the workspace) and *clones trust* (Claude Code's trust dialog accepted for the clones folder, `<orch config
+dir>-clones`, or a folder above it; the runner creates that folder: open Claude once in it and accept).
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).
@@ -874,8 +965,9 @@ created with `git init` without templates; its `.git/config` is written by the r
 includes, aliases, hooks, fsmonitor, filters or remotes. Each release round:
 
 1. fetches the base from the recipe's `remote` into a ref only the runner writes (`refs/remotes/release/<base>`);
-2. fetches each child branch from the workspace checkout's path into the mirror (`+refs/heads/<branch>` only: just
-   objects cross, and the commit is what counts from then on, never the workspace's refs or replace objects);
+2. fetches each child branch into the mirror (`+refs/heads/<branch>` only: just objects cross, and the commit is what
+   counts from then on, never the source's refs or replace objects): from the child's runner-made clone when the
+   runner's record names one ("Per-child clones"), else from the workspace checkout's path;
 3. classifies there (below);
 4. for the merge stage, checks out exactly the classified commit in the mirror's work tree (forced, cleaned) and runs
    the precheck, the commands and the check there, with the working directory in the mirror; before every one of
@@ -910,9 +1002,10 @@ with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) 
 `--ignore-submodules=none` (a gitlink counts, whatever `.gitmodules` says), `--no-ext-diff` and `--no-textconv`. Any
 match of `sensitive_paths` stops the release with "Sensitive path touched", naming the paths (escaped): nothing is
 merged. Because every commit counts, a later commit that removes the change does not clear it: merge by hand, or
-rewrite the branch without it, then Retry release on the merge stage. The runner takes the one branch a child names
-(`orch link --branch`), else the branch of its one worktree; the name must be a valid branch name that names the child
-(its id as a word) and is not the base. A child the runner cannot fetch or check fails its merge stage without a
+rewrite the branch without it, then Retry release on the merge stage. For a child with a runner-made clone the runner
+takes the branch and clone of its own record (never a ticket field); otherwise the one branch a child names (`orch
+link --branch`), else the branch of its one worktree, from the workspace. The name must be a valid branch name that
+names the child (its id as a word) and is not the base. A child the runner cannot fetch or check fails its merge stage without a
 command run.
 
 What this guarantees: the paths a branch changes are judged from objects the runner fetched, against the base on the
@@ -1032,7 +1125,9 @@ network) and a stand-in for the recipe's commands: no test runs a real `gh`, pus
 
 - A production stage; closing children under the charter (after a live test); release windows and rollback;
   runner-side proof of tests and review (and ring steps for them).
-- A second live end-to-end run after this round's fixes, and a repeatable one per release.
+- A second live end-to-end run after this round's fixes, and a repeatable one per release (per-child clones and the
+  coverage block are tested with stand-ins only).
+- An automatic close that reads `coverage_ok`; removing a child's clone once its work is released.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).
 - Phone cards through the signed phone-decision flow.

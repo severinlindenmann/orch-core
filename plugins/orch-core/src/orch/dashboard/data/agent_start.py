@@ -249,6 +249,7 @@ def suggest(ws, ticket, *, needs_items, rows=None, now=None, events=None, settin
     chosen = next(o for o in options if o["harness"] == harness and o["mode"] == mode)
     prompt, command = chosen["prompt"], chosen["command"]
     here = request is not None and terminals.enabled(ws, request)  # Terminals (#40): on, and a local request
+    tsettings = terminals.settings(ws.root)
     return {
         "key": ticket.id, "mode": mode, "harness": harness, "prompt": prompt, "command": command,
         "disabled": disabled, "disabled_role": role, "warning": warning, "pr": pr,
@@ -256,7 +257,13 @@ def suggest(ws, ticket, *, needs_items, rows=None, now=None, events=None, settin
         # a second button that opens it in Mission Control's own Terminals (issue #40), while tmux is installed
         "mission_control": terminal not in ("tmux", "none") and here,
         # the addon's "Start agents in Mission Control by default": its button comes first, as the primary
-        "mission_control_first": here and bool(terminals.settings(ws.root)["open_here"]),
+        "mission_control_first": here and bool(tsettings["open_here"]),
+        # Terminals runs one harness (the addon's setting): Open in Mission Control is refused for the others, so the
+        # box disables it with this as the reason while another harness is picked (app.js follows the select)
+        "mission_control_harness": tsettings["harness"],
+        "mission_control_harness_label": HARNESS_LABELS.get(tsettings["harness"], tsettings["harness"]),
+        # sessions Mission Control already runs for this ticket: the box links them and asks before starting another
+        "running": [s.name for s in terminals.for_ticket(ws, ticket.id)] if here else [],
         "launcher": chosen["launcher"], "launch_path": settings["path"],
         "modes": [{"value": m, "label": "Refine epic" if epic and m == "refine" else MODE_LABELS[m]} for m in modes],
         "harnesses": [{"value": h, "label": HARNESS_LABELS.get(h, h)} for h in harnesses(ws, settings)],

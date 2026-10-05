@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
+from orch.core import store
 from orch.dashboard import agentinfo, launch, terminals
 from orch.dashboard.auth import strict_same_origin
 from orch.dashboard.data import agent_start
@@ -68,14 +70,37 @@ def _sse(event: str, data) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-def _live(s, i: dict) -> dict:
-    """What a tile or the summary line shows, as JSON for the page and the stream."""
+_TICKET_NAME = re.compile(r"([A-Z][A-Z0-9]*-[0-9]+)(?:-[0-9]+)?")
+
+
+def _named_ticket(ws, name: str) -> str:
+    """The ticket a session is named for (`DEMO-1`, or `DEMO-1-2` for a second one), when it exists: shown as its
+    ticket until the agent claims one. "" otherwise (`scratch`)."""
+    m = _TICKET_NAME.fullmatch(name)
+    if m is None:
+        return ""
+    try:
+        store.load(ws, m.group(1))
+    except OrchError:
+        return ""
+    return m.group(1)
+
+
+def _info(ws, s, screen=None) -> dict:
+    """agentinfo for session `s`, with the model and context read off its screen when its transcript gave none."""
+    return agentinfo.with_screen(agentinfo.info(ws, s), screen)
+
+
+def _live(s, i: dict, ws=None) -> dict:
+    """What a tile or the summary line shows, as JSON for the page and the stream. `title` is the session's own name
+    (what you started it as); what the agent is working on (its transcript's title) is `topic`."""
     claimed = i.get("tickets") or []
     first = claimed[0] if claimed else None
+    named = "" if first or ws is None else _named_ticket(ws, s.name)
     active = i.get("subagents_active") or 0
     return {"status": i.get("status") or "", "now": i.get("now") or "", "kind": i.get("now_kind") or "",
-            "title": i.get("title") or "", "sig": i.get("sig") or "", "activity": s.activity,
-            "ticket": first["id"] if first else "", "tasks": (first or {}).get("tasks") or "",
+            "title": s.name, "topic": i.get("title") or "", "sig": i.get("sig") or "", "activity": s.activity,
+            "ticket": first["id"] if first else named, "tasks": (first or {}).get("tasks") or "",
             "more": len(claimed) - 1 if len(claimed) > 1 else 0,
             "subs": f"{active} subagent{'s' if active != 1 else ''} running" if active else "",
             "model": i.get("model") or "", "context": agentinfo.compact(i.get("context")) if i.get("context") else "",
@@ -87,8 +112,9 @@ def _rows(ws) -> list[dict]:
     found = terminals.sessions(ws)
     screens = terminals.capture_many([s.name for s in found])  # one tmux call for every screen
     for s in found:
-        i = agentinfo.info(ws, s)
-        rows.append({"s": s, "screen": screens.get(s.name) or NO_SCREEN, "info": i, "live": _live(s, i)})
+        screen = screens.get(s.name) or NO_SCREEN
+        i = _info(ws, s, screen)
+        rows.append({"s": s, "screen": screen, "info": i, "live": _live(s, i, ws)})
     rows.sort(key=lambda r: (_ORDER.get(r["info"].get("status"), 3), -r["s"].activity))  # waiting first
     return rows
 
@@ -102,7 +128,7 @@ def grid(request: Request):
     harness = terminals.settings(ws.root)["harness"]
     counts = {k: sum(1 for r in rows if r["info"].get("status") == k) for k in ("waiting", "busy", "idle")}
     return page(request, "terminals.html", 200 if on else 404, nav="terminals", title="Terminals", addon_on=addon_on,
-                available=found, local=local, rows=rows, counts=counts, harness_label=agent_start.HARNESS_LABELS.get(harness, harness))
+                available=found, local=local, rows=rows, root=str(ws.root), counts=counts, harness_label=agent_start.HARNESS_LABELS.get(harness, harness))
 
 
 @router.get("/terminals/stream")
@@ -139,7 +165,7 @@ async def grid_stream(request: Request):
                 info_at = loop.time()
                 lives = {}
                 for s in found:
-                    live = _live(s, await asyncio.to_thread(agentinfo.info, ws, s))
+                    live = _live(s, await asyncio.to_thread(_info, ws, s, last.get(s.name)), ws)
                     if live != last_live.get(s.name):
                         lives[s.name] = last_live[s.name] = live
                 if lives:
@@ -171,9 +197,11 @@ def view(request: Request, name: str):
     if s is None:
         return page(request, "terminal.html", 404, nav="terminals", title="Terminal", s=None, term_name=name,
                     screen=NO_SCREEN)
-    i = agentinfo.info(request.app.state.ws, s)
-    return page(request, "terminal.html", nav="terminals", title=i.get("title") or s.name, s=s, info=i,
-                live=_live(s, i), compact=agentinfo.compact, screen=terminals.capture(s.name) or NO_SCREEN)
+    screen = terminals.capture(s.name) or NO_SCREEN
+    ws = request.app.state.ws
+    i = _info(ws, s, screen)
+    return page(request, "terminal.html", nav="terminals", title=s.name, s=s, info=i,
+                live=_live(s, i, ws), compact=agentinfo.compact, screen=screen)
 
 
 @router.get("/terminals/{name}/stream")
@@ -203,7 +231,7 @@ async def view_stream(request: Request, name: str):
                 sent = True
             if info_at is None or loop.time() - info_at >= INFO_SECONDS:
                 info_at = loop.time()
-                live = _live(s, await asyncio.to_thread(agentinfo.info, ws, s))
+                live = _live(s, await asyncio.to_thread(_info, ws, s, last), ws)
                 if live != last_live:
                     last_live = live
                     yield _sse("info", live)

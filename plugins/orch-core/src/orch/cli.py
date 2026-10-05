@@ -247,12 +247,24 @@ def list_(
 
 @app.command()
 def show(ref: str, json_out: JsonOpt = False,
-         widgets: Annotated[bool, typer.Option("--widgets", help="Each widget's text alternative after its section.")] = False) -> None:
-    """Show a ticket (by ID, number or external key)."""
+         widgets: Annotated[bool, typer.Option("--widgets", help="Each widget's text alternative after its section.")] = False,
+         section: Annotated[str | None, typer.Option("--section", metavar="NAME",
+                                                     help="Only the ticket's status and this section.")] = None,
+         lines: Annotated[int | None, typer.Option("--lines", min=1, metavar="N",
+                                                   help="Only the first N lines.")] = None) -> None:
+    """Show a ticket (by ID, number or external key). --section and --lines limit the output, so no pipe into head
+    or grep is needed."""
     from orch.core import store
     ws = _ws()
     path, t = store.load(ws, ref)
     raw = path.read_text(encoding="utf-8")
+    if section is not None and not json_out:
+        name = next((s for s in t.sections if s.casefold() == section.strip().casefold()), None)
+        if name is None:
+            raise UsageError(f"{t.id} has no section {section!r}", hint="sections: " + ", ".join(t.sections))
+        text = f"{t.id} · status: {t.status}\n\n## {name}\n{t.section(name)}"
+        typer.echo("\n".join(text.splitlines()[:lines]) if lines else text)
+        return
     blocks = ctx = None
     if widgets:
         from orch.widgets import Ctx, check_ticket
@@ -268,7 +280,8 @@ def show(ref: str, json_out: JsonOpt = False,
         if widgets:
             from orch.widgets.render import annotate
             raw = annotate(raw, blocks, ctx)
-        typer.echo(f"{path.relative_to(ws.home).as_posix()}\n\n{raw}")
+        text = f"{path.relative_to(ws.home).as_posix()}\n\n{raw}"
+        typer.echo("\n".join(text.splitlines()[:lines]) if lines else text)
 
 
 @app.command()

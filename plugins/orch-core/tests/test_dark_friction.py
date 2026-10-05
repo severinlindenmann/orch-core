@@ -286,3 +286,50 @@ def test_the_read_only_git_verbs_workers_use(dws, human, cmd, ok):
 def test_commit_message_text_is_not_a_path(dws, human, cmd, ok):
     dark_profile.add_baseline(dws, human, name="git-basic")
     assert (dark_profile.match(dws, cmd) is not None) is ok, cmd
+
+
+# -- the second live run's cards (5 October): what each became ---------------------------------------------------------
+# (live command, what the strengthened prompt has the worker run instead, or None when it should not run at all)
+LIVE_CARDS = [
+    ("orch show T-0003 | head -30", "orch show T-0003 --lines 30"),
+    ("orch section set -h 2>&1 | head -30", "orch section set --help"),
+    ('orch show T-0002 | grep -E "^status:"', "orch show T-0002 --section Verification"),
+    ('printf "- AC1: the page lists 3 elephants" > orchestrator/temporary/v.md', None),  # the Write tool, then:
+    ('echo "- AC2: the data file is valid JSON" >> orchestrator/temporary/v.md', None),
+    ("orch section set T-0002 Verification --file orchestrator/temporary/T-0002-verification.md", "same"),
+    ("python3 -m http.server 8000", None),  # never: read the file with the Read tool
+    ("curl localhost:8000/elephants.html", None),
+    ("python3 -m json.tool elephants.json", None),  # not constrainable: a second argument writes any file
+    ("mkdir -p orchestrator/temporary", None),  # the Write tool makes the folder
+]
+
+
+def test_the_live_runs_cards_stay_cards_and_their_replacements_need_none(dws, human):
+    from orch.core import factory_runner
+    dark_profile.add_baseline(dws, human)
+    dark_profile.add_baseline(dws, human, name="git-basic")
+    for live, instead in LIVE_CARDS:
+        assert dark_profile.match(dws, live) is None or instead == "same", live  # no pipeline or shell matcher
+        if instead:
+            cmd = live if instead == "same" else instead
+            assert dark_profile.match(dws, cmd) is not None, cmd
+    prompt = factory_runner.factory_work_prompt("T-0002", "git commit -m \"T-0002 x\"")
+    for told in ("Never pipe output into head, grep or jq", "`orch show T-0002 --lines N`",
+                 "`orch show T-0002 --section NAME`", "never start a server", "never run python3 -m json.tool",
+                 "Never run mkdir, printf or echo", "With your Write tool (never printf, echo or a redirect)",
+                 "T-0002-verification.md"):
+        assert told in prompt, told
+
+
+def test_orch_show_limits_its_output_without_a_pipe(dws, capsys):
+    from orch.cli import run
+    from orch.core.ops import Ops
+    from orch.core.events import Actor
+    t = Ops(dws, Actor("agent", "claude-code", "cli")).new("Elephants")
+    Ops(dws, Actor("agent", "claude-code", "cli")).set_section(t.id, "Verification", "- AC1: listed 3 elephants")
+    capsys.readouterr()
+    assert run(["show", t.id, "--section", "verification"]) == 0
+    assert capsys.readouterr().out == f"{t.id} · status: {t.status}\n\n## Verification\n- AC1: listed 3 elephants\n"
+    assert run(["show", t.id, "--lines", "3"]) == 0
+    assert len(capsys.readouterr().out.splitlines()) == 3
+    assert run(["show", t.id, "--section", "Nope"]) != 0

@@ -1045,6 +1045,30 @@ no second live run has proved them yet. What remains likely: a model that ignore
 commands, and each such command still stops for a card (by design: the matcher does not accept chains, pipes or
 redirects); the nudge depends on Claude Code's current screen markers.
 
+**What the second live run showed (5 October, the stack with clones, release and close), and what changed.**
+
+- *The folder-trust question.* Both children sat at Claude's "Is this a project you trust?" for their clone folders
+  while the run view said "Working": the readiness check had accepted trust of the clones folder above them, which
+  Claude did not use for a clone. Now the runner reads the question off the pane and says so (it never answers it),
+  and the check counts only trust for the clone's own folder ("Claude's folder-trust question, per clone").
+- *Accept before the release.* Your Accept closed the epic while merge and dev were still waiting; nothing was
+  released. Now that needs "Close without releasing" with a reason ("Closing before the release ran").
+- *Named files.* The request misspelled the file names and the children built `elepthans.json` and `elpehant.html`:
+  they followed the text faithfully, which is not a model fault, but nothing noticed. One child left its file
+  untracked and still counted as proven. Now the Ready report, the merge stage and the close look at commits ("What
+  was built, not only mentioned").
+- *About 20 cards in a run meant for none.* The commands were read-only orch commands piped into `head`, `grep` or
+  `jq` (`orch show T-0003 | head -30`); evidence written through the shell (`printf ... > file`, `echo ... >> file`,
+  8 cards) although the prompt said to use the file tools; ad-hoc checks (`python3 -m http.server 8000`, `curl
+  localhost`, `python3 -m json.tool x.json`); and a `mkdir` in the orch folder. No pipeline matcher was added. The
+  worker prompt now names every replacement: `orch show <id> --lines N`, `--section NAME` or `--json` (new options,
+  so no pipe is needed; `orch show` is in the baseline), help with `--help` alone, the Verification file written with
+  the Write tool at `<id>-verification.md` in the temporary folder (which makes its folder; no `mkdir`) and handed
+  over with `--file`, and JSON or HTML checked by reading the file, never a server or `curl`. `python3 -m json.tool`
+  was left out of the baseline on purpose: a second argument makes it write any file, which a prefix or exact rule
+  cannot constrain. Each of those commands still stops for a card if a model ignores the prompt
+  (`tests/test_dark_friction.py` lists them and checks that each replacement needs none).
+
 ## Release recipe (phase 6)
 
 A Dark epic can release its own work, up to a stage you sign at its start: **merge** (each child's branch), **dev**

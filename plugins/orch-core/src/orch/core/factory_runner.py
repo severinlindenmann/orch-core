@@ -605,7 +605,12 @@ _PLAIN = (
     "messages to short plain sentences without line breaks, backticks, dollar signs or backslashes, and put a "
     "revision with ^ or ~ in double quotes (`git show \"HEAD^\"`). Create and change files with your file tools "
     "(Write, Edit), never with a shell heredoc, echo or cat redirect (such a command never runs here), and look at "
-    "a file with your Read tool instead of extra commands such as python or jq. File `orch permit request` only for "
+    "a file with your Read tool instead of extra commands such as python or jq. Never pipe output into head, grep "
+    "or jq: read a ticket with `orch show {key}` alone, or `orch show {key} --section NAME`, `orch show {key} "
+    "--lines N` or `orch show {key} --json`, and help with the command followed by --help alone, never piped. Check a JSON or HTML file "
+    "by reading it with your Read tool: never start a server (python3 -m http.server), never curl it and never run "
+    "python3 -m json.tool on it. Never run mkdir, printf or echo to make a file or folder: the Write tool makes the "
+    "folder it needs. File `orch permit request` only for "
     "a command that was actually denied with a request id P-n in the denial message, never for one that was not "
     "denied, and never retry variants of a denied command. Never run `orch instructions sync` or `orch setup`. "
 )
@@ -645,10 +650,11 @@ FACTORY_WORK_PROMPT = (
     "`orch task done {key} TN` with no -m; put notes in `orch log {key} -m \"...\"`. `orch ask` is refused in this "
     "epic: decide within the ticket's text and record why with `orch log`. {commit} When the work is done, prove "
     "each acceptance criterion: the criteria are the checkbox lines of the Acceptance criteria section, AC1, AC2, ... "
-    "counted from the top. Write a file under orchestrator/temporary with your Write tool holding one top-level line "
-    "per criterion, in order, saying what you checked and what you saw (a full short sentence), like `"
-    + EVIDENCE_EXAMPLE + "`, and set it with `orch section set {key} Verification --file FILE` (it replaces the "
-    "whole section). Leave the Acceptance criteria as they are: a tick proves nothing, and a criterion counts as "
+    "counted from the top. With your Write tool (never printf, echo or a redirect) write the file "
+    "{key}-verification.md under orchestrator/temporary, holding one top-level line per criterion, in order, saying "
+    "what you checked and what you saw (a full short sentence), like `" + EVIDENCE_EXAMPLE + "`, and set it with "
+    "`orch section set {key} Verification --file FILE`, FILE being that file's path (it replaces the whole "
+    "section). Leave the Acceptance criteria as they are: a tick proves nothing, and a criterion counts as "
     "proven only by its Verification line. Read `orch show {key}` to check that every criterion has its line, then "
     "run `orch move {key} testing` and stop; if the move warns that a criterion has no evidence, add its line, set "
     "Verification again and stop. If a command was denied with a request id, do other work or wait for the human "
@@ -670,7 +676,7 @@ CLONE_NO_COMMIT = ("Your working folder is a separate clone of the repository th
                    "commit: the workspace's commit format is not plain words. Leave your changes in this clone's "
                    "working tree and say so with `orch log {key} -m \"...\"`. Your tickets live in the workspace, not "
                    "in this clone, and orch commands work on them as usual.")
-_TMP = "under orchestrator/temporary"
+_TMP = "under orchestrator/temporary"  # the folder the worker writes its Verification file in (see the prompt)
 _SUBJECT_OK = re.compile(r"[A-Za-z0-9 \[\]()#:.,_/-]{1,100}")
 _LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
 

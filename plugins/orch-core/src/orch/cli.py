@@ -72,8 +72,11 @@ def _read(file: Path, ws=None) -> str:
     link on the way, not in orch's config dir): fsutil.agent_source."""
     from orch.actor import cli_actor
     from orch.core.fsutil import agent_source
-    agent_source(ws or _ws(), cli_actor(), file)
-    return file.read_text(encoding="utf-8")
+    f = agent_source(ws or _ws(), cli_actor(), file)
+    if f is None:
+        return file.read_text(encoding="utf-8")
+    with f:  # a factory session: only the descriptor agent_source opened and checked
+        return f.read().decode("utf-8")
 
 
 def _text(message: str | None, file: Path | None) -> str:

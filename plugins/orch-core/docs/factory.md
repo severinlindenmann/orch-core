@@ -223,8 +223,11 @@ exclusively in the guarded permits folder of your orch config dir, and only then
 permission hook trusts only this record to decide which epic's grants apply, and only for a process running under the
 process the runner recorded for that session (same pid and same start time): a copied session id gets nothing
 elsewhere. An ended or stopped session loses the record at once. Only a human process writes it: agent processes are
-refused, and the guard keeps agents away from the folder. Session ids are random, never written to events, tickets,
-logs or pages.
+refused, and the guard keeps agents away from the folder. Session ids are random; the runner itself writes them to
+no event, ticket, log line or page. The agent's own orch commands do record its session: a claim writes the full
+session id into the claimed ticket (its `claim` and `sessions` entries in the frontmatter), and the event log names the
+agent with the first 8 characters of it. That grants nothing: the hook trusts the id only for a process running under
+the one the runner recorded, so a copied id gets no factory treatment (and the binding is gone once the session ends).
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
 private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
@@ -463,24 +466,36 @@ refusal of a process under an agent harness, as for every approval).
   so sending the same form twice starts one run (the second send links to the epic the first one created). If the epic
   was created but its start failed, you land on the epic with the reason, and start it there.
 - **A planner splits the epic.** An epic started from New ticket has no children; the runner starts one planner session
-  for it (see "The planner" above), and the run view says "A planner session is splitting the epic into children."
-  while it runs. Without one it says "Waiting for children" and why: the planner starts when a session slot is free,
-  ended and waits for your answer, or ended twice without adding a child (then add the children yourself, or approve
-  the epic again for a new start). In a Dark epic the planner's orch commands stop for cards unless the Dark profile
-  holds them: while the profile is empty, the run view and New ticket's Dark mode say so and name
-  `orch dark profile add --baseline`.
-- **Epic page**: next to "Start as an AI Factory", "Start as a Dark AI Factory" while Dark is on; it also needs the word
-  dark typed, checked by the server.
+  for it (see "The planner" above), and the run view says "A planner session is splitting the epic into children"
+  while it runs. Without one it says "Waiting for children" and why: the planner starts when a session slot is free;
+  it ended without a child and no card of the epic is open (it starts once more only when you answer a card in the
+  epic or change the Dark profile); or it ended twice without adding a child (then add the children yourself, or
+  approve the epic again for a new start). An open card shows as "Needs you" instead. In a Dark epic the planner's
+  orch commands stop for cards unless the Dark profile holds them: while the profile is empty, the run view and New
+  ticket's Dark mode say so and name `orch dark profile add --baseline`.
+- **Sessions cannot write files under a prompting permission mode.** A runner session's file-edit prompt is denied
+  without a card (only shell commands are answered), and the launch command may not set a permission mode that skips
+  prompts. So unless your user-scope Claude settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
+  `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits`, `auto` or `bypassPermissions`, no agent
+  of the run can write a file and the planner cannot create children. The run view and New ticket's factory modes say
+  so; orch only reads that file, it never writes it.
+- **Epic page**: a Start choice in the epic's approval: None, AI Factory, and Dark AI Factory while Dark is on (radios,
+  as on New ticket). Dark shows the field for the word dark, which the server checks; the radio alone decides what is
+  signed.
 - **No permission prompts in a Dark session** does not mean nothing reaches you: a command outside the Dark profile is
   denied and becomes a card on the dashboard; you still answer cards, larger children and the verdict.
 - **Run view** (`/factory/<epic>`): a ring of five steps, each lit only from records orch keeps: Understand (a current
   signed charter and at least one child), Plan (every child covered, auto-approved or approved), Build (every child
   has all its tasks closed, as the agents report it, or is in testing or done with the record behind it), Evidence (the
   Ready report: every criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state,
-  said once: working (only while a child can be launched or a session runs), planning (the planner runs and there is
-  no child yet; Understand still needs a child), needs you, waiting for children, idle,
-  paused, stopped, budget used up, edited, blocked, not running (not armed) or finished. Motion and glow only while it
-  works. Then the time since you signed the start (there is no estimate), what waits for you (the same cards as
+  said once as a chip (a word or two) and a headline (the reason, never the chip again): working (a session runs on
+  a child), planning (the planner runs; Understand still needs a child), waiting for a session slot (a child can start
+  but no session runs on one yet: the runner's next round, or every slot of `factory.max_concurrency`, at most 3, is
+  taken), needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
+  armed) or finished. Motion only while it works (working or planning); a Dark run's working chip is mint, an AI
+  Factory's blue. The Dark core glows stronger only with real build evidence: a task a child closed (a running session
+  is not evidence). Then the time: "Running for ... since you signed the start" while it works (there is no estimate),
+  "Started ... ago" otherwise, and for a finished run the duration once, in its summary; what waits for you (the same cards as
   elsewhere), a read-only log in plain words (time, ticket, who and a fixed phrase per event kind; no command text,
   hashes or session ids) and "Stop the run…", which is the epic's pause. A finished epic shows a summary from the
   records: children, tasks done, and permission requests answered on a card or added to the Dark profile after they

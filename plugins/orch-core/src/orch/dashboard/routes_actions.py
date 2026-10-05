@@ -81,7 +81,8 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
             delegate: Annotated[str, Form()] = "", max_children: Annotated[str, Form()] = "",
             max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = "",
             option_offered: Annotated[list[str], Form()] = [], option_on: Annotated[list[str], Form()] = [],
-            dark: Annotated[str, Form()] = "", confirm_dark: Annotated[str, Form()] = ""):
+            dark: Annotated[str, Form()] = "", confirm_dark: Annotated[str, Form()] = "",
+            start: Annotated[str, Form()] = ""):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
@@ -92,6 +93,8 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
         url = safe_next(next_url) or _ticket_url(request, ref)
         return back(url, err="reload the page and review again")
     despite = despite_open_question in ("1", "on", "true")
+    if start in ("factory", "dark"):  # the epic page's Start radios (None / AI Factory / Dark)
+        factory, dark = "1", ("1" if start == "dark" else "")  # the radio decides, nothing else posted
     if dark in ("1", "on", "true") and confirm_dark.strip() != "dark":
         return back(safe_next(next_url) or _ticket_url(request, ref),
                     err="type dark to start a Dark AI Factory: nothing was signed")

@@ -49,7 +49,8 @@ def human_check(actor, what: str) -> None:
 
 def new_session_id() -> str:
     """A fresh UUID (the form the harness takes) from the system's random source: 122 random bits, a bearer secret
-    until the hook has seen it. It is never written to the event log, a ticket, a log line or a page."""
+    until the hook has seen it. The runner writes it to no event, ticket, log line or page; the agent's own `orch
+    claim` records it in the claimed ticket (docs/factory.md, "Session binding"), which grants nothing elsewhere."""
     return str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
 
 

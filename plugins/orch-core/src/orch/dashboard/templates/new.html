@@ -46,11 +46,11 @@
       <textarea id="done_when" name="done_when" rows="2">{{ values.get('done_when') or done_when_default }}</textarea>
     </label>
     {% if dark_on %}
-    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session</span>
+    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
       <input id="confirm_dark" name="confirm_dark" autocomplete="off" spellcheck="false" aria-describedby="confirm-dark-hint">
       <span class="muted" id="confirm-dark-hint">A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict.</span>
+      {% if profile_empty %}<span class="muted" data-profile-empty>The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: <code>orch dark profile add --baseline</code></span>{% endif %}
     </label>
-    {% if profile_empty %}<p class="muted only-dark" data-profile-empty>The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: <code>orch dark profile add --baseline</code></p>{% endif %}
     {% endif %}
     {% endif %}
     <div class="field-col">
@@ -118,6 +118,7 @@
         <li>The runner starts a session for each child that is approved or covered by your charter. No permission prompts in the session: a command outside the Dark profile is denied and becomes a card here, with a button to add it to the profile.</li>
         <li>You still answer cards, larger children and the verdict. There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
       </ol>
+      {% if edits_off %}<p class="muted only-factory" data-edits-off>Sessions started by the runner cannot write files unless your Claude permission mode allows edits. Set permissions.defaultMode to acceptEdits in your user settings, or the planner cannot create children.</p>{% endif %}
       {% endif %}
     </section>
   </aside>

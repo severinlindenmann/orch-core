@@ -141,19 +141,23 @@
   {% endfor %}
   {% set base = "Confirm · epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
   {#- app.js rewrites the label when the delegation fields change, so the confirm always says what is signed. -#}
-  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}"{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, size ≤ {{ e.factory.limits.max_size }}"{% endif %} data-inline-confirm="{{ base }} · no delegation">
+  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}"{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %} data-inline-confirm="{{ base }} · no delegation">
     <input type="hidden" name="gate" value="requirements">
     <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
     {% if e.factory %}
     {#- AI Factory (factory.enabled): Start is this same signed approval, with the factory's limits. Yours only. -#}
-    <fieldset class="charter-factory" id="factory-start">
-      <legend class="sr-only">AI Factory</legend>
-      <label><input type="checkbox" name="factory" value="1"> <b>Start as an AI Factory</b>: agents split, specify, approve and build the children without asking you</label>
-      <p class="muted">Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
+    <fieldset class="charter-factory seg" id="factory-start" data-start="">
+      <legend>Start</legend>
+      <div class="seg-options">
+        {% for v, label in (("", "None"), ("factory", "AI Factory"), ("dark", "Dark AI Factory")) if v != "dark" or e.factory.dark_on %}
+        <input class="sr-only" type="radio" id="start-{{ v or 'none' }}-{{ t.id }}" name="start" value="{{ v }}" {{ 'checked' if not v }}>
+        <label for="start-{{ v or 'none' }}-{{ t.id }}">{{ label }}</label>
+        {% endfor %}
+      </div>
+      <p class="muted">AI Factory: agents split, specify, approve and build the children; you answer the commands they need on cards, and you give the verdict. Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. It replaces the delegation choice below.</p>
       {% if e.factory.dark_on %}
-      <label><input type="checkbox" name="dark" value="1"> <b>Start as a Dark AI Factory</b>: the same, with no permission prompts in the session</label>
-      <p class="muted">A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. There is no release or automatic close: you read the Ready report and give the verdict.</p>
-      <label class="field-col" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session</span>
+      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. There is no release or automatic close: you read the Ready report and give the verdict.</p>
+      <label class="field-col start-dark-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
         <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false"></label>
       {% endif %}
     </fieldset>

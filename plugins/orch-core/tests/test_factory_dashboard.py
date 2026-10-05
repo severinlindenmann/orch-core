@@ -100,7 +100,7 @@ def test_epic_page_offers_start_and_it_signs_the_factory_charter(fws, fa, fd):
     e = fa.new("Billing revamp", type="epic")
     _refine(fa, e.id, plan=None)
     page = fd.get(f"/t/{e.id}").text
-    assert 'name="factory"' in page and "Not started as a factory" in page
+    assert 'name="start" value="factory"' in page and "Not started as a factory" in page
     seen = epics.charter(fws, store.load(fws, e.id)[1])["content_hash"]
     r = _posts(fd, f"/t/{e.id}/approve", gate="requirements", seen=seen, factory="1", delegate="1", max_children="3")
     assert "err=" not in _msg(r)
@@ -128,7 +128,7 @@ def test_start_needs_the_hash_the_page_showed(fws, fa, fd):
 
 def test_confirm_label_says_it_starts_a_factory():
     js = (__import__("pathlib").Path(__import__("orch").__file__).parent / "dashboard/static/app.js").read_text()
-    assert "START AI FACTORY" in js
+    assert 'FACTORY_START = "start the AI Factory: "' in js  # string check; behaviour: tests/js/factory_forms.js
 
 
 # -- the cards -----------------------------------------------------------------------------------------------------
@@ -295,7 +295,7 @@ def test_start_names_the_limits_from_the_defaults(fws, fa, fd):
     e = fa.new("Epic", type="epic")
     _refine(fa, e.id, plan=None)
     page = fd.get(f"/t/{e.id}").text
-    assert 'data-factory-confirm="up to 25 children or 72 hours, size ≤ m"' in page
+    assert 'data-factory-confirm="up to 25 children or 72 hours, children of size m or smaller"' in page
 
 
 # -- phase 3: the Ready report and the Stopped message ---------------------------------------------------------------

@@ -1766,7 +1766,13 @@ html.term-full-open { overflow: hidden; }
 .permit-grant { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2); min-width: 0; }
 .permit-grant form { margin: 0; }
 .permit-cmd-inline { overflow-wrap: anywhere; min-width: 0; }
-.charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0; }
+.charter-factory { border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3); margin: var(--s-3) 0;
+                   display: flex; flex-direction: column; gap: var(--s-2); }
+.charter-factory > p { margin: 0; }
+/* The typed word only for a Dark start: app.js keeps data-start in step; with :has() the radio decides (JS off too). */
+.charter-factory .start-dark-only { display: none; }
+.charter-factory[data-start=dark] .start-dark-only,
+.charter-factory:has(input[name=start][value=dark]:checked) .start-dark-only { display: flex; }
 .factory-budget { margin-left: var(--s-2); }
 
 /* Charts (templates/_charts.html, static/charts.js) */

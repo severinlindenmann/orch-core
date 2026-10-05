@@ -24,6 +24,9 @@ EVENT_KINDS = frozenset({
     # Quick tasks (orch.core.quick): one-line jobs outside the ticket flow; `data["quick"]` names the task
     "quick.added", "quick.claimed", "quick.released", "quick.done", "quick.outgrew", "quick.reopened",
     "quick.dropped", "quick.promoted", "quick.artifact",
+    # the release step (orch.core.factory_release): a stage's outcome (stage, child, proven, exit code only) and the
+    # human's retry
+    "release.stage", "release.retry",
 })
 
 

@@ -57,7 +57,8 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
                        "(setup changes the user-global Claude settings), and setting an addon ticket option (e.g. phone notifications), is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
-# grant|deny|revoke` (AI Factory), `dark profile add|remove` and `factory dark on` (Dark AI Factory), and moves to a
+# grant|deny|revoke` (AI Factory), `dark profile add|remove`, `factory dark on` and `factory release ...` (Dark AI
+# Factory), and moves to a
 # status only
 # the human moves to. Agents never run them, in any spelling: `uv run orch`, `python -m orch.cli`, a wrapper path,
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
@@ -68,7 +69,8 @@ _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledge
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)|quick\s+(?:-\S+\s+)*(?:reopen|drop)"
                   r"|schedule\s+(?:-\S+\s+)*(?:arm|resume|run-now|file|dismiss)"
                   r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove)"
-                  r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on)(?![\w-])")
+                  r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
+                  r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -78,7 +80,7 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
 _HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|ledger_repair|epic_pause"
                               r"|permit_(?:grant|deny|revoke)|file_finding|dismiss_finding|request_run|add_from_request"
-                              r"|set_factory_dark)(?![\w-])")
+                              r"|set_factory_dark|set_recipe|clear_recipe)(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal
 # outside the agent's process tree.
@@ -220,10 +222,11 @@ def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> li
 _ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 _KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
 _SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
-              "tmux", "tmux.name", "remote-humans*", "launch.json")
+              "factory-release*", "release-records", "tmux", "tmux.name", "remote-humans*", "launch.json")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
 _SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
-                    "ledger.head", "ledger.lock", "factory-command.json", "tmux", "tmux.name", "remote-humans.json",
+                    "ledger.head", "ledger.lock", "factory-command.json", "factory-release.json",
+                    "factory-release.json.lock", "release-records", "tmux", "tmux.name", "remote-humans.json",
                     "launch.json")
 _READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
             "bat", "wc", "xargs", "dir", "vdir"}
@@ -601,13 +604,15 @@ _APP_HUMAN = re.compile(
     _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
     + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove)" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
+    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
     + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
 _HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
                          r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove)"
-                         r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on)(?![\w-])")
+                         r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
+                         r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, reopening or dropping quick tasks, arming schedules and filing their "
-                      "findings, changing the Dark profile and moving a "
+                      "findings, changing the Dark profile or the release recipe and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
                       "terminal or the dashboard")
 # The harness markers orch reads to tell an agent from a human (orch.actor): an agent does not strip or blank them.
@@ -673,6 +678,8 @@ def _human_rest(rest: list[str]) -> bool:
     if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove"):
         return True
     if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
+        return True
+    if len(rest) >= 2 and rest[0] == "factory" and rest[1] == "release":
         return True
     if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
         return True
@@ -880,9 +887,9 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 # The Dark profile's module (orch.core.dark_profile) is driven from code no more than the permits module.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
-                     r"|\borch\.core\.(?:ledger|permits|dark_profile)\b"
-                     r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile)\b")
+                     r"|release-records|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
+                     r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release)\b"
+                     r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
 # The relay tool's two commands for the Orch Remote host: `bridge-key` prints the workspace channel key, and

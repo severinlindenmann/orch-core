@@ -1387,7 +1387,12 @@ class Ops(TaskOpsMixin):
             if delegate.get("factory") and not dark_on(self.ws):
                 raise UsageError("Dark AI Factory is switched off in this checkout",
                                  hint="the human runs `orch factory dark on` in their own terminal (docs/factory.md)")
-        delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`
+        delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`, `release` without `dark`
+        if delegate and delegate.get("release"):
+            from orch.core.factory_release import release_blocker
+            why = release_blocker(self.ws, delegate["release"])
+            if why:
+                raise ValidationError(f"no release can be signed: {why}")
         covered: dict = {}
 
         def fn(t: Ticket) -> dict:

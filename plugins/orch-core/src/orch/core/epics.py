@@ -35,6 +35,7 @@ from orch.errors import NotFoundError, UsageError
 EPIC = "epic"
 DELEGATE_DEFAULTS = {"max_children": 10, "max_size": "m"}
 FACTORY_DEFAULTS = {"max_children": 25, "max_size": "m", "max_hours": 72}
+RELEASE_TARGETS = ("merge", "dev")  # a Dark charter's release target (orch.core.factory_release.STAGES)
 _SIZE_RANK = {s: i for i, s in enumerate(SIZES)}
 # What a child is with respect to its epic's charter (child_state).
 STATE_LABELS = {
@@ -106,8 +107,14 @@ def normalize_delegate(delegate) -> dict | None:
     factory, dark = bool(given.get("factory")), bool(given.get("dark"))
     if dark and not factory:
         raise UsageError("a Dark charter is a factory charter: --dark goes with --factory")
+    release = given.get("release")
+    release = None if release in (None, "none") else release
+    if release is not None and release not in RELEASE_TARGETS:
+        raise UsageError("--release is merge or dev (production is not built yet)")
+    if release is not None and not dark:
+        raise UsageError("a release is signed only into a Dark charter: --release goes with --dark")
     d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
-    d.update({k: v for k, v in given.items() if v is not None and k not in ("factory", "dark")})
+    d.update({k: v for k, v in given.items() if v is not None and k not in ("factory", "dark", "release")})
     try:
         d["max_children"] = int(d["max_children"])
     except (TypeError, ValueError):
@@ -129,6 +136,8 @@ def normalize_delegate(delegate) -> dict | None:
         out.update(factory=True, max_hours=hours)
         if dark:
             out["dark"] = True
+        if release is not None:  # only when set (phase 6): every charter signed without one hashes as before
+            out["release"] = release
     return out
 
 

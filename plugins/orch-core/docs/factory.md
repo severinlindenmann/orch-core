@@ -275,12 +275,21 @@ python), and a script file written and then run.
 **A repository's own files.** A checkout's `.git` (its config, refs, packed-refs, info, objects, HEAD, worktrees and
 hooks) and a worktree's `.git` pointer file decide what later git commands run: hooksPath, fsmonitor, aliases, refs.
 Agents' file tools (Write, Edit, MultiEdit, NotebookEdit) never write a path with a `.git` component, in any case, as
-written (a relative path taken from the hook's working directory) or after symlinks; reading stays open. In the shell
-the guard denies a write into those `.git` files (a redirect, `tee`, `cp`, `mv`, `sed -i`, ...) and `git config` of a
-key that runs a program (fsmonitor, sshCommand, pager, editor, askpass, aliases, includes, filters, diff and merge
-drivers, credential helpers, gpg programs), as it already did for hooksPath; all of these are never grantable. The
-same text-check limits apply (a script written and then run is not seen); the release step does not depend on this:
-it never uses the workspace's `.git` for anything but fetching objects.
+written (a relative path taken from the hook's working directory, `~` expanded) or after symlinks; reading stays
+open. The same holds for your own git config, which every git of your user reads: `~/.gitconfig`, anything in
+`~/.config/git` or `$XDG_CONFIG_HOME/git`, and `/etc/gitconfig`. In the shell the guard denies a write into those
+`.git` files or onto a bare `.git` (a redirect, `tee`, `cp`, `mv`, `ln`, `install`, `rsync`, `dd`, `sed -i`,
+`perl -i`, an interpreter's `-c`/`-e`; paths are matched after `//` and `/./` are collapsed) or into your git config;
+`git config --global`/`--system` writes, and `git config -f`/`--file` naming a `.git` path or your git config; and
+`git config` or `git -c` of a key that runs a program or redirects git (fsmonitor, sshCommand, pager, editor, askpass,
+alternateRefsCommand, attributesFile, hooksPath, aliases, includes, filters, `diff.external`, diff, difftool,
+mergetool and merge drivers, credential settings, gpg programs, `remote.*.uploadpack|receivepack`,
+`url.*.insteadOf|pushInsteadOf`, `protocol.*.allow`), and `git --config-env`. A `git config` or `git -c` whose
+command word, key, scope or file is not a plain literal (ANSI-C `$'…'`, `${…}`, `$(…)`, a backslash, a quote inside a
+word) is denied too, because its value is only known when the shell runs it. All of these are never grantable. The
+text-check limits stay: a `cd` to the folder followed by a relative name, a path held in a shell variable, a string
+built in another language, and a script written and then run are not seen. The release step does not depend on any
+of this: it fetches only objects from the workspace's `.git` and runs its git without your git config.
 
 **The launch command** is yours, in `factory-command.json` inside the permits folder of the orch config dir, which the
 guard keeps agents from reading and writing (never the workspace config, ticket text or anything else an agent can

@@ -1813,6 +1813,6 @@ a.ec-pill:hover { background: var(--hover); }
 @media (max-width: 559px) { .new-submit .btn { flex: 1 1 100%; } }
 
 /* A phone answer waiting for Apply (an addon decision with an origin): its own card at the top of Today. */
-.origin-decision { border-left: 4px solid var(--info-mark); display: flex; flex-direction: column; gap: var(--s-2); }
+.origin-decision { border-left: var(--rail-w) solid var(--info-mark); display: flex; flex-direction: column; gap: var(--s-2); }
 .origin-decision h3, .origin-decision p { margin: 0; }
 .origin-label { display: flex; align-items: center; gap: var(--s-2); color: var(--info-fg); font: var(--type-meta); }

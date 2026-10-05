@@ -183,15 +183,19 @@ runner for that delegation. Every few seconds the dashboard then, for each armed
 
 **Waking a session that waits (the idle nudge).** An interactive Claude session that waits for you does not end, so
 the wake above never reaches it (in the live run each pane had to be told by hand that the cards were answered). So
-after you answer something in its epic (a grant, a denial, a revocation, or for a Dark epic a change to the Dark
-profile), the runner types **one** built-in line into the session's pane and presses Enter: "The human answered your
+after you answer something in its epic (a grant, a denial, or for a Dark epic a rule added to the Dark profile;
+a revocation or a removed rule takes a permission away and answers nothing), the runner types **one** built-in line
+into the session's pane and presses Enter: "The human answered your
 permission requests. Retry the blocked commands, then finish your ticket and move it to testing." (a denial alone gets
 a line saying to do without the command and record why; a planner one saying to finish splitting the epic). The text
 is a constant in orch, never taken from a ticket, the config or an agent, and the tmux launcher refuses any other.
 It types only when, read with tmux's `capture-pane`, the pane shows Claude Code's footer hint ("? for shortcuts" or
 "shift+tab to cycle") and an empty input line, nothing in its last lines looks like a running command ("esc to
 interrupt"), a permission, trust or other menu ("Do you want", "1.", "(y/n)"), and the screen stayed exactly the same
-for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. Anything else, or a record or pane
+for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. After typing it reads the pane
+again and presses Enter only when the line sits on Claude's input line and no menu, permission or trust prompt or
+running command is on screen (Enter would answer that instead); otherwise it clears the input line (Ctrl-U), presses
+nothing more, and counts the attempt. Anything else, or a record or pane
 it cannot read, types nothing. The run view says how often it nudged. What it cannot tell: a session that waits at a
 prompt Claude Code draws differently from these markers (a future version) is never nudged, and an idle session that
 was not waiting for that answer still gets the line (it is idle anyway). The runner keeps a small record per session

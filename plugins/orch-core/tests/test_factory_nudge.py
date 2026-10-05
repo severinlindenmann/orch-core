@@ -30,6 +30,9 @@ class Pane(Fake):
 
     def type(self, name, text):
         self.typed.append((name, text))
+        return not self.race  # True: Enter was pressed; False: the pane changed while typing
+
+    race = False
 
     def reap(self, name):
         return self.dead.pop(name, None)
@@ -190,18 +193,74 @@ def test_pane_idle(text, idle):
     assert fr.pane_idle(text) is idle
 
 
-def test_the_tmux_launcher_types_only_the_built_in_lines(monkeypatch):
+def _typed_screen(text):
+    return IDLE.replace("\u2502 >" + " " * 38, "\u2502 > " + text[:60])
+
+
+@pytest.mark.parametrize("after,enter", [
+    ("typed", True),  # the text sits on the input line: Enter
+    ("menu", False),  # a permission menu appeared meanwhile: Enter would pick its option
+    ("busy", False), ("trust", False), ("elsewhere", False), ("gone", False),
+])
+def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, after, enter):
     from orch.dashboard import factory_runner as dash
     from orch.errors import UsageError
     from test_factory_runner import _Run
+    nudge = fr.NUDGES["answered"]
+    screens = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "busy": BUSY + nudge,
+               "trust": TRUST, "elsewhere": "some output mentioning " + nudge + "\n", "gone": None}
     seen = []
-    monkeypatch.setattr(dash, "_tmux", lambda args, timeout=10: seen.append(args) or _Run(0))
+
+    def tmux(args, timeout=10):
+        seen.append(args)
+        if args[0] == "capture-pane":
+            return _Run(0 if screens[after] is not None else 1, screens[after] or "")
+        return _Run(0)
+    monkeypatch.setattr(dash, "_tmux", tmux)
     with pytest.raises(UsageError):
         dash.TmuxLauncher().type("fx-L-1-abc", "rm -rf ~")
     assert seen == []
-    dash.TmuxLauncher().type("fx-L-1-abc", fr.NUDGES["answered"])
-    assert seen == [["send-keys", "-t", "=fx-L-1-abc:", "-l", "--", fr.NUDGES["answered"]],
-                    ["send-keys", "-t", "=fx-L-1-abc:", "Enter"]]
+    assert dash.TmuxLauncher().type("fx-L-1-abc", nudge) is enter
+    keys = [a for a in seen if a[0] == "send-keys"]
+    assert keys[0] == ["send-keys", "-t", "=fx-L-1-abc:", "-l", "--", nudge]
+    assert keys[1:] == ([["send-keys", "-t", "=fx-L-1-abc:", "Enter"]] if enter
+                        else [["send-keys", "-t", "=fx-L-1-abc:", "C-u"]])
+
+
+def test_a_nudge_the_pane_changed_under_counts_as_an_attempt(fws, fa, fh, human, pane, at):
+    _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    pane.race = True
+    _ask_and_answer(fws, human, b)
+    lines = _run_until_idle(fws, human, pane, at)
+    assert any("nudge not sent" in x for x in lines) and fs.nudge_record(b["session"])["count"] == 1
+    at(fr.IDLE_SECONDS * 4)
+    _tick(fws, human, pane)
+    assert len(pane.typed) == 1  # not retried until something new is answered
+
+
+def test_revocations_and_profile_removals_are_not_answers(configure, agent, human, pane, at):
+    from conftest import human_ops
+    from orch.core import dark_profile
+    from orch.core.ops import Ops
+    dws = configure(factory={"enabled": True})
+    Ops(dws, human).set_factory_dark(True)
+    dark_profile.add(dws, human, "prefix", "make e2e")
+    _started(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
+    _tick(dws, human, pane)
+    (b,) = fs.bindings(dws)
+    dark_profile.remove(dws, human, dark_profile.rules(dws)[0]["id"])
+    _run_until_idle(dws, human, pane, at)
+    assert pane.typed == []
+    permits.hook_decision(dws, _payload(b["session"], "make other"))
+    (r,) = permits.open_requests(dws)
+    g = permits.permit_grant(dws, human, r["id"], "epic", expected_sha=r["sha"])
+    _run_until_idle(dws, human, pane, at, fr.IDLE_SECONDS + 1)
+    assert len(pane.typed) == 1  # the grant
+    permits.permit_revoke(dws, human, g["grant"])
+    _run_until_idle(dws, human, pane, at, 2 * fr.IDLE_SECONDS + fr.NUDGE_GAP)
+    assert len(pane.typed) == 1  # the revocation answers nothing
 
 
 # -- a session that ends right after its start -----------------------------------------------------------------------

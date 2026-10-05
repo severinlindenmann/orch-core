@@ -114,13 +114,18 @@ class TmuxLauncher:
             return None
         return r.stdout if r.returncode == 0 else None
 
-    def type(self, name: str, text: str) -> None:
-        """Type one of the runner's built-in nudges into the pane, then Enter. Nothing else is ever typed."""
+    def type(self, name: str, text: str) -> bool:
+        """Type one of the runner's built-in nudges into the pane, read the pane again, and press Enter only when the
+        text sits on Claude's input line and nothing Enter would answer instead is on screen (typed_ok); otherwise
+        clear the input line (C-u) and press nothing more. True when Enter was pressed. Nothing else is ever typed."""
         if text not in factory_runner.NUDGES.values():
             raise UsageError("the runner types only its built-in nudges")
-        for args in (["send-keys", "-t", f"={name}:", "-l", "--", text], ["send-keys", "-t", f"={name}:", "Enter"]):
-            if self._tmux(args).returncode != 0:
-                raise UsageError(f"could not type into {name}")
+        if self._tmux(["send-keys", "-t", f"={name}:", "-l", "--", text]).returncode != 0:
+            raise UsageError(f"could not type into {name}")
+        if factory_runner.typed_ok(self.capture(name), text):
+            return self._tmux(["send-keys", "-t", f"={name}:", "Enter"]).returncode == 0
+        self._tmux(["send-keys", "-t", f"={name}:", "C-u"])
+        return False
 
     def start(self, name: str, cwd: str, argv: list[str]) -> int:
         # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment.

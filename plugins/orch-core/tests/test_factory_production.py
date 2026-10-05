@@ -14,7 +14,7 @@ from orch.cli import run as cli_run
 from orch.core import epics, factory_release as fr, ledger, permits, store
 from orch.core.events import read_events
 from orch.errors import HumanOnlyError, UsageError, ValidationError
-from test_factory_release import (DEV, MERGE, PROD, ROLLBACK, Fake, _branch, _g, _recipe, _refine, _stage,  # noqa: F401
+from test_factory_release import (DEV, MERGE, PROD, ROLLBACK, Fake, _branch, _g, _recipe, _refine, _stage, _work,  # noqa: F401,E501
                                   _states, _stopped)
 from test_factory_release import (_not_stopping, bin_dir, fa, fh, fws, ready, recipe, remote,  # noqa: F401
                                   switch)
@@ -312,8 +312,7 @@ def test_a_stale_dev_never_lets_production_run(fws, prod, fa, human, close_tasks
     c = fa.new("late child", epic=eid)
     _refine(fa, c.id)
     fa.epic_auto_approve(c.id)
-    fa.link(c.id, repo="app", branch=f"feat/{c.id.lower()}-work")
-    _branch(fws.root, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
+    _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
     fa.claim(c.id)
     close_tasks(fa, c.id)
     fa.set_section(c.id, "Verification", "- AC1: ok")

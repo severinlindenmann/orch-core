@@ -74,15 +74,31 @@ def _msg(name: str) -> list[str]:
             "Why: the ticket", "-m", "Risk: low"]
 
 
+def _wt(name: str) -> str:
+    """The linked worktree (relative to the workspace root) a test branch is built in."""
+    return ".claude/worktrees/" + name.replace("/", "-")
+
+
 def _branch(ws_root, name: str, files: dict, start: str = "main") -> str:
-    _g(ws_root, "checkout", "-q", "-B", name, start)
+    """Commit `files` on branch `name` (reset to `start`) in its own linked worktree of the workspace: a child with a
+    worktree of its own is one the release fetches from the workspace checkout (one without gets a clone)."""
+    wt = ws_root / _wt(name)
+    if wt.is_dir():
+        _g(wt, "checkout", "-q", "-B", name, start)
+    else:
+        _g(ws_root, "worktree", "add", "-q", "-B", name, str(wt), start)
     for f, body in files.items():
-        (ws_root / f).parent.mkdir(parents=True, exist_ok=True)
-        (ws_root / f).write_text(body, encoding="utf-8")
-        _g(ws_root, "add", f)
-    _g(ws_root, "commit", "-q", "--allow-empty", *_msg(name))
-    sha = _g(ws_root, "rev-parse", "HEAD")
-    _g(ws_root, "checkout", "-q", "main")
+        (wt / f).parent.mkdir(parents=True, exist_ok=True)
+        (wt / f).write_text(body, encoding="utf-8")
+        _g(wt, "add", f)
+    _g(wt, "commit", "-q", "--allow-empty", *_msg(name))
+    return _g(wt, "rev-parse", "HEAD")
+
+
+def _work(fa, ws_root, cid: str, name: str, files: dict) -> str:
+    """Child `cid`'s branch `name` with `files`, in a worktree of its own, linked on the ticket."""
+    sha = _branch(ws_root, name, files)
+    fa.link(cid, repo="app", branch=name, worktree=_wt(name))
     return sha
 
 
@@ -172,8 +188,7 @@ def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, 
         _refine(fa, c.id)
         fa.set_section(c.id, "Requirements", "Part of billing.py")
         fa.epic_auto_approve(c.id)
-        fa.link(c.id, repo="app", branch=f"feat/{c.id.lower()}-work")
-        _branch(fws.root, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})
+        _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})
         fa.claim(c.id)
         close_tasks(fa, c.id)
         fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")
@@ -550,11 +565,10 @@ def test_a_renamed_sensitive_file_is_seen_as_both_paths(fws, ready, human, remot
     _main_commit(fws.root, remote, {".github/CODEOWNERS": "* @owner\n"})
     eid, (c,), _ = ready(files={})
     b = f"feat/{c.lower()}-work"
-    _g(fws.root, "checkout", "-q", b)
-    (fws.root / "docs").mkdir(exist_ok=True)
-    _g(fws.root, "mv", ".github/CODEOWNERS", "docs/CODEOWNERS")
-    _g(fws.root, "commit", "-q", "-m", "move it away")
-    _g(fws.root, "checkout", "-q", "main")
+    w = fws.root / _wt(b)
+    (w / "docs").mkdir(exist_ok=True)
+    _g(w, "mv", ".github/CODEOWNERS", "docs/CODEOWNERS")
+    _g(w, "commit", "-q", "-m", "move it away")
     renamed = _g(fws.root, "diff", "-M", "--name-only", f"main...{b}")
     assert ".github/CODEOWNERS" not in renamed  # with rename detection the sensitive side would be hidden
     fake = Fake()
@@ -566,10 +580,9 @@ def test_a_renamed_sensitive_file_is_seen_as_both_paths(fws, ready, human, remot
 def test_a_gitlink_hidden_by_ignore_submodules_is_seen(fws, ready, human, remote):
     eid, (c,), _ = ready(files={".gitmodules": '[submodule "x"]\n\tpath = vendor/deploy\n\tignore = all\n'})
     b = f"feat/{c.lower()}-work"
-    _g(fws.root, "checkout", "-q", b)
-    _g(fws.root, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},vendor/deploy")
-    _g(fws.root, "commit", "-q", "-m", "a gitlink")
-    _g(fws.root, "checkout", "-q", "-f", "main")
+    w = fws.root / _wt(b)
+    _g(w, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},vendor/deploy")
+    _g(w, "commit", "-q", "-m", "a gitlink")
     _g(fws.root, "config", "diff.ignoreSubmodules", "all")
     rec = fr.load(fws)[0]
     rec = {**rec, "sensitive_paths": ["vendor/deploy"]}
@@ -600,10 +613,9 @@ def test_a_moved_local_base_hides_nothing(fws, ready, human, remote):
 def test_a_sensitive_change_reverted_later_on_the_branch_is_seen(fws, ready, human):
     eid, (c,), _ = ready(files={".github/x.yml": "evil\n"})
     b = f"feat/{c.lower()}-work"
-    _g(fws.root, "checkout", "-q", b)
-    _g(fws.root, "rm", "-q", ".github/x.yml")
-    _g(fws.root, "commit", "-q", "-m", "hide it")
-    _g(fws.root, "checkout", "-q", "main")
+    w = fws.root / _wt(b)
+    _g(w, "rm", "-q", ".github/x.yml")
+    _g(w, "commit", "-q", "-m", "hide it")
     fr.tick(fws, human, Fake())
     assert _stopped(fws, eid) == ["sensitive"]  # every commit the branch brings in, not only the net diff
 
@@ -624,10 +636,9 @@ def test_a_sensitive_path_stops_before_anything_is_merged_and_retry_checks_again
     assert fr.tick(fws, human, fake) == []  # stays stopped until the human retries
     for k in (c1, c2):
         b = f"feat/{k.lower()}-work"
-        _g(fws.root, "checkout", "-q", b)
-        _g(fws.root, "rm", "-q", "poetry.lock")
-        _g(fws.root, "commit", "-q", "-m", "drop the lock")
-        _g(fws.root, "checkout", "-q", "-f", "main")
+        w = fws.root / _wt(b)
+        _g(w, "rm", "-q", "poetry.lock")
+        _g(w, "commit", "-q", "-m", "drop the lock")
     fr.retry(fws, human, eid, "merge", eid)
     fr.tick(fws, human, fake)
     assert _stopped(fws, eid) == ["sensitive"]  # every commit counts: the lock is still in the branch's history
@@ -805,8 +816,7 @@ def test_a_child_added_after_dev_was_proven_makes_dev_stale(fws, ready, fa, huma
     c = fa.new("late child", epic=eid)
     _refine(fa, c.id)
     fa.epic_auto_approve(c.id)
-    fa.link(c.id, repo="app", branch=f"feat/{c.id.lower()}-work")
-    _branch(fws.root, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
+    _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
     fa.claim(c.id)
     close_tasks(fa, c.id)
     fa.set_section(c.id, "Verification", "- AC1: ok")

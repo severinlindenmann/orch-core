@@ -1316,15 +1316,26 @@ def _rev(ws, rec, ref: str) -> str | None:
     return sha if r.get("code") == 0 and _SHA.fullmatch(sha) else None
 
 
-def fetch_child(ws, rec, branch: str, src: Path | None = None) -> str | None:
+def fetch_child(ws, rec, branch: str, src: Path | None = None, child: str | None = None) -> str | None:
     """Fetch `branch` from `src` (the child's runner-made clone, see child_source; else the workspace checkout) into
-    the release repository (objects and that one ref, nothing else), and return its commit, or None."""
-    src = src or workspace_repo(ws)
+    the release repository (objects and that one ref, nothing else), and return its commit, or None. From a clone
+    (anything but the workspace checkout), only for `child` and through factory_clones.fetch_from: under the clone's
+    lock, the clone checked again and its config written again first."""
+    from orch.core import factory_clones
+    top = workspace_repo(ws)
+    src = src or top
     if src is None or not valid_branch(branch):
         return None
-    r = _git(ws, rec, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", str(src),
-             f"+refs/heads/{branch}:refs/release-heads/{branch}")
-    return _rev(ws, rec, f"refs/release-heads/{branch}") if r.get("code") == 0 else None
+
+    def fetch(where: Path) -> str | None:
+        r = _git(ws, rec, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
+                 str(where), f"+refs/heads/{branch}:refs/release-heads/{branch}")
+        return _rev(ws, rec, f"refs/release-heads/{branch}") if r.get("code") == 0 else None
+    if top is not None and Path(src) == top:
+        return fetch(top)
+    if child is None:
+        return None
+    return factory_clones.fetch_from(ws, child, lambda p: fetch(p) if p == Path(src) else None)
 
 
 def fetch_base(ws, rec) -> str | None:
@@ -1349,12 +1360,18 @@ def checkout(ws, rec, sha: str) -> bool:
 def child_source(ws, t) -> tuple[str | None, Path | None, str]:
     """(branch, the repository to fetch it from, "") of child `t`: for a child the runner made a clone for, the
     branch and clone its record names (the runner's record, never a ticket field); else child_branch from the
-    workspace checkout (the fallback for children with a worktree of their own). (None, None, why) otherwise."""
-    from orch.core import factory_clones
+    workspace checkout, but only for a child the runner never gave a clone and never would: a child with a linked
+    worktree of its own, or one in a workspace that is not a checkout clones are made from. A clone record that is
+    gone, damaged or was cleaned (or a clone that failed) never falls back to the agent-written ticket fields.
+    (None, None, why) otherwise."""
+    from orch.core import factory_clones, factory_runner
     rec = factory_clones.record(ws, t.id)
     if rec is not None:  # checked as the commit gate checks it (no link, the pinned folder and .git) before a fetch
         path, why = factory_clones.verify(ws, t.id)
         return (rec["branch"], path, "") if path is not None else (None, None, why)
+    if (factory_clones.ever_had_clone(ws, t.id)
+            or (factory_clones.clonable(ws)[0] is not None and factory_runner.own_worktree_dir(ws, t) is None)):
+        return None, None, f"the runner's clone record of {t.id} is missing"
     branch, why = child_branch(ws, t)
     return branch, workspace_repo(ws) if branch else None, why
 
@@ -1456,7 +1473,7 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if branch == rec["base"]:
             errors[t.id] = f"{t.id}'s branch is the base branch"
             continue
-        sha = fetch_child(ws, rec, branch, src)
+        sha = fetch_child(ws, rec, branch, src, t.id)
         if sha is None:
             errors[t.id] = f"{t.id}'s branch could not be fetched from {src}"
             continue
@@ -1572,8 +1589,9 @@ def _release(ws, actor, g, run) -> list[str]:
 
 
 def _mark_stale(ws, rec, epic, kids) -> list[str]:
-    """A child whose merge was proven but whose branch in the workspace now points elsewhere (it came back with more
-    work) gets a stale record: the release is out of date and the human decides."""
+    """A child whose merge was proven but whose branch now points elsewhere (it came back with more work), read where
+    child_source says (its clone, or its own worktree's branch in the workspace; never a ticket field in place of a
+    missing clone record), gets a stale record: the release is out of date and the human decides."""
     lines = []
     for k in kids:
         us = unit_state(ws, epic.id, "merge", k)
@@ -1584,7 +1602,7 @@ def _mark_stale(ws, rec, epic, kids) -> list[str]:
         if branch is None:
             continue
         ensure_repo(ws, rec)
-        tip = fetch_child(ws, rec, branch, src)
+        tip = fetch_child(ws, rec, branch, src, k)
         if tip is not None and tip != us["sha"]:
             _write(_dir(ws, epic.id) / _name("merge", k, us["attempt"], "stale"), {"was": us["sha"], "now": tip})
             lines.append(f"{epic.id}: the merge of {k} is out of date: its branch changed after it was merged")
@@ -1770,7 +1788,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     if n > MAX_ATTEMPTS or gate(ws, epic.id, d["id"]) is None:
         return f"{epic.id}: {name} of {unit} not started: the epic may not release now", False
     if child:
-        if fetch_child(ws, rec, ctx["branch"], src) != ctx["sha"] or not checkout(ws, rec, ctx["sha"]):
+        if fetch_child(ws, rec, ctx["branch"], src, unit) != ctx["sha"] or not checkout(ws, rec, ctx["sha"]):
             return f"{epic.id}: {name} of {unit} not started: its branch moved since it was checked", False
         extra["sha"] = ctx["sha"]
     elif not checkout(ws, rec, extra["base_sha"]):
@@ -1788,7 +1806,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
         _record_production(ws, epic.id)
     env = command_env(ws, *progs.values())
     cwd = str(repo_dir(ws))
-    moved = (lambda: fetch_child(ws, rec, ctx["branch"], src) != ctx["sha"]) if child else None
+    moved = (lambda: fetch_child(ws, rec, ctx["branch"], src, unit) != ctx["sha"]) if child else None
     r = _run_steps(ws, epic, d, s, steps, run, env, cwd, moved)
     proven = r["proven"]
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),

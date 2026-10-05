@@ -586,7 +586,10 @@ worktree the readiness checks say so, as a warning).
   like the rest of the permits folder (agents' tools and commands cannot read or write it; a command naming it is
   never grantable). The path is derived from the validated workspace and child ids, never from ticket text, and a
   record whose path or branch is not the derived one does not count. The ticket's own `branches` and `worktrees`
-  fields are agent-written and are used only for a child with a linked worktree of its own.
+  fields are agent-written and are used only for a child with a linked worktree of its own, or in a workspace that is
+  not a checkout clones are made from. A child the runner gave (or tried to give) a clone, or would give one, is never
+  released from those fields: when its record is gone, damaged or was removed by `orch factory clones clean`, the
+  release refuses it ("the runner's clone record of <child> is missing").
 - At the child's first launch the runner makes the clone's folder itself (`mkdir`, exclusively, under its parent's
   descriptor), pins its inode, and runs, by argv, `git clone --local --no-hardlinks --no-checkout
   --no-recurse-submodules --template= <workspace repository> <clone>` into that empty folder with the release step's
@@ -602,9 +605,11 @@ worktree the readiness checks say so, as a warning).
   workspace is the subfolder `<sub>` of its repository, so relative paths land where they would in the workspace),
   with `ORCH_HOME` set to the workspace (above). It commits there on `fx/<child id>`; the guard and the permission hook
   let a commit run only from there, on that branch (see "Commits"). It never pushes.
-- The release first checks the clone as the commit gate does (no link on the way, the pinned folder and `.git`, a git
-  dir orch takes), then fetches the child's branch from it (objects and that one ref, pinned by commit, with the same
-  isolation and classification as before; see "Release recipe"). A clone that fails the check fails the merge stage.
+- Before every fetch from the clone the release takes the clone's lock (the one `clean` and a launch take), checks the
+  clone as the commit gate does (no link on the way, the pinned folder and `.git`, a git dir orch takes) and writes its
+  config again, then fetches the child's branch from it (objects and that one ref, pinned by commit, with the same
+  isolation and classification as before; see "Release recipe"). A clone that fails the check, or whose lock is held,
+  is not fetched from: the merge stage does not start.
 
 **By descriptor, never through a link.** The clones folder is outside the guarded permits folder, so an agent can
 plant a link in it or swap a folder for one. The runner never creates, writes, renames or removes anything there by a
@@ -634,7 +639,7 @@ drivers that are not configured, so none runs; `.gitmodules` is never read (no s
 as symlinks (the guard judges file tool paths after links, as in the workspace). Git LFS pointers stay pointers: the
 user's LFS filter is in the git config the runner does not use. Whether the file system ignores case is probed in a
 temporary folder of the runner's own, never in the clone. When the release fetches from the clone, `upload-pack` runs
-in the clone, with the config the runner wrote.
+in the clone, with the config the runner wrote right before that fetch, under the clone's lock.
 
 **What is agent-writable.** The clone's work tree, by the session's file tools and commands, like the workspace,
 except: its `.git` (the guard's `.git` rules: file tools never write a path with a `.git` component; shell writes into
@@ -1092,7 +1097,8 @@ includes, aliases, hooks, fsmonitor, filters or remotes. Each release round:
 1. fetches the base from the recipe's `remote` into a ref only the runner writes (`refs/remotes/release/<base>`);
 2. fetches each child branch into the mirror (`+refs/heads/<branch>` only: just objects cross, and the commit is what
    counts from then on, never the source's refs or replace objects): from the child's runner-made clone when the
-   runner's record names one ("Per-child clones"), else from the workspace checkout's path;
+   runner's record names one ("Per-child clones"), else, only for a child with a linked worktree of its own (or in
+   a workspace clones are not made from), from the workspace checkout's path;
 3. classifies there (below);
 4. for the merge stage, checks out exactly the classified commit in the mirror's work tree (forced, cleaned) and runs
    the precheck, the commands and the check there, with the working directory in the mirror; before every one of
@@ -1207,9 +1213,9 @@ can get run as you (a project runner allowed by a prefix rule, such as `npm run 
 anyway: forge a proven outcome, delete a failed intent so a stage runs again, or plant a lock.
 
 **Out of date.** A merge stage records the commit it merged for each child, and dev the children and commits it was
-proven for. If a child's branch in the workspace moves after its merge was proven (it came back with more work), or a
-child is added after dev was proven, the stage shows as out of date, not proven, and the epic is Stopped with
-"Release out of date". Retry release on that stage runs it again for the children as they are now (the merge first,
+proven for. If a child's branch (in its clone; for a child with a worktree of its own, in the workspace) moves after
+its merge was proven (it came back with more work), or a child is added after dev was proven, the stage shows as out
+of date, not proven, and the epic is Stopped with "Release out of date". Retry release on that stage runs it again for the children as they are now (the merge first,
 then dev).
 
 **The production stage.** Production runs only for a charter that signs `--release prod`, after dev is proven and not

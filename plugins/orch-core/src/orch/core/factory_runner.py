@@ -801,6 +801,21 @@ def _harness_ok(root: Path, p: Path) -> bool:
     return not any(os.path.lexists(p / f) and not _same_file(p / f, root / f) for f in _HARNESS_FILES)
 
 
+def own_worktree_dir(ws, t) -> Path | None:
+    """The one linked worktree child `t` names, when it is the child's own (own_work_tree; not a clone), or None."""
+    from orch.core import factory_clones
+    wts = t.meta.get("worktrees")
+    vals = list(wts.values()) if isinstance(wts, dict) else []
+    if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
+        try:
+            p = (Path(ws.root).resolve() / vals[0]).resolve()
+            if p.is_dir() and not factory_clones.in_root(p) and own_work_tree(ws, p, t.id) is None:
+                return p
+        except (OSError, RuntimeError, ValueError):
+            pass
+    return None
+
+
 def start_dir(ws, t) -> str | None:
     """Where the child's session starts: the one worktree the child names when it is the child's own, else the clone
     the runner recorded for it when it is the child's own (own_work_tree, the same rule the commit checks use); else
@@ -808,15 +823,9 @@ def start_dir(ws, t) -> str | None:
     launch) when that folder carries a harness settings or MCP file that is not identical to the workspace's own."""
     from orch.core import factory_clones
     root = Path(ws.root).resolve()
-    wts = t.meta.get("worktrees")
-    vals = list(wts.values()) if isinstance(wts, dict) else []
-    if len(vals) == 1 and isinstance(vals[0], str) and vals[0] and "\x00" not in vals[0]:
-        try:
-            p = (root / vals[0]).resolve()
-            if p.is_dir() and not factory_clones.in_root(p) and own_work_tree(ws, p, t.id) is None:
-                return str(p) if _harness_ok(root, p) else None
-        except (OSError, RuntimeError, ValueError):
-            pass
+    p = own_worktree_dir(ws, t)
+    if p is not None:
+        return str(p) if _harness_ok(root, p) else None
     rec = factory_clones.record(ws, t.id)
     if rec is not None:
         p = factory_clones.start_in(ws, rec)  # the clone's copy of the workspace folder

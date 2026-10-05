@@ -394,6 +394,67 @@ def test_a_sensitive_change_in_the_clone_stops_the_release(fws, fa, fh, human, c
     assert not fake.calls
 
 
+def _committed_clone(fws, fa, fh, human, remote, release="merge"):
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release=release)
+    cid = _child(fa, eid)
+    clone, _ = fc.ensure(fws, human, cid)
+    (clone / "x.json").write_text("[]\n", encoding="utf-8")
+    _g(clone, "add", "x.json")
+    _g(clone, "commit", "-q", *_msg(cid))
+    return eid, d, cid, clone
+
+
+@pytest.mark.parametrize("how", ["damaged", "removed", "cleaned"])
+def test_a_missing_clone_record_never_falls_back_to_the_ticket_branch(fws, fa, fh, human, close_tasks, remote, how):  # noqa: F811
+    eid, d, cid, clone = _committed_clone(fws, fa, fh, human, remote)
+    _to_testing(fa, cid, close_tasks)
+    if how == "damaged":
+        fc._rec_path(fws, cid).write_text("{damaged", encoding="utf-8")
+    elif how == "removed":
+        fc._rec_path(fws, cid).unlink()
+    else:
+        assert fc.clean(fws, human, cid)
+    other = f"feat/{cid.lower()}-other"  # an agent names a branch of the workspace on its ticket
+    _g(fws.root, "branch", other)
+    fa.link(cid, repo="app", branch=other)
+    assert fr.child_source(fws, store.load(fws, cid)[1]) == (None, None,
+                                                              f"the runner's clone record of {cid} is missing")
+    fake = RecipeFake()
+    lines = fr.tick(fws, human, fake)
+    assert not fake.calls and any("clone record" in x for x in lines), lines
+
+
+def test_a_child_that_never_had_a_clone_in_a_clonable_workspace_is_not_released(fws, fa, fh, human, close_tasks,
+                                                                                   remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    _g(fws.root, "branch", f"feat/{cid.lower()}-work")
+    fa.link(cid, repo="app", branch=f"feat/{cid.lower()}-work")  # a ticket field, no worktree of its own
+    assert fr.child_source(fws, store.load(fws, cid)[1])[2] == f"the runner's clone record of {cid} is missing"
+
+
+def test_each_fetch_from_a_clone_writes_its_config_again_under_its_lock(fws, fa, fh, human, close_tasks, remote,
+                                                                       monkeypatch):  # noqa: F811
+    eid, d, cid, clone = _committed_clone(fws, fa, fh, human, remote)
+    _to_testing(fa, cid, close_tasks)
+    rec = fc.record(fws, cid)
+    cfg = clone / ".git" / "config"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + f"[uploadpack]\n\tpackObjectsHook = touch {fws.marks}/pack\n",
+                   encoding="utf-8")
+    fr.ensure_repo(fws, fr.load(fws)[0])
+    branch, src, _ = fr.child_source(fws, store.load(fws, cid)[1])
+    sha = _g(clone, "rev-parse", "HEAD")
+    assert fr.fetch_child(fws, fr.load(fws)[0], branch, src, cid) == sha
+    assert cfg.read_text(encoding="utf-8") == fc.config_text(rec["source"], fc._case_insensitive())
+    assert fr.fetch_child(fws, fr.load(fws)[0], branch, src) is None  # from a clone only for its own child
+    monkeypatch.setattr(fc, "LOCK_TIMEOUT", 0.1)
+    with fc._clone_lock(fws, cid):  # `clean` (or a launch) holds the clone: the release does not fetch
+        assert fr.fetch_child(fws, fr.load(fws)[0], branch, src, cid) is None
+    assert sorted(os.listdir(fws.marks)) == []
+
+
 # -- the human's list and clean -----------------------------------------------------------------------------------
 
 def test_cli_list_and_clean_are_human_only_and_confirmed(fws, run, capsys, monkeypatch):

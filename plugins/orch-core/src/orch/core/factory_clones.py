@@ -278,6 +278,19 @@ def _fail_path(ws, child: str) -> Path:
     return fs._root() / "child-clones" / f"{fs._key(ws, 'clone', child)}.failed"
 
 
+def _cleaned_path(ws, child: str) -> Path:
+    return fs._root() / "child-clones" / f"{fs._key(ws, 'clone', child)}.cleaned"
+
+
+def ever_had_clone(ws, child) -> bool:
+    """Whether the runner ever recorded a clone for the child, tried to make one, or removed one (`clean`): its
+    record file (readable or not), its failure file or the mark `clean` leaves. The release then never reads the
+    agent-written ticket fields in place of the record."""
+    if not _key_ok(child):
+        return False
+    return any(os.path.lexists(p(ws, child)) for p in (_rec_path, _fail_path, _cleaned_path))
+
+
 def record(ws, child) -> dict | None:
     """The runner's record of the child's clone, or None (none, or one that does not read back exactly: another path
     or branch than the derived ones, another workspace, a damaged file)."""
@@ -605,6 +618,22 @@ def verify(ws, child: str) -> tuple[Path | None, str]:
     return (None, f"the clone of {child} {why}") if why else (Path(rec["path"]), "")
 
 
+def fetch_from(ws, child: str, fetch):
+    """fetch(path) for the release, under the child's clone lock, right after the clone is checked again (the pinned
+    folder and `.git`, a git dir orch takes) and its config written again by the runner, so the upload-pack git runs
+    in the clone reads only the runner's config. None when the clone cannot be had (no record, moved, locked)."""
+    from filelock import Timeout
+    try:
+        with _clone_lock(ws, child):
+            rec = record(ws, child)
+            if rec is None:
+                return None
+            _reuse(ws, child, rec)
+            return fetch(Path(rec["path"]))
+    except (Timeout, OSError, CloneError, UnicodeError):
+        return None
+
+
 def own_clone(ws, path, child: str) -> str | None:
     """Why `path` is not the child's own runner-made clone, or None: the clone's folder (or its copy of the workspace
     folder) the runner's record names for exactly this child, reached without a link and still the pinned folder and
@@ -701,6 +730,7 @@ def clean(ws, actor, child: str) -> bool:
                 pass  # removed by hand already, nothing of it left: only the record goes
             except (OSError, CloneError) as e:
                 raise ValidationError(f"the clone of {child} was not removed: {e}; the record stays") from None
+            fs._write_json(_cleaned_path(ws, child), {"child": child})  # the release never falls back to the ticket
             _rec_path(ws, child).unlink()
             _clear(ws, child)
     except Timeout:

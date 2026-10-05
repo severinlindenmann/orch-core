@@ -66,6 +66,7 @@
       <input id="confirm_dark" name="confirm_dark" autocomplete="off" spellcheck="false" aria-describedby="confirm-dark-hint">
       <span class="muted" id="confirm-dark-hint">A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict.</span>
     </label>
+    {% if profile_empty %}<p class="muted only-dark" data-profile-empty>The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: <code>orch dark profile add --baseline</code></p>{% endif %}
     {% endif %}
     {% endif %}
     <label class="field-col" for="files">Screenshots and files
@@ -86,13 +87,13 @@
       {% if factory_on %}
       <ol class="next-steps only-factory only-plain">
         <li>Creating it signs one epic: your ask is its Requirements, word for word; {{ limit_text }}.</li>
-        <li>Nothing splits the epic into children yet: start an agent on it and ask it to split it, or add the children yourself.</li>
+        <li>A planner session splits the epic into children, refines each and approves it under your charter.</li>
         <li>The runner starts a session for each child that is approved or covered by your charter. A permission card appears when an agent needs a command; you answer it.</li>
         <li>You read the Ready report and sign the verdict.</li>
       </ol>
       <ol class="next-steps only-dark">
         <li>You type dark to confirm; that signs the Dark charter ({{ limit_text }}).</li>
-        <li>Nothing splits the epic into children yet: start an agent on it and ask it to split it, or add the children yourself.</li>
+        <li>A planner session splits the epic into children, refines each and approves it under your charter. The Dark profile must hold the orch commands it runs.</li>
         <li>The runner starts a session for each child that is approved or covered by your charter. No permission prompts in the session: a command outside the Dark profile is denied and becomes a card here, with a button to add it to the profile.</li>
         <li>You still answer cards, larger children and the verdict. There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
       </ol>

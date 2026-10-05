@@ -16,7 +16,9 @@
   {{ fx.ring(run, steps) }}
   <div class="ring-side">
     <div role="status" id="run-status"><h2>{{ ui.status(run.role, run.chip) }} {{ run.headline }}</h2></div>
-    {% if run.state == "nokids" %}<p data-nokids>Nothing splits an epic into children yet. Start an agent on the epic and ask it to split it, or add the children yourself. The runner starts a session for each child that is approved or covered by your charter.</p>{% endif %}
+    {% if run.state == "planning" %}<p data-planning>It writes each child's requirements and acceptance criteria, and a plan when its size needs one, and approves it under your charter. Then the runner starts a session for each child.</p>{% endif %}
+    {% if run.state == "nokids" %}<p data-nokids>{% if run.planner == "spent" %}The planner session started twice and ended without adding a child. Add the children yourself, or approve the epic again for a new start.{% elif run.planner == "parked" %}The planner session ended without adding a child. It starts once more when something it waits for changes, such as your answer to one of its cards.{% else %}The runner starts a planner session that splits the epic into children when a session slot is free.{% endif %} The runner starts a session for each child that is approved or covered by your charter.</p>{% endif %}
+    {% if run.profile_empty %}<p class="muted" data-profile-empty>The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: <code>orch dark profile add --baseline</code></p>{% endif %}
     {% if run.state == "idle" %}<p>The runner starts a session for each child that is approved or covered by your charter, of size m or smaller, and open, in progress or waiting. None is right now.</p>{% endif %}
     {% if run.blocker and run.state == "blocked" %}<p class="muted">{{ run.blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
     {% if run.dark and not run.look_dark %}<p class="muted" data-dark-switch-off>Dark switch is off: this epic runs as an ordinary AI Factory. Commands outside your grants and the harness's allowlist are cards for you.</p>{% endif %}

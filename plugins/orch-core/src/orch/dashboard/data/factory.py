@@ -121,7 +121,7 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 # state: (chip role, list rank: needs you first, then working, then the rest, finished last, chip words). The chip
 # says the state in a word or two; the headline says it once, in a sentence.
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
-           "working": ("info", 1, "Working"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "working": ("info", 1, "Working"), "planning": ("info", 1, "Working"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
@@ -209,6 +209,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
                                       "in a terminal)")
     elif blocker:
         state, headline = "blocked", "The runner starts nothing"
+    elif not kids and any(factory_sessions.is_planner(b) for b in running):
+        state, headline = "planning", "A planner session is splitting the epic into children."
     elif not kids:
         state, headline = "nokids", "Waiting for children"
     elif running or any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
@@ -222,17 +224,23 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
-    here = {"working": "now", "waiting": "wait", "unarmed": "todo", "nokids": "todo", "idle": "todo"}.get(state, "stop")
+    here = {"working": "now", "planning": "now", "waiting": "wait", "unarmed": "todo", "nokids": "todo",
+            "idle": "todo"}.get(state, "stop")
     marks = ["done" if i < n else here if i == n else "todo" for i in range(len(STEPS))]
     current = min(n, len(STEPS) - 1)
-    live = state == "working"  # motion and glow only while it really works
+    live = state in ("working", "planning")  # motion and glow only while it really works
     built = bool(running) or any(_tasks(t)[0] for _, t in kids)
+    # why no child is there yet (the planner's own launch markers, never ticket text)
+    planner = None
+    if state == "nokids":
+        used = factory_sessions.planner_runs(ws, d["id"])
+        planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": STEPS[current], "live": live, "arc": STEP_ARCS[current],
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
-            "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine}
+            "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
 
 
 _LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "granted a permission",
@@ -282,6 +290,7 @@ def run_view(ws, epic) -> dict | None:
     r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
                    blocker=_blocker(), bound=_bound(ws))
     r["log"] = _epic_events(events, [epic.id] + [t.id for _, t in r["kids"]])
+    r["profile_empty"] = r["look_dark"] and r["state"] != "finished" and not dark_profile.rules(ws, signed)
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
     if r["state"] == "finished":
         reqs = [x for x in permits.requests(ws, events).values() if str(x["epic"]).upper() == epic.id.upper()]

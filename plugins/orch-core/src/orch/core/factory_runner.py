@@ -12,6 +12,9 @@ workspace config may only lower with `factory.max_concurrency`).
   open, in progress or waiting), at most `max_children` children per delegation and a few launches per child, both
   counted in markers beside the ledger. The runner generates the session id, writes the binding the permission hook
   trusts, and only then starts the agent.
+- Plan: an epic with no child at all gets one planner session instead (its binding's `child` is the epic itself), which
+  splits it into children, refines them and auto-approves them; at most PLANNER_LAUNCHES per delegation, outside the
+  child count. Once a child exists the runner never starts a planner again (one already running goes on).
 - Wake: a child whose session ended is started again when something it waits for changed (a grant, a denial, a
   revocation, its own text or status), never otherwise, within the launch cap.
 - Stop: when the epic is paused, edited, done, approved again, out of time, the ledger is cut, the factory is off, or
@@ -152,6 +155,31 @@ def work_prompt(key: str) -> str | None:
     return DEFAULTS["agents"]["prompts"]["work"].replace("{key}", key)
 
 
+# The planner's prompt: built in, like the work prompt, never from the config, a ticket or anything an agent edits. It
+# names only commands and options orch has (tests/test_factory_planner.py checks them against the CLI). `--file` and
+# multi-line text are left out on purpose: a Dark profile's prefix rule never matches them (docs/factory.md).
+PLANNER_PROMPT = (
+    "You are the planner of the AI Factory epic {key}. Read it with `orch show {key}` and its limits with "
+    "`orch epic show {key}`. Split the work into children within those limits, each created with one "
+    "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is xs, "
+    "s or m unless the limits say otherwise), the Requirements and Acceptance criteria written into files under "
+    "orchestrator/temporary first. When a child's size needs a Plan (every size but xs), write it as one paragraph "
+    "with `orch section set CHILD Plan -m \"...\"`. Keep line breaks, backticks, backslashes and the characters "
+    "; & | < > ( ) $ out of every command, titles and -m text included: a Dark run stops such a command for the human. "
+    "`orch ask` is refused in this epic: decide within the epic's text and record why with `orch log CHILD -m "
+    "\"...\"`, or leave the item out. Then approve each child with `orch epic auto-approve CHILD`. Do not build "
+    "anything and do not change the epic's own text. When every child is refined and approved, stop."
+)
+
+
+def planner_prompt(key: str) -> str | None:
+    """The built-in planner prompt for epic `key` (validated as work_prompt validates its key)."""
+    from orch.dashboard.data.agent_start import KEY_RE
+    if not isinstance(key, str) or not KEY_RE.fullmatch(key):
+        return None
+    return PLANNER_PROMPT.replace("{key}", key)
+
+
 def _same_file(a: Path, b: Path) -> bool:
     try:
         return a.is_file() and b.is_file() and not a.is_symlink() and not b.is_symlink() \
@@ -284,12 +312,13 @@ def _launchable(ws, epic, d, t, signed) -> bool:
             and not epics.hidden_in(t) and epics.child_state(ws, epic, t, signed) in ("delegated", "covered"))
 
 
-def _launch(ws, actor, launcher, settings, epic, d, t, token, lines) -> dict | None:
+def _launch(ws, actor, launcher, settings, epic, d, t, token, lines, planner: bool = False) -> dict | None:
     """Start one session. The command is the user's launch setting with the generated id and the built-in prompt put
     in as whole argv elements (never a shell, never ticket text), the program resolved to a trusted absolute path, under
-    `env -i` with a fixed PATH and the allowlisted variables."""
-    prompt = work_prompt(t.id)
-    cwd = start_dir(ws, t)
+    `env -i` with a fixed PATH and the allowlisted variables. `planner`: `t` is the epic itself, the planner's prompt
+    is used and the session starts in the workspace root."""
+    prompt = planner_prompt(t.id) if planner else work_prompt(t.id)
+    cwd = str(Path(ws.root).resolve()) if planner else start_dir(ws, t)
     if cwd is None:
         lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")
         return None
@@ -391,7 +420,26 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
         d = permits.factory_delegation(ws, epic, signed) if epic is not None else None
         if d is None or not d["active"] or not fs.armed(ws, d["id"]):
             continue
-        for ce in epics.children(ws, epic.id):
+        kids = epics.children(ws, epic.id)
+        if not kids:  # nothing splits the epic yet: one planner session does, within its own launch cap
+            if len(keep) >= cap:
+                return lines
+            if any(fs.is_planner(b) and b["epic"] == epic.id for b in keep) or permits.budget_reason(ws, epic, d):
+                continue
+            token = wake_token(epic, epic, signed, dark_marks)
+            if any(fs.is_planner(g) and g["epic"] == epic.id and g["delegation"] == d["id"] and g["wake"] == token
+                   for g in gone):
+                continue  # it ended without children and nothing it waits for changed since
+            if resolve_bin(settings["factory_command"][0]) is None or resolve_bin("env") is None:
+                lines.append(f"{epic.id} planner not started: claude or env was not found at a trusted path")
+                continue  # before its marker: a missing program must not use up its two launches
+            if not fs.mark_planner_run(ws, d["id"]):
+                continue
+            b = _launch(ws, actor, launcher, settings, epic, d, epic, token, lines, planner=True)
+            if b is not None:
+                keep.append(b)
+            continue
+        for ce in kids:
             if len(keep) >= cap:
                 return lines
             t = _ticket(ws, ce.id)

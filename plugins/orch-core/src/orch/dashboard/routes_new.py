@@ -70,12 +70,14 @@ def _plain(text: str) -> str:
 
 def _form(request: Request, values: dict, problem: str | None = None, status_code: int = 200,
           problem_href: str | None = None):
-    from orch.core import epics, permits
+    from orch.core import dark_profile, epics, permits
     ws = request.app.state.ws
     git = ws.config.get("git") or {}
+    dark_on = permits.dark_on(ws)
     return page(request, "new.html", status_code, nav="new", title="New ticket", types=TYPES, sizes=SIZES, priorities=PRIORITIES,
                 values=values, problem=problem, problem_href=problem_href, review_term=git.get("review_term") or "PR",
-                factory_on=permits.enabled(ws), dark_on=permits.dark_on(ws), done_when_default=DONE_WHEN,
+                factory_on=permits.enabled(ws), dark_on=dark_on, done_when_default=DONE_WHEN,
+                profile_empty=dark_on and not dark_profile.rules(ws),
                 limits=epics.FACTORY_DEFAULTS, once=_once(request).issue())
 
 

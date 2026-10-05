@@ -511,7 +511,9 @@ def use(ws, actor, g: dict, ticket_id: str | None) -> bool:
 # -- the PermissionRequest hook ---------------------------------------------------------------------------------------
 
 def _session_ticket(ws, session: str | None):
-    """The factory ticket this harness session works on: the child its binding names. Only the runner's binding
+    """The factory ticket this harness session works on: the child its binding names (for the planner, which splits a
+    childless epic, the epic itself: charter_epic of an epic is the epic, so it gets that epic's grants, Dark profile
+    and refusals like any of its children). Only the runner's binding
     (orch.core.factory_sessions, written when the runner launched the session) counts: a claim, the environment or a
     session id an agent chose does not make a session a factory session (#31). None when the session is not bound,
     or its child no longer belongs to the bound epic under the bound delegation (a binding that went stale answers

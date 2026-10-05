@@ -162,6 +162,7 @@ The dashboard server can keep the agents going for you, on this machine, in a tm
 start a factory epic **from the dashboard** (the epic page's "Start as an AI Factory"), that signed start also arms the
 runner for that delegation. Every few seconds the dashboard then, for each armed and active factory epic:
 
+- **plans**: an epic with no child at all gets one **planner** session instead (below);
 - **launches** one agent session (tmux must be installed) for each child that is auto-approved or covered by your
   charter, is size m or smaller, and is open, in progress or waiting: at most **3 at a time**
   (`factory.max_concurrency` in `orchestrator/config.json` can only lower that), at most the charter's **max
@@ -175,6 +176,22 @@ runner for that delegation. Every few seconds the dashboard then, for each armed
   children: those already running go on. When the dashboard stops, every session stops and every binding ends (each
   child starts again with the next dashboard); when it starts, a binding whose session is not running ends. If tmux does
   not answer, the runner concludes nothing that round and asks again.
+
+**The planner.** An armed, active factory epic that has no child at all (in any status) gets one planner session, under
+the same gates as a child's session (the factory on, the user-scope settings below, the budget not used up, not
+paused, edited or suspended, tmux and the programs found) and taking one of the concurrency slots. It is bound like a
+child's session (a random session id, the binding written before the start, trusted only for the recorded process,
+the checkout and start folder recorded); its binding names the epic itself as its child, so the permission hook gives
+it that epic's grants, Dark profile and refusals. It starts in the workspace root. Its prompt is built in, like the
+work prompt: read the epic, split it into children within the charter's limits with `orch new --epic <epic>`
+(Requirements and Acceptance criteria from files: `--requirements-file`, `--acceptance-file`), write a one-paragraph
+Plan with `orch section set <child> Plan -m "..."` when the size needs one, decide instead of asking (`orch ask` is
+refused; reasons go to `orch log`), approve each child with `orch epic auto-approve <child>`, build nothing, leave
+the epic's text alone, and stop. A planner starts at most twice per start (its own markers, not counted against the
+charter's children), and again only when its session ended, the epic still has no child, and something it waits for
+changed (your grant, denial or revocation in that epic, or a Dark profile change), as for a parked child. It stops as
+a child's session does. The first child does not stop it (it is still working); the runner just never starts a
+planner for an epic that has a child.
 
 The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
@@ -249,8 +266,9 @@ mode"); the runner does not change that (D2 B).
 
 ## Dark AI Factory (phase 5, core)
 
-A Dark factory is an AI Factory epic that never asks you for a permission while it runs. It is built on everything
-above: the permission hook stays the only gate, orch still writes no harness settings (D2 B), and the runner's launch
+A Dark factory is an AI Factory epic whose sessions show no permission prompts. That does not mean nothing reaches
+you: a command outside the Dark profile is denied and becomes a card for you, and larger children, budget cards and
+the verdict still need you. It is built on everything above: the permission hook stays the only gate, orch still writes no harness settings (D2 B), and the runner's launch
 command allowlist is unchanged (no settings file, no skip or bypass flags, no permission mode that stops asking).
 Instead of a card for every prompt, a Dark epic's hook answers from your **Dark profile**: a signed list of shell
 commands Dark runs in this checkout may run.
@@ -286,8 +304,9 @@ orch approve <epic> requirements --dark       # implies --factory
 ```
 
 The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
-before the typed confirmation says it plainly: Dark runs without asking you, only commands the profile lists run, and
-it releases and closes only within what the charter signs, which today is nothing: the verdict stays yours. The
+before the typed confirmation says it plainly: Dark runs without permission prompts in the session, only commands the
+profile lists run (anything else is denied and becomes a card for you), and it releases and closes only within what
+the charter signs, which today is nothing: the verdict stays yours. The
 command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
 **The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
@@ -304,11 +323,29 @@ orch dark profile list                          # anyone may read it
 orch dark profile add --prefix "npm run verify"  # a single simple command starting with these words
 orch dark profile add --exact "make test > out.txt"
 orch dark profile add --from-request P-7         # an open Dark card: its command as an exact rule
+orch dark profile add --baseline                 # the orch agent verbs a planner or worker needs
 orch dark profile remove <rule id>
 ```
 
-Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed; agents are
-refused in orch itself and by the guard.
+Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed (`--baseline`
+prints every rule it adds and needs BASELINE typed); agents are refused in orch itself and by the guard.
+
+**The baseline** is a fixed list of prefix rules for the orch commands an unattended planner or worker session runs:
+`orch show`, `list`, `search`, `next`, `state`, `check`, `new`, `section set`, `task add|start|done|skip|block|list`,
+`claim`, `release`, `log`, `link`, `move`, `wait`, `permit request`, `permit list`, `artifact add`, `epic show` and
+`epic auto-approve`. No human-only verb is in it (approve, answer, verdict, request-changes, reopen, close, ledger,
+`epic pause`, `permit grant|deny|revoke`, `dark profile add|remove`, `factory dark on`, addon administration, the
+dashboard) and no `ask`. Each rule goes through the same checks as any `--prefix` rule; rules already in force are
+skipped, so running it again adds nothing. A human-only form of an allowed verb (`orch move X done`) still does not
+run: the guard denies it, so no rule matches it. Without the baseline (an empty profile), every command a Dark session
+runs stops for a card; the run view and the New ticket page say so.
+
+What a prefix rule matches is narrow on purpose, and that reaches orch's own commands too: a shell metacharacter
+anywhere in the command, even inside quotes (a title or `-m` text holding `(`, `$` or `;`), or a line break, and an
+argument shape listed below (`--file` among them, so `orch section set X Plan --file plan.md` and `orch state X
+--file f`) match no prefix rule, and the command stops for a card. Multi-line text goes through files the agent writes
+with its file tools (`orch new --requirements-file … --acceptance-file …`, `--body-file`), and those tools are denied
+in factory sessions unless your permission mode lets file edits through (see "Permissions" above).
 
 - An **exact** rule matches only the identical command text.
 - A **prefix** rule matches only a single simple command: no `;`, `&`, `|`, `<`, `>`, `(`, `)`, backtick, `$`,
@@ -361,7 +398,7 @@ the repository the agent writes to, listed by its exact command.
 - A rule that covers an open Dark card hides the card from your lists without signing an answer to it; removing the
   rule brings the card back.
 
-**Waking.** Adding or removing a rule wakes the parked children of Dark epics (the runner relaunches them), the same
+**Waking.** Adding or removing a rule wakes the parked children (and a parked planner) of Dark epics (the runner relaunches them), the same
 way your grants do, whether the Dark switch is on or off: a wake only relaunches a child, it allows nothing by itself.
 Flipping the Dark switch alone wakes nothing, so switching it off and on does not relaunch every parked child; a child
 parked while Dark was off waits for your answer to its card, or a profile change.
@@ -381,9 +418,13 @@ refusal of a process under an agent harness, as for every approval).
   and Acceptance criteria are byte for byte what you sent before it signs. Each rendered form carries a one-time token,
   so sending the same form twice starts one run (the second send links to the epic the first one created). If the epic
   was created but its start failed, you land on the epic with the reason, and start it there.
-- **Nothing splits the epic yet.** An epic started from New ticket has no children, and the runner starts sessions only
-  for children (those approved or covered by your charter). Start an agent on the epic and ask it to split it, or add
-  the children yourself; until then the run view says "Waiting for children".
+- **A planner splits the epic.** An epic started from New ticket has no children; the runner starts one planner session
+  for it (see "The planner" above), and the run view says "A planner session is splitting the epic into children."
+  while it runs. Without one it says "Waiting for children" and why: the planner starts when a session slot is free,
+  ended and waits for your answer, or ended twice without adding a child (then add the children yourself, or approve
+  the epic again for a new start). In a Dark epic the planner's orch commands stop for cards unless the Dark profile
+  holds them: while the profile is empty, the run view and New ticket's Dark mode say so and name
+  `orch dark profile add --baseline`.
 - **Epic page**: next to "Start as an AI Factory", "Start as a Dark AI Factory" while Dark is on; it also needs the word
   dark typed, checked by the server.
 - **No permission prompts in a Dark session** does not mean nothing reaches you: a command outside the Dark profile is
@@ -392,7 +433,8 @@ refusal of a process under an agent harness, as for every approval).
   signed charter and at least one child), Plan (every child covered, auto-approved or approved), Build (every child
   has all its tasks closed, as the agents report it, or is in testing or done with the record behind it), Evidence (the
   Ready report: every criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state,
-  said once: working (only while a child can be launched or a session runs), needs you, waiting for children, idle,
+  said once: working (only while a child can be launched or a session runs), planning (the planner runs and there is
+  no child yet; Understand still needs a child), needs you, waiting for children, idle,
   paused, stopped, budget used up, edited, blocked, not running (not armed) or finished. Motion and glow only while it
   works. Then the time since you signed the start (there is no estimate), what waits for you (the same cards as
   elsewhere), a read-only log in plain words (time, ticket, who and a fixed phrase per event kind; no command text,
@@ -410,10 +452,15 @@ The Dark switch itself stays a terminal command (`orch factory dark on`). Not bu
 closing (the verdict is yours, from the Ready report), and runner-side proof that tests ran, a review happened or a
 branch merged; the ring has no steps for those because no record of them exists.
 
+What the test suite covers for the planner and the baseline, and what it does not: the runner, the binding, the hook
+and the dashboard states are tested with a stand-in launcher (no tmux, no agent), and the baseline against the CLI's
+real commands and the guard. No test runs a real Claude session through a planner or a child end to end.
+
 ## Coming in later phases
 
 - Release stages and closing children under the charter; runner-side proof of tests, review and merge (and ring
   steps for them).
+- A live end-to-end test of a factory run, per child, with a real agent session.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).
 - Phone cards through the signed phone-decision flow.

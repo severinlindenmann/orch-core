@@ -164,15 +164,30 @@ def profile_add(prefix: Annotated[Optional[str], typer.Option(
                 exact: Annotated[Optional[str], typer.Option("--exact", help="The full command text.")] = None,
                 from_request: Annotated[Optional[str], typer.Option(
                     "--from-request", help="An open Dark request (P-…): its command as an exact rule.")] = None,
+                baseline: Annotated[bool, typer.Option(
+                    "--baseline", help="The orch agent verbs a planner or worker session needs, as prefix rules.")] = False,
                 json_out: JsonOpt = False) -> None:
     """Add a rule to the Dark profile. Human only."""
     from orch.actor import confirm_typed, require_human_terminal
     from orch.core import dark_profile
     from orch.errors import UsageError
     cli, ws = _ctx()
-    if sum(x is not None for x in (prefix, exact, from_request)) != 1:
-        raise UsageError("give exactly one of --prefix, --exact or --from-request")
+    if sum(x is not None for x in (prefix, exact, from_request)) + baseline != 1:
+        raise UsageError("give exactly one of --prefix, --exact, --from-request or --baseline")
     require_human_terminal("changing the Dark profile")
+    if baseline:
+        todo = dark_profile.baseline_todo(ws)
+        if not todo:
+            cli._out({"added": []}, json_out, "every baseline rule is in the Dark profile already")
+            return
+        typer.echo("Adding to the Dark profile (every later Dark run in this workspace may run them without asking):",
+                   err=json_out)
+        for r in todo:
+            typer.echo("  " + _rule_line({"id": dark_profile.rule_id("prefix", r.split()), "kind": "prefix",
+                                          "rule": r.split()}), err=json_out)
+        added = dark_profile.add_baseline(ws, confirm_typed("BASELINE"), shown=todo)
+        cli._out({"added": added}, json_out, f"added {len(added)} baseline rules to the Dark profile")
+        return
     if from_request is not None:
         r = _show_request(ws, from_request, "Adding to the Dark profile, as an exact rule, the command of")
         actor = confirm_typed(r["id"])

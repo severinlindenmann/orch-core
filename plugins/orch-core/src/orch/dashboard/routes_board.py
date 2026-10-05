@@ -345,10 +345,12 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
     sort = sort if sort in _SORTABLE else "move"
     dir_ = "desc" if dir_ == "desc" else "asc"
     entries = query.list_tickets(ws, label=label or None)
+    unknown_status = status if status and status not in STATUSES else ""  # shown as a notice, the filter is ignored
     status = status if status in STATUSES else ""
     if status:  # M: the Done rail opens the List on the done tickets
         entries = [e for e in entries if e.status == status]
         show_done = 1 if status == "done" else show_done
+    q = q.strip()
     if q:
         hits = {e.id for e in query.search(ws, q)}
         entries = [e for e in entries if e.id in hits]
@@ -439,7 +441,7 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
         return "/board?" + urlencode(filters + extra + [("view", "list"), ("sort", column), ("dir", flip)])
 
     return page(request, "board.html", nav="board", title="Board", needs=needs, waiting=waiting, columns=columns,
-                statuses=STATUSES, backlog_open=backlog_open, board_roles={**metrics.STATUS_ROLES, "waiting": "neu"}, types=TYPES, priorities=PRIORITIES, repos=repos, q=q, type=type_, priority=priority,
+                statuses=STATUSES, backlog_open=backlog_open, board_roles={**metrics.STATUS_ROLES, "waiting": "neu"}, types=TYPES, priorities=PRIORITIES, repos=repos, q=q, unknown_status=unknown_status[:40], type=type_, priority=priority,
                 label=label, repo=repo, external=external, show_done=bool(show_done), view=view, sort=sort, dir=dir_,
                 active_count=active, external_tab=external_tab, external_link="/board?view=external",
                 external_params=clean_params(request.query_params, drop=("view",)) if view == "external" else {}, list_rows=list_rows, list_columns=_LIST_COLUMNS, list_sortable=_SORTABLE, list_link=list_link,

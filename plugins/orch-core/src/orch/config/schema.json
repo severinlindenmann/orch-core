@@ -78,7 +78,8 @@
         "pull_seconds": {"type": "number", "minimum": 5},
         "theme": {"enum": ["system", "light", "dark"]},
         "brand": {"type": "string"},
-        "stale_minutes": {"type": "integer", "minimum": 1}
+        "stale_minutes": {"type": "integer", "minimum": 1},
+        "revalidate_days": {"type": "integer", "minimum": 0}
       }
     },
     "agents": {
@@ -96,6 +97,21 @@
     "addons": {"type": "object", "additionalProperties": {"type": "object"}},
     "feedback": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
     "factory": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "checks": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,39}$"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["steps"],
+        "properties": {
+          "steps": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
+            "type": "object", "additionalProperties": false, "required": ["name", "run"],
+            "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 60},
+                           "run": {"type": "string", "minLength": 1, "maxLength": 2000}}}},
+          "keep_going": {"type": "boolean"},
+          "timeout": {"type": "integer", "minimum": 1, "maximum": 86400}
+        }
+      }
+    },
     "suggested_addons": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}},
     "sprints": {
       "type": "array",

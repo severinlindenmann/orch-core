@@ -110,6 +110,33 @@ check looks at that literal path only.
 - A Plan checklist of a ticket written before task lists becomes tasks through `orch migrate`; the Plan
   text and its approval stay unchanged.
 
+## Receipts (orch task done --run)
+
+`orch task done <id> T<n> --run` proves a task with a receipt instead of a sentence. orch runs the task's `verify`
+line itself, in the directory the agent stands in, and keeps what happened:
+
+- A `verify` line `check:<name>` runs the workspace's named check: `checks.<name>.steps` in
+  `orchestrator/config.json`, in order (`{"steps": [{"name": "build", "run": "npm run build"}, ...], "keep_going":
+  false}`). What verification takes differs per project, so the project says it once; an agent picks the check by
+  name and cannot change what it runs (the guard refuses an agent edit of `checks`). A `verify` line
+  `cmd: <command>` is one step named `verify`. Any other line is prose (`deploy and one green run per job`) and is
+  never run: `--run` refuses it. After a failing step the rest are skipped unless `keep_going`. The timeout covers
+  the whole run: `--timeout`, else the check's own `timeout` (seconds), else 540 s, under the 600 s an agent
+  harness allows one shell call. On a timeout, Ctrl-C or SIGTERM the step's whole process group is killed.
+- Receipts and who added an artifact are orch's to write: `orch artifact add --kind receipt`, and replacing a
+  receipt's file, are refused, and the
+  guard refuses an agent's edit of the ticket file that adds or changes a receipt, its `run` or any entry's `by`.
+- The receipt is an artifact of the reserved kind `receipt`, `receipt-T<n>-<UTC stamp>.log`: each step's command
+  and output (the tail, within the artifact size limit). Its entry carries `run`: `exit`, `timed_out`, `commit`,
+  `dirty`, `repo` (the checkout's folder name), `at`, `seconds`, `check` and `steps` (`name`, `run`, `status` pass|fail|skip, `exit`, `timed_out`,
+  `seconds`).
+- Verification gets a core `gates` widget with the id `receipt-t<n>`: a row per step with its status and time,
+  the receipt and the commit as its source. The next run of the same task replaces it.
+- The task is ticked only when every step passed; its note names the receipt. A failing run keeps its receipt and
+  widget, leaves the task open and exits with code 5.
+
+Nothing runs before the claim, the plan approval and the task's own rules allow `orch task done`.
+
 ## Input file (orch task add --file)
 
 ```yaml

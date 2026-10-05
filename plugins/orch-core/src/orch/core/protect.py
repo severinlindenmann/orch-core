@@ -7,6 +7,22 @@ PROTECTED_KEYS = ("id", "status", "gates", "claim")
 FROZEN_AFTER_APPROVAL = ("size", "type")
 
 
+def artifact_facts(meta: dict) -> list:
+    """What only orch writes on artifact entries: which are receipts, their `run`, and who added each (`by`). An
+    agent's raw edit that changes any of it (a hand-written receipt, a rewritten author) is refused by the guard;
+    a plain entry without these, or a label, stays editable."""
+    out = []
+    for e in meta.get("artifacts") or []:
+        if not isinstance(e, dict):
+            continue
+        facts = {k: e[k] for k in ("run", "by") if k in e}
+        if e.get("kind") == "receipt":
+            facts["kind"] = "receipt"
+        if facts:
+            out.append((str(e.get("name") or e.get("url") or e.get("static") or ""), repr(sorted(facts.items()))))
+    return sorted(out)
+
+
 def _answers(meta: dict) -> dict:
     return {
         str(q.get("id")): (q.get("answer"), q.get("answered"), q.get("via"))

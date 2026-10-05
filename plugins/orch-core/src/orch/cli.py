@@ -1919,6 +1919,8 @@ def serve(
             webbrowser.open(url)
         except Exception:
             pass  # headless machine: the printed link is enough
+    from orch.dashboard.factory_runner import configure_logging
+    configure_logging()  # the AI Factory runner's lines reach this terminal
     if bridge is not None:
         typer.echo("remote: reachable from your paired devices through the relay; Ctrl-C stops the dashboard and "
                    "the link")

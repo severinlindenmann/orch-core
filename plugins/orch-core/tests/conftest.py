@@ -42,6 +42,7 @@ def _factory_pane_pid(monkeypatch):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_readiness: run the AI Factory runner's real readiness checks")
+    config.addinivalue_line("markers", "real_programs: look up the AI Factory runner's programs for real")
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +53,8 @@ def _factory_ready(monkeypatch, request):
     fr._READY.clear()
     if request.node.get_closest_marker("real_readiness") is None:
         monkeypatch.setattr(fr, "readiness", lambda ws, settings, environ=None: [])
+    if request.node.get_closest_marker("real_programs") is None:  # the machine's tmux or claude decide nothing here
+        monkeypatch.setattr(fr, "program_blocker", lambda settings=None: None)
 
 
 @pytest.fixture(autouse=True)

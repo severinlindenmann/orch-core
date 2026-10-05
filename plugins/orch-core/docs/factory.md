@@ -331,8 +331,7 @@ reason, never a silent pass. The hook programs run with the words Claude Code wo
 shell, in an empty folder of the runner's own, and a plugin's hook with `CLAUDE_PLUGIN_DATA` pointing at the runner's
 own data folder (`permits/plugin-data` in your orch config dir, where the plugin's `bin/orch` keeps its venv): nothing
 is written in the workspace or the plugin's install folder (the test suite checks both). An absolute hook program is
-run only when it passes the same ownership and permission rule as the other programs (a regular file owned by you or
-root, in a folder only you or root can write). A relative `CLAUDE_CONFIG_DIR` blocks: each session would read another
+run only when it passes the same trust rule as the other programs (above). A relative `CLAUDE_CONFIG_DIR` blocks: each session would read another
 folder depending on where it starts.
 
 - *programs* (blocks): `claude`, `env`, `orch` and `uv` must not lie inside the workspace (as found or after links):
@@ -340,7 +339,8 @@ folder depending on where it starts.
   agent-written code on every session's PATH. Fix: install them outside the workspace and start the dashboard from
   there. Independently of this check, a program inside the workspace is never put on a session's PATH and the runner
   refuses to launch a `claude` or `env` there, and any program whose folder is not owned by you or root, or is
-  writable by group or others, is not used at all.
+  writable by everyone, is not used at all (a group-writable folder of yours, such as Apple Silicon Homebrew's
+  `/opt/homebrew/bin`, is fine).
 
 - *claude* (blocks): `claude --version` must exit 0 and print a version. A wrapper first on the dashboard's PATH that
   cannot find the real claude fails here. Fix: put the real claude first on the dashboard's PATH.
@@ -399,7 +399,14 @@ the one the runner recorded, so a copied id gets no factory treatment (and the b
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
 private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
-path only when owned by you or root and not writable by group or others (nor their folders). The agent gets `env -i` with a fixed PATH (the
+path only when trusted: the file owned by you or root and not writable by group or others, its folder owned by you
+or root and not writable by everyone (Homebrew's group-writable `/opt/homebrew/bin` is fine; `/tmp` is not). That keeps
+out another user's programs and world-writable folders; it is no defence against code that runs as you, which can
+write any folder you own (the defences there are that nothing inside the workspace is used, and the guard). When the
+runner cannot use `tmux`, `env` or `claude`, it says so: once on the dashboard's terminal and on every armed epic's
+run view and epic page, with the path it saw and why it was refused ("tmux was not found at a trusted path: ..."),
+never only "Waiting for children". The runner's own lines (sessions started, refused, stopped, nudged) are printed on
+the terminal that runs the dashboard. The agent gets `env -i` with a fixed PATH (the
 folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
 session starts in the child's worktree only when the child names exactly one and it is the child's own (a linked
 git worktree in the workspace on a non-default branch that names the child: see "Commits"); otherwise in the workspace

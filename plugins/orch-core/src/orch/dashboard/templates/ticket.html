@@ -190,7 +190,7 @@
 {% macro epic_slot(e, gate_shown, card_needed) %}
 {% set f, p = e.factory, e.permits or {} %}
 <section class="epic-slot" id="epic-slot" aria-label="Waiting on you">
-  {% if f and f.factory and f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
+  {% if f and f.factory and f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}.</p>{% endif %}
   {% if f and f.factory %}<p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark and f.dark_on else "AI Factory" }} run view</a></p>{% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}

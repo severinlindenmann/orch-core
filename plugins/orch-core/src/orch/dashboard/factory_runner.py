@@ -152,11 +152,37 @@ class TmuxLauncher:
             raise UsageError(f"{name} could not be ended (has it ended already?)")
 
 
+_SAID: dict[str, str | None] = {}  # the last blocking reason logged, per workspace: said once, not every round
+
+
 def run_once(ws, launcher=None) -> list[str]:
+    """One runner round. When the runner cannot start anything (factory_runner.runner_blocker: a program, the user
+    settings, readiness), that is said on the terminal once per change, and every view shows the same reason."""
     from orch.core import factory_sessions, permits
-    if not available() or not (permits.enabled(ws) or factory_sessions.bindings(ws)):
+    if not (permits.enabled(ws) or factory_sessions.bindings(ws)):
         return []
-    return factory_runner.tick(ws, LOCAL_HUMAN, launcher or TmuxLauncher(), settings=launch.load_settings())
+    settings = launch.load_settings()
+    why = factory_runner.program_blocker(settings)
+    key = str(ws.root)
+    if why != _SAID.get(key):
+        _SAID[key] = why
+        if why:
+            log.warning("factory runner starts nothing: %s", why)
+    if not available():  # no tmux at a trusted path: nothing can start (the views say why)
+        return []
+    return factory_runner.tick(ws, LOCAL_HUMAN, launcher or TmuxLauncher(), settings=settings)
+
+
+def configure_logging() -> None:
+    """The runner's lines (sessions started, refused, stopped, nudged) reach the terminal that runs the dashboard: a
+    handler on the `orch.factory` logger at INFO unless one is configured already. Nothing else changes."""
+    if log.handlers:
+        return
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter("orch factory: %(message)s"))
+    log.addHandler(h)
+    log.setLevel(logging.INFO)
+    log.propagate = False
 
 
 def release_once(ws, run=None) -> list[str]:

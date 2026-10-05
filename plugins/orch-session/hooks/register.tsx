@@ -109,8 +109,15 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'orch' }, async $ => {
+    // Outside an orch workspace there is one line to say: a toast, not a half-width pane.
+    quiet = 0
+    gone = 0
+    await refresh()
+    if ((await read($, problem)) === 'no-workspace') {
+      $.ui.toast(PROBLEM['no-workspace'], { timeoutMs: 4000 })
+      return { text: PROBLEM['no-workspace'] }
+    }
     await $.ui.open({ id: PANE, title: 'orch · this session' })
-    wake()
     return { text: 'orch pane opened.' }
   })
 

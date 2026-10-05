@@ -63,6 +63,7 @@ class Device:
     revoked: bool = False
     phone_link: str | None = None  # an existing phone pairing, recorded only with its proof (§8.2)
     credential: Credential | None = None
+    gen: int = 0  # the registry generation of this entry's last change that affects authorisation
 
     @property
     def level(self) -> int:
@@ -71,14 +72,14 @@ class Device:
     def as_json(self) -> dict:
         return {"pub": self.pub.hex(), "scope": self.scope, "label": self.label, "paired_at": self.paired_at,
                 "revoked": self.revoked, "phone_link": self.phone_link,
-                "credential": self.credential.as_json() if self.credential else None}
+                "credential": self.credential.as_json() if self.credential else None, "gen": self.gen}
 
 
 def _device(workspace: bytes, did: str, d: dict) -> Device:
     cred = d["credential"]
     dev = Device(did, bytes.fromhex(d["pub"]), d["scope"], d["label"], d["paired_at"], d["revoked"], d["phone_link"],
-                 Credential.from_json(cred) if cred is not None else None)
-    if (not _ID.fullmatch(did) or len(dev.pub) != 65 or device_id(workspace, dev.pub).hex() != did
+                 Credential.from_json(cred) if cred is not None else None, d["gen"])
+    if (type(dev.gen) is not int or dev.gen < 0 or not _ID.fullmatch(did) or len(dev.pub) != 65 or device_id(workspace, dev.pub).hex() != did
             or dev.scope not in SCOPES or not isinstance(dev.label, str) or len(dev.label) > _LABEL_MAX
             or type(dev.paired_at) is not int or type(dev.revoked) is not bool
             or not (dev.phone_link is None or isinstance(dev.phone_link, str))):
@@ -94,20 +95,31 @@ class Registry:
         self.workspace = workspace
         self.path = self.root / "registry.json"
         self.audit_path = self.root / "audit.jsonl"
+        # one lock for readers and writers: a reader never sees a registry between two parts of one change
+        self._lock = FileLock(str(self.path) + ".lock", timeout=10)
 
     # -- read --------------------------------------------------------------------------------------------------------
 
-    def devices(self) -> dict[str, Device]:
-        raw = files.read(self.path, _LIMIT)
+    def snapshot(self) -> tuple[int, dict[str, Device]]:
+        """(the registry generation, every device), read once under the registry lock."""
+        with self._lock:
+            raw = files.read(self.path, _LIMIT)
         if raw is None:
-            return {}
+            return 0, {}
         try:
             data = json.loads(raw.decode("utf-8"))
-            if data.get("v") != 1 or data.get("workspace") != self.workspace.hex() or not isinstance(data["devices"], dict):
+            if data.get("v") != 1 or data.get("workspace") != self.workspace.hex() or not isinstance(data["devices"], dict) \
+                    or type(data["generation"]) is not int:
                 raise ValueError("registry")
-            return {did: _device(self.workspace, did, d) for did, d in data["devices"].items()}
+            devs = {did: _device(self.workspace, did, d) for did, d in data["devices"].items()}
+            if any(d.gen > data["generation"] for d in devs.values()):
+                raise ValueError("registry generation")
+            return data["generation"], devs
         except (UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError) as e:
             raise files.Damaged("the device registry is not valid") from e
+
+    def devices(self) -> dict[str, Device]:
+        return self.snapshot()[1]
 
     def get(self, did: str) -> Device | None:
         return self.devices().get(did)
@@ -118,12 +130,18 @@ class Registry:
         line = json.dumps({"at": now_ms, "event": event, **fields}, sort_keys=True, ensure_ascii=True)
         files.append(self.audit_path, (line + "\n").encode("ascii"))
 
-    def _change(self, now_ms: int, event: str, mutate, **fields) -> Device:
-        with FileLock(str(self.path) + ".lock", timeout=10):
-            devs = self.devices()  # Damaged propagates: never write over a registry that cannot be read
+    def _change(self, now_ms: int, event: str, mutate, bump: bool = True, **fields) -> Device:
+        """One change under the registry lock. `bump`: it affects authorisation (added, scope, revocation, key), so
+        the generation moves on and every decision taken on the old entry stops being authorised."""
+        with self._lock:
+            generation, devs = self.snapshot()  # Damaged propagates: never write over a registry that cannot be read
             dev = mutate(devs)
+            if bump:
+                generation += 1
+                dev = _replace(dev, gen=generation)
             devs[dev.id] = dev
-            body = {"v": 1, "workspace": self.workspace.hex(), "devices": {k: v.as_json() for k, v in devs.items()}}
+            body = {"v": 1, "workspace": self.workspace.hex(), "generation": generation,
+                    "devices": {k: v.as_json() for k, v in devs.items()}}
             files.replace(self.path, json.dumps(body, sort_keys=True, ensure_ascii=True).encode("ascii"))
             self.audit(now_ms, event, device=dev.id, **fields)
         return dev
@@ -164,7 +182,7 @@ class Registry:
             if dev.credential is None:
                 raise LookupError("no credential")
             return _replace(dev, credential=_replace(dev.credential, sign_count=count))
-        return self._change(now_ms, "sign_count", mutate, sign_count=count)
+        return self._change(now_ms, "sign_count", mutate, bump=False, sign_count=count)
 
 
 def revoke_everywhere(config_dir: Path, pub: bytes, now_ms: int) -> tuple[list[tuple[str, str]], list[str]]:

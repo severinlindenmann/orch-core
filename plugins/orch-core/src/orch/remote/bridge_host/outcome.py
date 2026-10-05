@@ -39,6 +39,12 @@ class Verdict:
     fresh: bool = False
     rid: str | None = None  # run: the request that runs (R1 after an assertion)
     answer_rids: tuple[str, ...] = ()  # run: every request whose record takes the result (R1, and R2 for a fresh run)
+    # what the decision was taken on (accept, run): the registry entry read once, its generation, the host clock at
+    # the decision, and when a fresh-assertion or lease grant behind a run ends (None: no grant needed)
+    entry: object = None
+    gen: int | None = None
+    at_ms: int | None = None
+    until_ms: int | None = None
 
 
 def drop(why: str) -> Verdict:

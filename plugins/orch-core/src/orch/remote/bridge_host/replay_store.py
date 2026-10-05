@@ -127,6 +127,20 @@ class ReplayStore:
         files.replace(self._path(rid), _encode(new))
         return new
 
+    def in_flight(self, device: str, now_ms: int, running_key: str) -> list[str]:
+        """The unexpired records of `device` that are not finished (no outcome, or running)."""
+        out = []
+        for name in os.listdir(self.dir):
+            if not (name.endswith(".json") and _ID.fullmatch(name[:-5])):
+                continue
+            try:
+                rec = self.get(name[:-5], now_ms)
+            except files.Damaged:
+                continue  # answers already_done/unknown anyway, never runs
+            if rec is not None and rec.device == device and (rec.outcome is None or running_key in rec.outcome):
+                out.append(name[:-5])
+        return out
+
     def _count(self) -> int:
         return sum(1 for n in os.listdir(self.dir) if n.endswith(".json"))
 

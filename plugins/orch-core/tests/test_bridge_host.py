@@ -538,3 +538,112 @@ def test_the_module_has_no_network_dashboard_or_global_state():
             assert not isinstance(node, (ast.Global, ast.Nonlocal)), path.name
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
                 assert node.attr != "urandom", path.name  # randomness is injected
+
+
+# -- one decision, one reading of the registry, checked again right before anything runs ---------------------------
+
+def test_a_decision_carries_what_it_was_taken_on(host, clock):
+    acc = send(host, env(KEY_A, http("/move"), seq=1))
+    gen, devs = host.registry.snapshot()
+    assert (acc.entry, acc.gen, acc.scope, acc.at_ms) == (devs[did(KEY_A)], devs[did(KEY_A)].gen, "type", NOW)
+    assert host.store.get(acc.rid, NOW).outcome is None  # recorded, not yet decided
+    run = host.authorize(acc)
+    assert run.gen == acc.gen and run.until_ms is None and host.still_authorized(run)
+    assert "_running" in host.store.get(acc.rid, NOW).outcome  # running only once the whole decision passed
+
+
+@pytest.mark.parametrize("change,code", [("revoke", "revoked"), ("rescope", "scope_changed")])
+def test_a_change_between_check_and_authorize_refuses(host, change, code):
+    acc = send(host, env(KEY_A, http("/move"), seq=1))
+    if change == "revoke":
+        host.registry.revoke(did(KEY_A), NOW)  # from outside this Host (the Remote tab)
+    else:
+        host.registry.set_scope(did(KEY_A), "type", NOW)  # same scope, new generation: still a change
+    v = host.authorize(acc)
+    assert v.code == code and host.store.get(acc.rid, NOW).outcome == {"refusal": code}
+
+
+def test_a_replaced_entry_between_check_and_authorize_never_runs(host):
+    acc = send(host, env(KEY_A, http("/move"), seq=1))
+    data = json.loads(host.registry.path.read_text(encoding="utf-8"))
+    data["devices"][did(KEY_A)]["pub"] = pub(KEY_B).hex()  # a different key under the same id
+    host.registry.path.write_text(json.dumps(data), encoding="utf-8")
+    assert host.authorize(acc).result == "drop"
+    assert host.store.get(acc.rid, NOW).outcome is None  # never running: a retry is already_done/unknown
+
+
+@pytest.mark.parametrize("how", ["host_revoke", "registry_revoke", "registry_rescope", "kill"])
+def test_a_change_between_authorize_and_running_is_seen_and_its_result_never_stored(host, how):
+    acc = send(host, env(KEY_A, http("/move"), seq=1))
+    run = host.authorize(acc)
+    {"host_revoke": lambda: host.revoke(did(KEY_A)), "registry_revoke": lambda: host.registry.revoke(did(KEY_A), NOW),
+     "registry_rescope": lambda: host.registry.set_scope(did(KEY_A), "decide", NOW), "kill": host.stop}[how]()
+    assert not host.still_authorized(run)
+    if how == "kill":
+        return
+    assert host.finish(run.answer_rids, {"status": 200}, b"secret") is False
+    out = host.store.get(acc.rid, NOW).outcome
+    assert out == {"refusal": "scope_changed" if how == "registry_rescope" else "revoked"}
+
+
+def test_revoking_marks_every_unfinished_record_refused(host):
+    decided = host.authorize(send(host, env(KEY_A, http("/move"), seq=1)))
+    undecided = send(host, env(KEY_A, http("/move"), seq=2))
+    finished = host.authorize(send(host, env(KEY_A, http("/"), seq=3)))
+    host.finish(finished.answer_rids, {"status": 200})
+    host.revoke(did(KEY_A))
+    assert host.store.get(decided.rid, NOW).outcome == {"refusal": "revoked"}
+    assert host.store.get(undecided.rid, NOW).outcome == {"refusal": "revoked"}
+    assert host.store.get(finished.rid, NOW).outcome == {"status": 200}
+    assert host.authorize(undecided).code == "revoked"
+
+
+def test_lease_and_fresh_grants_end(fhost, clock):
+    opening = env(KEY_A, http("/terminal/stream"), seq=1, flags=E.F_STREAM)
+    fhost.authorize(send(fhost, opening))
+    stream = bytes.fromhex(rid_of(opening))
+    k1 = env(KEY_A, http("/terminal/input"), b"ls\n", seq=2, stream=stream)
+    refusal = fhost.authorize(send(fhost, k1))
+    run = fhost.authorize(send(fhost, env(KEY_A, assertion_for(refusal, rid_of(k1)), seq=3)))
+    assert run.until_ms == NOW + 15 * 60_000 and fhost.still_authorized(run)
+    r1 = env(KEY_A, http("/factory/start"), seq=4)
+    fresh_refusal = fhost.authorize(send(fhost, r1))
+    fresh = fhost.authorize(send(fhost, env(KEY_A, assertion_for(fresh_refusal, rid_of(r1), count=2), seq=5)))
+    assert fresh.fresh and fresh.until_ms == fresh_refusal.fields["expires_ms"] and fhost.still_authorized(fresh)
+    clock.now = fresh.until_ms
+    assert not fhost.still_authorized(fresh)  # the assertion's window ended before it ran
+    clock.now = run.until_ms
+    assert not fhost.still_authorized(run)  # the lease ended
+
+
+def test_readers_never_see_a_half_updated_registry(tmp_path, clock):
+    import threading
+    host = make_host(tmp_path, clock)
+    errors, stop = [], threading.Event()
+
+    def writer():
+        try:
+            for i in range(60):
+                host.registry.set_scope(did(KEY_B), ("look", "operate")[i % 2], NOW)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+        finally:
+            stop.set()
+
+    def reader():
+        last = -1
+        try:
+            while not stop.is_set():
+                gen, devs = host.registry.snapshot()
+                b = devs[did(KEY_B)]
+                assert gen >= last and b.gen <= gen and b.scope in ("look", "operate") and len(devs) == 2
+                last = gen
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer)] + [threading.Thread(target=reader) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert errors == [] and host.registry.snapshot()[0] == 62  # two additions, sixty changes

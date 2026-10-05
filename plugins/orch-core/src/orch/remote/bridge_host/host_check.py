@@ -15,6 +15,21 @@ status `unknown` and never runs again.
 
 Streams, leases, open challenges, parked requests and the refusal budgets are in memory: a host restart closes every
 stream, ends every lease and forgets every challenge, which only ever refuses more.
+
+Authorisation is decided once, on one reading, and checked again right before anything runs:
+
+- check() reads the registry once (a snapshot with its generation); the decision (Verdict) carries that entry, its
+  generation, the device's scope, the host clock at the decision and, for a run a grant allowed, when the grant ends.
+- authorize() decides on that same entry, after still_authorized() confirmed it is still the current one; it never
+  reads the scope or key a second time.
+- Every registry change that affects authorisation (added, scope, revocation, key) moves the generation on, under the
+  registry lock its readers take, so a decision taken before it is no longer authorised.
+- A record only becomes "running" once the whole decision, scope and assertion included, passed; before that it has
+  no outcome, and either way a replay is answered `already_done` / `unknown`, never run.
+- revoke() and set_scope() mark the device's records that are not finished as refused, and finish() never replaces
+  such a refusal: a request already running then answers the refusal, not its result.
+- The dispatcher MUST call still_authorized(run) immediately before it runs anything, and must not run when it is
+  False (revoked, rescoped, key replaced, the kill switch, or the fresh or lease grant ended).
 """
 from __future__ import annotations
 
@@ -42,6 +57,7 @@ from orch.remote.bridge_host.shown import clean_shown
 from orch.remote.bridge_host.signatures import from_pem, generate, public_bytes, sign, signed_bytes, to_pem, verify
 
 WINDOW_MS = 300_000  # each way; exactly 300,000 ms is inside
+RUNNING = "_running"  # the stored outcome of a request whose whole decision passed and that has not finished
 SEQ_WINDOW = 64
 LEASE_MS = 15 * 60_000
 _DIGEST = re.compile(r"(?:[0-9a-f]{64})?")
@@ -199,7 +215,7 @@ class Host:
             if known.device != did or known.digest != dig:
                 return refuse("rid_conflict")
             out = known.outcome
-            if out is None:  # accepted, no outcome stored (still running, or the host stopped before it finished)
+            if out is None or RUNNING in out:  # not finished (still deciding or running, or the host stopped)
                 return refuse("already_done", status="unknown")
             if "refusal" in out:  # re-sent with the host's CURRENT clock and high
                 extra = {k: v for k, v in out.items() if k != "refusal"}
@@ -230,7 +246,8 @@ class Host:
         self.store.record(rid, did, dig, now, None)
         if h.flags & F_STREAM:
             self.streams[rid] = did
-        return Verdict("accept", device=did, scope=dev.scope, meta=meta, data=data, rid=rid)
+        return Verdict("accept", device=did, scope=dev.scope, meta=meta, data=data, rid=rid, entry=dev, gen=dev.gen,
+                       at_ms=now)
 
     def _phone_key(self, phone_id: str) -> bytes | None:
         try:
@@ -260,11 +277,14 @@ class Host:
 
     def _authorize(self, acc: Verdict, now: int) -> Verdict:
         rid, did = acc.rid, acc.device
-        dev = self.registry.devices().get(did)
-        if dev is None or dev.revoked:
-            return self._final(rid, now, "revoked")
         if self.stopped:
             return self._final(rid, now, "stopped")
+        current = self.registry.devices().get(did)
+        if current is None or current.revoked:
+            return self._final(rid, now, "revoked")
+        if not _same_entry(acc, current):
+            return self._final(rid, now, "scope_changed")
+        dev = acc.entry  # the entry the signature was verified with, confirmed to be the current one
         op = acc.meta.get("op")
         if op == "cancel":
             if acc.header.stream == ZERO_ID:
@@ -284,11 +304,11 @@ class Host:
         if req is None or SCOPES[req.scope] > dev.level:
             return self._final(rid, now, "forbidden_scope")
         if req.assertion == "none":
-            return self._run(acc, dev, (rid,))
+            return self._run(acc, dev, (rid,), now)
         stream = acc.header.stream
         lease_class = req.assertion == "lease" and stream != ZERO_ID and self.streams.get(stream.hex()) == did
         if lease_class and self.leases.get(did, 0) > now:
-            return self._run(acc, dev, (rid,))
+            return self._run(acc, dev, (rid,), now, until_ms=self.leases[did])
         if lease_class:
             purpose, subject = "lease", dict(LEASE_SUBJECT)
         else:
@@ -318,8 +338,18 @@ class Host:
             return None
         return req
 
-    def _run(self, acc: Verdict, dev: Device, answer_rids: tuple[str, ...], fresh: bool = False) -> Verdict:
-        return dataclasses.replace(acc, result="run", scope=dev.scope, fresh=fresh, answer_rids=answer_rids)
+    def _run(self, acc: Verdict, dev: Device, answer_rids: tuple[str, ...], now: int, fresh: bool = False,
+             until_ms: int | None = None) -> Verdict:
+        """The whole decision passed: the records become running, and the run carries what it was decided on."""
+        for r in answer_rids:
+            self.store.set_outcome(r, {RUNNING: dev.gen}, now)
+        return dataclasses.replace(acc, result="run", scope=dev.scope, fresh=fresh, answer_rids=answer_rids,
+                                   entry=dev, gen=dev.gen, at_ms=now, until_ms=until_ms)
+
+    def still_authorized(self, decision: Verdict) -> bool:
+        """Whether `decision` (a run) may run now: not stopped, and still_authorized() for its entry and grant."""
+        with self._lock:
+            return not self.stopped and still_authorized(decision, self.registry, self.clock())
 
     def _assert(self, r2: Verdict, dev: Device, now: int) -> Verdict:
         """R2 (op=assert) for a parked R1 (§9.4, §9.5). Every outcome is written to the audit log."""
@@ -348,6 +378,9 @@ class Host:
         rec = self.store.get(for_rid, now) if r1 is not None else None
         if r1 is None or r1.device != did or rec is None:
             return self._final(rid2, now, "assertion_failed", why="nothing_parked")
+        if r1.gen != dev.gen:  # the registry entry changed between R1 and R2
+            self.store.set_outcome(for_rid, {"refusal": "scope_changed"}, now)
+            return self._final(rid2, now, "scope_changed")
         if issued.purpose == "lease":
             self.leases[did] = now + LEASE_MS
         req = self._requirement(r1)  # R1 runs exactly once, after its scope is checked again
@@ -356,19 +389,33 @@ class Host:
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")
-        self.store.set_outcome(for_rid, None, now)  # running: until finish(), a replay of R1 is already_done/unknown
-        return self._run(r1, dev, (for_rid, rid2), fresh=issued.purpose == "fresh")
+        until = self.leases[did] if issued.purpose == "lease" else issued.expires_ms  # the grant behind this run
+        return self._run(r1, dev, (for_rid, rid2), now, fresh=issued.purpose == "fresh", until_ms=until)
 
-    def finish(self, rids, head: dict, body: bytes = b"") -> None:
+    def finish(self, rids, head: dict, body: bytes = b"") -> bool:
         """Store the result of a run as the outcome of every rid in `rids` (Verdict.answer_rids), before the
-        response is sent. A body over 64 KiB raises ValueError: what a replay of a larger response answers is the
-        caller's decision, the record then keeps no outcome (a retry gets already_done/unknown)."""
-        if len(body) > MAX_REPLAY_BODY:
-            raise ValueError("a stored replay body is at most 64 KiB")
+        response is sent. Only a running record takes it: when one was refused meanwhile (the device was revoked or
+        rescoped while it ran), nothing is replaced and this returns False, and the caller sends that refusal
+        instead. A body over 64 KiB raises ValueError: what a replay of a larger response answers is the caller's
+        decision, the record then stays running (a retry gets already_done/unknown)."""
+        if len(body) > MAX_REPLAY_BODY or RUNNING in head:
+            raise ValueError("a stored replay body is at most 64 KiB, and a head has no running marker")
         with self._lock:
             now = self.clock()
+            recs = [self.store.get(rid, now) for rid in rids]
+            if any(r is None or r.outcome is None or RUNNING not in r.outcome for r in recs):
+                return False
+            devs = self.registry.devices()  # a change made elsewhere (the Remote tab, another workspace's revoke)
+            for r in recs:
+                cur = devs.get(r.device)
+                if cur is None or cur.revoked or cur.gen != r.outcome[RUNNING]:
+                    code = "revoked" if cur is None or cur.revoked else "scope_changed"
+                    for rid in rids:
+                        self.store.set_outcome(rid, {"refusal": code}, now)
+                    return False
             for rid in rids:
                 self.store.set_outcome(rid, dict(head), now, body)
+            return True
 
     # -- streams, leases, revocation, the kill switch ------------------------------------------------------------------
 
@@ -378,7 +425,10 @@ class Host:
     def end_lease(self, did: str) -> None:
         self.leases.pop(did, None)
 
-    def _end_device(self, did: str) -> list[str]:
+    def _end_device(self, did: str, code: str) -> list[str]:
+        now = self.clock()
+        for rid in self.store.in_flight(did, now, RUNNING):  # not finished: refused, so nothing of it is answered
+            self.store.set_outcome(rid, {"refusal": code}, now)
         ended = [s for s, d in self.streams.items() if d == did]
         for s in ended:
             del self.streams[s]
@@ -392,13 +442,13 @@ class Host:
         with a final `revoked` refusal chunk."""
         with self._lock:
             self.registry.revoke(did, self.clock())
-            return self._end_device(did)
+            return self._end_device(did, "revoked")
 
     def set_scope(self, did: str, scope: str) -> list[str]:
         """Change the scope (audited); returns the streams to close with `scope_changed`."""
         with self._lock:
             self.registry.set_scope(did, scope, self.clock())
-            return self._end_device(did)
+            return self._end_device(did, "scope_changed")
 
     def stop(self) -> list[str]:
         """The kill switch: everything after it is refused `stopped`; returns every stream to close with `stopped`."""
@@ -435,6 +485,27 @@ class Host:
         if v.result != "refuse" or v.header is None:
             raise ValueError("not a refusal")
         return self.seal_chunk(v.header, 0, {"refusal": v.code, **v.fields}, last=True, stream=stream, refusal=True)
+
+
+def _same_entry(decision: Verdict, current: Device) -> bool:
+    """The registry entry a decision was taken on is still the current one: same generation, key and scope."""
+    entry = decision.entry
+    return (isinstance(entry, Device) and decision.gen is not None and current.gen == decision.gen == entry.gen
+            and current.pub == entry.pub and current.scope == entry.scope and not current.revoked)
+
+
+def still_authorized(decision: Verdict, registry: Registry, now_ms: int) -> bool:
+    """Whether a decision may still be acted on at `now_ms`: its device is registered, not revoked, under the same
+    registry generation, key and scope it was decided on, and any fresh-assertion or lease grant behind it has not
+    ended. Reads the registry once; any error answers False. The dispatcher MUST call this (or
+    Host.still_authorized) immediately before running anything."""
+    try:
+        current = registry.devices().get(decision.device)
+    except Exception:  # noqa: BLE001 - cannot tell: not authorised
+        return False
+    if current is None or not _same_entry(decision, current):
+        return False
+    return decision.until_ms is None or now_ms < decision.until_ms
 
 
 def _subject(subject) -> dict | None:

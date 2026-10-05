@@ -1021,6 +1021,22 @@ def _changes_hooks_path(seg: str, plain: str) -> bool:
     return bool(_GIT_CONFIG.search(plain) and _HOOKS_PATH_KEY.search(bare) and not _CONFIG_READ.search(bare))
 
 
+# `git config` (a write form) of a key that makes later git commands run a program or read other config
+_GIT_EXEC_KEY = re.compile(r"(?i)\b(?:core\.(?:fsmonitor|sshcommand|pager|editor|askpass|gitproxy)|alias\.|include\.|"
+                           r"includeif\.|filter\.|diff\.\S+\.(?:command|textconv)|merge\.\S+\.driver|"
+                           r"credential\.helper|sequence\.editor|gpg\.\S*program|uploadpack\.packobjectshook)")
+# A write into a repository's own files (redirect, tee, cp, mv, sed -i, ...): see _GIT_DIR_DENIED
+_GIT_INTERNAL_PATH = re.compile(r"(?i)(?:^|[\s'\"=/~])\.git[/\\]+(?:config|refs|packed-refs|info|objects|head|"
+                                r"worktrees|modules|hooks|commondir|gitdir)\b")
+
+
+def _sets_git_exec_config(seg: str, plain: str) -> bool:
+    if not _GIT_WORD.search(plain) or not _GIT_CONFIG.search(plain):
+        return False
+    bare = seg.replace("'", "").replace('"', "")
+    return bool(_GIT_EXEC_KEY.search(bare) and not _CONFIG_READ.search(bare))
+
+
 def _cd_targets_state(cmd: str) -> bool:
     for m in _CD.finditer(cmd):
         target = next(g for g in m.groups() if g is not None)
@@ -1420,9 +1436,36 @@ def evaluate(ws, payload: dict) -> Decision:
         return Decision(False, _CONFIG_SECRETS_DENIED)  # Read given a directory: some clients list it
     if tool == "Bash":
         return _bash(ws, str(tool_input.get("command") or ""), cwd)
+    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and _in_git_dir(
+            str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
+        hooks = _STARTUP_FILE.search(str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""))
+        return Decision(False, _STARTUP_DENIED if hooks else _GIT_DIR_DENIED)  # git hooks keep their own message
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW
+
+
+# A repository's own files (`.git/config`, refs, packed-refs, info, objects/info/alternates, HEAD, worktrees, hooks,
+# or a worktree's `.git` pointer file) decide what later git commands run and see: hooksPath, fsmonitor, aliases,
+# refs. Agents write none of them with their file tools, in any workspace or worktree; reading stays open.
+_GIT_DIR_DENIED = ("agents do not write inside .git or a .git file with their file tools (config, refs, packed-refs, "
+                   "info, objects, HEAD, worktrees, hooks): later git commands would run or trust what is written "
+                   "there; use git commands that the guard allows instead")
+
+
+def _in_git_dir(raw: str, cwd, ws) -> bool:
+    """Whether a file tool's path has a `.git` component (any case), as written (relative to the hook's working
+    directory, else the workspace root) or after symlinks are resolved. Any error is a yes."""
+    if not raw:
+        return False
+    try:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = Path(str(cwd)) / p if cwd else Path(ws.root) / p
+        forms = {Path(os.path.normpath(p)), p.resolve()}
+    except (OSError, RuntimeError, ValueError):
+        return True
+    return any(part.lower() == ".git" for f in forms for part in f.parts)
 
 
 def _cwd_in_state(ws, cwd) -> bool:
@@ -1533,6 +1576,10 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         if _changes_hooks_path(seg, plain):
             return Decision(False, "changing core.hooksPath is not allowed: it switches off the git hooks "
                                    "that check commit messages for this workspace")
+        if _sets_git_exec_config(seg, plain):
+            return Decision(False, "setting git config that runs programs (fsmonitor, sshCommand, pager, editor, "
+                                   "aliases, includes, filters, diff commands, credential helpers) is not allowed: "
+                                   "later git commands would run them")
         if not may["commit"] and _COMMIT.search(plain):
             return Decision(False, "agents do not commit in this workspace (git.agent_may.commit is false): "
                                    "prepare the change and tell the user it is ready to commit")
@@ -1557,6 +1604,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _USE_ORCH)
     if _STARTUP_FILE.search(code) and _is_write(cmd):
         return Decision(False, _STARTUP_DENIED)
+    if _GIT_INTERNAL_PATH.search(code) and _is_write(cmd):
+        return Decision(False, _GIT_DIR_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
     return ALLOW

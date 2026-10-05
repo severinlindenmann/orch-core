@@ -105,3 +105,54 @@ def test_guard_keeps_the_dark_profile_with_the_human(ws, cmd, allowed):
     assert _bash(ws, cmd).allow is allowed, cmd
     if not allowed:
         assert permits.never_grantable(ws, cmd)
+
+
+# -- a repository's own files (.git) are not written by agents' file tools -----------------------------------------
+
+@pytest.mark.parametrize("rel", [".git/config", ".git/refs/heads/main", ".git/packed-refs", ".git/info/attributes",
+                                 ".git/objects/info/alternates", ".git/HEAD", ".git/worktrees/x/gitdir",
+                                 ".git/hooks/pre-commit", ".GIT/CONFIG", "sub/.git", "wt/.git", "./x/../.git/config"])
+@pytest.mark.parametrize("tool", ["Write", "Edit", "MultiEdit", "NotebookEdit"])
+def test_file_tools_never_write_inside_git(ws, tool, rel):
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    for path in (rel, str(ws.root / rel)):
+        d = _tool(ws, tool, **{key: path, "content": "x", "old_string": "a", "new_string": "b", "edits": []})
+        assert not d.allow and (".git" in d.reason or "git hooks" in d.reason), (tool, path)
+
+
+def test_a_relative_path_is_taken_from_the_hooks_working_directory(ws, tmp_path):
+    from orch.hooks.guard import evaluate
+    d = evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": "config", "content": "x"},
+                      "cwd": str(ws.root / ".git")})
+    assert not d.allow
+
+
+def test_a_symlink_into_git_is_refused(ws):
+    (ws.root / ".git").mkdir(exist_ok=True)
+    (ws.root / ".git" / "config").write_text("", encoding="utf-8")
+    (ws.root / "innocent.txt").symlink_to(ws.root / ".git" / "config")
+    assert not _tool(ws, "Write", file_path=str(ws.root / "innocent.txt"), content="[core]").allow
+
+
+def test_reading_git_files_and_writing_lookalikes_stays_open(ws):
+    assert _tool(ws, "Read", file_path=str(ws.root / ".git" / "config")).allow
+    for name in (".gitignore", ".github/workflows/ci.yml", ".gitattributes", "docs/git/config.md"):
+        assert _tool(ws, "Write", file_path=str(ws.root / name), content="x").allow, name
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo '[core]' >> .git/config", "printf x > .git/HEAD", "tee .git/info/attributes < /dev/null",
+    "cp evil .git/objects/info/alternates", "mv x .git/refs/heads/main", "sed -i s/a/b/ .git/packed-refs",
+    "git config core.fsmonitor ./tools/fsmon", "git config --local alias.st '!sh -c id'",
+    "git config include.path ../evil.cfg", "git config core.sshCommand 'sh -c id'",
+    "git config filter.x.smudge ./run", "git config --worktree core.pager ./run",
+])
+def test_bash_writes_into_git_and_exec_config_are_denied_and_never_grantable(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd
+    assert permits.never_grantable(ws, cmd) is not None
+
+
+@pytest.mark.parametrize("cmd", ["cat .git/config", "git status", "git log --oneline", "git config --get core.fsmonitor",
+                                 "git config user.name 'A B'", "git add .gitignore", "echo x > .gitignore"])
+def test_ordinary_git_use_stays_open(ws, cmd):
+    assert _bash(ws, cmd).allow, cmd

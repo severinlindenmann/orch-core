@@ -247,11 +247,14 @@ def dashboard_routes() -> list:
     return [route for module in router_modules() for route in module.router.routes]
 
 
-def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
+def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastAPI:
+    """The dashboard. `remote` (the remote flag only): a callable that builds the bridge host loop for this app
+    (orch.remote.remote_start.Remote.loop); without it nothing of the bridge is imported or started."""
     from orch.dashboard import routes_live, setup_state, switcher
     from orch.addons.outbox import OutboxPump
     from orch.addons.runtime import AddonRuntime
     from orch.addons.scheduler import Scheduler
+    from orch.remote.bridge_link import NullLink
 
     if port is not None:
         # The switcher is a convenience: a read-only or full config directory must never stop
@@ -276,9 +279,15 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
         tasks.append(asyncio.create_task(outbox_loop(ws, seconds, app.state.outbox)))
         tasks.append(asyncio.create_task(store_sweep_loop(STORE_SWEEP_SECONDS, app.state.downloads, app.state.reveals)))
         tasks.append(asyncio.create_task(factory_runner.loop(ws)))  # AI Factory: idle unless the human started an epic
+        bridge = app.state.bridge_loop
+        if bridge is not None:  # the remote bridge: polls the relay through its transport child, beside the runner
+            tasks.append(asyncio.create_task(bridge.run()))
         try:
             yield
         finally:
+            if bridge is not None:  # streams end, a goodbye, the lease released, the child ended; before the cancels
+                with contextlib.suppress(Exception):
+                    await bridge.stop()
             for task in tasks:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -309,4 +318,8 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
         app.include_router(module.router)
     # Outermost: a request carrying the remote marker is decided before anything else sees it. Local requests pass.
     app.add_middleware(RemoteGate, routes=dashboard_routes(), ws=ws)
+    # What the Remote tab reads: the bridge's Host (None without the remote flag) and its link (orch.remote.bridge_link)
+    app.state.bridge_loop = remote(app) if remote is not None else None
+    app.state.bridge_host = app.state.bridge_loop.host if app.state.bridge_loop is not None else None
+    app.state.bridge_link = app.state.bridge_loop.link if app.state.bridge_loop is not None else NullLink()
     return app

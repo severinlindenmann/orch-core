@@ -645,6 +645,15 @@ _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledg
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
+# The relay tool's two commands for the Orch Remote host: `bridge-key` prints the workspace channel key, and
+# `bridge-host` holds the device's relay credentials and carries the bridge mailbox. Only `orch serve --remote` runs
+# them, with their output piped into itself. An agent running either (or reading its output) is refused, in any
+# spelling the shell may produce, as a word of its own (a module or file such as bridge_host or test_bridge_host.py is
+# not one). A deterrent, like every guard rule: the operating-system user is shared, so it is the only barrier (bridge
+# protocol §2.7).
+_BRIDGE_CMD = re.compile(r"(?i)(?<![\w./\\-])bridge-(?:key|host)(?![\w./\\-])")
+_BRIDGE_CMD_DENIED = ("the relay tool's bridge-key and bridge-host commands hand out the remote bridge's workspace key "
+                      "and the device's relay access; only the human's `orch serve --remote` runs them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
@@ -1421,6 +1430,17 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
 
+def _bash_runs_bridge_command(cmd: str) -> bool:
+    """`bridge-key` or `bridge-host` as a word in the command or in what the shell turns it into; an error here
+    refuses a command that has the words in any form (fail closed)."""
+    try:
+        if _braces_over_budget(cmd) and re.search(r"(?i)bridge", cmd + _ansi_c(cmd)):
+            return True
+        return any(_BRIDGE_CMD.search(c) for c in _key_check_candidates(cmd))
+    except Exception:  # noqa: BLE001
+        return bool(re.search(r"(?i)bridge-(?:key|host)", cmd + _ansi_c(re.sub(r"\\\r?\n", "", cmd))))
+
+
 def _path_key(p: str) -> str:
     """A path as compared here: separators collapsed, `.` and `..` resolved as text, Unicode NFC and case folded
     (the default macOS and Windows file systems ignore case, so the guard must too)."""
@@ -1529,6 +1549,8 @@ def evaluate(ws, payload: dict) -> Decision:
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):
         return Decision(False, _LEDGER_DENIED)
+    if tool == "Bash" and _bash_runs_bridge_command(str(tool_input.get("command") or "")):
+        return Decision(False, _BRIDGE_CMD_DENIED)
     if tool in ("Grep", "Glob"):
         root = _resolve_root(tool_input.get("path")) or _resolve_root(cwd)
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")

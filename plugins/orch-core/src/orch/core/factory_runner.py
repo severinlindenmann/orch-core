@@ -919,6 +919,11 @@ def input_line(text) -> str | None:
             above = [ln for ln in lines[max(0, i - 2):i] if ln.strip()]
             if not above or "\u2500" not in above[-1]:
                 return None
+            # below it only the box's lower border and Claude's footer: anything else (a menu drawn under the box,
+            # text orch does not know) means the screen is not the plain prompt
+            below = [ln for ln in lines[i + 1:] if ln.strip()]
+            if len(below) > 3 or not all("\u2500" in ln or any(m in ln.casefold() for m in _IDLE) for ln in below):
+                return None
             return lines[i][m.end():].strip().strip("\u2502|").strip()
     return None
 

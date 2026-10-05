@@ -250,6 +250,7 @@ def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch,
 @pytest.mark.parametrize("text,line", [
     (IDLE, ""), (TYPED, "please also delete"), (_echoed("x"), ""), ("> stale\n", None), (UNKNOWN_MENU, None),
     (None, None), ("\u2500" * 9 + "\n\u276f \n" + "\u2500" * 9 + "\n", ""),
+    (IDLE + "Select a model\n  Opus\n\u203a Sonnet\n", None),  # a picker drawn below the box
 ])
 def test_the_input_line_is_the_one_inside_the_box(text, line):
     assert fr.input_line(text) == line

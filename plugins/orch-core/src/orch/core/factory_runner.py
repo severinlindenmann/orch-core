@@ -485,21 +485,30 @@ def _orch_words(cmd) -> list[str]:
 _PLAIN = (
     "Run exactly one plain command per tool call: no `&&`, `;`, `|`, `2>&1`, `|| true`, other redirects or command "
     "substitution, because a Dark run stops any such command for the human. Keep titles, -m texts and commit "
-    "messages to short plain sentences without line breaks, backticks, dollar signs or backslashes. File "
-    "`orch permit request` only for a command that was actually denied with a request id P-n in the denial message, "
-    "never for one that was not denied, and never retry variants of a denied command. Never run "
-    "`orch instructions sync` or `orch setup`. "
+    "messages to short plain sentences without line breaks, backticks, dollar signs or backslashes, and put a "
+    "revision with ^ or ~ in double quotes (`git show \"HEAD^\"`). Create and change files with your file tools "
+    "(Write, Edit), never with a shell heredoc, echo or cat redirect (such a command never runs here), and look at "
+    "a file with your Read tool instead of extra commands such as python or jq. File `orch permit request` only for "
+    "a command that was actually denied with a request id P-n in the denial message, never for one that was not "
+    "denied, and never retry variants of a denied command. Never run `orch instructions sync` or `orch setup`. "
 )
+
+# orch's evidence format (orch.core.evidence): criteria are top-level checkbox lines, evidence a top-level Verification
+# line citing AC<n>. The examples below are what the tests parse with the real parser.
+CRITERION_EXAMPLE = "- [ ] The export writes one row per order to out.csv"
+EVIDENCE_EXAMPLE = "- AC1: ran the export on the sample orders and saw 3 rows in out.csv"
 
 # The planner's prompt: built in, like the work prompt, never from the config, a ticket or anything an agent edits. It
 # names only commands and options orch has (tests/test_factory_planner.py checks them against the CLI).
 PLANNER_PROMPT = (
     "You are the planner of the AI Factory epic {key}. Read it with `orch show {key}` and its limits with "
     "`orch epic show {key}`. " + _PLAIN + "Split the work into children within those limits, each created with one "
-    "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is xs, "
-    "s or m unless the limits say otherwise), the Requirements and Acceptance criteria written into files under "
-    "orchestrator/temporary first. When a child's size needs a Plan (every size but xs), write it as one paragraph "
-    "with `orch section set CHILD Plan -m \"...\"`. "
+    "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is "
+    "xs, s or m unless the limits say otherwise), the Requirements and Acceptance criteria written into files under "
+    "orchestrator/temporary first. Write the Acceptance criteria file as top-level checkbox lines, one concrete and "
+    "checkable criterion per line and nothing else, like `" + CRITERION_EXAMPLE + "`: orch counts only such lines as "
+    "criteria (AC1, AC2, ... from the top), and the workers prove each one. When a child's size needs a Plan (every "
+    "size but xs), write it as one paragraph with `orch section set CHILD Plan -m \"...\"`. "
     "`orch ask` is refused in this epic: decide within the epic's text and record why with `orch log CHILD -m "
     "\"...\"`, or leave the item out. Then approve each child with `orch epic auto-approve CHILD`. Do not build "
     "anything and do not change the epic's own text. When every child is refined and approved, stop."
@@ -512,10 +521,16 @@ FACTORY_WORK_PROMPT = (
     "rules come first. " + _PLAIN + "Start with `orch claim {key}` and read it with `orch show {key}`. Add each task "
     "with `orch task add {key} \"TASK\"`, then for each one run `orch task start {key} TN`, do the work and run "
     "`orch task done {key} TN` with no -m; put notes in `orch log {key} -m \"...\"`. `orch ask` is refused in this "
-    "epic: decide within the ticket's text and record why with `orch log`. {commit} Write one Verification line per "
-    "acceptance criterion into a file under orchestrator/temporary and set it with `orch section set {key} "
-    "Verification --file FILE`. When every task is done, run `orch move {key} testing` and stop. If a command was "
-    "denied with a request id, do other work or wait for the human with `orch wait {key}`."
+    "epic: decide within the ticket's text and record why with `orch log`. {commit} When the work is done, prove "
+    "each acceptance criterion: the criteria are the checkbox lines of the Acceptance criteria section, AC1, AC2, ... "
+    "counted from the top. Write a file under orchestrator/temporary with your Write tool holding one top-level line "
+    "per criterion, in order, saying what you checked and what you saw (a full short sentence), like `"
+    + EVIDENCE_EXAMPLE + "`, and set it with `orch section set {key} Verification --file FILE` (it replaces the "
+    "whole section). Leave the Acceptance criteria as they are: a tick proves nothing, and a criterion counts as "
+    "proven only by its Verification line. Read `orch show {key}` to check that every criterion has its line, then "
+    "run `orch move {key} testing` and stop; if the move warns that a criterion has no evidence, add its line, set "
+    "Verification again and stop. If a command was denied with a request id, do other work or wait for the human "
+    "with `orch wait {key}`."
 )
 # {commit}: a session in a worktree of its own commits there; one in the shared checkout never commits (its branch may
 # be the default branch, and the baseline cannot create one). The permission hook refuses `git commit` on the default

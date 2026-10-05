@@ -301,7 +301,8 @@ BASELINE = ("orch show", "orch list", "orch search", "orch next", "orch state", 
 # The git a worker needs to commit its own work, read-only verbs and add/commit only: no push, fetch, reset, clean,
 # checkout, switch, rebase, config or `-c` (refusal() refuses those as prefixes anyway). `git branch` is never a
 # prefix rule, so its read-only form is an exact one.
-GIT_BASIC = ("git status", "git diff", "git log", "git show", "git add", "git commit")
+GIT_BASIC = ("git status", "git diff", "git log", "git show", "git add", "git commit", "git ls-tree", "git ls-files",
+             "git rev-parse")
 GIT_BASIC_EXACT = ("git branch --show-current",)
 BASELINES = {"orch": tuple(("prefix", r) for r in BASELINE),
              "git-basic": (*(("prefix", r) for r in GIT_BASIC), *(("exact", r) for r in GIT_BASIC_EXACT))}

@@ -135,7 +135,7 @@ def test_cli_baseline_git_basic(capsys, switch, configure):  # noqa: F811
     code, out = _run(capsys, "dark", "profile", "add", "--prefix", "make test", "git-basic")
     assert code != 0 and dark_profile.rules(ws) == []
     out = _ok(capsys, "dark", "profile", "add", "--baseline", "git-basic")
-    assert "added 7 baseline rules" in out and "git branch --show-current" in out
+    assert f"added {len(dark_profile.BASELINES['git-basic'])} baseline rules" in out and "git branch --show-current" in out
     assert {dark_profile.text(r["kind"], r["rule"]) for r in dark_profile.rules(ws)} == {
         *dark_profile.GIT_BASIC, *dark_profile.GIT_BASIC_EXACT}
     assert "already" in _ok(capsys, "dark", "profile", "add", "--baseline", "git-basic")
@@ -262,3 +262,14 @@ def test_cli_prune_is_human_only_and_typed(capsys, switch, configure, human):  #
 ])
 def test_compound_means_chains_pipes_redirects_and_substitutions_only(cmd, want):
     assert dark_profile.compound(cmd) is want
+
+
+@pytest.mark.parametrize("cmd,ok", [
+    ("git ls-tree HEAD", True), ("git ls-tree -r --name-only HEAD src", True), ("git ls-files", True),
+    ("git ls-files --modified", True), ("git rev-parse HEAD", True), ("git rev-parse --show-toplevel", True),
+    ('git rev-parse "HEAD^"', True), ("git ls-tree HEAD:../x", False), ("git ls-files /etc", False),
+    ("git ls-files ~/x", False), ("git rev-parse --git-dir=/x", False), ("git ls-files -o", False),
+])
+def test_the_read_only_git_verbs_workers_use(dws, human, cmd, ok):
+    dark_profile.add_baseline(dws, human, name="git-basic")
+    assert (dark_profile.match(dws, cmd) is not None) is ok, cmd

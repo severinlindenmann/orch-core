@@ -238,8 +238,16 @@ call (no `&&`, `;`, pipes, `2>&1`, `|| true`, other redirects or substitutions),
 messages as short plain sentences without line breaks, backticks, dollar signs or backslashes, `orch permit request`
 only for a command actually denied with a request id, no variants of a denied command, and never `orch instructions
 sync` or `orch setup`. The worker's: `orch claim`, `orch show`, one `orch task add <child> "TASK"` per task, `orch
-task start`, `orch task done <child> TN` (no `-m`; notes go to `orch log`), its work, Verification from a file with `orch section
-set <child> Verification --file FILE`, then `orch move <child> testing`. The test suite checks every orch command and
+task start`, `orch task done <child> TN` (no `-m`; notes go to `orch log`), its work, Verification from a file with `orch section set <child> Verification --file FILE`, then `orch move <child>
+testing`. Both prompts spell out orch's evidence format, because the live run's second round reached testing on every
+child and still could never be Ready: the planner wrote plain bullets (no criteria at all to orch) and the workers
+wrote prose with check marks (no evidence). The planner writes each criterion as a top-level checkbox line (`- [ ] The
+export writes one row per order to out.csv`); a worker proves each with one top-level Verification line in order
+(`- AC1: ran the export on the sample orders and saw 3 rows in out.csv`), leaves the criteria unticked (a tick proves
+nothing, and editing that section risks its approval), checks `orch show`, and only then moves to testing. The test
+suite parses the prompts' own examples with orch's evidence parser. Both prompts also say to create files with the file
+tools (a multi-line heredoc never matches a rule), to read files with the Read tool instead of extra commands, and to
+quote revisions such as `"HEAD^"`. The test suite checks every orch command and
 option either prompt names against the CLI, every git verb against real git, and that the orch and git-basic
 baselines match each command it tells the agent to run. A prompt is advice: a model can still ignore it, and then
 its chained command stops for a card as before.
@@ -510,7 +518,8 @@ exact rule that is merely not simple (`ls ~/x`, `pytest tests/*.py`) is kept. Th
 name is refused with the list.
 
 **The git-basic baseline** adds the git a worker needs to commit its work on its own branch: prefix rules `git
-status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, and the exact rule `git branch --show-current`
+status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, the read-only `git ls-tree`, `git ls-files` and
+`git rev-parse`, and the exact rule `git branch --show-current`
 (`git branch` is never a prefix rule). Nothing that reaches out, rewrites or configures: `git push`, `fetch`,
 `reset`, `clean`, `checkout`, `switch`, `rebase`, `config`, `stash`, `git -c …` and `git -C …` stay out, and the
 argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). For any git command a prefix

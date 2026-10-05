@@ -215,7 +215,7 @@ async def form_error(request, exc):
 
 def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
     from orch.dashboard import (routes_actions, routes_activity, routes_addons, routes_agent_start, routes_board,
-                                routes_design, routes_live, routes_new, routes_permits, routes_reports, routes_terminals, routes_theme,
+                                routes_design, routes_guide, routes_live, routes_new, routes_permits, routes_reports, routes_terminals, routes_theme,
                                 routes_ticket, routes_widgets, routes_workspace, setup_state, switcher)
     from orch.addons.outbox import OutboxPump
     from orch.addons.runtime import AddonRuntime
@@ -274,7 +274,7 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
     app.add_middleware(CompressMiddleware)  # outermost: compresses whatever the stack produced
     app.mount("/static", AssetFiles(directory=str(STATIC_DIR)), name="static")
     for module in (routes_board, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
-                   routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design, routes_terminals,
+                   routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design, routes_guide, routes_terminals,
                    routes_widgets):
         app.include_router(module.router)
     return app

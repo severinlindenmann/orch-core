@@ -27,9 +27,30 @@ origin from anything a device sent.
   Host and Origin are the dashboard's own loopback values, and the dashboard's own session cookie is added by this
   module. Neither the cookie nor any `Set-Cookie` ever appears in the events.
 - The client address is not loopback, and the scope carries `orch.remote`, so the outermost remote gate applies its
-  scope table and its refusals unchanged. The gate is not bypassed.
+  scope table and its refusals unchanged. Because Host, Origin and the cookie are the dashboard's own, the gate is
+  the only thing between a device and full local power: the dispatcher refuses (`error`, nothing runs) any app that
+  does not have `RemoteGate` as its outermost middleware (`app.user_middleware[0]`, read from the app handed over).
+  Hand it the app built by `create_app`, never a sub-app or a router.
 - Redirects are returned as they are, never followed. A malformed request (path shape, method, header value) is
   refused before anything runs.
+
+## Things the caller must know
+
+- Never rolls back. The body is handed to the app and its handler may finish before the response's first event is
+  checked; a revocation in between yields `Refused("not_authorized")` although the change was applied. For a state
+  change the check before running is the only gate that matters.
+- `origin` is a snapshot. A scope downgrade without a revocation is honoured only if `still_authorized` answers
+  False for it.
+- A response is cut after `max_seconds`: the device must reconnect streams by itself.
+- Response headers pass through as the app sent them, except `Set-Cookie` (any casing, and `Set-Cookie2`). The app
+  emits no hop-by-hop headers; the host adds its own framing.
+- Redirects carry absolute loopback URLs, and the host must not follow them.
+- `still_authorized` has a timeout (`auth_timeout`) for an awaitable answer, and a timeout counts as no. A blocking
+  synchronous callable cannot be interrupted: keep it cheap.
+- An iterator that is abandoned, neither finished nor closed, is cut by a watchdog after
+  `max_seconds + grace_seconds`; still, close it.
+- `on_error(exc)` (optional) hears an exception from the app for the host's own log; nothing of it reaches the
+  device, which only sees `Refused("error")`.
 
 ## Refusals
 
@@ -48,3 +69,4 @@ response's first event and before every body event, so a revoked device is cut o
 | `max_seconds` | 120 | the whole response, streams included, ends with `timeout` |
 | `max_chunk` | 32 KiB | larger pieces from the app are split into events of at most this size |
 | `grace_seconds` | 2 | how long the app may finish after a disconnect before it is cancelled |
+| `auth_timeout` | 2 | how long an async `still_authorized` may take; a timeout counts as no |

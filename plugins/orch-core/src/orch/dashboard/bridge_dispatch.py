@@ -21,6 +21,7 @@ from urllib.parse import unquote
 
 from orch.dashboard.auth import COOKIE
 from orch.dashboard.reach import SCOPE_KEY, RemoteOrigin
+from orch.dashboard.remote_gate import RemoteGate
 
 # The only request headers a caller may set. Anything else (cookie, origin, host, forwarding headers, encodings) is
 # dropped; content-length is computed here from the body.
@@ -49,6 +50,7 @@ class Limits:
     max_seconds: float = 120.0  # one whole response, a stream included; the device reconnects after it
     max_chunk: int = 32 << 10  # a larger body piece from the app is split into events of at most this size
     grace_seconds: float = 2.0  # how long the app gets to finish after a disconnect before it is cancelled
+    auth_timeout: float = 2.0  # how long an async still_authorized may take; a timeout counts as no
 
 
 @dataclass(frozen=True)
@@ -75,13 +77,24 @@ class Refused:
 ResponseEvent = Start | Body | End | Refused
 
 
+def _gated(app) -> bool:
+    """The app carries the remote gate as its outermost middleware. The dispatcher injects the app's own cookie and a
+    loopback Host, so an app without the gate (a sub-app, a bare router) would give a device full local power; this
+    refuses it. user_middleware is where the framework keeps the stack in order (index 0 is outermost), so it is read
+    from the app the caller hands over, not from anything the caller sets."""
+    try:
+        return app.user_middleware[0].cls is RemoteGate
+    except Exception:  # noqa: BLE001 - fail closed
+        return False
+
+
 def _build(app, request: BridgeRequest, origin, limits: Limits):
     """(scope, body) for the dashboard, or the reason this request is refused before anything runs."""
     token = getattr(getattr(app, "state", None), "token", None)
     if type(origin) is not RemoteOrigin or not isinstance(token, str) or not token or _BAD_VALUE.search(token) \
-            or ";" in token or " " in token:
+            or ";" in token or " " in token or not _gated(app):
         return "error"
-    if not isinstance(request, BridgeRequest) or not isinstance(request.body, bytes):
+    if type(request) is not BridgeRequest or type(request.body) is not bytes:
         return "bad_request"
     if len(request.body) > limits.max_request_bytes:
         return "too_large"
@@ -116,11 +129,11 @@ def _build(app, request: BridgeRequest, origin, limits: Limits):
     return scope, request.body
 
 
-async def _authorized(still_authorized) -> bool:
+async def _authorized(still_authorized, timeout: float) -> bool:
     try:
         answer = still_authorized()
         if inspect.isawaitable(answer):
-            answer = await answer
+            answer = await asyncio.wait_for(answer, timeout)
         return answer is True
     except Exception:  # noqa: BLE001 - fail closed
         return False
@@ -147,20 +160,22 @@ async def _stop(task: asyncio.Task, closing: asyncio.Event, queue: asyncio.Queue
 
 
 async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_authorized: Callable,
-                   limits: Limits = Limits()) -> AsyncIterator[ResponseEvent]:
+                   limits: Limits = Limits(), on_error: Callable | None = None) -> AsyncIterator[ResponseEvent]:
     """Run `request` against the dashboard `app` as the paired device `origin` and yield its response as it is
     produced: Start, Body..., End; or a Refused (the last event) when it could not run or was cut off.
 
     `still_authorized` (a callable, sync or async, True to go on) is asked right before the app runs, before the
     response's first event and before every body event, so a revoked device stops at once, mid-stream included;
     anything but True, an error included, refuses. Leaving the iterator by any route (break, error, cancel,
-    aclose) disconnects the app and waits for it, so a streaming route ends and no task is left behind."""
+    aclose) disconnects the app and waits for it, so a streaming route ends and no task is left behind; an iterator
+    that is merely abandoned is cut by a watchdog after max_seconds + grace_seconds. `on_error(exc)`, if given, hears
+    an app exception (for the host's own log); nothing of it reaches the device."""
     built = _build(app, request, origin, limits)
     if isinstance(built, str):
         yield Refused(built)
         return
     scope, body = built
-    if not await _authorized(still_authorized):
+    if not await _authorized(still_authorized, limits.auth_timeout):
         yield Refused("not_authorized")
         return
 
@@ -197,7 +212,12 @@ async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_a
             await app(scope, receive, send)
         except asyncio.CancelledError:
             raise
-        except BaseException as exc:  # noqa: BLE001 - reported to the caller as a refusal
+        except Exception as exc:  # noqa: BLE001 - reported to the caller as a refusal; never its detail
+            if on_error is not None:
+                try:
+                    on_error(exc)
+                except Exception:  # noqa: BLE001 - a hook never changes the outcome
+                    pass
             if not closing.is_set():
                 await queue.put(("failed", exc))
             return
@@ -205,6 +225,12 @@ async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_a
             await queue.put(("returned",))
 
     task = asyncio.ensure_future(run())
+
+    def watchdog():  # a consumer that stopped iterating but kept the iterator still frees the app
+        closing.set()
+        task.cancel()
+
+    timer = loop.call_later(limits.max_seconds + limits.grace_seconds, watchdog)
     try:
         deadline = loop.time() + limits.max_seconds
         total, started = 0, False
@@ -216,7 +242,7 @@ async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_a
                 return
             tag = item[0]
             if tag == "start" and not started:
-                if not await _authorized(still_authorized):
+                if not await _authorized(still_authorized, limits.auth_timeout):
                     yield Refused("not_authorized")
                     return
                 started = True
@@ -226,7 +252,7 @@ async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_a
                 if total > limits.max_response_bytes:
                     yield Refused("too_large")
                     return
-                if not await _authorized(still_authorized):
+                if not await _authorized(still_authorized, limits.auth_timeout):
                     yield Refused("not_authorized")
                     return
                 yield Body(item[1])
@@ -237,4 +263,5 @@ async def dispatch(app, request: BridgeRequest, origin: RemoteOrigin, *, still_a
                 yield Refused("error")
                 return
     finally:
+        timer.cancel()
         await _stop(task, closing, queue, limits.grace_seconds)

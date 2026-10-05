@@ -5,9 +5,10 @@
   "use strict";
 
   // ---- small helpers ----------------------------------------------------------------------------------------------
+  const host = window.orchHost;  // app.js, loaded first on every dashboard page, owns the browser features
   const store = {
-    get(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch (_) { return fallback; } },
-    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) { /* private mode: per-page only */ } },
+    get(key, fallback) { try { const v = host.local.get(key); return v === null ? fallback : JSON.parse(v); } catch (_) { return fallback; } },
+    set(key, value) { try { host.local.set(key, JSON.stringify(value)); } catch (_) { /* unserialisable: not kept */ } },
   };
   const SEEN = "orch.terminals.seen"; // name -> the sig this browser last saw on that terminal's own page
   const LABELS = { waiting: "waiting for you", busy: "busy", idle: "idle" };
@@ -137,7 +138,7 @@
         age.textContent = ago(l.activity);
       }
       mark();
-    }, sessions: () => location.reload() });
+    }, sessions: () => host.reload() });
     window.addEventListener("storage", mark); // looked at in another tab
     mark();
     return;

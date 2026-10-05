@@ -49,13 +49,26 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
     grants = [{"grant": g["grant"], "epic": g["epic"], "scope": g["scope"], "command": _raw(g["command"])}
               for g in permits.grants(ws) if g["live"] and keep(str(g["epic"]))]
     report = factory_report.cards(ws)
-    ready = [r for r in report["ready"] if keep(r["epic"])]
+    ready = [_with_auto(ws, r) for r in report["ready"] if keep(r["epic"])]
     stopped = [_stopped_card(s) for s in report["stopped"] if keep(s["epic"])]
     # a Stopped card says the budget is used up itself: one card for it, not two
     suspect = [x for x in report["suspect"] if keep(x["epic"])]
     cards = [c for c in permits.budget_cards(ws) if keep(str(c["epic"])) and not any(s["epic"] == c["epic"] for s in stopped)]
     return {"requests": reqs, "grants": grants, "budget": cards, "ready": ready, "stopped": stopped, "suspect": suspect,
             "cards_n": len(reqs) + len(cards) + len(ready) + len(stopped) + len(suspect), "any": bool(reqs or grants or cards or ready or stopped or suspect)}
+
+
+def _with_auto(ws, rep: dict) -> dict:
+    """A Ready report, with `auto` (orch.core.factory_close.view) when the epic's charter signs closing by itself: the
+    card then says what it waits for instead of offering Accept, unless a condition needs you."""
+    from orch.core import factory_close
+    try:
+        epic = store.read_ticket(store.resolve(ws, rep["epic"]).path)
+        d = permits.factory_delegation(ws, epic)
+        auto = factory_close.view(ws, epic, d, rep=rep) if d and d.get("close") else None
+    except Exception:
+        auto = None  # an error offers Accept, as for any epic: the human can always give the verdict
+    return {**rep, "auto": auto} if auto else rep
 
 
 _CAN = {  # what the human can do, per reason (rule text, never agent prose)
@@ -157,7 +170,8 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 # says the state in a word or two; the headline says it once, in a sentence.
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
-           "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
+           "closing": ("info", 1, "Closing by itself"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
@@ -246,8 +260,11 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     early = None
     planner_on = any(factory_sessions.is_planner(b) for b in running)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
+    from orch.core import factory_close
+    auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
     if lit[-1]:
-        state, headline = "finished", "You gave the verdict"
+        state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
+                                       else "You gave the verdict")
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
@@ -260,6 +277,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "releasing", "The runner is releasing the work with your recipe"
     elif window and not window["open"] and not mine["requests"] and not mine["budget"]:
         state, headline = "window", "Production waits for its release window"
+    elif auto and mine["ready"] and auto["pending"] and not mine["requests"] and not mine["budget"]:
+        state, headline = "closing", "It closes by itself when everything is proven"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
         state, headline = "waiting", "Your answer is needed on the cards below"
     elif not factory_sessions.armed(ws, d["id"]):
@@ -291,7 +310,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
-            "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo"}.get(state, "stop")
+            "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
+            "closing": "todo"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
@@ -305,7 +325,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
-            "arc": _arc(current, len(names)), "release": rel, "window": window,
+            "arc": _arc(current, len(names)), "release": rel, "window": window, "auto": auto,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],
@@ -316,7 +336,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
 _LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "granted a permission",
                "permit.denied": "denied a permission", "permit.revoked": "revoked a grant",
                "permit.used": "used a grant", "gate.delegated": "auto-approved it under your charter",
-               "release.stage": "ran a release stage", "release.retry": "allowed one more release attempt"}
+               "release.stage": "ran a release stage", "release.retry": "allowed one more release attempt",
+               "verdict.auto": "closed the epic by itself under your charter"}
 
 
 def _epic_events(events, ids) -> list[dict]:
@@ -329,9 +350,12 @@ def _epic_events(events, ids) -> list[dict]:
     for e in events:
         if not e.ticket or str(e.ticket).upper() not in keep:
             continue
-        who = ("The runner" if e.kind == "release.stage"  # the dashboard's own release round, on your behalf
+        charter = e.via == "dark-charter"  # the runner's close under a charter that signs it (factory_close)
+        who = ("The runner" if e.kind == "release.stage" or charter  # the dashboard's own round, on your behalf
                else "You" if str(e.actor).startswith("human") else "An agent")
-        rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {_LOG_PHRASE.get(e.kind) or action_phrase(e)}"})
+        phrase = ("gave the done verdict by itself under your charter" if charter and e.kind == "verdict.given"
+                  else _LOG_PHRASE.get(e.kind) or action_phrase(e))
+        rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {phrase}"})
     return rows[::-1][:200]
 
 
@@ -409,7 +433,9 @@ def run_view(ws, epic) -> dict | None:
         profile = sum(1 for x in reqs if (x["id"], x["sha"]) not in answered and x["source"] == "dark"
                       and added_after(x))
         r["summary"] = {"children": len(r["kids"]), "tasks": sum(_tasks(t)[0] for _, t in r["kids"]),
-                        "requests": len(reqs), "card": card, "profile": profile, "open": len(reqs) - card - profile}
+                        "requests": len(reqs), "card": card, "profile": profile, "open": len(reqs) - card - profile,
+                        # closed by the charter: what the runner's own record says was proven when it closed
+                        "auto": (r["auto"] or {}).get("closed") if (r["auto"] or {}).get("by_charter") else None}
     return r
 
 

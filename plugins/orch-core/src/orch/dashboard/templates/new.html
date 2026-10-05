@@ -69,6 +69,7 @@
       {% if profile_empty %}<span class="muted" data-profile-empty>The Dark profile is empty, so each command will stop for a card. Add the baselines in a terminal: <code>orch dark profile add --baseline</code> (orch's agent verbs) and <code>orch dark profile add --baseline git-basic</code> (so workers can commit)</span>{% endif %}
     </label>
     <div class="field-col only-dark">{{ fx.release_choice("new", offers) }}</div>
+    <div class="field-col only-dark">{{ fx.close_choice("new") }}</div>
     {% endif %}
     {% endif %}
     <label class="field-col" for="files">Screenshots and files
@@ -97,7 +98,7 @@
         <li>You type dark to confirm; that signs the Dark charter ({{ limit_text }}).</li>
         <li>A planner session splits the epic into children, refines each and approves it under your charter. The Dark profile must hold the orch commands it runs.</li>
         <li>The runner starts a session for each child that is approved or covered by your charter. No permission prompts in the session: a command outside the Dark profile is denied and becomes a card here, with a button to add it to the profile when it is one plain command. Sessions are told to run one plain command at a time; a model that ignores that still makes cards. The runner checks the sessions' environment before it starts one, and after you answer a card types one line into a session that waits.</li>
-        <li>You still answer cards, larger children and the verdict. With Release up to Merge, Dev or Production, the runner merges each child (and deploys dev, then production) with the recipe on this machine once the epic is Ready; production only when you choose it and type production, never before its release window opens. Nothing is closed by itself: you read the Ready report and sign the verdict.</li>
+        <li>You still answer cards, larger children and the verdict. With Release up to Merge, Dev or Production, the runner merges each child (and deploys dev, then production) with the recipe on this machine once the epic is Ready; production only when you choose it and type production, never before its release window opens. Nothing is closed by itself unless you tick Close the epic by itself, which replaces your verdict for this run (Reopen stays yours); otherwise you read the Ready report and sign the verdict.</li>
       </ol>
       {% if edits_off %}<p class="muted only-factory" data-edits-off>Sessions started by the runner cannot write files unless your Claude permission mode allows edits. Set permissions.defaultMode to acceptEdits in your user settings, or the planner cannot create children. <span data-edits-why>Now: {{ edits_off }}.</span></p>{% endif %}
       {% endif %}

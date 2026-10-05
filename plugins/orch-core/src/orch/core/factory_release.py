@@ -606,9 +606,11 @@ def _sensitive_record(ws, epic_id: str) -> dict | None:
 
 
 def _units(ws, epic, entries=None) -> list[str]:
-    """The children a per-child stage runs for: those in testing (Ready's open children), by id."""
+    """The children a per-child stage runs for: those in testing (Ready's open children), and those done since with
+    a proven merge (the verdict closed them after their release), by id."""
     from orch.core import epics
-    return sorted(e.id for e in epics.children(ws, epic.id, entries) if e.status == "testing")
+    return sorted(e.id for e in epics.children(ws, epic.id, entries) if e.status == "testing" or (
+        e.status == "done" and unit_state(ws, epic.id, "merge", e.id)["state"] == "proven"))
 
 
 def _window_path(ws) -> Path:

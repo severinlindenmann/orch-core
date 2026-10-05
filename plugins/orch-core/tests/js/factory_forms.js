@@ -109,5 +109,15 @@ for (const [rb, tail] of [[false, "; no rollback by itself"],
   assert.ok(charter.dataset.inlineConfirm.endsWith(" · releases to production by itself (merge, dev, then production) " +
     "using the recipe on this machine, after its release window" + tail), charter.dataset.inlineConfirm);
 }
+// the opt-in auto-close: the confirm says it replaces your verdict, and only while the box is ticked
+let close = true;
+charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset
+  : sel === "input[name=close]" ? { checked: close } : withProd(sel));
+fire("change", { target: charter });
+assert.ok(charter.dataset.inlineConfirm.endsWith(" · closes the epic by itself when everything is proven: this " +
+  "replaces your verdict for this run; Reopen stays yours"), charter.dataset.inlineConfirm);
+close = false;
+fire("change", { target: charter });
+assert.ok(!charter.dataset.inlineConfirm.includes("closes the epic"));
 assert.ok(!/[A-Z]{4,}/.test(fs.readFileSync(process.argv[2], "utf8").match(/DARK_START = "([^"]*)"/)[1]));
 console.log("factory forms ok");

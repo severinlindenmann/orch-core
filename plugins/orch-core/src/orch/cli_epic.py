@@ -28,9 +28,12 @@ def _epic(ws, ref: str):
 
 def release_text(d: dict | None, long: bool = False) -> str:
     """What a Dark charter `d` signs about releasing: nothing; up to merge or dev with the recipe on this machine; or
-    production, after its release window, with the recipe's rollback when signed. Never closing: the verdict stays
-    the human's."""
-    target = (d or {}).get("release")
+    production, after its release window, with the recipe's rollback when signed; and whether it closes the epic by
+    itself (`close`, which replaces the human verdict for this run) or the verdict stays the human's."""
+    d = d or {}
+    target = d.get("release")
+    closing = ("it closes the epic by itself when everything is proven: this replaces your verdict for this run, and "
+               "Reopen stays yours" if d.get("close") else "it closes nothing: the verdict is yours")
     if target in ("merge", "dev"):
         stages = "merge" if target == "merge" else "merge and dev"
         text = (f"releases up to {target} by itself using the recipe on this machine ({stages}, once every child is "
@@ -40,11 +43,13 @@ def release_text(d: dict | None, long: bool = False) -> str:
                 "once every child is Ready), waits for the release window, and "
                 + ("runs the recipe's rollback when the production check fails" if d.get("rollback")
                    else "does not roll back when the production check fails (no rollback signed)"))
+    elif d.get("close"):
+        text = "releases nothing (the charter signs no release)"
     elif long:
         return "Release: none. Dark releases and closes nothing by itself: the verdict stays yours."
     else:
         return "releases and closes nothing (the charter signs no release: the verdict is yours)"
-    text += "; it closes nothing: the verdict is yours"
+    text += "; " + closing
     return ("Release: it " + text + ".") if long else text
 
 
@@ -162,7 +167,9 @@ def render_charter(ws, epic, kids, delegate) -> list[str]:
     if delegate and delegate.get("factory"):
         out.append(f"AI Factory: on. Agents split, specify, auto-approve and build children: up to "
                    f"{delegate['max_children']} children of size ≤ {delegate['max_size']} or {delegate['max_hours']} "
-                   "hours, then they stop and tell you. Questions are not asked; permissions and the verdict stay yours.")
+                   "hours, then they stop and tell you. Questions are not asked; "
+                   + ("permissions stay yours, and the verdict is given by the charter (below)." if delegate.get("close")
+                      else "permissions and the verdict stay yours."))
         if delegate.get("dark"):
             out.append("Dark: on. Agents run without asking you: a shell command runs only if this checkout's Dark "
                        "profile lists it (`orch dark profile list`); anything else is denied and becomes a card. "

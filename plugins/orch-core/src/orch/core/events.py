@@ -23,6 +23,8 @@ EVENT_KINDS = frozenset({
     # the release step (orch.core.factory_release): a stage's outcome (stage, child, proven, exit code only) and the
     # human's retry
     "release.stage", "release.retry",
+    # the opt-in auto-close (orch.core.factory_close): the runner gave the epic verdict under a charter that signs it
+    "verdict.auto",
 })
 
 

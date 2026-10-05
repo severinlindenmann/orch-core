@@ -25,6 +25,14 @@
 </fieldset>
 {% endmacro %}
 
+{#- The opt-in auto-close, in a Dark start only: off by default; it replaces the human verdict for this run. -#}
+{% macro close_choice(sfx) %}
+<div class="close-choice" data-close-choice>
+  <label for="close-{{ sfx }}"><input type="checkbox" id="close-{{ sfx }}" name="close" value="1"> Close the epic by itself when everything is proven</label>
+  <p class="muted">This replaces your verdict for this run: the runner gives the done verdict and closes the children once every child is Ready, every release stage you sign is proven by its check, no card is open and nothing stopped it. Reopen stays yours. Off: you read the Ready report and give the verdict.</p>
+</div>
+{% endmacro %}
+
 {#- The factory ring and step marks (phase 5). Five steps, lit only from records (data/factory.py). Never colour only:
     done = solid thin, the current step thick, waiting for you = dashed, stopped = amber, and every mark has its words.
     Motion only while the run is working (the panel's is-live class). -#}

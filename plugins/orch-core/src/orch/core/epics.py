@@ -114,10 +114,12 @@ def normalize_delegate(delegate) -> dict | None:
         raise UsageError("--release is merge, dev or prod")
     if release is not None and not dark:
         raise UsageError("a release is signed only into a Dark charter: --release goes with --dark")
-    rollback = bool(given.get("rollback"))
+    rollback, close = bool(given.get("rollback")), bool(given.get("close"))
     if rollback and release != "prod":
         raise UsageError("--rollback goes with --release prod: it pre-authorises the recipe's rollback for a failed "
                          "production check only")
+    if close and not dark:
+        raise UsageError("closing the epic by itself is signed only into a Dark charter: --close goes with --dark")
     d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
     d.update({k: v for k, v in given.items()
               if v is not None and k not in ("factory", "dark", "release", "rollback", "close")})
@@ -146,6 +148,8 @@ def normalize_delegate(delegate) -> dict | None:
             out["release"] = release
         if rollback:  # only when set, as release: older charters hash as before
             out["rollback"] = True
+        if close:  # the opt-in auto-close (orch.core.factory_close): it replaces the human verdict for this run
+            out["close"] = True
     return out
 
 

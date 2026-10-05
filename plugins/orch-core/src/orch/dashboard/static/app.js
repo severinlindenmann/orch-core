@@ -400,6 +400,13 @@
     }
     return " · releases nothing";
   };
+  // the opt-in auto-close of a Dark start: the confirm says plainly that it replaces the human verdict
+  const closeText = (form) => {
+    const c = form.querySelector && form.querySelector("input[name=close]");
+    return c && c.checked
+      ? " · closes the epic by itself when everything is proven: this replaces your verdict for this run; Reopen stays yours"
+      : "";
+  };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
   // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
   const charterLabel = (form) => {
@@ -411,7 +418,7 @@
     if (box) box.dataset.start = start;
     if (start === "dark") {
       form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm
-        + releaseText(form);
+        + releaseText(form) + closeText(form);
       return;
     }
     if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
@@ -471,7 +478,8 @@
     if (box) box.dataset.mode = mode;
     if (armed.has(form)) disarm(form, false);
     if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form);
+    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form)
+      + closeText(form);
     else delete form.dataset.inlineConfirm;
   };
   document.addEventListener("change", (event) => {

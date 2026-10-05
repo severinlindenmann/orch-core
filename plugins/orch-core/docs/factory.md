@@ -46,7 +46,8 @@ any other child without a human approval is refused a claim or task start.
   its request; only a denial without one (an auto-mode classifier denial) needs `orch permit request "<command>"
   --ticket <id> --reason ...`. It signs nothing and grants nothing. A request for a command the Dark profile already
   allows files nothing (see "Requests the profile already covers").
-- The verdict stays yours (D1): children go to testing as usual, and you sign the epic's verdict.
+- The verdict stays yours (D1): children go to testing as usual, and you sign the epic's verdict. The one exception
+  is a Dark charter you sign with `close` (see "Closing by itself"), which replaces your verdict for that run only.
 
 ## Permissions: one system, answered by you
 
@@ -517,8 +518,8 @@ orch approve <epic> requirements --dark       # implies --factory
 The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
 before the typed confirmation says it plainly: Dark runs without permission prompts in the session, only commands the
 profile lists run (anything else is denied and becomes a card for you), and it releases and closes only within what
-the charter signs: nothing, unless you add `--release merge|dev|prod` (phase 6, below); it closes nothing, the verdict
-stays yours. The
+the charter signs: nothing, unless you add `--release merge|dev|prod` (phase 6, below); it closes nothing and the
+verdict stays yours, unless you add `--close` ("Closing by itself", below), which replaces your verdict for this run. The
 command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
 **The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
@@ -747,8 +748,9 @@ refusal of a process under an agent harness, as for every approval).
   its identical text, so adding it would not help; Grant once (the primary button) or Deny. The terminal's
   `--from-request` still accepts it, for the rare command an agent repeats word for word.
 
-The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: any automatic closing (the
-verdict is yours, from the Ready report), and runner-side proof that tests ran or a review happened; the ring has no
+The Dark switch itself stays a terminal command (`orch factory dark on`). Closing by itself happens only for a
+charter you sign with `close` (below); otherwise the verdict is yours, from the Ready report. Not built: runner-side
+proof that tests ran or a review happened; the ring has no
 steps for those because no record of them exists. Merge, Dev and Production steps appear only for a charter that signs a
 release up to them (phase 6, below).
 
@@ -1055,15 +1057,58 @@ agent sessions, `HOME` among it, and a PATH of the pinned programs' folders and 
 working directory, and no standard input. A program that needs a credential reads it from your own config (for
 example `gh` from its config under `HOME`), never from the recipe.
 
-**Not built.** Any automatic closing (the verdict stays yours), a notification when a release stops, a rollback
+**Not built.** A notification when a release stops, a rollback
 for anything but a failed production check, and runner-side proof that tests ran or a review happened. The test suite covers the recipe, the CLI, the guard, the
 charter and the release step with real git in temporary repositories (a workspace and a bare remote on disk, no
 network) and a stand-in for the recipe's commands: no test runs a real `gh`, push, merge or deploy.
 
+## Closing by itself (opt-in)
+
+By default the verdict on a factory epic is yours (D1). A **Dark** charter may sign `close`: then the runner gives the
+epic's done verdict by itself, and closes its children, once everything is proven. **This replaces your verdict for
+that run.** Reopen stays yours. An AI Factory that is not Dark never closes by itself.
+
+```bash
+orch approve <epic> requirements --dark --close [--release merge|dev|prod [--rollback]]
+```
+
+On the dashboard, a Dark start has a checkbox "Close the epic by itself when everything is proven", off by default and
+shown only with Dark; the word dark is still required, and the confirm says that it replaces your verdict for this run
+and that Reopen is available. `close` is refused without `--dark`, and the charter carries it only when you sign it
+(every charter signed before hashes as before).
+
+**When it closes.** The runner (the dashboard you started, in its release round, never a process under an agent
+harness) closes the epic only when all of this holds, read again under the workspace's release lock right before it
+acts: the factory and Dark switched on, the ledger whole, the epic open, its charter live (not paused, not edited, the
+budget not used up), Dark, started from the dashboard and signed with `close`; the Ready report holds (every child in
+testing or done, every criterion of every child in testing cites evidence, every status backed by orch's records);
+every release stage the charter signs is proven by its check and not out of date, and no sensitive path stopped it;
+no permission card of the epic is open; the epic has no Stopped reason; and the coverage check holds (when this orch
+has one: until then there is no coverage condition). If any condition fails it does not close, and the run view and the
+Ready card say which: "Not closed by itself: ..." for a condition only you can change (then Accept is offered as for
+any epic), or "It closes by itself, in place of your verdict, when: ..." with the conditions the runner still gets
+past by itself (a release stage to run), without an Accept button.
+
+**How it closes.** Through the same verdict the Ready report's Accept gives (`orch verdict <epic> done`): it closes
+the children and the epic, bound to the hash of exactly the evidence the Ready report showed, and is refused if any of
+it changed. It is signed into the ledger as your dashboard's human actor with `via` "dark-charter", and the events say
+the same (plus an event `verdict.auto` naming the children and the hash), so the ledger, `orch check` (an info
+finding "charter-verdict": a decision you delegated in that charter, not one you gave) and the run view ("Closed by
+itself under your charter", with the time, a summary of what was proven and a Reopen button) all show it was the
+charter's. An entry marked so under a charter that does not sign `close` is a warning in `orch check`.
+
+**Once.** Before it acts the runner creates an intent record for that charter exclusively (in the guarded release
+records, `close.<delegation>.intent`), then an outcome record. So it closes at most once per charter: never again after
+you reopen it, and a crash between the intent and the verdict leaves the verdict to you. Approving the epic again
+signs a new charter.
+
+**What it cannot tell.** The evidence is what the agents wrote, and a release check proves what it checks; closing by
+itself trusts both, as your Accept would have. Same-user trust holds as for the other release records: code an agent
+gets run as you could write the records.
+
 ## Coming in later phases
 
-- Closing children under the charter (after a live test); a notification when a release stops; runner-side proof of
-  tests and review (and ring steps for them).
+- A notification when a release stops; runner-side proof of tests and review (and ring steps for them).
 - A second live end-to-end run after this round's fixes, and a repeatable one per release.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).

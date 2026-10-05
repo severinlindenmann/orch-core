@@ -534,6 +534,9 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             rollback: Annotated[bool, typer.Option(
                 "--rollback", help="With --release prod: run the recipe's rollback by itself when the production "
                                    "check fails (nothing else).")] = False,
+            close: Annotated[bool, typer.Option(
+                "--close", help="With --dark: close the epic by itself when everything is proven. This replaces "
+                                "your verdict for this run; Reopen stays yours.")] = False,
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
@@ -553,6 +556,8 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         raise UsageError("--release goes with --dark: only a Dark charter signs a release")
     if rollback and release != "prod":
         raise UsageError("--rollback goes with --release prod")
+    if close and not dark:
+        raise UsageError("--close goes with --dark: only a Dark charter closes the epic by itself")
     factory = factory or dark
     delegate = delegate or factory
     if (max_children is not None or max_size is not None) and not delegate:
@@ -566,6 +571,8 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             limits["release"] = release
         if rollback:
             limits["rollback"] = True
+        if close:
+            limits["close"] = True
     target = store.resolve(ws, ref)
     if gate == "plans":
         if delegate:

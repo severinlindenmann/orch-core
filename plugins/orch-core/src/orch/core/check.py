@@ -250,6 +250,21 @@ def _closed_by_human(events, ticket_id: str) -> bool:
                 and last.data.get("to") == "done")
 
 
+def _charter_verdict(ws, t, event, signed) -> Finding:
+    """A done verdict the runner gave under a Dark charter that signs `close` (orch.core.factory_close): a decision the
+    human delegated in that signed charter, not one they gave; shown as such. Without such a charter it is a warning."""
+    from orch.core import epics
+    epic = t if epics.is_epic(t) else epics.parent_epic(ws, t)
+    d = epics.delegation(ws, epic, signed) if epic is not None else None
+    if d and d.get("close") and d.get("dark"):
+        return Finding("info", "charter-verdict", t.id,
+                       f"the done verdict was given by itself at {event.at} under the Dark charter of epic {epic.id}, "
+                       "which you signed with close (a decision you delegated in that charter, not one you gave)")
+    return Finding("warning", "charter-verdict-unbacked", t.id,
+                   "the done verdict says it was given under a Dark charter, but the epic's signed charter does not "
+                   "sign closing by itself: review it")
+
+
 def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> list[Finding]:
     out = []
     tid = t.id
@@ -300,6 +315,8 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
         if not (last and last.kind == "verdict.given" and _is_human(last)
                 and last.data.get("verdict") == "done" and last.data.get("to") == "done"):
             out.append(Finding("error", "unverified-verdict", tid, "ticket is done but its last recorded status change is not a human done verdict"))
+        elif last.via == "dark-charter":  # orch.core.factory_close.CHARTER_VIA
+            out.append(_charter_verdict(ws, t, last, signed))
     for q in t.meta.get("questions") or []:
         if q.get("answer") in (None, ""):
             continue

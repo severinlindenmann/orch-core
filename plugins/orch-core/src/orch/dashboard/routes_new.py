@@ -101,7 +101,7 @@ def release_problem(ws, release: str, rollback: bool, confirm_production: str) -
 
 
 def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: str, release: str = "",
-                  rollback: bool = False, confirm_production: str = "") -> str | None:
+                  rollback: bool = False, confirm_production: str = "", close: bool = False) -> str | None:
     """Why this mode cannot start, judged here from the switches (never from what the form offered) and from the text
     the human typed, before anything is created, or None. The text checks are the ones the start itself makes, so a
     start refused for them leaves no epic behind."""
@@ -125,6 +125,8 @@ def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: 
             return f"{why}: nothing was created."
     elif release not in ("", "none") or rollback:
         return "Only a Dark AI Factory signs a release: nothing was created."
+    if close and mode != "dark":
+        return "Only a Dark AI Factory closes the epic by itself: nothing was created."
     if not ask.strip():
         return "Describe the work in Ask: it becomes the epic's Requirements. Nothing was created."
     if not done_when.strip():
@@ -164,6 +166,7 @@ def create(
     release: Annotated[str, Form()] = "",
     rollback: Annotated[str, Form()] = "",
     confirm_production: Annotated[str, Form()] = "",
+    close: Annotated[str, Form()] = "",
     once: Annotated[str, Form()] = "",
     files: Annotated[Optional[list[UploadFile]], File()] = None,
 ):
@@ -180,7 +183,8 @@ def create(
               "external": external, "ask": ask, "mode": mode, "done_when": done_when or DONE_WHEN, "release": release}
     release = release if mode == "dark" else ""  # the field shows only in Dark mode; another mode signs no release
     roll = mode == "dark" and rollback in ("1", "on", "true")
-    problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release, roll, confirm_production)
+    shut = mode == "dark" and close in ("1", "on", "true")  # the auto-close: shown only in Dark mode
+    problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release, roll, confirm_production, shut)
     if problem:
         return _form(request, values, problem, 422)
     if factory:
@@ -234,7 +238,7 @@ def create(
         start_factory(ws, t.id, epics.charter(ws, t, tickets=[])["content_hash"],
                       {"factory": True, **({"dark": True} if mode == "dark" else {}),
                        **({"release": release} if release in ("merge", "dev", "prod") else {}),
-                       **({"rollback": True} if roll else {})})
+                       **({"rollback": True} if roll else {}), **({"close": True} if shut else {})})
     except OrchError as e:
         return back(f"/t/{t.id}", err=_plain(f"created {t.id}, but starting it as {name} failed: {error_text(e)}"))
     return back(f"/factory/{t.id}", msg=f"created {t.id} and started it as {name}")

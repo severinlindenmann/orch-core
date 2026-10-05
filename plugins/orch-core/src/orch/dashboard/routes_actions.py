@@ -48,7 +48,8 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
             max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = "",
             dark: Annotated[str, Form()] = "", confirm_dark: Annotated[str, Form()] = "",
             start: Annotated[str, Form()] = "", release: Annotated[str, Form()] = "",
-            rollback: Annotated[str, Form()] = "", confirm_production: Annotated[str, Form()] = ""):
+            rollback: Annotated[str, Form()] = "", confirm_production: Annotated[str, Form()] = "",
+            close: Annotated[str, Form()] = ""):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
@@ -75,6 +76,8 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
             limits["release"] = release
         if roll:
             limits["rollback"] = True
+        if close in ("1", "on", "true"):  # the auto-close checkbox (a Dark start only): replaces the verdict
+            limits["close"] = True
     elif factory in ("1", "on", "true"):
         limits = {"factory": True}
     elif delegate in ("1", "on", "true"):

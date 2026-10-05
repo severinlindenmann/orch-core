@@ -62,3 +62,24 @@ def release_retry(request: Request, ref: str, stage: Annotated[str, Form()] = ""
     except OrchError as e:
         return back(url, err=error_text(e))
     return back(url, msg=text)
+
+
+@router.post("/factory/{ref}/reopen")
+def reopen(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
+    """Reopen an epic the runner closed by itself under its charter: the existing reopen (Ops.reopen), yours only
+    (it refuses an agent and any process under an agent harness). Its children stay done."""
+    from orch.core import factory_close, store
+    from orch.core.ops import Ops
+    ws = request.app.state.ws
+    try:
+        epic = store.read_ticket(store.resolve(ws, ref).path)
+    except OrchError as e:
+        return back("/factory", err=error_text(e))
+    url = f"/factory/{epic.id}"
+    try:
+        if not factory_close.closed_by_charter(ws, epic):
+            raise UsageError(f"{epic.id} was not closed by its charter: reopen it with orch reopen in a terminal")
+        Ops(ws, HUMAN).reopen(epic.id, reason)
+    except OrchError as e:
+        return back(url, err=error_text(e))
+    return back(url, msg=f"reopened {epic.id}")

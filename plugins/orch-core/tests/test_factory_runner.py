@@ -599,7 +599,7 @@ def test_an_agent_edited_workspace_config_cannot_change_the_launch(fws, fa, fh, 
     _tick(evil, human, fake)
     ((_, _, argv),) = fake.started
     assert "evil" not in argv and "/opt/test/claude" in argv and not any("rm -rf" in a for a in argv)
-    assert argv[-1] == factory_runner.factory_work_prompt("L-0002")  # the built-in one, never the config's
+    assert argv[-1] == factory_runner.factory_work_prompt("L-0002")  # the built-in one (shared checkout), never the config's
 
 
 def test_ticket_text_never_reaches_the_launch(fws, fa, fh, human, fake):

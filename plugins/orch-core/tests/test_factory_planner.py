@@ -461,10 +461,12 @@ def dws_both(configure, human):
 NAMED_AS_REFUSED = (("ask",), ("permit", "request"), ("instructions", "sync"), ("setup",))
 
 
-@pytest.mark.parametrize("prompt", [factory_runner.planner_prompt("L-0001"),
-                                    factory_runner.factory_work_prompt("L-0002")], ids=["planner", "worker"])
-def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_both, prompt):
+@pytest.mark.parametrize("which", ["planner", "worker in a worktree", "worker in the shared checkout"])
+def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_both, which):
     import subprocess
+    prompt = (factory_runner.planner_prompt("L-0001") if which == "planner" else factory_runner.factory_work_prompt(
+        "L-0002", factory_runner.commit_form(dws_both, "L-0002") if "worktree" in which else None))
+    assert ("git commit" in prompt) is (which == "worker in a worktree")
     snippets = re.findall(r"`([^`]+)`", prompt)
     orch_cmds = [s for s in snippets if s.startswith("orch ")]
     assert len(orch_cmds) >= 6 and "\n" not in prompt
@@ -488,13 +490,16 @@ def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_
         assert dark_profile.match(dws_both, real) is not None, real
 
 
-def test_the_worker_prompt_is_built_in_and_says_the_plain_rules():
-    p = factory_runner.factory_work_prompt("L-0002")
+def test_the_worker_prompt_is_built_in_and_says_the_plain_rules(ws):
+    p = factory_runner.factory_work_prompt("L-0002", factory_runner.commit_form(ws, "L-0002"))
     assert p.startswith("You work on L-0002, a child of an AI Factory epic.") and "orch-work-on-ticket" in p
     for words in ("one plain command per tool call", "`&&`", "`2>&1`", "`|| true`", "actually denied with a request id",
                   "never retry variants", "`orch instructions sync`", "`orch setup`", "with no -m",
-                  "`git commit -m \"L-0002 short text\"`", "`orch move L-0002 testing`"):
+                  '`git commit -m "L-0002 short summary" -m "What: ..." -m "Why: ..." -m "Risk: ..."`',
+                  "on this worktree's branch", "`orch move L-0002 testing`"):
         assert words in p, words
+    shared = factory_runner.factory_work_prompt("L-0002")
+    assert "Do not commit" in shared and "git add" not in shared and "git commit" not in shared
     for bad in ("-x", "L-1\n", "l-1", "", None, "L-1 --model x"):
         assert factory_runner.factory_work_prompt(bad) is None
     assert "one plain command per tool call" in factory_runner.planner_prompt("L-0001")
@@ -941,3 +946,95 @@ def test_a_permission_request_names_its_own_epic_only(fws, fa, fh, human, fake):
         permits.request(fws, w1.actor, store.load(fws, c2)[1], "make deploy", reason="E2 needs it")
     assert permits.request(fws, w1.actor, store.load(fws, c1)[1], "make deploy")["epic"] == e1
     assert permits.request(fws, fa.actor, store.load(fws, c2)[1], "make deploy")["epic"] == e2  # unbound: as before
+
+
+# -- commits: the workspace's format, and only in a worktree of the session's own --------------------------------------
+
+def _commit_message(form):
+    """The message git makes of the prompt's `git commit -m ... -m ...` (each -m one paragraph), dots filled in."""
+    import shlex
+    words = shlex.split(form)
+    parts = [words[i + 1] for i, w in enumerate(words) if w == "-m"]
+    return "\n\n".join(p.replace("...", "the export is written") for p in parts)
+
+
+def test_the_prompts_commit_passes_the_real_commit_msg_check(fws, fa, fh):
+    from orch.hooks.commit_msg import check_message
+    eid, d = _epic(fws, fa, fh)
+    cid = _child(fa, eid)
+    form = factory_runner.commit_form(fws, cid)
+    assert form.startswith(f'git commit -m "{cid} short summary" -m "What: ..."')
+    assert check_message(fws, _commit_message(form)) == []
+    assert check_message(fws, f"{cid} short text") != []  # what the old prompt said would have failed
+
+
+def test_the_commit_form_follows_the_workspace_config_and_refuses_odd_text(configure):
+    from orch.hooks.commit_msg import check_message
+    ws = configure(commit={"subject": "[{key}] {summary}", "body": ["Why", "Tests"], "rollback": True})
+    form = factory_runner.commit_form(ws, "L-0002")
+    assert form == 'git commit -m "[L-0002] short summary" -m "Why: ..." -m "Tests: ..." -m "Rollback: ..."'
+    assert not [p for p in check_message(ws, _commit_message(form)) if "body" in p or "subject" in p]
+    for bad in ({"subject": '{key} "{summary}"'}, {"subject": "{key} $(x) {summary}"}, {"subject": "{summary}"},
+                {"body": ["What`x`"]}, {"body": ["a\nb"]}):
+        assert factory_runner.commit_form(configure(commit=bad), "L-0002") is None, bad
+
+
+def test_the_runner_tells_only_a_worktree_session_to_commit(fws, fa, fh, human, fake, monkeypatch):
+    eid, d = _epic(fws, fa, fh)
+    cid = _child(fa, eid)
+    _tick(fws, human, fake)
+    root_prompt = next(a for n, c, a in fake.started if cid in n)[-1]
+    assert "Do not commit" in root_prompt and "git commit" not in root_prompt
+    for b in fs.bindings(fws):
+        factory_runner.sweep(fws, human, fake, stop_all=True)
+    wt = fws.root / ".claude" / "worktrees" / "c"
+    wt.mkdir(parents=True)
+    monkeypatch.setattr(factory_runner, "start_dir", lambda ws, t: str(wt.resolve()))
+    _tick(fws, human, fake)
+    wt_prompt = fake.started[-1][2][-1]
+    assert "on this worktree's branch" in wt_prompt and f'git commit -m "{cid} short summary"' in wt_prompt
+
+
+def _repo(path, branch, origin_head=None, detached=False):
+    import subprocess
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
+    if origin_head:
+        (path / ".git" / "refs" / "remotes" / "origin").mkdir(parents=True)
+        (path / ".git" / "refs" / "remotes" / "origin" / "HEAD").write_text(
+            f"ref: refs/remotes/origin/{origin_head}\n", encoding="utf-8")
+    if detached:
+        (path / ".git" / "HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
+    return path
+
+
+def test_the_hook_refuses_a_commit_on_the_default_branch_or_a_detached_head(configure, agent, human, fake, tmp_path):
+    from conftest import human_ops
+    from orch.core.ops import Ops
+    dws = configure(factory={"enabled": True}, git={"agent_may": {"commit": True}})
+    Ops(dws, human).set_factory_dark(True)
+    eid, d = _epic(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
+    dark_profile.add_baseline(dws, human, name="git-basic")
+    _tick(dws, human, fake)
+    (b,) = fs.bindings(dws)
+    cmd = 'git commit -m "L-0002 x" -m "What: y"'
+
+    def answer(cwd):
+        p = {**_payload(b["session"], cmd), "cwd": str(cwd)}
+        return permits.hook_decision(dws, p)
+    for cwd in (_repo(tmp_path / "m", "main"), _repo(tmp_path / "ms", "master"),
+                _repo(tmp_path / "t", "trunk", origin_head="trunk"), _repo(tmp_path / "d", "feat/x", detached=True),
+                tmp_path / "no-repo", None):
+        if cwd is not None:
+            cwd.mkdir(exist_ok=True)
+        out = permits.hook_decision(dws, {**_payload(b["session"], cmd), **({"cwd": str(cwd)} if cwd else {})}) \
+            if cwd is not None else answer(dws.root / "nowhere")
+        assert _behavior(out) == "deny" and "git commit is refused here" in out["hookSpecificOutput"]["decision"][
+            "message"], cwd
+    assert _behavior(answer(_repo(tmp_path / "f", f"feat/{eid.lower()}"))) == "allow"
+    sub = tmp_path / "f" / "src"
+    sub.mkdir()
+    assert _behavior(answer(sub)) == "allow"  # a folder inside the worktree
+    out = answer(_repo(tmp_path / "f2", "main"))
+    assert "HEAD is the default branch main" in out["hookSpecificOutput"]["decision"]["message"]
+    assert permits._git_commit("cd x && git commit -m y") and not permits._git_commit("git log --oneline")

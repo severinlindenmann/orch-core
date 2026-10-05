@@ -1094,11 +1094,46 @@ def test_an_epic_that_cannot_be_read_fails_the_beat_instead_of_reading_none(conf
     a.set_section(epic.id, "Acceptance criteria", "- [ ] a")
     h.approve(epic.id, "requirements", delegate={"factory": True})
 
-    def boom(*a, **k):
-        raise OSError("unreadable")
+    real, epic_path = store.read_ticket, store.resolve(fws, epic.id).path
+
+    def boom(path, *a, **k):  # only the epic itself cannot be read
+        if Path(path) == Path(epic_path):
+            raise OSError("unreadable")
+        return real(path, *a, **k)
     monkeypatch.setattr(store, "read_ticket", boom)
     with pytest.raises(OSError):
         presence.factory(fws)
+
+
+def test_a_malformed_mailbox_id_is_ignored_before_anything_is_checked(ws):
+    host, a = make_host(), Device_(KEY_A)
+    loop = make_loop(ws, host)
+    seen = []
+    host.check = lambda env, rid: seen.append(rid)
+    env = a.envelope(http("GET", "/"))
+    rid = E.Header.decode(env).rid.hex()
+    for bad in (rid.upper(), rid + "\n", rid[:-2], 7, None):
+        asyncio.run(loop._handle({"rid": bad, "body": E.b64u(env)}))  # noqa: SLF001
+    asyncio.run(loop._handle({"rid": rid, "body": 5}))  # noqa: SLF001
+    assert seen == []
+
+
+def test_an_unknown_error_code_from_the_child_reads_as_protocol(fake):
+    from orch.remote.transport import Child, TransportError
+    fake.inject("poll", code="something_new")
+
+    async def main():
+        child = Child([sys.executable, FAKE, "bridge-host", "--workspace", WS_HEX], fake.dir)
+        await child.start()
+        with pytest.raises(TransportError) as e:
+            await child.call("poll", wait=0)
+        assert e.value.code == "protocol"
+        fake.inject("poll", code="rate_limited")
+        with pytest.raises(TransportError) as e:
+            await child.call("poll", wait=0)
+        assert e.value.code == "rate_limited"
+        await child.close()
+    asyncio.run(main())
 
 
 def test_a_failed_beat_sends_nothing_and_the_next_one_goes_out(ws, fake):

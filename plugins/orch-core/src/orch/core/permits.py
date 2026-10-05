@@ -611,9 +611,10 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
         return _decision("allow")
     if dark:
         r = request(ws, actor, ticket, command, reason="not in the Dark profile", source="dark")
-        return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory "
-                                 f"(request {r['id']}). The human can add it to the Dark profile; go on with other "
-                                 f"work, or do without it and record why in the ticket.")
+        return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory. "
+                                 f"Request {r['id']} is open: the human can add it to the Dark profile. Do other work "
+                                 f"or run `orch wait {ticket.id}`. Do not retry variants of this command and do not "
+                                 f"file another request for it.")
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
     return _decision("deny", f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
                              f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")

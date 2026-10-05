@@ -599,7 +599,7 @@ def test_an_agent_edited_workspace_config_cannot_change_the_launch(fws, fa, fh, 
     _tick(evil, human, fake)
     ((_, _, argv),) = fake.started
     assert "evil" not in argv and "/opt/test/claude" in argv and not any("rm -rf" in a for a in argv)
-    assert argv[-1] == "Work on ticket L-0002 with the orch-work-on-ticket skill."
+    assert argv[-1] == factory_runner.factory_work_prompt("L-0002")  # the built-in one, never the config's
 
 
 def test_ticket_text_never_reaches_the_launch(fws, fa, fh, human, fake):
@@ -608,7 +608,7 @@ def test_ticket_text_never_reaches_the_launch(fws, fa, fh, human, fake):
     fa.new("$(touch /tmp/x); `id` & rm -rf ~", epic=eid)
     _tick(fws, human, fake)
     ((_, _, argv),) = fake.started
-    assert not any(c in " ".join(argv) for c in ("$(", "`", "rm -rf", "touch"))
+    assert not any(c in " ".join(argv) for c in ("$(", "`id`", "rm -rf", "touch"))
 
 
 def test_the_launch_command_is_not_writable_by_agents(ws):

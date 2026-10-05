@@ -167,35 +167,56 @@ def _orch_words(cmd) -> list[str]:
     return words[1:]
 
 
-def work_prompt(key: str) -> str | None:
-    """The built-in work prompt for `key`. Never the workspace config's prompt or any ticket text: an agent can edit
-    those, and this text starts another agent."""
-    from orch.config.load import DEFAULTS
-    from orch.dashboard.data.agent_start import KEY_RE
-    if not isinstance(key, str) or not KEY_RE.fullmatch(key):
-        return None
-    return DEFAULTS["agents"]["prompts"]["work"].replace("{key}", key)
-
+# What every runner session is told about command shapes (the live run of 5 Oct: chains, pipes and redirects each
+# became a card, and agents filed requests for commands that were never denied). Built in, never from config.
+_PLAIN = (
+    "Run exactly one plain command per tool call: no `&&`, `;`, `|`, `2>&1`, `|| true`, other redirects or command "
+    "substitution, because a Dark run stops any such command for the human. Keep titles, -m texts and commit "
+    "messages to short plain sentences without line breaks, backticks, dollar signs or backslashes. File "
+    "`orch permit request` only for a command that was actually denied with a request id P-n in the denial message, "
+    "never for one that was not denied, and never retry variants of a denied command. Never run "
+    "`orch instructions sync` or `orch setup`. "
+)
 
 # The planner's prompt: built in, like the work prompt, never from the config, a ticket or anything an agent edits. It
-# names only commands and options orch has (tests/test_factory_planner.py checks them against the CLI). `--file` and
-# multi-line text are left out on purpose: a Dark profile's prefix rule never matches them (docs/factory.md).
+# names only commands and options orch has (tests/test_factory_planner.py checks them against the CLI).
 PLANNER_PROMPT = (
     "You are the planner of the AI Factory epic {key}. Read it with `orch show {key}` and its limits with "
-    "`orch epic show {key}`. Split the work into children within those limits, each created with one "
+    "`orch epic show {key}`. " + _PLAIN + "Split the work into children within those limits, each created with one "
     "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is xs, "
     "s or m unless the limits say otherwise), the Requirements and Acceptance criteria written into files under "
     "orchestrator/temporary first. When a child's size needs a Plan (every size but xs), write it as one paragraph "
-    "with `orch section set CHILD Plan -m \"...\"`. Keep line breaks, backticks, backslashes and the characters "
-    "; & | < > ( ) $ out of every command, titles and -m text included: a Dark run stops such a command for the human. "
+    "with `orch section set CHILD Plan -m \"...\"`. "
     "`orch ask` is refused in this epic: decide within the epic's text and record why with `orch log CHILD -m "
     "\"...\"`, or leave the item out. Then approve each child with `orch epic auto-approve CHILD`. Do not build "
     "anything and do not change the epic's own text. When every child is refined and approved, stop."
 )
 
+# A child's prompt in a factory epic, used instead of the workspace's default work prompt (the agent may not have the
+# orch skills at user scope: the live run's agent then invented `orch work-on`), so it carries the command forms.
+FACTORY_WORK_PROMPT = (
+    "You work on {key}, a child of an AI Factory epic. Follow the orch-work-on-ticket skill if you have it; these "
+    "rules come first. " + _PLAIN + "Start with `orch claim {key}` and read it with `orch show {key}`. Add each task "
+    "with `orch task add {key} \"TASK\"`, then for each one run `orch task start {key} TN`, do the work and run "
+    "`orch task done {key} TN` with no -m; put notes in `orch log {key} -m \"...\"`. `orch ask` is refused in this "
+    "epic: decide within the ticket's text and record why with `orch log`. Commit your work on your own branch or "
+    "worktree with `git add FILES` and `git commit -m \"{key} short text\"`. Write one Verification line per "
+    "acceptance criterion into a file under orchestrator/temporary and set it with `orch section set {key} "
+    "Verification --file FILE`. When every task is done, run `orch move {key} testing` and stop. If a command was "
+    "denied with a request id, do other work or wait for the human with `orch wait {key}`."
+)
+
+
+def factory_work_prompt(key: str) -> str | None:
+    """The built-in prompt of a child's session (its key validated as a ticket key)."""
+    from orch.dashboard.data.agent_start import KEY_RE
+    if not isinstance(key, str) or not KEY_RE.fullmatch(key):
+        return None
+    return FACTORY_WORK_PROMPT.replace("{key}", key)
+
 
 def planner_prompt(key: str) -> str | None:
-    """The built-in planner prompt for epic `key` (validated as work_prompt validates its key)."""
+    """The built-in planner prompt for epic `key` (its key validated as a ticket key)."""
     from orch.dashboard.data.agent_start import KEY_RE
     if not isinstance(key, str) or not KEY_RE.fullmatch(key):
         return None
@@ -338,7 +359,7 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | No
     """Everything a launch needs, checked before a launch is counted (a missing program or a refused worktree must not
     use up a child's or the planner's launches): (prompt, cwd, claude, env), or None. `planner`: `t` is the epic
     itself, the planner's prompt is used and the session starts in the workspace root."""
-    prompt = planner_prompt(t.id) if planner else work_prompt(t.id)
+    prompt = planner_prompt(t.id) if planner else factory_work_prompt(t.id)
     cwd = str(Path(ws.root).resolve()) if planner else start_dir(ws, t)
     if cwd is None:
         lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")

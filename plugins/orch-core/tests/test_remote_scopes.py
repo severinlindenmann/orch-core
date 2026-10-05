@@ -605,3 +605,141 @@ def test_within_window_never_raises():
     assert bridge.within_window(now - timedelta(seconds=300), now) is True
     assert bridge.within_window(now + timedelta(seconds=300, microseconds=1), now) is False
     assert bridge.within_window(datetime.max.replace(tzinfo=timezone.utc), datetime.min.replace(tzinfo=timezone.utc)) is False
+
+
+# -- the factory lookup is explicit, and every doubt means guarded ----------------------------------------------------
+
+def _wrap_resolve(monkeypatch, only, result):
+    real = store.resolve
+
+    def fake(ws, ref, entries=None):
+        if ref == only:
+            if isinstance(result, Exception):
+                raise result
+            return result(real(ws, ref, entries))
+        return real(ws, ref, entries)
+    monkeypatch.setattr(store, "resolve", fake)
+
+
+def test_factory_guard_parent_cases(factory, put, monkeypatch):
+    from orch.errors import NotFoundError, UsageError
+    fws, epic, child, other = factory
+    from orch.core.model import new_ticket  # noqa: F401
+    assert remote_gate.factory_guarded(fws, child) is True
+    assert remote_gate.factory_guarded(fws, other) is False  # no parent
+    # alias forms of the parent id cannot slip past
+    for alias in (epic.lower(), "1", epic + " "):
+        tid = put("backlog", parent=alias)
+        assert remote_gate.factory_guarded(fws, tid) is True, alias
+    assert remote_gate.factory_guarded(fws, put("backlog", parent="L-0999")) is False  # dangling parent
+    assert remote_gate.factory_guarded(fws, "L-0998") is False  # no such ticket: the handler refuses it
+    # an ambiguous parent, an unparseable parent entry and a read error are guarded
+    odd = put("backlog", parent=other)
+    _wrap_resolve(monkeypatch, other, UsageError("ambiguous"))
+    assert remote_gate.factory_guarded(fws, odd) is True
+    monkeypatch.undo()
+    _wrap_resolve(monkeypatch, other, lambda e: type("E", (), {"meta": None, "path": e.path, "id": e.id})())
+    assert remote_gate.factory_guarded(fws, odd) is True
+    monkeypatch.undo()
+    _wrap_resolve(monkeypatch, other, NotFoundError("gone"))
+    assert remote_gate.factory_guarded(fws, odd) is False
+    monkeypatch.undo()
+    monkeypatch.setattr(store, "read_ticket", lambda *a, **k: (_ for _ in ()).throw(OSError("unreadable")))
+    assert remote_gate.factory_guarded(fws, child) is True
+    monkeypatch.undo()
+    monkeypatch.setattr(store, "scan", lambda ws: (_ for _ in ()).throw(OSError("scan failed")))
+    assert remote_gate.factory_guarded(fws, other) is True
+
+
+def test_an_ambiguous_ticket_ref_is_guarded(factory, monkeypatch):
+    from orch.errors import UsageError
+    fws, epic, child, other = factory
+    _wrap_resolve(monkeypatch, other, UsageError("ambiguous"))
+    assert remote_gate.factory_guarded(fws, other) is True
+
+
+def test_an_epic_that_is_not_factory_or_not_active_does_not_guard(configure, agent, human):
+    from conftest import human_ops
+    from orch.core.ops import Ops
+    fws = configure(factory={"enabled": True})
+    a, h = Ops(fws, agent), human_ops(fws, human)
+    epic = a.new("Plain", type="epic")
+    a.set_section(epic.id, "Requirements", "r")
+    a.set_section(epic.id, "Acceptance criteria", "- [ ] a")
+    h.approve(epic.id, "requirements", delegate={"max_children": 3})  # delegation, but not a factory
+    child = a.new("c", epic=epic.id)
+    assert remote_gate.factory_guarded(fws, child.id) is False
+    assert remote_gate.factory_guarded(fws, "") is True and remote_gate.factory_guarded(fws, None) is True
+
+
+# -- addon actions under a running factory epic ------------------------------------------------------------------------
+
+class _Acts:
+    def __init__(self):
+        self.intent, self.ran = None, 0
+
+    def act(self, action_id, target, ctx, **kw):
+        self.ran += 1
+        return self.intent
+
+
+@pytest.fixture
+def acting(factory):
+    fws, epic, child, other = factory
+    obj = _Acts()
+    acts = [{"id": k, "label": k.title(), "tickets": True} for k in ("close", "reopen", "import", "plain")]
+    fws._addons = AddonRegistry(fws, {"demo": loaded(fws, obj, name="demo", actions=acts)})
+    return create_app(fws, "tok"), obj, child, other
+
+
+def _act(app, action, target, remote):
+    return call(app, "POST", f"/addons/demo/actions/{action}", remote=remote, body=f"target={target}".encode(),
+                headers=FORM)
+
+
+@pytest.mark.parametrize("kind", ["close", "reopen", "import"])
+def test_action_intents_under_a_factory_epic_need_a_fresh_assertion(acting, kind):
+    app, obj, child, other = acting
+    obj.intent = Intent(kind, ref=child, value="t", reason="r")
+    status, headers, _ = _act(app, kind, child, origin(Scope.TYPE))
+    assert status == 303 and b"fresh+confirmation" in headers[b"location"] and obj.ran == 0  # refused before addon code
+    obj.ran = 0
+    status, headers, _ = _act(app, kind, child, origin(Scope.TYPE, fresh=True))
+    assert status == 303 and obj.ran == 1 and b"fresh+confirmation" not in headers[b"location"]
+
+
+@pytest.mark.parametrize("kind", ["close", "reopen", "import"])
+def test_action_intents_outside_a_factory_epic_and_locally_are_not_held(acting, kind):
+    app, obj, child, other = acting
+    obj.intent = Intent(kind, ref=other, value="t", reason="r")
+    _, headers, _ = _act(app, kind, other, origin(Scope.TYPE))
+    assert obj.ran == 1 and b"fresh+confirmation" not in headers[b"location"]
+    obj.intent = Intent(kind, ref=child, value="t", reason="r")
+    _, headers, _ = _act(app, kind, child, None)
+    assert obj.ran == 2 and b"fresh+confirmation" not in headers[b"location"]
+
+
+def test_an_action_intent_naming_a_guarded_ticket_other_than_its_target_is_held(acting):
+    app, obj, child, other = acting
+    obj.intent = Intent("close", ref=child, reason="r")  # the target is unrelated; the intent is not
+    _, headers, _ = _act(app, "close", other, origin(Scope.TYPE))
+    assert b"fresh+confirmation" in headers[b"location"]
+
+
+def test_action_refusal_rules(factory):
+    fws, epic, child, other = factory
+    req = type("R", (), {"scope": {reach.SCOPE_KEY: origin(Scope.TYPE)}})()
+    fresh = type("R", (), {"scope": {reach.SCOPE_KEY: origin(Scope.TYPE, fresh=True)}})()
+    local = type("R", (), {"scope": {}})()
+    for kind in ("answer", "approve", "move", "new", "bogus", None):
+        assert remote_gate.action_refusal(req, fws, type("I", (), {"kind": kind, "ref": other})()) == remote_gate.NO_WAY
+        assert remote_gate.action_refusal(fresh, fws, type("I", (), {"kind": kind, "ref": other})()) == remote_gate.NO_WAY
+        assert remote_gate.action_refusal(local, fws, type("I", (), {"kind": kind, "ref": other})()) is None
+    assert remote_gate.action_refusal(req, fws, Intent("none")) is None
+    assert remote_gate.action_refusal(req, fws, Intent("close", ref=None)) == remote_gate.FRESH  # no ref: guarded
+    assert remote_gate.action_refusal(fresh, fws, Intent("close", ref=None)) is None
+    assert remote_gate.action_refusal(req, fws, Intent("close", ref=other)) is None
+    assert remote_gate.action_target_refusal(req, fws, child) == remote_gate.FRESH
+    assert remote_gate.action_target_refusal(fresh, fws, child) is None
+    assert remote_gate.action_target_refusal(local, fws, child) is None
+    assert remote_gate.action_target_refusal(req, fws, "") is None

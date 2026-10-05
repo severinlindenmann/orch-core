@@ -88,6 +88,9 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
         return confirm_page(request, action=f"/addons/{name}/actions/{action_id}", fields=[("target", target), ("return_to", dest)],
                             title=spec.confirm or f"{spec.label}?", body=f"{la.manifest.title} does this outside orch.",
                             confirm=spec.label, cancel_href=dest, nav=f"addon:/addons/{name}/")
+    refusal = remote_gate.action_target_refusal(request, ws, target)
+    if refusal:
+        return back(dest, err=refusal)
     upload, kwargs = None, {}
     try:
         try:
@@ -123,6 +126,9 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
     else:
         try:
             intent = intents.as_intent(result)
+            refusal = remote_gate.action_refusal(request, ws, intent)
+            if refusal:
+                return back(dest, err=refusal)
             message = intents.execute(ws, intent, allowed_ref=target, tickets=spec.tickets, actor=request_actor(request), source="act")
         except OrchError as e:
             return back(dest, err=error_text(e))

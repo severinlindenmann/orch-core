@@ -107,6 +107,7 @@ REFUSED = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="vi
 <h1>This device cannot do this</h1><p>%s</p></html>"""
 _RAW_BAD = re.compile(rb"%2f|%5c|%00", re.I)
 _ENCODED_LEFT = re.compile(r"%[0-9a-fA-F]{2}")  # a decoded path that still holds an escape was double-encoded
+FRESH = "This needs a fresh confirmation on this device first."
 NO_WAY = "Open the dashboard on the computer where it runs to do this."  # the one text of every refusal
 
 
@@ -213,9 +214,9 @@ class RemoteGate:
         if (not origin.fresh and scope["method"] == "POST" and path.startswith("/t/")
                 and factory_guarded(self.ws, self._ref(scope))):
             # a change under a running factory epic can start agents or alter a launched one's prompt
-            return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
+            return await _respond(send, 403, FRESH)
         if tag.fresh and not origin.fresh:  # only a device that may do this at all hears that it needs a confirmation
-            return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
+            return await _respond(send, 403, FRESH)
         await self.app(scope, replay, send)
 
 
@@ -228,22 +229,39 @@ class RemoteGate:
 
 
 def factory_guarded(ws, ref) -> bool:
-    """The ticket is, or is a child of, an epic with an active factory delegation. Fails closed: any lookup error
-    except "no such ticket" (the handler refuses that itself) answers yes."""
+    """The ticket is, or is a child of, an epic with an active factory delegation. Fails closed: an ambiguous
+    ticket or parent, an unparseable or unreadable ticket or parent, any read error and a missing ref all answer
+    yes. Only "no such ticket" (the handler refuses that itself) and a parent that does not exist answer no."""
     from orch.core import epics, store
-    from orch.errors import NotFoundError, UsageError
-    if not isinstance(ref, str):
+    from orch.errors import NotFoundError
+    if not isinstance(ref, str) or not ref.strip():
         return True
     try:
-        t = store.read_ticket(store.resolve(ws, ref).path)
-        for epic in (t if epics.is_epic(t) else None, epics.parent_epic(ws, t)):
-            d = epics.delegation(ws, epic) if epic is not None else None
+        entries = store.scan(ws)
+        try:
+            entry = store.resolve(ws, ref, entries)
+        except NotFoundError:
+            return False
+        if entry.meta is None:
+            return True
+        epic_list = [store.read_ticket(entry.path)] if epics.is_epic(entry.meta) else []
+        parent = epics._parent_id(entry.meta)  # the id the runner's epics.children() reads
+        if parent:
+            try:
+                p = store.resolve(ws, parent, entries)
+            except NotFoundError:
+                p = None  # a dangling parent covers nothing
+            if p is not None:
+                if p.meta is None:
+                    return True
+                if epics.is_epic(p.meta):
+                    epic_list.append(store.read_ticket(p.path))
+        for epic in epic_list:
+            d = epics.delegation(ws, epic)
             if d and d.get("factory") and d.get("active"):
                 return True
         return False
-    except (NotFoundError, UsageError):
-        return False
-    except Exception:  # noqa: BLE001 - fail closed
+    except Exception:  # noqa: BLE001 - fail closed (an ambiguous ref is a UsageError and lands here)
         return True
 
 
@@ -273,7 +291,7 @@ def decision_refusal(request, ws, intent) -> str | None:
     if not bridge.allows(ws.root, kind, origin, needed):
         return NO_WAY
     if intent.kind != "new" and not origin.fresh and factory_guarded(ws, intent.ref):
-        return "This needs a fresh confirmation on this device first."
+        return FRESH
     return None
 
 
@@ -310,3 +328,36 @@ async def _peek(scope, receive):
         return await receive()
 
     return body, replay, _is_form(scope)
+
+
+_ACTION_KINDS = ("none", "close", "reopen", "import")  # all an addon action may return to change a ticket
+
+
+def action_target_refusal(request, ws, target) -> str | None:
+    """Remote only: refuse an addon action whose target ticket sits under a running factory epic, before any addon
+    code runs, unless the device holds a fresh assertion."""
+    try:
+        origin = remote_origin(request)
+    except BadOrigin:
+        return NO_WAY
+    if origin is None or origin.fresh or not isinstance(target, str) or not target.strip():
+        return None
+    return FRESH if factory_guarded(ws, target) else None
+
+
+def action_refusal(request, ws, intent) -> str | None:
+    """Remote only: the intent an addon action returned. Only none, close, reopen and import exist for actions;
+    anything else is refused. A ticket-changing one under a running factory epic (or with no ticket named) needs a
+    fresh assertion."""
+    try:
+        origin = remote_origin(request)
+    except BadOrigin:
+        return NO_WAY
+    if origin is None:
+        return None
+    kind = getattr(intent, "kind", None)
+    if kind not in _ACTION_KINDS:
+        return NO_WAY
+    if kind != "none" and not origin.fresh and factory_guarded(ws, getattr(intent, "ref", None)):
+        return FRESH
+    return None

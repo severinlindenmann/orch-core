@@ -69,15 +69,23 @@ def _keep_option_text(root) -> None:
 
 
 MAX_ASK_BYTES = 256 * 1024
+MAX_ASK_DEPTH = 64  # a question file is questions > options > fields: a handful of levels
 
 
 def _refuse_aliases(text: str) -> None:
     """Question files never need anchors or aliases, and an alias bomb that survives parsing explodes when the data is
     serialised later: refuse them on the event stream (linear in the text) before anything is composed."""
     try:
+        depth = 0
         for ev in yaml.parse(text, Loader=yaml.SafeLoader):
             if isinstance(ev, yaml.AliasEvent) or getattr(ev, "anchor", None) is not None:
                 raise ValidationError("invalid question file: anchors and aliases are not allowed in question files")
+            if isinstance(ev, (yaml.SequenceStartEvent, yaml.MappingStartEvent)):
+                depth += 1
+                if depth > MAX_ASK_DEPTH:  # the composer is recursive (libyaml's C one overflows the stack and crashes)
+                    raise ValidationError(f"invalid question file: nested more than {MAX_ASK_DEPTH} levels deep")
+            elif isinstance(ev, (yaml.SequenceEndEvent, yaml.MappingEndEvent)):
+                depth -= 1
     except yaml.YAMLError:
         pass  # a syntax error is reported by the real load below
 

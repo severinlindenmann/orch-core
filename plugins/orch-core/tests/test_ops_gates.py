@@ -249,5 +249,5 @@ def test_question_files_refuse_anchors_aliases_and_huge_files_fast():
 @pytest.mark.parametrize("deep", ["questions: " + "[" * 100000, "questions: " + "{a: " * 50000 + "1" + "}" * 50000,
                                   "questions:\n" + "- " * 60000 + "x"])
 def test_a_deeply_nested_question_file_is_refused_not_a_crash(deep):
-    with pytest.raises(ValidationError, match="nested too deeply|more than|larger than"):
+    with pytest.raises(ValidationError, match="nested|more than|larger than"):
         parse_ask_file(deep)

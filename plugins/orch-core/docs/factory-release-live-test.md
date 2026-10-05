@@ -55,10 +55,13 @@ orch dark profile add --baseline git-basic      # so workers can commit on their
 ```
 
 Each child runs in a clone of its own outside the workspace, below `<your orch config dir>-clones` (for
-`~/.config/orch` that is `~/.config/orch-clones`). Claude Code asks once whether to trust a folder it has not seen,
-and a session the runner starts there would wait at that dialog: open Claude once in `~/.config/orch-clones` (make
-the folder first if it is not there) and accept it. The dashboard's readiness check "clones trust" says whether it
-is accepted.
+`~/.config/orch` that is `~/.config/orch-clones`). Claude Code asks "Is this a project you trust?" once per clone
+folder: trusting `~/.config/orch-clones` itself does not carry over (the first live run showed it). A child's session
+waits at that question, and the run view says so ("<child> waits at Claude's folder-trust question ..."); the runner
+never answers it. Answer it in the session's pane, or, once the runner made the clones, run `orch factory clones
+trust` in your terminal and add the entries it prints under `projects` in Claude's `.claude.json` (with Claude
+closed): that helps a session started after it, while a session already at the question still needs the answer in
+its pane.
 
 Start the dashboard from the terminal whose PATH holds `~/orch-live-test/bin` (`orch serve`).
 

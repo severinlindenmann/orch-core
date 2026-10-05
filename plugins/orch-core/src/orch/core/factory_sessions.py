@@ -364,6 +364,12 @@ def nudges(delegation: str) -> int:
     return total
 
 
+def at_trust_question(session: str) -> bool:
+    """Whether the runner last saw this session's pane at Claude Code's folder-trust question."""
+    b = nudge_record(session)
+    return b is not None and b["idle"] == "trust"
+
+
 def idle_since(session: str):
     """Since when the runner last saw this session's pane idle at its prompt and unchanged (a datetime), or None: not
     idle, not watched, or a record that does not read back (unknown is never idle)."""

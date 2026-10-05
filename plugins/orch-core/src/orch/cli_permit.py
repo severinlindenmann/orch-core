@@ -271,6 +271,27 @@ def clones_list(json_out: JsonOpt = False) -> None:
              or "no child clones")
 
 
+@clones_app.command("trust")
+def clones_trust(json_out: JsonOpt = False) -> None:
+    """Which clone folders Claude Code still asks its folder-trust question for, and what to add. Human only; orch
+    never writes Claude's settings: open Claude once in each folder and accept, or add the printed entries yourself
+    (under `projects` in Claude's .claude.json, with Claude closed)."""
+    import json
+    from orch.actor import require_human_terminal
+    from orch.core import factory_runner
+    cli, ws = _ctx()
+    require_human_terminal("reading the clones' trust")
+    rows = factory_runner.clone_trust(ws)
+    left = [r for r in rows if not r["trusted"]]
+    entries = {r["path"]: {"hasTrustDialogAccepted": True} for r in left}
+    text = ("no child clones" if not rows else "every clone folder is trusted" if not left else
+            "Claude Code asks its folder-trust question for these clone folders (trust of a folder above a clone is "
+            "not used for it):\n" + "\n".join(f"  {r['child']}  {r['path']}" for r in left)
+            + "\nOpen Claude once in each folder and accept, or add these entries under \"projects\" in your "
+              ".claude.json (with Claude closed):\n" + json.dumps(entries, indent=2))
+    cli._out({"clones": rows, "add": entries}, json_out, text)
+
+
 @clones_app.command("clean")
 def clones_clean(child: str, json_out: JsonOpt = False) -> None:
     """Delete one child's clone and the runner's record of it, work that was not released included. Human only:

@@ -709,9 +709,19 @@ GB) each child costs that much disk and has 120 seconds per round to copy; past 
 
 **Readiness.** For a workspace that is a git checkout: *clones* (blocks with the reason when the runner could not make
 a clone, see "Git dirs orch's clones do not take"; a warning for a linked-worktree workspace), and, when clones are
-made, *git* (found at a trusted path outside the workspace) and *clones trust* (Claude Code's trust dialog accepted for
-the clones folder, `<orch config dir>-clones`, or a folder above it; the runner creates that folder: open Claude once in
-it and accept).
+made, *git* (found at a trusted path outside the workspace) and *clones trust* (a warning).
+
+**Claude's folder-trust question, per clone.** Claude Code asks "Is this a project you trust?" for a folder it has not
+recorded, and in the live run of 5 October it asked it for each child's clone although the clones folder above them
+(`<orch config dir>-clones`) was trusted: a clone is a git repository of its own, and Claude did not take the trust
+of a folder above it. So orch counts only an entry for the clone's own start folder (or a folder above it inside
+that clone) in Claude's `.claude.json`, and the *clones trust* check warns until every clone made so far has one
+("no clone has been made yet" before the first). orch never writes Claude's settings and the runner never answers the
+question: it reads each session's pane, and a session at the question is said once in the log and as the run view's
+state ("<child> waits at Claude's folder-trust question for <path>; accept it once or trust the folder; the runner
+cannot answer it"; never "Working"). Answer it in the session's pane, or run `orch factory clones trust` (yours, in a
+terminal): it lists the clone folders still untrusted and the `projects` entries to add to `.claude.json` with Claude
+closed.
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).

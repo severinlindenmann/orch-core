@@ -358,9 +358,11 @@ def _hook_commands(ws, environ, data) -> tuple[list[tuple[str, list[str], list[s
     return [out[k] for k in _HOOKS if k in out], [k for k in _HOOKS if k not in out]
 
 
-def _trusted_folder(environ, root: Path) -> tuple[bool, str]:
-    """(trusted, why not): whether Claude Code recorded the trust dialog as accepted for `root` or a folder above it,
-    comparing real paths on both sides (a key may be written /var/... for /private/var/...). Read only."""
+def _trusted_folder(environ, root: Path, stop: Path | None = None) -> tuple[bool, str]:
+    """(trusted, why not): whether Claude Code recorded the trust dialog as accepted for `root` or a folder above it
+    (with `stop`, only up to and including `stop`: a child's clone, whose trust Claude does not take from a folder
+    above the clone), comparing real paths on both sides (a key may be written /var/... for /private/var/...). Read
+    only."""
     from orch.core.fsutil import read_regular_file
     base = environ.get("CLAUDE_CONFIG_DIR")
     path = Path(base) / ".claude.json" if base else Path.home() / ".claude.json"
@@ -377,12 +379,35 @@ def _trusted_folder(environ, root: Path) -> tuple[bool, str]:
         projects = None
     if not isinstance(projects, dict):
         return False, f"{path} holds no readable `projects`"
-    want = {os.path.realpath(p) for p in (root, *root.parents)}
+    ups = [root, *root.parents]
+    if stop is not None:
+        top = os.path.realpath(stop)
+        ups = ups[:next((i + 1 for i, p in enumerate(ups) if os.path.realpath(p) == top), len(ups))]
+    want = {os.path.realpath(p) for p in ups}
     for key, v in projects.items():
         if isinstance(v, dict) and v.get("hasTrustDialogAccepted") is True and isinstance(key, str) \
                 and os.path.realpath(key) in want:
             return True, ""
-    return False, f"{path} records no accepted trust dialog for {root} or a folder above it"
+    return False, f"{path} records no accepted trust dialog for {root}" + (
+        " or a folder above it" if stop is None else " itself (or a folder above it inside its clone)")
+
+
+def clone_trust(ws, environ=None) -> list[dict]:
+    """Every clone the runner made for this workspace and whether Claude Code recorded its folder-trust answer for
+    the folder a session starts in there: [{child, path, trusted}]. Claude asks per clone folder (the live run of
+    5 October: trust of the clones folder above did not carry over to a clone, a git repository of its own), so only
+    an entry for that folder, or one above it inside the clone, counts. Read only."""
+    from orch.core import factory_clones
+    environ = os.environ if environ is None else environ
+    out = []
+    for row in factory_clones.listing(ws):
+        rec = factory_clones.record(ws, row["child"])
+        if rec is None:
+            continue
+        start = factory_clones.start_in(ws, rec)
+        ok, _ = _trusted_folder(environ, start, stop=Path(rec["path"]))
+        out.append({"child": row["child"], "path": str(start), "trusted": ok})
+    return out
 
 
 def _check(name, ok, why="", level="block", tail="") -> dict:
@@ -511,13 +536,17 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                           f"git was not found at a trusted path outside the workspace ({seen}): a child gets no "
                           "clone of its own and is not started. Install git outside the workspace and restart the "
                           "dashboard"))
-        croot = factory_clones.root()
-        croot.mkdir(mode=0o700, parents=True, exist_ok=True)
-        ok, why = _trusted_folder(environ, croot)
-        out.append(_check("clones trust", ok,
-                          f"Claude Code has not recorded the trust dialog for {croot}, where the runner makes each "
-                          f"child's clone ({why}): a child's session would stop at it. Open Claude once in that "
-                          "folder and accept the trust dialog"))
+        factory_clones.root().mkdir(mode=0o700, parents=True, exist_ok=True)
+        rows = clone_trust(ws, environ)
+        left = [r for r in rows if not r["trusted"]]
+        out.append(_check("clones trust", bool(rows) and not left,
+                          "Claude Code asks its folder-trust question once per child's clone folder (trust of a "
+                          "folder above a clone is not used for it): "
+                          + (f"not yet answered for {', '.join(r['child'] + ' (' + r['path'] + ')' for r in left)}"
+                             if left else "no clone has been made yet")
+                          + ". A child's session waits at the question until you accept it in its pane (the run view "
+                            "says so; the runner never answers it), or run `orch factory clones trust` in your "
+                            "terminal for what to add", level="warn"))
     deny = ((data or {}).get("permissions") or {}).get("deny") if isinstance((data or {}).get("permissions"), dict) \
         else None
     lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
@@ -1081,6 +1110,25 @@ def input_line(text) -> str | None:
     return None
 
 
+# Claude Code's folder-trust question, as it draws it (fixed text, matched without case in the pane's last lines). The
+# runner never answers it: trusting a folder is the human's.
+_TRUST_QUESTION = ("is this a project you trust", "yes, i trust this folder", "do you trust the files in this folder")
+
+
+def trust_question(text) -> bool:
+    """Whether the pane shows Claude Code's folder-trust question."""
+    if not isinstance(text, str):
+        return False
+    low = "\n".join([ln for ln in text.splitlines() if ln.strip()][-30:]).casefold()
+    return any(m in low for m in _TRUST_QUESTION)
+
+
+def trust_line(b: dict) -> str:
+    """What the run view and the log say, once per session, about a session at the folder-trust question."""
+    return (f"{b['child']} waits at Claude's folder-trust question for {b.get('start') or 'its folder'}; accept it "
+            "once or trust the folder; the runner cannot answer it")
+
+
 def _busy(text: str) -> bool:
     low = "\n".join([ln for ln in text.splitlines() if ln.strip()][-12:]).casefold()
     return any(m in low for m in _BUSY)
@@ -1132,7 +1180,7 @@ def _observe(actor, capture, b: dict, rec: dict) -> tuple[dict, str | None]:
     if not isinstance(text, str):
         return rec, None
     pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
-    idle = "1" if pane_idle(text) else ""
+    idle = "trust" if trust_question(text) else "1" if pane_idle(text) else ""  # "trust": waits at that question
     if pane != rec["pane"] or idle != rec["idle"]:
         rec = {**rec, "pane": pane, "pane_at": clock.stamp_s(), "idle": idle}
         fs.write_nudge_record(actor, rec)
@@ -1150,7 +1198,10 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
     if capture is None or rec is None:
         return
     try:
+        was = rec["idle"]
         rec, text = _observe(actor, capture, b, rec)
+        if rec["idle"] == "trust" and was != "trust":  # said once, when the session reaches the question
+            lines.append(trust_line(b))
         if text is None or type_ is None or rec["count"] >= MAX_NUDGES or rec["answers"] == now_answers:
             return
         now = clock.now()

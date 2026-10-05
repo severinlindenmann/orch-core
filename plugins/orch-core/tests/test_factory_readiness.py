@@ -432,18 +432,30 @@ def test_the_plugin_probe_writes_nothing_in_the_plugin_or_the_workspace(ws, tmp_
     assert (base_dir() / "permits" / "plugin-data" / "venv-made").is_file()  # the runner's own data folder
 
 
-def test_a_git_workspace_needs_git_and_the_clones_folder_trusted(ws, env):
+def test_a_git_workspace_needs_git_and_says_trust_is_asked_per_clone_folder(ws, env, monkeypatch, tmp_path):
     from orch.core import factory_clones
     assert "git" not in _failing(ws) and "clones trust" not in _failing(ws)  # not a git checkout: no clones
     subprocess.run(["git", "init", "-q"], cwd=ws.root, check=True)
     f = _failing(ws)
-    assert "git was not found" in f["git"]["why"] and "Open Claude once in that folder" in f["clones trust"]["why"]
-    assert str(factory_clones.root()) in f["clones trust"]["why"] and factory_clones.root().is_dir()
+    assert "git was not found" in f["git"]["why"] and f["clones trust"]["level"] == "warn"
+    assert "once per child's clone folder" in f["clones trust"]["why"] and "no clone has been made yet" in \
+        f["clones trust"]["why"] and "orch factory clones trust" in f["clones trust"]["why"]
     env["bins"]["git"] = REAL_RESOLVE(__import__("shutil").which("git"))  # the real trust rule for git
     assert env["bins"]["git"]
+    # the live run: trust of the clones folder above did not carry over to a clone, so it is not taken for one
+    clone = factory_clones.root() / "w" / "L-0002" / "repo"
+    clone.mkdir(parents=True)
+    monkeypatch.setattr(factory_clones, "listing", lambda w: [{"child": "L-0002"}])
+    monkeypatch.setattr(factory_clones, "record", lambda w, c: {"path": str(clone)})
+    monkeypatch.setattr(factory_clones, "start_in", lambda w, rec: clone)
     projects = {str(p.resolve()): {"hasTrustDialogAccepted": True} for p in (ws.root, factory_clones.root())}
     (env["dir"] / ".claude.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
-    assert _failing(ws) == {}
+    f = _failing(ws)
+    assert set(f) == {"clones trust"} and f"L-0002 ({clone})" in f["clones trust"]["why"]
+    assert fr.clone_trust(ws) == [{"child": "L-0002", "path": str(clone), "trusted": False}]
+    projects[str(clone.resolve())] = {"hasTrustDialogAccepted": True}  # the clone's own folder: counted
+    (env["dir"] / ".claude.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
+    assert _failing(ws) == {} and fr.clone_trust(ws)[0]["trusted"] is True
     env["bins"]["git"] = str(ws.root / "bin" / "git")
     assert "lies inside the workspace" in _failing(ws)["git"]["why"]
 

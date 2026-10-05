@@ -543,8 +543,31 @@ def test_cli_list_and_clean_are_human_only_and_confirmed(fws, run, capsys, monke
     assert cli_run(["factory", "clones", "clean", cid]) == 0 and not clone.exists() and fc.record(fws, cid) is None
 
 
+def test_cli_clones_trust_says_which_clone_folders_claude_still_asks_for(fws, run, capsys, monkeypatch, tmp_path):
+    from orch import actor as orch_actor
+    from orch.cli import run as cli_run
+    cid = run["cid"]
+    start = str(fc.start_in(fws, fc.record(fws, cid)))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    (tmp_path / "claude").mkdir()
+    cfg = tmp_path / "claude" / ".claude.json"
+    cfg.write_text(json.dumps({"projects": {str(fc.root()): {"hasTrustDialogAccepted": True}}}), encoding="utf-8")
+    monkeypatch.setenv("ORCH_HARNESS", "test-agent")
+    monkeypatch.setattr(orch_actor, "is_interactive", lambda: False)
+    assert cli_run(["factory", "clones", "trust"]) != 0  # human only
+    monkeypatch.delenv("ORCH_HARNESS", raising=False)
+    monkeypatch.setattr(orch_actor, "is_interactive", lambda: True)
+    capsys.readouterr()
+    assert cli_run(["factory", "clones", "trust", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["clones"] == [{"child": cid, "path": start, "trusted": False}]  # the folder above does not count
+    assert out["add"] == {start: {"hasTrustDialogAccepted": True}}
+    cfg.write_text(json.dumps({"projects": {start: {"hasTrustDialogAccepted": True}}}), encoding="utf-8")
+    assert cli_run(["factory", "clones", "trust"]) == 0 and "every clone folder is trusted" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("cmd", [
-    "orch factory clones list", "orch factory clones clean L-0002", "uv run orch factory clones clean L-0002",
+    "orch factory clones list", "orch factory clones clean L-0002", "orch factory clones trust", "uv run orch factory clones clean L-0002",
     "python3 -c 'from orch.core import factory_clones'",
     "python3 -c \"from orch.cli import app; app(['factory', 'clones', 'clean', 'L-0002'])\"",
 ])

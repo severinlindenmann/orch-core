@@ -445,3 +445,37 @@ def test_the_run_view_page_says_it_and_the_nudge_count(fws, fa, fh, human, pane,
     _tick(fws, human, pane)
     html = _client(fws).get(f"/factory/{eid}").text
     assert "data-asleep" in html and "Sessions are waiting at their prompt: nothing is running" in html
+
+
+# -- Claude's folder-trust question: said once, never answered ----------------------------------------------------------
+
+NEW_TRUST = ("Accessing workspace:\n\n /Users/x/.config/orch-clones/w/L-0002/repo\n\n Is this a project you trust?\n"
+             " ❯ 1. Yes, I trust this folder\n   2. No, exit\n\n Enter to confirm · Esc to cancel\n")
+
+
+@pytest.mark.parametrize("screen", [TRUST, NEW_TRUST])
+def test_a_session_at_the_trust_question_is_said_once_and_never_answered(fws, fa, fh, human, pane, at, screen):
+    from test_dark_dashboard import _client
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    pane.screen[b["name"]] = screen
+    lines = _tick(fws, human, pane)
+    want = (f"{cid} waits at Claude's folder-trust question for {b['start']}; accept it once or trust the folder; "
+            "the runner cannot answer it")
+    assert lines.count(want) == 1
+    _ask_and_answer(fws, human, b)  # even after an answer and a long wait, nothing is typed into it
+    at(fr.IDLE_SECONDS * 10)
+    assert want not in _tick(fws, human, pane) and pane.typed == []  # said once per session
+    r = _state(fws, eid)
+    assert r["state"] == "trust" and r["headline"] == want and r["chip"] == "Trust question" and not r["live"]
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "data-trust" in html and "never answers it for you" in html
+    pane.screen[b["name"]] = BUSY  # the human accepted it in the pane: working again
+    _tick(fws, human, pane)
+    assert _state(fws, eid)["state"] == "working"
+
+
+def test_trust_question_text_matching():
+    assert fr.trust_question(NEW_TRUST) and fr.trust_question(TRUST)
+    assert not fr.trust_question(IDLE) and not fr.trust_question(None) and not fr.trust_question(ASKING)

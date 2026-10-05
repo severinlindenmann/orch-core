@@ -143,12 +143,14 @@ def delegated_fyi(ws, entries, events, limit: int = 8) -> dict:
 
 # -- the epic page --------------------------------------------------------------------------------------------------
 
-def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
+def page_data(ws, epic, *, entries, needs, events, builder, show: str = "", gate: bool = False, asks: int = 0,
+              move_human: bool = False) -> dict:
     """The epic page beyond the story: child rows (ticket cards), each child's state against the charter, the
     charter approve view (every child's gated text, plans expandable), the delegation and its audit, and the epic
     verdict (every child's criteria with evidence)."""
     from orch.core import evidence
     from orch.core.gates import gate_meta, gate_parts, human_questions_in
+    from orch.dashboard.data import epic_health
     from orch.dashboard.markdown import artifact_scope, section_widgets
     # One read of the open children: the charter's hash, the approve view and the verdict are all built from these
     # same objects, so what is hashed is exactly what is rendered.
@@ -162,7 +164,9 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
         if card is None:
             continue
         st = states.get(e.id, {})
-        rows.append({"card": card, "state": st.get("state"), "state_label": st.get("state_label")})
+        key = epic_health.bucket(card)
+        rows.append({"card": card, "state": st.get("state"), "state_label": st.get("state_label"), "bucket": key,
+                     "sub": epic_health.sub_line(card, key)})
         t = kids.get(e.id)
         if t is None:
             continue
@@ -193,4 +197,22 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
                                           or any(v != "unchanged" for v in changes.values())
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
+    # The 5-second view: buckets, sentence, bar, chip and the top slot's emptiness, all from the rows above.
+    n = epic_health.counts(r["bucket"] for r in rows)
+    f, p = s["factory"], s["permits"] or {}
+    n_permits = len(p.get("requests") or []) + len(p.get("budget") or [])
+    stopped = bool(f and f.get("factory") and f.get("state") in epic_health.STOPPED_STATES) or bool(p.get("stopped") or p.get("suspect"))
+    ready_report = bool(p.get("ready"))
+    needs_n = n["you"] + n_permits + int(s["verdict_ready"]) + int(s["reapprove"]) + asks + len(p.get("ready") or [])
+    state = f["state"] if f and f.get("factory") else None
+    role, label = epic_health.state_chip(total=len(rows), n=n, approved=s["approved"] or epic.status == "done",
+                                         factory_state=state, needs=needs_n)
+    if epic.status == "done":
+        role, label = "ok", "Done"
+    flt = epic_health.filter_view(n, show)
+    s.update(buckets=n, progress=epic_health.progress(n), chip={"role": role, "label": label}, filter=flt,
+             groups=epic_health.groups(rows, flt["show"]),
+             nothing_waiting=epic_health.nothing_waiting(gate=gate or s["reapprove"] or (not s["approved"] and epic.status != "done"), asks=asks, permits=n_permits,
+                                                         stopped=stopped, ready=s["verdict_ready"] or ready_report, needs_you=n["you"],
+                                                         move_human=move_human))
     return s

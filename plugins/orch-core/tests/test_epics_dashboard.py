@@ -84,7 +84,7 @@ def test_epic_page_lists_children_and_approves_the_charter(dash, ws, aops, epic)
     assert d["active"] and d["max_children"] == 3 and d["max_size"] == "s"
     assert store.load(ws, cid)[1].status == "open"
     page = dash.get(f"/t/{eid}").text
-    assert "Pause delegation" in page and "covered by the epic approval" in page
+    assert "Pause auto-approval" in page and "covered by the epic approval" in page
     r = dash.post(f"/t/{eid}/epic/pause", follow_redirects=False)
     assert r.status_code == 303 and "err=" not in r.headers["location"]
     assert epics.delegation(ws, store.load(ws, eid)[1])["paused"]

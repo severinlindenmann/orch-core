@@ -174,57 +174,137 @@
 </section>
 {% endmacro %}
 
-{% macro factory_panel(e) %}
-{% set f, p = e.factory, e.permits %}
-<section class="epic-factory" id="factory" aria-labelledby="factory-h">
-  <h3 id="factory-h">AI Factory</h3>
-  {% if not f.factory %}<p class="muted">Not started as a factory. Start it when you approve the epic, above.</p>
-  {% else %}
-  <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
-    <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
-  {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
-  {% endif %}
+{#- The epic page, in the order a person needs it: what is theirs (epic_slot), how it is going (epic_progress with the
+    budget), the children by status (epic_list), then details (no buttons there). -#}
+{% macro epic_slot(e, gate_shown, card_needed) %}
+{% set f, p = e.factory, e.permits or {} %}
+<section class="epic-slot" id="epic-slot" aria-label="Waiting on you">
+  {% if f and f.factory and f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
-  {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#factory", True) }}{% endfor %}
+  {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#epic-slot", True) }}{% endfor %}
+  {% if gate_shown %}{{ charter_form(e, gate_views.requirements.question) }}{% endif %}
   {% for c in p.budget %}{{ pm.budget_card(c) }}{% endfor %}
-  {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#factory") }}{% endfor %}
-  {% if p.grants %}
-  <h4>Standing grants</h4>
-  <ul class="plain permit-grants">{% for g in p.grants %}{{ pm.grant_row(g, "/t/" ~ t.id ~ "#factory") }}{% endfor %}</ul>
+  {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#epic-slot") }}{% endfor %}
+  {% if e.verdict_ready %}{{ verdict_accept(e) }}{% endif %}
+  {% if card_needed %}{{ epic_move_card() }}{% endif %}
+  {% if e.buckets.you %}<p class="epic-kids-you">{{ ui.icon("you") }} <b>{{ e.buckets.you }}</b> {{ "child waits" if e.buckets.you == 1 else "children wait" }} for you. <a class="lnk" href="?show=you#epic-children">See {{ "it" if e.buckets.you == 1 else "them" }}</a></p>{% endif %}
+  {% if e.nothing_waiting %}<p class="epic-clear muted">Nothing is waiting on you.</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% macro epic_move_card() %}
+{% set a = move.action or {} %}
+<section class="status-card status-you" aria-labelledby="status-title">
+  <p class="status-label" id="status-title">{{ tc.move_chip(card.move) }}</p>
+  <p class="ym-text">{{ move.text }}</p>
+  <div class="cluster ym-actions">
+    {% if a.kind == "approve" %}<a class="btn" href="#epic-approve">Read the epic and its children, then approve</a>{% endif %}
+    {% if a.kind == "verdict" %}<a class="btn" href="#proven">Check the proof and give the verdict</a>{% endif %}
+    {% if a.kind in ("repair", "task") %}<a class="btn btn-primary" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
+    {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
+    {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
+  </div>
+  {% if card_qids %}{% for q in questions if q.id in card_qids %}{{ question_form(q) }}{% endfor %}{% endif %}
+  {% for m in move.more %}
+  <div class="ym-hint"><p>{{ m.text }}</p>
+    <div class="cluster ym-actions">{% if m.action.kind == "move" %}{{ move_form(m.action.to, m.action.label) }}{% endif %}{{ changes_form(m.action.gate) }}</div></div>
+  {% endfor %}
+</section>
+{% endmacro %}
+
+{% macro epic_progress(e) %}
+{% set pr, f, d, p = e.progress, e.factory, e.delegation, e.permits or {} %}
+<section class="epic-progress" id="epic-progress" aria-labelledby="epic-progress-h">
+  <h2 id="epic-progress-h" class="sr-only">Progress</h2>
+  {% if pr %}
+  <p class="ec-headline">{{ pr.sentence }}</p>
+  <div class="ec-bar" role="img" aria-label="{{ pr.aria }}">{% for sg in pr.segments %}<i class="ec-seg ec-seg-{{ sg.key }}" style="flex-grow: {{ sg.n }}"></i>{% endfor %}</div>
+  <ul class="ec-legend plain">{% for sg in pr.legend %}<li><span class="ec-sw ec-seg-{{ sg.key }}" aria-hidden="true"></span><b>{{ sg.n }}</b> {{ sg.label }}</li>{% endfor %}</ul>
+  {% else %}
+  <p class="ec-headline">No tickets yet.</p>
+  <p class="muted">They appear here when an agent plans the epic.</p>
+  {% endif %}
+  {% if (f and f.factory) or (d and d.active) or p.grants %}
+  <div class="ec-budget" id="factory">
+    {% if f and f.factory %}
+    <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
+      <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
+    {% endif %}
+    {% if d and d.active %}
+    <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · pause the delegation">
+      <button type="submit" class="btn">Pause auto-approval</button>
+    </form>
+    <p class="muted">New children are not approved while it is paused. Running agents keep going.</p>
+    {% endif %}
+    {% if p.grants %}
+    <h3>Standing grants</h3>
+    <ul class="plain permit-grants">{% for g in p.grants %}{{ pm.grant_row(g, "/t/" ~ t.id ~ "#factory") }}{% endfor %}</ul>
+    {% endif %}
+  </div>
   {% endif %}
 </section>
 {% endmacro %}
 
-{% macro epic_children(e) %}
+{% macro epic_row(r) %}{{ tc.row(r.card, false) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}{% if r.sub %} · {{ r.sub }}{% endif %}</p>{% endmacro %}
+
+{% macro epic_list(e) %}
 <section class="epic-children" id="epic-children" aria-labelledby="epic-children-h">
-  <h3 id="epic-children-h">Children <span class="count">{{ e.rows|length }}</span></h3>
+  <h2 id="epic-children-h">Children <span class="count">{{ e.rows|length }}</span></h2>
   {% if e.rows %}
-  <div class="tc-rows">{% for r in e.rows %}{{ tc.row(r.card) }}<p class="epic-state epic-state-{{ r.state }}">{{ r.card.id }}: {{ r.state_label }}</p>{% endfor %}</div>
-  {% else %}<p class="muted">No children yet. Agents add them with <code>orch new --epic {{ t.id }}</code>; you can link existing tickets on their page or with <code>orch link &lt;ticket&gt; --epic {{ t.id }}</code>.</p>{% endif %}
+  <nav class="ec-filter" aria-label="Filter children">{% for o in e.filter.options %}
+    {%- if o.disabled %}<span class="ec-pill" aria-disabled="true">{{ o.label }} {{ o.n }}</span>
+    {%- else %}<a class="ec-pill" href="?show={{ o.key }}#epic-children"{% if o.key == e.filter.show %} aria-current="true"{% endif %}>{{ o.label }} {{ o.n }}</a>{% endif %}
+  {% endfor %}</nav>
+  {% for g in e.groups %}
+  <section class="ec-group ec-group-{{ g.key }}" aria-labelledby="ec-g-{{ g.key }}">
+    <h3 id="ec-g-{{ g.key }}">{{ ui.icon(g.role) }} {{ g.title }} <span class="count">{{ g.n }}</span></h3>
+    {% if g.note %}<p class="muted ec-note">{{ g.note }}</p>{% endif %}
+    <div class="tc-rows">
+    {% for r in g.rows[:5] %}{{ epic_row(r) }}{% endfor %}
+    {% if g.rows|length > 5 %}<details class="ec-more"><summary class="lnk">Show {{ g.rows|length - 5 }} more</summary>{% for r in g.rows[5:] %}{{ epic_row(r) }}{% endfor %}</details>{% endif %}
+    </div>
+  </section>
+  {% endfor %}
+  {% else %}<p class="muted">No tickets yet. They appear here when an agent plans the epic.</p>
+  <p class="muted">Agents add them with <code>orch new --epic {{ t.id }}</code>; you can link existing tickets on their page or with <code>orch link &lt;ticket&gt; --epic {{ t.id }}</code>.</p>{% endif %}
 </section>
-{% if e.factory %}{{ factory_panel(e) }}{% endif %}
-{% set d = e.delegation %}
-<section class="epic-delegation" id="epic-delegation" aria-labelledby="epic-delegation-h">
+{% endmacro %}
+
+{#- Details: facts and the audit, never a button. -#}
+{% macro epic_details(e) %}
+{% set d, f = e.delegation, e.factory %}
+<section class="epic-details" id="doing" aria-labelledby="epic-details-h">
+  <h2 id="epic-details-h">Details</h2>
+  <dl class="ec-dl">
+    <div><dt>Epic approval</dt><dd>{% if e.approved %}Approved{% if e.reapprove %}, changed since{% endif %}{% else %}Not approved{% endif %}{% if e.charter.content_hash %} <span class="muted key">{{ e.charter.content_hash[7:15] }}</span>{% endif %}</dd></div>
+    <div><dt>Acceptance criteria of the children</dt><dd>{% if e.rollup.ac_total %}{{ e.rollup.ac_proven }} of {{ e.rollup.ac_total }} proven{% else %}None as checkboxes{% endif %}</dd></div>
+  </dl>
   <h3 id="epic-delegation-h">Delegation</h3>
+  <div id="epic-delegation">
   {% if not d %}<p class="muted">None: you approve every child. You can turn it on when you approve the epic.</p>
   {% else %}
   <p>{% if d.paused %}{{ ui.status("neu", "paused") }}{% elif d.epic_changed %}{{ ui.status("warn", "suspended: the epic changed") }}{% else %}{{ ui.status("info", "active") }}{% endif %}
     Agents may approve up to {{ d.max_children }} children they add, of size up to {{ d.max_size }}.</p>
-  {% if d.active %}
-  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · pause the delegation">
-    <button type="submit" class="btn">Pause delegation</button>
-  </form>
   {% endif %}
-  {% endif %}
-</section>
-<section class="epic-audit" id="epic-audit" aria-labelledby="epic-audit-h">
+  {% if f and not f.factory %}<p class="muted">Not started as a factory. Start it when you approve the epic.</p>{% endif %}
+  </div>
   <h3 id="epic-audit-h">Auto-approvals <span class="count">{{ e.auto_approvals|length }}</span></h3>
+  <div id="epic-audit">
   {% if e.auto_approvals %}
   <ul class="plain">{% for a in e.auto_approvals %}
     <li><a class="lnk key" href="/t/{{ a.ticket }}">{{ a.ticket }}</a> {{ a.title }} <span class="muted">· {{ a.gate }} auto-approved by {{ a.actor }} · {{ a.at|local }}</span>{% if not a.valid %} {{ ui.status("warn", "no longer valid: waits for you") }}{% endif %}</li>
   {% endfor %}</ul>
   {% else %}<p class="muted">None.</p>{% endif %}
+  </div>
+</section>
+{% endmacro %}
+
+{% macro verdict_accept(e) %}
+<section class="card epic-accept" id="epic-accept" aria-labelledby="epic-accept-h">
+  <h2 id="epic-accept-h">Ready for your verdict</h2>
+  <p>All {{ e.proof|length }} open {{ "child is" if e.proof|length == 1 else "children are" }} in testing. Read the proof, then accept or send back.</p>
+  <a class="btn btn-primary" href="#epic-verdict">Check the proof and accept below</a>
 </section>
 {% endmacro %}
 
@@ -300,10 +380,11 @@
 </div>
 
 <header class="ticket-head">
-  {{ tc.header(card, created_day, t.section("Summary")) }}
+  {{ tc.header(card, created_day, t.section("Summary"), epic.chip if epic else none) }}
   {% if meta_line or blockers %}<p class="meta-line muted">{{ meta_line }}{% if blockers %}{% if meta_line %} · {% endif %}<span class="meta-warn">{{ ui.icon("warn") }} blocked by {{ blockers|join(", ") }}</span>{% endif %}</p>{% endif %}
   {#- M: the journey, Asked → Agreed → Doing → Proven → Done, each with its date and who/what (data.story.journey);
       at phone width five segments with a one-line caption. -#}
+  {% if not epic %}
   {% set jwords = {"done": "done", "now": "in progress", "todo": "not yet"} %}
   <ol class="journey" aria-label="Journey">
     {% for j in journey %}
@@ -314,9 +395,18 @@
     {% endfor %}
   </ol>
   <p class="journey-caption muted" aria-hidden="true">{% for j in journey %}{{ j.name }}{% if j.state == "done" %} ✓{% endif %}{{ " · " if not loop.last }}{% endfor %}</p>
+  {% endif %}
 </header>
 
-{% if t.status != "done" %}
+{% if t.status != "done" and epic %}
+{% set gate_shown = t.status in ("backlog", "open") and (actions.approve_requirements or epic.reapprove) %}
+{% set ea = move.action or {} %}
+{% set card_needed = move.kind == "human" and not (ea.kind == "verdict" and epic.verdict_ready) %}
+{{ epic_slot(epic, gate_shown, card_needed) }}
+{{ epic_progress(epic) }}
+{% if start_box and not start_box.disabled %}<details class="more-start"><summary class="lnk">Start an agent ▸</summary>{{ start_agent(start_box, t.id) }}</details>{% endif %}
+{{ epic_list(epic) }}
+{% elif t.status != "done" %}
 {% set human = move.kind == "human" %}
 {% set a = move.action or {} %}
 <section class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
@@ -441,7 +531,6 @@
       <div class="cluster story-actions">{{ together_form(req, plan) }}{{ changes_form("plan") }}</div>
     </section>
     {% endif %}
-    {% if epic and t.status in ("backlog", "open") and (actions.approve_requirements or epic.reapprove) %}{{ charter_form(epic, req.question) }}{% endif %}
     {% set answered = questions|selectattr("answered_flag")|list %}
     {% set still_open = questions|rejectattr("answered_flag")|list %}
     {% if questions %}
@@ -464,7 +553,7 @@
   {% endcall %}
 
   {% if epic %}
-  {% call chapter_block("doing", "children " ~ epic.rollup.done ~ "/" ~ epic.rollup.total ~ " done") %}{{ epic_children(epic) }}{% endcall %}
+  {{ epic_details(epic) }}
   {% call chapter_block("proven", ("AC " ~ epic.rollup.ac_proven ~ "/" ~ epic.rollup.ac_total) if epic.rollup.ac_total else "") %}{{ epic_verdict(epic) }}{% endcall %}
   {% else %}
   {% call chapter_block("doing", ("T " ~ card.tasks.closed ~ "/" ~ card.tasks.total) if card.tasks else "") %}

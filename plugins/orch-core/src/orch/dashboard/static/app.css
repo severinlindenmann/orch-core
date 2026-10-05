@@ -1655,6 +1655,51 @@ html.term-full-open { overflow: hidden; }
 .ib-track { display: block; width: 96px; flex: none; }
 .ib-track i { display: block; height: var(--s-2); min-width: var(--s-1); border-radius: var(--s-1); background: var(--series-1); }
 .reports-grid .card { min-width: 0; }
+
+/* ---------- Epic page at a glance: your slot, progress, children by status ---------- */
+.epic-slot { display: flex; flex-direction: column; gap: var(--s-3); margin: var(--s-4) 0; min-width: 0; }
+.epic-slot > * { margin-top: 0; margin-bottom: 0; }
+.epic-clear { margin: 0; }
+.epic-kids-you { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); align-items: center; }
+.epic-stopped, .epic-accept { border-color: var(--you-mark); }
+.epic-progress { margin: var(--s-5) 0; min-width: 0; }
+.ec-headline { font: var(--type-item); margin: 0 0 var(--s-2); }
+.ec-bar { display: flex; height: var(--s-3); border-radius: var(--r-pill); overflow: hidden; background: var(--line2); }
+.ec-seg { display: block; min-width: var(--s-1); }
+.ec-seg-done { background: var(--ok-mark); }
+.ec-seg-working { background: var(--info-mark); }
+.ec-seg-you { background: var(--you-mark); }
+.ec-seg-testing { background: var(--neu-mark); }
+.ec-seg-ready { background: var(--line2); }
+/* no progress is outlined: a shape, not only a hue */
+.ec-seg-idle { background: var(--surface); box-shadow: inset 0 0 0 2px var(--warn-mark); }
+.ec-legend { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-4); margin: var(--s-2) 0 0; padding: 0; list-style: none; font: var(--type-meta); color: var(--muted); }
+.ec-legend b { color: var(--text); }
+.ec-sw { display: inline-block; width: var(--s-3); height: var(--s-3); border-radius: var(--s-1); margin-right: var(--s-1); vertical-align: -0.1em; }
+.ec-sw.ec-seg-ready { box-shadow: inset 0 0 0 1px var(--ctl); background: var(--surface); }
+.ec-budget { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); align-items: center; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+.ec-budget > p, .ec-budget > form { margin: 0; }
+.ec-budget > h3, .ec-budget > ul { flex: 1 1 100%; margin: 0; }
+.ec-filter { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-3) 0; }
+.ec-pill { display: inline-flex; align-items: center; min-height: var(--control-h); padding: 0 var(--s-3); border: 1px solid var(--line2); border-radius: var(--r-pill); font: var(--type-meta); font-weight: 600; }
+a.ec-pill:hover { background: var(--hover); }
+.ec-pill[aria-current] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.ec-pill[aria-disabled] { color: var(--muted); opacity: .6; }
+.ec-group h3 { display: flex; align-items: center; gap: var(--s-2); }
+.ec-note { margin: 0 0 var(--s-2); }
+.ec-more > summary { cursor: pointer; padding: var(--s-2) 0; }
+.ec-dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--s-3) var(--s-6); margin: 0 0 var(--s-3); }
+.ec-dl dt { font: var(--type-meta); color: var(--muted); }
+.ec-dl dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .epic-slot .btn, .epic-slot button, .ec-budget .btn, .ec-pill { min-height: var(--tap); }
+  .epic-slot .actions, .epic-slot .cluster { flex-direction: column; align-items: stretch; }
+  .epic-slot .actions form, .epic-slot .cluster form { width: 100%; }
+  .epic-slot .actions .btn, .epic-slot .cluster .btn, .epic-slot .actions button { width: 100%; }
+  .ec-budget .btn { width: 100%; }
+  .epic-slot code, .epic-slot .permit-cmd { overflow-wrap: anywhere; }
+}
+
 /* ---------- AI Factory (#2, phase 3): the Ready report and the Stopped message ---------- */
 .factory-report, .factory-reasons { display: flex; flex-direction: column; gap: var(--s-3); margin: 0; padding: 0; min-width: 0; }
 .factory-child { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; padding-top: var(--s-2); border-top: 1px solid var(--line); overflow-wrap: anywhere; }

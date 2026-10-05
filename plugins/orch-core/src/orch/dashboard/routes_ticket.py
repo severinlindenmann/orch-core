@@ -122,7 +122,7 @@ def _question_view(q: dict) -> dict:
 
 
 @router.get("/t/{ref}")
-def ticket_page(request: Request, ref: str, open: str = ""):
+def ticket_page(request: Request, ref: str, open: str = "", show: str = ""):
     # One scan per request, shared by the load, needs_you, blockers, agent rows, the card and the menu badge.
     entries = store.scan(request.app.state.ws)
     ws, path, t, error = load_or_error(request, ref, entries)
@@ -189,7 +189,10 @@ def ticket_page(request: Request, ref: str, open: str = ""):
     if t.meta.get("type") == "epic":
         from orch.dashboard.data.epic import page_data
         all_events = read_events(ws)  # the delegation's audit spans the children's events
-        epic_view = page_data(ws, t, entries=entries, needs=all_needs, events=all_events,
+        epic_view = page_data(ws, t, entries=entries, needs=all_needs, events=all_events, show=show,
+                              gate=t.status in ("backlog", "open") and bool(actions["approve_requirements"]),
+                              asks=sum(1 for q in questions if not q["answered_flag"]),
+                              move_human=move.get("kind") == "human",
                               builder=Cards(ws, entries=entries, needs=all_needs, events=all_events, now=at,
                                             reviews=reviews))
     # The status card answers blocking questions in place; other open questions are answered in Agreed.

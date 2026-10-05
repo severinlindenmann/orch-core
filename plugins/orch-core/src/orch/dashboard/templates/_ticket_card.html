@@ -47,11 +47,11 @@
 {%- endmacro %}
 
 {#- S: one line (two below 560 px): icon, key, title, move, strip, PR. -#}
-{% macro row(c) -%}
+{% macro row(c, show_epic=true) -%}
 <div class="tc-row">
   <span class="tc-icon tc-{{ c.move.role }}">{{ ui.icon(c.move.role) }}</span>
   <a class="key lnk" href="/t/{{ c.id }}">{{ c.id }}</a>
-  <span class="tc-title">{% if c.epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
+  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
   <span class="tc-move">{{ move_chip(c.move) }}</span>
   <span class="tc-progress">{{ strip(c) }}{% if c.code %} {{ code_token(c.code) }}{% endif %}</span>
 </div>
@@ -98,7 +98,7 @@
 {%- endmacro %}
 
 {#- L: the top of the ticket page, below the crumb. `summary` is the agent's Summary text (Markdown), or "". -#}
-{% macro header(c, created_day="", summary="") -%}
+{% macro header(c, created_day="", summary="", chip=none) -%}
 <div class="tc-header">
   {%- if c.epic %}<p class="tc-epic"><a class="lnk" href="/t/{{ c.epic.id }}"><span aria-hidden="true">◇</span> Epic {{ c.epic.id }} · {{ c.epic.title }}</a></p>{% endif %}
   <p class="tc-metaline muted"><b class="key">{{ c.id }}</b>{% if c.rollup %} · epic{% elif c.size %} · {{ c.size|upper }}{% endif %}{% if c.priority %} · {% if c.hot %}<span class="tc-hot">{{ ui.icon("warn") }} {{ c.priority }}</span>{% else %}{{ c.priority }}{% endif %}{% endif %}
@@ -106,7 +106,7 @@
     {%- if created_day %} · created {{ created_day }}{% endif %}
     {%- if c.parent %} · part of <a class="lnk" href="/t/{{ c.parent }}">{{ c.parent }}</a>{% endif %}</p>
   <h1>{{ c.title }}</h1>
-  <p class="tc-chips">{{ move_chip(c.move) }} <span class="muted tc-status">{{ c.status_label }}</span></p>
+  <p class="tc-chips">{% if chip %}{{ ui.status(chip.role, chip.label) }}{% else %}{{ move_chip(c.move) }}{% endif %} <span class="muted tc-status">{{ c.status_label }}</span></p>
   {% if summary %}
   <div class="tc-summary"><p class="tc-summary-label muted">Agent's summary</p>{{ summary|md|safe }}</div>
   {% endif %}

@@ -13,7 +13,7 @@ from orch.addons.api import Snapshot
 from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Countdown, Link, MenuStatus, Table, Tabs,
                                  Text, Time)
 
-from .data import (FAMILIES, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
+from .data import (FAMILIES, begin_fetch, open_cache, save_cache, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
                    monday_of, names, pace,
                    parse_file, read_limits, subagents, transcripts, week_rises)
 
@@ -151,7 +151,13 @@ class UsageProvider:
                 sids = [s["id"] for s in meta.get("sessions") or [] if isinstance(s, dict) and isinstance(s.get("id"), str)]
                 tickets.append((e.id, str(meta.get("title") or ""), sids))
             log = ctx.settings.get("limits_log") or "~/.claude/orch-usage/limits.jsonl"
-            return Snapshot(self.id, scope, ctx.now(), items=tuple(build(claude_dir(), tickets, log, time.time())))
+            open_cache(ctx.addon.state_dir / "parse-cache.json")
+            begin_fetch()
+            try:
+                items = tuple(build(claude_dir(), tickets, log, time.time()))
+            finally:
+                save_cache()
+            return Snapshot(self.id, scope, ctx.now(), items=items)
         except Exception as e:  # the transcript format is Claude Code's own and may change: never raise into a page
             return Snapshot(self.id, scope, ctx.now(), health="error", message=f"could not read Claude's files ({type(e).__name__})")
 

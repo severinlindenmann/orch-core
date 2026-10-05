@@ -146,6 +146,39 @@ def test_provider_reads_tickets_and_the_page_renders(tmp_path):
     assert panel[0].title == "Usage" and "$4.20" in repr(panel)
 
 
+def test_parse_cache_survives_a_restart_and_reparses_only_changed_transcripts(tmp_path, monkeypatch):
+    claude = tmp_path / "home" / ".claude"
+    session(claude, SID, [reply("a", 2000, "2026-10-01T10:00:00Z"), cost(1, 4.2, 1000, 3, 1, {"claude-opus-5-5": 4.2})])
+    session(claude, OTHER, [reply("b", 300, "2026-10-01T11:00:00Z")])
+    ws = fake_workspace(tmp_path / "ws", tickets=[{"title": "x", "meta": {"sessions": [{"id": SID, "harness": "claude-code"}]}}])
+    ctx = ws.load(ADDON).ctx.provider_context()
+    first = T.UsageProvider().fetch(ctx, "workspace", None)
+    cache_file = ws.load(ADDON).ctx.state_dir / "parse-cache.json"
+    assert first.health == "ok" and cache_file.is_file()
+    # "orch serve" restarts: the in-memory cache is gone, the file stays
+    data._PARSED.clear()
+    data._CACHE.update(file=None, dirty=False, touched=set())
+    opened = []
+    real_open = data.Path.open
+    monkeypatch.setattr(data.Path, "open", lambda self, *a, **k: (opened.append(self.name) if "projects" in str(self) else None, real_open(self, *a, **k))[1])
+    again = T.UsageProvider().fetch(ctx, "workspace", None)
+    assert opened == [] and [i for i in again.items if i["kind"] in ("ticket", "unlinked")] == [i for i in first.items if i["kind"] in ("ticket", "unlinked")]          # nothing parsed, same answer
+    # one transcript grows: only that one is parsed again
+    with (claude / "projects" / "-proj" / f"{OTHER}.jsonl").open("a") as fh:
+        fh.write(reply("c", 50, "2026-10-01T12:00:00Z") + "\n")
+    opened.clear()
+    T.UsageProvider().fetch(ctx, "workspace", None)
+    assert opened == [f"{OTHER}.jsonl"]
+
+
+def test_a_corrupt_or_foreign_parse_cache_is_an_empty_cache(tmp_path):
+    f = tmp_path / "parse-cache.json"
+    for text in ("{not json", '{"v": 99, "files": {}}', '{"v": 1, "files": {"x": {"msgs": "bad"}}}', "[]"):
+        f.write_text(text)
+        data._CACHE.update(file=None, dirty=False, touched=set())
+        data.open_cache(f)  # never raises
+
+
 def _ticket(ws):
     from orch.core import store
     return store.load(ws.ws, ws.tickets[0])[1]

@@ -10,7 +10,8 @@ from typing import Annotated
 from fastapi import APIRouter, Form, Request
 
 from orch.core import permits
-from orch.dashboard.views import HUMAN, back, error_text, safe_next
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, error_text, safe_next
 from orch.errors import OrchError
 
 router = APIRouter()
@@ -29,16 +30,16 @@ def _answer(request: Request, next_url: str, action, success: str):
 @router.post("/permits/{rid}/grant")
 def grant(request: Request, rid: str, sha: Annotated[str, Form()] = "", scope: Annotated[str, Form()] = "once",
           next_url: Next = ""):
-    return _answer(request, next_url, lambda ws: permits.permit_grant(ws, HUMAN, rid, scope, expected_sha=sha or None),
+    return _answer(request, next_url, lambda ws: permits.permit_grant(ws, request_actor(request), rid, scope, expected_sha=sha or None),
                    f"{rid.upper()} granted ({scope})")
 
 
 @router.post("/permits/{rid}/deny")
 def deny(request: Request, rid: str, sha: Annotated[str, Form()] = "", next_url: Next = ""):
-    return _answer(request, next_url, lambda ws: permits.permit_deny(ws, HUMAN, rid, expected_sha=sha or None),
+    return _answer(request, next_url, lambda ws: permits.permit_deny(ws, request_actor(request), rid, expected_sha=sha or None),
                    f"{rid.upper()} denied")
 
 
 @router.post("/permits/grants/{gid}/revoke")
 def revoke(request: Request, gid: str, next_url: Next = ""):
-    return _answer(request, next_url, lambda ws: permits.permit_revoke(ws, HUMAN, gid), "grant revoked")
+    return _answer(request, next_url, lambda ws: permits.permit_revoke(ws, request_actor(request), gid), "grant revoked")

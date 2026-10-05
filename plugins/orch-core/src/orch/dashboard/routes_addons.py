@@ -17,7 +17,8 @@ from orch.addons.widgets import MAX_TARGET_LEN
 from orch.core.events import append_event
 from orch.dashboard.addon_files import save_upload, stage_download
 from orch.dashboard.auth import strict_same_origin
-from orch.dashboard.views import HUMAN, back, confirm_page, error_text, page, safe_next
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, confirm_page, error_text, page, safe_next
 from orch.errors import OrchError
 
 router = APIRouter()
@@ -121,13 +122,13 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
     else:
         try:
             intent = intents.as_intent(result)
-            message = intents.execute(ws, intent, allowed_ref=target, tickets=spec.tickets, actor=HUMAN, source="act")
+            message = intents.execute(ws, intent, allowed_ref=target, tickets=spec.tickets, actor=request_actor(request), source="act")
         except OrchError as e:
             return back(dest, err=error_text(e))
         if intent.kind != "none":
             extra["intent"] = intent.kind
         out = back(dest, msg=str(message or f"{spec.label}: done")[:300])
-    append_event(ws, None, "addon.action", HUMAN, {"addon": name, "action": action_id, "target": target[:200], **extra})
+    append_event(ws, None, "addon.action", request_actor(request), {"addon": name, "action": action_id, "target": target[:200], **extra})
     request.app.state.scheduler.request_refresh(name)
     return out
 
@@ -180,7 +181,7 @@ def resolve(request: Request, name: str, id: str = Form(...), choice: str = Form
         return back(dest, err=error_text(e))
     try:
         # decisions=: defence in depth; find_decision only returns items of addons with the decisions capability
-        message = intents.execute(ws, intent, allowed_ref=decision.ticket, tickets=False, actor=HUMAN,
+        message = intents.execute(ws, intent, allowed_ref=decision.ticket, tickets=False, actor=request_actor(request),
                                   source="resolve", decisions=la.has("decisions"), anchor=decision.anchor)
         outcome, text = "applied", str(message or "Done")[:300]
     except OrchError as e:
@@ -192,7 +193,7 @@ def resolve(request: Request, name: str, id: str = Form(...), choice: str = Form
                 hook(id, outcome, text)
             except Exception:
                 _log_error(ws, name, f"on_intent_result {id[:200]}")
-    append_event(ws, None, "addon.decision", HUMAN, {"addon": name, "decision": id[:200], "choice": choice[:50],
+    append_event(ws, None, "addon.decision", request_actor(request), {"addon": name, "decision": id[:200], "choice": choice[:50],
                                                       "intent": intent.kind, "ref": decision.ticket,
                                                       "outcome": outcome})
     return back(dest, msg=text) if outcome == "applied" else back(dest, err=text)

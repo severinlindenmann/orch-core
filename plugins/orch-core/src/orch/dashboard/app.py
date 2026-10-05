@@ -17,6 +17,7 @@ from orch.dashboard import factory_runner
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
 from orch.dashboard.auth import auth_middleware
+from orch.dashboard.remote_gate import RemoteGate
 
 log = logging.getLogger("orch.dashboard")
 
@@ -213,10 +214,23 @@ async def form_error(request, exc):
     return back(target, err="some form fields were missing or invalid")
 
 
-def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
+def router_modules() -> tuple:
+    """The route modules, in the order they are included (and so matched)."""
     from orch.dashboard import (routes_actions, routes_activity, routes_addons, routes_agent_start, routes_board,
                                 routes_design, routes_live, routes_new, routes_permits, routes_reports, routes_terminals, routes_theme,
-                                routes_ticket, routes_widgets, routes_workspace, setup_state, switcher)
+                                routes_ticket, routes_widgets, routes_workspace)
+    return (routes_board, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
+            routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design,
+            routes_terminals, routes_widgets)
+
+
+def dashboard_routes() -> list:
+    """Every route of the dashboard in matching order (the remote gate reads its scope tags for these)."""
+    return [route for module in router_modules() for route in module.router.routes]
+
+
+def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
+    from orch.dashboard import routes_live, setup_state, switcher
     from orch.addons.outbox import OutboxPump
     from orch.addons.runtime import AddonRuntime
     from orch.addons.scheduler import Scheduler
@@ -273,8 +287,8 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
     app.add_middleware(RequestScopeMiddleware)
     app.add_middleware(CompressMiddleware)  # outermost: compresses whatever the stack produced
     app.mount("/static", AssetFiles(directory=str(STATIC_DIR)), name="static")
-    for module in (routes_board, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
-                   routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design, routes_terminals,
-                   routes_widgets):
+    for module in router_modules():
         app.include_router(module.router)
+    # Outermost: a request carrying the remote marker is decided before anything else sees it. Local requests pass.
+    app.add_middleware(RemoteGate, routes=dashboard_routes(), root=ws.root)
     return app

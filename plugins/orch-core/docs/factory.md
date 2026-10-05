@@ -537,140 +537,217 @@ stays yours. The runner (the dashboard you started) runs the stages; an agent ca
 dir, next to `factory-command.json` and under the same guard: agents can neither read nor write it, it is never
 grantable, and orch's `factory release` commands are human-only. It is not workspace config, ticket text or charter
 text, because an agent can edit all of those, and these commands merge and deploy. One file holds the recipes of
-several workspaces, keyed by workspace id (`{"workspaces": {"<id>": recipe}}`). A file that is damaged, not a regular
-file, not owned by you or writable by group or others counts as no recipe. In your own terminal (each refused to agents
-and under an agent harness):
+several workspaces, keyed by workspace id (`{"workspaces": {"<id>": {"recipe": ..., "programs": ...}}}`). A file that
+is damaged, not a regular file, not owned by you or writable by group or others counts as no recipe. In your own
+terminal (each refused to agents and under an agent harness):
 
 ```bash
-orch factory release set --file recipe.json   # validates, prints the whole recipe, needs RELEASE typed
+orch factory release set --file recipe.json   # validates, prints the recipe and the program pins, needs RELEASE typed
 orch factory release show
 orch factory release clear                    # needs CLEAR typed; no release runs until you set one again
 orch factory release retry <epic> --stage merge|dev [--child <child>]   # one more attempt, needs the epic id typed
 ```
 
+**Program pins.** `set` resolves every program of the recipe with your terminal's PATH and the runner's trust checks
+(an absolute PATH entry; the file owned by you or root and not writable by group or others; not inside the workspace),
+and stores its real path and sha256 with the recipe; the confirmation shows them. At run time each program must still
+resolve, on the dashboard's PATH, to the same real path with the same content, or the stage does not start ("not the
+one you pinned"): after an upgrade of `gh` or a script of yours, set the recipe again.
+
 **Schema.**
 
 ```json
-{"stages": [{"name": "merge", "per": "child", "timeout": 600,
-             "commands": [["<program>", "<arg>", "{branch}"]],
-             "check": {"argv": ["<program>", "<arg>"], "expect": "<exact trimmed stdout>"}},
-            {"name": "dev", "per": "epic", "timeout": 900,
-             "commands": [["<program>", "<arg>"]], "check": {"argv": ["<program>", "<arg>"]}}],
- "sensitive_paths": [".github/*", "*.lock"],
- "base": "main"}
+{"remote": "<owner>/<name>", "repo": "<owner>/<name>", "base": "main",
+ "sensitive_paths": [".github", "**/*.lock"],
+ "git_config": {"credential.helper": "<your helper>"},
+ "stages": [{"name": "merge", "timeout": 600,
+             "precheck": {"argv": ["<program>", "..."], "expect": "<text>"},
+             "commands": [["<program>", "...", "{base}", "{branch}"], ["<program>", "...", "{sha}"]],
+             "check": {"argv": ["<program>", "..."], "expect": "<exact trimmed stdout>"}},
+            {"name": "dev", "timeout": 900,
+             "commands": [["<program>", "..."]], "check": {"argv": ["<program>", "..."]}}]}
 ```
 
+- `remote` (required): where the base comes from and where the work goes: an `https://`, `ssh://` or `file:///` URL,
+  `user@host:path`, an absolute path, or `owner/name` (GitHub over https). Never read from the workspace's
+  `.git/config` or any workspace file. Transport helpers such as `ext::` are refused.
+- `repo` (optional): `owner/name` for `gh --repo {repo}`; taken from `remote` when that is `owner/name`.
+- `base`: the branch the work goes to (default `main`), fetched from `remote`.
+- `git_config` (optional): only `credential.helper` and `core.sshCommand`, for the runner's own git calls (see below).
 - `stages`: `merge`, then `dev`, each at most once and in that order. `production` or any other name is refused
-  ("not built yet"). `merge` runs per child (the default) or once per epic; `dev` runs once per epic.
+  ("not built yet"). `merge` runs once per child (`per` may only say `child`); `dev` runs once per epic.
 - `commands`: 1 to 10 argv lists of 1 to 64 printable ASCII words (at most 512 characters each). A shell string is
-  refused, and so is a shell or wrapper that runs one (`sh`, `bash`, `env`, `sudo`, `xargs`, ...) as the program. Each
-  program is looked up like the runner's own tools: an absolute PATH entry, owned by you or root, not writable by group
-  or others, and not inside the workspace (agents write there).
+  refused, and so is a program that runs a string or another program (`sh`, `bash` and every shell, `env`, `sudo`,
+  `xargs`, `nohup`, `timeout`, `nice`, `command`, `script`, `osascript`, `time`, `setsid`, ...), an interpreter given
+  code as text (`python -c`, `node -e`, `perl -e`, ...), and git with an alias, `--config-env` or `--exec-path`.
+- The **merge stage** must name `{sha}` in a command (so the merge is pinned to the commit the runner checked, for
+  example `gh pr merge … --match-head-commit {sha}`), and `{base}` in a command (the one that opens the pull request:
+  the recipe, not the agent, chooses where the work goes) or in its `precheck`.
+- `precheck` (merge only, optional): runs before the stage's commands; the stage fails unless it exits 0 and, with
+  `expect`, prints exactly that. Use it to refuse a branch whose open pull request targets another base.
 - `check`: the stage is **proven** only when this command exits 0 and, with `expect`, its trimmed standard output is
-  exactly that text (at most 1024 characters). A stage without a check is refused.
+  exactly that text (at most 1024 characters; placeholders are filled in). A stage without a check is refused.
 - `timeout`: seconds per command, 1 to 1800 (default 600).
-- Placeholders, in any word but the program: `{epic}`, `{workspace}`, and in a stage that runs per child `{child}`,
-  `{branch}` and `{sha}`. Each value is checked before it is put in: ticket ids by their form, the workspace id as hex,
-  the branch by a strict git branch form (a letter or digit first, so never an option; no `..`, `//`, `/.`, `@{`,
-  trailing `/`, `.` or `.lock`), the commit as hex. A word may hold text around a placeholder, since every value is
-  checked the same way. Any other brace is refused.
-- `sensitive_paths`: up to 100 glob patterns (`fnmatch`, where `*` also crosses `/`). `base`: the branch the children
-  are compared with (default `main`).
+- Placeholders, in any word but the program, and in `expect`: `{epic}`, `{workspace}`, `{base}`, `{remote}`,
+  `{repo}`, and in the merge stage `{child}`, `{branch}` and `{sha}`. Each value is checked before it is put in:
+  ticket ids by their form, the workspace id and the commit as hex, branch and base by a strict git branch form (a
+  letter or digit first, so never an option; no `..`, `//`, `/.`, `@{`, trailing `/`, `.` or `.lock`), remote and
+  repo as the recipe validated them. Any other brace is refused.
+- `sensitive_paths`: up to 100 patterns, matched case-insensitively (after Unicode normalisation). A pattern without a
+  glob character is that file or folder and everything below it (`.github`, `deploy`); one with `*`, `?` or `[` is a
+  glob over the whole path (`*` also crosses `/`, so `*.lock` matches `a/b/c.lock`); a leading `**/` matches at any
+  depth, the top level included (`**/migrations/*` matches `migrations/1.sql` and `app/migrations/1.sql`, while
+  `*/migrations/*` misses the top level). No leading or trailing `/`.
+
+**What runs where.** The workspace checkout is agent-written, its `.git` included (config, hooks, refs, objects), so
+the runner neither classifies nor runs anything there. It keeps a repository of its own in
+`permits/release-repos/<workspace id>/repo` of your orch config dir (guarded like the rest of the permits folder),
+created with `git init` without templates; its `.git/config` is written by the runner every time it is used: no
+includes, aliases, hooks, fsmonitor, filters or remotes. Each release round:
+
+1. fetches the base from the recipe's `remote` into a ref only the runner writes (`refs/remotes/release/<base>`);
+2. fetches each child branch from the workspace checkout's path into the mirror (`+refs/heads/<branch>` only: just
+   objects cross, and the commit is what counts from then on, never the workspace's refs or replace objects);
+3. classifies there (below);
+4. for the merge stage, checks out exactly the classified commit in the mirror's work tree (forced, cleaned) and runs
+   the precheck, the commands and the check there, with the working directory in the mirror; before every one of
+   those commands it fetches the branch again and stops if it no longer points at the classified commit;
+5. for the dev stage, fetches the base again and checks out the remote base as it is then (the merged work, never
+   the agent's working tree), and runs the commands there.
+
+Every git call the runner makes is an argv list with `--no-replace-objects`, `-c core.hooksPath=/dev/null`,
+`-c core.fsmonitor=false`, `-c core.sshCommand=ssh` and `-c credential.helper=` (an empty helper list, then the
+recipe's `git_config` values when it names them), in an environment of the allowlist below plus
+`GIT_NO_REPLACE_OBJECTS=1` and `GIT_TERMINAL_PROMPT=0` (no `GIT_DIR`, `GIT_WORK_TREE` or the like). Your global and
+system git config still apply; only repository-level config was the attack surface, and in the mirror the runner
+writes it. A private https remote therefore needs `git_config.credential.helper` (for example the helper your global
+config names). `SSH_AUTH_SOCK` is not passed, so an ssh remote works only with a key ssh can use without an agent
+(an unencrypted key, or one named in your ssh config); https with your credential helper is the simpler choice. Any
+mirror or git failure stops the round (fail closed): nothing runs.
+
+**The diff classification.** Before the first merge command of an epic, every child branch not yet merged is compared
+with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) and every commit the branch brings in
+(`git log -m <base>..<commit>`, merges against each parent), both with `--no-renames` (a rename is both paths),
+`--ignore-submodules=none` (a gitlink counts, whatever `.gitmodules` says), `--no-ext-diff` and `--no-textconv`. Any
+match of `sensitive_paths` stops the release with "Sensitive path touched", naming the paths (escaped): nothing is
+merged. Because every commit counts, a later commit that removes the change does not clear it: merge by hand, or
+rewrite the branch without it, then Retry release on the merge stage. The runner takes the one branch a child names
+(`orch link --branch`), else the branch of its one worktree; the name must be a valid branch name that names the child
+(its id as a word) and is not the base. A child the runner cannot fetch or check fails its merge stage without a
+command run.
+
+What this guarantees: the paths a branch changes are judged from objects the runner fetched, against the base on the
+remote, with no workspace config, hook, ref, replace object or rename detection in between; the merge stage runs on
+exactly that commit and is pinned to it. What it cannot: the recipe is yours and runs whatever you wrote (a command
+that merges something else merges something else); the check proves what it checks; the content of a commit that
+touches no sensitive pattern is not judged; and the dev stage runs the base's own scripts (`make`, `package.json`),
+which are the merged, classified ones.
 
 **Signing it into the charter.** `orch approve <epic> requirements --dark --release merge|dev`, or the "Release up to"
 choice of the dashboard's Dark start. The text you confirm says it "releases up to <stage> by itself using the recipe
 on this machine". It is refused without `--dark`, while no valid recipe exists for this workspace, or when the recipe
 lacks a stage up to the target (dev needs merge and dev). The charter carries `release` only when you sign one, so
-every charter signed before hashes exactly as before. The recipe in force when a stage runs is the one used: change it
-with `orch factory release set`, and the next stage uses the new one.
+every charter signed before hashes exactly as before. The recipe in force when a stage runs is the one used.
 
 **When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
 every command: the factory and Dark switched on, the ledger whole, the charter active (not paused, not edited, the
 budget not used up), the epic Ready (every child in testing or done, every criterion cited, nothing unverifiable), no
 open permission request of the epic, and no Stopped reason other than the release's own. A process under an agent
-harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round,
-so a long command does not hold back pauses and stops. Known limit: an epic that used exactly its child budget counts
-as Stopped ("Budget used up", as since phase 3), so it does not release.
+harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round.
+Known limit: an epic that used exactly its child budget counts as Stopped ("Budget used up", as since phase 3), so it
+does not release.
 
-**Branches and the diff classification.** A per-child stage works on the children in testing. The runner takes the one
-branch a child names (`orch link --branch`), else the branch of its one worktree; the name must be a valid branch name
-that names the child (its id as a word) and is not the base. It resolves the commit itself
-(`git rev-parse --verify refs/heads/<branch>^{commit}`). Before the first merge command of an epic it lists what every
-child branch not yet merged changes (`git diff --name-only --no-renames -z <base>...<commit>`, by argv, with
-`core.fsmonitor` off; a rename is listed as both of its paths) and matches the recipe's `sensitive_paths`. Any match
-stops the release with "Sensitive path touched", naming the paths (escaped): nothing is merged. Right before a child's
-merge the commit is resolved again; a branch that moved since it was checked is not merged that round. A child the
-runner cannot check (no branch, a branch that does not name it, a branch git does not know) fails its merge stage
-without a command run. The branches are those of the workspace's own repository.
+**The lock.** One release at a time per workspace: an exclusive file in the guarded folder names the dashboard process
+(pid and start time), an expiry (the command's timeout plus two minutes, renewed before each command) and the process
+group of the command that runs. It is held across all stages of one epic, and it holds while that dashboard lives and
+its expiry has not passed, or while the recorded command's process group still runs: a dashboard that died does not
+let a new one start another epic's release beside a running command. When the dashboard stops, each running release
+command's process group gets SIGTERM and, five seconds later, SIGKILL; its attempt is recorded as failed ("the
+dashboard stopped while it ran").
 
-**The lock.** One release at a time per workspace: an exclusive file in the guarded folder names the holding process
-(its pid and start time) and an expiry (the command's timeout plus two minutes, renewed before each command). It is
-held across all stages of one epic. A holder whose process is gone or whose expiry passed holds nothing.
+**Records and crash safety.** Each attempt of a stage for one unit (a child, or the epic) writes, in
+`permits/release-records/`, an intent record (stage, unit, attempt, a hash of the commands, start time, the commit)
+exclusively before the first command, and an outcome record (exit codes, the check's exit code, end time, proven or
+not, the commit merged, for dev the children and commits it was proven for, and the last 4 KB of output, escaped)
+after. Temporary files get random names, are created exclusively and never through a link. The output is kept only
+there: never in events, tickets or logs. Each outcome adds an event `release.stage` with the stage, the unit, proven
+and the exit code only. A proven stage never runs again by itself (records are kept per epic, so approving it again
+does not merge twice). An intent without an outcome, and no live lock holder, means the runner stopped while a command
+ran: the outcome is **unknown**, and that stage is never run again by itself. Each stage and unit gets one automatic
+attempt; a failure stops the release there and leaves the others as they are. A pause, an edit, a used-up budget, the
+factory or Dark switched off or a cut ledger stops the release before its next command (a running command finishes
+first, and the attempt is recorded as failed).
 
-**Records and crash safety.** Each attempt of a stage for one unit (a child, or the epic) writes, in the
-`release-records` folder of the permits folder, an intent record (stage, unit, attempt, a hash of the commands, start
-time) exclusively before the first command, and an outcome record (exit codes, the check's exit code, end time, proven
-or not, and the last 4 KB of output, escaped) after. The output is kept only there: never in events, tickets or logs.
-Each outcome adds an event `release.stage` with the stage, the unit, proven and the exit code only. A proven stage
-never runs again (records are kept per epic, so approving it again does not merge twice). An intent without an
-outcome, and no live lock holder, means the runner stopped while a command ran: the outcome is **unknown**, and that
-stage is never run again by itself. Each stage and unit gets one automatic attempt; a failure stops the release there
-(the stages after it do not run) and leaves the others as they are. A pause, an edit, a used-up budget, the factory or
-Dark switched off or a cut ledger stops the release before its next command (a running command finishes first, and
-the attempt is recorded as failed).
+These records, the outcomes and the lock rest on same-user trust, stated plainly: the guard keeps agents' tools and
+commands away from the permits folder, and a Dark profile rule never matches a command naming it, but code an agent
+can get run as you (a project runner allowed by a prefix rule, such as `npm run …` or `pytest`) can write there
+anyway: forge a proven outcome, delete a failed intent so a stage runs again, or plant a lock.
+
+**Out of date.** A merge stage records the commit it merged for each child, and dev the children and commits it was
+proven for. If a child's branch in the workspace moves after its merge was proven (it came back with more work), or a
+child is added after dev was proven, the stage shows as out of date, not proven, and the epic is Stopped with
+"Release out of date". Retry release on that stage runs it again for the children as they are now (the merge first,
+then dev).
 
 **Stopped reasons** (the run view, Today and the Board, as for the earlier reasons):
 
-- *Sensitive path touched*: look at the named paths. Merge by hand, or change the branch, then Retry release on the
-  merge stage: the branches are checked again.
-- *Release stage failed* (with the stage and exit code): look at the output on the run view, fix the cause, then
-  Retry release for that stage: it runs once more.
+- *Sensitive path touched*: look at the named paths; merge by hand, or rewrite the branch without the change, then
+  Retry release on the merge stage: the branches are checked again.
+- *Release stage failed* (with the stage and exit code or reason): read the output on the run view, fix the cause,
+  then Retry release for that stage: it runs once more.
 - *Release outcome unknown*: check by hand whether the stage's commands ran (did the branch merge, did dev deploy).
   Retry release runs it once more, so retry only when running it again is safe; otherwise finish it by hand.
+- *Release out of date*: children changed after the release stage was proven; Retry release on that stage, or
+  release the change by hand.
 
 **Retry release** is yours: the run view's button (inline confirm) or `orch factory release retry`. It allows exactly
-one more attempt of one failed or unknown stage (or, after a sensitive-path stop, a fresh check of the branches) and
-runs nothing itself; the runner's next round does.
+one more attempt of one failed, unknown or out-of-date stage (or, after a sensitive-path stop, a fresh check of the
+branches) and runs nothing itself; the runner's next round does.
 
 **On the dashboard.** A Dark start (New ticket's Dark mode and the epic page's Start) has a "Release up to" choice:
 Nothing (the default), Merge or Dev. Merge and Dev are disabled, with a line naming
 `orch factory release set --file recipe.json`, while this workspace has no valid recipe with those stages; the server
 checks it again before anything is created or signed, and the confirm says what will run. For a charter that signs a
 release, the run view's ring gets Merge (and Dev) after Evidence, lit only from proven stage records (a failed,
-unknown or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage and unit as
-waiting, running, proven, failed or outcome unknown, the escaped output tail under a disclosure, and Retry release on
-a failed or unknown one. While a stage runs the state reads "Releasing".
+unknown, out-of-date or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage
+and unit as waiting, running, proven, failed, outcome unknown or out of date, the escaped output tail under a
+disclosure, and Retry release where it applies. While a stage runs the state reads "Releasing".
 
-**Example** (an example only: the program names, the script paths and what they do are placeholders for your own; no
-secrets belong in the recipe). It merges each child's pull request at exactly the commit that was checked, then
+**Example** (an example only: the owner/name, the script paths and what they do are placeholders for your own; no
+secrets belong in the recipe). It pushes the checked commit to the remote, opens a pull request against the recipe's
+base, merges it only at that commit, and checks that the merged pull request went to that base at that commit; then it
 deploys dev through scripts of yours kept outside the repository:
 
 ```json
-{"stages": [
-  {"name": "merge", "per": "child", "timeout": 600,
-   "commands": [["gh", "pr", "merge", "{branch}", "--squash", "--match-head-commit", "{sha}"]],
-   "check": {"argv": ["gh", "pr", "view", "{branch}", "--json", "state", "--jq", ".state"], "expect": "MERGED"}},
-  {"name": "dev", "per": "epic", "timeout": 1200,
+{"remote": "your-org/your-app", "base": "main",
+ "git_config": {"credential.helper": "<the helper your global git config names>"},
+ "sensitive_paths": [".github", "deploy", "**/*.lock", "**/migrations/*"],
+ "stages": [
+  {"name": "merge", "timeout": 600,
+   "precheck": {"argv": ["gh", "pr", "list", "--repo", "{repo}", "--head", "{branch}", "--state", "open",
+                         "--json", "baseRefName", "--jq", "map(select(.baseRefName != \"{base}\")) | length"],
+                "expect": "0"},
+   "commands": [["git", "push", "--force", "{remote}", "{sha}:refs/heads/{branch}"],
+                ["gh", "pr", "create", "--repo", "{repo}", "--base", "{base}", "--head", "{branch}", "--fill"],
+                ["gh", "pr", "merge", "{branch}", "--repo", "{repo}", "--squash", "--match-head-commit", "{sha}"]],
+   "check": {"argv": ["gh", "pr", "view", "{branch}", "--repo", "{repo}", "--json", "baseRefName,headRefOid,state",
+                      "--jq", "[.baseRefName, .headRefOid, .state] | join(\" \")"],
+             "expect": "{base} {sha} MERGED"}},
+  {"name": "dev", "timeout": 1200,
    "commands": [["/Users/you/bin/deploy-dev", "--epic", "{epic}"]],
-   "check": {"argv": ["/Users/you/bin/dev-health"], "expect": "ok"}}],
- "sensitive_paths": [".github/*", "deploy/*", "*.lock", "*/migrations/*"],
- "base": "main"}
+   "check": {"argv": ["/Users/you/bin/dev-health"], "expect": "ok"}}]}
 ```
 
-The commands get only the runner's minimal environment (the allowlist of the agent sessions, `HOME` among it, and a
-PATH of the programs' folders and the system's), the workspace root as working directory, and no standard input. A
-program that needs a credential reads it from your own config (for example `gh` from its config under `HOME`), never
-from the recipe.
-
-**Residual risks, stated plainly.** The commands run in an agent-written checkout: git hooks, a `Makefile` or a
-`package.json` script the commands reach run what the agents wrote, as the Dark profile's prefix rules do; prefer
-programs and scripts kept outside the repository. The check proves what it checks: the runner trusts its exit code and
-output. The branch a child names is agent-written; the runner only accepts one that names the child and checks what it
-changes, but what the sensitive patterns do not name is not stopped.
+(`gh pr create` fails when a pull request for the branch exists already; make it a script of yours that tolerates that
+if your flow reuses branches.) The recipe's commands get only the runner's minimal environment (the allowlist of the
+agent sessions, `HOME` among it, and a PATH of the pinned programs' folders and the system's), the mirror's work tree as
+working directory, and no standard input. A program that needs a credential reads it from your own config (for
+example `gh` from its config under `HOME`), never from the recipe.
 
 **Not built.** A production stage, any automatic closing (the verdict stays yours), release windows, rollback, and
 runner-side proof that tests ran or a review happened. The test suite covers the recipe, the CLI, the guard, the
-charter and the release step with a stand-in command runner: no test runs a real `gh`, `git push`, merge or deploy.
+charter and the release step with real git in temporary repositories (a workspace and a bare remote on disk, no
+network) and a stand-in for the recipe's commands: no test runs a real `gh`, push, merge or deploy.
 
 ## Coming in later phases
 

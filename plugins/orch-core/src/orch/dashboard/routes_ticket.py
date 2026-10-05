@@ -100,12 +100,51 @@ def _links(items) -> list[dict]:
 _PR_NUMBER = re.compile(r"/(?:pull|pulls|pr|merge_requests)/(\d+)(?:[/?#]|$)")
 
 
-def _pr_label(pr: dict) -> str:
+def _repo_names(ws) -> dict[str, str]:
+    """git.repos name -> the name a page shows ("Harness (name)" for the workspace's own repo)."""
+    from orch.addons.api import workspace_repos
+    try:
+        return {r.name: r.label for r in workspace_repos(ws)}
+    except Exception:
+        return {}
+
+
+def dedupe_prs(prs: list[dict], groups=()) -> list[dict]:
+    """The Code panel lists a PR once: by URL among the ticket's own links, and not again when an addon's
+    ticket.code table already shows it (the harness PR was listed under its repo and as a link)."""
+    shown: set[str] = set()
+
+    def walk(w):
+        if isinstance(w, (list, tuple)):
+            for x in w:
+                walk(x)
+            return
+        url = getattr(w, "url", None)
+        if isinstance(url, str) and url:
+            shown.add(url)
+        for attr in ("rows", "body"):
+            walk(getattr(w, attr, ()) or ())
+
+    for g in groups or ():
+        walk(getattr(g, "widgets", ()))
+    out, seen = [], set()
+    for pr in prs:
+        url = pr.get("url")
+        if url and (url in seen or url in shown):
+            continue
+        if url:
+            seen.add(url)
+        out.append(pr)
+    return out
+
+
+def _pr_label(pr: dict, names: dict[str, str] | None = None) -> str:
     """"repo #N · state" for the Code panel. `orch link` writes state "draft" as a placeholder that nothing
     refreshes, so "draft" is left out (a ready PR read "draft"); the live state comes from a code-review
     addon. A state someone set by hand (open, merged, closed) still shows."""
     match = _PR_NUMBER.search(str(pr.get("url") or ""))
-    name = str(pr.get("repo") or "PR") + (f" #{match.group(1)}" if match else "")
+    repo = str(pr.get("repo") or "PR")
+    name = (names or {}).get(repo, repo) + (f" #{match.group(1)}" if match else "")
     state = pr.get("state")
     return f"{name} · {state}" if isinstance(state, str) and state and state != "draft" else name
 
@@ -146,8 +185,9 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
                        key=lambda q: q["answered_flag"])
     claim = as_dict(t.meta.get("claim"))
     external = _links(t.meta.get("external"))
-    prs = [{**pr, "label": _pr_label(pr)} for pr in _links(t.meta.get("prs"))]
-    branches = as_dict(t.meta.get("branches"))
+    names = _repo_names(ws)
+    prs = [{**pr, "label": _pr_label(pr, names)} for pr in _links(t.meta.get("prs"))]
+    branches = {names.get(str(k), k): v for k, v in as_dict(t.meta.get("branches")).items()}
     # allow_override: a gate whose text still reads as a question for the human can be approved with the explicit
     # "not a question for me" checkbox (the server checks it, Ops.approve)
     can = {g: can_approve(t, g, plan_skip_sizes=skip, allow_override=True) for g in GATE_SECTIONS}

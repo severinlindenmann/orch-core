@@ -9,7 +9,7 @@
 </div>
 <div class="addon-page" id="addon-page">
   {% if group.widgets %}{{ w.widgets(group.widgets, group) }}
-  {% elif group.banner and group.banner.health == "never_fetched" %}{#- first fetch: one skeleton line per section, no spinner -#}
+  {% elif group.banner and group.banner.health == "never_fetched" and not group.banner.stalled %}{#- first fetch: one skeleton line per section, no spinner -#}
   <section class="card skeleton-block" aria-busy="true" aria-label="Loading {{ group.title }}"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></section>
   {% else %}<p class="empty">Nothing to show yet.</p>{% endif %}
 </div>

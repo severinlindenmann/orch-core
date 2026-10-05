@@ -91,7 +91,7 @@
     {%- elif b.health == "rate_limited" %}Rate limited{% if b.retry_after %} · resets {{ b.retry_after|local("%H:%M") }}{% endif %}
     {%- elif b.health == "auth_required" %}Login needed
     {%- elif b.health == "offline" %}Offline
-    {%- elif b.health == "never_fetched" %}Loading…
+    {%- elif b.health == "never_fetched" %}{% if b.stalled %}Not loaded yet · Refresh{% else %}Loading…{% endif %}
     {%- else %}Fetch failed{% endif %}
   {%- endset %}
   {%- if callout and b.health == "auth_required" %}{{ login_callout(b.message) }}

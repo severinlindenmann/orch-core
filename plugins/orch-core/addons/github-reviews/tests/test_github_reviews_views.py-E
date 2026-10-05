@@ -61,7 +61,7 @@ def test_repo_cards(demo):
     assert repos.layout == "grid"  # compact cards side by side, not one long KV list per repo
     harness, ingest = repos.body
     rows = _kv(harness)
-    assert harness.title == "Harness (acme-energy-data)"
+    assert harness.title == "acme-energy-data"
     assert next(w for w in harness.body if isinstance(w, KV)).layout == "stats"
     assert _chips(harness) == [Text("harness"), Badge("ok", "GitHub"), Text("branch feature/DEMO-0009-late-arriving-exports"),
                                Text("ahead 3, behind 1 vs main"), Badge("warn", "Uncommitted: 2 files"),
@@ -227,8 +227,8 @@ def test_one_ticket_several_repos(demo):
     addon = _cached(demo)
     card = next(w for w in addon.obj.widgets(PAGE, _view(demo, addon, PAGE)) if isinstance(w, Card) and w.title == "One ticket, several repos")
     table, text = card.body
-    assert [(r[0].text, r[1]) for r in table.rows] == [("DEMO-0003", "Harness (acme-energy-data) #21, ingest #5"),
-                                                       ("DEMO-0009", "Harness (acme-energy-data) #23, ingest #4")]
+    assert [(r[0].text, r[1]) for r in table.rows] == [("DEMO-0003", "acme-energy-data #21, ingest #5"),
+                                                       ("DEMO-0009", "acme-energy-data #23, ingest #4")]
     assert text == Text("Suggested merge order: DEMO-0003 → DEMO-0009")
 
 
@@ -247,8 +247,8 @@ def test_today_summary_and_items(demo):
         Tile("Checks failing", 2, "err", href="/addons/github-reviews/?state=failing", sub=SUB)]
     [card] = addon.obj.widgets("today.from_addons", _view(demo, addon, "today.from_addons"))
     rows = [(r[0].text, r[1].url if r[1] else None) for r in card.body[0].rows]
-    assert rows == [("Checks failing on Harness (acme-energy-data) #21", "/t/DEMO-0003#start-agent-DEMO-0003"),
-                    ("Review requested on Harness (acme-energy-data) #90", None)]
+    assert rows == [("Checks failing on acme-energy-data #21", "/t/DEMO-0003#start-agent-DEMO-0003"),
+                    ("Review requested on acme-energy-data #90", None)]
 
 
 def test_today_is_empty_without_data(demo):
@@ -261,7 +261,7 @@ def test_ticket_code_lists_prs_across_repos(demo):
     addon = _cached(demo)
     ticket = store.load(demo.ws, "DEMO-0009")[1]
     [table] = addon.obj.widgets("ticket.code", _view(demo, addon, "ticket.code", ticket))
-    assert [r[0].text for r in table.rows] == ["Harness (acme-energy-data) #23", "ingest #4"]
+    assert [r[0].text for r in table.rows] == ["acme-energy-data #23", "ingest #4"]
     assert table.rows[1][1] == Badge("ok", "checks passed") and table.rows[1][2] == Badge("ok", "approved")
     other = store.load(demo.ws, "DEMO-0006")[1]
     assert addon.obj.widgets("ticket.code", _view(demo, addon, "ticket.code", other)) == []
@@ -327,7 +327,7 @@ def test_filters_are_chip_rows_with_the_shown_filter_current(demo):
     assert isinstance(states, Chips) and isinstance(repos, Chips)
     assert [c.text.rsplit(" ", 1)[0] for c in states.items] == ["Needs your review", "Yours", "Checks failing", "Drafts", "All open"]
     assert [c.current for c in states.items] == [False, False, True, False, False]
-    assert [(c.text, c.current) for c in repos.items] == [("All repos", False), (("Harness (acme-energy-data)", False)), ("ingest", True)]
+    assert [(c.text, c.current) for c in repos.items] == [("All repos", False), ("acme-energy-data", False), ("ingest", True)]
     assert repos.items[2].url == "/addons/github-reviews/?state=failing&repo=ingest"
 
 

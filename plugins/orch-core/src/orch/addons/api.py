@@ -422,6 +422,13 @@ class RepoRef:
     path: Path
     default_branch: str | None = None
 
+    @property
+    def label(self) -> str:
+        """What a page calls it: the workspace's own repo reads "Harness (name)", so it is not taken for a sub-repo."""
+        if self.role != "harness":
+            return self.name
+        return "Harness" if self.name == "harness" else f"Harness ({self.name})"
+
 
 @dataclass(frozen=True)
 class TrackerRef:

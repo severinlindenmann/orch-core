@@ -192,6 +192,18 @@ def test_never_fetched_banner(client):
     assert "Loading…" in _banner(html)
 
 
+def test_never_fetched_banner_times_out(client, monkeypatch):
+    from orch.addons import runtime
+    now = [1000.0]
+    monkeypatch.setattr(runtime, "_clock", lambda: now[0])
+    runtime._waiting.clear()
+    assert "Loading…" in _banner(client.get("/addons/demo/").text)
+    now[0] += runtime.LOADING_TIMEOUT + 1
+    html = client.get("/addons/demo/").text
+    assert "Not loaded yet · Refresh" in _banner(html) and "Loading…" not in _banner(html)
+    assert "skeleton" not in html[html.index("addon-page"):]
+
+
 def test_stale_page_keeps_rows_and_shows_banner(client, ws):
     cache.write_snapshot(ws, "demo", _snap("stale", message="fetch failed: offline"))
     html = client.get("/addons/demo/").text

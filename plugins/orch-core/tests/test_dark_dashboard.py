@@ -545,8 +545,9 @@ def test_run_view_while_the_planner_splits_the_epic(dws, human):
 def test_an_empty_dark_profile_is_said_on_the_run_view_and_the_new_page(dws, human):
     c = _client(dws)
     eid = _started(c, dws, "dark")
-    note = "The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: " \
-           "<code>orch dark profile add --baseline</code>"
+    note = "The Dark profile is empty, so each command will stop for a card. Add the baselines in a terminal: " \
+           "<code>orch dark profile add --baseline</code> (orch's agent verbs) and " \
+           "<code>orch dark profile add --baseline git-basic</code> (so workers can commit)"
     assert note in c.get(f"/factory/{eid}").text and note in c.get("/new").text
     plain = _started(c, dws, "factory")
     assert "data-profile-empty" not in c.get(f"/factory/{plain}").text  # not a Dark run

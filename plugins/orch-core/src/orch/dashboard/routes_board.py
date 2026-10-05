@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 
 from orch.clock import now as clock_now
 from orch.core import events as events_mod
+from orch.core import epics as epics_mod
 from orch.core import permits, query, store
 from orch.core.constants import PRIORITIES, PRIORITY_RANK, SIZES, STATUSES, TYPES
 from orch.dashboard import launch
@@ -320,9 +321,10 @@ async def board_backlog(request: Request):
 def board(request: Request, q: str = "", type_: str = Query("", alias="type"), priority: str = "",
           label: str = "", show_done: int = 0, repo: str = "", external: str = "", view: str = "board",
           sort: str = "move", dir_: str = Query("asc", alias="dir"), group: str = "", backlog: str = "",
-          status: str = ""):
+          status: str = "", show: str = "epics"):
     from orch.dashboard import prefs
     ws = request.app.state.ws
+    show = "all" if show == "all" else "epics"  # Epics (default): an epic and its tickets in a lane are one group card
     # C: the Backlog lane starts folded; ?backlog=open|closed (and the fold's toggle, POST /board/backlog) remembers
     # the choice per user, outside the repository.
     if backlog in ("open", "closed"):
@@ -406,6 +408,16 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
             g["rows"] = sorted((c for c in g["cards"] if "move" in c and (c["status"] != "done" or show_done)),
                                key=_sort_key(sort), reverse=dir_ == "desc")
 
+    # Lane cards: one calculation of what a lane header counts (cards) and of the tickets drawn (data.epic.board_lanes).
+    grouped = view == "board" and not q and group_by == "none" and show == "epics"
+    fids = factory_data.factory_epic_ids(ws, all_entries) if grouped else set()
+    by_id = {e.id.upper(): e for e in all_entries}
+
+    def rollup_of(eid: str):
+        return epics_mod.rollup(ws, by_id[eid], all_entries, needs)
+
+    lane_cards = epic_data.board_lanes(columns, FLOW, builder.epics, grouped=grouped, rollup_of=rollup_of,
+                                       factory_ids=fids)
     moves, strip_cards = [], []
     at = clock_now()
     if view == "board" and not q:
@@ -418,7 +430,7 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
     # Switching tabs keeps the filters, show_done and the List sort (a non-default one rides along
     # on the Board URL too, so going back to List finds it again).
     sorting = [("sort", sort), ("dir", dir_)] if (sort, dir_) != ("move", "asc") else []
-    keep = filters + ([("show_done", 1)] if show_done else []) + sorting
+    keep = filters + ([("show", "all")] if show == "all" else []) + ([("show_done", 1)] if show_done else []) + sorting
 
     def list_link(column: str) -> str:
         """The List view sorted by `column`; the sorted column flips direction."""
@@ -436,6 +448,7 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
                 group_labels={k: v for k, v in epic_data.GROUP_LABELS.items() if k != "factory" or factory_on},
                 board_link="/board" + ("?" + urlencode(keep) if keep else ""),
                 list_view_link="/board?" + urlencode(filters + [("view", "list")] + keep[len(filters):]),
+                show=show, lane_cards=lane_cards, group_shown=epic_data.GROUP_SHOWN,
                 moves=moves, strip=strip_cards, strip_max=STRIP_MAX, kind_labels=decisions_data.KIND_LABELS, flow=FLOW, flow_labels=FLOW_LABELS,
                 flow_icons=FLOW_ICONS, backlog_counts=priority_counts(columns["backlog"]),
                 done_week=done_this_week(columns["done"], at) if not show_done else 0, done_days=DONE_DAYS,

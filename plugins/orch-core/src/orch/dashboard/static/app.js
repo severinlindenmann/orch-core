@@ -72,6 +72,51 @@
     const form = field.closest("form[data-autosubmit]");
     if (form && form.requestSubmit && pointerSelects.has(field)) form.requestSubmit();
   });
+  // The Epics | All tickets radios follow the same rule: a click applies at once, arrow keys wait for the Filter button.
+  document.addEventListener("click", (event) => {
+    const radio = event.target && event.target.matches && event.target.matches("form[data-autosubmit] .show-pill input");
+    if (!radio || event.detail === 0 || event.target.checked === event.target.defaultChecked) return;  // detail 0: keyboard
+    const form = event.target.closest("form[data-autosubmit]");
+    if (form && form.requestSubmit) form.requestSubmit();
+  });
+
+  // ---------- Board group cards (Epics view) ----------
+  // A group (data-group="<epic>:<lane>") folds its tickets. Its open/closed state (and "show all") is kept per group
+  // in this tab (sessionStorage), because a live refresh or a search swaps #board-results. With no stored choice the
+  // server's state stands (open while a ticket in it needs you); with storage off it always stands.
+  const GROUP_KEY = "orch-board-groups";
+  const groupState = () => { try { return JSON.parse(window.sessionStorage.getItem(GROUP_KEY) || "{}") || {}; } catch (e) { return {}; } };
+  const groupSave = (id, patch) => {
+    const all = groupState();
+    all[id] = { ...all[id], ...patch };
+    try { window.sessionStorage.setItem(GROUP_KEY, JSON.stringify(all)); } catch (e) { /* not remembered */ }
+  };
+  const groupSet = (btn, on) => {
+    btn.setAttribute("aria-expanded", on ? "true" : "false");
+    const target = document.getElementById(btn.getAttribute("aria-controls"));
+    if (target) target.hidden = !on;
+    const text = on ? btn.dataset.hide : btn.dataset.show;
+    const label = btn.matches("[data-group-toggle]") ? btn.querySelector("span") : btn;
+    if (label && text) label.textContent = text;
+  };
+  const groupRestore = (root) => {
+    const saved = groupState();
+    root.querySelectorAll("[data-group]").forEach((g) => {
+      const s = saved[g.dataset.group];
+      if (!s) return;
+      const t = g.querySelector("[data-group-toggle]");
+      const m = g.querySelector("[data-group-more]");
+      if (t && typeof s.open === "boolean") groupSet(t, s.open);
+      if (m && typeof s.all === "boolean") groupSet(m, s.all);
+    });
+  };
+  document.addEventListener("click", (event) => {
+    const btn = event.target && event.target.closest && event.target.closest("[data-group-toggle], [data-group-more]");
+    if (!btn) return;
+    const on = btn.getAttribute("aria-expanded") !== "true";
+    groupSet(btn, on);
+    groupSave(btn.closest("[data-group]").dataset.group, btn.matches("[data-group-toggle]") ? { open: on } : { all: on });
+  });
 
   // ---------- Live search (D) ----------
   // A search box in a form marked data-live-search="<selectors>" filters as you type: LIVE_MS after the last key it
@@ -114,6 +159,7 @@
           }
           now.replaceWith(next);
         });
+        groupRestore(document);
         if (focused && document.activeElement !== input) {
           input.focus();
           try { input.setSelectionRange(start, end); } catch (e) { /* type=search may refuse a range */ }
@@ -929,6 +975,7 @@
       });
     });
     showKeptReceipts();
+    groupRestore(root);
     // A palette link from another page (/#d-<card>) lands on the card with its primary focused, never armed.
     const target = window.location && window.location.hash.startsWith("#d-") && document.getElementById(window.location.hash.slice(1));
     if (target && target.matches("[data-decision]")) {

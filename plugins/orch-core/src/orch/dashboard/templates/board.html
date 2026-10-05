@@ -33,6 +33,10 @@
     <select name="group">
       {% for key, text in group_labels.items() %}<option value="{{ key }}" {{ 'selected' if key == group_by }}>{{ text }}</option>{% endfor %}
     </select></label>
+  {% if view == "board" and group_by == "none" %}
+  <fieldset class="filter-field show-by"><legend class="filter-label">Show</legend>
+    <span class="show-pills"><label class="show-pill"><input type="radio" name="show" value="epics"{{ ' checked' if show == 'epics' }}><span>Epics</span></label><label class="show-pill"><input type="radio" name="show" value="all"{{ ' checked' if show == 'all' }}><span>All tickets</span></label></span></fieldset>
+  {% elif show == "all" %}<input type="hidden" name="show" value="all">{% endif %}
   <details class="more-filters"{% if more_set %} open{% endif %}>
     <summary class="btn btn-quiet">More filters{% if more_set %} <span class="badge" aria-label="{{ more_set }} set">{{ more_set }}</span>{% endif %}</summary>
     <div class="more-filters-body">
@@ -60,11 +64,12 @@
 {% endif %}
 
 {#- M: the agents' flow. A lane with cards, or an empty lane as a narrow rail (still a drop target). -#}
-{% macro flow_lane(status, cards, suffix="", heading="h2", label_prefix="") %}
-{% if cards %}
+{% macro flow_lane(status, cards, suffix="", heading="h2", label_prefix="", lane=none) %}
+{% if (lane["entries"] if lane else cards) %}
 <section class="col lane flow-lane" id="col-{{ status }}{{ suffix }}" data-status="{{ status }}" aria-label="{{ label_prefix }}{{ flow_labels[status] }}">
-  <{{ heading }} class="col-h col-{{ flow_icons[status] }}">{{ ui.icon(flow_icons[status]) }} {{ flow_labels[status] }} <span class="count">{{ cards|length }}</span></{{ heading }}>
-  {% for c in cards %}{{ tc.board_card(c) }}{% endfor %}
+  <{{ heading }} class="col-h col-{{ flow_icons[status] }}">{{ ui.icon(flow_icons[status]) }} {{ flow_labels[status] }} <span class="count">{{ lane.cards if lane else cards|length }}</span>{% if lane and lane.tickets != lane.cards %} <span class="count-sub">{{ lane.tickets }} {{ "ticket" if lane.tickets == 1 else "tickets" }}</span>{% endif %}</{{ heading }}>
+  {% if lane %}{% for it in lane["entries"] %}{% if it.group %}{{ tc.group_card(it.group, group_shown) }}{% else %}{{ tc.board_card(it.card) }}{% endif %}{% endfor %}
+  {% else %}{% for c in cards %}{{ tc.board_card(c) }}{% endfor %}{% endif %}
 </section>
 {% else %}{{ fl.rail(status, flow_labels[status], flow_icons[status], suffix, label_prefix) }}{% endif %}
 {% endmacro %}
@@ -168,7 +173,7 @@
 {% endfor %}
 {% else %}
 <div class="flow" role="group" aria-label="Agent flow">
-  {% for status in flow %}{{ flow_lane(status, columns[status]) }}{% endfor %}
+  {% for status in flow %}{{ flow_lane(status, columns[status], lane=lane_cards[status]) }}{% endfor %}
   {{ done_lane(columns["done"], done_week) }}
 </div>
 {{ backlog_lane(columns["backlog"], backlog_counts, "Backlog") }}

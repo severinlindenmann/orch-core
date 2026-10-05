@@ -62,6 +62,9 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
     despite = despite_open_question in ("1", "on", "true")
     if start in ("factory", "dark"):  # the epic page's Start radios (None / AI Factory / Dark)
         factory, dark = "1", ("1" if start == "dark" else "")  # the radio decides, nothing else posted
+    if dark not in ("1", "on", "true") and (close in ("1", "on", "true") or rollback in ("1", "on", "true")):
+        return back(safe_next(next_url) or _ticket_url(request, ref),
+                    err="only a Dark AI Factory closes the epic by itself or signs a rollback: nothing was signed")
     if dark in ("1", "on", "true") and confirm_dark.strip() != "dark":
         return back(safe_next(next_url) or _ticket_url(request, ref),
                     err="type dark to start a Dark AI Factory: nothing was signed")

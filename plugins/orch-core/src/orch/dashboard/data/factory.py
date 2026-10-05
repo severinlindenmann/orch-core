@@ -343,6 +343,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
+            "all_done": epic.status == "open" and bool(kids) and all(t.status == "done" for _, t in kids),
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],

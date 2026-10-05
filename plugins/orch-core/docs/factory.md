@@ -1105,11 +1105,15 @@ acts: the factory and Dark switched on, the ledger whole, the epic open, its cha
 budget not used up), Dark, started from the dashboard and signed with `close`; the Ready report holds (every child in
 testing or done, every criterion of every child in testing cites evidence, every status backed by orch's records);
 every release stage the charter signs is proven by its check and not out of date, and no sensitive path stopped it;
-no permission card of the epic is open; the epic has no Stopped reason; and the coverage check holds (when this orch
-has one: until then there is no coverage condition). If any condition fails it does not close, and the run view and the
-Ready card say which: "Not closed by itself: ..." for a condition only you can change (then Accept is offered as for
-any epic), or "It closes by itself, in place of your verdict, when: ..." with the conditions the runner still gets
-past by itself (a release stage to run), without an Accept button.
+no permission card of the epic is open; the epic has no Stopped reason; every criterion meets the close rules for
+evidence (below); and the coverage check holds. About coverage, plainly: this orch has no coverage check of its own
+yet; until `factory_report.coverage_ok` exists there is no coverage condition, and once it does only an answer of
+exactly `True` counts (False, an unknown such as None, anything else or an error keeps the epic open). No confirm text
+claims coverage is checked. If any condition fails it does not close, and the run view and the Ready card say which:
+"Not closed by itself: ..." for a condition only you can change, or "Your charter closes it by itself, in place of
+your verdict, when: ..." with the conditions the runner still gets past by itself (a release stage to run). Accept is
+always there beside it: you can give the verdict yourself at any time. A stage that cannot start, a production held
+by another epic or a window that cannot be read is never shown as something the runner gets past by itself.
 
 **The close rules for evidence.** The Ready report counts a criterion as cited when a Verification line names it and
 says something; you read that before you Accept. A close nobody reads needs more, so closing by itself also requires,
@@ -1135,12 +1139,21 @@ it changed. It is signed into the ledger as your dashboard's human actor with `v
 the same (plus an event `verdict.auto` naming the children and the hash), so the ledger, `orch check` (an info
 finding "charter-verdict": a decision you delegated in that charter, not one you gave) and the run view ("Closed by
 itself under your charter", with the time, a summary of what was proven and a Reopen button) all show it was the
-charter's. An entry marked so under a charter that does not sign `close` is a warning in `orch check`.
+charter's. The signed verdict entries and `verdict.auto` name the charter's delegation id, and `orch check` judges
+the close against that charter (not the epic's current one) and the runner's close record: a verdict marked so without
+a charter that signs `close`, or without the record, is a warning ("charter-verdict-unbacked"). The children's
+approvals an agent gave under that delegation stay info findings ("delegated-approval"), not unsigned decisions, after
+the delegation ended.
 
 **Once.** Before it acts the runner creates an intent record for that charter exclusively (in the guarded release
 records, `close.<delegation>.intent`), then an outcome record. So it closes at most once per charter: never again after
 you reopen it, and a crash between the intent and the verdict leaves the verdict to you. Approving the epic again
 signs a new charter.
+
+**Reopen.** The run view's Reopen (yours, with a reason) first pauses the epic's delegation (signed), so the runner
+releases, merges and starts nothing more under that charter, then reopens the epic; its children stay done. With every
+child done there is no Ready report and no epic verdict to give, so the run view says so and offers "Close the epic"
+(the signed close, with your reason); to send work back instead, add a child and approve the epic again.
 
 **What it cannot tell.** The evidence is what the agents wrote, and a release check proves what it checks; closing by
 itself trusts both, as your Accept would have. Same-user trust holds as for the other release records: code an agent

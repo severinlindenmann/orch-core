@@ -67,8 +67,9 @@ def release_retry(request: Request, ref: str, stage: Annotated[str, Form()] = ""
 @router.post("/factory/{ref}/reopen")
 def reopen(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
     """Reopen an epic the runner closed by itself under its charter: the existing reopen (Ops.reopen), yours only
-    (it refuses an agent and any process under an agent harness). Its children stay done."""
-    from orch.core import factory_close, store
+    (it refuses an agent and any process under an agent harness). It first pauses the epic's delegation (signed), so
+    the runner releases, merges and starts nothing more under that charter after "not done". Its children stay done."""
+    from orch.core import epics, factory_close, store
     from orch.core.ops import Ops
     ws = request.app.state.ws
     try:
@@ -78,8 +79,38 @@ def reopen(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
     url = f"/factory/{epic.id}"
     try:
         if not factory_close.closed_by_charter(ws, epic):
-            raise UsageError(f"{epic.id} was not closed by its charter: reopen it with orch reopen in a terminal")
+            raise UsageError(f"{epic.id} was not closed by its charter: there is nothing to reopen here")
+        if not " ".join((reason or "").split()):
+            raise UsageError("reopening a ticket needs a reason")
+        d = epics.delegation(ws, epic)
+        if d and not d["paused"]:
+            Ops(ws, HUMAN).epic_pause(epic.id)  # stop the run first: nothing more happens under this charter
         Ops(ws, HUMAN).reopen(epic.id, reason)
     except OrchError as e:
         return back(url, err=error_text(e))
-    return back(url, msg=f"reopened {epic.id}")
+    return back(url, msg=f"reopened {epic.id} and stopped its run")
+
+
+@router.post("/factory/{ref}/close")
+def close(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
+    """Close an open factory epic whose children are all done (after a Reopen, there is no Ready report and no epic
+    verdict to give): the existing close (Ops.close), yours only, signed, with your reason."""
+    from orch.core import epics, permits, store
+    from orch.core.ops import Ops
+    ws = request.app.state.ws
+    try:
+        epic = store.read_ticket(store.resolve(ws, ref).path)
+    except OrchError as e:
+        return back("/factory", err=error_text(e))
+    url = f"/factory/{epic.id}"
+    try:
+        kids = epics.children(ws, epic.id)
+        if not permits.enabled(ws) or permits.factory_delegation(ws, epic) is None:
+            raise UsageError(f"{epic.id} is not an AI Factory epic, or AI Factory is switched off")
+        if epic.status != "open" or not kids or any(k.status != "done" for k in kids):
+            raise UsageError("only an open epic whose children are all done is closed here; otherwise give the "
+                             "verdict from the Ready report")
+        Ops(ws, HUMAN).close(epic.id, reason)
+    except OrchError as e:
+        return back(url, err=error_text(e))
+    return back(url, msg=f"closed {epic.id}")

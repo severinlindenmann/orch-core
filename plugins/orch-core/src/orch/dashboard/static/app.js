@@ -485,6 +485,16 @@
       + closeText(form);
     else delete form.dataset.inlineConfirm;
   };
+  // A choice that hides a field also clears it, so a hidden box is never sent ticked (the server refuses it anyway):
+  // the rollback outside Production, the rollback and the close outside a Dark start.
+  document.addEventListener("change", (event) => {
+    const t = event.target;
+    const form = t && t.closest && t.closest("form");
+    if (!form || !form.querySelectorAll || !["mode", "start", "release"].includes(t.name)) return;
+    form.querySelectorAll("input[name=rollback], input[name=close]").forEach((box) => {
+      if (t.name === "release" ? box.name === "rollback" && t.value !== "prod" : t.value !== "dark") box.checked = false;
+    });
+  }, true);
   document.addEventListener("change", (event) => {
     const form = ["mode", "release", "rollback", "close"].includes(event.target.name) && event.target.closest
       && event.target.closest("form[data-new-form]");

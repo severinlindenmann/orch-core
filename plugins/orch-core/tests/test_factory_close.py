@@ -83,7 +83,7 @@ def test_it_closes_once_through_the_human_verdict_path_marked_as_the_charter(fws
         assert last["kind"] == "verdict" and last["verdict"] == "done" and last["via"] == fc.CHARTER_VIA
         assert factory_report.finished(fws, _epic(fws, tid), signed, read_events(fws)) == "done"
     auto = [e for e in read_events(fws) if e.kind == "verdict.auto"]
-    assert len(auto) == 1 and auto[0].data == {"children": [c], "seen": rep["seen"]} and auto[0].via == "dark-charter"
+    assert len(auto) == 1 and auto[0].data == {"children": [c], "seen": rep["seen"], "delegation": d["id"]} and auto[0].via == "dark-charter"
     assert fc.closed_by_charter(fws, _epic(fws, eid)) and fc.record(fws, eid, d["id"])["closed"] is True
     assert fc.tick(fws, human) == [] and len([e for e in read_events(fws) if e.kind == "verdict.auto"]) == 1
 
@@ -109,9 +109,12 @@ def test_it_waits_for_every_signed_release_stage(fws, closing, human, remote):
     assert _epic(fws, eid).status == "open"
 
 
-@pytest.mark.parametrize("what", ["charter", "dark-off", "factory-off", "ledger", "unarmed", "paused", "not-ready",
-                                  "request", "stopped", "coverage", "coverage-error", "once"])
-def test_each_condition_alone_keeps_it_open(fws, closing, ready, fa, fh, human, monkeypatch, what):
+@pytest.mark.parametrize("what,code", [
+    ("charter", "charter"), ("dark-off", "off"), ("factory-off", None), ("ledger", "ledger"), ("unarmed", "unarmed"),
+    ("paused", "charter"), ("edited", "charter"), ("not-ready", "ready"), ("request", "request"),
+    ("stopped", "stopped"), ("coverage", "coverage"), ("coverage-none", "coverage"), ("coverage-error", "coverage"),
+    ("once", "once"), ("not-open", "status"), ("evidence", "evidence")])
+def test_each_condition_alone_keeps_it_open(fws, closing, ready, fa, fh, human, monkeypatch, what, code):
     from orch.core.ops import Ops
     if what == "charter":
         eid, _, _ = ready(release="none")
@@ -130,6 +133,8 @@ def test_each_condition_alone_keeps_it_open(fws, closing, ready, fa, fh, human, 
         monkeypatch.setattr(ledger, "head_ok", lambda: False)
     elif what == "paused":
         fh.epic_pause(eid)
+    elif what == "edited":
+        fa.set_section(eid, "Requirements", "r, and something new")
     elif what == "not-ready":
         late = fa.new("late child", epic=eid)
         _refine(fa, late.id)
@@ -137,16 +142,47 @@ def test_each_condition_alone_keeps_it_open(fws, closing, ready, fa, fh, human, 
         permits.request(fws, fa.actor, _epic(fws, c), "make other", source="agent")
     elif what == "coverage":
         monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: False, raising=False)
+    elif what == "coverage-none":  # an unknown (the epic names no file) is not ok
+        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: None, raising=False)
     elif what == "coverage-error":
         monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: 1 / 0, raising=False)
     elif what == "once":
         fr.fs._create(fc._marker(fws, eid, d["id"], "intent"), {"at": "x"})
-    assert fc.tick(fws, human) == []
-    assert _epic(fws, eid).status == "open" and not [e for e in read_events(fws) if e.kind == "verdict.auto"]
-    if what not in ("factory-off",):
+    elif what == "not-open":  # an epic that is not open (here: done, by your own verdict) is never closed again
+        rep = factory_report.ready(fws, _epic(fws, eid))
+        fh.verdict(eid, "done", expected_hash=rep["seen"])
+    elif what == "evidence":
+        fa.set_section(c, "Verification", "- AC1: looks right to me")
+    assert fc.tick(fws, human) == [] and not [e for e in read_events(fws) if e.kind == "verdict.auto"]
+    assert _epic(fws, eid).status == ("done" if what == "not-open" else "open")
+    if code is not None:
         e = _epic(fws, eid)
-        bl = fc.blockers(fws, e, permits.factory_delegation(fws, e))
-        assert bl, what
+        assert [b["code"] for b in fc.blockers(fws, e, permits.factory_delegation(fws, e))] == [code], what
+
+
+@pytest.mark.parametrize("what", ["stale", "sensitive", "cleared", "blocked"])
+def test_each_release_condition_alone_keeps_it_open(fws, closing, human, recipe, bin_dir, what):
+    from test_factory_release import _branch
+    eid, (c,), _ = closing(release="dev", recipe=recipe,
+                           **({"files": {".github/x.yml": "x\n"}} if what == "sensitive" else {}))
+    fake = Fake()
+    if what == "stale":
+        fr.tick(fws, human, fake)
+        _branch(fws.root, f"feat/{c.lower()}-work", {"src/more.py": "x\n"}, start=f"feat/{c.lower()}-work")
+        fr.tick(fws, human, fake)
+    elif what == "sensitive":
+        fr.tick(fws, human, fake)
+    elif what == "cleared":
+        fr.clear_recipe(fws, human)
+    elif what == "blocked":
+        (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+        fr.tick(fws, human, fake)
+    assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"
+    bl = _view(fws, eid)["blockers"]
+    assert bl and not any(b["pending"] for b in bl if b["code"] != "release") and not _view(fws, eid)["pending"], bl
+    want = {"stale": "Release out of date", "sensitive": "Sensitive path touched", "cleared": "recipe cannot be read",
+            "blocked": "Release could not start"}[what]
+    assert any(want in b["text"] for b in bl), bl
 
 
 def test_the_coverage_shim_counts_once_coverage_exists(fws, closing, human, monkeypatch):
@@ -181,6 +217,31 @@ def test_a_crash_after_the_intent_never_closes_twice(fws, closing, human, monkey
     assert "once" in _codes(fws, eid)
 
 
+def test_a_crash_after_the_children_closed_leaves_the_epic_to_the_human(fws, closing, human, monkeypatch):
+    """The real verdict path: the children are closed (all of them, under their locks), then the dashboard dies
+    before the epic's own verdict is written."""
+    from orch.core.ops import Ops
+    eid, (c0, c1), _ = closing(kids=2)
+    real = Ops._close_children
+
+    def then_die(self, *a, **k):
+        real(self, *a, **k)
+        raise KeyboardInterrupt
+    with monkeypatch.context() as m:
+        m.setattr(Ops, "_close_children", then_die)
+        with pytest.raises(KeyboardInterrupt):
+            fc.tick(fws, human)
+    fr.release_lock(fws)
+    assert _epic(fws, c0).status == _epic(fws, c1).status == "done" and _epic(fws, eid).status == "open"
+    assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"  # never a second try
+    assert fc.record(fws, eid, permits.factory_delegation(fws, _epic(fws, eid))["id"]) is None
+    pytest.importorskip("fastapi")
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "Every child is done, so there is no Ready report" in html and "Close the epic" in html
+    r = _client(fws).post(f"/factory/{eid}/close", data={"reason": "checked by hand"}, follow_redirects=False)
+    assert "err=" not in r.headers["location"] and _epic(fws, eid).status == "done"
+
+
 def test_a_change_between_ready_and_the_verdict_refuses_it_and_records_why(fws, closing, human, monkeypatch, fa):
     eid, (c,), _ = closing()
     real = factory_report.ready
@@ -211,13 +272,34 @@ def test_orch_check_shows_the_close_as_a_delegated_decision(fws, closing, human)
     eid, (c,), _ = closing()
     fc.tick(fws, human)
     found = run_checks(fws, emit_events=False)
-    mine = [f for f in found if f.ticket in (eid, c)]
-    assert {f.code for f in mine if f.code == "charter-verdict"} == {"charter-verdict"}
-    assert {f.ticket for f in mine if f.code == "charter-verdict"} == {eid, c}
-    assert all(f.level == "info" for f in mine if f.code == "charter-verdict")
-    assert not [f for f in mine if f.code in ("unverified-verdict", "charter-verdict-unbacked")
-                or (f.code == "unsigned-decision" and "done verdict" in f.message)]
-    assert "delegated in that charter" in next(f.message for f in mine if f.code == "charter-verdict")
+    mine = sorted((f.level, f.code, f.ticket) for f in found if f.ticket in (eid, c))
+    assert mine == sorted([("info", "charter-verdict", eid), ("info", "charter-verdict", c),
+                           ("info", "delegated-approval", c), ("info", "delegated-approval", c)])
+    assert "delegated in that charter" in next(f.message for f in found if f.code == "charter-verdict")
+    signed = ledger.entries(fws)
+    did = permits.factory_delegation(fws, _epic(fws, eid))["id"]
+    assert all(ledger.status_chain(fws, t, signed)[-1]["delegation"] == did for t in (eid, c))
+    assert [e.data["delegation"] for e in read_events(fws) if e.kind == "verdict.auto"] == [did]
+
+
+def test_orch_check_judges_the_close_against_the_charter_that_gave_it(fws, closing, human, fh):
+    """Reopened and approved again without close: the earlier close is still the earlier charter's, info; a verdict
+    entry naming a charter that does not sign close is a warning."""
+    from orch.core.check import run_checks
+    from orch.core.ops import Ops
+    eid, (c,), d = closing()
+    fc.tick(fws, human)
+    Ops(fws, human).epic_pause(eid)
+    Ops(fws, human).reopen(eid, "not done")
+    fh.approve(eid, "requirements", delegate={"factory": True, "dark": True},
+               expected_hash=epics.charter(fws, _epic(fws, eid))["content_hash"])
+    assert "close" not in permits.factory_delegation(fws, _epic(fws, eid))
+    codes = {(f.code, f.ticket) for f in run_checks(fws, emit_events=False)}
+    assert ("charter-verdict", c) in codes and ("charter-verdict-unbacked", c) not in codes
+    # the close record of that charter is gone: the child's charter verdict is no longer backed
+    fc._marker(fws, eid, d["id"], "outcome").unlink()
+    codes = {(f.code, f.ticket) for f in run_checks(fws, emit_events=False)}
+    assert ("charter-verdict-unbacked", c) in codes
 
 
 def test_the_close_records_are_guarded(ws):
@@ -245,8 +327,9 @@ def test_ready_card_says_it_closes_by_itself_instead_of_accept(fws, closing, hum
     html = _client(fws).get(f"/factory/{eid}").text
     card = html[html.index(f'data-ready="{eid}"'):]
     card = card[:card.index("</article>")]
-    assert "data-auto-ready" in card and "It closes by itself, in place of your verdict, when:" in card
-    assert "the merge stage is proven by its check" in card and "Accept the epic" not in card
+    assert "data-auto-ready" in card and "Your charter closes it by itself, in place of your verdict, when:" in card
+    assert "the merge stage is proven by its check" in card and "Accept the epic" in card  # Accept stays yours
+    assert "nothing is executed or verified by the factory" in card
     assert "Closing by itself" in html and "It closes by itself when everything is proven" in html
 
 
@@ -272,11 +355,15 @@ def test_run_view_after_the_close_and_the_humans_reopen(fws, closing, human):
     assert r.status_code == 403 and _epic(fws, eid).status == "done"
     r = cl.post(f"/factory/{eid}/reopen", data={"reason": ""}, follow_redirects=False)
     assert "err=" in r.headers["location"] and _epic(fws, eid).status == "done"
+    assert "stop its run (the delegation is paused)" in html
     r = cl.post(f"/factory/{eid}/reopen", data={"reason": "not done yet"}, follow_redirects=False)
     assert "err=" not in r.headers["location"] and _epic(fws, eid).status == "open"
-    assert fc.tick(fws, human) == [] and "once" in _codes(fws, eid)  # never again by itself after a Reopen
+    assert epics.delegation(fws, _epic(fws, eid))["paused"]  # the runner does nothing more under that charter
+    assert fc.tick(fws, human) == [] and _codes(fws, eid) == ["charter"]  # paused: never again by itself
     html = cl.get(f"/factory/{eid}").text
-    assert "Not closed by itself: it closed, or began to close, by itself once already" in html
+    assert "Not closed by itself: the charter is paused" in html
+    d = epics.delegation(fws, _epic(fws, eid))  # and the once-marker of that charter holds as well
+    assert __import__("os").path.lexists(fc._marker(fws, eid, d["id"], "intent"))
 
 
 def test_reopen_route_refuses_an_epic_the_charter_did_not_close(fws, ready, human, monkeypatch):
@@ -306,13 +393,19 @@ def test_start_forms_sign_close_only_in_dark_mode_and_say_what_it_means(fws, fa,
     r = _new(c, close="1")
     eid = r.headers["location"].split("/factory/")[1].split("?")[0]
     assert epics.delegation(fws, _epic(fws, eid))["close"] is True
-    r = _new(c, mode="factory", close="1")
-    eid = r.headers["location"].split("/factory/")[1].split("?")[0]
-    assert "close" not in epics.delegation(fws, _epic(fws, eid))
+    n = len(list(store.scan(fws)))
+    for over in ({"mode": "factory", "close": "1"}, {"mode": "ticket", "close": "1"},
+                 {"mode": "factory", "rollback": "1"}):
+        r = _new(c, **over)
+        assert r.status_code == 422 and "Only a Dark AI Factory" in r.text and len(list(store.scan(fws))) == n
     e = fa.new("Epic", type="epic")
     _refine(fa, e.id, plan=None)
     assert "data-close-choice" in c.get(f"/t/{e.id}").text
     seen = epics.charter(fws, _epic(fws, e.id))["content_hash"]
+    r = c.post(f"/t/{e.id}/approve", data={"gate": "requirements", "seen": seen, "start": "factory", "close": "1"},
+               follow_redirects=False)
+    assert "only a Dark AI Factory" in r.headers["location"].replace("+", " ") and epics.delegation(
+        fws, _epic(fws, e.id)) is None
     r = c.post(f"/t/{e.id}/approve", data={"gate": "requirements", "seen": seen, "start": "dark",
                                            "confirm_dark": "dark", "close": "1"}, follow_redirects=False)
     assert "err=" not in r.headers["location"] and epics.delegation(fws, _epic(fws, e.id))["close"] is True

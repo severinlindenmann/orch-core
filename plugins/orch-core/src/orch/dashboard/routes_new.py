@@ -111,6 +111,10 @@ def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: 
     from orch.textsafe import decodes_to_hidden
     if mode not in MODES:
         return "Unknown mode: nothing was created."
+    if mode != "dark" and close:
+        return "Only a Dark AI Factory closes the epic by itself: nothing was created."
+    if mode != "dark" and rollback:
+        return "Only a Dark AI Factory signs a release and its rollback: nothing was created."
     if mode == "ticket":
         return None
     if not permits.enabled(ws):
@@ -183,8 +187,9 @@ def create(
     values = {"title": title, "type": "epic" if factory else type_, "size": size, "priority": priority,
               "external": external, "ask": ask, "mode": mode, "done_when": done_when or DONE_WHEN, "release": release}
     release = release if mode == "dark" else ""  # the field shows only in Dark mode; another mode signs no release
-    roll = mode == "dark" and rollback in ("1", "on", "true")
-    shut = mode == "dark" and close in ("1", "on", "true")  # the auto-close: shown only in Dark mode
+    # a rollback or a close posted outside Dark mode is refused, never silently dropped (_mode_problem)
+    roll = rollback in ("1", "on", "true")
+    shut = close in ("1", "on", "true")  # the auto-close: shown only in Dark mode
     problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release, roll, confirm_production, shut)
     if problem:
         return _form(request, values, problem, 422)

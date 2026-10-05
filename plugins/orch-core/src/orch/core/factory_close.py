@@ -31,13 +31,14 @@ MESSAGE = "closed by itself under the Dark charter"
 def epic_coverage_ok(ws, epic) -> bool:
     """factory_report.coverage_ok(ws, epic) when this orch has it, else True. The coverage check (whether the
     children cover the epic's requirements) is built on its own; until it is part of factory_report there is no
-    coverage condition to hold, and as soon as it is, its answer counts. An error in it is a no (fail closed)."""
+    coverage condition to hold, and as soon as it is, its answer counts: only `True` is ok. Anything else (False, an
+    unknown such as None when the epic names no file, any other value, an error) is not ok (fail closed)."""
     from orch.core import factory_report
     check = getattr(factory_report, "coverage_ok", None)
     if check is None:
         return True
     try:
-        return bool(check(ws, epic))
+        return check(ws, epic) is True
     except Exception:
         return False
 
@@ -77,12 +78,12 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
     import os
     from orch.core import factory_report, ledger, permits
     try:
+        if not ledger.head_ok():  # a cut ledger backs no charter at all: said first
+            return [_b("ledger", "the approval ledger on this machine is cut")]
         if d is None or not d.get("close"):
             return [_b("charter", "the charter does not sign closing by itself")]
         if not permits.enabled(ws) or not permits.dark_on(ws):
             return [_b("off", "AI Factory or its Dark switch is off")]
-        if not ledger.head_ok():
-            return [_b("ledger", "the approval ledger on this machine is cut")]
         if epic.status != "open":
             return [_b("status", f"the epic is {epic.status}")]
         if not d.get("dark") or not d["active"]:
@@ -201,7 +202,7 @@ def close_once(ws, epic_id: str, did: str) -> str | None:
             return None  # another round or dashboard took it: never twice
         stages = [s["name"] for s in (fr.status(ws, epic, d) or {}).get("stages", [])]
         try:
-            Ops(ws, ACTOR).verdict(epic.id, "done", MESSAGE, expected_hash=rep["seen"])
+            Ops(ws, ACTOR).verdict(epic.id, "done", MESSAGE, expected_hash=rep["seen"], delegation=did)
         except OrchError as e:
             fs._create(_marker(ws, epic.id, did, "outcome"),
                        {"closed": False, "at": clock.stamp_s(), "why": e.message[:300]})
@@ -209,7 +210,7 @@ def close_once(ws, epic_id: str, did: str) -> str | None:
         fs._create(_marker(ws, epic.id, did, "outcome"),
                    {"closed": True, "at": clock.stamp_s(), "children": kids, "proven": rep["proven"],
                     "total": rep["total"], "stages": stages})
-        append_event(ws, epic.id, "verdict.auto", ACTOR, {"children": kids, "seen": rep["seen"]})
+        append_event(ws, epic.id, "verdict.auto", ACTOR, {"children": kids, "seen": rep["seen"], "delegation": did})
         return f"{epic.id}: closed by itself under its charter with {', '.join(kids)}"
     finally:
         fr.release_lock(ws)

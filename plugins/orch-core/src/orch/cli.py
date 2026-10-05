@@ -1259,7 +1259,7 @@ def update_cmd(check_only: Annotated[bool, typer.Option("--check", help="Only sa
 @app.command()
 def serve(
     host: Annotated[Optional[str], typer.Option("--host", help="Bind address (default from config).")] = None,
-    port: Annotated[Optional[int], typer.Option("--port", help="Port (default from config).")] = None,
+    port: Annotated[Optional[int], typer.Option("--port", help="Exact port; fails if taken (default: remembered, configured, next free).")] = None,
     lan: Annotated[bool, typer.Option("--lan", help="Listen on all interfaces, e.g. for your phone.")] = False,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser.")] = False,
     no_update: Annotated[bool, typer.Option("--no-update", help="Do not offer to update orch and its addons.")] = False,
@@ -1284,7 +1284,20 @@ def serve(
     ws = _ws()
     cfg = ws.config["dashboard"]
     bind = host or ("0.0.0.0" if lan else cfg["host"])
-    bind_port = port or cfg["port"]
+    from orch.dashboard import switcher
+    if port is not None and not 1 <= port <= 65535:
+        raise UsageError(f"--port {port} is not a port", hint="use a number from 1 to 65535")
+    remembered = None if port is not None else switcher.remembered_port(ws)
+    ports = [port] if port is not None else switcher.candidate_ports(remembered, cfg["port"])
+    try:
+        sock, bind_port = switcher.listen_first_free(bind, ports)
+    except OSError as e:
+        shown_bind = f"[{bind}]" if ":" in bind else bind
+        raise UsageError(f"could not listen on {shown_bind}:{ports[0]}" + ("" if port is not None else f" or the next {len(ports) - 1} ports"),
+                         hint="--port N picks one; the port may be in use") from e
+    if port is None and bind_port != (remembered or cfg["port"]):
+        was = f"its remembered port {remembered}" if remembered else f"the configured port {cfg['port']}"
+        typer.echo(f"{was} is taken; using {bind_port}")
     token = secrets.token_urlsafe(24)
     shown = _lan_ip() if bind == "0.0.0.0" else bind
     url = f"http://{shown}:{bind_port}/?token={token}"
@@ -1296,7 +1309,8 @@ def serve(
             webbrowser.open(url)
         except Exception:
             pass  # headless machine: the printed link is enough
-    uvicorn.run(create_app(ws, token, port=bind_port), host=bind, port=bind_port, log_level="warning")
+    server = uvicorn.Server(uvicorn.Config(create_app(ws, token, port=bind_port), host=bind, port=bind_port, log_level="warning"))
+    server.run(sockets=[sock])
 
 
 # -- ticket schema (tools such as phone apps) --------------------------------------------

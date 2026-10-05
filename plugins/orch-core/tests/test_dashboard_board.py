@@ -117,7 +117,12 @@ def test_serve_wires_uvicorn(ws_root, monkeypatch, capsys):
     monkeypatch.setattr(actor, "is_interactive", lambda: True)
     from orch.cli import run
     seen = {}
-    monkeypatch.setattr(uvicorn, "run", lambda app, host, port, log_level: seen.update(host=host, port=port))
+
+    def fake_run(self, sockets=None):  # the bound socket is handed over, not host and port
+        seen.update(host=self.config.host, port=sockets[0].getsockname()[1])
+        sockets[0].close()
+
+    monkeypatch.setattr(uvicorn.Server, "run", fake_run)
     assert run(["serve", "--no-open", "--port", "9999"]) == 0
     assert seen == {"host": "127.0.0.1", "port": 9999}
     assert "http://127.0.0.1:9999/?token=" in capsys.readouterr().out

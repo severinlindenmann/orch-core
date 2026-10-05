@@ -913,15 +913,25 @@ def artifact_scan(ref: str, json_out: JsonOpt = False) -> None:
 # -- maintenance -----------------------------------------------------------------------
 
 @app.command()
-def check(json_out: JsonOpt = False) -> None:
+def check(
+    json_out: JsonOpt = False,
+    record: Annotated[bool, typer.Option("--record", help="Also write the gate.invalidated events for gates whose "
+                                         "text changed after approval. Without it, check writes nothing.")] = False,
+) -> None:
     """Validate config, tickets, gates, human actions and commits. Exit 5 on errors.
+
+    Read-only: it reports a changed approved gate but writes no event (the tracked events.jsonl stays clean). The
+    gate.invalidated event is recorded by the next command that changes that ticket, or by `orch check --record`.
 
     Human approvals, answers and verdicts are checked against orchestrator/.state/events.jsonl and against this
     machine's approval ledger (in the orch config dir). A clone without the same .state, or another machine, reports
     unverified-* and unsigned-decision findings for decisions made elsewhere: review them with `orch ledger adopt`."""
-    from orch.core.check import run_checks
+    from orch.core.check import record_invalidations, run_checks
     ws = _ws()
-    findings = run_checks(ws) + _uncommitted_finding(ws)
+    base = run_checks(ws, emit_events=False)
+    if record:
+        record_invalidations(ws, base)
+    findings = base + _uncommitted_finding(ws)
     text = "\n".join(f"{f.level:<7} {f.ticket or '-':<8} {f.code:<24} {f.message}" for f in findings) or "all good"
     _out([f.to_dict() for f in findings], json_out, text)
     if any(f.level == "error" for f in findings):

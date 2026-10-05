@@ -339,8 +339,9 @@ comment is never dropped and the gate sees at least what the shell runs):
   keyword such as `if` or `while`, ...): refused, the gate cannot see the arguments git would get.
 - git is **data** when it is an argument of any other program: `orch log L-1 -m "committed with git"`, `orch new
   --title "fix git hooks"`, `grep -rn git src`. Not git's; the gate lets it through to the other checks.
-- Fails closed: a `$` or backtick anywhere in a command that names git (a variable, `$(...)` or `$'...'` has its value
-  only when the shell runs it), a program word built from a variable or substitution (`$G push`, `` `echo git` push
+- Fails closed: a `$` or backtick outside single quotes in a command that names git (a variable, `$(...)` or `$'...'`
+  has its value only when the shell runs it; inside single quotes both are data, so an `orch log` message in single
+  quotes may quote a git command in backticks, while `echo "$(git push)"` is refused), a program word built from a variable or substitution (`$G push`, `` `echo git` push
   ``), a variable or substitution handed to a program that runs others (`sh -c "$CMD"`, `eval $X`), quoting that cannot
   be read, a parse that accounts for a different number of git words than the text holds, and any error inside the
   check are refusals. A line that runs git may not also `cd`, `pushd` or `popd`, redirect (`<`, `>`, `2>&1`) or use a

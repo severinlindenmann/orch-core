@@ -656,6 +656,30 @@ def _plain(command) -> str:
     return re.sub(r"[\\'\"]", "", str(command).replace("\\\n", ""))
 
 
+def _live(command) -> str:
+    """The text the shell may still expand: everything but the inside of single quotes (outside double quotes),
+    where `$` and backticks are plain data. Double-quoted text stays (`$(...)`, backticks and `$x` run there), and so
+    does a backslash with the character after it (read as written: never data). The `$` of `$'...'` stays too."""
+    out, i, s, dq = [], 0, str(command), False
+    while i < len(s):
+        c = s[i]
+        if c == "\\":
+            out.append(s[i:i + 2])
+            i += 2
+            continue
+        if c == '"':
+            dq = not dq
+        elif c == "'" and not dq:
+            j = s.find("'", i + 1)
+            if j < 0:
+                return s  # unbalanced: everything counts (the parse refuses it anyway)
+            i = j + 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _words(command: str) -> list[str]:
     """The command's words as the shell splits them, operators as words of their own. Raises ValueError when the
     quoting cannot be read."""
@@ -706,8 +730,9 @@ def _scan(command) -> tuple[list[tuple[list[str], str, list[str]]], str | None, 
 
     - A GIT_*= assignment anywhere: refused.
     - No `git` word (any case, any path, `git.exe`) in the plain text: nothing of git's (None, not git's).
-    - A `$` or backtick where the plain text names git (a variable, a substitution or `$'...'` quoting has its value
-      only when the shell runs it), quoting that cannot be read, or a parse that accounts for a different number of
+    - A `$` or backtick outside single quotes where the plain text names git (a variable, a substitution or `$'...'`
+      quoting has its value only when the shell runs it; inside single quotes both are data), quoting that cannot
+      be read, or a parse that accounts for a different number of
       git words than the plain text holds: refused (fail closed).
     - git as the program of a simple command (at the start or after `;`, `&&`, `||`, `&`, `(`, `{`, `!`, with no
       variable assignment before it): an invocation; as a later stage of a pipeline, or after an assignment: refused.
@@ -726,7 +751,7 @@ def _scan(command) -> tuple[list[tuple[list[str], str, list[str]]], str | None, 
             return [], ("a program named through a variable or a substitution, or a variable handed to a program "
                         "that runs others (sh -c, eval, xargs, ...), may be git: orch cannot tell, so it is refused"), True
         return [], None, False
-    if _UNCHECKABLE.search(str(command)):
+    if _UNCHECKABLE.search(_live(command)):  # inside single quotes `$` and backticks are data (`orch log -m '...'`)
         return [], "a command naming git with a variable, a substitution or $'...' quoting cannot be checked", True
     try:
         words = _words(command)
@@ -786,7 +811,7 @@ _FLAG_VALUES = {"--color": ("always", "never", "auto"), "--word-diff": ("plain",
                 "--decorate": ("short", "full", "auto", "no")}  # display flags that may carry one of these values
 
 
-def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
+def _arg_refusal(verb: str, args: list[str]) -> str | None:
     """Why `args` change what allowlisted `verb` does, or None: only the verb's listed options (exact names, `=value`
     or a following value for those that take one, short clusters letter by letter), operands of the verb's kind, and
     no path outside the repository."""
@@ -907,11 +932,11 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     - _scan: one shell reading; git as a program is checked, git carried by another program is refused, git as data
       of another program is not git's; GIT_*= assignments, `$` and backticks near git, unreadable quoting, cd and
       redirects in a git line are refused;
-    - per invocation: no option before the verb but --no-pager; the verb in _VERBS, with only its listed options and
-      operands of its kind (_arg_refusal: no path outside the repository, no pathspec magic, `checkout`/`switch` only
-      to the own branch);
-    - add and restore from the start folder or below it; commit, checkout and switch only in the session's own work
-      tree (_own_place: the runner-made clone or its own linked worktree)."""
+    - per invocation: no option before the verb but --no-pager; the verb in _VERBS (no restore, checkout or switch:
+      see the note below _VERBS), with only its listed options and operands of its kind (_arg_refusal: no path
+      outside the repository, no pathspec magic);
+    - add from the start folder or below it; commit only in the session's own work tree, on a branch that can be
+      read (_own_place: the runner-made clone or its own linked worktree)."""
     try:
         if not isinstance(command, str):
             return "the command is not text"
@@ -926,16 +951,14 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
             if verb not in _VERBS:
                 return (f"git {verb or '(no command)'} is not one of the git commands a factory session may run "
                         f"({_ALLOWED_TEXT})")
-            own = None
             if verb in _COMMIT_VERBS:
                 if place is None:
                     place = _own_place(ws, b, cwd)
-                why, own = place
-                if why:
-                    return why
+                if place[0]:
+                    return place[0]
             elif verb in _TREE_VERBS and not _in_start(b, cwd):
                 return "the session's folder is not given, or not inside the folder the runner started it in"
-            why = _arg_refusal(verb, args, own)
+            why = _arg_refusal(verb, args)
             if why:
                 return why
             if verb == "commit" and not any(a in ("-m", "--message") or a.startswith("--message=")

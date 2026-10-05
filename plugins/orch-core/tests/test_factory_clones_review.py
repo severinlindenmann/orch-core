@@ -571,6 +571,7 @@ def test_every_spelling_of_git_is_seen_as_git(fws, run, cmd):
     'orch log L-0002 -m "committed with git"', 'orch new --title "fix git hooks" --epic L-0001',
     "orch log L-0002 -m 'git push is not allowed here'", "grep -rn git src", 'echo "use git status"',
     "orch section set L-0002 Verification --file v.md",
+    "orch log L-0002 -m 'ran `git status`'", "orch log L-0002 -m 'git log cost $5 and $(nothing) ran'",
 ])
 def test_git_named_as_data_of_another_program_is_not_gated(fws, run, cmd):
     assert not permits._git_commit(cmd), cmd
@@ -582,6 +583,9 @@ def test_git_named_as_data_of_another_program_is_not_gated(fws, run, cmd):
     "command git push", "timeout 5 git push", "nice git status", "nohup git status", "sh -c 'git push'",
     "bash -lc 'git status'", 'echo "$(git push)"', "echo `git push`", "x=1 git status", "if git status; then :; fi",
     "cat <(git log)", "python3 -c 'import os; os.system(\"git push\")'", "make git", "awk '{system(\"git push\")}'",
+    "echo $(git push)", 'echo "`git push`"', "git log $X", "git commit -m 'x' $FLAGS",
+    "orch log L-0002 -m 'ok' `git push`",
+    "git log $'--output=x'", "orch log L-0002 -m 'a' \\$(git push)",
 ])
 def test_git_carried_or_hidden_is_refused_by_both_gates(fws, run, cmd):
     assert permits._git_commit(cmd), cmd

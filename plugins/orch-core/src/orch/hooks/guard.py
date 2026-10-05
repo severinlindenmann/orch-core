@@ -222,11 +222,11 @@ def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> li
 _ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 _KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
 _SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
-              "factory-release*", "release-records", "tmux", "tmux.name", "remote-humans*", "launch.json")
+              "factory-release*", "release-records", "release-repos", "tmux", "tmux.name", "remote-humans*", "launch.json")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
 _SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
                     "ledger.head", "ledger.lock", "factory-command.json", "factory-release.json",
-                    "factory-release.json.lock", "release-records", "tmux", "tmux.name", "remote-humans.json",
+                    "factory-release.json.lock", "release-records", "release-repos", "tmux", "tmux.name", "remote-humans.json",
                     "launch.json")
 _READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
             "bat", "wc", "xargs", "dir", "vdir"}
@@ -887,7 +887,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 # The Dark profile's module (orch.core.dark_profile) is driven from code no more than the permits module.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|release-records|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
+                     r"|release-records|release-repos|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
                      r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release)\b"
                      r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "

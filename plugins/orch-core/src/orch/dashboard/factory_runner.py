@@ -151,6 +151,8 @@ def shutdown(ws, launcher=None) -> list[str]:
 
 
 async def loop(ws, seconds: float = ROUND_SECONDS) -> None:
+    from orch.core import factory_release
+    factory_release._STOPPING.clear()  # a dashboard started again in this process releases again
     releases = asyncio.create_task(_release_loop(ws, seconds))
     try:
         for line in await asyncio.to_thread(startup, ws):
@@ -168,7 +170,13 @@ async def loop(ws, seconds: float = ROUND_SECONDS) -> None:
             except Exception:  # a round must never take the dashboard down
                 log.exception("factory runner round failed")
     finally:
-        releases.cancel()  # a command already running finishes in its thread; its outcome is recorded then
+        # a running release command's process group gets SIGTERM, then SIGKILL after a short grace (its outcome is
+        # recorded as failed by its own thread), instead of holding the shutdown for its timeout
+        try:
+            await asyncio.shield(asyncio.to_thread(factory_release.terminate_all))
+        except BaseException:
+            log.exception("factory release shutdown failed")
+        releases.cancel()
         try:
             for line in await asyncio.shield(asyncio.to_thread(shutdown, ws)):
                 log.info("factory runner: %s", line)

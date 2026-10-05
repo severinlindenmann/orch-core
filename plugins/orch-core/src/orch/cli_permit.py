@@ -159,10 +159,15 @@ def release_set(file: Annotated[Path, typer.Option("--file", help="The recipe, a
     except (OSError, ValueError, UnicodeDecodeError) as e:
         raise UsageError(f"{file} is not a readable JSON file ({type(e).__name__})") from None
     rec = factory_release.check_recipe(data, ws)  # refused before anything is shown or asked
+    pins = factory_release.pin_programs(rec)
     typer.echo("Setting the release recipe of this workspace (Dark epics that sign a release run these commands "
-               "by themselves once Ready; nothing releases to production):", err=json_out)
+               "by themselves once Ready, in the runner's own repository; nothing releases to production):",
+               err=json_out)
     typer.echo(_recipe_text(rec), err=json_out)
-    rec = factory_release.set_recipe(ws, confirm_typed("RELEASE"), data)
+    typer.echo("Programs, pinned by real path and sha256 (a release refuses to run one that changed):", err=json_out)
+    for word, pin in pins.items():
+        typer.echo(f"  {word} -> {pin['path']}  sha256 {pin['sha256']}", err=json_out)
+    rec = factory_release.set_recipe(ws, confirm_typed("RELEASE"), data, shown=pins)
     cli._out(rec, json_out, f"release recipe set: {', '.join(s['name'] for s in rec['stages'])}")
 
 

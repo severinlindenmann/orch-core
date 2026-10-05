@@ -1,0 +1,33 @@
+{
+ "uv_true": {
+  "register": {
+   "credential": "kii3zlqbWuB4SVHURJBJMunQuwn58k9FjdGGSMH4h8Y"
+  },
+  "assert_ok": {
+   "ok": true,
+   "why": "Start epic E-12: Migrate jobs",
+   "get_ms": 28,
+   "rawChallengeOk": "fnbDM_84lVbLiIW8yVYALuXxvIsCfAqE8UgxBLThT3U"
+  },
+  "assert_tampered_client": {
+   "ok": false,
+   "why": "origin",
+   "get_ms": 23,
+   "rawChallengeOk": "xhDQTPxwMEGn28YxgcBbAk7uKIsafmRgmBGRo1lOgV8"
+  },
+  "replay": [
+   {
+    "ok": true,
+    "why": "Allow permission X"
+   },
+   {
+    "ok": false,
+    "why": "unknown or replayed challenge"
+   }
+  ],
+  "in_sandboxed_frame": "NotAllowedError: The 'publickey-credentials-get' feature is not enabled in this document. Permissions Policy may be used to delegate Web Authentication capabilities to cross-origin child frames."
+ },
+ "uv_false": {
+  "register_no_uv": "browser refused: Page.evaluate: NotAllowedError: The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2"
+ }
+}

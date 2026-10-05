@@ -1,0 +1,479 @@
+{
+ "chromium": {
+  "A_first_load": {
+   "wall_ms": 119,
+   "shim_render": {
+    "at": 91,
+    "k": "orch",
+    "t": "rendered",
+    "path": "/",
+    "ms": 57,
+    "bridgeFetches": 9,
+    "bytes": 20981
+   },
+   "bridge_requests": 10,
+   "eventsource_opened": true,
+   "title": "(1) Today \u00b7 acme \u00b7 Mission Control"
+  },
+  "B_click_link_board": {
+   "wall_ms": 8101,
+   "messages_after_click": [
+    "push"
+   ],
+   "bridge_requests": 2,
+   "frame_pathname": "/board",
+   "parent_url_hash": "#/board",
+   "title": "(1) Board \u00b7 acme \u00b7 Mission Control",
+   "note": "no shim render: page swapped in place by the dashboard's own script or nothing happened"
+  },
+  "C_click_ticket": {
+   "href": "/t/L-0004",
+   "wall_ms_to_settle": 837,
+   "bridge_requests": 2,
+   "messages": [
+    "push"
+   ],
+   "frame_pathname": "/t/L-0004",
+   "title": "(1) L-0004 Check the nightly backup \u00b7 acme \u00b7 Mission Control"
+  },
+  "D_back": {
+   "wall_ms_to_settle": 803,
+   "frame_pathname": "/board",
+   "title": "(1) Board \u00b7 acme \u00b7 Mission Control",
+   "parent_hash": "#/board",
+   "messages": [
+    "sclose",
+    "iframe-load",
+    "sopen",
+    "rendered",
+    "navigated"
+   ]
+  },
+  "D_forward": {
+   "frame_pathname": "/t/L-0004",
+   "title": "(1) L-0004 Check the nightly backup \u00b7 acme \u00b7 Mission Control"
+  },
+  "E_new_page": {
+   "frame_pathname": "/new"
+  },
+  "E_form_post": {
+   "requests": [
+    "GET /new -> 200",
+    "POST /new -> 200"
+   ],
+   "frame_pathname": "/t/L-0005",
+   "title": "(1) L-0005 Created through the frame (chromium) \u00b7 acme \u00b7 Mission Control",
+   "text_has_new_title": true,
+   "ticket_on_disk": true
+  },
+  "E2_human_only_action": {
+   "requests": [],
+   "frame_pathname": "/",
+   "lines_mentioning_refusal": [
+    "1 decision, then the agents run on their own",
+    "0 agents working \u00b7 2 ideas in the backlog",
+    "The work is in testing; only you accept it or send it back.",
+    "No agent holds a ticket right now."
+   ]
+  },
+  "F_live_update": {
+   "requests_during_4s_idle": 0,
+   "appeared_after_ms": 1656,
+   "requests": [
+    "GET /board -> 200"
+   ],
+   "stream_messages": []
+  },
+  "G_terminals_grid": {
+   "frame_pathname": "/terminals",
+   "text": "Skip to content | Mission Control | New ticket | Today | 1 | Board | Activity | Reports | Terminals | Workspace & addons | 3 |  | acme \u00b7 L | 0 repos |  | Light | Dark | Auto | Terminals |  | What each agent is doing now. Waiting ones first.",
+   "requests": [
+    "GET /terminals -> 200",
+    "GET /board -> 200",
+    "GET /static/terminal.js?v=ab406cbef719 -> 200",
+    "GET /board -> 200"
+   ],
+   "stream_messages": [
+    "sclose",
+    "sopen",
+    "sopen"
+   ]
+  },
+  "G_terminal_view": {
+   "frame_pathname": "/terminals/orch-spike-1",
+   "dom_updates_seen": 28,
+   "update_latency_ms": {
+    "p50": 91,
+    "p95": 151,
+    "max": 358
+   },
+   "requests": [
+    "GET /terminals/orch-spike-1 -> 200",
+    "POST /terminals/orch-spike-1/size -> 204",
+    "GET /board -> 200",
+    "POST /terminals/orch-spike-1/keys -> 204"
+   ],
+   "key_posts_reaching_host": 1,
+   "stream_messages": [
+    "sclose",
+    "sclose",
+    "sopen",
+    "sopen"
+   ]
+  },
+  "G_keys_post_without_Origin_status": 403,
+  "H_in_frame_probes": {
+   "theme_cookie_write": "orch_theme=dark",
+   "localStorage": "b",
+   "location.pathname/search": "/terminals/orch-spike-1",
+   "document.referrer": "http://127.0.0.1:49156/shell?path=/",
+   "clipboard.writeText": "rejected NotAllowedError",
+   "window.open": "null",
+   "pushState to other path": "/board?x=1",
+   "xhr": "throws XMLHttpRequest is not available in the frame",
+   "fetch external": "rejected blocked: not the dashboard",
+   "dialog.showModal": true,
+   "download link click": "clicked",
+   "target=_blank click": "clicked",
+   "_downloads_seen_by_browser": [],
+   "_popups_seen_by_browser": [],
+   "_shim_messages": [
+    {
+     "at": 34417,
+     "k": "orch",
+     "t": "external",
+     "href": "https://example.com"
+    },
+    {
+     "at": 34418,
+     "k": "orch",
+     "t": "push",
+     "path": "/board?x=1"
+    },
+    {
+     "at": 34422,
+     "k": "orch",
+     "t": "download",
+     "path": "/static/app.css"
+    },
+    {
+     "at": 34422,
+     "k": "orch",
+     "t": "external",
+     "href": "http://127.0.0.1:49156/board"
+    }
+   ]
+  },
+  "errors_console": [
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Loading the image 'http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21' violates the following Content Security Policy directive: \"img-src blob"
+   ],
+   [
+    "console.error",
+    "Permissions policy violation: The Clipboard API has been blocked because of a permissions policy applied to the current document. See https://crbug.com/41434823"
+   ]
+  ],
+  "bridge_requests_total": 48,
+  "relay_server_ms": {
+   "p50": 9.4,
+   "p95": 21.7,
+   "max": 72.6
+  },
+  "relay_roundtrip_ms_in_browser": {
+   "n": 48,
+   "p50": 12.4,
+   "p95": 40.3
+  },
+  "I_raw_probe": {
+   "document.cookie read": "throws SecurityError: Failed to read the 'cookie' property from 'Document': The document is ",
+   "document.cookie write": "throws SecurityError: Failed to set the 'cookie' property on 'Document': The document is san",
+   "localStorage": "throws SecurityError: Failed to read the 'localStorage' property from 'Window': The document",
+   "sessionStorage": "throws SecurityError: Failed to read the 'sessionStorage' property from 'Window': The docume",
+   "indexedDB": "throws SecurityError: Failed to execute 'open' on 'IDBFactory': access to the Indexed Databa",
+   "location.href/origin/pathname": "ok: http://127.0.0.1:49156/probe-frame | http://127.0.0.1:49156 | /probe-frame",
+   "history.replaceState other path": "ok: /board?x=1",
+   "history.pushState other path": "ok: len 2->3 /t/L-0001",
+   "replaceState other origin": "throws SecurityError: Failed to execute 'replaceState' on 'History': A history state object ",
+   "fetch same origin": "throws TypeError: Failed to fetch",
+   "XMLHttpRequest": "throws Error: network error",
+   "EventSource": "throws Error: error event",
+   "window.open": "ok: null",
+   "navigator.clipboard.writeText": "throws NotAllowedError: Failed to execute 'writeText' on 'Clipboard': Document is not focused.",
+   "document.execCommand copy": "ok: false",
+   "Worker(blob:)": "ok: started",
+   "BroadcastChannel": "ok: ok",
+   "serviceWorker": "throws SecurityError: Failed to read the 'serviceWorker' property from 'Navigator': Service ",
+   "document.referrer": "ok: \"http://127.0.0.1:49156/probe-shell\"",
+   "window.top.location": "throws SecurityError: Failed to read a named property 'href' from 'Location': Blocked a fram",
+   "parent.postMessage": "ok: sent",
+   "dialog.showModal": "ok: true",
+   "matchMedia": "ok: true",
+   "img blob: load": "ok: loaded",
+   "img same-origin /static load": "throws Error: blocked",
+   "script src same-origin": "throws Error: blocked",
+   "inline script w/o nonce (eval)": "throws EvalError: Evaluating a string as JavaScript violates the following Content Secur",
+   "form submit (form-action none)": "ok: submitted",
+   "cspViolations": "connect-src http://127.0.0.1:49156/healthz || connect-src http://127.0.0.1:49156/healthz || connect-src http://127.0.0.1:49156/events || worker-src blob || img-src http://127.0.0.1:49156/static/x.png || script-src-elem http://127.0.0.1:49156/shell.js || script-src eval || form-action http://127.0.0.1:49156/probe-form"
+  },
+  "I_raw_downloads_seen": [],
+  "I_raw_popups_seen": [],
+  "J_navigation_escapes": {
+   "location.reload()": {
+    "frame_route_hits_after": 0,
+    "frame_pathname_after": "/",
+    "visible_text_len_after": 22,
+    "iframe_loads": 3,
+    "body_text_head": "{\"detail\":\"Not Found\"}",
+    "shell_log_after": [
+     "iframe-load"
+    ]
+   },
+   "location.href = '/board'": {
+    "frame_route_hits_after": 0,
+    "frame_pathname_after": "/board",
+    "visible_text_len_after": 22,
+    "iframe_loads": 3,
+    "body_text_head": "{\"detail\":\"Not Found\"}",
+    "shell_log_after": [
+     "iframe-load"
+    ]
+   },
+   "location.hash = '#x'": {
+    "frame_route_hits_after": 0,
+    "frame_pathname_after": "/",
+    "visible_text_len_after": 770,
+    "iframe_loads": 2,
+    "body_text_head": "Skip to content\nMission Control\nNew ticket\nToday\n1\nBoard\nAct",
+    "shell_log_after": []
+   }
+  },
+  "K_phone_menu_dialog_open": true
+ },
+ "webkit": {
+  "A_first_load": {
+   "wall_ms": 186,
+   "shim_render": {
+    "at": 159,
+    "k": "orch",
+    "t": "rendered",
+    "path": "/",
+    "ms": 91,
+    "bridgeFetches": 9,
+    "bytes": 21179
+   },
+   "bridge_requests": 10,
+   "eventsource_opened": true,
+   "title": "(1) Today \u00b7 acme \u00b7 Mission Control"
+  },
+  "B_click_link_board": {
+   "wall_ms": 8052,
+   "messages_after_click": [
+    "log",
+    "push"
+   ],
+   "bridge_requests": 2,
+   "frame_pathname": "/frame",
+   "parent_url_hash": "#/board",
+   "title": "(1) Board \u00b7 acme \u00b7 Mission Control",
+   "note": "no shim render: page swapped in place by the dashboard's own script or nothing happened"
+  },
+  "C_click_ticket": {
+   "href": "/t/L-0004",
+   "wall_ms_to_settle": 845,
+   "bridge_requests": 2,
+   "messages": [
+    "log",
+    "push"
+   ],
+   "frame_pathname": "/frame",
+   "title": "(1) L-0004 Check the nightly backup \u00b7 acme \u00b7 Mission Control"
+  },
+  "D_back": {
+   "wall_ms_to_settle": 807,
+   "frame_pathname": "/frame",
+   "title": "(1) Board \u00b7 acme \u00b7 Mission Control",
+   "parent_hash": "#/board",
+   "messages": [
+    "iframe-load",
+    "log",
+    "sclose",
+    "sopen",
+    "rendered",
+    "navigated"
+   ]
+  },
+  "D_forward": {
+   "frame_pathname": "/frame",
+   "title": "(1) L-0004 Check the nightly backup \u00b7 acme \u00b7 Mission Control"
+  },
+  "E_new_page": {
+   "frame_pathname": "/frame"
+  },
+  "E_form_post": {
+   "requests": [
+    "GET /new -> 200",
+    "POST /frame?tok=b14ae25a-e99c-41c0-9e2a-f85738566149 -> 404"
+   ],
+   "frame_pathname": "/frame",
+   "title": "(1) New ticket \u00b7 acme \u00b7 Mission Control",
+   "text_has_new_title": false,
+   "ticket_on_disk": false
+  },
+  "E2_human_only_action": {
+   "requests": [],
+   "frame_pathname": "/frame",
+   "lines_mentioning_refusal": [
+    "1 decision, then the agents run on their own",
+    "0 agents working \u00b7 3 ideas in the backlog",
+    "The work is in testing; only you accept it or send it back.",
+    "No agent holds a ticket right now."
+   ]
+  },
+  "F_live_update": {
+   "requests_during_4s_idle": 0,
+   "appeared_after_ms": null,
+   "requests": [],
+   "stream_messages": [
+    "sclose"
+   ]
+  },
+  "G_terminals_grid": {
+   "frame_pathname": "/frame",
+   "text": "Skip to content | Mission Control | New ticket | Today | 1 | Board | Activity | Reports | Terminals | Workspace & addons | 3 |  | acme \u00b7 L | 0 repos |  | Light | Dark | Auto | Terminals |  | What each agent is doing now. Waiting ones first.",
+   "requests": [
+    "GET /terminals -> 200",
+    "GET /static/early.js?v=1325bcfe30f1 -> 200",
+    "GET /static/app.js?v=9a90061a0dee -> 200",
+    "GET /static/terminal.js?v=ab406cbef719 -> 200",
+    "GET /static/charts.js?v=ef4c1f83e966 -> 200",
+    "GET /static/tokens.css?v=11a5d2dff47a -> 200",
+    "GET /static/tasks.css?v=97fe76edd993 -> 200",
+    "GET /static/app.css?v=b35e15d5bd1a -> 200"
+   ],
+   "stream_messages": [
+    "sopen",
+    "sopen"
+   ]
+  },
+  "G_terminal_view": {
+   "frame_pathname": "/frame",
+   "dom_updates_seen": 28,
+   "update_latency_ms": {
+    "p50": 91,
+    "p95": 186,
+    "max": 186
+   },
+   "requests": [
+    "GET /terminals/orch-spike-1 -> 200",
+    "POST /terminals/orch-spike-1/size -> 204",
+    "POST /terminals/orch-spike-1/keys -> 204"
+   ],
+   "key_posts_reaching_host": 1,
+   "stream_messages": [
+    "sclose",
+    "sclose",
+    "sopen",
+    "sopen"
+   ]
+  },
+  "G_keys_post_without_Origin_status": 403,
+  "H_in_frame_probes": {
+   "theme_cookie_write": "orch_theme=dark",
+   "localStorage": "b",
+   "location.pathname/search": "/frame?tok=b14ae25a-e99c-41c0-9e2a-f85738566149",
+   "document.referrer": "http://127.0.0.1:49156/",
+   "clipboard.writeText": "ok",
+   "window.open": "null",
+   "pushState to other path": "/frame?tok=b14ae25a-e99c-41c0-9e2a-f85738566149",
+   "xhr": "throws XMLHttpRequest is not available in the frame",
+   "fetch external": "rejected blocked: not the dashboard",
+   "dialog.showModal": true,
+   "download link click": "clicked",
+   "target=_blank click": "clicked",
+   "_downloads_seen_by_browser": [],
+   "_popups_seen_by_browser": [],
+   "_shim_messages": [
+    {
+     "at": 43410,
+     "k": "orch",
+     "t": "external",
+     "href": "https://example.com"
+    },
+    {
+     "at": 43411,
+     "k": "orch",
+     "t": "log",
+     "m": "replaceState: SecurityError"
+    },
+    {
+     "at": 43411,
+     "k": "orch",
+     "t": "push",
+     "path": "/board?x=1"
+    },
+    {
+     "at": 43414,
+     "k": "orch",
+     "t": "download",
+     "path": "/static/app.css"
+    },
+    {
+     "at": 43414,
+     "k": "orch",
+     "t": "external",
+     "href": "http://127.0.0.1:49156/board"
+    }
+   ]
+  },
+  "errors_console": [
+   [
+    "console.error",
+    "Refused to load http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21 because it does not appear in the img-src directive of the Content Security"
+   ],
+   [
+    "console.error",
+    "Refused to load http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21 because it does not appear in the img-src directive of the Content Security"
+   ],
+   [
+    "console.error",
+    "Refused to load http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21 because it does not appear in the img-src directive of the Content Security"
+   ],
+   [
+    "console.error",
+    "Refused to load http://127.0.0.1:49156/static/brand/mc-icon-plain.svg?v=50cc5196be21 because it does not appear in the img-src directive of the Content Security"
+   ]
+  ],
+  "bridge_requests_total": 141,
+  "relay_server_ms": {
+   "p50": 10.2,
+   "p95": 22.4,
+   "max": 72.6
+  },
+  "relay_roundtrip_ms_in_browser": {
+   "n": 51,
+   "p50": 22,
+   "p95": 46
+  }
+ }
+}

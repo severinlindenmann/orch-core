@@ -78,3 +78,33 @@ def test_export_link_keeps_before(dash, hops):
 def test_reports_and_timeline_share_one_escape_helper():
     from orch.dashboard.data import metrics, text, timeline
     assert metrics.md_escape is text.md_escape and timeline.md_escape is text.md_escape
+
+
+def _addon_event(ws, kind, data):
+    from orch.core.events import append_event
+    from orch.dashboard.views import HUMAN
+    append_event(ws, None, kind, HUMAN, data)
+
+
+def test_addon_action_reads_as_a_sentence_under_code(ws, hops):
+    from orch.dashboard.data.timeline import timeline
+    _addon_event(ws, "addon.action", {"addon": "github-reviews", "action": "mark_ready", "target": "DEMO-0010|GH-14|done"})
+    items = [i for g in timeline(ws, category="code").groups for i in g["items"]]
+    assert [i["what"] for i in items] == ["mark ready on DEMO-0010, GH-14 (github reviews)"]
+    assert items[0]["ticket"] == "DEMO-0010" and "|" not in items[0]["what"]
+
+
+def test_addon_decision_files_under_decisions(ws):
+    from orch.dashboard.data.timeline import timeline
+    _addon_event(ws, "addon.decision", {"addon": "github-issues", "decision": "x", "choice": "ignore"})
+    assert len([i for g in timeline(ws, category="decisions").groups for i in g["items"]]) == 1
+
+
+def test_ledger_adopted_is_hidden_from_all_but_has_its_own_filter(ws, hops):
+    from orch.dashboard.data.timeline import timeline
+    t = hops.new("Adopt me")
+    _addon_event(ws, "ledger.adopted", {})
+    allitems = [i for g in timeline(ws).groups for i in g["items"]]
+    assert all(i["kind"] != "ledger.adopted" for i in allitems) and allitems
+    only = [i for g in timeline(ws, category="ledger").groups for i in g["items"]]
+    assert [i["kind"] for i in only] == ["ledger.adopted"]

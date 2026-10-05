@@ -337,7 +337,7 @@ async def addon_settings(request: Request, name: str):
     await asyncio.to_thread(userfiles.save_addon_config, ws.root, name, values)
     await asyncio.to_thread(request.app.state.addons.reload)
     invalidate_setup_count(ws)
-    return back(_BACK, msg=f"Saved settings for {f.manifest.title}")
+    return back(f"/workspace#settings-{name}-d", msg=f"Saved settings for {f.manifest.title}")  # stay on that addon's Settings
 
 
 # -- Phones (remote humans): human-only dashboard POSTs, no CLI -----------------------------

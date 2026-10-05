@@ -349,6 +349,7 @@ def board(request: Request, q: str = "", type_: str = Query("", alias="type"), p
     if status:  # M: the Done rail opens the List on the done tickets
         entries = [e for e in entries if e.status == status]
         show_done = 1 if status == "done" else show_done
+    q = q.strip()
     if q:
         hits = {e.id for e in query.search(ws, q)}
         entries = [e for e in entries if e.id in hits]

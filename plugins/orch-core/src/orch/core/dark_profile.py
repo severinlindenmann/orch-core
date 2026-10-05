@@ -36,17 +36,44 @@ RULE_KINDS = ("exact", "prefix")
 _META = frozenset(";&|<>()`$\\\n")
 _BROAD = frozenset("""sh bash zsh fish dash ksh csh tcsh pwsh busybox env sudo su doas eval exec xargs nohup time nice
     timeout watch command builtin arch xcrun caffeinate script tmux screen osascript open launchctl crontab at
-    python python3 node perl ruby php lua tclsh deno bun bunx npx uv uvx
+    stdbuf ionice setsid flock unbuffer parallel expect gdb lldb sqlite3 less man
+    python python3 py node perl ruby php lua tclsh deno bun bunx npx uv uvx irb julia rscript swift jshell
     curl wget ssh scp sftp ftp telnet nc socat rsync docker kubectl find awk sed tee dd vim vi nano emacs""".split())
-_VERSIONED = re.compile(r"python[\d.]*w?|node\d*|perl[\d.]*|ruby[\d.]*|php[\d.]*")
+# Families by name (casefolded, a trailing .exe removed): shells, interpreters and their versions, awk/sed/find.
+_BROAD_RE = re.compile(r"(?:ba|z|k|c|tc|da|fi)?sh[\d.]*|python[\d.]*w?(?:-\S+)?|pypy[\d.]*|ipython[\d.]*"
+                       r"|node(?:js)?[\d.-]*|perl[\d.]*|ruby[\d.]*|php[\d.]*|[gmn]?awk|g?sed|g?find")
 _PROGRAM = re.compile(r"[A-Za-z0-9_.+/][A-Za-z0-9_.+/-]*")
-_GIT_NEVER = frozenset("push reset clean fetch pull clone rebase bisect submodule ls-remote archive config worktree "
-                       "remote".split())
+_GIT_NEVER = frozenset("""push reset clean fetch pull clone rebase bisect submodule ls-remote archive config worktree
+    remote grep difftool mergetool filter-branch daemon instaweb send-email credential p4 svn update-ref replace gc
+    branch checkout""".split())
+# (program, subcommand) pairs that run or fetch arbitrary code.
+_SUB_NEVER = {"npm": {"exec", "x", "dlx"}, "pnpm": {"exec", "x", "dlx"}, "yarn": {"exec", "x", "dlx"},
+              "cargo": {"run"}, "go": {"run"}, "gh": {"alias", "extension", "secret", "api"}}
 _NEVER_PROG = frozenset(("rm", "mv"))
-# Arguments that make an allowed program run other code; a command carrying one matches no prefix rule.
+# Some argument shapes that make an allowed program run other code, read other config or write elsewhere; a command
+# carrying one matches no prefix rule. Not every such argument: a prefix rule trusts the repository (docs/factory.md).
 _RUNS_CODE = frozenset(("--upload-pack", "--receive-pack", "--exec", "--script-shell", "--shell", "--prefix",
-                        "--userconfig", "--node-options", "--require", "--config", "--eval"))
-_RUNS_CODE_SHORT = frozenset(("-x", "-c", "-e"))
+                        "--userconfig", "--node-options", "--require", "--config", "--eval", "--workspace",
+                        "--globalconfig", "--open-files-in-pager", "--ext-diff", "--textconv", "--output", "--file",
+                        "--makefile", "--rootdir", "--confcutdir", "--manifest-path", "--to-command",
+                        "--use-compress-program", "--checkpoint-action"))
+_SHORT_LETTERS = frozenset("cexCwfpoIO")  # a single-dash word holding one of these (-x, -xc, -Ofoo, -Ipath, ...)
+_ASSIGN = ("SHELL=", "MAKEFLAGS=")
+
+
+def _prog(word: str) -> str:
+    p = word.rsplit("/", 1)[-1].casefold()
+    return p[:-4] if p.endswith(".exe") else p
+
+
+def _bad_arg(w: str) -> bool:
+    if w.startswith(_ASSIGN):
+        return True
+    if w.startswith("--") and len(w) > 2:
+        name = "--" + w[2:].split("=", 1)[0].casefold().replace("_", "-")
+        # an option a program accepts abbreviated (npm does) counts as the refused one it abbreviates
+        return name in _RUNS_CODE or (len(name) >= 5 and any(o.startswith(name) for o in _RUNS_CODE))
+    return w.startswith("-") and len(w) > 1 and any(c in _SHORT_LETTERS for c in w[1:])
 
 
 def rule_id(kind: str, value) -> str:
@@ -76,7 +103,7 @@ def simple_tokens(command) -> list[str] | None:
 
 
 def _runs_code(words) -> str | None:
-    return next((w for w in words if w in _RUNS_CODE_SHORT or w.split("=", 1)[0] in _RUNS_CODE), None)
+    return next((w for w in words if _bad_arg(w)), None)
 
 
 def refusal(kind, value) -> str | None:
@@ -94,8 +121,8 @@ def refusal(kind, value) -> str | None:
         return "a prefix rule needs at least two words (a program alone allows everything it does)"
     if "=" in value[0] or not _PROGRAM.fullmatch(value[0]):
         return "a prefix rule starts with a plain program name (no variable assignment, no option)"
-    prog, sub = value[0].rsplit("/", 1)[-1].casefold(), value[1].casefold()
-    if prog in _BROAD or _VERSIONED.fullmatch(prog):
+    prog, sub = _prog(value[0]), value[1].casefold()
+    if prog in _BROAD or _BROAD_RE.fullmatch(prog):
         return f"`{prog}` runs or reaches anything: list the exact commands instead"
     if prog in _NEVER_PROG:
         return f"`{prog}` is never a prefix rule: list the exact command instead"
@@ -103,8 +130,10 @@ def refusal(kind, value) -> str | None:
         return "a git prefix names its subcommand first (an option before it reaches every one)"
     if prog == "git" and sub in _GIT_NEVER:
         return f"`git {sub}` is never a prefix rule: list the exact command instead"
-    if prog == "gh" and (sub.startswith("-") or sub == "api"):
-        return "a gh prefix names a subcommand other than api"
+    if prog == "gh" and sub.startswith("-"):
+        return "a gh prefix names its subcommand first"
+    if sub in _SUB_NEVER.get(prog, ()):
+        return f"`{prog} {sub}` is never a prefix rule: list the exact command instead"
     flag = _runs_code(value)
     if flag:
         return f"`{flag}` makes a program run other code: list the exact command instead"
@@ -130,13 +159,14 @@ def check_rule(ws, kind: str, value) -> tuple[str, object]:
     return kind, value
 
 
-def rules(ws, signed=None) -> list[dict]:
-    """The rules in force in this checkout, oldest first: {id, kind, rule, at, actor}. An entry of another checkout,
-    one that does not hold together (an id that is not its rule's) or a rule that fails `refusal` is ignored; a
-    remove counts only for a rule in force; a cut ledger holds none."""
+def rules(ws, signed=None, checkout: str | None = None) -> list[dict]:
+    """The rules in force in this checkout (or in `checkout`, the id a session binding recorded), oldest first: {id,
+    kind, rule, at, actor}. An entry of another checkout, one that does not hold together (an id that is not its
+    rule's) or a rule that fails `refusal` is ignored; a remove counts only for a rule in force; a cut ledger holds
+    none."""
     from orch.core.ledger import checkout_id
     from orch.core.permits import _signed
-    cid = checkout_id(ws)
+    cid = checkout or checkout_id(ws)
     out: dict[str, dict] = {}
     for e in _signed(ws, signed):
         if e.get("kind") != KIND or e.get("checkout") != cid:
@@ -145,7 +175,7 @@ def rules(ws, signed=None) -> list[dict]:
         if e.get("op") == "remove":
             if isinstance(rid, str) and rid in out:
                 del out[rid]
-        elif (e.get("op") == "add" and refusal(kind, value) is None and rid == rule_id(kind, value)):
+        elif e.get("op") == "add" and refusal(kind, value) is None and isinstance(rid, str) and rid == rule_id(kind, value):
             out[rid] = {"id": rid, "kind": kind, "rule": value, "at": e.get("at"), "actor": e.get("actor")}
     return list(out.values())
 

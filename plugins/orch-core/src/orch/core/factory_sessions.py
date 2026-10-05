@@ -27,7 +27,11 @@ from orch.errors import HumanOnlyError, ValidationError
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MAX_LAUNCHES = 5  # per child and delegation: a child that keeps parking is the human's to look at
 _MAX_BYTES = 4096
-_KEYS = {"workspace", "session", "epic", "delegation", "child", "name", "wake", "pid", "pid_start", "at"}
+# `checkout`: the checkout id (orch.core.ledger.checkout_id) of the workspace the runner launched from, and `start`
+# the directory it started the session in; the hook takes the Dark switch and profile from this checkout, never from
+# the agent's own working directory or `.git` file.
+_KEYS = {"workspace", "checkout", "start", "session", "epic", "delegation", "child", "name", "wake", "pid", "pid_start",
+         "at"}
 
 
 def _root() -> Path:
@@ -63,15 +67,17 @@ def _create(path: Path, body: dict | None = None) -> bool:
 
 # -- session bindings -------------------------------------------------------------------------------------------------
 
-def bind(ws, actor, *, session: str, epic: str, delegation: str, child: str, name: str, wake: str = "") -> dict:
-    """Human only (the runner, in the dashboard the human started): bind `session` to its epic, delegation and child.
-    Exclusive: a session id is bound once."""
+def bind(ws, actor, *, session: str, epic: str, delegation: str, child: str, name: str, wake: str = "",
+         start: str = "") -> dict:
+    """Human only (the runner, in the dashboard the human started): bind `session` to its epic, delegation and child,
+    and to this workspace's checkout. Exclusive: a session id is bound once."""
     from orch.clock import stamp_s
-    from orch.core.ledger import workspace_id
+    from orch.core.ledger import checkout_id, workspace_id
     human_check(actor, "binding a factory session")
     if not isinstance(session, str) or not SESSION_ID.match(session):
         raise ValidationError("a factory session id is a UUID the runner generated")
-    body = {"workspace": workspace_id(ws), "session": session, "epic": str(epic), "delegation": str(delegation),
+    body = {"workspace": workspace_id(ws), "checkout": checkout_id(ws), "start": str(start or ws.root),
+            "session": session, "epic": str(epic), "delegation": str(delegation),
             "child": str(child), "name": str(name), "wake": str(wake), "pid": "", "pid_start": "", "at": stamp_s()}
     if not _create(_root() / "sessions" / f"{session}.json", body):
         raise ValidationError(f"session {session} is bound already")

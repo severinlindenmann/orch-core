@@ -187,7 +187,7 @@ orch-core plugin there, or carry the orch guard and permission hooks (commands w
 path ending in `/orch`), and `disableAllHooks` must not be on. Until that holds, the runner starts nothing, stops
 what runs, and the epic page says why.
 
-**Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child)
+**Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child, and the checkout and folder it launches in)
 exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
 permission hook trusts only this record to decide which epic's grants apply, and only for a process running under the
 process the runner recorded for that session (same pid and same start time): a copied session id gets nothing
@@ -292,9 +292,13 @@ it releases and closes only within what the charter signs, which today is nothin
 command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
 **The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
-written only by a human process. Another checkout of the same workspace (the same customer and id prefix), a copy or
-a clone has its own, empty profile. The rules in force are a replay of the entries, each checked again as when it was
-added: an entry that fails is ignored. A cut ledger means no rule counts.
+written only by a human process. The worktrees of one clone share one profile and one Dark switch (agents work in
+worktrees, so they must); another clone of the same workspace (the same customer and id prefix), or a copy, has its
+own, empty profile and its own switch. In a Dark session the checkout is the one the runner recorded in the session's
+binding when it launched it, never the one the agent's working directory or its `.git` file names: a session whose
+checkout no longer matches its binding (it moved into another clone, or its `.git` file was rewritten) is denied. The
+rules in force are a replay of the entries, each checked again as when it was added: an entry that fails is ignored.
+A cut ledger means no rule counts.
 
 ```bash
 orch dark profile list                          # anyone may read it
@@ -313,22 +317,32 @@ refused in orch itself and by the guard.
   redirects, pipes and substitutions never match a prefix rule (a redirect defeats prefix rules in Claude's own
   matcher too); they can only match an exact rule. `npm run verify --quiet` matches `npm run verify`;
   `npm run verify > f` and `npm run verify; rm -rf x` do not.
-- A prefix rule also never matches a command carrying an argument that makes a program run other code:
-  `--upload-pack`, `--receive-pack`, `--exec`, `--script-shell`, `--shell`, `--prefix`, `--userconfig`,
-  `--node-options`, `--require`, `--config`, `--eval` (also as `--flag=value`), and `-x`, `-c` or `-e` as a word of
-  their own. Such a command can only match an exact rule (`pytest -x` needs one).
+- A prefix rule also never matches a command carrying one of these argument shapes, which make some programs run
+  other code, read other configuration or write elsewhere. They are these shapes, not every argument that does so (see
+  "A prefix rule trusts the repository" below): `--upload-pack`, `--receive-pack`, `--exec`, `--script-shell`,
+  `--shell`, `--prefix`, `--userconfig`, `--globalconfig`, `--node-options`, `--require`, `--config`, `--eval`,
+  `--workspace`, `--open-files-in-pager`, `--ext-diff`, `--textconv`, `--output`, `--file`, `--makefile`, `--rootdir`,
+  `--confcutdir`, `--manifest-path`, `--to-command`, `--use-compress-program`, `--checkpoint-action` (also as
+  `--flag=value`, in any case, with `_` for `-`, or abbreviated to three letters or more, as npm accepts); a word that
+  starts with `SHELL=` or `MAKEFLAGS=`; and any single-dash word holding one of the letters `c e x C w f p o I O`
+  (`-x`, `-xc`, `-Ofoo`, `-Ipath`, ...). Such a command can only match an exact rule (`pytest -x` needs one).
 - **Broad rules are refused**: a prefix of fewer than two words; one whose program is not a plain name (a variable
   assignment such as `FOO=1`, an option); one whose program (by its last path part, any case) is a shell,
   interpreter, wrapper, editor, network or file-sweeping tool: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`,
   `tcsh`, `pwsh`, `busybox`, `env`, `sudo`, `su`, `doas`, `eval`, `exec`, `xargs`, `nohup`, `time`, `nice`, `timeout`,
   `watch`, `command`, `builtin`, `arch`, `xcrun`, `caffeinate`, `script`, `tmux`, `screen`, `osascript`, `open`,
-  `launchctl`, `crontab`, `at`, `python` (and `python3.12`, `pythonw`, ...), `node` (and `node18`), `perl`, `ruby`,
-  `php` (and their versions), `lua`, `tclsh`, `deno`, `bun`, `bunx`, `npx`, `uv`, `uvx`, `curl`, `wget`, `ssh`,
-  `scp`, `sftp`, `ftp`, `telnet`, `nc`, `socat`, `rsync`, `docker`, `kubectl`, `find`, `awk`, `sed`, `tee`, `dd`,
-  `vim`, `vi`, `nano`, `emacs`; `gh` without a subcommand or with `api`; `git` with an option before its subcommand,
-  or with `push`, `reset`, `clean`, `fetch`, `pull`, `clone`, `rebase`, `bisect`, `submodule`, `ls-remote`, `archive`,
-  `config`, `worktree` or `remote`; `rm` and `mv`; any of the argument shapes above; anything never grantable;
-  anything outside printable ASCII.
+  `launchctl`, `crontab`, `at`, `stdbuf`, `ionice`, `setsid`, `flock`, `unbuffer`, `parallel`, `expect`, `gdb`,
+  `lldb`, `sqlite3`, `less`, `man`, every shell by name (`bash5`, `tcsh`, ...), `python` (and `python3.12`, `pythonw`,
+  `python3.12-intel64`, `py`, `pypy3`, `ipython`), `node` (and `node18`, `nodejs`), `perl`, `ruby`, `php` (and their
+  versions), `irb`, `julia`, `Rscript`, `swift`, `jshell`, `lua`, `tclsh`, `deno`, `bun`, `bunx`, `npx`, `uv`, `uvx`,
+  `curl`, `wget`, `ssh`, `scp`, `sftp`, `ftp`, `telnet`, `nc`, `socat`, `rsync`, `docker`, `kubectl`, `find`/`gfind`,
+  `awk`/`gawk`/`mawk`/`nawk`, `sed`/`gsed`, `tee`, `dd`, `vim`, `vi`, `nano`, `emacs` (a trailing `.exe` is ignored);
+  `npm`, `pnpm` or `yarn` with `exec`, `x` or `dlx`; `cargo run`; `go run`; `gh` without a subcommand first, or with
+  `api`, `alias`, `extension` or `secret`; `git` with an option before its subcommand, or with `push`, `reset`,
+  `clean`, `fetch`, `pull`, `clone`, `rebase`, `bisect`, `submodule`, `ls-remote`, `archive`, `config`, `worktree`,
+  `remote`, `grep`, `difftool`, `mergetool`, `filter-branch`, `daemon`, `instaweb`, `send-email`, `credential`, `p4`,
+  `svn`, `update-ref`, `replace`, `gc`, `branch` or `checkout`; `rm` and `mv`; any of the argument shapes above;
+  anything never grantable; anything outside printable ASCII.
 
 **A prefix rule trusts the repository.** A prefix rule on a project runner (`npm run X`, `make X`, `pytest`, `python
 script.py` as an exact rule) lets the agent run any code it can write into the repository: `package.json`, the
@@ -348,8 +362,10 @@ the repository the agent writes to, listed by its exact command.
 - A rule that covers an open Dark card hides the card from your lists without signing an answer to it; removing the
   rule brings the card back.
 
-**Waking.** While Dark is on, adding or removing a rule wakes the parked children of Dark epics (the runner relaunches
-them), the same way your grants do. While Dark is off, profile changes wake nothing.
+**Waking.** Adding or removing a rule wakes the parked children of Dark epics (the runner relaunches them), the same
+way your grants do, whether the Dark switch is on or off: a wake only relaunches a child, it allows nothing by itself.
+Flipping the Dark switch alone wakes nothing, so switching it off and on does not relaunch every parked child; a child
+parked while Dark was off waits for your answer to its card, or a profile change.
 
 Not in this phase: starting a Dark epic from the dashboard (so nothing runs yet), the Dark switch and the "Add to the
 Dark profile" action on the dashboard, a ring or factory list view, release stages, and closing children under the

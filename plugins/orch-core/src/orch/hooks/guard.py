@@ -507,7 +507,25 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
         return True
     main, docs = _split_heredocs(cmd)
     units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
-    return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
+    return any((_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)))
+               or (_ORCH_MODULE.search(u) and (_HUMAN_VERB_WORD.search(u) or _APP_HUMAN.search(u)
+                                               or _HUMAN_ARGV.search(u)))
+               for u in units)
+
+
+# Code that names an orch module (`orch.cli`, `orch.core.ops`, which _ORCH_WORD leaves out on purpose) together with a
+# human verb word, a human-only argv list handed to the CLI app (`app(["factory", "dark", "on"])`), or a human-only
+# AI Factory subcommand on the same command line (`python -c 'from orch.cli import app; app()' factory dark on`).
+_ORCH_MODULE = re.compile(r"(?<![\w-])orch\.(?:cli|core)\b")
+_Q = r"""['"]"""
+_APP_HUMAN = re.compile(
+    _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
+    + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove)" + _Q
+    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
+    + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
+_HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
+                         r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove)"
+                         r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on)(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, changing the Dark profile and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
@@ -1357,6 +1375,12 @@ def evaluate(ws, payload: dict) -> Decision:
     cwd = payload.get("cwd")
     if not isinstance(tool_input, dict):
         return ALLOW
+    command = tool_input.get("command")
+    if tool == "Bash" and isinstance(command, str) and "\\\n" in command:
+        # A backslash-newline continues the line in the shell: judge the joined text as well (it only adds denials).
+        joined = evaluate(ws, {**payload, "tool_input": {**tool_input, "command": command.replace("\\\n", "")}})
+        if not joined.allow:
+            return joined
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob") and any(
             _ledger_path_closed(str(tool_input.get(k) or ""), cwd) for k in ("file_path", "notebook_path", "path", "pattern",
                                                                     "glob")):

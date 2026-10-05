@@ -88,6 +88,18 @@ def test_ordinary_commands_stay_grantable(pushy, cmd):
     ("orch dark profile list", True), ("orch dark profile list --json", True),
     ("orch factory dark off", True), ("orch factory dark status --json", True),
     ("uv run pytest tests/test_dark_profile.py -q", True),
+    # backslash-newline continuations are joined before the checks
+    ("orch factory dark o\\\nn", False), ("orch permit gr\\\nant P-1", False), ("orch dark profile \\\nadd --exact x", False),
+    ("make \\\n  test", True),
+    # code naming an orch module with a human verb word, an app() argv list, or the argv on the same line
+    ("python3 -c 'from orch.core.ops import Ops; Ops(w, a).set_factory_dark(True)'", False),
+    ("python3 -c 'from orch.cli import app; app()' factory dark on", False),
+    ("python3 -c 'from orch.cli import app; app([\"factory\", \"dark\", \"on\"])'", False),
+    ("python3 -c 'from orch.cli import app; app([\"permit\", \"grant\", \"P-1\"])'", False),
+    ("python3 -c 'from orch.cli import app; app([\"dark\", \"profile\", \"remove\", \"R-1\"])'", False),
+    ("python3 -c 'from orch.cli import app; app([\"approve\", \"L-1\", \"plan\"])'", False),
+    ("python3 -c 'from orch.cli import app; app()' factory dark status", True),
+    ("python3 -c 'import orch.cli; print(1)'", True),
 ])
 def test_guard_keeps_the_dark_profile_with_the_human(ws, cmd, allowed):
     assert _bash(ws, cmd).allow is allowed, cmd

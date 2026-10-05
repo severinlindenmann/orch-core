@@ -478,7 +478,7 @@ def test_the_dark_profile_does_not_wake_an_ordinary_factory_child(fws, fa, fh, h
     assert _tick(dws, human, fake) == []
 
 
-def test_the_dark_profile_wakes_nothing_while_dark_is_off(configure, agent, human, fake):
+def test_flipping_the_dark_switch_alone_wakes_nothing(configure, agent, human, fake):
     from conftest import human_ops
     from orch.core import dark_profile
     from orch.core.ops import Ops
@@ -494,21 +494,20 @@ def test_the_dark_profile_wakes_nothing_while_dark_is_off(configure, agent, huma
 
     _tick(dws, human, fake)
     park()
-    Ops(dws, agent).set_factory_dark(False)  # off: the epic is an ordinary factory epic again (that wakes it once)
-    _tick(dws, human, fake)
+    for on in (False, True, False, True):  # toggling the switch alone: no relaunch storm
+        Ops(dws, human).set_factory_dark(on)
+        assert _tick(dws, human, fake) == []
+    Ops(dws, agent).set_factory_dark(False)
+    rule = dark_profile.add(dws, human, "prefix", "make e2e")  # a profile change wakes it, even with Dark off
+    assert _tick(dws, human, fake)[0].startswith("started")
     park()
-    rule = dark_profile.add(dws, human, "prefix", "make e2e")
-    assert _tick(dws, human, fake) == []  # a profile change while Dark is off wakes nothing
-    dark_profile.remove(dws, human, rule["rule_id"])
+    Ops(dws, human).set_factory_dark(True)
     assert _tick(dws, human, fake) == []
-    Ops(dws, human).set_factory_dark(True)  # on again, and the profile changed while it was off: it wakes once
-    assert _tick(dws, human, fake)[0].startswith("started")
-    park()
-    dark_profile.add(dws, human, "prefix", "make e2e")  # with Dark on, a profile change wakes it
+    dark_profile.remove(dws, human, rule["rule_id"])  # with Dark on, too
     assert _tick(dws, human, fake)[0].startswith("started")
 
 
-def test_wake_token_takes_the_profile_only_for_a_dark_charter_with_dark_on():
+def test_wake_token_takes_the_profile_only_for_a_dark_charter():
     from types import SimpleNamespace
     epic = SimpleNamespace(id="L-0001")
     child = SimpleNamespace(id="L-0002", meta={}, title="c", section=lambda name: "")

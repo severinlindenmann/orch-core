@@ -221,8 +221,9 @@ def concurrency(ws) -> int:
 def wake_token(epic, child, signed, dark_marks: list | None = None) -> str:
     """What a parked child waits for: the human's answers in this epic (grants, denials, revocations) and what its
     approvals bind (its text and gates), and in a Dark epic every change to this checkout's Dark profile (`dark_marks`:
-    the MACs of its signed entries, given only while Dark is switched on; a history, so removing a rule wakes too).
-    Not its status: the agent moves that itself."""
+    the MACs of its signed entries, a history, so removing a rule wakes too). The marks count whether the Dark switch
+    is on or off, so flipping the switch alone wakes nothing (no relaunch storm); a profile change wakes a parked
+    Dark child either way, which grants nothing by itself. Not its status: the agent moves that itself."""
     mine = [e for e in signed if e.get("ticket") == epic.id]
     gates = {k: bool((v or {}).get("approved")) for k, v in sorted((child.meta.get("gates") or {}).items())}
     body = [epics.child_hashes(child), gates, sorted(str(e.get("grant")) for e in mine if e.get("kind") == "grant"),
@@ -230,7 +231,7 @@ def wake_token(epic, child, signed, dark_marks: list | None = None) -> str:
             sum(1 for e in mine if e.get("kind") == "permit_revoke")]
     charter = next((e for e in reversed(mine) if e.get("kind") == "charter"), None)
     if (dark_marks is not None and charter and isinstance(charter.get("delegate"), dict)
-            and charter["delegate"].get("dark")):  # only Dark epics with Dark on: other tokens stay as they were
+            and charter["delegate"].get("dark")):  # only Dark epics: other tokens stay as they were
         body.append(list(dark_marks))
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
@@ -304,7 +305,8 @@ def _launch(ws, actor, launcher, settings, epic, d, t, token, lines) -> dict | N
     name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id
     argv = [*env_prefix(env_bin, [claude]), claude,
             *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in command[1:])]
-    b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token)
+    b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token,
+                start=str(cwd))
     try:
         pid = launcher.start(name, cwd, argv)
         fs.set_pid(ws, actor, sid, pid)
@@ -381,8 +383,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     cap = concurrency(ws)
     gone = fs.ended(ws)
     cid = ledger.checkout_id(ws)
-    dark_marks = ([e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
-                  if permits.dark_on(ws) else None)
+    dark_marks = [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
     for entry in store.scan(ws):
         if entry.meta is None or not epics.is_epic(entry.meta) or entry.status == "done":
             continue

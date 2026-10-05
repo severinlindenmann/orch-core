@@ -70,22 +70,24 @@ def factory_delegation(ws, epic, signed=None) -> dict | None:
 DARK_SETTING = "factory.dark"
 
 
-def dark_on(ws) -> bool:
-    """Dark AI Factory (phase 5): `factory.enabled` is on and this checkout's newest signed Dark setting says on
-    (`orch factory dark on`, human only; anyone may sign it off). Not a config value: an agent can edit the config."""
+def dark_on(ws, checkout: str | None = None) -> bool:
+    """Dark AI Factory (phase 5): `factory.enabled` is on and the newest signed Dark setting of this checkout (or of
+    `checkout`, the id a session binding recorded) says on (`orch factory dark on`, human only; anyone may sign it
+    off). Not a config value: an agent can edit the config."""
     if not enabled(ws):
         return False
     from orch.core import ledger
     try:
-        return ledger.signed_setting(ws, DARK_SETTING) is True
+        return ledger.signed_setting(ws, DARK_SETTING, checkout=checkout) is True
     except Exception:
         return False
 
 
-def dark_delegation(ws, epic, signed=None) -> dict | None:
+def dark_delegation(ws, epic, signed=None, checkout: str | None = None) -> dict | None:
     """The epic's delegation when it is an active factory charter the human signed with `--dark` and the Dark switch
-    is on, else None (then the epic is an ordinary factory epic: cards, as before)."""
-    if not dark_on(ws):
+    (of this checkout, or of `checkout`) is on, else None (then the epic is an ordinary factory epic: cards, as
+    before)."""
+    if not dark_on(ws, checkout):
         return None
     d = factory_delegation(ws, epic, signed)
     return d if d and d.get("dark") and d["active"] else None
@@ -574,17 +576,30 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")
     actor = Actor("agent", "claude-code", "hook", str(payload.get("session_id") or "") or None)
-    dark = dark_delegation(ws, epic) is not None
+    fd = factory_delegation(ws, epic)
+    checkout = None
+    if fd and fd.get("dark"):
+        # A Dark epic answers from the checkout the runner launched the session in (its binding), never from the one
+        # the hook's working directory or an agent-writable `.git` file names now: a session that moved is denied.
+        from orch.core import factory_sessions
+        from orch.core.ledger import checkout_id
+        b = factory_sessions.binding(ws, payload.get("session_id"))
+        checkout = b["checkout"] if b else None
+        if not checkout or checkout != checkout_id(ws):
+            return _decision("deny", "this session is not in the checkout the runner started it in; nothing was "
+                                     "allowed. Go back to it, or do without this and record why in the ticket.")
+    dark = dark_delegation(ws, epic, checkout=checkout) is not None
     if dark:
         from orch.core import dark_profile
-        if dark_profile.match(ws, command) is not None:  # a standing rule: nothing is used up
+        listed = dark_profile.rules(ws, checkout=checkout)
+        if dark_profile.match(ws, command, listed) is not None:  # a standing rule: nothing is used up
             return _decision("allow")
     g = find_live_grant(ws, epic.id, command)
     if g is not None and use(ws, actor, g, ticket.id):
         return _decision("allow")
     if dark:
         r = request(ws, actor, ticket, command, reason="not in the Dark profile", source="dark")
-        return _decision("deny", f"not in the Dark profile of this workspace, so it does not run in a Dark factory "
+        return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory "
                                  f"(request {r['id']}). The human can add it to the Dark profile; go on with other "
                                  f"work, or do without it and record why in the ticket.")
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")

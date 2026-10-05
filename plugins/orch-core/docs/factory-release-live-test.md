@@ -77,13 +77,17 @@ What to look at:
 - **The window.** Start a second Dark epic with Production within an hour of the first release: after dev it shows
   "Production waits for its release window" with the time it opens. It is not Stopped; nothing runs until then.
 - **A failed live check, rolled back.** Before production runs, `touch ~/orch-live-test/state/fail-production-check`.
+  On a first run the file must exist before the epic becomes Ready: the runner goes from merge through production in
+  one round, so creating it afterwards is too late.
   The production check fails, the rollback runs (`production.version` reads `rolled-back`), and the epic is Stopped
   with "Production rolled back". It does not close by itself. Remove the file, then Retry release on production (after
   the window).
-- **A failed rollback.** Also `touch ~/orch-live-test/state/fail-rollback`: Stopped with "Rollback failed".
+- **A failed rollback.** Also `touch ~/orch-live-test/state/fail-rollback`: Stopped with "Rollback failed". While it
+  is unresolved, no other epic's production runs in this workspace: a second Dark epic shows "Production is held".
 - **Without the rollback signed**, a failed check stops with "Production check failed" and nothing is rolled back.
-- **Reopen.** On a closed epic, Reopen (give a reason). The epic is open again and never closes by itself again under
-  that charter; the verdict is yours.
+- **Reopen.** On a closed epic, Reopen (give a reason). It stops the run (the delegation is paused), the epic is open
+  again and never closes by itself again under that charter. Its children stay done, so there is no verdict to give:
+  the run view offers "Close the epic" with a reason, or add a child and approve the epic again.
 
 ## Clean up
 

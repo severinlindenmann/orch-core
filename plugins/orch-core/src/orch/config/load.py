@@ -32,7 +32,8 @@ DEFAULTS: dict = {
     "claims": {"ttl_hours": 4},
     "artifacts": {"mode": "local"},
     "temporary": {"max_age_days": 14},
-    "dashboard": {"host": "127.0.0.1", "port": 8765, "pull_seconds": 60, "theme": "system", "brand": "none", "stale_minutes": 120},
+    "dashboard": {"host": "127.0.0.1", "port": 8765, "pull_seconds": 60, "theme": "system", "brand": "none", "stale_minutes": 120,
+                  "revalidate_days": 30},  # an open or backlog ticket untouched this long is flagged idle (0: off)
     # Start agent (spec §7): the default harness (one of the known harnesses) and the prompt per
     # mode ({key} and {pr} are the only placeholders; ticket text never enters a prompt). What gets
     # launched (terminal, harness argv) is per user only: ~/.config/orch/launch.json, see
@@ -56,7 +57,44 @@ DEFAULTS: dict = {
     # AI Factory (#2, docs/factory.md): off until the human switches it on; a factory epic still needs the human's
     # signed `orch approve <epic> requirements --factory`.
     "factory": {"enabled": False},
+    # Named checks (orch.core.receipts): what `orch task done --run` runs for a verify line `check:<name>`, step by
+    # step. Each project says what its verification takes; the guard refuses an agent edit of this key.
+    "checks": {},
 }
+
+_CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+MAX_CHECK_STEPS = 20
+# Under the 600 s an agent harness's shell call allows, so the harness never kills a run before orch does; a check
+# that needs longer says so itself (`checks.<name>.timeout`).
+DEFAULT_CHECK_TIMEOUT = 540
+
+
+def check_timeout(cfg: dict, name: str | None) -> int | None:
+    """The seconds the workspace's check `name` allows (`timeout`, 1-86400), or None when it sets none."""
+    check = (cfg.get("checks") or {}).get(name) if name and isinstance(cfg.get("checks"), dict) else None
+    t = check.get("timeout") if isinstance(check, dict) else None
+    return t if isinstance(t, int) and not isinstance(t, bool) and 1 <= t <= 86400 else None
+
+
+def check_steps(cfg: dict, name: str) -> tuple[list[dict], bool]:
+    """The steps ({name, run}) and keep_going of the workspace's check `name`; UsageError naming the configured
+    checks when there is none, or saying what is wrong with it."""
+    checks = cfg.get("checks") if isinstance(cfg.get("checks"), dict) else {}
+    known = ", ".join(sorted(checks)) or "none configured"
+    check = checks.get(name)
+    if not _CHECK_NAME.match(name or "") or not isinstance(check, dict):
+        raise UsageError(f"no check {name!r} in the workspace config (checks: {known})",
+                         hint="add it under `checks` in orchestrator/config.json")
+    steps = check.get("steps")
+    if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_CHECK_STEPS:
+        raise UsageError(f"check {name!r} needs 1-{MAX_CHECK_STEPS} steps")
+    out = []
+    for i, s in enumerate(steps, 1):
+        if not (isinstance(s, dict) and isinstance(s.get("name"), str) and 0 < len(s["name"].strip()) <= 60
+                and isinstance(s.get("run"), str) and 0 < len(s["run"].strip()) <= 2000):
+            raise UsageError(f"check {name!r} step {i} needs a name (1-60 characters) and a run command")
+        out.append({"name": s["name"].strip(), "run": s["run"].strip()})
+    return out, bool(check.get("keep_going"))
 
 
 def deep_merge(base: dict, override: dict) -> dict:

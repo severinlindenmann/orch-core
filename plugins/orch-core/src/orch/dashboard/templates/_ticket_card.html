@@ -51,7 +51,7 @@
 <div class="tc-row">
   <span class="tc-icon tc-{{ c.move.role }}">{{ ui.icon(c.move.role) }}</span>
   <a class="key lnk" href="/t/{{ c.id }}">{{ c.id }}</a>
-  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}</span>
+  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
   <span class="tc-move">{{ move_chip(c.move) }}</span>
   <span class="tc-progress">{{ strip(c) }}{% if c.code %} {{ code_token(c.code) }}{% endif %}</span>
 </div>
@@ -82,12 +82,13 @@
     {%- else %}{% for seg, n in tk.bar %}<span class="seg seg-{{ seg }}" style="flex-grow: {{ n }}"></span>{% endfor %}{% endif -%}
   </span></span>
   {%- endif %}
-  {%- if c.code or (c.ac and c.ac.total) or (c.rollup and c.rollup.ac_total) or c.artifacts %}
+  {%- if c.code or (c.ac and c.ac.total) or (c.rollup and c.rollup.ac_total) or c.artifacts or c.idle_days %}
   <span class="tc-facts">
     {%- if c.code %}{% set k = c.code %}<span class="code-token code-{{ k.role }}">{{ k.label }}{% if k.glyph %} <span aria-hidden="true">{{ k.glyph }}</span>{% endif %}{% set w = {"passed": "checks", "failed": "checks failing", "pending": "checks running", "cancelled": "checks cancelled"}.get(k.checks, "") %}{% if w %} {{ w }}{% endif %}{% if k.draft %} · draft{% endif %}</span>{% if k.others %} <span class="muted">+{{ k.others }}</span>{% endif %}{% endif %}
     {%- if c.rollup and c.rollup.ac_total %}<span class="tc-fact{{ ' tc-fact-ok' if c.rollup.ac_proven == c.rollup.ac_total }}">AC {{ c.rollup.ac_proven }}/{{ c.rollup.ac_total }}<span class="sr-only"> acceptance criteria of the children proven</span></span>
     {%- elif c.ac and c.ac.total %}<span class="tc-fact{{ ' tc-fact-ok' if c.ac.proven == c.ac.total }}">AC {{ c.ac.proven }}/{{ c.ac.total }}<span class="sr-only"> acceptance criteria proven</span></span>{% endif %}
     {%- if c.artifacts %}<span class="tc-fact"><span aria-hidden="true">▦</span> {{ c.artifacts }} artifact{{ "s" if c.artifacts != 1 }}</span>{% endif %}
+    {%- if c.idle_days %}<span class="tc-fact tc-idle" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">idle {{ c.idle_days }}d</span>{% endif %}
   </span>
   {%- endif %}
   {%- if m.why %}<span class="tc-why muted">{{ m.why }}</span>{% elif m.what == "ready" and not c.rollup %}<span class="tc-why muted">waiting for an agent to start</span>{% endif %}

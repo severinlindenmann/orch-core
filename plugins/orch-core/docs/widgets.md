@@ -60,6 +60,14 @@ rule of `orch.core.evidence` (a top-level Verification line that cites `AC<n>`);
 part of that criterion's evidence and is drawn inside its evidence on the ticket page, one fenced before any citing
 line is "Other evidence". The approved text is never touched.
 
+### Receipts
+
+`orch task done <id> T<n> --run` writes its result as a core `gates` block in Verification (id `receipt-t<n>`, one
+row per step of the task's check, source the receipt artifact and commit) and replaces that block on the next run of
+the same task, so the widget always shows the latest run of what the project's check consists of
+(docs/tasks-format.md, "Receipts"). Like every Verification widget it is the agent's evidence, read by the human
+before the verdict.
+
 ## Files by digest
 
 Any artifact a block names (images, data files, one-off HTML) is a file in the ticket's own artifact folder, named

@@ -44,6 +44,7 @@ class Entry:
     status: str  # folder name
     meta: dict | None
     error: str | None = None
+    summary: str | None = None  # the Summary's first line (first_line), kept in the scan cache
 
 
 # -- one read-only request ------------------------------------------------------------------------------------------
@@ -147,6 +148,18 @@ def read_ticket(path, source: str = "<string>", *, shared: bool = False) -> Tick
     return ticket if shared else _copy_ticket(ticket)
 
 
+def first_line(text: str | None, limit: int = 160) -> str | None:
+    """The first non-empty line of a section, without a list marker, cut to `limit` characters."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        for marker in ("- ", "* ", "+ "):
+            line = line.removeprefix(marker)
+        line = line.strip()
+        if line:
+            return line[:limit]
+    return None
+
+
 def scan(ws) -> list[Entry]:
     return list(memo(ws, "scan", lambda: _scan(ws)))
 
@@ -178,18 +191,20 @@ def _scan(ws) -> list[Entry]:
                 continue  # vanished since the listing
             key = f"{rel}/{x.name}"
             cached = cache.get(key)
-            if cached and cached.get("mtime") == mtime:
-                meta, err = cached.get("meta"), cached.get("error")
+            if cached and cached.get("mtime") == mtime and "summary" in cached:  # a cache from before 1.7: read again
+                meta, err, summary = cached.get("meta"), cached.get("error"), cached.get("summary")
             else:
                 dirty = True
+                summary = None
                 try:
-                    meta, err = read_ticket(p, key).meta, None
+                    t = read_ticket(p, key)
+                    meta, err, summary = t.meta, None, first_line(t.section("Summary"))
                 except TicketParseError as e:
                     meta, err = None, e.message
                 except UnicodeDecodeError as e:
                     meta, err = None, f"{key}: not UTF-8 ({e})"
-            new_cache[key] = {"mtime": mtime, "meta": meta, "error": err}
-            entries.append(Entry(str(meta["id"]) if meta else m.group(1), p, status, meta, err))
+            new_cache[key] = {"mtime": mtime, "meta": meta, "error": err, "summary": summary}
+            entries.append(Entry(str(meta["id"]) if meta else m.group(1), p, status, meta, err, summary))
     if dirty or len(new_cache) != len(cache):
         try:
             atomic_write_text(cache_path, json.dumps(new_cache, ensure_ascii=False))

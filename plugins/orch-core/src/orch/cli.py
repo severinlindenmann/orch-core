@@ -72,9 +72,12 @@ def _view(ws, ticket) -> dict:
     return query.ticket_view(ws, store.resolve(ws, ticket.id).path, ticket)
 
 
-def _row(e) -> dict:
+def _row(e, ws=None) -> dict:
+    from orch.core.query import idle_days
     m = e.meta or {}
     return {
+        "idle_days": idle_days(ws, m, e.status) if ws is not None else None,
+        "summary": e.summary,
         "id": e.id, "status": e.status, "type": m.get("type"), "priority": m.get("priority"),
         "size": m.get("size"), "title": m.get("title"),
         "external": [x.get("key") for x in m.get("external") or [] if isinstance(x, dict)],
@@ -82,10 +85,18 @@ def _row(e) -> dict:
     }
 
 
+SummaryOpt = Annotated[bool, typer.Option("--summary", "-s", help="Print each ticket's Summary line under it.")]
+
+
+def _lines(rows: list[dict], summary: bool) -> str:
+    return "\n".join(_fmt(r) + (f"\n    {r['summary']}" if summary and r.get("summary") else "") for r in rows)
+
+
 def _fmt(r: dict) -> str:
     title = r["title"] if r["title"] is not None else f"⚠ {r['error']}"
     ext = f"  [{', '.join(r['external'])}]" if r["external"] else ""
-    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}"
+    idle = f"  ⚠ idle {r['idle_days']}d, revalidate" if r.get("idle_days") else ""
+    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{idle}"
 
 
 # -- entry point -----------------------------------------------------------------------
@@ -217,18 +228,19 @@ def list_(
     status: Annotated[Optional[str], typer.Option("--status")] = None,
     label: Annotated[Optional[str], typer.Option("--label")] = None,
     mine: Annotated[bool, typer.Option("--mine", help="Only tickets claimed by this session.")] = False,
+    summary: SummaryOpt = False,
     json_out: JsonOpt = False,
 ) -> None:
     """List tickets."""
     from orch.actor import session_id
     from orch.core import query
     ws = _ws()
-    rows = [_row(e) for e in query.list_tickets(ws, status=status, label=label, session=session_id() if mine else None)]
+    rows = [_row(e, ws) for e in query.list_tickets(ws, status=status, label=label, session=session_id() if mine else None)]
     if json_out:  # whose move it is, by the dashboard's own rules (data.cards)
         from orch.dashboard.data.cards import ticket_moves
         moves = ticket_moves(ws)
         rows = [{**r, "move": moves.get(r["id"])} for r in rows]
-    _out(rows, json_out, "\n".join(_fmt(r) for r in rows) or "no tickets")
+    _out(rows, json_out, _lines(rows, summary) or "no tickets")
 
 
 @app.command()
@@ -258,11 +270,12 @@ def show(ref: str, json_out: JsonOpt = False,
 
 
 @app.command()
-def search(text: str, json_out: JsonOpt = False) -> None:
+def search(text: str, summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
     """Full-text search over ticket files."""
     from orch.core import query
-    rows = [_row(e) for e in query.search(_ws(), text)]
-    _out(rows, json_out, "\n".join(_fmt(r) for r in rows) or "no matches")
+    ws = _ws()
+    rows = [_row(e, ws) for e in query.search(ws, text)]
+    _out(rows, json_out, _lines(rows, summary) or "no matches")
 
 
 @app.command()
@@ -273,11 +286,12 @@ def path(ref: str) -> None:
 
 
 @app.command("next")
-def next_(json_out: JsonOpt = False) -> None:
+def next_(summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
     """Open, unblocked tickets by priority (top 5)."""
     from orch.core import query
-    rows = [_row(e) for e in query.next_tickets(_ws())][:5]
-    _out(rows, json_out, "\n".join(_fmt(r) for r in rows) or "nothing open")
+    ws = _ws()
+    rows = [_row(e, ws) for e in query.next_tickets(ws)][:5]
+    _out(rows, json_out, _lines(rows, summary) or "nothing open")
 
 
 # -- work ------------------------------------------------------------------------------

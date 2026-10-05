@@ -595,7 +595,7 @@ class Ops(TaskOpsMixin):
 
     def artifact_add(self, ref: str, file: Path, name: str | None = None, *, context: bool = False,
                      stream=None, kind: str | None = None, label: str | None = None, task: str | None = None,
-                     ac: int | None = None, inline: bool = False, replace: bool = False) -> Path:
+                     ac: int | None = None, inline: bool = False, replace: bool = False, _run: dict | None = None) -> Path:
         """Copy `file` into the ticket's artifacts and link it in the ticket (frontmatter `artifacts`, with its
         sha256, a kind and optionally the task or criterion it proves). With `stream` (an open, already checked file
         of `file`), the bytes come from the stream, not from the path again. A file that already lies in the ticket's
@@ -612,7 +612,7 @@ class Ops(TaskOpsMixin):
         fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(name or src.name)
         if not art.safe_name(fname):
             raise UsageError(f"invalid artifact name {name or src.name!r}")
-        kind = _artifact_kind(kind, art.guess_kind(fname))
+        kind = "receipt" if _run is not None else _artifact_kind(kind, art.guess_kind(fname))
         label = _artifact_label(label)
         if inline and ac is None:
             raise UsageError("--inline writes a Verification line for one criterion", hint="pass --ac <n> as well")
@@ -625,6 +625,9 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict:
             _check_artifact_targets(t, task, ac)
             known = art.find(t, fname)
+            if isinstance(known, dict) and known.get("kind") == "receipt" and _run is None:
+                raise UsageError(f"{fname} is a receipt: only `orch task done --run` writes it",
+                                 hint="attach your file under another name with --name")
             if not in_place and dest.exists() and not replace:
                 raise ValidationError(f"artifact {entry.id}/{fname} already exists",
                                       hint="pass --name to store it under another name, or --replace")
@@ -634,6 +637,9 @@ class Ops(TaskOpsMixin):
             if not self.dry_run:
                 item.update(sha256=art.file_sha256(dest), size=dest.stat().st_size)
             item["added"] = stamp()
+            item["by"] = self.actor.to_str()
+            if _run is not None:
+                item["run"] = _run
             item.update(_artifact_extras(label, task, ac, context))
             _put_entry(t, item, lambda e: e.get("name") == fname)
             if inline:
@@ -657,7 +663,7 @@ class Ops(TaskOpsMixin):
         label = _artifact_label(label)
         if inline and ac is None:
             raise UsageError("--inline writes a Verification line for one criterion", hint="pass --ac <n> as well")
-        item = {"url": url, "kind": kind, "added": stamp(), **_artifact_extras(label, task, ac, context)}
+        item = {"url": url, "kind": kind, "added": stamp(), "by": self.actor.to_str(), **_artifact_extras(label, task, ac, context)}
 
         def fn(t: Ticket) -> dict:
             _check_artifact_targets(t, task, ac)
@@ -679,7 +685,7 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict | None:
             found.extend(self._register_loose(t))
             for path in art.unregistered_static(self.ws, t):
-                _put_entry(t, {"static": path, "kind": art.guess_kind(path), "added": stamp()},
+                _put_entry(t, {"static": path, "kind": art.guess_kind(path), "added": stamp(), "by": self.actor.to_str()},
                            lambda e, p=path: e.get("static") == p)
                 found.append(f"static:{path}")
             if found:
@@ -700,7 +706,7 @@ class Ops(TaskOpsMixin):
         for n in names:
             p = self.ws.artifacts_dir / t.id / n
             _put_entry(t, {"name": n, "kind": art.guess_kind(n), "sha256": art.file_sha256(p),
-                           "size": p.stat().st_size, "added": stamp()}, lambda e, n=n: e.get("name") == n)
+                           "size": p.stat().st_size, "added": stamp(), "by": self.actor.to_str()}, lambda e, n=n: e.get("name") == n)
         return names
 
     # -- questions -------------------------------------------------------------------
@@ -1402,8 +1408,13 @@ def _artifact_kind(kind: str | None, default: str) -> str:
     from orch.core.artifacts import KINDS
     if kind in (None, ""):
         return default
+    from orch.core.artifacts import RESERVED_KINDS
+    if kind in RESERVED_KINDS:
+        raise UsageError(f"the {kind} kind is written by `orch task done --run`, which runs the check itself",
+                         hint="attach your own output as kind log")
     if kind not in KINDS:
-        raise UsageError(f"unknown artifact kind {kind!r}", hint="one of: " + ", ".join(KINDS))
+        raise UsageError(f"unknown artifact kind {kind!r}",
+                         hint="one of: " + ", ".join(k for k in KINDS if k not in RESERVED_KINDS))
     return kind
 
 

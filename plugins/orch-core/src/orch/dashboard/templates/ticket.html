@@ -152,8 +152,10 @@
       <label><input type="checkbox" name="factory" value="1"> <b>Start as an AI Factory</b>: agents split, specify, approve and build the children without asking you</label>
       <p class="muted">Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
       {% if e.factory.dark_on %}
-      <label><input type="checkbox" name="dark" value="1"> <b>Start as a Dark AI Factory</b>: the same, but nothing asks you while it runs</label>
-      <p class="muted">Agents may run only the commands this checkout's Dark profile allows; anything else stops that child with a card. There is no release or automatic close: you read the Ready report and give the verdict.</p>
+      <label><input type="checkbox" name="dark" value="1"> <b>Start as a Dark AI Factory</b>: the same, with no permission prompts in the session</label>
+      <p class="muted">A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. There is no release or automatic close: you read the Ready report and give the verdict.</p>
+      <label class="field-col" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session</span>
+        <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false"></label>
       {% endif %}
     </fieldset>
     {% endif %}
@@ -187,7 +189,7 @@
   <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
     <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
   {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
-  <p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark else "AI Factory" }} run view</a></p>
+  <p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark and f.dark_on else "AI Factory" }} run view</a></p>
   {% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}

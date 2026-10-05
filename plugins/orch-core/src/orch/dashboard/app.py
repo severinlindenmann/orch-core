@@ -263,6 +263,7 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
     app.state.addons = AddonRuntime(ws)  # what pages ask of addons: cache reads and widgets, never ctx.run
     app.state.downloads = OneTimeStore(DOWNLOAD_TTL)  # token -> a FileResult staged in out/, served once
     app.state.reveals = OneTimeStore(DOWNLOAD_TTL)  # token -> a Reveal, shown once
+    app.state.new_once = routes_new.FormOnce()  # the New ticket form's factory starts: one per rendered form
     try:
         sweep_addon_io(ws)  # uploads and downloads left over from a crash
     except OSError as exc:

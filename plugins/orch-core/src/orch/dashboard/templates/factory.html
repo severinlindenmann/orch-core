@@ -13,12 +13,13 @@
 {% if rows %}
 <ul class="plain factory-list">
   {% for r in rows %}
-  <li class="card factory-row{{ ' is-dark' if r.dark }}" data-factory="{{ r.epic }}">
+  <li class="card factory-row{{ ' is-dark' if r.look_dark }}" data-factory="{{ r.epic }}">
     <div class="factory-row-head">
       <a class="lnk" href="/factory/{{ r.epic }}"><b>{{ r.title }}</b></a>
       <span class="key muted">{{ r.epic }}</span>
     </div>
-    <p class="factory-row-chips"><span class="chip chip-neu{{ ' chip-dark' if r.dark }}">{{ "Dark" if r.dark else "AI Factory" }}</span> {{ ui.status(r.role, r.headline) }}</p>
+    <p class="factory-row-chips"><span class="chip chip-neu{{ ' chip-dark' if r.look_dark }}">{{ r.name }}{% if r.dark and not r.look_dark %} (Dark switch off){% endif %}</span> {{ ui.status(r.role, r.chip) }}</p>
+    <p class="permit-meta">{{ r.headline }}</p>
     {{ fx.marks(r, steps, True) }}
     <p class="muted permit-meta">Step {{ r.current + 1 }} of {{ steps|length }}: {{ r.step }}{% if r.elapsed %} · {{ r.elapsed }}{% endif %}</p>
   </li>

@@ -390,7 +390,7 @@
     const f = form.elements;
     const on = f.delegate && f.delegate.checked;
     if (f.dark && f.dark.checked) {  // Dark wins over the plain factory box, as on the server
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START DARK AI FACTORY, NO PROMPTS: " + form.dataset.factoryConfirm;
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START DARK AI FACTORY (PROFILE ONLY): " + form.dataset.factoryConfirm;
       return;
     }
     if (f.factory && f.factory.checked) {  // AI Factory: its own limits, whatever the delegation fields say
@@ -436,6 +436,35 @@
     const button = event.submitter || form.querySelector("button[type=submit]");
     if (button) arm(form, button);
   });
+  // New ticket (phase 5): the Mode radios keep data-mode on the page in step (the CSS shows each mode's fields by it),
+  // and a factory mode gets the inline confirm naming the limits it signs; Ticket mode posts at once, as before. A
+  // factory start is sent once: its button is disabled after the confirmed submit (the server's one-time token
+  // refuses a second one anyway).
+  const modeOf = (form) => {
+    const checked = form.querySelector("input[name=mode]:checked");
+    return checked ? checked.value : "ticket";
+  };
+  const newMode = (form) => {
+    const mode = modeOf(form);
+    const box = form.closest("[data-mode]");
+    if (box) box.dataset.mode = mode;
+    if (armed.has(form)) disarm(form, false);
+    if (mode === "factory") form.dataset.inlineConfirm = "Confirm · start AI Factory: " + form.dataset.factoryConfirm;
+    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · START DARK AI FACTORY (PROFILE ONLY): " + form.dataset.factoryConfirm;
+    else delete form.dataset.inlineConfirm;
+  };
+  document.addEventListener("change", (event) => {
+    const form = event.target.name === "mode" && event.target.closest && event.target.closest("form[data-new-form]");
+    if (form) newMode(form);
+  });
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!form.matches || !form.matches("form[data-new-form]") || modeOf(form) === "ticket") return;
+    if (form.dataset.sent) { event.preventDefault(); return; }
+    if (event.defaultPrevented) return;  // the first press only armed the confirm
+    form.dataset.sent = "1";
+    setTimeout(() => form.querySelectorAll("button[type=submit]").forEach((b) => { b.disabled = true; }), 0);
+  });
   document.addEventListener("keydown", (event) => {
     const form = armedFormOf(event.target);
     if (!form) return;
@@ -451,10 +480,17 @@
   // Coming back with the browser's Back button must never find a button still armed.
   // A reload or Back can restore the delegation fields the human had set: the label must follow them, at start and on
   // every pageshow (the charter form also has autocomplete="off").
-  const charterLabels = () => document.querySelectorAll("form[data-charter-confirm]").forEach(charterLabel);
+  const charterLabels = () => {
+    document.querySelectorAll("form[data-charter-confirm]").forEach(charterLabel);
+    document.querySelectorAll("form[data-new-form]").forEach(newMode);
+  };
   charterLabels();
   window.addEventListener("pageshow", () => {
     document.querySelectorAll("form[data-armed]").forEach((f) => disarm(f, false));
+    document.querySelectorAll("form[data-new-form][data-sent]").forEach((f) => {
+      delete f.dataset.sent;
+      f.querySelectorAll("button[type=submit]").forEach((b) => { b.disabled = false; });
+    });
     charterLabels();
   });
   window.orchInlineConfirm = { canConfirm, DOUBLE_CLICK_MS };  // read by the unit test

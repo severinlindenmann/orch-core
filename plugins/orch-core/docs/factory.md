@@ -374,23 +374,37 @@ refusal of a process under an agent harness, as for every approval).
 - **New ticket** has a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on (otherwise a
   line says how to turn it on in a terminal). A factory mode makes an epic whose Requirements are your ask, word for
   word, and whose Acceptance criteria are the "Done when" text; nothing else is written for you. Creating it is also the
-  start: the same signed charter approval and runner arming as the epic page's start. Dark needs the word `dark`
-  typed. The server checks the switches and the typed word again; a refused start creates nothing. If the epic was
-  created but its start failed, you land on the epic with the reason, and start it there.
-- **Epic page**: next to "Start as an AI Factory", "Start as a Dark AI Factory" while Dark is on.
+  start: the same signed charter approval and runner arming as the epic page's start, behind the same inline confirm,
+  which names the limits you sign. Dark needs the word dark typed. The server checks the switches, the typed word, and
+  the text for what the start would refuse (a line that reads as a question still open for you, hidden or control
+  characters) before anything is created, so a refused start creates nothing; it checks that the stored Requirements
+  and Acceptance criteria are byte for byte what you sent before it signs. Each rendered form carries a one-time token,
+  so sending the same form twice starts one run (the second send links to the epic the first one created). If the epic
+  was created but its start failed, you land on the epic with the reason, and start it there.
+- **Nothing splits the epic yet.** An epic started from New ticket has no children, and the runner starts sessions only
+  for children (those approved or covered by your charter). Start an agent on the epic and ask it to split it, or add
+  the children yourself; until then the run view says "Waiting for children".
+- **Epic page**: next to "Start as an AI Factory", "Start as a Dark AI Factory" while Dark is on; it also needs the word
+  dark typed, checked by the server.
+- **No permission prompts in a Dark session** does not mean nothing reaches you: a command outside the Dark profile is
+  denied and becomes a card on the dashboard; you still answer cards, larger children and the verdict.
 - **Run view** (`/factory/<epic>`): a ring of five steps, each lit only from records orch keeps: Understand (a current
   signed charter and at least one child), Plan (every child covered, auto-approved or approved), Build (every child
-  has all its tasks closed, or is in testing or done with the record behind it), Evidence (the Ready report: every
-  criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state in words (working,
-  waiting for you, paused, stopped, budget used up, runner blocked, not armed, finished), the time since you signed
-  the start (there is no estimate), what waits for you (the same cards as elsewhere), a read-only log (time, ticket,
-  event kind and whether a human or an agent wrote it; no command text, hashes or session ids) and "Stop the run…",
-  which is the epic's pause. A finished epic shows a summary from the records: children, tasks done, and permission
-  requests answered on a card or by the Dark profile.
-- **Factories** (`/factory`, in the menu): every factory epic of the workspace, needs you first, then working, stopped,
-  finished.
-- **Add to the Dark profile** on a Dark card: the card's exact command becomes an exact rule (`orch dark profile add
-  --from-request`, the same checks), bound to the hash of the command the card showed.
+  has all its tasks closed, as the agents report it, or is in testing or done with the record behind it), Evidence (the
+  Ready report: every criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state,
+  said once: working (only while a child can be launched or a session runs), needs you, waiting for children, idle,
+  paused, stopped, budget used up, edited, blocked, not running (not armed) or finished. Motion and glow only while it
+  works. Then the time since you signed the start (there is no estimate), what waits for you (the same cards as
+  elsewhere), a read-only log in plain words (time, ticket, who and a fixed phrase per event kind; no command text,
+  hashes or session ids) and "Stop the run…", which is the epic's pause. A finished epic shows a summary from the
+  records: children, tasks done, and permission requests answered on a card or added to the Dark profile after they
+  were filed (commands the profile allowed directly leave no record and are not counted). A Dark charter while the Dark
+  switch is off is shown, and runs, as an ordinary AI Factory.
+- **Factories** (`/factory`, in the menu): every factory epic of the workspace; those that need you (cards, stopped,
+  budget used up) first, then working, the rest, finished.
+- **Add to the Dark profile** on a Dark card, while Dark is on and its epic is an active Dark epic: the card's exact
+  command becomes an exact rule (`orch dark profile add --from-request`, the same checks), bound to the hash of the
+  command the card showed.
 
 The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: release stages, any automatic
 closing (the verdict is yours, from the Ready report), and runner-side proof that tests ran, a review happened or a

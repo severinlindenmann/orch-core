@@ -15,10 +15,25 @@ def _raw(text) -> str:
     return "".join(c if 32 <= ord(c) < 127 else c.encode("unicode_escape").decode("ascii") for c in str(text))
 
 
-def _card(r: dict) -> dict:
+def _card(r: dict, profile: bool = False) -> dict:
     return {"id": r["id"], "epic": r["epic"], "ticket": r["ticket"], "sha": r["sha"], "short": r["sha"][7:15],
             "command": _raw(r["command"]), "reason": _raw(r["reason"]),
-            "asked_by": _raw(r["actor"]), "source": _raw(r["source"]), "at": r["at"]}
+            "asked_by": _raw(r["actor"]), "source": _raw(r["source"]), "at": r["at"], "profile": profile}
+
+
+def _dark_epics(ws, reqs) -> set[str]:
+    """Upper-case ids of the epics of Dark cards that are active Dark epics now (Dark on): only their cards offer "Add
+    to the Dark profile" (dark_profile.add_from_request refuses the others)."""
+    out = set()
+    if not permits.dark_on(ws):
+        return out
+    for eid in {str(r["epic"]) for r in reqs if r["source"] == "dark"}:
+        try:
+            if permits.dark_delegation(ws, store.read_ticket(store.resolve(ws, eid).path)) is not None:
+                out.add(eid.upper())
+        except Exception:
+            continue
+    return out
 
 
 def permit_view(ws, epic_id: str | None = None) -> dict | None:
@@ -27,7 +42,9 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
     if not permits.enabled(ws):
         return None
     keep = (lambda e: e.upper() == epic_id.upper()) if epic_id else (lambda e: True)
-    reqs = [_card(r) for r in permits.open_requests(ws) if keep(str(r["epic"]))]
+    raw = [r for r in permits.open_requests(ws) if keep(str(r["epic"]))]
+    dark = _dark_epics(ws, raw)
+    reqs = [_card(r, r["source"] == "dark" and str(r["epic"]).upper() in dark) for r in raw]
     grants = [{"grant": g["grant"], "epic": g["epic"], "scope": g["scope"], "command": _raw(g["command"])}
               for g in permits.grants(ws) if g["live"] and keep(str(g["epic"]))]
     report = factory_report.cards(ws)
@@ -90,10 +107,24 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
 
 STEPS = ("Understand", "Plan", "Build", "Evidence", "Done")
 _PLANNED = ("covered", "delegated", "approved", "done")  # epics.child_state
-# state: (chip role, list rank: needs you first, then working, stopped, finished)
-_STATES = {"waiting": ("you", 0), "working": ("info", 1), "stopped": ("warn", 2), "budget": ("warn", 2),
-           "paused": ("neu", 2), "changed": ("warn", 2), "blocked": ("warn", 2), "unarmed": ("neu", 2),
-           "finished": ("ok", 3)}
+
+
+def _arc(i: int) -> str:
+    """The SVG path of ring segment `i` (the 18 of every 20 units its circle draws), for the moving dash."""
+    import math
+    a0, a1 = math.radians(-90 + 72 * i), math.radians(-90 + 72 * i + 64.8)
+    return (f"M {60 + 52 * math.cos(a0):.2f} {60 + 52 * math.sin(a0):.2f} "
+            f"A 52 52 0 0 1 {60 + 52 * math.cos(a1):.2f} {60 + 52 * math.sin(a1):.2f}")
+
+
+STEP_ARCS = tuple(_arc(i) for i in range(5))
+# state: (chip role, list rank: needs you first, then working, then the rest, finished last, chip words). The chip
+# says the state in a word or two; the headline says it once, in a sentence.
+_STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
+           "working": ("info", 1, "Working"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
+           "idle": ("neu", 2, "Idle"), "finished": ("ok", 3, "Finished")}
+NEEDS_YOU = ("waiting", "stopped", "budget")
 
 
 def span(seconds) -> str:
@@ -146,59 +177,95 @@ def _at(stamp):
         return None
 
 
-def run_status(ws, epic, d, view, *, signed, events, entries) -> dict:
-    """One factory epic as the run view and the list show it, from records only: {epic, title, dark, dark_live, state,
-    role, rank, headline, steps, current, step, hot, elapsed, ...}. `view` is permit_view(ws) (all epics)."""
+def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, bound=()) -> dict:
+    """One factory epic as the run view and the list show it, from records only: {epic, title, dark, look_dark, state,
+    role, rank, chip, headline, steps, current, step, hot, live, elapsed, ...}. `view` is permit_view(ws) (all epics),
+    `blocker` factory_runner.user_settings_blocker() read once (it counts only for an armed epic), `bound` the live runner bindings of this workspace."""
     from orch.core import factory_runner, factory_sessions
     kids = factory_report._kids(ws, epic, entries)
     n = _steps(ws, epic, d, kids, signed, events, entries)
     kids = kids or []
-    mine = {k: [x for x in view[k] if str(x["epic"]).upper() == epic.id.upper()]
+    eid = epic.id.upper()
+    mine = {k: [x for x in view[k] if str(x["epic"]).upper() == eid]
             for k in ("requests", "ready", "stopped", "budget", "suspect")}
     dark = bool(d.get("dark"))
-    name = "Dark AI Factory" if dark else "AI Factory"
-    blocker = None
+    look_dark = dark and permits.dark_on(ws)  # a Dark charter with the switch off runs (and looks) as an AI Factory
+    name = "Dark AI Factory" if look_dark else "AI Factory"
+    running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
     if n == 5:
-        state, headline = "finished", "Finished"
+        state, headline = "finished", "Finished: you gave the verdict"
     elif d["paused"]:
         state, headline = "paused", "Paused: you stopped the run"
     elif mine["stopped"]:
         only_budget = all(r["code"] == "budget" for s in mine["stopped"] for r in s["reasons"])
-        state, headline = ("budget", "Budget used up") if only_budget else ("stopped", "Stopped")
+        state, headline = (("budget", "The budget is used up: agents stopped on this epic") if only_budget
+                           else ("stopped", "Stopped: the agents cannot go on by themselves"))
     elif d["epic_changed"]:
         state, headline = "changed", "Suspended: the epic's text changed since you started it"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
-        state, headline = "waiting", "Waiting for you"
+        state, headline = "waiting", "Your answer is needed on the cards below"
     elif not factory_sessions.armed(ws, d["id"]):
-        state, headline = "unarmed", "Not running: it was started in a terminal, so the runner launches nothing"
-    elif (blocker := factory_runner.user_settings_blocker()):
+        state, headline = "unarmed", ("Not running: the dashboard's start did not arm it (for example, it was approved "
+                                      "in a terminal)")
+    elif blocker:
         state, headline = "blocked", "The runner starts nothing"
-    else:
+    elif not kids:
+        state, headline = "nokids", "Waiting for children"
+    elif running or any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
         state, headline = "working", f"{name} is working"
-    role, rank = _STATES[state]
+    else:
+        state, headline = "idle", "Nothing is running: no child can start now"
+    role, rank, chip = _STATES[state]
     start = _at(d.get("at"))
     end = clock.now()
     if state == "finished":
-        end = max((_at(e.at) for e in events if e.ticket == epic.id and e.kind == "verdict.given"
+        end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
-    here = {"working": "now", "waiting": "wait", "unarmed": "todo"}.get(state, "stop")
+    here = {"working": "now", "waiting": "wait", "unarmed": "todo", "nokids": "todo", "idle": "todo"}.get(state, "stop")
     marks = ["done" if i < n else here if i == n else "todo" for i in range(len(STEPS))]
     current = min(n, len(STEPS) - 1)
-    return {"epic": epic.id, "title": epic.title, "dark": dark, "dark_live": dark and permits.dark_on(ws), "name": name,
-            "state": state, "role": role, "rank": rank, "headline": headline, "blocker": blocker, "steps": n,
-            "current": current, "step": STEPS[current], "hot": dark and n >= 2, "marks": marks,
+    live = state == "working"  # motion and glow only while it really works
+    built = bool(running) or any(_tasks(t)[0] for _, t in kids)
+    return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
+            "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
+            "steps": n, "current": current, "step": STEPS[current], "live": live, "arc": STEP_ARCS[current],
+            "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine}
 
 
+_LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "granted a permission",
+               "permit.denied": "denied a permission", "permit.revoked": "revoked a grant",
+               "permit.used": "used a grant", "gate.delegated": "auto-approved it under your charter"}
+
+
 def _epic_events(events, ids) -> list[dict]:
-    """The read-only log: time, ticket, event kind and who (human or agent) only. Event data (command hashes, grant
-    ids, text) and agent session ids never reach the page."""
+    """The read-only log in plain words: time, ticket, who (you or an agent) and a fixed phrase per event kind
+    (timeline.action_phrase). Event data (command text, hashes, grant ids, notes) and agent session ids never reach
+    the page."""
+    from orch.dashboard.data.timeline import action_phrase
     keep = {i.upper() for i in ids}
-    rows = [{"at": e.at, "ticket": e.ticket, "kind": e.kind, "who": str(e.actor).split(":", 1)[0]}
-            for e in events if e.ticket and str(e.ticket).upper() in keep]
+    rows = []
+    for e in events:
+        if not e.ticket or str(e.ticket).upper() not in keep:
+            continue
+        who = "You" if str(e.actor).startswith("human") else "An agent"
+        rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {_LOG_PHRASE.get(e.kind) or action_phrase(e)}"})
     return rows[::-1][:200]
+
+
+def _bound(ws) -> list[dict]:
+    from orch.core import factory_sessions
+    try:
+        return factory_sessions.bindings(ws)
+    except Exception:
+        return []
+
+
+def _blocker():
+    from orch.core import factory_runner
+    return factory_runner.user_settings_blocker()
 
 
 def run_view(ws, epic) -> dict | None:
@@ -212,16 +279,22 @@ def run_view(ws, epic) -> dict | None:
     if d is None:
         return None
     view = permit_view(ws)
-    r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries)
+    r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
+                   blocker=_blocker(), bound=_bound(ws))
     r["log"] = _epic_events(events, [epic.id] + [t.id for _, t in r["kids"]])
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
     if r["state"] == "finished":
-        reqs = [x for x in permits.requests(ws, events).values() if x["epic"] == epic.id]
+        reqs = [x for x in permits.requests(ws, events).values() if str(x["epic"]).upper() == epic.id.upper()]
         answered = permits.decisions(ws, signed)
         listed = dark_profile.rules(ws, signed)
+
+        def added_after(x) -> bool:  # a rule signed after the card, covering exactly its command
+            rule = dark_profile.match(ws, x["command"], listed)
+            return rule is not None and _at(rule.get("at")) is not None and _at(x["at"]) is not None \
+                and _at(rule["at"]) >= _at(x["at"])
         card = sum(1 for x in reqs if (x["id"], x["sha"]) in answered)
         profile = sum(1 for x in reqs if (x["id"], x["sha"]) not in answered and x["source"] == "dark"
-                      and dark_profile.match(ws, x["command"], listed) is not None)
+                      and added_after(x))
         r["summary"] = {"children": len(r["kids"]), "tasks": sum(_tasks(t)[0] for _, t in r["kids"]),
                         "requests": len(reqs), "card": card, "profile": profile, "open": len(reqs) - card - profile}
     return r
@@ -235,7 +308,8 @@ def factory_list(ws) -> list[dict] | None:
     from orch.core import ledger
     from orch.core.events import read_events
     signed, events, entries = ledger.entries(ws), read_events(ws), store.scan(ws)
-    view, out = permit_view(ws), []
+    view, out, bound = permit_view(ws), [], _bound(ws)
+    blocker = _blocker()  # read once for the whole list
     for e in entries:
         if e.meta is None or not epics.is_epic(e.meta):
             continue
@@ -245,7 +319,8 @@ def factory_list(ws) -> list[dict] | None:
             continue
         d = permits.factory_delegation(ws, epic, signed)
         if d is not None:
-            out.append(run_status(ws, epic, d, view, signed=signed, events=events, entries=entries))
+            out.append(run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
+                                  blocker=blocker, bound=bound))
     return sorted(out, key=lambda r: (r["rank"], r["epic"]))
 
 

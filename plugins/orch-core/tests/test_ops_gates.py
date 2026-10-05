@@ -40,6 +40,31 @@ def test_build_questions_rejects(raw, msg):
         build_questions(raw, [], "t")
 
 
+def test_unquoted_yaml_option_labels_keep_their_source_text():
+    f = """questions:
+  - text: Ship it?
+    options:
+      - {key: A, label: Yes}
+      - {key: B, label: No}
+      - {key: C, label: On}
+      - {key: D, label: 2.50}
+    recommended: A
+    blocking: false
+  - text: Bare?
+    options: [Off, 3]
+"""
+    q1, q2 = build_questions(parse_ask_file(f), [], "t")
+    assert [o["label"] for o in q1["options"]] == ["Yes", "No", "On", "2.50"]
+    assert q1["recommended"] == "A"
+    assert q1["blocking"] is False  # other YAML booleans are untouched
+    assert [o["label"] for o in q2["options"]] == ["Off", "3"]
+
+
+def test_boolean_label_from_json_gets_a_quote_hint():
+    with pytest.raises(ValidationError, match='quote it, e.g. label: "No"'):
+        build_questions([{"text": "x", "options": [{"key": "A", "label": "Yes"}, {"key": "B", "label": False}]}], [], "t")
+
+
 def test_parse_ask_file_rejects_empty():
     with pytest.raises(ValidationError):
         parse_ask_file("questions: []")
@@ -197,3 +222,32 @@ def test_addon_context_show_is_read_only(ws, aops):
     t = AddonContext(ws, "tix").show(tid.replace("L-000", ""))
     assert t.id == tid and t.title == "Backup"
     assert len(read_events(ws)) == before
+
+
+def test_question_files_refuse_anchors_aliases_and_huge_files_fast():
+    import time
+    bomb = ["questions:", "  - text: x", "    options: [a, b]", "    meta:", "      x0: &a0 [z, z, z, z, z, z, z, z, z, z]"]
+    bomb += [f"      x{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]" for i in range(1, 30)]
+    many = ["questions:", "  - text: base", "    options: &o [" + ", ".join(f"o{i}" for i in range(500)) + "]"]
+    many += [f"  - text: q{i}\n    options: *o" for i in range(300)]
+    docs = ["\n".join(bomb), "questions: &a [*a]", "questions:\n  - text: x\n    options: &a [*a, *a]", "\n".join(many),
+            "questions:\n  - &m {key: A, label: x}\n  - *m"]
+    for doc in docs:
+        t = time.time()
+        with pytest.raises(ValidationError, match="anchors and aliases"):
+            parse_ask_file(doc)
+        assert time.time() - t < 1
+    t = time.time()
+    with pytest.raises(ValidationError, match="larger than"):
+        parse_ask_file("questions:\n  - text: " + "x" * 300_000)
+    assert time.time() - t < 1
+    q, = build_questions(parse_ask_file("questions:\n  - text: x\n    options: [{key: A, label: No}, {key: B, label: Yes}]"), [], "t")
+    assert [o["label"] for o in q["options"]] == ["No", "Yes"]
+    assert parse_ask_file("questions:\n  - text: 'a & b * c'\n    options: [a, b]")  # & and * in text are not anchors
+
+
+@pytest.mark.parametrize("deep", ["questions: " + "[" * 100000, "questions: " + "{a: " * 50000 + "1" + "}" * 50000,
+                                  "questions:\n" + "- " * 60000 + "x"])
+def test_a_deeply_nested_question_file_is_refused_not_a_crash(deep):
+    with pytest.raises(ValidationError, match="nested|more than|larger than"):
+        parse_ask_file(deep)

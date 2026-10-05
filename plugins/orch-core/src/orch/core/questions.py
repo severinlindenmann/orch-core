@@ -5,7 +5,6 @@ import hashlib
 import yaml
 
 from orch.core.canonical import canonical_json
-from orch.core.model import yaml_load
 from orch.errors import NotFoundError, ValidationError
 
 QTYPES = ("single", "multi", "confirm", "text")
@@ -22,9 +21,105 @@ def question_hash(q: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical_json(core)).hexdigest()
 
 
+_STR_TAG = "tag:yaml.org,2002:str"
+_PLAIN_TAGS = ("tag:yaml.org,2002:bool", "tag:yaml.org,2002:int", "tag:yaml.org,2002:float")
+
+
+def _as_text(node) -> None:
+    """Keep a bare option label or key as written: `No`, `Yes`, `On`, `Off` and `1.0` are not YAML booleans or numbers here."""
+    if isinstance(node, yaml.ScalarNode) and node.tag in _PLAIN_TAGS:
+        node.tag = _STR_TAG
+
+
+MAX_ASK_NODES = 20000  # distinct YAML nodes in a question file: far above any real one, a bound on hostile input
+
+
+def _keep_option_text(root) -> None:
+    """Walk the node graph once (aliases share nodes, so a node is visited once whatever points at it: an alias bomb
+    or a recursive alias cannot make this exponential or endless) and keep option labels and keys as written."""
+    seen: set[int] = set()
+    todo = [root]
+    while todo:
+        node = todo.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if len(seen) > MAX_ASK_NODES:
+            raise ValidationError(f"invalid question file: more than {MAX_ASK_NODES} YAML nodes")
+        if isinstance(node, yaml.SequenceNode):
+            todo.extend(node.value)
+        elif isinstance(node, yaml.MappingNode):
+            for k, v in node.value:
+                if isinstance(k, yaml.ScalarNode) and k.value == "options" and isinstance(v, yaml.SequenceNode):
+                    seen.add(id(v))
+                    for opt in v.value:
+                        if isinstance(opt, yaml.MappingNode):
+                            seen.add(id(opt))
+                            for ok, ov in opt.value:
+                                if isinstance(ok, yaml.ScalarNode) and ok.value in ("label", "key"):
+                                    _as_text(ov)
+                                else:
+                                    todo.append(ov)
+                        elif isinstance(opt, yaml.ScalarNode):
+                            _as_text(opt)
+                        else:
+                            todo.append(opt)
+                else:
+                    todo.append(v)
+
+
+MAX_ASK_BYTES = 256 * 1024
+MAX_ASK_DEPTH = 64  # a question file is questions > options > fields: a handful of levels
+
+
+def _refuse_aliases(text: str) -> None:
+    """Question files never need anchors or aliases, and an alias bomb that survives parsing explodes when the data is
+    serialised later: refuse them on the event stream (linear in the text) before anything is composed."""
+    try:
+        depth = 0
+        for ev in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(ev, yaml.AliasEvent) or getattr(ev, "anchor", None) is not None:
+                raise ValidationError("invalid question file: anchors and aliases are not allowed in question files")
+            if isinstance(ev, (yaml.SequenceStartEvent, yaml.MappingStartEvent)):
+                depth += 1
+                if depth > MAX_ASK_DEPTH:  # the composer is recursive (libyaml's C one overflows the stack and crashes)
+                    raise ValidationError(f"invalid question file: nested more than {MAX_ASK_DEPTH} levels deep")
+            elif isinstance(ev, (yaml.SequenceEndEvent, yaml.MappingEndEvent)):
+                depth -= 1
+    except yaml.YAMLError:
+        pass  # a syntax error is reported by the real load below
+
+
+def _load_ask_yaml(text: str):
+    try:
+        return _load_ask_yaml_unbounded(text)
+    except RecursionError:  # a few KB of `[[[[…` or `{a: {a: …` overflows the recursive composer: a refusal, not a crash
+        raise ValidationError("invalid question file: nested too deeply") from None
+
+
+def _load_ask_yaml_unbounded(text: str):
+    from orch.core import model  # the same loader as every other orch YAML file (C loader when available)
+    if len(text.encode("utf-8", "replace")) > MAX_ASK_BYTES:
+        raise ValidationError(f"invalid question file: larger than {MAX_ASK_BYTES // 1024} KB")
+    _refuse_aliases(text)
+    for cls in (model._Loader, model._PyLoader):
+        loader = cls(text)
+        try:
+            node = loader.get_single_node()
+            if node is None:
+                return None
+            _keep_option_text(node)
+            return loader.construct_document(node)
+        except yaml.YAMLError:
+            if cls is model._PyLoader:
+                raise
+        finally:
+            loader.dispose()
+
+
 def parse_ask_file(text: str) -> list:
     try:
-        data = yaml_load(text.lstrip("﻿"))
+        data = _load_ask_yaml(text.lstrip("﻿"))
     except yaml.YAMLError as e:
         raise ValidationError(f"invalid question file: {e}") from e
     if isinstance(data, dict):
@@ -62,8 +157,15 @@ def _options(i: int, qtype: str, raw) -> list[dict]:
             o = {"label": "Yes" if o else "No"}
         elif isinstance(o, str):
             o = {"label": o}
+        if isinstance(o, dict) and isinstance(o.get("label"), bool):  # JSON true/false; YAML files keep the source text
+            raise ValidationError(f"question {i}: option {j + 1}: label must be text, not true/false; "
+                                  f"quote it, e.g. label: \"No\"")
+        if isinstance(o, dict) and isinstance(o.get("label"), (int, float)):
+            o = {**o, "label": str(o["label"])}
         if not isinstance(o, dict) or not o.get("label"):
             raise ValidationError(f"question {i}: option {j + 1} needs a label")
+        if not isinstance(o["label"], str):
+            raise ValidationError(f"question {i}: option {j + 1}: label must be text; quote it, e.g. label: \"No\"")
         key = str(o.get("key") or chr(ord("A") + j)).strip()
         if key.upper() in seen:
             raise ValidationError(f"question {i}: duplicate option key {key}")

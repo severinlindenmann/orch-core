@@ -19,7 +19,8 @@ from orch.core.check import record_invalidations, run_checks
 from orch.core.maintenance import tidy
 from orch.dashboard.auth import strict_same_origin
 from orch.dashboard import routes_widgets, setup_state
-from orch.dashboard.views import HUMAN, _theme, back, confirm_page, error_text, invalidate_setup_count, page
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import _theme, back, confirm_page, error_text, invalidate_setup_count, page
 from orch.errors import OrchError
 from orch.hooks.install import hook_state
 from orch.remote import store as phone_store
@@ -231,7 +232,7 @@ async def addon_check_updates(request: Request):
     return back(_BACK, msg=f"{n} update(s) available" if n else "All custom addons are up to date")
 
 
-def _update_everything() -> tuple[list[str], list[str]]:
+def _update_everything(actor) -> tuple[list[str], list[str]]:
     """(done, problems). Core is pulled and reinstalled but cannot restart a running server; an addon that asks for
     something new is installed and left for the human to review and trust in its row."""
     done, problems = [], []
@@ -246,7 +247,7 @@ def _update_everything() -> tuple[list[str], list[str]]:
         if not info.has_update:
             continue
         try:
-            before, m, r, trusted = update.apply_addon(info.name, actor=HUMAN)
+            before, m, r, trusted = update.apply_addon(info.name, actor=actor)
         except OrchError as e:
             problems.append(f"{info.name}: {e.message}")
             continue
@@ -266,7 +267,7 @@ async def addon_update_all(request: Request, ask: str = Form("")):
                             " every custom addon. An addon that asks for nothing new is trusted again; any other waits for"
                             " your review.", confirm="Update all", cancel="Cancel", cancel_href=_BACK, nav="workspace")
     try:
-        done, problems = await asyncio.to_thread(_update_everything)
+        done, problems = await asyncio.to_thread(_update_everything, request_actor(request))
     except OrchError as e:
         return back(_BACK, err=error_text(e))
     await asyncio.to_thread(request.app.state.addons.reload)
@@ -283,7 +284,7 @@ def addon_enable(request: Request, name: str, enabled: str = Form(...)):
     ws = request.app.state.ws
     on = enabled == "1"
     try:
-        (manage.enable if on else manage.disable)(ws.root, name, actor=HUMAN)
+        (manage.enable if on else manage.disable)(ws.root, name, actor=request_actor(request))
     except OrchError as e:
         return back(_BACK, err=error_text(e))
     request.app.state.addons.reload()  # import now, in this POST: the next page render imports nothing
@@ -315,7 +316,7 @@ async def addon_trust(request: Request, name: str, seen: str = Form(...), ask: s
                             " what changed in the review on Workspace & addons first.", confirm="Trust this version",
                             cancel="Cancel", cancel_href=_BACK, nav="workspace")
     try:
-        await asyncio.to_thread(manage.trust_addon, name, seen_digest=seen, actor=HUMAN)
+        await asyncio.to_thread(manage.trust_addon, name, seen_digest=seen, actor=request_actor(request))
     except OrchError as e:
         return back(_BACK, err=error_text(e))
     await asyncio.to_thread(request.app.state.addons.reload)
@@ -349,7 +350,8 @@ async def addon_settings(request: Request, name: str):
     invalidate_setup_count(ws)
     # a changed setting should show on the addon's page now, not after the next manual Refresh
     request.app.state.scheduler.request_refresh(name)
-    return back(_BACK, msg=f"Saved settings for {f.manifest.title}" + ("".join(f". {n}" for n in notes[:2]) if notes else ""))
+    return back(f"/workspace#settings-{name}-d",  # stay on that addon's Settings
+                msg=f"Saved settings for {f.manifest.title}" + ("".join(f". {n}" for n in notes[:2]) if notes else ""))
 
 
 # -- Phones (remote humans): human-only dashboard POSTs, no CLI -----------------------------

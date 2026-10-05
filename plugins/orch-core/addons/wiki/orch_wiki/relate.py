@@ -10,6 +10,8 @@ from .globs import glob_match, normalize
 from .pages import KEY, WORD
 
 STATUSES = ("testing", "done")
+COMMON_MIN_PAGES = 4  # fewer pages than this and "on most of them" says nothing
+COMMON_SHARE = 0.5  # a term on more than this share of the pages is no signal
 MAX_SCANS = 20  # page texts read with a regex per related_pages call; the rest is looked up
 TARGET = re.compile(r"[A-Z][A-Z0-9]*-\d+\|[^|\n]{1,201}\|[^|\n]{1,200}")
 
@@ -95,6 +97,7 @@ def related_pages(ticket, pages, text_of, mentions_of=_no_mentions, limit: int =
     the regex on the page text, on at most MAX_SCANS texts per call."""
     terms = ticket_terms(ticket)
     scored = []
+    per_page = []
     scans = 0
     for page in pages:
         found = mentions_of(page)
@@ -116,6 +119,18 @@ def related_pages(ticket, pages, text_of, mentions_of=_no_mentions, limit: int =
                 scans += 1
                 hay = f"{str(page.get('title') or '').lower()}\n{text_of(page)}"
             counts.append((term, len(pattern.findall(hay))))
+        per_page.append((page, counts))
+    # A term on most pages (the harness repo's name, a label every page carries) says nothing about this ticket: it is
+    # left out, unless it is a ticket key or an external key, which always mean something. Needs a few pages to judge.
+    common = set()
+    if len(per_page) >= COMMON_MIN_PAGES:
+        for term, _ in terms:
+            if not KEY.fullmatch(term.lower()):
+                hits = sum(1 for _, counts in per_page if any(t == term and n for t, n in counts))
+                if hits / len(per_page) > COMMON_SHARE:
+                    common.add(term)
+    for page, counts in per_page:
+        counts = [(t, n) for t, n in counts if t not in common]
         total = sum(n for _, n in counts)
         if not total and ticket.id in _strs(page.get("links")):
             counts, total = [(ticket.id, 1)], 1
@@ -127,9 +142,17 @@ def related_pages(ticket, pages, text_of, mentions_of=_no_mentions, limit: int =
     return [(page, why) for _, _, page, why in scored[:limit]]
 
 
+QUOTES = "\"'`\u201c\u201d\u2018\u2019\u201e\u201a\u00ab\u00bb"  # straight and typographic quotes around a word or phrase
+
+
+def search_words(query: str) -> list[str]:
+    """The words of a query: lowercased, split on whitespace, quotes around a word dropped ("dbt" finds dbt), at most 5."""
+    return [w for w in (x.strip(QUOTES) for x in str(query).lower().split()) if w][:5]
+
+
 def search(pages, text_of, query: str, limit: int = 50) -> list[dict]:
     """In-memory search over cached pages: every word must be in the title or the text."""
-    words = [w for w in query.lower().split() if w][:5]
+    words = search_words(query)
     if not words:
         return []
     found = []

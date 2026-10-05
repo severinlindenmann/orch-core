@@ -260,10 +260,12 @@ def journey(t, card: dict, steps: list[dict], events, ask_by: dict, signers: dic
         doing_bits.append(card["code"]["label"])
     ac = card.get("ac") or {}
     done = t.status == "done"
+    work = state("Work")
     stages = [
         ("Asked", "done", day(t.meta.get("created")), asked_note),
         ("Agreed", state("Requirements", "Plan"), agreed_day, agreed_note),
-        ("Doing", state("Work"), _day(_moved_to(events, "in-progress")), " · ".join(doing_bits) or "not started"),
+        ("Doing", work, _day(_moved_to(events, "in-progress")),
+         " · ".join(doing_bits) or ("under way" if work == "now" else "not started")),
         ("Proven", state("Testing"), _day(_moved_to(events, "testing")),
          f"AC {ac.get('proven', 0)}/{ac['total']}" if ac.get("total") else "no criteria"),
         ("Done", "done" if done else "todo", _day(_moved_to(events, "done")) if done else "",

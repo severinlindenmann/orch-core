@@ -114,6 +114,19 @@ def record_invalidations(ws, findings: list[Finding]) -> None:
     store.forget_scope()  # the event log changed under this request
 
 
+def record_ticket_invalidations(ws, t) -> None:
+    """Write the gate.invalidated events a ticket is owed (an approved gate whose text changed since), once each.
+    Every mutation calls this on the ticket it is about to change, before it applies, so the invalidation is on the
+    audit trail ahead of any later decision on that ticket: read-only commands never write it (#108)."""
+    gates = [g for g in GATE_SECTIONS
+             if ((t.meta.get("gates") or {}).get(g) or {}).get("approved") and gate_state(t, g) == "invalidated"]
+    if not gates:
+        return
+    events = read_events(ws)
+    for gate in gates:
+        _record_invalidation(ws, t, gate, events)
+
+
 def _check_addons(ws) -> list[Finding]:
     """Addon findings from manifests and user files only: checks never import addon code."""
     from orch.addons.discovery import discover

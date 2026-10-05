@@ -50,7 +50,7 @@
             <div class="row">
               {% if r.status == "stale" %}<a class="btn" href="/t/{{ r.ticket }}#start-agent-{{ r.ticket }}">Start agent</a>{% endif %}
               <form method="post" action="/t/{{ r.ticket }}/release" data-dialog="Release {{ r.harness or 'the agent' }}'s claim on {{ r.ticket }}?" data-dialog-body="{{ r.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><input type="hidden" name="next" value="/activity">
-                <button class="btn btn-quiet" type="submit" aria-label="Release claim on {{ r.ticket }}">Release…</button>
+                <button class="btn" type="submit" aria-label="Release claim on {{ r.ticket }}">Release…</button>
               </form>
             </div>
           </td>

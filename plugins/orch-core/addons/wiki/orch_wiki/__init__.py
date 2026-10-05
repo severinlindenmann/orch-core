@@ -33,6 +33,10 @@ class WikiAddon:
         texts = self.index.texts(str(page.get("provider") or ""), str(page.get("space") or ""))
         return texts.get(str(page.get("id") or ""), "")
 
+    def raw_text_of(self, page: dict) -> str:
+        raws = self.index.raw(str(page.get("provider") or ""), str(page.get("space") or ""))
+        return raws.get(str(page.get("id") or ""), "")
+
     def body_of(self, page: dict) -> str | None:
         return self.bodies.bodies(str(page.get("space") or "")).get(str(page.get("id") or ""))
 

@@ -106,3 +106,43 @@ def test_every_stacked_cell_has_a_label(dash, ws, put, aops, monkeypatch):
             if cls and set(cls.group(1).split()) & set(_UNLABELLED_OK):
                 continue
             assert "data-label=" in attrs, (url, attrs)
+
+
+def test_addon_settings_form_has_no_nested_form_and_its_save_button_belongs_to_it(dash, ws, monkeypatch):
+    """A settings widget may hold its own <form> (an Action button, e.g. orch-tix "Sync now"). Forms cannot nest: the
+    parser used to close the settings form at the inner </form>, leaving "Save settings" outside any form."""
+    from html.parser import HTMLParser
+
+    from orch.addons.runtime import SlotGroup
+    from orch.addons.widgets import Action
+    from orch.dashboard import routes_workspace
+
+    group = SlotGroup("x", "X", (Action("sync", "Sync now"),))
+    monkeypatch.setattr(routes_workspace, "_addon_rows",
+                        lambda ws, runtime: [{"name": "x", "title": "X", "kind": "custom", "version": "1", "source": "/src/x",
+                                              "trust": "trusted", "trust_role": "ok", "trust_label": "trusted",
+                                              "enabled": True, "can_enable": True, "health": None, "review": None,
+                                              "fields": [{"key": "path", "label": "Path", "type": "text", "value": ""}],
+                                              "settings_groups": [group], "update": None, "error": None, "problem": None}])
+    html = dash.get("/workspace").text
+    assert "Sync now" in html
+
+    class Forms(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.depth = self.max_depth = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "form":
+                self.depth += 1
+                self.max_depth = max(self.max_depth, self.depth)
+
+        def handle_endtag(self, tag):
+            if tag == "form":
+                self.depth -= 1
+
+    p = Forms()
+    p.feed(html)
+    assert p.max_depth == 1                      # no form inside a form
+    assert 'id="settings-form-x"' in html
+    assert re.search(r'<button type="submit" form="settings-form-x"[^>]*>Save settings</button>', html)

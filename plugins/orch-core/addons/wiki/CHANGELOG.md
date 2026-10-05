@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Search shows the passage that matched, with the matched words in bold, and a Clear search link; quotes around words are ignored. A page is no longer "related" to a ticket because of a word that is on most pages (such as the harness repo's name). `confluence`, a stub, is no longer offered in the provider select. The search index now keeps the page text in its own case (indexes from earlier versions keep working, with lowercase excerpts until the next refresh).
+- Core: a provider's snapshots for scopes it no longer lists are dropped, so a failure from a provider that is no longer selected does not stay on the page.
+
 ## 0.3.0
 
 - Pages show ticket widgets: an ```orch block on a local page is drawn like on a ticket (same chrome, text alternative and sandboxed frame; an invalid block shows an error naming the page path and line). Page files are pinned by digest and live in `_files/` of the wiki folder. Search, excerpts and ticket mentions read each block's text alternative, not its JSON. GitHub wiki pages are not drawn in orch, so they are unchanged.

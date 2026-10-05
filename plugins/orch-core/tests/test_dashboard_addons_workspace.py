@@ -95,6 +95,7 @@ def test_settings_save_and_validate(client, ws):
     assert "err=" in bad.headers["location"]
     ok = client.post("/workspace/addons/alpha/settings", data={"greeting": "Hi", "x": "y"}, headers=ORIGIN, follow_redirects=False)
     assert "Saved+settings" in ok.headers["location"]
+    assert ok.headers["location"].endswith("#settings-alpha-d")  # back to that addon's Settings, not the top
     assert userfiles.workspace_addons(ws.root)["alpha"]["config"] == {"greeting": "Hi"}
     assert 'value="Hi"' in client.get("/workspace").text
 

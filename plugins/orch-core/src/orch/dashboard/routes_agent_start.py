@@ -17,7 +17,8 @@ from orch.core.ops import Ops
 from orch.dashboard import launch, terminals
 from orch.dashboard.data import agent_start
 from orch.dashboard.data.agents import agent_rows
-from orch.dashboard.views import HUMAN, back, error_text, safe_next
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, error_text, safe_next
 from orch.errors import OrchError
 
 router = APIRouter()
@@ -58,7 +59,7 @@ def start_agent(request: Request, ref: str, mode: Annotated[str, Form()], harnes
         _, argv, _ = agent_start.build(ws, t.id, mode, harness, pr=s["pr"], settings=settings)
         launch.preflight(terminal, settings)  # cheap launcher checks before the claim is touched
         if s["warning"]:  # a stale claim: release it so the new agent can claim the ticket
-            Ops(ws, HUMAN).release(t.id)
+            Ops(ws, request_actor(request)).release(t.id)
         name = terminals.free_name(ws, t.id) if terminal == "tmux" else t.id
         msg = launch.start(ws, t.id, argv, terminal=terminal, name=name, harness=harness, settings=settings)
     except OrchError as e:

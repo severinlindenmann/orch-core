@@ -49,7 +49,8 @@ _SCAN = 50
 def workspace_id(ws) -> str:
     """A stable, opaque id for this workspace: random, URL-safe, stored in the workspace's own state
     directory (so a rename or move of the directory keeps it) and never derived from its path or name.
-    Created once; a missing or malformed file gets a fresh id. Two starters at once agree on one id."""
+    It is an unauthenticated routing label kept in an agent-writable directory: it must never authorize
+    anything. Created once; a missing or malformed file gets a fresh id. Two starters at once agree on one id."""
     path = ws.state_dir / "workspace-id"
     for _ in range(3):
         raw = read_regular_file(path, 128)
@@ -75,9 +76,11 @@ def workspace_id(ws) -> str:
 def pid_alive(pid) -> bool:
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
         return False
+    if sys.platform == "win32":  # os.kill would send a console event there; the pid is unknown, the entry stays
+        return True
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, OverflowError, ValueError):
         return False
     except OSError:  # PermissionError: it exists, it is just not ours
         return True
@@ -102,21 +105,43 @@ def candidate_ports(remembered: int | None, configured: int) -> list[int]:
     return out
 
 
+def _someone_listens(port: int) -> bool:
+    """A quick connect on loopback (v4, and v6 when there is one). With SO_REUSEADDR some systems let a
+    wildcard listener and a loopback listener share a number, so a bind alone is not proof the port is free."""
+    for addr, family in (("127.0.0.1", socket.AF_INET), ("::1", socket.AF_INET6)):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.2)
+                if probe.connect_ex((addr, port)) == 0:
+                    return True
+        except (OSError, OverflowError, ValueError):
+            continue
+    return False
+
+
 def listen_first_free(host: str, ports: list[int]) -> tuple[socket.socket, int]:
     """Bind (and listen on) the first free port of `ports` and return that very socket: the bind is
     the claim, so two starts at the same instant cannot both get one port. Raises OSError if none."""
     last: OSError | None = None
     for p in ports:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if _someone_listens(p):  # before our own bind: afterwards a connect would reach us
+            last = OSError(errno.EADDRINUSE, "port in use")
+            continue
+        try:
+            family = socket.getaddrinfo(host, p, type=socket.SOCK_STREAM)[0][0]
+            sock = socket.socket(family, socket.SOCK_STREAM)
+        except (OSError, OverflowError, ValueError, IndexError) as exc:
+            last = exc if isinstance(exc, OSError) else OSError(errno.EINVAL, str(exc))
+            continue
         try:
             if sys.platform != "win32":  # on Windows this option would let two binders share a port
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((host, p))
             sock.listen(128)
             return sock, p
-        except OSError as exc:
+        except (OSError, OverflowError, ValueError) as exc:
             sock.close()
-            last = exc
+            last = exc if isinstance(exc, OSError) else OSError(errno.EINVAL, str(exc))
     raise last or OSError(errno.EADDRNOTAVAIL, "no port to try")
 
 

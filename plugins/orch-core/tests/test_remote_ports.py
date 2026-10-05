@@ -261,3 +261,38 @@ def test_others_skips_dead_pid_and_keeps_live_one(ws, tmp_path):
         data[str(other)] = {**entry, "pid": dead}
         path.write_text(json.dumps(data))
         assert switcher.others(ws) == []
+
+
+@pytest.mark.parametrize("bad", ["70000", "-1", "0"])
+def test_command_rejects_out_of_range_port(served, configure, bad, capsys):
+    go, box = served
+    configure(dashboard={"port": _free_port()})
+    assert go("--port", bad) != 0
+    assert "port" not in box
+
+
+def test_listen_never_leaks_overflow():
+    with pytest.raises(OSError):
+        switcher.listen_first_free("127.0.0.1", [70000, -1])
+
+
+def test_pid_alive_on_windows_never_signals(monkeypatch):
+    monkeypatch.setattr(switcher.sys, "platform", "win32")
+
+    def boom(*a):
+        raise AssertionError("os.kill must not be called")
+    monkeypatch.setattr(switcher.os, "kill", boom)
+    assert switcher.pid_alive(4242) is True
+    assert switcher.pid_alive(-1) is False
+
+
+def test_listen_skips_port_held_on_the_wildcard_address(held):
+    p = _free_port()
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", p))
+    s.listen(1)
+    held.append(s)
+    sock, got = switcher.listen_first_free("127.0.0.1", [p, p + 1, p + 2])
+    sock.close()
+    assert got != p

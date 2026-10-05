@@ -1285,14 +1285,17 @@ def serve(
     cfg = ws.config["dashboard"]
     bind = host or ("0.0.0.0" if lan else cfg["host"])
     from orch.dashboard import switcher
-    remembered = None if port else switcher.remembered_port(ws)
-    ports = [port] if port else switcher.candidate_ports(remembered, cfg["port"])
+    if port is not None and not 1 <= port <= 65535:
+        raise UsageError(f"--port {port} is not a port", hint="use a number from 1 to 65535")
+    remembered = None if port is not None else switcher.remembered_port(ws)
+    ports = [port] if port is not None else switcher.candidate_ports(remembered, cfg["port"])
     try:
         sock, bind_port = switcher.listen_first_free(bind, ports)
     except OSError as e:
-        raise UsageError(f"could not listen on {bind}:{ports[0]}" + ("" if port else f" or the next {len(ports) - 1} ports"),
+        shown_bind = f"[{bind}]" if ":" in bind else bind
+        raise UsageError(f"could not listen on {shown_bind}:{ports[0]}" + ("" if port is not None else f" or the next {len(ports) - 1} ports"),
                          hint="--port N picks one; the port may be in use") from e
-    if not port and bind_port != (remembered or cfg["port"]):
+    if port is None and bind_port != (remembered or cfg["port"]):
         was = f"its remembered port {remembered}" if remembered else f"the configured port {cfg['port']}"
         typer.echo(f"{was} is taken; using {bind_port}")
     token = secrets.token_urlsafe(24)

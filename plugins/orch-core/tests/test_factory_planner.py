@@ -343,10 +343,11 @@ def test_a_dark_planner_runs_the_baseline_and_nothing_else(configure, agent, hum
     (b,) = fs.bindings(dws)
     for cmd in (f"orch show {eid}", f'orch new --epic {eid} --title "Export" --size s --requirements-file '
                 f"orchestrator/temporary/r.md --acceptance-file orchestrator/temporary/a.md",
-                'orch section set L-0009 Plan -m "Add the export, then test it."', "orch epic auto-approve L-0009"):
+                'orch section set L-0009 Plan -m "Add the export, then test it."', "orch epic auto-approve L-0009",
+                'orch log L-0009 -m "a (note); quoted"'):
         assert _behavior(permits.hook_decision(dws, _payload(b["session"], cmd))) == "allow", cmd
     for cmd in (f"orch approve {eid} requirements", f"orch move {eid} done", "orch dark profile add --baseline",
-                "orch section set L-0009 Plan --file plan.md", 'orch log L-0009 -m "a (note)"', "make deploy"):
+                'orch log L-0009 -m "$(id)"', "orch show L-0009 && orch claim L-0009", "make deploy"):
         assert _behavior(permits.hook_decision(dws, _payload(b["session"], cmd))) == "deny", cmd
 
 

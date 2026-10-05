@@ -426,18 +426,24 @@ What the baseline lets a session do, besides the scope limits above (residual ri
 - `orch permit list` shows every open request's command and reason to the session.
 
 What a prefix rule matches is narrow on purpose, and that reaches orch's own commands too: a shell metacharacter
-anywhere in the command, even inside quotes (a title or `-m` text holding `(`, `$` or `;`), or a line break, and an
-argument shape listed below (`--file` among them, so `orch section set X Plan --file plan.md` and `orch state X
---file f`) match no prefix rule, and the command stops for a card. Multi-line text goes through files the agent writes
-with its file tools (`orch new --requirements-file … --acceptance-file …`, `--body-file`), and those tools are denied
-in factory sessions unless your permission mode lets file edits through (see "Permissions" above).
+outside quotes, a line break, and an argument shape listed below match no prefix rule, and the command stops for a
+card. Text inside correct quotes is plain text to the shell, so a title or `-m` text may hold `(`, `;`, `&`, `|`,
+`<`, `>` or `#` (`orch task done T-2 T1 -m "Data (WWF, IUCN)"` matches `orch task done`); `$`, a backtick, a
+backslash and `!` inside double quotes still refuse (the shell acts on them there), and inside single quotes
+everything is plain (`-m 'costs $5'` matches). Multi-line text goes through files the agent writes with its file
+tools (`orch new --requirements-file … --acceptance-file …`, `--body-file`), and those tools are denied in factory
+sessions unless your permission mode lets file edits through (see "Permissions" above).
 
 - An **exact** rule matches only the identical command text.
-- A **prefix** rule matches only a single simple command: no `;`, `&`, `|`, `<`, `>`, `(`, `)`, backtick, `$`,
-  backslash or newline anywhere, and its first words (split as the shell would) equal the rule's. Compound commands,
-  redirects, pipes and substitutions never match a prefix rule (a redirect defeats prefix rules in Claude's own
-  matcher too); they can only match an exact rule. `npm run verify --quiet` matches `npm run verify`;
-  `npm run verify > f` and `npm run verify; rm -rf x` do not.
+- A **prefix** rule matches only a single simple command: outside quotes no `;`, `&`, `|`, `<`, `>`, `(`, `)`,
+  backtick, `$`, backslash, glob (`*`, `?`, `[`), brace, tilde, newline, and no `#` or `=` starting a word; inside
+  double quotes no `$`, backtick, backslash or `!`; quotes that close; and its first words (split as the shell would)
+  equal the rule's. Compound commands, redirects, pipes and substitutions never match a prefix rule (a redirect defeats
+  prefix rules in Claude's own matcher too); they can only match an exact rule. `npm run verify --quiet` matches
+  `npm run verify`; `npm run verify > f` and `npm run verify; rm -rf x` do not. The split is tested against the real
+  `sh`, `bash` and `zsh` on thousands of generated commands (`tests/test_dark_quoting.py`): whenever orch reads words
+  from a command, those shells read the same words. Globs and braces outside quotes refuse because they expand (a file
+  named `--exec=x` matched by `-*` would reach the program as that option).
 - A prefix rule also never matches a command carrying one of these argument shapes, which make some programs run
   other code, read other configuration or write elsewhere. They are these shapes, not every argument that does so (see
   "A prefix rule trusts the repository" below): `--upload-pack`, `--receive-pack`, `--exec`, `--script-shell`,

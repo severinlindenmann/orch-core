@@ -13,9 +13,10 @@ matches the command, and `deny` with a card otherwise; nothing is ever asked in 
   is ignored. A cut ledger backs no rule (permits._signed), so the profile does not apply.
 - `exact`: the full command text, matched character for character.
 - `prefix`: a list of argv tokens. It matches only a single simple command: no shell metacharacter (; & | < > ( ) `
-  $ \\ or a newline) anywhere, split by shlex, whose first tokens equal the rule's, and with none of the argument
-  shapes that make a program run other code (--exec, --upload-pack, -c, -e, ...). Compound commands, redirects, pipes,
-  substitutions and those arguments never match a prefix rule, only an exact one.
+  $ \\ or a newline), glob, brace or tilde outside quotes, nothing still active inside double quotes ($ ` \\ !), split
+  by shlex, whose first tokens equal the rule's, and with none of the argument shapes that make a program run other
+  code (--exec, --upload-pack, -c, -e, ...). Compound commands, redirects, pipes, substitutions and those arguments
+  never match a prefix rule, only an exact one. Quoted text is plain text to the shell, so `-m "a (b); c"` matches.
 - Broad rules are refused when added (and ignored when replayed): a prefix of fewer than two tokens, one whose program
   is not a plain word, is an environment assignment, or is a shell, an interpreter, a wrapper, an editor or a network
   or file-sweeping tool, `git` with an option or a fetching, rewriting or configuring subcommand first, `gh api`,
@@ -90,10 +91,39 @@ def _printable(s) -> bool:
     return isinstance(s, str) and bool(s) and all(32 <= ord(c) < 127 for c in s)
 
 
+_DQ_ACTIVE = frozenset("$`\\!")  # still active (or history-expanding) inside double quotes
+# Outside quotes, besides _META: globs, braces and the tilde expand (a file named `--exec=x` matched by `-*` would
+# reach the program as that option), so they refuse too; and # or zsh's = starting a word.
+_BARE_ACTIVE = _META | frozenset("*?[{}~")
+
+
+def _inert_quoting(command: str) -> bool:
+    """Whether every shell metacharacter of `command` sits inside quotes where the shell reads it as plain text:
+    anything inside single quotes; inside double quotes anything but $ ` \\ and !. Outside quotes no metacharacter,
+    glob, brace or tilde, and no # (a comment) or = starting a word. Quotes must close."""
+    q, start = None, True  # start: nothing but quote marks since the word began (zsh reads `""=x` as `=x`)
+    for c in command:
+        if q == "'":
+            q, start = (None, start) if c == "'" else (q, False)
+        elif q == '"':
+            if c in _DQ_ACTIVE:
+                return False
+            q, start = (None, start) if c == '"' else (q, False)
+        elif c in "'\"":
+            q = c
+        elif c in _BARE_ACTIVE or (start and c in "#="):
+            return False
+        else:
+            start = c == " "
+    return q is None
+
+
 def simple_tokens(command) -> list[str] | None:
-    """The argv of a single simple command, or None: text outside printable ASCII, any shell metacharacter, or text
-    the shell cannot split."""
-    if not _printable(command) or any(c in _META for c in command):
+    """The argv of a single simple command, or None: text outside printable ASCII, a shell metacharacter outside
+    quotes (or one still active inside double quotes), a comment, or text the shell cannot split. A metacharacter in
+    correctly quoted text (`-m "Elephants (WWF)"`) is plain text to the shell, so it does not refuse the command;
+    tests/test_dark_quoting.py checks the split against the real shells."""
+    if not _printable(command) or not _inert_quoting(command):
         return None
     try:
         words = shlex.split(command, comments=False, posix=True)

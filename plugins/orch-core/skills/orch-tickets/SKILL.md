@@ -18,6 +18,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Goal | Command |
 |---|---|
 | What should I work on? | `orch next` · `orch list --status open` · `orch list --mine` |
+| What else touches this code? | `orch related <id> [--path src/x] [--json]`: done tickets that changed those files (their decisions), open tickets in the same files, files usually changed with them, linked tickets |
 | Read a ticket | `orch show <id>` (ID, number or external key); with `--json` its `move` says whose turn it is (`who`: you, agent or nobody) |
 | Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (`## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Summary` in the body file go into those sections) |
 | Follow-up | `orch new --from <id> --title "..."` |

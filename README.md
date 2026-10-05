@@ -17,7 +17,7 @@ Agents are fast. They are also confident, and they will happily approve their ow
 
 ## Features
 
-- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
+- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
 - **Skills** for Claude Code: `orch-tickets`, `orch-refine-ticket` (requirements engineering), `orch-work-on-ticket` (claim, plan, implement, verify) and `orch-setup` (guided onboarding).
 - **Hooks**: the guard, and a `SessionStart` hook that prints the active rules, your claimed tickets and what is waiting on you.
 - **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key in every commit.

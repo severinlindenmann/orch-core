@@ -24,17 +24,21 @@ def dws(configure, human):
 
 # -- orch's --file options ------------------------------------------------------------------------------------------
 
-def test_orchs_file_options_match_a_prefix_rule_and_other_programs_stay_refused(dws, human):
+def test_orchs_file_options_match_a_prefix_rule_and_other_programs_stay_refused(dws, human, monkeypatch):
+    from orch.core import factory_runner
+    monkeypatch.setattr(factory_runner, "resolve_bin", lambda name: f"/opt/test/{name}")
     dark_profile.add_baseline(dws, human)
     for cmd in ("orch section set L-1 Plan --file orchestrator/temporary/plan.md", "orch state L-1 --file s.md",
                 "orch task add L-1 --file orchestrator/temporary/t.yaml", "orch task add L-1 --file=t.yaml",
-                "/opt/bin/orch state L-1 --file s.md"):
+                "/opt/test/orch state L-1 --file s.md"):  # the path the runner resolves orch to
         words = dark_profile.simple_tokens(cmd)
         assert dark_profile._runs_code(words) is None, cmd
     assert dark_profile.match(dws, "orch task add L-1 --file orchestrator/temporary/t.yaml") is not None
     dark_profile.add(dws, human, "prefix", "npm run verify")
     for cmd in ("npm run verify --file x", "./orch state L-1 --file s.md", "orchx state --file s",
-                "orch task add L-1 --fil t.yaml"):  # another program, a relative path, an abbreviation
+                "orch task add L-1 --fil t.yaml",  # another program, a relative path, an abbreviation
+                str(dws.root / ".venv" / "bin" / "orch") + " state L-1 --file s.md",  # an orch in the workspace
+                "/tmp/x/orch state L-1 --file s.md"):  # an absolute path that is not the resolved orch
         assert dark_profile._runs_code(dark_profile.simple_tokens(cmd)) is not None, cmd
 
 
@@ -47,11 +51,18 @@ def test_a_bound_session_still_cannot_hand_orch_a_file_outside_the_workspace(ws,
     tid = json.loads(_ok(capsys, "new", "-t", "x", "--json"))["id"]
     _bound_session(ws, human, monkeypatch)
     for args in (("section", "set", tid, "Plan", "--file", str(secret)), ("state", tid, "--file", str(secret)),
-                 ("task", "add", tid, "--file", str(secret))):
+                 ("task", "add", tid, "--file", str(secret)), ("new", "-t", "y", "--requirements-file", str(secret)),
+                 ("new", "-t", "y", "--acceptance-file", str(secret)), ("new", "-t", "y", "--body-file", str(secret)),
+                 ("new", "-t", "y", "--summary-file", str(secret)), ("new", "-t", "y", "--out-of-scope-file", str(secret)),
+                 ("widget", "add", tid, "--section", "Context", "--type", "stats", "--file", str(secret)),
+                 ("feedback", "add", "--file", str(secret)), ("artifact", "add", tid, str(secret))):
         assert dark_profile._runs_code(["orch", *args]) is None  # the profile would let it run ...
         code, out = _run(capsys, *args)
         assert code != 0 and "an agent cannot hand orch the file" in out.err, (args, out.err)  # ... orch refuses
-    assert "PRIVATE" not in json.dumps(store.load(ws, tid)[1].sections)
+    from orch.core.ledger import base_dir
+    texts = [p.read_text(encoding="utf-8", errors="replace") for root in (ws.root, base_dir())
+             for p in root.rglob("*") if p.is_file() and not p.is_symlink()]
+    assert not any("PRIVATE" in t for t in texts) and store.load(ws, tid)
 
 
 # -- the git-basic baseline -------------------------------------------------------------------------------------------
@@ -66,6 +77,20 @@ def test_every_git_basic_rule_is_real_git_and_passes_the_checks(dws, kind, rule)
     assert evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": rule}, "cwd": str(ws.root)}).allow
     r = subprocess.run(["git", *rule.split()[1:2], "-h"], capture_output=True, text=True, cwd=ws.root)
     assert r.returncode == 129 and "usage: git" in r.stdout, rule  # a real subcommand prints its usage
+
+
+@pytest.mark.parametrize("cmd", [
+    "git diff --no-index /etc/hosts /dev/null", "git diff --no-ind a b", "git add --pathspec-from-file=/etc/hosts",
+    "git commit --pathspec-from=x -m y", "git commit -F /etc/hosts", "git commit -F msg.txt", "git commit -aF m",
+    "git commit --file=m", "git commit --fi m", "git commit -t /etc/hosts", "git commit --template=t",
+    "git commit --templ t", "git diff --orderfile=o", "git commit --amend -m x", "git commit --am -m x",
+    "git commit --fixup HEAD~1", "git commit --squash=HEAD", "git commit --sq HEAD", "git log -- /etc",
+    "git show HEAD:/etc/hosts", "git diff ~/x", "git add ../outside/f", "git add src/../../x", "git log --stat=..",
+    "git show --format=~/x", "git diff a/../b",
+])
+def test_git_basic_refuses_reading_outside_and_rewriting(dws, human, cmd):
+    dark_profile.add_baseline(dws, human, name="git-basic")
+    assert dark_profile.match(dws, cmd) is None, cmd
 
 
 def test_git_basic_allows_a_workers_commit_and_nothing_that_rewrites_or_reaches_out(dws, human):
@@ -196,6 +221,9 @@ def test_prune_removes_only_exact_rules_for_compound_commands(dws, human, agent)
     for j in junk:
         dark_profile.add(dws, human, "exact", j)
     dark_profile.add(dws, human, "exact", "pytest -x tests")  # one plain command: kept
+    for kept in ("ls ~/x", "pytest tests/*.py", 'grep "a\\|b" f', "echo 'a; b | c'", "make x \\; y"):
+        dark_profile.add(dws, human, "exact", kept)  # not simple, but not compound: kept too
+        assert not dark_profile.compound(kept), kept
     dark_profile.add(dws, human, "prefix", "make test")
     assert sorted(r["rule"] for r in dark_profile.prunable(dws)) == sorted(junk)
     with pytest.raises(HumanOnlyError):
@@ -205,8 +233,8 @@ def test_prune_removes_only_exact_rules_for_compound_commands(dws, human, agent)
     assert len(dark_profile.prunable(dws)) == 2
     dark_profile.prune(dws, human, [r["id"] for r in dark_profile.prunable(dws)])
     assert dark_profile.prunable(dws) == []
-    assert {dark_profile.text(r["kind"], r["rule"]) for r in dark_profile.rules(dws)} == {"pytest -x tests",
-                                                                                         "make test"}
+    assert {dark_profile.text(r["kind"], r["rule"]) for r in dark_profile.rules(dws)} >= {"pytest -x tests",
+                                                                                         "make test", "ls ~/x"}
 
 
 def test_cli_prune_is_human_only_and_typed(capsys, switch, configure, human):  # noqa: F811
@@ -224,3 +252,13 @@ def test_cli_prune_is_human_only_and_typed(capsys, switch, configure, human):  #
     switch.human("PRUNE")
     assert "removed 1 rules" in _ok(capsys, "dark", "profile", "prune") and dark_profile.rules(ws) == []
     assert "nothing to prune" in _ok(capsys, "dark", "profile", "prune")
+
+
+@pytest.mark.parametrize("cmd,want", [
+    ("a && b", True), ("a; b", True), ("a | b", True), ("a > f", True), ("a < f", True), ("(a)", True),
+    ("a $(b)", True), ('a "$(b)"', True), ("a `b`", True), ('a "`b`"', True), ("a\nb", True),
+    ("a '$(b)'", False), ("a '; | &'", False), ('a "; | & < >"', False), ("ls ~/x", False), ("a *.py", False),
+    ("find . -exec rm {} \\;", False), ("a $HOME", False),
+])
+def test_compound_means_chains_pipes_redirects_and_substitutions_only(cmd, want):
+    assert dark_profile.compound(cmd) is want

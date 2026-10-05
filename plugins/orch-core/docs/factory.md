@@ -463,16 +463,21 @@ orch dark profile prune                          # remove exact rules for compou
 
 Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed (`--baseline`
 prints every rule it adds and needs BASELINE typed; `prune` lists the rules it removes and needs PRUNE typed);
-agents are refused in orch itself and by the guard. `prune` removes exact rules whose command is not one plain
-command (a chain, pipe, redirect, substitution or expansion): such a rule matches only that identical text, which
-agents rarely repeat, so it is clutter left by adding one chained card. The baselines are named: `orch` (the default) and `git-basic`; an unknown
+agents are refused in orch itself and by the guard. `prune` removes exact rules whose command is compound (an
+unquoted `;`, `&`, `|`, `<`, `>`, `(`, `)` or line break, or a backtick or `$(` outside single quotes): such a rule
+matches only that identical text, which agents rarely repeat, so it is clutter left by adding one chained card. An
+exact rule that is merely not simple (`ls ~/x`, `pytest tests/*.py`) is kept. The baselines are named: `orch` (the default) and `git-basic`; an unknown
 name is refused with the list.
 
 **The git-basic baseline** adds the git a worker needs to commit its work on its own branch: prefix rules `git
 status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, and the exact rule `git branch --show-current`
 (`git branch` is never a prefix rule). Nothing that reaches out, rewrites or configures: `git push`, `fetch`,
 `reset`, `clean`, `checkout`, `switch`, `rebase`, `config`, `stash`, `git -c …` and `git -C …` stay out, and the
-argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). `git commit` passes only
+argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). For any git command a prefix
+rule also refuses what reads files outside the repository or rewrites other commits: `--no-index`,
+`--pathspec-from-file`, `--template`, `--orderfile`, `--amend`, `--fixup`, `--squash`, `--file` (and every
+abbreviation git accepts), a short option word holding `F` or `t`, and any argument (or the value after `=` or `:`)
+that is an absolute path, starts with `~` or has a `..` path component. `git commit` passes only
 where the workspace lets agents commit (`git.agent_may.commit`); elsewhere the guard denies it, and `--baseline
 git-basic` adds the other rules and reports `git commit` as not added, with the reason.
 
@@ -520,13 +525,15 @@ sessions unless your permission mode lets file edits through (see "Permissions" 
 
 - An **exact** rule matches only the identical command text.
 - A **prefix** rule matches only a single simple command: outside quotes no `;`, `&`, `|`, `<`, `>`, `(`, `)`,
-  backtick, `$`, backslash, glob (`*`, `?`, `[`), brace, tilde, newline, and no `#` or `=` starting a word; inside
-  double quotes no `$`, backtick, backslash or `!`; quotes that close; and its first words (split as the shell would)
-  equal the rule's. Compound commands, redirects, pipes and substitutions never match a prefix rule (a redirect defeats
+  backtick, `$`, backslash, glob (`*`, `?`, `[`), brace, tilde, `#`, `^`, `!`, newline, and no `=` starting a word;
+  inside double quotes no `$`, backtick, backslash or `!`; quotes that close, and no single-quoted piece right after
+  another (`'a''b'`); and its first words (split as the shell would) equal the rule's. Compound commands, redirects, pipes and substitutions never match a prefix rule (a redirect defeats
   prefix rules in Claude's own matcher too); they can only match an exact rule. `npm run verify --quiet` matches
   `npm run verify`; `npm run verify > f` and `npm run verify; rm -rf x` do not. The split is tested against the real
-  `sh`, `bash` and `zsh` on thousands of generated commands (`tests/test_dark_quoting.py`): whenever orch reads words
-  from a command, those shells read the same words. Globs and braces outside quotes refuse because they expand (a file
+  `sh`, `bash`, `zsh` and `zsh` with `extendedglob` and `rcquotes` on thousands of generated commands
+  (`tests/test_dark_quoting.py`): whenever orch reads words from a command, those shells read the same words. That
+  guarantee is for a plain shell configuration: a user's shell with other options that change quoting or globbing is
+  not covered. Globs and braces outside quotes refuse because they expand (a file
   named `--exec=x` matched by `-*` would reach the program as that option).
 - A prefix rule also never matches a command carrying one of these argument shapes, which make some programs run
   other code, read other configuration or write elsewhere. They are these shapes, not every argument that does so (see
@@ -537,11 +544,12 @@ sessions unless your permission mode lets file edits through (see "Permissions" 
   `--flag=value`, in any case, with `_` for `-`, or abbreviated to three letters or more, as npm accepts); a word that
   starts with `SHELL=` or `MAKEFLAGS=`; and any single-dash word holding one of the letters `c e x C w f p o I O`
   (`-x`, `-xc`, `-Ofoo`, `-Ipath`, ...). Such a command can only match an exact rule (`pytest -x` needs one).
-  One exception: `--file` passes when the program is `orch` itself (by name, or an absolute path ending in `/orch`;
-  never a relative path, which could name a script the agent wrote), because orch reads a bound session's files only
+  One exception: `--file` passes when the program is `orch` itself (the bare word `orch`, or exactly the path the
+  runner resolves `orch` to; never another path, which could name a script the agent wrote), because orch reads a bound session's files only
   inside the workspace (see "Files" above), so `orch task add X --file orchestrator/temporary/t.yaml` and `orch
   section set X Plan --file plan.md` match their baseline rules. The test suite proves a bound session is still
-  refused a file outside the workspace through them.
+  refused a file outside the workspace through every file option orch has (`new --*-file`, `section set`, `state`,
+  `task add`, `widget add`, `feedback add`, `artifact add`).
 - **Broad rules are refused**: a prefix of fewer than two words; one whose program is not a plain name (a variable
   assignment such as `FOO=1`, an option); one whose program (by its last path part, any case) is a shell,
   interpreter, wrapper, editor, network or file-sweeping tool: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`,

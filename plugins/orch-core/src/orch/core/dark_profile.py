@@ -67,6 +67,27 @@ def _prog(word: str) -> str:
     return p[:-4] if p.endswith(".exe") else p
 
 
+# git reads files and rewrites commits through these (git accepts any unambiguous abbreviation of a long option): a
+# git command carrying one, a short option word holding F or t, or any argument naming a path outside the repository
+# (absolute, ~, or with a .. component) matches no prefix rule.
+_GIT_REFUSED = frozenset(("--no-index", "--pathspec-from-file", "--template", "--orderfile", "--amend", "--fixup",
+                          "--squash", "--file"))
+_GIT_SHORT = frozenset("Ft")
+
+
+def _git_bad(w: str) -> bool:
+    if w.startswith("--") and len(w) > 2:
+        name = "--" + w[2:].split("=", 1)[0].casefold()
+        if any(o.startswith(name) for o in _GIT_REFUSED):
+            return True
+    elif w.startswith("-") and len(w) > 1 and any(c in _GIT_SHORT for c in w[1:]):
+        return True
+    for v in (w, w.split("=", 1)[1] if "=" in w else "", w.split(":", 1)[1] if ":" in w else ""):
+        if v.startswith(("/", "~")) or ".." in v.split("/"):
+            return True
+    return False
+
+
 def _bad_arg(w: str, orch: bool = False) -> bool:
     if w.startswith(_ASSIGN):
         return True
@@ -95,25 +116,32 @@ def _printable(s) -> bool:
 
 _DQ_ACTIVE = frozenset("$`\\!")  # still active (or history-expanding) inside double quotes
 # Outside quotes, besides _META: globs, braces and the tilde expand (a file named `--exec=x` matched by `-*` would
-# reach the program as that option), so they refuse too; and # or zsh's = starting a word.
-_BARE_ACTIVE = _META | frozenset("*?[{}~")
+# reach the program as that option), so they refuse too; so do # and ^ anywhere (zsh's extendedglob makes them glob
+# operators mid-word), ! (history and negation), and = starting a word (zsh's equals expansion).
+_BARE_ACTIVE = _META | frozenset("*?[{}~#^!")
 
 
 def _inert_quoting(command: str) -> bool:
     """Whether every shell metacharacter of `command` sits inside quotes where the shell reads it as plain text:
     anything inside single quotes; inside double quotes anything but $ ` \\ and !. Outside quotes no metacharacter,
-    glob, brace or tilde, and no # (a comment) or = starting a word. Quotes must close."""
-    q, start = None, True  # start: nothing but quote marks since the word began (zsh reads `""=x` as `=x`)
+    glob, brace, tilde, #, ^ or !, and no = starting a word. Quotes must close, and a single-quoted piece never
+    directly follows another (zsh's rcquotes reads `'a''b'` as a'b). This assumes a plain shell configuration: the
+    differential test runs sh, bash, zsh and zsh with extendedglob and rcquotes, not every option a user may set."""
+    q, start, closed = None, True, False  # start: nothing but quote marks since the word began (zsh: `""=x` is `=x`)
     for c in command:
         if q == "'":
-            q, start = (None, start) if c == "'" else (q, False)
-        elif q == '"':
+            q, start, closed = (None, start, True) if c == "'" else (q, False, False)
+            continue
+        if c == "'" and closed:
+            return False
+        closed = False
+        if q == '"':
             if c in _DQ_ACTIVE:
                 return False
             q, start = (None, start) if c == '"' else (q, False)
         elif c in "'\"":
             q = c
-        elif c in _BARE_ACTIVE or (start and c in "#="):
+        elif c in _BARE_ACTIVE or (start and c == "="):
             return False
         else:
             start = c == " "
@@ -135,14 +163,18 @@ def simple_tokens(command) -> list[str] | None:
 
 
 def _is_orch(word) -> bool:
-    """`orch` by name (found on the session's PATH), or an absolute path ending in /orch: never a relative path, which
-    could name a script the agent wrote."""
-    return word == "orch" or (isinstance(word, str) and word.startswith("/") and word.rsplit("/", 1)[-1] == "orch")
+    """`orch` by name (found on the session's PATH), or exactly the path the runner resolves `orch` to: never another
+    path, which could name a script the agent wrote."""
+    if word == "orch":
+        return True
+    from orch.core.factory_runner import resolve_bin
+    return isinstance(word, str) and word.startswith("/") and word == resolve_bin("orch")
 
 
 def _runs_code(words) -> str | None:
     orch = bool(words) and _is_orch(words[0])
-    return next((w for w in words if _bad_arg(w, orch)), None)
+    git = bool(words) and _prog(words[0]) == "git"
+    return next((w for w in words if _bad_arg(w, orch) or (git and _git_bad(w))), None)
 
 
 def refusal(kind, value) -> str | None:
@@ -314,9 +346,30 @@ def add_baseline(ws, actor, shown=None, name: str = "orch") -> dict:
 
 
 def compound(command) -> bool:
-    """Whether `command` is not one plain simple command (a chain, pipe, redirect, substitution or expansion): no
-    prefix rule ever matches it, and an exact rule only its identical text."""
-    return simple_tokens(command) is None
+    """Whether `command` chains, pipes, redirects or substitutes: an unquoted ; & | < > ( ) or line break, or a
+    backtick or $( outside single quotes. No prefix rule ever matches it, and an exact rule only its identical text.
+    (`ls ~/x` or `pytest tests/*.py` are not compound: they only match no prefix rule.)"""
+    if not isinstance(command, str):
+        return False
+    q, prev, esc = None, "", False
+    for c in command:
+        if esc:  # a backslash-escaped character (\; of find -exec, \" in double quotes) is plain
+            esc, prev = False, ""
+            continue
+        if q == "'":
+            q = None if c == "'" else q
+        elif c == "\\":
+            esc = True
+        elif c == "`" or (c == "(" and prev == "$") or c == "\n":
+            return True
+        elif q == '"':
+            q = None if c == '"' else q
+        elif c in "'\"":
+            q = c
+        elif c in ";&|<>()":
+            return True
+        prev = c if q != "'" else ""
+    return False
 
 
 def prunable(ws) -> list[dict]:

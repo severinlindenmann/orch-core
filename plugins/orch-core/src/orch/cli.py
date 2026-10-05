@@ -164,6 +164,18 @@ def main() -> None:
 
 # -- create / read ---------------------------------------------------------------------
 
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(version: Annotated[bool, typer.Option("--version", callback=_print_version, is_eager=True,
+                                                help="Print the orch version and exit.")] = False) -> None:
+    pass
+
+
 @app.command()
 def version() -> None:
     """Print the orch version."""
@@ -777,6 +789,9 @@ def ledger_adopt(
         typer.echo("nothing to adopt: every decision here is in the ledger on this machine")
         return
     ops = _ops(ws, Actor("human", "you", "tty"))
+    if len(items) > 5 and not all_:
+        typer.echo(f"{len(items)} decisions to review, one prompt each. To read them all and sign them after one typed "
+                   f"confirmation instead, stop here and run: orch ledger adopt {'--workspace ' if workspace else (ref + ' ')}--all")
 
     from orch.textsafe import decodes_to_hidden, lines, visible
 

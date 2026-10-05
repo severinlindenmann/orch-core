@@ -36,6 +36,8 @@ claude plugin marketplace add severinlindenmann/orch-core
 claude plugin install orch-core@orch-core
 ```
 
+The plugin is installed for one *scope*: `--scope user` (every project of yours), `--scope project` (this repository, shared through `.claude/settings.json`) or `--scope local`. Pass it explicitly (`claude plugin install orch-core@orch-core --scope user`); a plugin installed in the scope of another project does not load here, and `claude plugin list` shows where it is enabled.
+
 Then, in the repository you want to work in, run `/orch-core:setup` or just say *"set up orch here"*. The setup skill asks one question at a time (ticket prefix, external tracker, git host, what agents may do on their own) and runs `orch init` only after you say yes.
 
 Human decisions run in your own terminal, not through an agent, so install the CLI there once:

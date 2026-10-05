@@ -165,8 +165,8 @@ that anything was built. The rules, deterministic and with known limits:
 - No name is dropped: the card lists the first 50 and says how many more, and every name counts.
 
 `factory_report.coverage_ok` is True when the epic names at least one file and every one is covered, False when one
-is not or anything cannot be read, and None (unknown, never a pass) when the epic names no file. It is there for a
-later automatic close; nothing reads it yet.
+is not or anything cannot be read, and None (unknown, never a pass) when the epic names no file. The automatic close
+(below, "Closing by itself") reads it: only True lets the epic close by itself.
 
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:
@@ -1359,10 +1359,11 @@ budget not used up), Dark, started from the dashboard and signed with `close`; t
 testing or done, every criterion of every child in testing cites evidence, every status backed by orch's records);
 every release stage the charter signs is proven by its check and not out of date, and no sensitive path stopped it;
 no permission card of the epic is open; the epic has no Stopped reason; every criterion meets the close rules for
-evidence (below); and the coverage check holds. About coverage, plainly: this orch has no coverage check of its own
-yet; until `factory_report.coverage_ok` exists there is no coverage condition, and once it does only an answer of
-exactly `True` counts (False, an unknown such as None, anything else or an error keeps the epic open). No confirm text
-claims coverage is checked. If any condition fails it does not close, and the run view and the Ready card say which:
+evidence (below); and the coverage check holds. About coverage, plainly: it is `factory_report.coverage_ok`, the
+text check of the Ready report's coverage block (every file the epic names is named in a child's text, not checked as
+built), and only an answer of exactly `True` counts: False, None (the epic names no file), anything else or an error
+keeps the epic open. The confirm texts say so: coverage is checked as text mentions only, and an epic that names no
+file is not closed by itself. If any condition fails it does not close, and the run view and the Ready card say which:
 "Not closed by itself: ..." for a condition only you can change, or "Your charter closes it by itself, in place of
 your verdict, when: ..." with the conditions the runner still gets past by itself (a release stage to run). Accept is
 always there beside it: you can give the verdict yourself at any time. A stage that cannot start, a production held

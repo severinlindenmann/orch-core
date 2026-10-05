@@ -53,9 +53,9 @@ Start the dashboard from the terminal whose PATH holds `~/orch-live-test/bin` (`
 
 ## Run it
 
-1. New ticket, Mode **Dark AI Factory**. Ask for something tiny (for example two files with a line each), type
-   **dark**, choose Release up to **Production**, tick **Roll back production by itself if its check fails**, type
-   **production**, and tick **Close the epic by itself when everything is proven**. Read the confirm: it names the
+1. New ticket, Mode **Dark AI Factory**. Ask for something tiny that names its files (for example `a.txt` and
+   `b.txt` with a line each: an epic that names no file is never closed by itself), type **dark**, choose Release
+   up to **Production**, tick **Roll back production by itself if its check fails**, type **production**, and tick **Close the epic by itself when everything is proven**. Read the confirm: it names the
    stages, the window, the rollback and that the close replaces your verdict for this run.
 2. The planner splits the epic, workers build each child on its own branch and move it to testing.
 3. Once the epic is Ready, the runner merges each child into `main` of the bare remote, deploys dev, then production

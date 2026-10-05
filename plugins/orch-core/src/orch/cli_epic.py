@@ -33,7 +33,8 @@ def release_text(d: dict | None, long: bool = False) -> str:
     d = d or {}
     target = d.get("release")
     closing = ("it closes the epic by itself when everything is proven, on what the agents wrote under the close rules "
-               "(nothing is executed or verified by the factory"
+               "(nothing is executed or verified by the factory; coverage is checked as text mentions only, and an "
+               "epic that names no file is not closed by itself"
                + ("" if target else "; with no release signed, nothing is deployed or run either")
                + "): this replaces your verdict for this run, and Reopen stays yours"
                if d.get("close") else "it closes nothing: the verdict is yours")

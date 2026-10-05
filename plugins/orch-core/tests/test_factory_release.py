@@ -159,16 +159,18 @@ def fh(fws, human):
 
 
 def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, kids=1, arm=True, files=None,
-                charter=None):
+                charter=None, epic_reqs="Build billing.py"):
     if recipe is not None:
         fr.set_recipe(fws, human, recipe)
     e = fa.new("Billing revamp", type="epic")
     _refine(fa, e.id, plan=None)
+    fa.set_section(e.id, "Requirements", epic_reqs)  # a named file by default, so the coverage check can pass
     fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, "release": release, **(charter or {})})
     ids = []
     for i in range(kids):
         c = fa.new(f"child {i}", epic=e.id)
         _refine(fa, c.id)
+        fa.set_section(c.id, "Requirements", "Part of billing.py")
         fa.epic_auto_approve(c.id)
         fa.link(c.id, repo="app", branch=f"feat/{c.id.lower()}-work")
         _branch(fws.root, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})

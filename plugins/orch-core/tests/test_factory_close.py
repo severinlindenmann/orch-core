@@ -64,6 +64,7 @@ def test_cli_close_needs_dark_and_says_it_replaces_the_verdict(fws, fa, capsys, 
     out = capsys.readouterr().out
     assert "closes the epic by itself when everything is proven, on what the agents wrote under the close rules" in out
     assert "nothing is executed or verified by the factory" in out and "nothing is deployed or run" in out
+    assert "coverage is checked as text mentions only" in out and "names no file is not closed by itself" in out
     assert "this replaces your verdict for this run" in out
     assert "Reopen stays yours" in out and "verdict stays yours" not in out
     assert epics.delegation(fws, _epic(fws, e.id))["close"] is True
@@ -141,11 +142,11 @@ def test_each_condition_alone_keeps_it_open(fws, closing, ready, fa, fh, human, 
     elif what == "request":
         permits.request(fws, fa.actor, _epic(fws, c), "make other", source="agent")
     elif what == "coverage":
-        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: False, raising=False)
+        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: False)
     elif what == "coverage-none":  # an unknown (the epic names no file) is not ok
-        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: None, raising=False)
+        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: None)
     elif what == "coverage-error":
-        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: 1 / 0, raising=False)
+        monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: 1 / 0)
     elif what == "once":
         fr.fs._create(fc._marker(fws, eid, d["id"], "intent"), {"at": "x"})
     elif what == "not-open":  # an epic that is not open (here: done, by your own verdict) is never closed again
@@ -185,13 +186,19 @@ def test_each_release_condition_alone_keeps_it_open(fws, closing, human, recipe,
     assert any(want in b["text"] for b in bl), bl
 
 
-def test_the_coverage_shim_counts_once_coverage_exists(fws, closing, human, monkeypatch):
-    eid, _, _ = closing()
-    monkeypatch.setattr(factory_report, "coverage_ok", lambda ws, e: True, raising=False)
+def test_the_close_reads_the_real_coverage_check(fws, closing, human):
+    eid, _, _ = closing()  # the epic names billing.py and its child names it too
+    assert factory_report.coverage_ok(fws, _epic(fws, eid)) is True
     assert fc.epic_coverage_ok(fws, _epic(fws, eid)) is True
-    monkeypatch.delattr(factory_report, "coverage_ok")
-    assert fc.epic_coverage_ok(fws, _epic(fws, eid)) is True  # absent: no coverage condition to hold
     assert fc.tick(fws, human) and _epic(fws, eid).status == "done"
+
+
+def test_an_epic_that_names_no_file_is_never_closed_by_itself(fws, closing, human):
+    eid, _, _ = closing(epic_reqs="Make billing better")
+    assert factory_report.coverage_ok(fws, _epic(fws, eid)) is None  # unknown, never a pass
+    assert fc.epic_coverage_ok(fws, _epic(fws, eid)) is False
+    assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"
+    assert _codes(fws, eid) == ["coverage"]
 
 
 def test_a_failed_release_stage_keeps_it_open(fws, closing, human, recipe):
@@ -330,6 +337,7 @@ def test_ready_card_says_it_closes_by_itself_instead_of_accept(fws, closing, hum
     assert "data-auto-ready" in card and "Your charter closes it by itself, in place of your verdict, when:" in card
     assert "the merge stage is proven by its check" in card and "Accept the epic" in card  # Accept stays yours
     assert "nothing is executed or verified by the factory" in card
+    assert "coverage is checked as text mentions only" in card
     assert "Closing by itself" in html and "It closes by itself when everything is proven" in html
 
 

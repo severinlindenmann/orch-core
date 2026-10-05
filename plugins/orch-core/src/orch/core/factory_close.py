@@ -29,16 +29,12 @@ MESSAGE = "closed by itself under the Dark charter"
 
 
 def epic_coverage_ok(ws, epic) -> bool:
-    """factory_report.coverage_ok(ws, epic) when this orch has it, else True. The coverage check (whether the
-    children cover the epic's requirements) is built on its own; until it is part of factory_report there is no
-    coverage condition to hold, and as soon as it is, its answer counts: only `True` is ok. Anything else (False, an
-    unknown such as None when the epic names no file, any other value, an error) is not ok (fail closed)."""
+    """factory_report.coverage_ok(ws, epic) is True: every file the epic names is named by a child (a text check, not
+    a check that anything was built). Anything else (False, None when the epic names no file, any other value, an
+    error) is not ok (fail closed)."""
     from orch.core import factory_report
-    check = getattr(factory_report, "coverage_ok", None)
-    if check is None:
-        return True
     try:
-        return check(ws, epic) is True
+        return factory_report.coverage_ok(ws, epic) is True
     except Exception:
         return False
 

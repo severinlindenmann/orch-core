@@ -407,7 +407,7 @@
     const r = form.querySelector("input[name=release]:checked");
     const none = !r || r.value === "none";
     return " · closes the epic by itself when everything is proven, on what the agents wrote under the close rules:"
-      + " nothing is executed or verified by the factory" + (none ? ", and with no release nothing is deployed or run" : "")
+      + " nothing is executed or verified by the factory; coverage is checked as text mentions only, and an epic that names no file is not closed by itself" + (none ? ", and with no release nothing is deployed or run" : "")
       + "; this replaces your verdict for this run; Reopen stays yours";
   };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its

@@ -79,7 +79,7 @@
   {% if r.auto and r.auto.pending %}
   <div data-auto-ready><p>Your charter closes it by itself, in place of your verdict, {% if r.auto.blockers %}when:{% else %}in the runner's next round: everything it needs is proven.{% endif %}</p>
     {% if r.auto.blockers %}<ul class="plain">{% for b in r.auto.blockers %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}
-    <p class="muted">It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory. You can still accept it yourself now; Reopen stays yours afterwards.</p></div>
+    <p class="muted">It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory, and coverage is checked as text mentions only, and an epic that names no file is not closed by itself. You can still accept it yourself now; Reopen stays yours afterwards.</p></div>
   {% elif r.auto %}<p data-auto-not>Not closed by itself: {{ (r.auto.blockers|rejectattr("pending")|first).text }}. You can accept it yourself.</p>{% endif %}
   <div class="actions">
     <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ r.epic }} and {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}">

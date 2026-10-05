@@ -17,6 +17,7 @@ from orch.addons.widgets import MAX_TARGET_LEN
 from orch.core.events import append_event
 from orch.dashboard.addon_files import save_upload, stage_download
 from orch.dashboard.auth import strict_same_origin
+from orch.dashboard import remote_gate
 from orch.dashboard.reach import request_actor
 from orch.dashboard.views import back, confirm_page, error_text, page, safe_next
 from orch.errors import OrchError
@@ -179,6 +180,9 @@ def resolve(request: Request, name: str, id: str = Form(...), choice: str = Form
         intent = intents.as_intent(result)
     except OrchError as e:
         return back(dest, err=error_text(e))
+    refusal = remote_gate.decision_refusal(request, ws, intent)
+    if refusal:
+        return back(dest, err=refusal)
     try:
         # decisions=: defence in depth; find_decision only returns items of addons with the decisions capability
         message = intents.execute(ws, intent, allowed_ref=decision.ticket, tickets=False, actor=request_actor(request),

@@ -61,9 +61,11 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/reports.md"): LOOK, ("GET", "/design"): LOOK, ("GET", "/widgets"): LOOK,
     ("GET", "/w/preview/{ref}"): LOOK, ("GET", "/w/{ref}/{section}/{digest}"): LOOK,
     ("GET", "/wp/{addon}/{digest}"): LOOK, ("GET", "/wpf/{addon}/{digest}"): LOOK,
-    ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK, ("GET", "/addons/{name}/files/{token}"): LOOK,
-    ("GET", "/terminals"): LOOK, ("GET", "/terminals/stream"): LOOK, ("GET", "/terminals/{name}"): LOOK,
-    ("GET", "/terminals/{name}/stream"): LOOK,
+    ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK,
+    # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
+    # one-time token and deletes the file, so it counts as a change
+    ("GET", "/terminals"): OPERATE, ("GET", "/terminals/stream"): OPERATE, ("GET", "/terminals/{name}"): OPERATE,
+    ("GET", "/terminals/{name}/stream"): OPERATE, ("GET", "/addons/{name}/files/{token}"): OPERATE,
     # -- the human decisions (a phone switch also applies where the signed phone path has one)
     ("POST", "/t/{ref}/approve"): _approve,
     ("POST", "/t/{ref}/approve-together"): _t(Scope.DECIDE, kind="approve"),
@@ -155,8 +157,9 @@ class RemoteGate:
     """ASGI middleware, outermost. `routes` is the dashboard's route list in routing order; `root` the workspace
     root (for the phone switches)."""
 
-    def __init__(self, app, routes, root):
-        self.app, self.routes, self.root = app, list(routes), root
+    def __init__(self, app, routes, ws):
+        self.app, self.routes, self.ws = app, list(routes), ws
+        self.root = ws.root
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "lifespan":
@@ -207,9 +210,71 @@ class RemoteGate:
             return await _respond(send, 403, no)
         if not bridge.allows(self.root, tag.kind, origin, tag.scope):
             return await _respond(send, 403, no)
+        if (not origin.fresh and scope["method"] == "POST" and path.startswith("/t/")
+                and factory_guarded(self.ws, self._ref(scope))):
+            # a change under a running factory epic can start agents or alter a launched one's prompt
+            return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
         if tag.fresh and not origin.fresh:  # only a device that may do this at all hears that it needs a confirmation
             return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
         await self.app(scope, replay, send)
+
+
+    def _ref(self, scope):
+        for route in self.routes:
+            match, child = route.matches(scope)
+            if match is Match.FULL:
+                return child.get("path_params", {}).get("ref")
+        return None
+
+
+def factory_guarded(ws, ref) -> bool:
+    """The ticket is, or is a child of, an epic with an active factory delegation. Fails closed: any lookup error
+    except "no such ticket" (the handler refuses that itself) answers yes."""
+    from orch.core import epics, store
+    from orch.errors import NotFoundError, UsageError
+    if not isinstance(ref, str):
+        return True
+    try:
+        t = store.read_ticket(store.resolve(ws, ref).path)
+        for epic in (t if epics.is_epic(t) else None, epics.parent_epic(ws, t)):
+            d = epics.delegation(ws, epic) if epic is not None else None
+            if d and d.get("factory") and d.get("active"):
+                return True
+        return False
+    except (NotFoundError, UsageError):
+        return False
+    except Exception:  # noqa: BLE001 - fail closed
+        return True
+
+
+# an addon decision's intent kind -> (phone-switch kind, scope needed); anything else is refused
+_INTENT_KINDS = {"none": (None, None), "answer": ("answer", Scope.DECIDE), "approve": ("approve", Scope.DECIDE),
+                 "request_changes": ("request_changes", Scope.DECIDE), "verdict": ("verdict", Scope.DECIDE),
+                 "move": (None, Scope.DECIDE), "new": ("ticket_request", Scope.OPERATE)}
+
+
+def decision_refusal(request, ws, intent) -> str | None:
+    """For a remote request only: why an addon decision's intent may not run (None: it may, or the request is
+    local). The route is tagged Operate because the intent is only known after the addon answered; this applies
+    the same scope, phone switch and factory rule the direct routes get. Unknown kinds are refused."""
+    from orch.remote import bridge
+    try:
+        origin = remote_origin(request)
+    except BadOrigin:
+        return NO_WAY
+    if origin is None:
+        return None
+    entry = _INTENT_KINDS.get(getattr(intent, "kind", None))
+    if entry is None:
+        return NO_WAY
+    kind, needed = entry
+    if needed is None:
+        return None
+    if not bridge.allows(ws.root, kind, origin, needed):
+        return NO_WAY
+    if intent.kind != "new" and not origin.fresh and factory_guarded(ws, intent.ref):
+        return "This needs a fresh confirmation on this device first."
+    return None
 
 
 def _is_form(scope) -> bool:

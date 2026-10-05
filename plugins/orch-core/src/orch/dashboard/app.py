@@ -290,5 +290,5 @@ def create_app(ws, token: str, *, port: int | None = None) -> FastAPI:
     for module in router_modules():
         app.include_router(module.router)
     # Outermost: a request carrying the remote marker is decided before anything else sees it. Local requests pass.
-    app.add_middleware(RemoteGate, routes=dashboard_routes(), root=ws.root)
+    app.add_middleware(RemoteGate, routes=dashboard_routes(), ws=ws)
     return app

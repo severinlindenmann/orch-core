@@ -345,7 +345,7 @@ def test_tag_counts_per_scope():
     for tag in remote_gate.TAGS.values():
         tag = tag(None) if callable(tag) else tag
         counts[tag.scope] = counts.get(tag.scope, 0) + 1
-    assert counts[None] >= 12 and counts[Scope.LOOK] >= 30 and counts[Scope.TYPE] >= 5
+    assert counts[None] >= 12 and counts[Scope.LOOK] >= 25 and counts[Scope.TYPE] >= 5
 
 
 # -- one policy for both phone paths --------------------------------------------------------------------------------
@@ -436,3 +436,172 @@ def test_head_and_trailing_slashes_reach_no_untagged_handler(app):
     for path in ("/workspace/", "/board/", "/terminals/", "/t/x/approve/", "/static"):
         assert call(app, "GET", path, remote=origin(Scope.TYPE, fresh=True))[0] == 403, path
     assert call(app, "POST", "/t/x/approve/", remote=origin(Scope.TYPE, fresh=True), body=b"factory=1", headers=FORM)[0] == 403
+
+
+# -- follow-ups from the independent review ---------------------------------------------------------------------------
+
+def test_watching_a_terminal_needs_operate_and_typing_stays_type(app):
+    reads = [("GET", "/terminals"), ("GET", "/terminals/stream"), ("GET", "/terminals/{name}"),
+             ("GET", "/terminals/{name}/stream"), ("GET", "/addons/{name}/files/{token}")]
+    for key in reads:
+        assert remote_gate.TAGS[key].scope is Scope.OPERATE, key
+    for key in (("POST", "/terminals/new"), ("POST", "/terminals/{name}/keys"), ("POST", "/terminals/{name}/size"),
+                ("POST", "/terminals/{name}/end")):
+        assert remote_gate.TAGS[key].scope is Scope.TYPE, key
+    assert call(app, "GET", "/terminals", remote=origin(Scope.DECIDE))[0] == 403
+    assert call(app, "GET", "/terminals", remote=origin(Scope.OPERATE))[0] != 403
+    assert call(app, "GET", "/addons/x/files/abc", remote=origin(Scope.LOOK))[0] == 403
+
+
+def test_the_live_stream_carries_no_content():
+    src = inspect.getsource(__import__("orch.dashboard.routes_live", fromlist=["x"]))
+    assert "event: change" in src and "data: {}" in src and "event: hello" in src  # a version tag and change pings only
+
+
+# An addon decision's intent is known only after the addon answered, so the handler applies the gate's rules.
+from addon_fixtures import loaded  # noqa: E402
+from orch.addons.api import Intent, PendingDecision  # noqa: E402
+from orch.addons.loader import AddonRegistry  # noqa: E402
+from orch.core import store  # noqa: E402
+from orch.core.questions import question_hash  # noqa: E402
+
+
+class _Phone:
+    def __init__(self):
+        self.items, self.intent = [], None
+
+    def decisions(self, view):
+        return self.items
+
+    def resolve(self, decision_id, choice, ctx):
+        return self.intent
+
+
+@pytest.fixture
+def decider(ws, aops):
+    t = aops.new("Decide through an addon")
+    aops.ask(t.id, [{"text": "Which format?", "options": ["ISO 8601", "Local"], "recommended": "A"}])
+    obj = _Phone()
+    ws._addons = AddonRegistry(ws, {"phone": loaded(ws, obj, name="phone", capabilities=["decisions"], slots=[],
+                                                    menu=None, settings_schema=[])})
+    return t.id, obj
+
+
+def _decide(app, remote):
+    return call(app, "POST", "/addons/phone/decisions", remote=remote, body=b"id=p1&choice=apply", headers=FORM)
+
+
+def _answer_intent(ws, tid):
+    q = store.load(ws, tid)[1].meta["questions"][0]
+    return Intent("answer", ref=tid, qid="Q1", value="A", expected_hash=question_hash(q))
+
+
+def test_an_addon_decision_needs_the_scope_and_the_switch_of_its_intent(app, ws, decider):
+    tid, obj = decider
+    obj.items = [PendingDecision("p1", "Answer", ticket=tid, anchor="Q1")]
+    obj.intent = _answer_intent(ws, tid)
+
+    def answered():
+        return store.load(ws, tid)[1].meta["questions"][0]["answer"]
+
+    phones.set_permissions(ws.root, {"answer": False, "approve": True, "request_changes": True, "verdict": True})
+    status, headers, _ = _decide(app, origin(Scope.TYPE, fresh=True))
+    assert status == 303 and b"err=" in headers[b"location"] and answered() is None  # switch off
+    phones.set_permissions(ws.root, {"answer": True, "approve": False, "request_changes": False, "verdict": False})
+    status, headers, _ = _decide(app, origin(Scope.LOOK))
+    assert status == 403  # the route itself needs Operate
+    status, headers, _ = _decide(app, origin(Scope.OPERATE))
+    assert b"err=" not in headers[b"location"] and answered() == "A"  # scope and switch both allow it
+
+
+@pytest.mark.parametrize("kind,switch", [("approve", "approve"), ("request_changes", "request_changes"),
+                                         ("verdict", "verdict")])
+def test_other_intent_kinds_are_held_to_their_switch(app, ws, decider, kind, switch):
+    tid, obj = decider
+    obj.items = [PendingDecision("p1", "Decide", ticket=tid)]
+    obj.intent = Intent(kind, ref=tid, gate="requirements", expected_hash="sha256:" + "0" * 64, reason="r")
+    everything = {k: True for k in phones.KINDS}
+    phones.set_permissions(ws.root, {**everything, switch: False})
+    status, headers, _ = _decide(app, origin(Scope.TYPE, fresh=True))
+    assert status == 303 and headers[b"location"].count(b"err=") == 1
+    assert b"Open+the+dashboard" in headers[b"location"]  # refused by the policy, not by the ticket's state
+
+
+def test_unknown_and_unmapped_intent_kinds_are_refused(ws):
+    class _Req:
+        scope = {reach.SCOPE_KEY: origin(Scope.TYPE, fresh=True)}
+    for kind in ("import", "close", "reopen", "bogus", None):
+        assert remote_gate.decision_refusal(_Req(), ws, Intent(kind or "none") if kind in ("import", "close", "reopen")
+                                            else type("I", (), {"kind": kind, "ref": "x"})()) == remote_gate.NO_WAY
+    assert remote_gate.decision_refusal(_Req(), ws, Intent("none")) is None
+    assert remote_gate.decision_refusal(type("R", (), {"scope": {}})(), ws, Intent("close", ref="x")) is None  # local
+
+
+# -- changes under a running AI Factory epic need a fresh assertion --------------------------------------------------
+
+@pytest.fixture
+def factory(configure, agent, human):
+    from conftest import human_ops
+    from orch.core.ops import Ops
+    fws = configure(factory={"enabled": True})
+    a, h = Ops(fws, agent), human_ops(fws, human)
+    epic = a.new("Revamp", type="epic")
+    a.set_section(epic.id, "Requirements", "r")
+    a.set_section(epic.id, "Acceptance criteria", "- [ ] a")
+    h.approve(epic.id, "requirements", delegate={"factory": True})
+    child = a.new("child", epic=epic.id)
+    other = a.new("unrelated")
+    return fws, epic.id, child.id, other.id
+
+
+FACTORY_POSTS = (("approve", b"gate=requirements&seen=x"), ("move", b"to=backlog"), ("request-changes", b"gate=plan&seen=x"),
+                 ("answer", b"qid=q1&qhash=x"), ("comment", b"text=x"),
+                 ("task", b"task=t1&action=done"), ("task/add", b"text=x"), ("verdict", b"verdict=done&seen=x"),
+                 ("release", b""), ("epic/pause", b""), ("edit", b"text=x"))
+
+
+def test_changes_under_a_running_factory_epic_need_a_fresh_assertion(factory):
+    fws, epic, child, other = factory
+    app = create_app(fws, "tok")
+    for ref in (epic, child):  # refused without the assertion; nothing ran, so the delegation is still active
+        for action, body in FACTORY_POSTS:
+            path = f"/t/{ref}/{action}"
+            assert call(app, "POST", path, remote=origin(Scope.TYPE), body=body, headers=FORM)[0] == 403, path
+    for action, body in FACTORY_POSTS:  # with it they reach the handler (the child first: these really run)
+        assert call(app, "POST", f"/t/{child}/{action}", remote=origin(Scope.TYPE, fresh=True), body=body,
+                    headers=FORM)[0] != 403, action
+    assert call(app, "POST", f"/t/{epic}/comment", remote=origin(Scope.TYPE, fresh=True), body=b"text=x",
+                headers=FORM)[0] == 303
+    for action, body in FACTORY_POSTS:  # a ticket outside the epic, and a local request, are not held
+        assert call(app, "POST", f"/t/{other}/{action}", remote=origin(Scope.TYPE), body=body, headers=FORM)[0] != 403
+        assert call(app, "POST", f"/t/{child}/{action}", body=body, headers=FORM)[0] != 403
+
+
+def test_a_factory_lookup_error_fails_closed(factory, monkeypatch):
+    fws, epic, child, other = factory
+    from orch.core import epics
+    monkeypatch.setattr(epics, "delegation", lambda *a, **k: 1 / 0)
+    assert remote_gate.factory_guarded(fws, child) is True
+    assert remote_gate.factory_guarded(fws, "nonexistent-99") is False  # the handler refuses that itself
+    assert remote_gate.factory_guarded(fws, None) is True
+
+
+def test_an_addon_decision_under_a_factory_epic_needs_a_fresh_assertion(factory):
+    fws, epic, child, other = factory
+    assert remote_gate.decision_refusal(type("R", (), {"scope": {reach.SCOPE_KEY: origin(Scope.TYPE)}})(), fws,
+                                        Intent("move", ref=child, value="backlog")) is not None
+    assert remote_gate.decision_refusal(type("R", (), {"scope": {reach.SCOPE_KEY: origin(Scope.TYPE, fresh=True)}})(),
+                                        fws, Intent("move", ref=child, value="backlog")) is None
+
+
+def test_within_window_never_raises():
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    for bad in (0, 1.5, "2026-10-05T12:00:00Z", None, b"x", object()):
+        assert bridge.within_window(bad, now) is False
+        assert bridge.within_window(now, bad) is False
+    assert bridge.within_window(datetime(2026, 10, 5, 12, 0), now) is False  # naive
+    assert bridge.within_window(now, datetime(2026, 10, 5, 12, 0)) is False
+    assert bridge.within_window(now + timedelta(seconds=300), now) is True
+    assert bridge.within_window(now - timedelta(seconds=300), now) is True
+    assert bridge.within_window(now + timedelta(seconds=300, microseconds=1), now) is False
+    assert bridge.within_window(datetime.max.replace(tzinfo=timezone.utc), datetime.min.replace(tzinfo=timezone.utc)) is False

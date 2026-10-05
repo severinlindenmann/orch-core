@@ -1040,22 +1040,55 @@ _GLOBAL_GIT_DENIED = ("agents do not write the user's own git config (~/.gitconf
                       "it; ask the user")
 # Claude Code's user-scope files decide which hooks guard every session (and the AI Factory runner tests the hook
 # commands they name): its settings, its .claude.json and the plugins it installed. Agents never write them.
-_HARNESS_TEXT = re.compile(r"(?i)(?:~|\$\{?HOME\}?)/+\.claude(?:/+(?:settings(?:\.local)?\.json|plugins)\b|\.json\b)"
-                           r"|CLAUDE_CONFIG_DIR")
-_HARNESS_DENIED = ("agents do not write Claude Code's user-scope settings, its .claude.json or the plugins it installed: "
-                   "they decide which hooks guard every session; ask the user")
+# Claude Code's user-scope files decide which hooks guard every session (and the AI Factory runner tests the hook
+# commands they name): its settings, .claude.json, the plugins it installed, the user's hooks, skills, agents and
+# CLAUDE.md, and the programs orch runs as (the folders of `orch` and `uv`, their tool venv, orch's own installed code).
+# Agents never write them. In shell text: a write in a simple command whose text (quotes and backslashes taken out,
+# $HOME spelled ~) names one, or any write after a `cd` into one.
+_HARNESS_TEXT = re.compile(r"(?i)~/+\.claude(?:/|\.json\b|\b(?![\w.-]))|claude_config_dir")
+_HARNESS_DENIED = ("agents do not write Claude Code's user-scope settings, its .claude.json, the plugins it installed, "
+                   "the user's hooks, skills, agents or CLAUDE.md, or the programs orch runs as: they decide what guards "
+                   "every session; ask the user")
+_HARNESS_NAMES = ("settings.json", "settings.local.json", "CLAUDE.md")
+_HARNESS_DIRS = ("plugins", "hooks", "skills", "agents")
 
 
-def _harness_targets() -> tuple[set[str], set[str]]:
-    """(files, folders), lower-cased: the user-scope settings, .claude.json, the plugins folder and every plugin
-    folder installed_plugins.json names. Errors leave out what cannot be read (the text check still applies)."""
+def _program_folders(ws) -> set[Path]:
+    """The folders of the `orch` and `uv` this process finds on its PATH (as found and after links), the tool venv a
+    `bin` folder belongs to, and orch's own installed code; none inside the workspace (agents write there anyway) or
+    in a source checkout (a folder with .git above it: someone develops orch there)."""
+    import shutil
+    out: set[Path] = set()
+    for name in ("orch", "uv"):
+        found = shutil.which(name)
+        if found:
+            real = Path(os.path.realpath(found)).parent
+            out |= {Path(os.path.abspath(found)).parent, real}
+            if real.name == "bin" and (real.parent / "pyvenv.cfg").is_file():
+                out.add(real.parent)  # the tool venv that holds orch's code
+    import orch as _orch
+    out.add(Path(_orch.__file__).resolve().parent)
+    root = Path(ws.root).resolve() if ws is not None else None
+
+    def keep(p: Path) -> bool:
+        if root is not None and (p == root or root in p.parents):
+            return False
+        return not any(os.path.lexists(d / ".git") for d in (p, *p.parents))
+    return {p for p in out if keep(p)}
+
+
+def _harness_targets(ws=None) -> tuple[set[str], set[str]]:
+    """(files, folders), lower-cased absolute paths: the user-scope settings, CLAUDE.md and .claude.json (of
+    CLAUDE_CONFIG_DIR and of ~/.claude), the plugins, hooks, skills and agents folders, every plugin folder
+    installed_plugins.json names, and _program_folders. Errors leave out what cannot be read (the text check still
+    applies)."""
     base = os.environ.get("CLAUDE_CONFIG_DIR")
     homes = [Path.home(), Path.home().resolve()]
     configured = [Path(base), Path(base).resolve()] if base else []
     dirs = [*configured, *(h / ".claude" for h in homes)]  # the configured dir and the default one
-    files = {str(d / n).lower() for d in dirs for n in ("settings.json", "settings.local.json")}
+    files = {str(d / n).lower() for d in dirs for n in _HARNESS_NAMES}
     files |= {str(d / ".claude.json").lower() for d in [*configured, *homes]}
-    folders = {str(d / "plugins").lower() for d in dirs}
+    folders = {str(d / n).lower() for d in dirs for n in _HARNESS_DIRS}
     try:
         listed = json.loads((dirs[0] / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")).get("plugins")
         for entries in (listed.values() if isinstance(listed, dict) else []):
@@ -1063,6 +1096,10 @@ def _harness_targets() -> tuple[set[str], set[str]]:
                 if isinstance(e, dict) and isinstance(e.get("installPath"), str) and os.path.isabs(e["installPath"]):
                     folders |= {e["installPath"].lower(), str(Path(e["installPath"]).resolve()).lower()}
     except (OSError, ValueError, AttributeError, RuntimeError):
+        pass
+    try:
+        folders |= {str(p).lower() for p in _program_folders(ws)}
+    except (OSError, RuntimeError, ValueError, ImportError):
         pass
     return files, folders
 
@@ -1073,7 +1110,7 @@ def _harness_file(raw: str, cwd, ws) -> bool:
         return False
     try:
         forms = _path_forms(raw, cwd, ws)
-        files, folders = _harness_targets()
+        files, folders = _harness_targets(ws)
     except (OSError, RuntimeError, ValueError):
         return True
     for f in forms:
@@ -1083,17 +1120,46 @@ def _harness_file(raw: str, cwd, ws) -> bool:
     return False
 
 
-def _harness_in_text(code: str) -> bool:
-    """A shell text naming one of _harness_targets or their usual spellings (~/.claude/settings.json, ...)."""
-    t = _paths_text(code)
-    if _HARNESS_TEXT.search(t):
-        return True
+def _tilde(text: str) -> str:
+    """Shell text with quotes and backslashes taken out, $HOME / ${HOME} and the home folder spelled ~, separators
+    collapsed: so `"$HOME"/'.claude'/settings.json` reads ~/.claude/settings.json."""
+    t = re.sub(r"[\\'\"]", "", text)
+    t = re.sub(r"\$\{?HOME\}?", "~", t)
+    for h in sorted({str(Path.home()), str(Path.home().resolve())}, key=len, reverse=True):
+        t = t.replace(h, "~")
+    return _paths_text(t)
+
+
+def _harness_in_text(cmd: str, ws=None) -> bool:
+    """Whether a shell command writes one of _harness_targets: a simple command that writes and whose text names one
+    (only that command: `echo x > notes.md; cat ~/.claude/settings.json` is no hit), or any write after a `cd` or
+    `pushd` into one in the same line. Any error is a yes."""
     try:
-        files, folders = _harness_targets()
-    except (OSError, RuntimeError, ValueError):
+        files, folders = _harness_targets(ws)
+        home = [str(Path.home()).lower(), str(Path.home().resolve()).lower()]
+
+        def tilde(p: str) -> str:
+            for h in home:
+                if p.startswith(h):
+                    return "~" + p[len(h):]
+            return p
+        marks = {tilde(x) for x in files | folders} | files | folders
+
+        def names(text: str) -> bool:
+            low = text.lower()
+            return bool(_HARNESS_TEXT.search(text)) or any(m in low for m in marks)
+        inside = False
+        for seg in _command_segments(cmd):
+            t = _tilde(seg)
+            cd = re.match(r"^\s*(?:cd|pushd)(?:\s+(\S+))?", t)
+            if cd:
+                inside = bool(cd.group(1)) and names(cd.group(1) + "/")
+                continue
+            if _is_git_write(seg) and (inside or names(t)):
+                return True
+        return False
+    except Exception:
         return True
-    low = t.lower()
-    return any(x in low for x in files | folders)
 
 
 _RAW_TOKEN = re.compile(r"""(?:[^\s'"]+|'[^']*'|"(?:\\.|[^"\\])*")+""")
@@ -1839,7 +1905,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _GIT_DIR_DENIED)
     if _GLOBAL_GIT_CONFIG.search(_paths_text(code)) and _is_git_write(cmd):
         return Decision(False, _GLOBAL_GIT_DENIED)
-    if _harness_in_text(code) and _is_git_write(cmd):
+    if _harness_in_text(cmd, ws):
         return Decision(False, _HARNESS_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)

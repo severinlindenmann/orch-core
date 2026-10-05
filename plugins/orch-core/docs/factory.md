@@ -359,10 +359,20 @@ Code would run them with, but never through a shell.
   nothing else stops a session from using them: in the live run a child published a Claude artifact on its own.
 
 The session PATH is the folders of the resolved `claude`, `orch` and `uv` (each found on the dashboard's PATH and
-trusted as below, none inside the workspace), then the system's. The guard keeps agents from writing the files these
-checks read: the user-scope `settings.json` and `settings.local.json` (of `$CLAUDE_CONFIG_DIR` and of `~/.claude`),
-`.claude.json`, Claude Code's `plugins` folder and every folder `installed_plugins.json` names, with the file tools and
-in shell writes (best effort for shell text, as for the other guarded files).
+trusted as below, none inside the workspace), then the system's. The guard keeps agents from writing what decides how every session is guarded: the user-scope `settings.json`,
+`settings.local.json` and `CLAUDE.md` and the `plugins`, `hooks`, `skills` and `agents` folders (of `$CLAUDE_CONFIG_DIR`
+and of `~/.claude`), `.claude.json`, every folder `installed_plugins.json` names, and the programs orch runs as: the
+folders of the `orch` and `uv` the session finds, the tool venv such an `orch` lives in, and orch's own installed code
+(none of these inside the workspace or in a source checkout of orch: those are someone's working copy). With the file
+tools, as written or after links; in the shell, per simple command, on its text with quotes and backslashes taken out
+and `$HOME` spelled `~` (a write that names one, or any write after a `cd` or `pushd` into one in the same line), so
+reading them and writing elsewhere in the same line stay open, and a workspace's own `.claude/settings.json` stays
+writable. Best effort for shell text, as for the other guarded files.
+
+**What "agent-writable" means here.** For the readiness checks and the launch, a program is agent-writable when it lies
+inside the workspace (agents write there with their file tools and shell). Other folders of your user are writable by
+any process of your user, agents included; the guard keeps agents' tools away from the ones listed above, best effort,
+and nothing else (other folders on your PATH, for example) is protected.
 
 **Claude Code formats assumed, not verified against Claude Code's own documentation:** `projects[<path>]
 .hasTrustDialogAccepted` in `.claude.json`; `{"plugins": {"<id>": [{"installPath": ...}]}}` in

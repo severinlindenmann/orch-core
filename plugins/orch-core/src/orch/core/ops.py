@@ -623,10 +623,7 @@ class Ops(TaskOpsMixin):
         skipped = (factory_release.skip_fields(self.ws, store.load(self.ws, entry.id)[1], skip_release,
                                                "Close without releasing, with a reason")
                    if epics.is_epic(entry.meta or {}) else {})
-        with factory_release.quiet(self.ws, entry.id, bool(skipped)):
-            return self._close_now(ref, reason, skipped)
-
-    def _close_now(self, ref: str, reason: str, release: dict) -> Ticket:
+        release = skipped
 
         def fn(t: Ticket) -> dict:
             _refuse_hidden("ticket title", t.title)
@@ -639,7 +636,8 @@ class Ops(TaskOpsMixin):
                       + (f" (closed without release: {release['release_skipped']})" if release else ""))
             return {"reason": reason, "command": "close", **({"tasks_skipped": skipped} if skipped else {})}
 
-        return self._mutate(ref, "ticket.moved", fn)
+        with factory_release.quiet(self.ws, entry.id, bool(release)):  # no stage runs while it closes without one
+            return self._mutate(ref, "ticket.moved", fn)
 
     def reopen(self, ref: str, reason: str) -> Ticket:
         """Human only: done → open when the requirements are still approved, else backlog."""

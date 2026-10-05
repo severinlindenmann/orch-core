@@ -94,7 +94,8 @@ def release_problem(ws, release: str, rollback: bool, confirm_production: str) -
         return "Type production to let the runner release to production by itself"
     if release in ("merge", "dev", "prod"):
         from orch.core import factory_release
-        why = factory_release.release_blocker(ws, release, rollback=rollback)
+        from orch.core.epics import FACTORY_DEFAULTS  # a dashboard start signs the factory's default time budget
+        why = factory_release.release_blocker(ws, release, rollback=rollback, max_hours=FACTORY_DEFAULTS["max_hours"])
         if why:
             return f"No release can be signed ({_plain(why)})"
     return None

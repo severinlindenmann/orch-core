@@ -13,7 +13,7 @@
   </div>
   {% if o.release_off %}<p class="muted" data-release-off>Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>
   {% elif o.dev_off %}<p class="muted" data-dev-off>Dev needs a dev stage in the recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>
-  {% elif o.prod_off %}<p class="muted" data-prod-off>Production needs a recipe with merge, dev and production stages: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
+  {% elif o.prod_off %}<p class="muted" data-prod-off>Production cannot be chosen: {{ o.prod_off }}. The recipe is set with <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
   <p class="muted">Merge and dev use the recipe on this machine, once every child is Ready. Production only when you choose it: after dev is proven, never before its release window opens. Nothing is closed by this choice.</p>
   <div class="only-prod">
     <label><input type="checkbox" name="rollback" value="1"{{ ' disabled' if o.rollback_off }}> Roll back production by itself if its check fails</label>

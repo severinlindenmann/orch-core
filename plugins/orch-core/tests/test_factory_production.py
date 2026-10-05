@@ -59,6 +59,12 @@ def _at(fws, hours_ago: float) -> None:
                                                  "epic": "X-1"}))
 
 
+def _later(monkeypatch, hours: float) -> None:
+    """The fake clock: `hours` from now (for the release window)."""
+    real = clock.now
+    monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=hours))
+
+
 def _prod(fws, eid):
     st = fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))
     return next(s for s in st["stages"] if s["name"] == "production")
@@ -180,7 +186,8 @@ def test_a_failed_live_check_without_a_signed_rollback_stops_and_rolls_nothing_b
     fake.live = False
     lines = fr.tick(fws, human, fake)
     assert "production of" in lines[-1] and "failed" in lines[-1] and "rollback" not in " ".join(fake.ran())
-    assert _stopped(fws, eid) == ["production-failed"] and fr.window(fws, 20)["open"]  # not proven: no clock
+    assert _stopped(fws, eid) == ["production-failed"]
+    assert not fr.window(fws, 20)["open"]  # the clock started when production's commands began
     assert fr.tick(fws, human, fake) == []  # no automatic retry of production
 
 
@@ -219,11 +226,19 @@ def test_a_signed_rollback_without_a_recipe_rollback_cannot_start_production(fws
     fr.set_recipe(fws, human, _prod_recipe(remote, rollback=False))  # the human removed it after signing
     fake = ProdFake()
     fake.live = False
-    fr.tick(fws, human, fake)
-    assert _stopped(fws, eid) == ["production-failed"] and "rollback" not in " ".join(fake.ran())
+    lines = fr.tick(fws, human, fake)
+    assert _stopped(fws, eid) == ["rollback-missing"] and "not started" in lines[-1]
+    assert not any("prod" in x for x in fake.ran())  # production's commands never ran
+    assert fr.window(fws, 20)["open"] and _states(fws, eid)["production"] == "waiting"
+    reason = fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))
+    assert "signs a rollback, but the recipe's production stage has none" in reason["reasons"][0]["text"]
+    assert fr.tick(fws, human, fake) == []  # a Stopped reason: nothing is tried again until you retry
+    fr.set_recipe(fws, human, _prod_recipe(remote))
+    fr.retry(fws, human, eid, "production", eid)
+    assert _stopped(fws, eid) == [] and fr.tick(fws, human, fake)[-1].endswith("; rolled back")
 
 
-def test_an_unknown_production_or_rollback_outcome_is_never_run_again(fws, prod, human):
+def test_an_unknown_production_or_rollback_outcome_is_never_run_again(fws, prod, human, monkeypatch):
     eid, _, _ = prod(signed_rollback=True)
     fake = ProdFake()
 
@@ -239,6 +254,7 @@ def test_an_unknown_production_or_rollback_outcome_is_never_run_again(fws, prod,
     # a rollback that started and has no outcome is a reason of its own, never run again
     fr.retry(fws, human, eid, "production", eid)
     fake.live = False
+    _later(monkeypatch, 21)  # past the window the first attempt started
 
     def crash_rollback(argv):
         if "rollback-prod" in argv:
@@ -251,7 +267,7 @@ def test_an_unknown_production_or_rollback_outcome_is_never_run_again(fws, prod,
     assert _stopped(fws, eid) == ["rollback-failed"] and fr.tick(fws, human, fake) == []
 
 
-def test_retry_of_production_is_human_only_and_allows_one_attempt(fws, prod, human, agent):
+def test_retry_of_production_is_human_only_and_allows_one_attempt(fws, prod, human, agent, monkeypatch):
     eid, _, _ = prod()
     fake = ProdFake()
     fake.live = False
@@ -262,6 +278,8 @@ def test_retry_of_production_is_human_only_and_allows_one_attempt(fws, prod, hum
     with pytest.raises(ValidationError):
         fr.retry(fws, human, eid, "production", eid)
     fake.live = True
+    assert fr.tick(fws, human, fake) == [] and _states(fws, eid)["production"] == "waiting"  # the window
+    _later(monkeypatch, 21)
     assert fr.tick(fws, human, fake) == [f"{eid}: production of {eid} proven"]
     assert fake.ran().count(next(x for x in fake.ran() if "deploy-prod" in x)) == 2
 
@@ -429,3 +447,128 @@ def test_epic_page_production_start_needs_the_typed_word(fws, fa, human, remote)
     r = c.post(f"/t/{e.id}/approve", data={**data, "confirm_production": "production"}, follow_redirects=False)
     assert "err=" not in r.headers["location"]
     assert epics.delegation(fws, store.load(fws, e.id)[1])["release"] == "prod"
+
+
+# -- review fixes: blocked starts, the workspace-wide production hold, the window's sources, done children -----------
+
+def test_a_production_that_cannot_resolve_holds_every_other_epics_production(fws, prod, human, monkeypatch):
+    a, _, _ = prod(signed_rollback=True)
+    fake = ProdFake()
+    fake.live, fake.healthy = False, False
+    fr.tick(fws, human, fake)
+    assert _stopped(fws, a) == ["rollback-failed"]
+    b, _, _ = prod()
+    fake.live, fake.healthy = True, True
+    _later(monkeypatch, 21)  # the window is open again: only the hold keeps B's production back
+    fr.tick(fws, human, fake)
+    assert _states(fws, b) == {"merge": "proven", "dev": "proven", "production": "waiting"}
+    assert _prod(fws, b)["held"] == [a] and fake.ran().count(f"make rollback-prod {a}") == 1
+    assert sum("deploy-prod" in x for x in fake.ran()) == 1  # only A's attempt ever ran
+    pytest.importorskip("fastapi")
+    html = _client(fws).get(f"/factory/{b}").text
+    assert "Production is held: another epic&#39;s production is unresolved" in html and "data-held" in html
+    fr.retry(fws, human, a, "production", a)  # the human resolves A: B is no longer held
+    assert _prod(fws, b)["held"] == []
+
+
+def test_the_window_counts_every_attempt_and_survives_a_deleted_record(fws, prod, human, monkeypatch):
+    eid, _, _ = prod()
+    fr.tick(fws, human, ProdFake())
+    assert _states(fws, eid)["production"] == "proven"
+    fr._window_path(fws).unlink()  # the runner's record is gone: the outcome records still say when
+    w = fr.window(fws, 20)
+    assert not w["open"] and w["last"] is not None
+    _later(monkeypatch, 21)
+    assert fr.window(fws, 20)["open"]
+
+
+@pytest.mark.parametrize("at", ["2999-01-01T00:00:00Z", "nonsense", None])
+def test_a_window_record_in_the_future_or_unreadable_keeps_the_window_shut(fws, at):
+    fr._atomic(fr._window_path(fws), json.dumps({"at": at}))
+    w = fr.window(fws, 20)
+    assert w["open"] is False and ("future" in w["why"] or "cannot be read" in w["why"])
+
+
+def test_a_stage_that_cannot_start_is_a_stopped_reason_until_the_human_retries(fws, ready, human, bin_dir, recipe):
+    eid, _, _ = ready()
+    (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+    fake = Fake()
+    assert "not the one you pinned" in fr.tick(fws, human, fake)[0]
+    assert _stopped(fws, eid) == ["release-blocked"] and fake.calls == []
+    assert fr.tick(fws, human, fake) == []  # said once, not every round
+    reason = fr.reasons(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))[0]
+    assert "not the one you pinned" in reason["text"] and "nothing ran" in reason["text"]
+    fr.set_recipe(fws, human, recipe)  # the human pins the program again
+    fr.retry(fws, human, eid, "merge", eid)
+    assert _stopped(fws, eid) == [] and fr.tick(fws, human, fake)[-1] == f"{eid}: dev of {eid} proven"
+
+
+def test_a_base_that_cannot_be_fetched_for_dev_is_a_stopped_reason(fws, ready, human, remote):
+    import unittest.mock
+    eid, _, _ = ready()
+    fake = Fake()
+    real = fr.fetch_base
+    calls = []
+
+    def flaky(ws, rec):
+        calls.append(1)
+        return real(ws, rec) if len(calls) == 1 else None  # the classification fetches; dev's fetch fails
+    with unittest.mock.patch.object(fr, "fetch_base", flaky):
+        fr.tick(fws, human, fake)
+    assert _states(fws, eid)["merge"] == "proven" and _stopped(fws, eid) == ["release-blocked"]
+    assert "could not be fetched" in fr.reasons(fws, store.load(fws, eid)[1],
+                                                permits.factory_delegation(fws, store.load(fws, eid)[1]))[0]["text"]
+
+
+def test_a_recipe_cleared_after_signing_is_a_stopped_reason(fws, prod, human):
+    eid, _, _ = prod()
+    fr.clear_recipe(fws, human)
+    assert "not started" in fr.tick(fws, human, ProdFake())[0]
+    assert _stopped(fws, eid) == ["release-blocked"]
+
+
+def test_a_child_closed_after_its_merge_does_not_make_dev_stale(fws, ready, human):
+    from orch.core.ops import Ops
+    eid, (c0, c1), _ = ready(kids=2)
+    fake = Fake()
+    fake.results["deploy-dev"] = {"code": 2}
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid) == {"merge": "proven", "dev": "failed"}
+    t1 = store.load(fws, c1)[1]
+    Ops(fws, human).verdict(c1, "done", "ok", expected_hash=epics.verdict_hash([t1], fws))
+    fr.retry(fws, human, eid, "dev", eid)
+    fake.results.pop("deploy-dev")
+    assert fr.tick(fws, human, fake) == [f"{eid}: dev of {eid} proven"]
+    assert _states(fws, eid) == {"merge": "proven", "dev": "proven"} and _stopped(fws, eid) == []
+
+
+def test_production_goes_stale_when_dev_is_proven_again_on_another_commit(fws, prod, human):
+    eid, _, _ = prod()
+    fr.tick(fws, human, ProdFake())
+    dev = fr.unit_state(fws, eid, "dev", eid)
+    d = fr._dir(fws, eid)
+    n = dev["attempt"]
+    body = {"stage": "dev", "unit": eid, "attempt": n + 1, "base_sha": "0" * 40, "children": dev["children"]}
+    for kind, extra in (("intent", {}), ("outcome", {"proven": True, "codes": [0], "check": 0, "ended": "x"})):
+        fr._write(d / fr._name("dev", eid, n + 1, kind), {**body, **extra})
+    fr._write(d / fr._name("dev", eid, n, "retry"), {"at": "x"})
+    p = _prod(fws, eid)
+    assert p["state"] == "stale" and "dev changed after production was proven" in p["units"][0]["why"]
+
+
+def test_a_window_longer_than_the_budget_is_refused_at_approval_and_warned_at_set(fws, fa, fh, human, remote,
+                                                                                capsys, switch, tmp_path):
+    e = fa.new("E", type="epic")
+    _refine(fa, e.id, plan=None)
+    fr.set_recipe(fws, human, _prod_recipe(remote, hours=72))
+    with pytest.raises(ValidationError, match="time budget"):
+        fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, "release": "prod"})
+    fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, "release": "dev"})  # dev is fine
+    f = tmp_path / "r.json"
+    f.write_text(json.dumps(_prod_recipe(remote, hours=100)), encoding="utf-8")
+    switch.human("RELEASE")
+    assert cli_run(["factory", "release", "set", "--file", str(f)]) == 0
+    assert "cannot sign prod" in capsys.readouterr().err
+    pytest.importorskip("fastapi")
+    html = _client(fws).get("/new").text
+    assert re.search(r'value="prod"[^>]*disabled', html) and "data-prod-off" in html

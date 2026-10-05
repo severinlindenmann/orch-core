@@ -171,6 +171,12 @@ def release_set(file: Annotated[Path, typer.Option("--file", help="The recipe, a
     typer.echo("Programs, pinned by real path and sha256 (a release refuses to run one that changed):", err=json_out)
     for word, pin in pins.items():
         typer.echo(f"  {word} -> {pin['path']}  sha256 {pin['sha256']}", err=json_out)
+    from orch.core.epics import FACTORY_DEFAULTS
+    prod = next((s for s in rec["stages"] if s["name"] == "production"), None)
+    if prod and prod["window_hours"] >= FACTORY_DEFAULTS["max_hours"]:
+        typer.echo(f"Warning: the production window ({prod['window_hours']} hours) is as long as or longer than a "
+                   f"factory charter's default time budget ({FACTORY_DEFAULTS['max_hours']} hours): such a charter "
+                   "cannot sign prod (waiting for the window would use the whole budget).", err=True)
     rec = factory_release.set_recipe(ws, confirm_typed("RELEASE"), data, shown=pins)
     cli._out(rec, json_out, f"release recipe set: {', '.join(s['name'] for s in rec['stages'])}")
 

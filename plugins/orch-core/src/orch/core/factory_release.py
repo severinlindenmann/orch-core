@@ -53,7 +53,8 @@ DEFAULT_PER = {"merge": "child", "dev": "epic", "production": "epic"}
 TARGET_STAGE = {"merge": "merge", "dev": "dev", "prod": "production"}  # a charter's `release` -> the recipe's stage
 # the Stopped reasons this module adds (orch.dashboard.data.factory._CAN says what the human can do for each)
 RELEASE_CODES = ("sensitive", "release-failed", "release-unknown", "release-stale", "production-failed",
-                 "rolled-back", "rollback-failed")
+                 "rolled-back", "rollback-failed", "release-blocked", "rollback-missing")
+FUTURE_SKEW = 300  # seconds a record's time may lie ahead of this clock before it counts as unreadable
 DEFAULT_WINDOW = 20  # hours between two proven productions of one workspace, unless the recipe says more or less
 MAX_WINDOW = 720
 FILE = "factory-release.json"
@@ -452,8 +453,9 @@ def up_to(rec: dict | None, target: str) -> list[dict] | None:
     return [have[n] for n in need] if all(n in have for n in need) else None
 
 
-def release_blocker(ws, target: str, rollback: bool = False) -> str | None:
-    """Why a charter cannot sign `release: target` (and `rollback`) in this workspace now, or None."""
+def release_blocker(ws, target: str, rollback: bool = False, max_hours=None) -> str | None:
+    """Why a charter cannot sign `release: target` (and `rollback`) in this workspace now, or None. `max_hours`: the
+    charter's time budget; a production window as long or longer can use it all up waiting, so that is refused."""
     rec, why = load(ws)
     if rec is None:
         return why + ": run `orch factory release set --file recipe.json` in your own terminal"
@@ -463,6 +465,11 @@ def release_blocker(ws, target: str, rollback: bool = False) -> str | None:
                 + ", ".join(target_stages(target) or ("merge",)) + ", in that order)")
     if rollback and not stages[-1].get("rollback"):
         return "the release recipe's production stage has no rollback: add one to the recipe first"
+    hours = stages[-1].get("window_hours") if stages[-1]["name"] == "production" else None
+    if hours and isinstance(max_hours, int) and hours >= max_hours:
+        return (f"the production window ({hours} hours) is as long as or longer than the charter's time budget "
+                f"({max_hours} hours): waiting for the window would use the whole budget, so production might never "
+                "run. Shorten the window in the recipe")
     return None
 
 
@@ -605,6 +612,23 @@ def _sensitive_record(ws, epic_id: str) -> dict | None:
     return _read(p) or {"hits": {}, "damaged": True}
 
 
+def _blocked_record(ws, epic_id: str) -> dict | None:
+    """The runner's record that a stage could not start (a program not the one pinned, the recipe lacking a stage,
+    the base not fetchable, a signed rollback missing ...): a Stopped reason until the human's Retry clears it."""
+    p = _dir(ws, epic_id) / "blocked.json"
+    if not os.path.lexists(p):
+        return None
+    return _read(p) or {"code": "release-blocked", "stage": "?", "unit": str(epic_id), "why": "its record cannot be read"}
+
+
+def _block(ws, actor, epic_id: str, stage: str, unit: str, why: str, code: str = "release-blocked") -> str:
+    """Record that `stage` of `unit` could not start, and why (once; the first reason is kept). Nothing ran."""
+    if _write(_dir(ws, epic_id) / "blocked.json", {"code": code, "stage": stage, "unit": unit, "why": why[:400],
+                                                   "at": _now()}):
+        _event(ws, actor, epic_id, "release.stage", {"stage": stage, "child": unit, "proven": False, "exit": None})
+    return f"{epic_id}: {stage} of {unit} not started: {why}"
+
+
 def _units(ws, epic, entries=None) -> list[str]:
     """The children a per-child stage runs for: those in testing (Ready's open children), and those done since with
     a proven merge (the verdict closed them after their release), by id."""
@@ -618,24 +642,78 @@ def _window_path(ws) -> Path:
     return fs._root() / "release-records" / f"production-last-{fs._key(ws, 'production-last')}.json"
 
 
+def _epic_ids(ws) -> list[str]:
+    from orch.core import epics, store
+    return [e.id for e in store.scan(ws) if e.meta is not None and epics.is_epic(e.meta)]
+
+
+def _production_times(ws) -> tuple[list, str]:
+    """(every time a production attempt of this workspace began or ended, as the runner's records say, why one could
+    not be read). Sources: the runner's window record, and every epic's production intent and outcome records, so a
+    deleted window record does not open the window while an attempt's records remain."""
+    from orch import clock
+    times, bad = [], ""
+
+    def add(stamp, what):
+        nonlocal bad
+        try:
+            times.append(clock.parse_stamp(str(stamp)))
+        except (ValueError, OverflowError):
+            bad = bad or what
+    p = _window_path(ws)
+    if os.path.lexists(p):
+        add((_read(p, 1024) or {}).get("at"), f"the runner's window record ({p.name})")
+    for eid in _epic_ids(ws):
+        d = _dir(ws, eid)
+        for n in range(1, MAX_ATTEMPTS + 1):
+            ip = d / _name("production", eid, n, "intent")
+            if not os.path.lexists(ip):
+                break
+            add((_read(ip) or {}).get("started"), f"a production intent record of {eid}")
+            op = d / _name("production", eid, n, "outcome")
+            if os.path.lexists(op):
+                out = _read(op)
+                if out is None or out.get("ended") is not None:
+                    add((out or {}).get("ended"), f"a production outcome record of {eid}")
+    return times, bad
+
+
 def window(ws, hours: int) -> dict:
     """The production release window of this workspace: {open, opens (a stamp, or None), last, why}. It opens
-    `hours` after the last proven production the runner recorded (open when there was none). A record that cannot be
-    read keeps it closed (fail closed): the human looks at it."""
+    `hours` after the last production attempt of the workspace began or ended (open when there was none), as the
+    runner's own records say. A record that cannot be read, or whose time lies in the future, keeps it shut (fail
+    closed): the human looks at it."""
     from datetime import timedelta
     from orch import clock
-    p = _window_path(ws)
-    if not os.path.lexists(p):
+    times, bad = _production_times(ws)
+    shut = {"open": False, "opens": None, "last": None}
+    if bad:
+        return {**shut, "why": f"{bad} cannot be read, so the window stays shut until you look at it"}
+    if not times:
         return {"open": True, "opens": None, "last": None, "why": ""}
-    body = _read(p, 1024)
+    now, last = clock.now(), max(times)
+    if last > now + timedelta(seconds=FUTURE_SKEW):
+        return {**shut, "why": "the runner's record of the last production release lies in the future, so the window "
+                               "stays shut until you look at it"}
     try:
-        last = clock.parse_stamp(str((body or {}).get("at")))
-    except ValueError:
-        return {"open": False, "opens": None, "last": None,
-                "why": "the runner's record of the last production release cannot be read, so the window stays shut "
-                       f"until you look at it ({p.name} in the release records)"}
-    opens = last + timedelta(hours=hours)
-    return {"open": clock.now() >= opens, "opens": clock.stamp_s(opens), "last": clock.stamp_s(last), "why": ""}
+        opens = last + timedelta(hours=hours)
+    except OverflowError:
+        return {**shut, "why": "the release window cannot be worked out"}
+    return {"open": now >= opens, "opens": clock.stamp_s(opens), "last": clock.stamp_s(last), "why": ""}
+
+
+def unresolved_production(ws, epic_id: str) -> list[str]:
+    """The other epics of this workspace whose production attempt is failed, unknown or rolling back (a failed or
+    unknown rollback included): no production runs anywhere in the workspace until the human retries or clears it."""
+    holder = lock_holder(ws)
+    out = []
+    for eid in _epic_ids(ws):
+        if eid.upper() == str(epic_id).upper():
+            continue
+        us = unit_state(ws, eid, "production", eid, holder)
+        if us["state"] in ("failed", "unknown") or (us.get("rollback") or {}).get("state") == "rolling back":
+            out.append(eid)
+    return out
 
 
 def _record_production(ws, epic_id: str) -> None:
@@ -679,14 +757,25 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
             if spec is not None:
                 w = window(ws, spec["window_hours"])
                 s["window"] = {**w, "hours": spec["window_hours"]}
+            s["held"] = unresolved_production(ws, epic.id)
     sens = _sensitive_record(ws, epic.id)
+    blocked = _blocked_record(ws, epic.id)
     return {"target": stages[-1]["name"], "recipe": rec is not None, "why": why, "stages": stages, "sensitive": sens,
-            "reasons": _reasons(stages, sens)}
+            "blocked": blocked, "reasons": _reasons(stages, sens, blocked)}
 
 
-def _reasons(stages, sens) -> list[dict]:
+def _reasons(stages, sens, blocked=None) -> list[dict]:
     from orch.core.factory_report import _text
     out = []
+    if blocked is not None:
+        what = f"the {_text(blocked.get('stage'), 20)} stage of {_text(blocked.get('unit'), 40)}"
+        if blocked.get("code") == "rollback-missing":
+            out.append({"code": "rollback-missing", "label": "Signed rollback missing",
+                        "text": f"{what} did not start: your charter signs a rollback, but the recipe's production stage "
+                                "has none now; nothing ran"})
+        else:
+            out.append({"code": "release-blocked", "label": "Release could not start",
+                        "text": f"{what} did not start: {_text(blocked.get('why'), 300)}; nothing ran"})
     if sens is not None:
         hits = sens.get("hits") if isinstance(sens.get("hits"), dict) else {}
         named = "; ".join(f"{_text(c, 40)}: " + ", ".join(_text(p, 120) for p in (ps or [])[:10])
@@ -1221,17 +1310,23 @@ def _release(ws, actor, g, run) -> list[str]:
     from orch.core.ledger import workspace_id
     epic, d, rep = g
     rec, why = load(ws)
-    stages = up_to(rec, d["release"])
-    if stages is None:
-        return [f"{epic.id}: no release: {why or 'the recipe lacks a stage the charter signs'}"]
-    kids = sorted(r["id"] for r in rep["children"] if r["status"] == "testing")
     st = status(ws, epic, d)
     if any(r["code"] != "release-stale" for r in st["reasons"]):
         return []  # stopped: the Stopped card says why (an out-of-date stage waits for the human's retry by itself)
+    stages = up_to(rec, d["release"])
+    if stages is None:
+        have = {s["name"] for s in (rec or {}).get("stages", [])}
+        missing = next((n for n in target_stages(d["release"]) if n not in have), "merge")
+        return [_block(ws, actor, epic.id, missing, epic.id,
+                       why or f"the release recipe has no {missing} stage, which your charter signs")]
+    # the children as the release records count them: in testing, and done since with a proven merge (a verdict
+    # given after the merge must not make dev out of date)
+    testing = {r["id"] for r in rep["children"] if r["status"] == "testing"}
+    kids = _units(ws, epic)
     if not acquire(ws, epic.id, max(s["timeout"] for s in stages)):
         return [f"{epic.id}: the release waits: another release holds the lock"]
     try:
-        stale = _mark_stale(ws, rec, epic, kids)
+        stale = _mark_stale(ws, rec, epic, [k for k in kids if k in testing])
         if stale or all(s["state"] == "proven" for s in st["stages"]):
             return stale
         return _run_stages(ws, actor, epic, d, rec, stages, kids, workspace_id(ws), run)
@@ -1303,8 +1398,9 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
                 now = {x["name"]: x for x in status(ws, epic, d)["stages"]}
                 if any(now[n]["state"] != "proven" for n in STAGES[:STAGES.index(s["name"])]):
                     return lines
-                if s["name"] == "production" and not window(ws, s["window_hours"])["open"]:
-                    return lines  # waiting, not stopped: the run view shows when it opens; nothing ran
+                if s["name"] == "production" and (not window(ws, s["window_hours"])["open"]
+                                                  or unresolved_production(ws, epic.id)):
+                    return lines  # waiting, not stopped: the run view shows when it opens or what holds it
             line, proven = _attempt(ws, actor, epic, d, rec, s, unit, us["attempt"] + 1, found, kids, wsid, run)
             lines.append(line)
             if not proven:
@@ -1392,6 +1488,11 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     from orch.core.factory_report import _full
     name = s["name"]
     child = s["per"] == "child"
+
+    def block(why, code="release-blocked"):  # a cause the runner cannot get past by itself: a Stopped reason
+        return _block(ws, actor, epic.id, name, unit, why, code), False
+    if name == "production" and d.get("rollback") and not s.get("rollback"):
+        return block("your charter signs a rollback, but the recipe's production stage has none", "rollback-missing")
     # the work area: the checked commit for a child stage; for dev, the remote base as it is now (the merged work);
     # for production, exactly the commit dev was proven on
     extra: dict = {}
@@ -1406,13 +1507,12 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
                 dev = unit_state(ws, epic.id, "dev", epic.id)
                 base_sha = dev.get("base_sha") if dev["state"] == "proven" else None
                 if not isinstance(base_sha, str) or not _SHA.fullmatch(base_sha):
-                    return f"{epic.id}: production not started: no proven dev commit to release", False
+                    return block("no proven dev commit to release")
                 extra.update(children=dict(dev.get("children") or {}))
             else:
                 base_sha = fetch_base(ws, rec)
                 if base_sha is None:
-                    return f"{epic.id}: {name} not started: the base could not be fetched from the recipe's remote", \
-                        False
+                    return block("the base could not be fetched from the recipe's remote")
                 extra.update(children={k: unit_state(ws, epic.id, "merge", k).get("sha") for k in kids})
             extra["base_sha"] = base_sha
             ctx = _context(epic.id, wsid, rec, sha=base_sha)
@@ -1420,14 +1520,14 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
         rollback = s.get("rollback") if name == "production" and d.get("rollback") else None
         rb_steps = _steps_of(rollback, ctx) if rollback else []
     except ValidationError as e:
-        return f"{epic.id}: {name} of {unit} not started: {e}", False
+        return block(str(e))
     steps, progs, why = _pin_steps(rec, steps)
     if steps is None:
-        return f"{epic.id}: {name} of {unit} not started: {why}", False
+        return block(why)
     if rollback:  # a signed rollback must be runnable before production starts at all
         rb_steps, rb_progs, why = _pin_steps(rec, rb_steps)
         if rb_steps is None:
-            return f"{epic.id}: {name} of {unit} not started: the rollback cannot run: {why}", False
+            return block(f"the rollback cannot run: {why}")
         progs = {**progs, **rb_progs}
     if n > MAX_ATTEMPTS or gate(ws, epic.id, d["id"]) is None:
         return f"{epic.id}: {name} of {unit} not started: the epic may not release now", False
@@ -1436,19 +1536,19 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
             return f"{epic.id}: {name} of {unit} not started: its branch moved since it was checked", False
         extra["sha"] = ctx["sha"]
     elif not checkout(ws, rec, extra["base_sha"]):
-        return f"{epic.id}: {name} not started: the commit to release cannot be checked out", False
+        return block("the commit to release cannot be checked out")
     ddir = _dir(ws, epic.id)
     digest = "sha256:" + hashlib.sha256(json.dumps([a for _, a, _ in steps]).encode("utf-8")).hexdigest()
     intent = {"stage": name, "unit": unit, "attempt": n, "argv_sha": digest, "started": _now(), **extra}
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
+    if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
+        _record_production(ws, epic.id)
     env = command_env(ws, *progs.values())
     cwd = str(repo_dir(ws))
     moved = (lambda: fetch_child(ws, rec, ctx["branch"]) != ctx["sha"]) if child else None
     r = _run_steps(ws, epic, d, s, steps, run, env, cwd, moved)
     proven = r["proven"]
-    if proven and name == "production":  # the window's clock: written before the outcome (a crash keeps it shut)
-        _record_production(ws, epic.id)
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),
                "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"]}
     _write(ddir / _name(name, unit, n, "outcome"), outcome)
@@ -1489,6 +1589,16 @@ def retry(ws, actor, epic_id: str, stage: str, unit: str) -> str:
     if stage not in STAGES or not KEY.fullmatch(epic_id) or not KEY.fullmatch(unit):
         raise UsageError("give a stage (merge, dev or production), an epic and a child or the epic itself")
     ddir = _dir(ws, epic_id)
+    if _blocked_record(ws, epic_id) is not None:  # a stage that could not start: the next round tries again
+        for k in range(1, MAX_ATTEMPTS + 1):
+            dst = ddir / f"blocked.{k}.cleared"
+            if not os.path.lexists(dst):
+                os.replace(ddir / "blocked.json", dst)
+                break
+        else:
+            raise ValidationError("the release was retried too often; approve the epic again for a new start")
+        _event(ws, actor, epic_id, "release.retry", {"stage": stage, "child": unit})
+        return "the release starts again in the runner's next round (fix what kept it from starting first)"
     if stage == "merge" and _sensitive_record(ws, epic_id) is not None:
         for k in range(1, MAX_ATTEMPTS + 1):
             dst = ddir / f"sensitive.{k}.cleared"

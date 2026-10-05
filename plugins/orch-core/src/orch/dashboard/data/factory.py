@@ -92,6 +92,12 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
                          "then Retry release on production if running it again is safe.",
     "rolled-back": "Production is back where it was, as the rollback's check says. Read the output on the run view, fix "
                    "the cause, then Retry release on production: it runs once more, after its release window.",
+    "release-blocked": "Fix what kept the stage from starting (it is named above: for example set the recipe again "
+                       "with orch factory release set after a program changed, or add the missing stage), then Retry "
+                       "release: the runner tries again in its next round. Nothing ran.",
+    "rollback-missing": "Your charter signs a rollback, but the recipe's production stage has none now. Add the rollback "
+                        "back to the recipe (orch factory release set), then Retry release on production; or approve "
+                        "the epic again without the rollback. Production did not run.",
     "rollback-failed": "Look at production now: the rollback did not prove itself, so production may be broken. Fix it "
                        "by hand; Retry release on production only when running it again is safe.",
 }
@@ -107,8 +113,11 @@ def release_offers(ws, dark_on: bool) -> dict:
     from orch.core import factory_release
     off = factory_release.release_blocker(ws, "merge") if dark_on else None
     dev = factory_release.release_blocker(ws, "dev") if dark_on and not off else None
-    prod = factory_release.release_blocker(ws, "prod") if dark_on and not off and not dev else None
-    rb = (factory_release.release_blocker(ws, "prod", rollback=True) if dark_on and not (off or dev or prod)
+    hours = epics.FACTORY_DEFAULTS["max_hours"]  # what a dashboard start signs
+    prod = (factory_release.release_blocker(ws, "prod", max_hours=hours) if dark_on and not off and not dev
+            else None)
+    rb = (factory_release.release_blocker(ws, "prod", rollback=True, max_hours=hours)
+          if dark_on and not (off or dev or prod)
           else None)
     return {"release_off": off, "dev_off": dev, "prod_off": prod, "rollback_off": rb}
 
@@ -171,7 +180,7 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
-           "closing": ("info", 1, "Closing by itself"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
@@ -243,7 +252,13 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     rel_stages = (rel or {}).get("stages") or [{"name": s, "state": "waiting"}
                                                for s in factory_release.target_stages(d.get("release"))]
     # production waiting only for its release window (a time the runner's own record decides; not a stop)
-    window = next((s["window"] for s in rel_stages if s.get("window")), None)
+    window = next((dict(s["window"]) for s in rel_stages if s.get("window")), None)
+    held = next((s["held"] for s in rel_stages if s.get("held")), None)  # another epic's production unresolved
+    if window and window.get("opens"):  # a wait for the window uses the charter's time budget
+        ends = _at(d.get("at"))
+        ends = ends + timedelta(hours=d["max_hours"]) if ends and d.get("max_hours") else None
+        window["budget_ends"] = clock.stamp_s(ends) if ends else None
+        window["after_budget"] = bool(ends and _at(window["opens"]) and _at(window["opens"]) >= ends)
     names = [*STEPS[:4], *(RELEASE_STEPS[s["name"]] for s in rel_stages), STEPS[4]]
     lit = [n > i for i in range(4)] + [n >= 4 and s["state"] == "proven" for s in rel_stages] + [n == 5]
     for i in range(1, len(lit) - 1):  # a release step counts only once those before it do (Done is the verdict alone)
@@ -275,6 +290,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "changed", "The epic's text changed since you started it"
     elif any(s["state"] == "running" for s in rel_stages):
         state, headline = "releasing", "The runner is releasing the work with your recipe"
+    elif held and not mine["requests"] and not mine["budget"]:
+        state, headline = "held", "Production is held: another epic's production is unresolved"
     elif window and not window["open"] and not mine["requests"] and not mine["budget"]:
         state, headline = "window", "Production waits for its release window"
     elif auto and mine["ready"] and auto["pending"] and not mine["requests"] and not mine["budget"]:
@@ -311,7 +328,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
-            "closing": "todo"}.get(state, "stop")
+            "closing": "todo", "held": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
@@ -325,7 +342,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
-            "arc": _arc(current, len(names)), "release": rel, "window": window, "auto": auto,
+            "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],

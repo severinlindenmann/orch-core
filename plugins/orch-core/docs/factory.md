@@ -910,8 +910,9 @@ What this guarantees: the paths a branch changes are judged from objects the run
 remote, with no workspace config, hook, ref, replace object or rename detection in between; the merge stage runs on
 exactly that commit and is pinned to it. What it cannot: the recipe is yours and runs whatever you wrote (a command
 that merges something else merges something else); the check proves what it checks; the content of a commit that
-touches no sensitive pattern is not judged; and the dev stage runs the base's own scripts (`make`, `package.json`),
-which are the merged, classified ones.
+touches no sensitive pattern is not judged; classification covers the child branches only, not commits someone else
+pushed to the base; and the dev stage runs the base's own scripts (`make`, `package.json`) as they are on the remote
+then: the children's merged work as classified, plus whatever else reached the base.
 
 **Signing it into the charter.** `orch approve <epic> requirements --dark --release merge|dev|prod [--rollback]`, or
 the "Release up to" choice of the dashboard's Dark start. The text you confirm says it "releases up to <stage> by itself
@@ -919,8 +920,13 @@ using the recipe on this machine", and for prod that it releases to production b
 machine, waits for the release window, and (with `--rollback`) runs the recipe's rollback when the production check
 fails. It is refused without `--dark`, while no valid recipe exists for this workspace, when the recipe lacks a stage
 up to the target (dev needs merge and dev; prod needs all three), and `--rollback` without `--release prod` or while
-the recipe's production stage has no rollback. The charter carries `release` and `rollback` only when you sign them, so
-every charter signed before hashes exactly as before. The recipe in force when a stage runs is the one used.
+the recipe's production stage has no rollback, and prod when the recipe's production window is as long as or longer
+than the charter's time budget (72 hours for a dashboard start; waiting for the window would use it up, so production
+might never run; `orch factory release set` warns about such a window). The charter carries `release` and `rollback`
+only when you sign them, so every charter signed before hashes exactly as before. The recipe in force when a stage runs
+is the one used. On the dashboard, choosing Production also needs the word production typed (as well as dark); in the
+terminal the typed confirmation of `orch approve` (the epic's id) covers the whole charter text, which names
+production, the window and the rollback.
 
 **When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
 every command: the factory and Dark switched on, the ledger whole, the charter active (not paused, not edited, the
@@ -966,16 +972,27 @@ then dev).
 out of date (a changed merge or a new child makes dev, and with it production, out of date; production never runs
 while dev is), on the commit dev was proven on, under the same lock, gate, intent-before-commands records and pinned
 programs as the other stages. It gets one automatic attempt: a failed or unknown production attempt stops the release,
-and only your Retry release allows one more.
+and only your Retry release allows one more. It checks out the base commit dev was proven on and fills `{sha}` with it;
+that commit is what production releases only when your recipe's commands use `{sha}` (a script that deploys "the
+latest main" deploys whatever main is then).
+
+- *One unresolved production holds every other.* While any epic of the workspace has a production attempt that
+  failed, whose outcome is unknown, or that is rolling back (a failed or unknown rollback included), no other epic's
+  production starts: its run view says "Production is held: another epic's production is unresolved" and names that
+  epic. Retry release on that epic's production (after checking production by hand) resolves it; its own production then
+  waits for its window and its gate like any other.
 
 - *The release window.* Production never starts before `min_hours_since_last` hours (default 20) have passed since
-  the last proven production of this workspace. The runner trusts only its own record of that time: a file in the
-  guarded release records (`permits/release-records/production-last-<key>.json`), written by the runner when a
-  production stage is proven (before its outcome record, so a crash keeps the window shut), never by an agent, a
-  ticket or the recipe. No record means the window is open; a record it cannot read keeps the window shut until you
-  look at it. Only a proven production starts the clock: a failed or rolled-back attempt does not. While the window
-  is shut the epic is **waiting**, not Stopped: nothing runs, the run view says when the window opens, and the runner
-  checks again every round. A retry waits for the window too: it is never skipped.
+  the last production attempt of this workspace began or ended, whatever came of it (a failed or rolled-back attempt
+  touched production too). The runner trusts only its own records of that time: a file in the guarded release records
+  (`permits/release-records/production-last-<key>.json`), written right after the attempt's intent record and before
+  its first command, and every epic's production intent and outcome records, so deleting that file does not open the
+  window while the attempts' records remain. Never an agent, a ticket or the recipe. No record means the window is open;
+  a record it cannot read, or whose time lies in the future, keeps the window shut until you look at it. While the
+  window is shut the epic is **waiting**, not Stopped: nothing runs, the run view says when the window opens and when
+  the charter's time budget ends (a wait uses it; if the window opens after the budget ends, production does not run
+  under that charter), and the runner checks again every round. A retry waits for the window too: it is never
+  skipped.
 - *The rollback.* With `rollback` signed in the charter (`--rollback`, or the dashboard's "Roll back production by
   itself if its check fails") and a rollback in the recipe, the runner runs the recipe's rollback commands and then
   their check once, right after a production attempt whose commands all exited 0 and whose live check did not pass
@@ -1002,6 +1019,11 @@ and only your Retry release allows one more.
   then Retry release on production (after its window).
 - *Rollback failed*: the rollback's check did not pass, or its outcome is unknown: production may be broken. Fix it by
   hand.
+- *Release could not start*: the runner could not start a stage for a reason it cannot get past by itself (a program
+  that is not the one you pinned, the recipe cleared or lacking a stage the charter signs, the base not fetchable, the
+  commit not checkable out); nothing ran. Fix the cause, then Retry release: the runner tries again in its next round.
+- *Signed rollback missing*: the charter signs a rollback but the recipe's production stage has none now; production
+  did not run. Put the rollback back into the recipe and Retry release, or approve the epic again without it.
 
 **Retry release** is yours: the run view's button (inline confirm) or `orch factory release retry`. It allows exactly
 one more attempt of one failed, unknown or out-of-date stage (or, after a sensitive-path stop, a fresh check of the

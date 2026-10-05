@@ -111,7 +111,12 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
                 if st["sensitive"] is not None:
                     out.append(_b("release", "a child branch touches a sensitive path"))
                 for s in st["stages"]:
-                    if s["state"] in ("waiting", "running"):
+                    if s.get("held"):
+                        out.append(_b("release", "production is held: another epic's production is unresolved ("
+                                      + ", ".join(s["held"]) + ")"))
+                    elif (s.get("window") or {}).get("why"):
+                        out.append(_b("release", s["window"]["why"]))
+                    elif s["state"] in ("waiting", "running"):
                         out.append(_b("release", f"the {s['name']} stage is proven by its check", pending=True))
                     elif s["state"] != "proven":
                         out.append(_b("release", f"the {s['name']} stage is {s['state']}"))

@@ -179,7 +179,9 @@ def test_mode_choice_with_dark_on_says_what_reaches_you(dws):
     assert 'id="mode-dark"' in html and 'name="confirm_dark"' in html and "data-dark-off" not in html
     assert "Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session" in html
     assert "you still answer cards, larger children and the verdict" in html
-    assert "with a button to add it to the profile" in html and "Nothing splits the epic into children yet" in html
+    assert "with a button to add it to the profile" in html and "Nothing splits the epic" not in html
+    assert "A planner session splits the epic into children" in html
+    assert "The Dark profile must hold the orch commands it runs." in html
     for claim in ("Nothing asks you", "nothing asks you", "without any prompts", "Agents split it", "one button"):
         assert claim not in html
 
@@ -486,9 +488,42 @@ def test_run_view_without_children_waits_for_them(dws):
     eid = _started(c, dws, "dark")
     html = c.get(f"/factory/{eid}").text
     assert "Waiting for children" in _status(html) and "chip-neu" in _status(html) and "is working" not in html
-    assert "Nothing splits an epic into children yet. Start an agent on the epic and ask it to split it" in html
+    assert "The runner starts a planner session that splits the epic into children when a session slot is free" in html
     assert 'aria-valuetext="Step 1 of 5: Understand, not yet"' in html  # Understand needs a child
     assert "is-live" not in _panel(html) and "hot" not in _panel(html)
+
+
+def test_run_view_while_the_planner_splits_the_epic(dws, human):
+    c = _client(dws)
+    eid = _started(c, dws, "dark")
+    fake = Fake()
+    _tick(dws, human, fake)  # the runner starts the planner
+    html = c.get(f"/factory/{eid}").text
+    assert "A planner session is splitting the epic into children." in _status(html)
+    assert "chip-info" in _status(html) and " Working</span>" in _status(html) and "Waiting for children" not in html
+    assert 'aria-valuetext="Step 1 of 5: Understand, in progress"' in html  # still no child: Understand not lit
+    assert "is-live" in _panel(html) and "data-planning" in html
+    assert "1 factory, 1 working" in c.get("/factory").text
+    fake.names.clear()  # it ended without a child
+    _tick(dws, human, fake)
+    html = c.get(f"/factory/{eid}").text
+    assert "Waiting for children" in _status(html) and "The planner session ended without adding a child" in html
+    d = epics.delegation(dws, _epic(dws, eid))
+    fs.mark_planner_run(dws, d["id"])
+    html = c.get(f"/factory/{eid}").text
+    assert "The planner session started twice and ended without adding a child" in html
+
+
+def test_an_empty_dark_profile_is_said_on_the_run_view_and_the_new_page(dws, human):
+    c = _client(dws)
+    eid = _started(c, dws, "dark")
+    note = "The Dark profile is empty, so each command will stop for a card. Add the baseline in a terminal: " \
+           "<code>orch dark profile add --baseline</code>"
+    assert note in c.get(f"/factory/{eid}").text and note in c.get("/new").text
+    plain = _started(c, dws, "factory")
+    assert "data-profile-empty" not in c.get(f"/factory/{plain}").text  # not a Dark run
+    dark_profile.add_baseline(dws, human)
+    assert "data-profile-empty" not in c.get(f"/factory/{eid}").text and "data-profile-empty" not in c.get("/new").text
 
 
 def test_run_view_working_dark_and_the_glow(dws, fa, human, close_tasks):

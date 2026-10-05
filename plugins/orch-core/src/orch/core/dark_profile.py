@@ -217,6 +217,32 @@ def add(ws, actor, kind: str, value) -> dict:
     return _sign(ws, actor, "add", rid, kind, value)
 
 
+# The baseline: prefix rules for the orch verbs an unattended planner or worker session runs. Agent verbs only; no
+# human-only verb (approve, answer, verdict, request-changes, reopen, close, ledger, epic pause, permit grant/deny/revoke,
+# dark profile add/remove, factory dark on, addon admin, serve) and no `ask` (refused in a factory epic). A human-only
+# form of an allowed verb (`orch move X done`) is still denied: match() refuses every never-grantable command, and the
+# guard denies those. tests/test_factory_planner.py checks each rule against the CLI's real commands.
+BASELINE = ("orch show", "orch list", "orch search", "orch next", "orch state", "orch check", "orch new",
+            "orch section set", "orch task add", "orch task start", "orch task done", "orch task skip",
+            "orch task block", "orch task list", "orch claim", "orch release", "orch log", "orch link", "orch move",
+            "orch wait", "orch permit request", "orch permit list", "orch artifact add", "orch epic show",
+            "orch epic auto-approve")
+
+
+def baseline_todo(ws) -> list[str]:
+    """The baseline rules not in force in this checkout yet, in order."""
+    have = {r["id"] for r in rules(ws)}
+    return [r for r in BASELINE if rule_id("prefix", r.split()) not in have]
+
+
+def add_baseline(ws, actor, shown=None) -> list[dict]:
+    """Human only: sign every baseline rule not in force yet (and, with `shown`, among the rules the human was
+    shown), each through `add` (the same checks); the entries."""
+    from orch.core.permits import _human_check
+    _human_check(actor, "changing the Dark profile")
+    return [add(ws, actor, "prefix", r) for r in baseline_todo(ws) if shown is None or r in shown]
+
+
 def remove(ws, actor, rid: str) -> dict:
     """Human only: take a rule out; the next Dark prompt for it is denied and becomes a card."""
     from orch.core.permits import _human_check

@@ -8,7 +8,7 @@
 - An **armed** marker says the human started this delegation from the dashboard: the runner works only for armed,
   active delegations. Re-approving the epic is a new delegation and arms nothing by itself.
 - A **run** marker counts one launch of one child (a cap on launches, and on how many children one delegation may
-  start, that editing tickets or events cannot lower).
+  start, that editing tickets or events cannot lower), or of the delegation's planner (its own key and cap).
 
 Every reader fails closed: a missing, unreadable, malformed or foreign record is "not bound / not armed".
 """
@@ -26,6 +26,7 @@ from orch.errors import HumanOnlyError, ValidationError
 
 SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 MAX_LAUNCHES = 5  # per child and delegation: a child that keeps parking is the human's to look at
+PLANNER_LAUNCHES = 2  # per delegation: a planner that ends twice without children is the human's to look at
 _MAX_BYTES = 4096
 # `checkout`: the checkout id (orch.core.ledger.checkout_id) of the workspace the runner launched from, and `start`
 # the directory it started the session in; the hook takes the Dark switch and profile from this checkout, never from
@@ -240,3 +241,28 @@ def mark_run(ws, delegation: str, child: str) -> bool:
     """Count one more launch of `child`; False once MAX_LAUNCHES are used. The caller holds the delegation lock."""
     prefix = f"{_key(ws, delegation)}.{_safe(child)}"
     return any(_create(_run_dir() / f"{prefix}.{n}") for n in range(1, MAX_LAUNCHES + 1))
+
+
+# The planner (one session that splits a childless epic) has markers of its own, under a key no child's marker shares,
+# so it never counts as a child against the charter's max_children nor against a child's launches.
+
+def is_planner(b: dict) -> bool:
+    """A planner's binding names the epic itself as its `child` (a child binding names a non-epic ticket)."""
+    return b["child"] == b["epic"]
+
+
+def planner_runs(ws, delegation: str) -> int:
+    """Planner launches counted so far under the delegation; an unreadable folder counts as the limit."""
+    prefix = _key(ws, delegation, "planner") + "."
+    try:
+        return sum(1 for n in os.listdir(_run_dir()) if n.startswith(prefix))
+    except FileNotFoundError:
+        return 0
+    except OSError:
+        return 10**9
+
+
+def mark_planner_run(ws, delegation: str) -> bool:
+    """Count one more planner launch; False once PLANNER_LAUNCHES are used (each marker is created exclusively)."""
+    prefix = _key(ws, delegation, "planner")
+    return any(_create(_run_dir() / f"{prefix}.{n}") for n in range(1, PLANNER_LAUNCHES + 1))

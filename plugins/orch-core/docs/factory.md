@@ -41,8 +41,10 @@ any other child without a human approval is refused a claim or task start.
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never
   an answer), or leaves the item out and lists it as not built.
-- A missing permission is a request, not a question: `orch permit request "<command>" --ticket <id> --reason ...`.
-  It signs nothing and grants nothing.
+- A missing permission is a request, not a question. A command the hook denies with a request id (P-n) already has
+  its request; only a denial without one (an auto-mode classifier denial) needs `orch permit request "<command>"
+  --ticket <id> --reason ...`. It signs nothing and grants nothing. A request for a command the Dark profile already
+  allows files nothing (see "Requests the profile already covers").
 - The verdict stays yours (D1): children go to testing as usual, and you sign the epic's verdict.
 
 ## Permissions: one system, answered by you
@@ -198,6 +200,21 @@ latest 30 minutes after it started, children or not (a planner stopped there wit
 two starts; one stopped with children leaves the unapproved ones to you). A planner the dashboard's own shutdown
 stopped does not count: it starts again with the next dashboard. Two dashboards on one config dir start one planner
 (the check, the count and the binding happen under the delegation's lock, as for children).
+
+**The worker prompt.** A child's session gets a built-in prompt of its own (never the workspace's work prompt, which
+an agent can edit): work on the child, following the `orch-work-on-ticket` skill if the agent has it, with the command
+forms written out, because a session that has only orch's hooks at user scope has no orch skills (in the live run the
+agent invented `orch work-on`). Both built-in prompts say the same about command shapes: one plain command per tool
+call (no `&&`, `;`, pipes, `2>&1`, `|| true`, other redirects or substitutions), titles, `-m` texts and commit
+messages as short plain sentences without line breaks, backticks, dollar signs or backslashes, `orch permit request`
+only for a command actually denied with a request id, no variants of a denied command, and never `orch instructions
+sync` or `orch setup`. The worker's: `orch claim`, `orch show`, one `orch task add <child> "TASK"` per task, `orch
+task start`, `orch task done <child> TN` (no `-m`; notes go to `orch log`), its work committed on its own branch or
+worktree with `git add FILES` and `git commit -m "<child> short text"`, Verification from a file with `orch section
+set <child> Verification --file FILE`, then `orch move <child> testing`. The test suite checks every orch command and
+option either prompt names against the CLI, every git verb against real git, and that the orch and git-basic
+baselines match each command it tells the agent to run. A prompt is advice: a model can still ignore it, and then
+its chained command stops for a card as before.
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,
@@ -503,7 +520,8 @@ the repository the agent writes to, listed by its exact command.
 - a live grant for the exact command still allows, as before;
 - anything else is denied with "not in the Dark profile", and a card (source `dark`) is filed for you: grant or deny
   it as usual, or add it to the profile (`--from-request`, only while its epic is an active Dark epic and Dark is on).
-  Nothing is asked in the session.
+  Nothing is asked in the session. The denial tells the agent which request is open, that you can add it, to do other
+  work or `orch wait`, and not to retry variants of the command or file another request for it.
 - A rule that covers an open Dark card hides the card from your lists without signing an answer to it; removing the
   rule brings the card back.
 

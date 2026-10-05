@@ -447,11 +447,28 @@ def test_cli_add_baseline(capsys, switch, configure):  # noqa: F811
 
 # -- the prompt names only what the CLI has, and what the baseline runs ---------------------------------------------------
 
-def test_every_command_in_the_planner_prompt_exists_and_the_baseline_runs_it(dws_baseline):
-    prompt = factory_runner.planner_prompt("L-0001")
-    snippets = [s for s in re.findall(r"`([^`]+)`", prompt) if s.startswith("orch ")]
-    assert len(snippets) >= 6
-    for s in snippets:
+@pytest.fixture
+def dws_both(configure, human):
+    """The orch and git-basic baselines, in a workspace that lets agents commit."""
+    from orch.core.ops import Ops
+    ws = configure(factory={"enabled": True}, git={"agent_may": {"commit": True}})
+    Ops(ws, human).set_factory_dark(True)
+    dark_profile.add_baseline(ws, human)
+    dark_profile.add_baseline(ws, human, name="git-basic")
+    return ws
+
+
+NAMED_AS_REFUSED = (("ask",), ("permit", "request"), ("instructions", "sync"), ("setup",))
+
+
+@pytest.mark.parametrize("prompt", [factory_runner.planner_prompt("L-0001"),
+                                    factory_runner.factory_work_prompt("L-0002")], ids=["planner", "worker"])
+def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_both, prompt):
+    import subprocess
+    snippets = re.findall(r"`([^`]+)`", prompt)
+    orch_cmds = [s for s in snippets if s.startswith("orch ")]
+    assert len(orch_cmds) >= 6 and "\n" not in prompt
+    for s in orch_cmds:
         words = s.split()
         cut = next((i for i in range(len(words), 0, -1) if _leaf(words[1:i]) is not None), None)
         assert cut, s
@@ -460,9 +477,27 @@ def test_every_command_in_the_planner_prompt_exists_and_the_baseline_runs_it(dws
         for w in words[cut:]:
             if w.startswith("-"):
                 assert w in opts, (s, w)
-        if words[1] != "ask":  # named only as refused
-            real = s.replace("CHILD", "L-0002").replace("FILE", "r.md").replace("SIZE", "s")
-            assert dark_profile.match(dws_baseline, real) is not None, real
+        if not any(tuple(words[1:1 + len(n)]) == n for n in NAMED_AS_REFUSED):
+            real = (s.replace("CHILD", "L-0002").replace("FILE", "r.md").replace("SIZE", "s")
+                    .replace("TN", "T1").replace("TASK", "Write the export"))
+            assert dark_profile.match(dws_both, real) is not None, real
+    for s in (s for s in snippets if s.startswith("git ")):
+        real = s.replace("FILES", "src/a.py")
+        r = subprocess.run(["git", real.split()[1], "-h"], capture_output=True, text=True, cwd=dws_both.root)
+        assert r.returncode == 129 and "usage: git" in r.stdout, s
+        assert dark_profile.match(dws_both, real) is not None, real
+
+
+def test_the_worker_prompt_is_built_in_and_says_the_plain_rules():
+    p = factory_runner.factory_work_prompt("L-0002")
+    assert p.startswith("You work on L-0002, a child of an AI Factory epic.") and "orch-work-on-ticket" in p
+    for words in ("one plain command per tool call", "`&&`", "`2>&1`", "`|| true`", "actually denied with a request id",
+                  "never retry variants", "`orch instructions sync`", "`orch setup`", "with no -m",
+                  "`git commit -m \"L-0002 short text\"`", "`orch move L-0002 testing`"):
+        assert words in p, words
+    for bad in ("-x", "L-1\n", "l-1", "", None, "L-1 --model x"):
+        assert factory_runner.factory_work_prompt(bad) is None
+    assert "one plain command per tool call" in factory_runner.planner_prompt("L-0001")
 
 
 def test_baseline_partial_failure_says_what_was_added_and_what_failed(configure, human, monkeypatch, capsys, switch):  # noqa: F811

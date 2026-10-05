@@ -809,33 +809,50 @@ IDLE_SECONDS = 45  # the pane must show the same idle prompt this long
 _BUSY = ("esc to interrupt", "do you want", "don't ask again", "❯ 1.", "> 1.", "(y/n)", "yes, proceed",
          "trust the files", "press enter", "interrupted")
 _IDLE = ("? for shortcuts", "shift+tab to cycle")
-_EMPTY_INPUT = re.compile(r"[│|\s]*[>❯]\s*[│|\s]*")
+_PROMPT = re.compile(r"^[\s\u2502|]*[>\u276f](?=\s|$)")
+IDLE_VIEW_SECONDS = 180  # the run view says the sessions wait at their prompt after this long
+
+
+def input_line(text) -> str | None:
+    """The text on Claude Code's input line: the last prompt line (`>` or `\u276f`) of the pane, only when the line
+    right above it is the input box's border (a line of \u2500), with the box's side bars stripped; None when there is
+    no such line (a prompt echoed in the transcript has no border above it, so it never counts)."""
+    if not isinstance(text, str):
+        return None
+    lines = text.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        m = _PROMPT.match(lines[i])
+        if m:
+            above = [ln for ln in lines[max(0, i - 2):i] if ln.strip()]
+            if not above or "\u2500" not in above[-1]:
+                return None
+            return lines[i][m.end():].strip().strip("\u2502|").strip()
+    return None
+
+
+def _busy(text: str) -> bool:
+    low = "\n".join([ln for ln in text.splitlines() if ln.strip()][-12:]).casefold()
+    return any(m in low for m in _BUSY)
 
 
 def typed_ok(text, nudge: str) -> bool:
-    """Whether a pane read right after typing `nudge` shows it on Claude's input line and nothing that Enter would
-    answer instead (a menu, a permission or trust prompt, a running command): only then is Enter pressed."""
-    if not isinstance(text, str):
+    """Whether a pane read after typing `nudge` shows it on the input line itself (never on an earlier echo of it in
+    the transcript) and nothing that Enter would answer instead (a menu, a permission or trust prompt, a running
+    command): only then is Enter pressed."""
+    if not isinstance(text, str) or _busy(text):
         return False
-    tail = [ln for ln in text.splitlines() if ln.strip()][-12:]
-    low = "\n".join(tail).casefold()
-    if any(m in low for m in _BUSY):
-        return False
-    head = nudge[:40]
-    return any(re.search(r"[>\u276f]\s+" + re.escape(head), ln) for ln in tail)
+    line = input_line(text)
+    return bool(line) and line.startswith(nudge[:40])
 
 
 def pane_idle(text) -> bool:
-    """Whether a pane's text shows Claude Code idle at an empty input prompt, conservatively: its footer hint, an empty
-    input line, and no sign of a running command, a permission or trust prompt or a menu in its last lines. Anything
-    else (including text it does not recognise) is not idle."""
-    if not isinstance(text, str):
+    """Whether a pane's text shows Claude Code idle at an empty input line, conservatively: its footer hint, the input
+    box's line empty, and no sign of a running command, a permission or trust prompt or a menu in its last lines.
+    Anything else (including text it does not recognise) is not idle."""
+    if not isinstance(text, str) or not text.strip() or _busy(text):
         return False
-    tail = [ln for ln in text.splitlines() if ln.strip()][-12:]
-    low = "\n".join(tail).casefold()
-    if not tail or any(m in low for m in _BUSY) or not any(m in low for m in _IDLE):
-        return False
-    return any(_EMPTY_INPUT.fullmatch(ln) for ln in tail)
+    low = text.casefold()
+    return any(m in low for m in _IDLE) and input_line(text) == ""
 
 
 def answers(epic, signed, dark_adds: int) -> dict:
@@ -852,31 +869,43 @@ def answers(epic, signed, dark_adds: int) -> dict:
 
 def _nudge_base(b: dict, now_answers: dict) -> dict:
     return {"session": b["session"], "epic": b["epic"], "delegation": b["delegation"], "answers": now_answers,
-            "count": 0, "last": "", "pane": "", "pane_at": ""}
+            "count": 0, "last": "", "pane": "", "pane_at": "", "idle": ""}
+
+
+def _observe(actor, capture, b: dict, rec: dict) -> tuple[dict, str | None]:
+    """Read the session's pane and keep in its record what it shows: a hash of the screen, since when it is unchanged
+    (`pane_at`), and whether it is idle at its prompt (`idle`). Written only when that changes."""
+    import hashlib as _h
+    from orch import clock
+    text = capture(b["name"])
+    if not isinstance(text, str):
+        return rec, None
+    pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
+    idle = "1" if pane_idle(text) else ""
+    if pane != rec["pane"] or idle != rec["idle"]:
+        rec = {**rec, "pane": pane, "pane_at": clock.stamp_s(), "idle": idle}
+        fs.write_nudge_record(actor, rec)
+    return rec, text
 
 
 def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None:
-    """Type one built-in nudge into the idle pane of session `b` after an answer in its epic: at most MAX_NUDGES, at
-    least NUDGE_GAP apart, only while pane_idle holds for IDLE_SECONDS. Fails closed: a missing or damaged record, a
-    pane that cannot be read or anything unexpected types nothing."""
-    import hashlib as _h
+    """Watch the pane of session `b` (every round: the run view tells a waiting session from a working one by it), and
+    after an answer in its epic type one built-in nudge when it has been idle at its prompt for IDLE_SECONDS: at most
+    MAX_NUDGES, at least NUDGE_GAP apart. Fails closed: a missing or damaged record, a pane that cannot be read or
+    anything unexpected types nothing."""
     from orch import clock
     capture, type_ = getattr(launcher, "capture", None), getattr(launcher, "type", None)
     rec = fs.nudge_record(b["session"])
-    if capture is None or type_ is None or rec is None or rec["count"] >= MAX_NUDGES or rec["answers"] == now_answers:
+    if capture is None or rec is None:
         return
-    now = clock.now()
     try:
+        rec, text = _observe(actor, capture, b, rec)
+        if text is None or type_ is None or rec["count"] >= MAX_NUDGES or rec["answers"] == now_answers:
+            return
+        now = clock.now()
         if rec["last"] and (now - clock.parse_stamp(rec["last"])).total_seconds() < NUDGE_GAP:
             return
-        text = capture(b["name"])
-        if not isinstance(text, str):
-            return
-        pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
-        if pane != rec["pane"]:
-            fs.write_nudge_record(actor, {**rec, "pane": pane, "pane_at": clock.stamp_s()})
-            return
-        if (now - clock.parse_stamp(rec["pane_at"])).total_seconds() < IDLE_SECONDS or not pane_idle(text):
+        if rec["idle"] != "1" or (now - clock.parse_stamp(rec["pane_at"])).total_seconds() < IDLE_SECONDS:
             return
         old = rec["answers"]
         only_denied = (now_answers.get("deny", 0) > old.get("deny", 0)
@@ -884,10 +913,10 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         kind = "planner" if fs.is_planner(b) else "denied" if only_denied else "answered"
         # counted before typing: a failure to type is not retried in a loop
         fs.write_nudge_record(actor, {**rec, "answers": now_answers, "count": rec["count"] + 1,
-                                      "last": clock.stamp_s(), "pane": "", "pane_at": ""})
+                                      "last": clock.stamp_s(), "pane": "", "pane_at": "", "idle": ""})
         if type_(b["name"], NUDGES[kind]) is True:
             lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
-        else:  # the launcher cleared the input line again and pressed nothing: counted as an attempt
+        else:  # the launcher typed nothing, or cleared the input line again and pressed nothing: an attempt
             lines.append(f"{b['name']}: nudge not sent, the pane changed while typing ({rec['count'] + 1} of "
                          f"{MAX_NUDGES})")
     except (OrchError, OSError, ValueError, TypeError, KeyError):

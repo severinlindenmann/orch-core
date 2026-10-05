@@ -307,7 +307,7 @@ def unmark_planner_run(ws, delegation: str) -> None:
 # Written only by the runner (a human process), read by the runner and the run view. A record that does not read back
 # exactly is treated as spent (no nudge) or absent (nothing shown): fail closed.
 
-_NUDGE_KEYS = {"session", "epic", "delegation", "answers", "count", "last", "pane", "pane_at"}
+_NUDGE_KEYS = {"session", "epic", "delegation", "answers", "count", "last", "pane", "pane_at", "idle"}
 
 
 def _write_json(path: Path, body: dict) -> None:
@@ -336,7 +336,8 @@ def nudge_record(session: str) -> dict | None:
     b = _read_json(_root() / "nudges" / f"{session}.json")
     if b is None or set(b) != _NUDGE_KEYS or b["session"] != session or not isinstance(b["count"], int) \
             or not isinstance(b["answers"], dict) or not all(isinstance(b[k], str) for k in ("epic", "delegation",
-                                                                                           "last", "pane", "pane_at")):
+                                                                                           "last", "pane", "pane_at",
+                                                                                           "idle")):
         return None
     return b
 
@@ -361,6 +362,19 @@ def nudges(delegation: str) -> int:
         if b is not None and b["delegation"] == delegation:
             total += max(0, b["count"])
     return total
+
+
+def idle_since(session: str):
+    """Since when the runner last saw this session's pane idle at its prompt and unchanged (a datetime), or None: not
+    idle, not watched, or a record that does not read back (unknown is never idle)."""
+    from orch import clock
+    b = nudge_record(session)
+    if b is None or b["idle"] != "1" or not b["pane_at"]:
+        return None
+    try:
+        return clock.parse_stamp(b["pane_at"])
+    except ValueError:
+        return None
 
 
 def record_early_end(ws, actor, b: dict, status: str, tail: str) -> None:

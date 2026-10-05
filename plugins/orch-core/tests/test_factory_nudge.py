@@ -19,6 +19,14 @@ TRUST = "Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, e
 TYPED = IDLE.replace("│ >" + " " * 38, "│ > please also delete" + " " * 18)
 
 
+def _echoed(text):
+    """An idle screen whose transcript still shows an earlier nudge as an echoed prompt line above the input box."""
+    return "> " + text + "\n\n" + IDLE
+
+
+UNKNOWN_MENU = "Choose what to do next:\n  1. Keep going\n  2. Stop\n"
+
+
 class Pane(Fake):
     """The fake launcher with a pane per session and a record of what was typed."""
     def __init__(self):
@@ -185,7 +193,7 @@ def test_the_nudge_text_is_never_from_tickets_or_config(fws, fa, fh, human, pane
 
 
 @pytest.mark.parametrize("text,idle", [
-    (IDLE, True), (IDLE.replace("accept edits on (shift+tab to cycle)", "? for shortcuts"), True),
+    (_echoed(fr.NUDGES["answered"]), True), (IDLE, True), (IDLE.replace("accept edits on (shift+tab to cycle)", "? for shortcuts"), True),
     (BUSY, False), (ASKING, False), (TRUST, False), (TYPED, False), ("", False), (None, False),
     ("> \n", False),  # an empty prompt alone, without Claude's footer, is not known to be Claude
 ])
@@ -197,34 +205,54 @@ def _typed_screen(text):
     return IDLE.replace("\u2502 >" + " " * 38, "\u2502 > " + text[:60])
 
 
-@pytest.mark.parametrize("after,enter", [
-    ("typed", True),  # the text sits on the input line: Enter
-    ("menu", False),  # a permission menu appeared meanwhile: Enter would pick its option
-    ("busy", False), ("trust", False), ("elsewhere", False), ("gone", False),
+@pytest.mark.parametrize("before,after,enter", [
+    (IDLE, ["typed"], True),  # the text sits on the input line: Enter
+    (IDLE, [IDLE, IDLE, "typed"], True),  # the redraw lags: read again, then Enter
+    (IDLE, [IDLE] * 6, False),  # it never lands
+    (IDLE, ["echo"] * 6, False),  # an earlier nudge echoed in the transcript is not the input line
+    (IDLE, ["menu"], False),  # a permission menu appeared meanwhile: Enter would pick its option
+    (IDLE, [UNKNOWN_MENU] * 6, False),  # a menu orch does not know: no input box, no Enter
+    (IDLE, [BUSY] * 6, False), (IDLE, [TRUST] * 6, False), (IDLE, [None] * 6, False),
+    (TYPED, ["typed"], False),  # the input line was not empty before: nothing is typed at all
+    (_echoed("old"), ["typed"], True),  # an echo above the box does not stop a nudge that lands in it
 ])
-def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, after, enter):
+def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, before, after, enter):
     from orch.dashboard import factory_runner as dash
     from orch.errors import UsageError
     from test_factory_runner import _Run
     nudge = fr.NUDGES["answered"]
-    screens = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "busy": BUSY + nudge,
-               "trust": TRUST, "elsewhere": "some output mentioning " + nudge + "\n", "gone": None}
-    seen = []
+    named = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "echo": _echoed(nudge)}
+    screens = [before, *(named.get(x, x) if isinstance(x, str) else x for x in after)]
+    seen, slept = [], []
 
     def tmux(args, timeout=10):
         seen.append(args)
         if args[0] == "capture-pane":
-            return _Run(0 if screens[after] is not None else 1, screens[after] or "")
+            screen = screens.pop(0) if len(screens) > 1 else screens[0]
+            return _Run(0 if screen is not None else 1, screen or "")
         return _Run(0)
     monkeypatch.setattr(dash, "_tmux", tmux)
+    monkeypatch.setattr(dash, "_sleep", slept.append)
     with pytest.raises(UsageError):
         dash.TmuxLauncher().type("fx-L-1-abc", "rm -rf ~")
     assert seen == []
     assert dash.TmuxLauncher().type("fx-L-1-abc", nudge) is enter
     keys = [a for a in seen if a[0] == "send-keys"]
+    if before is TYPED:
+        assert keys == []
+        return
     assert keys[0] == ["send-keys", "-t", "=fx-L-1-abc:", "-l", "--", nudge]
     assert keys[1:] == ([["send-keys", "-t", "=fx-L-1-abc:", "Enter"]] if enter
                         else [["send-keys", "-t", "=fx-L-1-abc:", "C-u"]])
+    assert len(slept) <= dash.TYPE_POLLS and sum(slept) <= 1.5
+
+
+@pytest.mark.parametrize("text,line", [
+    (IDLE, ""), (TYPED, "please also delete"), (_echoed("x"), ""), ("> stale\n", None), (UNKNOWN_MENU, None),
+    (None, None), ("\u2500" * 9 + "\n\u276f \n" + "\u2500" * 9 + "\n", ""),
+])
+def test_the_input_line_is_the_one_inside_the_box(text, line):
+    assert fr.input_line(text) == line
 
 
 def test_a_nudge_the_pane_changed_under_counts_as_an_attempt(fws, fa, fh, human, pane, at):
@@ -366,3 +394,53 @@ def test_the_new_runner_records_are_guarded(ws, cmd):
     from orch.hooks.guard import evaluate
     assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)}).allow
     assert permits.never_grantable(ws, cmd)
+
+
+# -- the run view tells sessions waiting at their prompt from working ones ----------------------------------------------
+
+def _state(fws, eid):
+    from orch.dashboard.data import factory as data
+    return data.run_view(fws, store.load(fws, eid)[1])
+
+
+def test_the_run_view_says_idle_when_every_session_waits_at_its_prompt(fws, fa, fh, human, pane, at):
+    eid, kids, d = _started(fws, fa, fh, n=2)
+    _tick(fws, human, pane)  # starts them
+    _tick(fws, human, pane)  # reads their screens
+    assert len(fs.bindings(fws)) == 2
+    assert _state(fws, eid)["state"] == "working"  # seen idle just now: not long enough
+    at(fr.IDLE_VIEW_SECONDS + 1)
+    _tick(fws, human, pane)  # same screens: nothing changes in the records
+    r = _state(fws, eid)
+    assert r["state"] == "asleep" and r["headline"] == "Sessions are waiting at their prompt: nothing is running"
+    assert r["chip"] == "Idle at prompt" and not r["live"]
+    one = fs.bindings(fws)[0]["name"]
+    pane.screen[one] = BUSY  # one starts working again
+    _tick(fws, human, pane)
+    assert _state(fws, eid)["state"] == "working"
+
+
+@pytest.mark.parametrize("damage", ["no capture", "damaged record", "unreadable pane"])
+def test_unknown_is_never_called_idle(fws, fa, fh, human, at, damage):
+    p = Fake() if damage == "no capture" else Pane()
+    eid, kids, d = _started(fws, fa, fh)
+    _tick(fws, human, p)
+    (b,) = fs.bindings(fws)
+    if damage == "damaged record":
+        (fs._root() / "nudges" / f"{b['session']}.json").write_text("{", encoding="utf-8")
+    if damage == "unreadable pane":
+        p.screen[b["name"]] = None
+    at(fr.IDLE_VIEW_SECONDS * 3)
+    _tick(fws, human, p)
+    assert _state(fws, eid)["state"] == "working"
+
+
+def test_the_run_view_page_says_it_and_the_nudge_count(fws, fa, fh, human, pane, at):
+    from test_dark_dashboard import _client
+    eid, kids, d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    _tick(fws, human, pane)
+    at(fr.IDLE_VIEW_SECONDS + 1)
+    _tick(fws, human, pane)
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "data-asleep" in html and "Sessions are waiting at their prompt: nothing is running" in html

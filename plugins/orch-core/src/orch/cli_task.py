@@ -108,7 +108,7 @@ def add(ref: str,
     if file is not None:
         if refs or verify or needs or owner != "agent":
             raise UsageError("with --file, put refs, verify, needs and owner into the file")
-        raw = tk.parse_tasks_file(file.read_text(encoding="utf-8"))
+        raw = tk.parse_tasks_file(cli._read(file, ws))
     else:
         raw = [{"text": text, "refs": list(refs or []), "verify": verify, "needs": _ids(needs) or [], "owner": owner}]
     t, added = cli._ops(ws).task_add(ref, raw, after=after)

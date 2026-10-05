@@ -265,3 +265,17 @@ def mark_planner_run(ws, delegation: str) -> bool:
     """Count one more planner launch; False once PLANNER_LAUNCHES are used (each marker is created exclusively)."""
     prefix = _key(ws, delegation, "planner")
     return any(_create(_run_dir() / f"{prefix}.{n}") for n in range(1, PLANNER_LAUNCHES + 1))
+
+
+def unmark_planner_run(ws, delegation: str) -> None:
+    """Take back the latest planner launch (the human's dashboard stopped it: that is not one of its launches).
+    Only the runner, in the dashboard the human started, calls it; the guard keeps agents away from the folder."""
+    prefix = _key(ws, delegation, "planner")
+    for n in range(PLANNER_LAUNCHES, 0, -1):
+        try:
+            (_run_dir() / f"{prefix}.{n}").unlink()
+            return
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return

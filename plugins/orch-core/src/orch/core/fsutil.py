@@ -23,6 +23,41 @@ def atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def agent_source(ws, actor, path) -> None:
+    """Refuse a file an AI Factory session hands orch to read (`--file`, `--body-file`, `orch artifact add <file>`,
+    ...) unless it lies inside the workspace, reached without a symbolic link, and outside orch's config dir: orch
+    copies what it reads into tickets and artifacts, and in a Dark factory such a command runs without a prompt, so it
+    must not carry other files out. A factory session is one with the runner's trusted binding (the one the permission
+    hook trusts). A human, and an agent outside the factory (whose commands the harness asks about as usual, and who
+    attaches screenshots from /tmp), pass any file, as before."""
+    if actor is None or getattr(actor, "is_human", False) or not getattr(actor, "session", None):
+        return
+    from orch.core import factory_sessions
+    if factory_sessions.trusted(ws, actor.session) is None:
+        return
+    from orch.core.ledger import base_dir
+    from orch.errors import ValidationError
+    a = Path(os.path.abspath(os.path.expanduser(str(path))))
+    try:
+        r = a.resolve(strict=True)
+        root, cfg = Path(ws.root).resolve(), base_dir().resolve()
+    except (OSError, RuntimeError):
+        r = root = cfg = None
+    if r is None:
+        why = "it cannot be read"
+    elif r != a:
+        why = "its path goes through a symbolic link"
+    elif root not in r.parents:
+        why = "it lies outside the workspace"
+    elif r == cfg or cfg in r.parents:
+        why = "it lies in orch's config dir"
+    else:
+        return
+    raise ValidationError(f"an agent cannot hand orch the file {path}: {why}",
+                          hint="write the text into a file inside the workspace (for example under "
+                               "orchestrator/temporary) and pass that path")
+
+
 def read_regular_file(path, max_bytes: int) -> bytes | None:
     """The bytes of `path` if it is a regular file of at most `max_bytes`, else None (missing, unreadable, too
     large, or a FIFO/device: opened non-blocking, so it never hangs the caller). At most `max_bytes` are read."""

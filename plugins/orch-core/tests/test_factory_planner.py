@@ -151,20 +151,112 @@ def test_a_planner_starts_at_most_twice_and_only_when_what_it_waits_for_changed(
     assert fs.runs(fws, d["id"]) == 0
 
 
-def test_the_first_child_does_not_stop_the_planner_and_no_planner_starts_after_it(fws, fa, fh, human, fake):
+def test_the_planner_goes_on_while_a_child_waits_and_stops_once_every_child_is_approved(fws, fa, fh, human, fake):
     eid, d = _epic(fws, fa, fh)
     _tick(fws, human, fake)
     (p,) = fs.bindings(fws)
-    cid = _child(fa, eid)  # the planner's work
+    c1 = _child(fa, eid)  # the planner's work: one child approved,
+    c2 = _child(fa, eid, approve=False)  # one still being written
     _tick(fws, human, fake)
-    assert sorted(b["child"] for b in fs.bindings(fws)) == sorted([eid, cid])  # it goes on; the child starts
-    permits.hook_decision(fws, _payload(p["session"]))
-    fake.names.discard(p["name"])
+    assert sorted(b["child"] for b in fs.bindings(fws)) == sorted([eid, c1])  # it goes on; the approved child starts
+    fa.epic_auto_approve(c2)
+    lines = _tick(fws, human, fake)
+    assert any(p["name"] in x and "planner is done" in x for x in lines) and p["name"] in fake.stopped
+    assert sorted(b["child"] for b in fs.bindings(fws)) == sorted([c1, c2])
     _tick(fws, human, fake)
-    (r,) = permits.open_requests(fws)
-    permits.permit_grant(fws, human, r["id"], "once", expected_sha=r["sha"])  # would wake a childless planner
+    assert not any(fs.is_planner(b) for b in fs.bindings(fws)) and fs.planner_runs(fws, d["id"]) == 1
+
+
+def test_a_planner_holding_the_only_slot_hands_it_to_the_child_after_planning(fws, fa, fh, human, fake, configure):
+    one = configure(factory={"enabled": True, "max_concurrency": 1})
+    eid, d = _epic(one, fa, fh)
+    _tick(one, human, fake)
+    (p,) = fs.bindings(one)
+    cid = _child(fa, eid)
+    _tick(one, human, fake)  # the planner stops (its child is approved) and frees the slot
+    _tick(one, human, fake)
+    assert [b["child"] for b in fs.bindings(one)] == [cid] and p["name"] in fake.stopped
+
+
+def _later(monkeypatch, minutes):
+    from orch import clock
+    real = clock.now()
+    monkeypatch.setattr(clock, "now", lambda: real + timedelta(minutes=minutes))
+
+
+def test_the_planner_time_limit_with_a_child_waiting(fws, fa, fh, human, fake, monkeypatch):
+    eid, d = _epic(fws, fa, fh)
     _tick(fws, human, fake)
-    assert [b["child"] for b in fs.bindings(fws)] == [cid] and fs.planner_runs(fws, d["id"]) == 1
+    (p,) = fs.bindings(fws)
+    _child(fa, eid, approve=False)
+    _later(monkeypatch, factory_runner.PLANNER_MINUTES - 1)
+    _tick(fws, human, fake)
+    assert fs.bindings(fws) == [p]
+    _later(monkeypatch, factory_runner.PLANNER_MINUTES + 1)
+    assert "time limit" in _tick(fws, human, fake)[0] and fs.bindings(fws) == []
+    _tick(fws, human, fake)
+    assert fs.bindings(fws) == [] and len(fake.started) == 1  # a child exists: no planner again
+
+
+def test_the_planner_time_limit_without_a_child_counts_as_a_launch(fws, fa, fh, human, fake, monkeypatch):
+    eid, d = _epic(fws, fa, fh)
+    _tick(fws, human, fake)
+    _later(monkeypatch, factory_runner.PLANNER_MINUTES + 1)
+    assert "time limit" in _tick(fws, human, fake)[0] and fs.bindings(fws) == []
+    assert _tick(fws, human, fake) == [] and fs.planner_runs(fws, d["id"]) == 1  # parked, not looping
+
+
+def test_three_childless_epics_on_one_slot_take_turns(fws, fa, fh, human, fake, monkeypatch, configure):
+    one = configure(factory={"enabled": True, "max_concurrency": 1})
+    ids = [_epic(one, fa, fh, title=f"Epic {i}")[0] for i in range(3)]
+    seen = []
+    for i in range(3):
+        _later(monkeypatch, i * (factory_runner.PLANNER_MINUTES + 1))
+        _tick(one, human, fake)  # ends the planner whose time is up, then starts the next epic's
+        (b,) = fs.bindings(one)
+        seen.append(b["epic"])
+    assert sorted(seen) == sorted(ids)  # every epic got its planner: the slot is never held for good
+
+
+def test_a_dashboard_restart_does_not_use_up_a_planner_launch(fws, fa, fh, human, fake):
+    eid, d = _epic(fws, fa, fh)
+    for _ in range(3):  # three dashboard runs, each ended by the dashboard shutting down
+        _tick(fws, human, fake)
+        assert fs.planner_runs(fws, d["id"]) == 1
+        factory_runner.sweep(fws, human, fake, stop_all=True)
+        assert fs.planner_runs(fws, d["id"]) == 0
+    assert len(fake.started) == 3
+
+
+def test_another_dashboard_binding_the_planner_first_wins(fws, fa, fh, human, fake, monkeypatch):
+    """The already-running check, the marker and the binding happen under the delegation's lock: a planner another
+    dashboard on the same config dir bound after this round looked is seen there, and nothing else starts."""
+    eid, d = _epic(fws, fa, fh)
+    other = Fake()
+    real = factory_runner._ready
+
+    def other_dashboard_binds_meanwhile(ws, settings, epic, dd, t, lines, planner=False):
+        out = real(ws, settings, epic, dd, t, lines, planner=planner)
+        monkeypatch.setattr(factory_runner, "_ready", real)
+        factory_runner._start(ws, human, other, settings, epic, dd, t, "", [], out)
+        return out
+
+    monkeypatch.setattr(factory_runner, "_ready", other_dashboard_binds_meanwhile)
+    _tick(fws, human, fake)
+    assert not fake.started and len(other.started) == 1 and len(fs.bindings(fws)) == 1
+
+
+def test_a_missing_program_burns_no_child_launch(fws, fa, fh, human, fake, monkeypatch):
+    eid, d = _epic(fws, fa, fh)
+    cid = _child(fa, eid)
+    good = factory_runner.resolve_bin
+    monkeypatch.setattr(factory_runner, "resolve_bin", lambda name: None)
+    for _ in range(7):
+        _tick(fws, human, fake)
+    assert fs.runs(fws, d["id"], cid) == 0 and fs.runs(fws, d["id"]) == 0 and not fake.started
+    monkeypatch.setattr(factory_runner, "resolve_bin", good)
+    _tick(fws, human, fake)
+    assert [b["child"] for b in fs.bindings(fws)] == [cid]
 
 
 def _stop_pause(fws, fh, eid, monkeypatch, configure):
@@ -327,10 +419,11 @@ def test_add_baseline_is_human_only_and_idempotent(configure, human, agent):
         dark_profile.add_baseline(ws, agent)
     assert dark_profile.rules(ws) == []
     dark_profile.add(ws, human, "prefix", "orch show")  # one already in force is skipped
-    added = dark_profile.add_baseline(ws, human)
-    assert len(added) == len(dark_profile.BASELINE) - 1 and len(dark_profile.rules(ws)) == len(dark_profile.BASELINE)
+    res = dark_profile.add_baseline(ws, human)
+    assert len(res["added"]) == len(dark_profile.BASELINE) - 1 and res["failed"] == []
+    assert len(dark_profile.rules(ws)) == len(dark_profile.BASELINE)
     n = len(ledger.entries(ws))
-    assert dark_profile.add_baseline(ws, human) == [] and len(ledger.entries(ws)) == n
+    assert dark_profile.add_baseline(ws, human) == {"added": [], "failed": []} and len(ledger.entries(ws)) == n
     assert dark_profile.baseline_todo(ws) == []
 
 
@@ -347,7 +440,7 @@ def test_cli_add_baseline(capsys, switch, configure):  # noqa: F811
     out = _ok(capsys, "dark", "profile", "add", "--baseline")
     assert f"added {len(dark_profile.BASELINE)} baseline rules" in out and "orch epic auto-approve" in out
     assert len(dark_profile.rules(ws)) == len(dark_profile.BASELINE)
-    assert json.loads(_ok(capsys, "dark", "profile", "add", "--baseline", "--json")) == {"added": []}
+    assert json.loads(_ok(capsys, "dark", "profile", "add", "--baseline", "--json")) == {"added": [], "failed": []}
 
 
 # -- the prompt names only what the CLI has, and what the baseline runs ---------------------------------------------------
@@ -368,3 +461,160 @@ def test_every_command_in_the_planner_prompt_exists_and_the_baseline_runs_it(dws
         if words[1] != "ask":  # named only as refused
             real = s.replace("CHILD", "L-0002").replace("FILE", "r.md").replace("SIZE", "s")
             assert dark_profile.match(dws_baseline, real) is not None, real
+
+
+def test_baseline_partial_failure_says_what_was_added_and_what_failed(configure, human, monkeypatch, capsys, switch):  # noqa: F811
+    ws = configure(factory={"enabled": True})
+    switch.human("BASELINE")  # a human process: the direct calls below and the CLI
+    real = dark_profile.add
+
+    def flaky(w, actor, kind, value):
+        if value == "orch move":
+            from orch.errors import ValidationError
+            raise ValidationError("the ledger refused it")
+        return real(w, actor, kind, value)
+
+    monkeypatch.setattr(dark_profile, "add", flaky)
+    res = dark_profile.add_baseline(ws, human)
+    assert res["failed"] == [{"rule": "orch move", "error": "the ledger refused it"}]
+    assert len(res["added"]) == len(dark_profile.BASELINE) - 1
+    monkeypatch.setattr(dark_profile, "add", real)
+    dark_profile.remove(ws, human, dark_profile.rule_id("prefix", ["orch", "show"]))
+    monkeypatch.setattr(dark_profile, "add", lambda *a: (_ for _ in ()).throw(__import__("orch.errors").errors.ValidationError("no")))
+    code, out = _run(capsys, "dark", "profile", "add", "--baseline")
+    assert code != 0 and "FAILED orch show: no" in out.out and "FAILED orch move: no" in out.out
+    assert "baseline rules were not added" in out.err
+
+
+# -- a factory session works on its own epic only -----------------------------------------------------------------------
+
+def _session_ops(ws, b):
+    from orch.core.events import Actor
+    from orch.core.ops import Ops
+    return Ops(ws, Actor("agent", "claude-code", "cli", b["session"]))
+
+
+def test_a_planner_creates_and_approves_children_of_its_own_epic_only(fws, fa, fh, human, fake):
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    _tick(fws, human, fake)
+    p1 = next(b for b in fs.bindings(fws) if b["epic"] == e1)
+    ops = _session_ops(fws, p1)
+    mine = ops.new("mine", epic=e1)  # the planner's own flow works
+    _refine(ops, mine.id)
+    ops.epic_auto_approve(mine.id)
+    ops.log(mine.id, "decided X because the epic says Y")
+    ops.new("a follow-up for later")  # backlog items outside any epic stay possible
+    with pytest.raises(ValidationError, match=f"works on epic {e1}"):
+        ops.new("theirs", epic=e2)
+    theirs = _child(fa, e2, approve=False)  # written by another agent under e2
+    with pytest.raises(ValidationError, match=f"works on epic {e1}"):
+        ops.epic_auto_approve(theirs)
+    free = fa.new("free ticket")
+    with pytest.raises(ValidationError, match=f"works on epic {e1}"):
+        ops.link(free.id, epic=e2)
+    fa.epic_auto_approve(theirs)  # an agent without a binding: as before
+
+
+def test_a_worker_claims_releases_and_moves_its_own_epics_children_only(fws, fa, fh, human, fake):
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    c1 = _child(fa, e1)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    c2 = _child(fa, e2)
+    _tick(fws, human, fake)
+    w1 = next(b for b in fs.bindings(fws) if b["child"] == c1)
+    ops = _session_ops(fws, w1)
+    ops.claim(c1)
+    ops.release(c1)
+    ops.claim(c1)
+    for call in (lambda: ops.claim(c2), lambda: ops.move(c2, "waiting"), lambda: ops.release(c2)):
+        with pytest.raises(ValidationError, match=f"works on epic {e1}"):
+            call()
+    fa.claim(c2)  # an agent without a binding: as before
+
+
+# -- an agent hands orch only files inside the workspace ------------------------------------------------------------------
+
+def _bound_session(ws, human, monkeypatch=None):
+    """A runner binding for UUID (pid 4242, which conftest puts in this process's ancestry); with `monkeypatch`, this
+    process's CLI runs as that agent session."""
+    fs.bind(ws, human, session=UUID, epic="L-0001", delegation="sha256:x", child="L-0001", name="fx-L-0001-aaaaaa")
+    fs.set_pid(ws, human, UUID, 4242)
+    if monkeypatch is not None:
+        monkeypatch.setenv("ORCH_HARNESS", "test-agent")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", UUID)
+    from orch.core.events import Actor
+    return Actor("agent", "claude-code", "cli", UUID)
+
+
+def test_agent_file_options_stay_inside_the_workspace(ws, tmp_path, capsys, monkeypatch, human):
+    secret = tmp_path / "home" / ".ssh" / "id_ed25519"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("PRIVATE KEY", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    inside = ws.root / "orchestrator" / "temporary" / "r.md"
+    inside.parent.mkdir(parents=True, exist_ok=True)
+    inside.write_text("the requirements", encoding="utf-8")
+    link = ws.root / "orchestrator" / "temporary" / "link.md"
+    link.symlink_to(secret)
+    (ws.root / "sub").mkdir()
+    linked_dir = ws.root / "dirlink"
+    linked_dir.symlink_to(secret.parent)
+    outside_ok = json.loads(_ok(capsys, "new", "-t", "unbound", "--requirements-file", str(secret), "--json"))
+    assert outside_ok["id"]  # an agent outside the factory: as before (its harness asks about the command)
+    store.load(ws, outside_ok["id"])[0].unlink()
+    _bound_session(ws, human, monkeypatch)
+    t = json.loads(_ok(capsys, "new", "-t", "ok", "--requirements-file", str(inside), "--json"))
+    assert "the requirements" in store.load(ws, t["id"])[1].section("Requirements")
+    for bad in (str(secret), "~/.ssh/id_ed25519", "../home/.ssh/id_ed25519", "sub/../../home/.ssh/id_ed25519",
+                str(link), "dirlink/id_ed25519"):
+        for args in (("new", "-t", "x", "--requirements-file", bad), ("new", "-t", "x", "--body-file", bad),
+                     ("new", "-t", "x", "--acceptance-file", bad), ("new", "-t", "x", "--summary-file", bad),
+                     ("new", "-t", "x", "--out-of-scope-file", bad), ("section", "set", t["id"], "Plan", "--file", bad),
+                     ("state", t["id"], "--file", bad), ("task", "add", t["id"], "--file", bad),
+                     ("artifact", "add", t["id"], bad)):
+            code, out = _run(capsys, *args)
+            assert code != 0 and "PRIVATE KEY" not in json.dumps(store.load(ws, t["id"])[1].sections), (args, out)
+            assert "an agent cannot hand orch the file" in out.err or "not a file" in out.err \
+                or "does not exist" in out.err, (args, out.err)
+    for bad, why in ((str(secret), "outside the workspace"), ("../home/.ssh/id_ed25519", "outside the workspace"),
+                     (str(link), "symbolic link"), ("dirlink/id_ed25519", "symbolic link")):
+        code, out = _run(capsys, "new", "-t", "x", "--requirements-file", bad)
+        assert code != 0 and why in out.err, (bad, out.err)
+    assert not list((ws.root / "orchestrator").rglob("id_ed25519"))  # nothing was copied into an artifact
+    assert "PRIVATE KEY" not in "".join(p.read_text(encoding="utf-8", errors="replace")
+                                        for p in ws.root.rglob("*") if p.is_file() and not p.is_symlink())
+
+
+def test_agent_source_refuses_the_config_dir_and_lets_a_human_pass_anything(ws, tmp_path, monkeypatch, human):
+    from orch.core import fsutil
+    from orch.errors import ValidationError
+    cfg = ws.root / "cfg"
+    (cfg / "permits").mkdir(parents=True)
+    rec = cfg / "permits" / "x.json"
+    rec.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(ledger, "base_dir", lambda: cfg)
+    agent = _bound_session(ws, human)  # its binding lives in that config dir too
+    with pytest.raises(ValidationError, match="config dir"):
+        fsutil.agent_source(ws, agent, rec)
+    outside = tmp_path / "elsewhere.txt"
+    outside.write_text("x", encoding="utf-8")
+    with pytest.raises(ValidationError, match="outside the workspace"):
+        fsutil.agent_source(ws, agent, outside)
+    fsutil.agent_source(ws, human, outside)  # a human: as before
+    fsutil.agent_source(ws, human, rec)
+    from orch.core.ops import Ops
+    t = Ops(ws, human).new("t")
+    assert Ops(ws, human).artifact_add(t.id, outside).name == "elsewhere.txt"
+    with pytest.raises(ValidationError, match="outside the workspace"):
+        Ops(ws, agent).artifact_add(t.id, outside, name="other.txt")
+
+
+def test_a_plan_on_the_epic_itself_is_refused(fws, fa, fh):
+    from orch.errors import UsageError
+    eid, d = _epic(fws, fa, fh)
+    with pytest.raises(UsageError, match="has no plan of its own"):
+        fa.set_section(eid, "Plan", "anything")
+    assert epics.delegation(fws, store.load(fws, eid)[1])["active"]

@@ -178,15 +178,22 @@ def profile_add(prefix: Annotated[Optional[str], typer.Option(
     if baseline:
         todo = dark_profile.baseline_todo(ws)
         if not todo:
-            cli._out({"added": []}, json_out, "every baseline rule is in the Dark profile already")
+            cli._out({"added": [], "failed": []}, json_out, "every baseline rule is in the Dark profile already")
             return
         typer.echo("Adding to the Dark profile (every later Dark run in this workspace may run them without asking):",
                    err=json_out)
         for r in todo:
             typer.echo("  " + _rule_line({"id": dark_profile.rule_id("prefix", r.split()), "kind": "prefix",
                                           "rule": r.split()}), err=json_out)
-        added = dark_profile.add_baseline(ws, confirm_typed("BASELINE"), shown=todo)
-        cli._out({"added": added}, json_out, f"added {len(added)} baseline rules to the Dark profile")
+        res = dark_profile.add_baseline(ws, confirm_typed("BASELINE"), shown=todo)
+        lines = [f"added {len(res['added'])} baseline rules to the Dark profile"]
+        lines += [f"  added  {e['rule_id']}  {dark_profile.text('prefix', e['rule'])}" for e in res["added"]]
+        lines += [f"  FAILED {f['rule']}: {f['error']}" for f in res["failed"]]
+        cli._out(res, json_out, "\n".join(lines))
+        if res["failed"]:
+            from orch.errors import ValidationError
+            raise ValidationError(f"{len(res['failed'])} baseline rules were not added (listed above); the others were",
+                                  hint="run orch dark profile add --baseline again after fixing the cause")
         return
     if from_request is not None:
         r = _show_request(ws, from_request, "Adding to the Dark profile, as an exact rule, the command of")

@@ -235,12 +235,22 @@ def baseline_todo(ws) -> list[str]:
     return [r for r in BASELINE if rule_id("prefix", r.split()) not in have]
 
 
-def add_baseline(ws, actor, shown=None) -> list[dict]:
+def add_baseline(ws, actor, shown=None) -> dict:
     """Human only: sign every baseline rule not in force yet (and, with `shown`, among the rules the human was
-    shown), each through `add` (the same checks); the entries."""
+    shown), each through `add` (the same checks). {added: the entries signed, failed: [{rule, error}]}: one rule that
+    fails does not hide which others were signed."""
     from orch.core.permits import _human_check
+    from orch.errors import OrchError
     _human_check(actor, "changing the Dark profile")
-    return [add(ws, actor, "prefix", r) for r in baseline_todo(ws) if shown is None or r in shown]
+    added, failed = [], []
+    for r in baseline_todo(ws):
+        if shown is not None and r not in shown:
+            continue
+        try:
+            added.append(add(ws, actor, "prefix", r))
+        except (OrchError, OSError) as e:
+            failed.append({"rule": r, "error": str(e)})
+    return {"added": added, "failed": failed}
 
 
 def remove(ws, actor, rid: str) -> dict:

@@ -14,7 +14,7 @@ from .provider import github_trackers
 FILTERS = (("mine", "Mine"), ("sprint", "Current sprint"), ("all", "All open"))
 _FILTER_LABEL = dict(FILTERS)
 CATEGORY = {"todo": ("neu", "to do"), "in_progress": ("info", "in progress"), "done": ("ok", "done")}
-COLUMNS = ("Key", "Title", "Status", "Priority", "Assignee", "Sprint", "Local ticket")
+COLUMNS = ("Key", "Title", "GitHub status", "Priority", "Assignee", "Sprint", "Local ticket")
 SYNC_COLUMNS = ("Key", "GitHub", "Local ticket", "Fix", "Ignore")
 BEHIND = 10  # percentage points behind "expected by today" before a sprint shows "behind plan"
 
@@ -105,33 +105,57 @@ def _open_question_count(ticket) -> int:
     return sum(1 for q in qs if isinstance(q, dict) and q.get("answer") in (None, ""))
 
 
-def _close_confirm(ticket) -> str | None:
+def _close_warnings(ticket) -> str:
     """How many open tasks a close would skip and how many open questions would stay unanswered, read from the
-    ticket at render time; None (the manifest's static text) when we have no ticket to compute from or nothing to warn about."""
+    ticket at render time; "" when we have no ticket to compute from or nothing to warn about."""
     if ticket is None:
-        return None
+        return ""
     tasks, questions = _open_task_count(ticket), _open_question_count(ticket)
-    if not tasks and not questions:
-        return None
     parts = []
     if tasks:
         parts.append(f"{tasks} open task{'s' if tasks != 1 else ''} will be skipped")
     if questions:
         parts.append(f"{questions} open question{'s' if questions != 1 else ''} will stay unanswered")
-    return f"Close the local ticket? {' and '.join(parts)}."
+    return f" {' and '.join(parts)}." if parts else ""
+
+
+_UNPROVEN = ("in-progress", "waiting", "testing")
+
+
+def _names(item, ticket) -> str:
+    """Both sides by name: `DEMO-0027 "Title" (testing)` and `GH-36 "Issue title"`."""
+    return f'{ticket.id} "{_short(ticket.title)}" ({ticket.status}) and {item["key"]} "{_short(_str(item.get("title")))}"'
+
+
+def _short(text: str, limit: int = 70) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def _fix(item, ticket, action, full_ticket=None) -> Action:
     # The target is the local ticket id: the close/reopen Intent's ref must equal it (core refuses any other ticket).
+    detail = "Changes only the local ticket in orch; nothing is changed on GitHub."
     if action == "close":
-        return Action("close_local", "Close local", ticket.id, confirm=_close_confirm(full_ticket))
-    return Action("reopen_local", "Reopen local", ticket.id)
+        unproven = " Closing it here skips its verdict." if ticket.status in _UNPROVEN else ""
+        text = f"Close {_names(item, ticket)}? The issue is closed in GitHub.{unproven}{_close_warnings(full_ticket)}"
+        return Action("close_local", "Close local", ticket.id, confirm=text, detail=detail)
+    return Action("reopen_local", "Reopen local", ticket.id, detail=detail,
+                  confirm=f"Reopen {_names(item, ticket)}? The issue is open again in GitHub.")
+
+
+def _ignore(item, ticket) -> Action:
+    side = "closed" if item.get("category") == "done" else "open"
+    return Action("ignore", "Ignore", token(ticket.id, item["key"], item.get("category")),
+                  confirm=f'Ignore that {item["key"]} is {side} in GitHub while {ticket.id} is {ticket.status}?',
+                  detail="Hides this difference until the issue changes again. Neither side is changed.")
 
 
 def _local(item, links):
     tickets = links.for_external(item["key"])
     if not tickets:
-        return Action("import", "Import", item["key"])
+        return Action("import", "Import", item["key"],
+                      confirm=f'Import {item["key"]} "{_short(_str(item.get("title")))}" as a backlog ticket?'
+                              f' It becomes a {item.get("type") or "feature"} with {item.get("priority") or "normal"} priority.',
+                      detail="Creates a local ticket from the issue; nothing is changed on GitHub.")
     if len(tickets) == 1:
         return Link(f"{tickets[0].id} · {tickets[0].status}", f"/t/{tickets[0].id}")
     return Text(", ".join(f"{t.id} · {t.status}" for t in tickets))
@@ -150,7 +174,9 @@ def _filters(view, items, shown: str, sprint, me_unknown: bool) -> Card:
                   for key, label in FILTERS)
     default = view.settings.get("default_filter") or "mine"
     note = Text(f"Default: {_FILTER_LABEL.get(default, 'Mine')}. Change it in Workspace & addons.")
-    return Card("Show", (Chips(chips, label="Filter issues"), note, Link("Workspace & addons", "/workspace#addons")))
+    sprints = Text("Sprints here are GitHub milestones. They are separate from the sprints in orchestrator/config.json "
+                   "that Board \u00b7 Group by Sprint uses; an imported ticket keeps its own sprint.")
+    return Card("Show", (Chips(chips, label="Filter issues"), note, sprints, Link("Workspace & addons", "/workspace#addons")))
 
 
 def _sprint_card(items, sprint) -> Card:
@@ -161,7 +187,9 @@ def _sprint_card(items, sprint) -> Card:
     behind = p["expected"] is not None and p["pct"] + BEHIND < p["expected"]
     if behind:
         rows.append(("Pace", Badge("warn", "behind plan")))
-    return Card(f"Sprint · {sprint.get('name')}", (KV(tuple(rows)),), role="warn" if behind else None)
+    name = _str(sprint.get("name"))
+    title = name if name.lower().startswith("sprint") else f"Sprint · {name}"  # "Sprint 42", not "Sprint · Sprint 42"
+    return Card(title, (KV(tuple(rows)),), role="warn" if behind else None)
 
 
 def _sync_card(view, items, links):
@@ -169,7 +197,7 @@ def _sync_card(view, items, links):
     for item, ticket, action in out_of_sync(view, items, links):
         there = Badge("ok", "closed in GitHub") if action == "close" else Badge("info", "open in GitHub")
         rows.append((_key_cell(item), there, Link(f"{ticket.id} · {ticket.status}", f"/t/{ticket.id}"), _fix(item, ticket, action),
-                     Action("ignore", "Ignore", token(ticket.id, item["key"], item.get("category")))))
+                     _ignore(item, ticket)))
     if not rows:
         return None
     return Card("Out of sync", (Text("GitHub and the local ticket disagree. Fix the local ticket, or ignore the difference "
@@ -246,6 +274,6 @@ def ticket_panel(view) -> list:
             body.append(Callout("warn", "Out of sync",
                                 "Closed in GitHub, not done here." if hit[1] == "close" else "Open again in GitHub, done here."))
             body.append(KV((("Fix", _fix(item, hit[0], hit[1], full_ticket=ticket)),
-                            ("Or", Action("ignore", "Ignore", token(ticket.id, key, item.get("category")))))))
+                            ("Or", _ignore(item, hit[0])))))
         out.append(Card(f"{key} · GitHub issue", tuple(body)))
     return out

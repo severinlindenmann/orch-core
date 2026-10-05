@@ -1226,6 +1226,20 @@
     if (!document.hidden) open();
   }
 
+  // A flash arrives as ?msg=/?err= on the address after a POST redirect; once it is shown, drop it from the address so a
+  // reload or a copied link does not show (or act on) the same message again. The page itself is not reloaded.
+  try {
+    const here = host.pageHistory.current();
+    const q = here.indexOf("?");
+    if (q >= 0 && /[?&](msg|err)=/.test(here)) {
+      const hash = here.indexOf("#");
+      const params = new URLSearchParams(here.slice(q, hash >= 0 ? hash : undefined));
+      params.delete("msg"); params.delete("err");
+      const rest = params.toString();
+      host.pageHistory.replace(here.slice(0, q) + (rest ? "?" + rest : "") + (hash >= 0 ? here.slice(hash) : ""));
+    }
+  } catch (e) { /* the address stays as it is */ }
+
   // Countdowns ([data-until], the server's text stays without JS): same format as the server, every 30 s.
   const tick = () => document.querySelectorAll("[data-until]").forEach((el) => {
     const s = (Date.parse(el.dataset.until) - Date.now()) / 1000;

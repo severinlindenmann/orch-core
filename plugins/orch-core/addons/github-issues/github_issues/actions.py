@@ -44,8 +44,11 @@ def _import(target, ctx) -> Intent:
     title = " ".join(str(item.get("title") or "").split()) or item["key"]
     url = item.get("url") if isinstance(item.get("url"), str) else ""
     ask = _issue_text(ctx, url)
-    return Intent("import", ref=item["key"], value=title[:200], reason=f"Imported from {url}" if url else "",
-                  data={"ask": ask} if ask else {})
+    data = {"ask": ask} if ask else {}
+    for field in ("type", "priority"):  # the issue's type:/priority: labels; core ignores values orch does not know
+        if isinstance(item.get(field), str) and item[field]:
+            data[field] = item[field]
+    return Intent("import", ref=item["key"], value=title[:200], reason=f"Imported from {url}" if url else "", data=data)
 
 
 def _issue_text(ctx, url: str) -> str:

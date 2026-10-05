@@ -116,6 +116,7 @@ class Action:
     target: str = ""
     confirm: str | None = None  # overrides the manifest's confirm text for this one instance; None keeps the manifest's
     quiet: bool = False  # API 2.1: the lesser action of a row or card (Ignore, Dismiss), drawn without a border
+    detail: str | None = None  # the confirm dialog's second line for this instance; None keeps core's generic text
     kind: ClassVar[str] = "action"
 
 
@@ -161,6 +162,7 @@ class Chips:
     the one shown now. `label` names the row for screen readers (e.g. "Filter by state")."""
     items: tuple
     label: str = ""
+    show_label: bool = True  # False: `label` stays a screen-reader name only (a card's own title already says it)
     kind: ClassVar[str] = "chips"
 
 
@@ -450,6 +452,8 @@ def _check(w, manifest, where: str, out: list[str], depth: int, slot: str = "") 
         if w.confirm is not None:
             _str_field(w.confirm, MAX_TEXT_LEN, where, "confirm", out)
         _flag(w.quiet, where, "quiet", out)
+        if w.detail is not None:
+            _str_field(w.detail, MAX_TEXT_LEN, where, "detail", out)
         if not isinstance(w.action, str):
             out.append(f"{where}.action: must be a string, got {type(w.action).__name__}")
         elif manifest.action(w.action) is None:
@@ -480,6 +484,7 @@ def _check(w, manifest, where: str, out: list[str], depth: int, slot: str = "") 
 
     elif isinstance(w, Chips):
         _str_field(w.label, MAX_LABEL_LEN, where, "label", out)
+        _flag(w.show_label, where, "show_label", out)
         for i, item in enumerate(_rows_of(w.items, where, "items", out)):
             if not isinstance(item, _CHIP_ITEMS):
                 out.append(f"{where}.items[{i}]: {type(item).__name__} is not allowed in Chips (Badge, Link or Text)")

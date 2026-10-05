@@ -251,7 +251,8 @@ class AddonRuntime:
                 out.append(Callout("err", f"{title} returned an invalid widget", _SEE_ERRORS))
         return tuple(out)
 
-    def slot(self, name: str, ticket=None, params=None) -> list[SlotGroup]:
+    def slot(self, name: str, ticket=None, params=None, always_banner: bool = False) -> list[SlotGroup]:
+        """`always_banner`: a slot that is a page of its own (Board · External) shows "Updated 2 min ago" too."""
         groups = []
         try:
             addons = list(self.registry)
@@ -265,7 +266,7 @@ class AddonRuntime:
                 widgets = self._widgets(la, name, ticket, params)
                 # the banner is never shown in today.summary, and on other slots only when health is not ok
                 banner = None if name == "today.summary" else self._banner(la)
-                if banner is not None and banner.health == "ok":
+                if banner is not None and banner.health == "ok" and not always_banner:
                     banner = None
                 if widgets or banner is not None:
                     groups.append(SlotGroup(la.name, la.manifest.title, widgets, banner, _confirms(la.manifest),

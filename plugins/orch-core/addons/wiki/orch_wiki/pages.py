@@ -59,7 +59,7 @@ def mentions(title: str, text: str) -> dict[str, int]:
 def write_index(state_dir, provider: str, space: str, texts: dict, titles=None) -> None:
     path = index_path(state_dir, provider, space)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pages = {str(k): str(v)[:MAX_INDEX_CHARS].lower() for k, v in texts.items()}
+    pages = {str(k): str(v)[:MAX_INDEX_CHARS] for k, v in texts.items()}  # as written: search lowercases on read, excerpts keep case
     data = {"schema": 1, "pages": pages,
             "mentions": {k: mentions(str((titles or {}).get(k) or ""), v) for k, v in pages.items()}}
     tmp = path.with_name(path.name + ".tmp")
@@ -78,35 +78,40 @@ class IndexReader:
 
     def __init__(self, state_dir):
         self.state_dir = Path(state_dir)
-        self._cache: dict[Path, tuple[float, dict, dict]] = {}
+        self._cache: dict[Path, tuple[float, dict, dict, dict]] = {}
 
-    def _load(self, provider: str, space: str) -> tuple[dict, dict]:
+    def _load(self, provider: str, space: str) -> tuple[dict, dict, dict]:
         path = index_path(self.state_dir, provider, space)
         try:
             mtime = path.stat().st_mtime
         except OSError:
-            return {}, {}
+            return {}, {}, {}
         hit = self._cache.get(path)
         if hit and hit[0] == mtime:
-            return hit[1], hit[2]
-        texts, found = {}, {}
+            return hit[1], hit[2], hit[3]
+        texts, found, raws = {}, {}, {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, UnicodeDecodeError):
             data = None
         if isinstance(data, dict):
             pages = data.get("pages")
-            texts = {str(k): str(v) for k, v in pages.items()} if isinstance(pages, dict) else {}
+            raws = {str(k): str(v) for k, v in pages.items()} if isinstance(pages, dict) else {}
+            texts = {k: v.lower() for k, v in raws.items()}  # an index from an older version is lowercase already
             raw = data.get("mentions")
             for k, v in (raw.items() if isinstance(raw, dict) else ()):
                 counts = _counts(v)
                 if counts is not None:
                     found[str(k)] = counts
-        self._cache[path] = (mtime, texts, found)
-        return texts, found
+        self._cache[path] = (mtime, texts, found, raws)
+        return texts, found, raws
 
     def texts(self, provider: str, space: str) -> dict:
         return self._load(provider, space)[0]
+
+    def raw(self, provider: str, space: str) -> dict:
+        """{page id: the page text in its own case} (lowercase for an index written by an older version)."""
+        return self._load(provider, space)[2]
 
     def mentions(self, provider: str, space: str) -> dict:
         """{page id: {word or key: count}}; a page missing here (an index from an older version) has none."""

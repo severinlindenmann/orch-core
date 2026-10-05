@@ -43,7 +43,7 @@ def list_(json_out: JsonOpt = False) -> None:
 
 @addon_app.command("check")
 def check(
-    path: Annotated[Path, typer.Argument(help="Addon folder (holds orch-addon.json).")],
+    path: Annotated[Path, typer.Argument(help="Addon folder (holds orch-addon.json), or the name of a known addon.")],
     static: Annotated[bool, typer.Option("--static", help="Only the static checks; do not import the addon's code.")] = False,
     strict: Annotated[bool, typer.Option("--strict", help="Design warnings (W1-W18, see DESIGN.md) fail the check too.")] = False,
     fmt: Annotated[str, typer.Option("--format", help="JSON shape: v1 (a flat problem list) or v2 "
@@ -57,6 +57,11 @@ def check(
     from orch.errors import UsageError, ValidationError
     if fmt not in ("v1", "v2"):
         raise UsageError(f"--format {fmt!r} is not known", hint="use v1 or v2")
+    if not path.is_dir() and len(path.parts) == 1:  # a bare name, as list/trust/enable take: use that addon's folder
+        from orch.addons.discovery import find
+        found = find(str(path))
+        if found is not None:
+            path = found.folder
     if not path.is_dir():
         missing = f"{path} is not a folder"
         if json_out:  # ruling F4: one JSON document and exit 5, also for a missing path

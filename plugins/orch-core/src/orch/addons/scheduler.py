@@ -105,6 +105,10 @@ class Scheduler:
             scopes = []
         else:
             scopes = [s for s in result.get("scopes", []) if isinstance(s, str) and s]
+            try:  # a scope the provider no longer lists leaves no snapshot behind: its old failure would still show
+                cache.prune_scopes(self.ws, loaded.name, provider.id, scopes)
+            except Exception:
+                _log_error(self.ws, loaded.name, f"prune {provider.id}", traceback.format_exc())
         self._scope_cache[ck] = (provider, now + self._interval(provider), scopes)
         return scopes
 

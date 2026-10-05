@@ -13,7 +13,6 @@ from jinja2 import pass_context
 from orch.clock import now as clock_now
 from orch.clock import parse_stamp
 from orch.core import query
-from orch.core.events import Actor
 from orch.dashboard import switcher
 from orch.dashboard import terminals
 from orch.dashboard.assets import static_url
@@ -23,7 +22,6 @@ from orch.dashboard.markdown import (ArtifactScope, artifact_scope, md_page_filt
 from orch.dashboard.qr import qr_matrix, qr_matrix_uncached, qr_runs
 from orch.errors import OrchError
 
-HUMAN = Actor("human", "you", "dashboard")
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 
 
@@ -311,6 +309,8 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "page_title_prefix": f"({needs_count}) " if needs_count > 0 else "",
         "shortcuts": _shortcuts(ws),
         "density": _density(ws),
+        # The page's own address, for app.js: the dashboard never reads it back from the address bar.
+        "here": request.url.path + ("?" + request.url.query if request.url.query else ""),
         "msg": request.query_params.get("msg"),
         "err": request.query_params.get("err"),
     }

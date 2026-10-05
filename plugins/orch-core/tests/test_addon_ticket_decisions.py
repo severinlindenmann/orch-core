@@ -11,7 +11,7 @@ from orch.addons.loader import AddonRegistry
 from orch.core import store
 from orch.core.events import read_events
 from orch.core.questions import question_hash
-from orch.dashboard.views import HUMAN
+from orch.dashboard.reach import LOCAL_HUMAN as HUMAN  # the local dashboard actor (was views.HUMAN)
 from orch.errors import ValidationError
 
 ORIGIN = {"origin": "http://testserver"}

@@ -286,3 +286,16 @@ def test_init_rejects_a_blank_customer(tmp_path, capsys):
     assert run(["init", "--customer", "  ", "--prefix", "ZZ", "--dir", str(tmp_path / "w")]) == 2
     assert "must not be blank" in capsys.readouterr().err
     assert not (tmp_path / "w" / "orchestrator" / "config.json").exists()
+
+
+def test_adopt_with_many_items_points_to_all(ws, aops, human_tty, capsys):
+    ids = [_ready(aops) for _ in range(6)]
+    for tid in ids:
+        _forge_approval(ws, tid, "requirements", status="open")
+    human_tty(*[""] * 6)
+    assert run(["ledger", "adopt", "--workspace"]) == 0
+    out = capsys.readouterr().out
+    assert "6 decisions to review" in out and "orch ledger adopt --workspace --all" in out and "signed 0 of 6" in out
+    human_tty("")                                  # a few items: no hint
+    assert run(["ledger", "adopt", ids[0]]) == 0
+    assert "--all" not in capsys.readouterr().out

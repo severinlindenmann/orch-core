@@ -1,5 +1,75 @@
 // Progressive enhancement only: every page works without this file.
 (() => {
+  // ---------- Host adapter ----------
+  // The one place this dashboard touches its own address, history, cookie, web storage or clipboard, so a host that
+  // cannot offer them (a sandboxed frame with no address of its own) can replace single methods. A host sets
+  // window.orchHost before this file runs; its methods win over the local defaults below. Locally every method
+  // does exactly what the page did before. The page's own path comes from <html data-path> (server-rendered),
+  // never from the address bar. tests/test_dashboard_host_adapter.py keeps all other code in the dashboard's
+  // scripts away from those browser features; keep this block between its two markers.
+  // host-adapter:begin
+  const memoryStore = (kind) => {  // web storage with an in-page fallback when the browser refuses it
+    const mem = new Map();
+    return {
+      get(key) { if (mem.has(key)) return mem.get(key); try { return window[kind].getItem(key); } catch (e) { return null; } },
+      set(key, value) { mem.delete(key); try { window[kind].setItem(key, value); } catch (e) { mem.set(key, value); } },
+      remove(key) { mem.delete(key); try { window[kind].removeItem(key); } catch (e) { /* nothing stored */ } },
+    };
+  };
+  const hereRaw = () => {  // "/path?query" of the page shown
+    const set = document.documentElement && document.documentElement.dataset && document.documentElement.dataset.path;
+    if (set) return set;
+    const l = window.location;  // only a page not rendered by the dashboard lacks data-path
+    return l ? (l.pathname || "/") + (l.search || "") : "/";
+  };
+  const host = Object.assign({
+    path() { return host.url().split("?")[0]; },
+    search() { const u = host.url(); const i = u.indexOf("?"); return i < 0 ? "" : u.slice(i); },
+    url() { return hereRaw(); },
+    hash() { return (window.location && window.location.hash) || ""; },
+    // An href against this page: {href, path, search, hash, internal}, or null when it is not a URL.
+    resolve(href) {
+      if (/[\u0000-\u001f\u007f]/.test(String(href))) return null;
+      try {
+        const u = new URL(href, window.location.href);
+        return { href: u.href, path: u.pathname, search: u.search, hash: u.hash, internal: u.origin === window.location.origin };
+      } catch (e) { return null; }
+    },
+    // Only a single-slash path or a same-origin address: "//host" and backslash forms never leave the dashboard.
+    navigate(href) {
+      const h = String(href);
+      if (/[\u0000-\u001f\u007f]/.test(h)) return;  // browsers drop tabs and newlines inside an address
+      if (!/^\/(?![\/\\])/.test(h)) {
+        let u = null;
+        try { u = new URL(h, window.location.href); } catch (e) { return; }
+        if (/^[\/\\]{2}/.test(h) || u.origin !== window.location.origin) return;
+      }
+      window.location.href = h;
+    },
+    reload() { window.location.reload(); },
+    pageHistory: {
+      canPush() { return Boolean(window.history && window.history.pushState); },
+      push(url) { window.history.pushState({ orch: true }, "", url); },
+      replace(url) { if (window.history && window.history.replaceState) window.history.replaceState(null, "", url); },
+      current() { const l = window.location; return l.pathname + l.search + l.hash; },  // after Back or Forward
+    },
+    setTheme(value) {
+      try { document.cookie = "orch_theme=" + value + "; Path=/; Max-Age=31536000; SameSite=Strict"; } catch (e) { /* this view only */ }
+    },
+    session: memoryStore("sessionStorage"),
+    local: memoryStore("localStorage"),
+    copy(text) {
+      return window.navigator && window.navigator.clipboard && window.navigator.clipboard.writeText
+        ? window.navigator.clipboard.writeText(text) : Promise.reject(new Error("no clipboard"));
+    },
+    // A click on a link that opens a new tab or downloads: return true when the host handled it, false to let the
+    // browser follow the plain link (the local default).
+    openLink() { return false; },
+    download() { return false; },
+  }, window.orchHost || {});
+  window.orchHost = host;
+  // host-adapter:end
+
   const html = document.documentElement || { dataset: {} };
   let renderedAt = Date.now();  // when the page shown was rendered (reset by an in-place swap), for "Updated N min ago"
   const isEl = (el) => Boolean(el && el.closest);
@@ -12,16 +82,17 @@
     if (!["light", "dark", "system"].includes(value)) return;
     event.preventDefault();
     html.dataset.theme = value;
-    document.cookie = "orch_theme=" + value + "; Path=/; Max-Age=31536000; SameSite=Strict";
+    host.setTheme(value);
     form.querySelectorAll("button[name=theme]").forEach((b) => b.setAttribute("aria-pressed", String(b.value === value)));
   });
 
   // Workspace tabs: every panel is in the page and the server hides all but the chosen one. A #fragment inside a
   // hidden panel (an action's redirect to #phones, a #trust-x link) opens that panel instead.
   const openTabFor = (root) => {
-    const hash = window.location && window.location.hash;
+    const hash = host.hash();
     if (!hash || hash.length < 2 || !root.querySelector || !document.getElementById) return;
     const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target && target.tagName === "DETAILS") target.open = true;  // a redirect back to an addon's Settings keeps it open
     const panel = target && target.closest && target.closest("[data-tab-panel][hidden]");
     if (!panel) return;
     document.querySelectorAll("[data-tab-panel]").forEach((p) => { p.hidden = p !== panel; });
@@ -85,11 +156,11 @@
   // in this tab (sessionStorage), because a live refresh or a search swaps #board-results. With no stored choice the
   // server's state stands (open while a ticket in it needs you); with storage off it always stands.
   const GROUP_KEY = "orch-board-groups";
-  const groupState = () => { try { return JSON.parse(window.sessionStorage.getItem(GROUP_KEY) || "{}") || {}; } catch (e) { return {}; } };
+  const groupState = () => { try { return JSON.parse(host.session.get(GROUP_KEY) || "{}") || {}; } catch (e) { return {}; } };
   const groupSave = (id, patch) => {
     const all = groupState();
     all[id] = { ...all[id], ...patch };
-    try { window.sessionStorage.setItem(GROUP_KEY, JSON.stringify(all)); } catch (e) { /* not remembered */ }
+    try { host.session.set(GROUP_KEY, JSON.stringify(all)); } catch (e) { /* not remembered */ }
   };
   const groupSet = (btn, on) => {
     btn.setAttribute("aria-expanded", on ? "true" : "false");
@@ -133,7 +204,7 @@
     const form = input.form;
     if (!form || !window.DOMParser) return;
     const selectors = String(form.dataset.liveSearch || "").split(",").map((x) => x.trim()).filter(Boolean);
-    const url = new URL(form.getAttribute("action") || window.location.pathname, window.location.href);
+    const url = new URL(host.resolve(form.getAttribute("action") || host.path()).href);
     const params = new URLSearchParams();
     for (const [k, v] of new FormData(form)) if (v !== "") params.append(k, v);  // empty filters stay out of the URL
     url.search = params.toString();
@@ -164,7 +235,8 @@
           input.focus();
           try { input.setSelectionRange(start, end); } catch (e) { /* type=search may refuse a range */ }
         }
-        if (window.history && window.history.replaceState) window.history.replaceState(null, "", url.toString());
+        host.pageHistory.replace(url.toString());
+        html.dataset.path = url.pathname + url.search;
       })
       .catch(() => { /* aborted by a newer key, or offline: Enter still submits */ })
       .finally(() => { if (seq === liveSeq) form.removeAttribute("aria-busy"); });
@@ -240,11 +312,11 @@
       redirect: "follow",
     }).then((response) => {
       if (!response.ok || response.url.includes("/move")) {
-        window.location = "/board?err=" + encodeURIComponent("could not move the ticket");
+        host.navigate("/board?err=" + encodeURIComponent("could not move the ticket"));
         return;
       }
-      window.location = "/board" + new URL(response.url).search;
-    }).catch(() => window.location.reload());
+      host.navigate("/board" + new URL(response.url).search);
+    }).catch(() => host.reload());
   });
 
   // ---------- Receipts (design system Receipt): what happened, in place, never a toast ----------
@@ -254,9 +326,9 @@
   const clock = () => new Date().toTimeString().slice(0, 5);
   const keepReceipt = (text) => {
     try {
-      const all = JSON.parse(window.sessionStorage.getItem(RECEIPT_KEY) || "[]");
+      const all = JSON.parse(host.session.get(RECEIPT_KEY) || "[]");
       all.push({ text, at: Date.now() });
-      window.sessionStorage.setItem(RECEIPT_KEY, JSON.stringify(all.slice(-5)));
+      host.session.set(RECEIPT_KEY, JSON.stringify(all.slice(-5)));
     } catch (e) { /* no storage: the receipt shows until the page changes */ }
   };
   const receiptEl = (text, kind) => {
@@ -277,8 +349,8 @@
     if (!box) return;
     let all = [];
     try {
-      all = JSON.parse(window.sessionStorage.getItem(RECEIPT_KEY) || "[]");
-      window.sessionStorage.removeItem(RECEIPT_KEY);
+      all = JSON.parse(host.session.get(RECEIPT_KEY) || "[]");
+      host.session.remove(RECEIPT_KEY);
     } catch (e) { return; }
     all.filter((r) => Date.now() - r.at < 120000).forEach((r) => box.append(receiptEl(r.text)));
   };
@@ -455,7 +527,7 @@
     button.setAttribute("aria-busy", "true");
     post(form, encode(form, button)).then((response) => {
       const o = outcome(response);
-      if (!o.ok) { window.location = o.url.href; return; }  // the server's message, on the page it chose
+      if (!o.ok) { host.navigate(o.url.pathname + o.url.search + o.url.hash); return; }  // the server's message, on the page it chose
       disarm(form, false);
       collapseInto(card, form.dataset.receipt);
     }).catch(() => form.submit());
@@ -907,14 +979,14 @@
         section.setAttribute("tabindex", "-1");
         section.focus();
       })
-      .catch(() => { window.location = link.href; });
+      .catch(() => { host.navigate(link.getAttribute("href")); });
   });
 
   // Copy fix: the Workspace page's "Copy fix" buttons carry the shell command in data-copy.
   document.addEventListener("click", (event) => {
     const button = event.target.closest && event.target.closest("[data-copy]");
-    if (!button || !navigator.clipboard || !navigator.clipboard.writeText) return;
-    navigator.clipboard.writeText(button.dataset.copy).then(() => {
+    if (!button) return;
+    host.copy(button.dataset.copy).then(() => {
       const original = button.textContent;
       button.textContent = "Copied";
       setTimeout(() => { button.textContent = original; }, 1500);
@@ -966,18 +1038,18 @@
     root.querySelectorAll("details[data-remember]").forEach((details) => {
       const key = "orch-details:" + details.dataset.remember;
       try {
-        if (window.localStorage.getItem(key) === "open") details.open = true;
+        if (host.local.get(key) === "open") details.open = true;
       } catch (e) { /* no storage: keep the default */ }
       details.addEventListener("toggle", () => {
         try {
-          window.localStorage.setItem(key, details.open ? "open" : "closed");
+          host.local.set(key, details.open ? "open" : "closed");
         } catch (e) { /* no storage: nothing to remember */ }
       });
     });
     showKeptReceipts();
     groupRestore(root);
     // A palette link from another page (/#d-<card>) lands on the card with its primary focused, never armed.
-    const target = window.location && window.location.hash.startsWith("#d-") && document.getElementById(window.location.hash.slice(1));
+    const target = host.hash().startsWith("#d-") && document.getElementById(host.hash().slice(1));
     if (target && target.matches("[data-decision]")) {
       focusCard(target);
       const primary = target.querySelector("[data-key-primary]");
@@ -991,24 +1063,33 @@
   // place (history keeps working), so the live stream below stays connected. Anything else, a modifier click, or a
   // failed fetch is a normal page load.
   const SWAPPABLE = /^\/(?:|board|activity|reports|workspace|groom|t\/[A-Za-z0-9_-]+|addons\/[a-z][a-z0-9-]*\/)$/;
-  const swappable = (a) => {
-    if (!a || !a.href || a.target || a.hasAttribute("download") || a.hasAttribute("data-no-swap")) return false;
-    const url = new URL(a.href, window.location.href);
-    return url.origin === window.location.origin && SWAPPABLE.test(url.pathname) && !(url.pathname === window.location.pathname && url.hash && url.search === window.location.search);
+  // The in-page address a link can be swapped to (path, query, hash), or null when it must load as a page.
+  const swapTarget = (href) => {
+    const r = href && host.resolve(href);
+    if (!r || !r.internal || !SWAPPABLE.test(r.path)) return null;
+    if (r.path === host.path() && r.hash && r.search === host.search()) return null;
+    return r.path + r.search + r.hash;
   };
+  const hrefOf = (a) => (a.getAttribute ? a.getAttribute("href") : a.href);
+  const swappable = (a) => Boolean(a && hrefOf(a) && !a.target && !a.hasAttribute("download") && !a.hasAttribute("data-no-swap") && swapTarget(hrefOf(a)));
   const cache = new Map();  // url -> {at, page}
+  let changes = 0;  // live "change" events seen; a page fetched before the latest one may be out of date
   const fetchPage = (url) => {
+    const seq = changes;
     const hit = cache.get(url);
     if (hit && Date.now() - hit.at < 10000) return hit.page;
     const page = fetch(url, { credentials: "same-origin" }).then((r) => {
-      const final = new URL(r.url);
-      if (!r.ok || !SWAPPABLE.test(final.pathname) || !(r.headers.get("content-type") || "").includes("text/html")) throw new Error("not swappable");
-      return r.text().then((text) => ({ url: r.url, text }));
+      const final = host.resolve(r.url);
+      if (!r.ok || !final || !SWAPPABLE.test(final.path) || !(r.headers.get("content-type") || "").includes("text/html")) throw new Error("not swappable");
+      return r.text().then((text) => ({ url: r.url, text, seq }));
     });
     cache.set(url, { at: Date.now(), page });
     page.catch(() => cache.delete(url));
     return page;
   };
+  let gen = 0;  // which document is shown; every swap starts a new one
+  let timer = null;
+  let rearm = () => {};  // set by the live stream: queue a fresh refresh
   const swapIn = (page, push) => {
     const next = new DOMParser().parseFromString(page.text, "text/html");
     const main = next.querySelector("main.content");
@@ -1019,12 +1100,17 @@
     oldMain.replaceWith(document.adoptNode(main));
     oldMenu.replaceWith(document.adoptNode(menu));
     document.title = next.title;
-    ["version", "shortcuts", "density"].forEach((k) => { if (next.documentElement.dataset[k] !== undefined) html.dataset[k] = next.documentElement.dataset[k]; });
+    ["version", "shortcuts", "density", "path"].forEach((k) => { if (next.documentElement.dataset[k] !== undefined) html.dataset[k] = next.documentElement.dataset[k]; });
     document.body.classList.remove("stale");
     renderedAt = Date.now();
     dirty = false;
-    if (push) history.pushState({ orch: true }, "", page.url);
-    const hash = new URL(page.url).hash;
+    gen += 1;
+    // A refresh queued by the page just replaced must not land on this one; but a page fetched before the latest
+    // change may be stale, so then a fresh refresh is queued (the one queued or in flight is replaced) to correct it.
+    if (page.seq === undefined || page.seq === changes) clearTimeout(timer);
+    else rearm();
+    if (push) host.pageHistory.push(page.url);
+    const hash = (host.resolve(page.url) || {}).hash || "";
     if (!hash) window.scrollTo(0, 0);
     init(main);
     const heading = main.querySelector("h1");
@@ -1035,31 +1121,39 @@
     cache.clear();
   };
   function go(href) {
-    const a = document.createElement("a");
-    a.href = href;
-    if (!window.DOMParser || !window.fetch || !swappable(a)) { window.location.href = href; return; }
-    fetchPage(a.href).then((page) => swapIn(page, true)).catch(() => { window.location.href = href; });
+    const t = swapTarget(href);
+    if (!window.DOMParser || !window.fetch || !t) { host.navigate(href); return; }
+    fetchPage(t).then((page) => swapIn(page, true)).catch(() => { host.navigate(href); });
   }
   let hoverTimer = 0;
   const prefetch = (event) => {
     const a = isEl(event.target) && event.target.closest("a[href]");
     if (!a || !window.fetch || !swappable(a)) return;
     clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => fetchPage(a.href).catch(() => {}), 65);
+    hoverTimer = setTimeout(() => fetchPage(swapTarget(hrefOf(a))).catch(() => {}), 65);
   };
   document.addEventListener("mouseover", prefetch);
   document.addEventListener("focusin", prefetch);
   document.addEventListener("click", (event) => {
     const a = isEl(event.target) && event.target.closest("a[href]");
     if (event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (!a || !window.DOMParser || !window.fetch || !window.history || !swappable(a)) return;
+    if (!a || !window.DOMParser || !window.fetch || !host.pageHistory.canPush() || !swappable(a)) return;
     event.preventDefault();
-    fetchPage(a.href).then((page) => swapIn(page, true)).catch(() => { window.location.href = a.href; });
+    const href = hrefOf(a);
+    fetchPage(swapTarget(href)).then((page) => swapIn(page, true)).catch(() => { host.navigate(href); });
   });
   window.addEventListener("popstate", () => {
     if (!window.DOMParser || !window.fetch) return;
-    fetchPage(window.location.href).then((page) => swapIn({ ...page, url: window.location.href }, false))
-      .catch(() => window.location.reload());
+    const now = host.pageHistory.current();
+    fetchPage(now).then((page) => swapIn({ ...page, url: now }, false)).catch(() => host.reload());
+  });
+
+  // Links that open a new tab or download: a host without tabs or downloads of its own takes them over (openLink,
+  // download); locally both return false and the plain link does what it always did.
+  document.addEventListener("click", (event) => {
+    const a = isEl(event.target) && event.target.closest("a[target=_blank], a[download]");
+    if (!a || event.defaultPrevented) return;
+    if (a.hasAttribute("download") ? host.download(a) : host.openLink(a)) event.preventDefault();
   });
 
   // ---------- Live refresh when tickets change (server-sent events from /events) ----------
@@ -1079,14 +1173,20 @@
       if (dirty || typing(active) || held.length || dialogOpen() || reading || document.querySelector("form[data-armed]")) {
         document.body.classList.add("stale");
       }
-      else if (window.DOMParser && window.fetch && SWAPPABLE.test(window.location.pathname)) {
+      else if (window.DOMParser && window.fetch && SWAPPABLE.test(host.path())) {
         cache.clear();
-        fetchPage(window.location.href).then((page) => swapIn({ ...page, url: window.location.href }, false))
-          .catch(() => window.location.reload());
-      } else window.location.reload();
+        const here = host.url();
+        const shown = gen;
+        fetchPage(here).then((page) => {
+          if (shown === gen) swapIn({ ...page, url: here + host.hash() }, false);  // not onto a newer document
+        }).catch(() => { if (shown === gen) host.reload(); });
+      } else host.reload();
     };
     // Debounced: an agent's burst of writes (and every open tab) refreshes once, 1.5 s after the last change.
-    let timer = null;
+    rearm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(refresh, 1500);
+    };
     let source = null;
     const open = () => {
       if (source) return;
@@ -1098,6 +1198,8 @@
         if (seen && event.data && event.data !== seen) refresh();
       });
       source.addEventListener("change", () => {
+        changes += 1;
+        cache.clear();  // nothing fetched before this change may be shown as current
         clearTimeout(timer);
         timer = setTimeout(refresh, 1500);
       });

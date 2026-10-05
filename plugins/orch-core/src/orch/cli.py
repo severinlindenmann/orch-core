@@ -316,6 +316,21 @@ def next_(summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
     _out(rows, json_out, _lines(rows, summary) or "nothing open")
 
 
+@app.command()
+def related(
+    ref: Annotated[Optional[str], typer.Argument(help="Ticket ID; its commits give the files when no --path is passed.")] = None,
+    paths: Annotated[Optional[list[str]], typer.Option("--path", "-p", help="A file or folder (repeatable).")] = None,
+    limit: Annotated[int, typer.Option("--limit", min=1, max=50, help="Items per group.")] = 8,
+    json_out: JsonOpt = False,
+) -> None:
+    """What else touches this code: earlier tickets, open tickets in the same files, co-changed files, links."""
+    from orch.core import related as rel
+    if not ref and not paths:
+        raise UsageError("pass a ticket, --path, or both")
+    data = rel.related(_ws(), ref, list(paths or []), limit=limit)
+    _out(data, json_out, rel.render(data))
+
+
 # -- work ------------------------------------------------------------------------------
 
 @app.command()

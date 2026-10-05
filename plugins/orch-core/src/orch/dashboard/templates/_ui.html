@@ -12,6 +12,15 @@
   <div class="actions">{% for value, label in d.choices %}<form method="post" action="/addons/{{ addon }}/decisions" class="inline"><input type="hidden" name="id" value="{{ d.id }}"><input type="hidden" name="choice" value="{{ value }}"><button type="submit" class="btn"{% if d.stale and value == "apply" %} disabled{% endif %}>{{ label }}</button></form>{% endfor %}</div>
 </div>{% endmacro %}
 
+{#- An addon decision that came from elsewhere (its `origin`, e.g. a phone) and waits for Apply: its own card on Today. -#}
+{% macro origin_decision(addon, d) %}<article class="card origin-decision" data-addon="{{ addon }}">
+  <p class="origin-label">{{ icon("info") }} <b>From {{ "your phone" if d.origin == "phone" else d.origin }}</b> · waiting for Apply</p>
+  <h3>{{ d.title }}{% if d.ticket %} · <a class="lnk" href="/t/{{ d.ticket }}">{{ d.ticket }}</a>{% endif %}</h3>
+  {% if d.body %}<p>{{ d.body }}</p>{% endif %}
+  {% if d.stale %}<p>{{ status("warn", "stale: the question changed since") }}</p>{% endif %}
+  <div class="actions">{% for value, label in d.choices %}<form method="post" action="/addons/{{ addon }}/decisions" class="inline"><input type="hidden" name="id" value="{{ d.id }}"><input type="hidden" name="choice" value="{{ value }}"><button type="submit" class="btn{{ ' btn-primary' if value == 'apply' and not d.stale }}"{% if d.stale and value == "apply" %} disabled{% endif %}>{{ label }}</button></form>{% endfor %}</div>
+</article>{% endmacro %}
+
 {#- Addon ticket options (manifest `ticket_options`): one checkbox per option inside a form that already posts. The hidden
     "offered" field lets the server tell an unticked box from an option the form never showed. -#}
 {% macro option_fields(options) %}{% for o in options %}<input type="hidden" name="option_offered" value="{{ o.key }}">

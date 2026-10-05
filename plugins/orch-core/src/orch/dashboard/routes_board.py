@@ -48,8 +48,8 @@ def decisions(request: Request, q: str = "", type_: str = Query("", alias="type"
     rows = agents.agent_rows(ws, events=all_events, entries=entries, needs=needs, now=at)
     parts = today.split_today(all_decisions)  # M: combined req + plan approvals get their own "Ready to start"
     runtime = getattr(request.app.state, "addons", None)
-    addon_inline, addon_loose = decisions_data.place_addon_decisions(runtime.decisions() if runtime else [],
-                                                                     parts["blocking"] + parts["later"])
+    from_origin, addon_items = decisions_data.split_by_origin(runtime.decisions() if runtime else [])
+    addon_inline, addon_loose = decisions_data.place_addon_decisions(addon_items, parts["blocking"] + parts["later"])
     settings = launch.load_settings()
     flight = today.in_flight(ws, needs=needs, entries=entries, events=all_events, now=at, rows=rows,
                              settings=settings)
@@ -73,7 +73,7 @@ def decisions(request: Request, q: str = "", type_: str = Query("", alias="type"
                 ready=ready["decisions"],
                 stale=blocking["stale"][:today.STALE_ROWS], stale_total=len(blocking["stale"]),
                 later=later["decisions"], backlog=parts["backlog"], kind_labels=decisions_data.KIND_LABELS, addon_inline=addon_inline,
-                addon_loose=addon_loose, card_anchor=decisions_data.card_anchor,
+                addon_loose=addon_loose, from_origin=from_origin, card_anchor=decisions_data.card_anchor,
                 summary=today.ready_backlog(today.summary(ws, needs=waiting, rows=rows, now=at, decisions=all_decisions),
                                             len(parts["ready"])),
                 working_rows=[r for r in rows if r.status == "working"], in_flight=flight, start_panel=start_panel,

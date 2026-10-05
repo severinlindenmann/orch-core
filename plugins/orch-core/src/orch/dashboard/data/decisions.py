@@ -383,6 +383,13 @@ def card_anchor(d: Decision, qid: str | None = None) -> str | None:
     return "verdict" if d.kind == "verdict" else None
 
 
+def split_by_origin(items) -> tuple[list, list]:
+    """(waiting for Apply from elsewhere, the rest): an addon item that names an `origin` (a phone answer) is drawn as its
+    own card on Today instead of inside a question card or under From addons. Core knows no addon names here."""
+    from_origin = [(a, d) for a, d in items if getattr(d, "origin", None)]
+    return from_origin, [(a, d) for a, d in items if not getattr(d, "origin", None)]
+
+
 def place_addon_decisions(items, cards) -> tuple[dict, list]:
     """Split addon decisions into those drawn on a shown card, keyed (TICKET, anchor), and the rest (From addons)."""
     spots = set()

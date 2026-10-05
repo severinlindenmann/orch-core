@@ -1,0 +1,14 @@
+{"remote": "/Users/you/orch-live-test/remote.git", "base": "main",
+ "sensitive_paths": [".github", "**/*.lock"],
+ "stages": [
+  {"name": "merge", "timeout": 60,
+   "commands": [["release-step", "merge", "{remote}", "{base}", "{branch}", "{sha}"]],
+   "check": {"argv": ["release-step", "merged", "{remote}", "{base}", "{sha}"], "expect": "merged {sha}"}},
+  {"name": "dev", "timeout": 60,
+   "commands": [["release-step", "deploy", "dev", "{sha}"]],
+   "check": {"argv": ["release-step", "version", "dev"], "expect": "{sha}"}},
+  {"name": "production", "timeout": 60, "window": {"min_hours_since_last": 1},
+   "commands": [["release-step", "deploy", "production", "{sha}"]],
+   "check": {"argv": ["release-step", "version", "production"], "expect": "{sha}"},
+   "rollback": {"commands": [["release-step", "rollback", "production"]],
+                "check": {"argv": ["release-step", "health", "production"], "expect": "ok"}}}]}

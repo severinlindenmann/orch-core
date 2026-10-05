@@ -1007,7 +1007,8 @@ class Ops(TaskOpsMixin):
         delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`, `release` without `dark`
         if delegate and delegate.get("release"):
             from orch.core.factory_release import release_blocker
-            why = release_blocker(self.ws, delegate["release"])
+            why = release_blocker(self.ws, delegate["release"], rollback=bool(delegate.get("rollback")),
+                                  max_hours=delegate.get("max_hours"))
             if why:
                 raise ValidationError(f"no release can be signed: {why}")
         covered: dict = {}
@@ -1280,7 +1281,8 @@ class Ops(TaskOpsMixin):
             ledger.record_setting(self.ws, DARK_SETTING, on, self.actor, process_evidence())
         self._emit(None, "setting.changed", {"setting": DARK_SETTING, "value": on})
 
-    def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None) -> Ticket:
+    def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None,
+                      charter: dict | None = None) -> Ticket:
         """One verdict for the epic: every open child must be in testing; each gets its own signed done verdict,
         then the epic is done."""
         from orch.core import epics
@@ -1309,7 +1311,7 @@ class Ops(TaskOpsMixin):
             for ct in tickets:
                 self.verdict(ct.id, "done", note, expected_hash=seen[ct.id])
         else:
-            self._close_children([e.id for e in kids], seen, note)
+            self._close_children([e.id for e in kids], seen, note, *([charter] if charter else []))
 
         def fn(t: Ticket) -> dict:
             _refuse_hidden("epic title", t.title)
@@ -1317,7 +1319,7 @@ class Ops(TaskOpsMixin):
             t.meta["status"] = "done"
             t.meta.setdefault("gates", {})["verify"] = {"verdict": "done", "at": stamp(), "via": self.actor.via}
             self._ledger(t, "verdict", verdict="done", verify_at=t.meta["gates"]["verify"]["at"],
-                         children=[e.id for e in kids])
+                         children=[e.id for e in kids], **(charter or {}))
             self._log(t, "verdict done for the epic and " + ", ".join(e.id for e in kids)
                       + (f": {message}" if message else ""))
             return {"verdict": "done", "message": message, "children": [e.id for e in kids]}
@@ -1390,7 +1392,7 @@ class Ops(TaskOpsMixin):
 
         return self._mutate(ref, "gate.changes_requested", fn)
 
-    def _close_children(self, ids: list[str], seen: dict, note: str) -> None:
+    def _close_children(self, ids: list[str], seen: dict, note: str, charter: dict | None = None) -> None:
         """Close every child of an epic verdict, or none: all their locks are held while each is re-read and checked
         against the hash it was shown with, and only then are they written."""
         from contextlib import ExitStack
@@ -1410,7 +1412,7 @@ class Ops(TaskOpsMixin):
             written = []
             for path, t in loaded:
                 before = t.status
-                data = self._verdict_fn("done", note, seen[t.id])(t) or {}
+                data = self._verdict_fn("done", note, seen[t.id], charter)(t) or {}
                 if t.status != before:
                     data["from"], data["to"] = before, t.status
                 store.save(self.ws, t, path)
@@ -1419,10 +1421,15 @@ class Ops(TaskOpsMixin):
             self._emit(tid, "verdict.given", data)
 
     def verdict(self, ref: str, verdict: str, message: str | None = None, *,
-                expected_hash: str | None = None) -> Ticket:
+                expected_hash: str | None = None, delegation: str | None = None) -> Ticket:
         """`expected_hash`: the hash of the criteria and evidence the human read (orch.core.epics.verdict_hash: for
-        an epic over its open children, else over this ticket); refused when it no longer matches."""
+        an epic over its open children, else over this ticket); refused when it no longer matches. `delegation`: only
+        for the runner's close under a Dark charter (via "dark-charter", orch.core.factory_close): the charter's
+        delegation id, signed into each verdict entry so `orch check` judges it against that charter."""
         require_human(self.actor, "giving verdicts")
+        if delegation is not None and self.actor.via != "dark-charter":
+            raise UsageError("a verdict names a charter only when the charter gives it")
+        charter = {"delegation": delegation} if delegation is not None else None
         _require_seen(expected_hash, "a verdict")
         if verdict not in ("done", "follow-up"):
             raise UsageError("verdict must be done or follow-up")
@@ -1430,11 +1437,13 @@ class Ops(TaskOpsMixin):
             raise UsageError("a follow-up verdict needs a message (-m) saying what is missing")
         target = store.resolve(self.ws, ref)
         if (target.meta or {}).get("type") == "epic":
-            return self._epic_verdict(target.id, verdict, message, expected_hash)
+            return self._epic_verdict(target.id, verdict, message, expected_hash, charter)
 
+        if charter is not None:
+            raise UsageError("a charter closes an epic, not a single ticket")
         return self._mutate(ref, "verdict.given", self._verdict_fn(verdict, message, expected_hash))
 
-    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str):
+    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str, charter: dict | None = None):
         """The change one verdict makes to its ticket (inside the ticket's lock), checked against `expected_hash`."""
         def fn(t: Ticket) -> dict:
             from orch.core.epics import verdict_hash
@@ -1449,8 +1458,13 @@ class Ops(TaskOpsMixin):
             t.meta["status"] = to
             t.meta.setdefault("gates", {})["verify"] = {"verdict": verdict, "at": stamp(), "via": self.actor.via,
                                                            "hash": seen}
+            # the gate hashes the ticket holds at its verdict, signed with it: what `orch check` later trusts as the
+            # approvals this done was given on (ticket frontmatter alone is agent-writable)
+            sealed = {gt: (t.meta.get("gates") or {}).get(gt, {}).get("hash") for gt in GATE_SECTIONS
+                      if isinstance((t.meta.get("gates") or {}).get(gt), dict)
+                      and (t.meta.get("gates") or {}).get(gt, {}).get("hash")}
             self._ledger(t, "verdict", verdict=verdict, verify_at=t.meta["gates"]["verify"]["at"],
-                         verdict_hash=seen)
+                         verdict_hash=seen, gates=sealed, **(charter or {}))
             if to == "done":
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
             self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))

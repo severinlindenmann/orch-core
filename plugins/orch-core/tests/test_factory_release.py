@@ -95,6 +95,9 @@ MERGE = _stage("merge", commands=[["gh", "pr", "create", "--base", "{base}", "--
                                   ["gh", "pr", "merge", "{branch}", "--match-head-commit", "{sha}"]],
                check={"argv": ["gh", "pr", "view", "{branch}", "--json", "state", "-q", ".state"], "expect": "MERGED"})
 DEV = _stage("dev", commands=[["make", "deploy-dev"]], check={"argv": ["make", "dev-health"]})
+ROLLBACK = {"commands": [["make", "rollback-prod", "{epic}"]], "check": {"argv": ["make", "prod-health"], "expect": "ok"}}
+PROD = _stage("production", commands=[["make", "deploy-prod", "{sha}"]],
+              check={"argv": ["make", "prod-live", "{sha}"], "expect": "live {sha}"})
 
 
 def _recipe(remote, **over):
@@ -155,12 +158,13 @@ def fh(fws, human):
     return human_ops(fws, human)
 
 
-def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, kids=1, arm=True, files=None):
+def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, kids=1, arm=True, files=None,
+                charter=None):
     if recipe is not None:
         fr.set_recipe(fws, human, recipe)
     e = fa.new("Billing revamp", type="epic")
     _refine(fa, e.id, plan=None)
-    fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, "release": release})
+    fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, "release": release, **(charter or {})})
     ids = []
     for i in range(kids):
         c = fa.new(f"child {i}", epic=e.id)
@@ -170,7 +174,7 @@ def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, 
         _branch(fws.root, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})
         fa.claim(c.id)
         close_tasks(fa, c.id)
-        fa.set_section(c.id, "Verification", "- AC1: ran the suite, green")
+        fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")
         fa.move(c.id, "testing")
         ids.append(c.id)
     d = epics.delegation(fws, store.load(fws, e.id)[1])
@@ -214,9 +218,30 @@ def _bad(remote, **stage_over):
     (lambda r: _bad(r, commands=[["timeout", "5", "gh", "{sha}", "{base}"]]), "runs a string"),
     (lambda r: _bad(r, commands=[["python3", "-c", "x", "{sha}", "{base}"]]), "runs code given as text"),
     (lambda r: _bad(r, commands=[["git", "-c", "alias.x=!sh", "x", "{sha}", "{base}"]]), "alias"),
-    (lambda r: {"stages": [_stage("production")], "remote": str(r)}, "not built yet"),
-    (lambda r: {"stages": [_stage("staging")], "remote": str(r)}, "not built yet"),
-    (lambda r: {"stages": [DEV, MERGE], "remote": str(r)}, "merge stage comes before"),
+    (lambda r: {"stages": [_stage("production")], "remote": str(r)}, "comes after a dev stage"),
+    (lambda r: {"stages": [MERGE, _stage("production")], "remote": str(r)}, "comes after a dev stage"),
+    (lambda r: {"stages": [_stage("staging")], "remote": str(r)}, "is not a stage"),
+    (lambda r: {"stages": [DEV, MERGE], "remote": str(r)}, "in this order: merge, dev, production"),
+    (lambda r: {"stages": [DEV, PROD, MERGE], "remote": str(r)}, "in this order"),
+    (lambda r: {"stages": [MERGE, _stage("dev", window={"min_hours_since_last": 5})], "remote": str(r)},
+     "only the production stage has a window"),
+    (lambda r: {"stages": [{**MERGE, "rollback": ROLLBACK}], "remote": str(r)}, "only the production stage"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "window": {"min_hours_since_last": 0}}], "remote": str(r)},
+     "never skipped"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "window": {"hours": 3}}], "remote": str(r)}, "window is"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "window": {"min_hours_since_last": True}}], "remote": str(r)},
+     "whole number of hours"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "rollback": {"commands": [["make", "back"]]}}], "remote": str(r)},
+     "both required"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "rollback": {**ROLLBACK, "commands": ["make back"]}}],
+                "remote": str(r)}, "shell string"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "rollback": {**ROLLBACK, "commands": [["bash", "-c", "x"]]}}],
+                "remote": str(r)}, "runs a string"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "rollback": {**ROLLBACK, "check": {"argv": ["sh", "-c", "x"]}}}],
+                "remote": str(r)}, "runs a string"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "rollback": {**ROLLBACK, "commands": [["make", "{branch}"]]}}],
+                "remote": str(r)}, "only filled in for a stage that runs per child"),
+    (lambda r: {"stages": [MERGE, DEV, {**PROD, "per": "child"}], "remote": str(r)}, "once per epic"),
     (lambda r: {"stages": [MERGE, MERGE], "remote": str(r)}, "twice"),
     (lambda r: _bad(r, per="epic"), "runs per child"),
     (lambda r: _bad(r, commands=[["gh", "pr", "merge", "{branch}", "--base", "{base}"]]), "must name {sha}"),
@@ -366,9 +391,9 @@ def test_cli_set_show_clear_are_human_only_and_confirmed(ws, capsys, switch, tmp
     assert os.path.realpath(bin_dir / "gh") in out and "sha256" in out  # the pins are shown before the confirmation
     assert cli_run(["factory", "release", "show"]) == 0 and "deploy-dev" in capsys.readouterr().out
     bad = tmp_path / "bad.json"
-    bad.write_text(json.dumps({"stages": [_stage("production")], "remote": "acme/app"}), encoding="utf-8")
+    bad.write_text(json.dumps({"stages": [_stage("staging")], "remote": "acme/app"}), encoding="utf-8")
     assert cli_run(["factory", "release", "set", "--file", str(bad)]) != 0
-    assert "not built yet" in capsys.readouterr().err
+    assert "is not a stage" in capsys.readouterr().err
     switch.human("CLEAR")
     assert cli_run(["factory", "release", "clear"]) == 0 and fr.recipe(ws) is None
 
@@ -416,7 +441,7 @@ def test_release_is_hashed_only_when_set():
     assert epics.normalize_delegate({**base, "release": "dev"})["release"] == "dev"
     with pytest.raises(UsageError, match="--dark"):
         epics.normalize_delegate({"factory": True, "release": "merge"})
-    with pytest.raises(UsageError, match="production is not built"):
+    with pytest.raises(UsageError, match="merge, dev or prod"):
         epics.normalize_delegate({**base, "release": "production"})
 
 

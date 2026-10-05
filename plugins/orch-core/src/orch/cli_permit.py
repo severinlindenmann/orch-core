@@ -164,12 +164,24 @@ def release_set(file: Annotated[Path, typer.Option("--file", help="The recipe, a
     rec = factory_release.check_recipe(data, ws)  # refused before anything is shown or asked
     pins = factory_release.pin_programs(rec)
     typer.echo("Setting the release recipe of this workspace (Dark epics that sign a release run these commands "
-               "by themselves once Ready, in the runner's own repository; nothing releases to production):",
+               "by themselves once Ready, in the runner's own repository, up to the stage each charter signs; "
+               "production only for a charter that signs prod, never before its release window opens):",
                err=json_out)
     typer.echo(_recipe_text(rec), err=json_out)
     typer.echo("Programs, pinned by real path and sha256 (a release refuses to run one that changed):", err=json_out)
     for word, pin in pins.items():
         typer.echo(f"  {word} -> {pin['path']}  sha256 {pin['sha256']}", err=json_out)
+    from orch.core.epics import FACTORY_DEFAULTS
+    prod = next((s for s in rec["stages"] if s["name"] == "production"), None)
+    if prod and prod["window_hours"] >= FACTORY_DEFAULTS["max_hours"]:
+        typer.echo(f"Warning: the production window ({prod['window_hours']} hours) is as long as or longer than a "
+                   f"factory charter's default time budget ({FACTORY_DEFAULTS['max_hours']} hours): such a charter "
+                   "cannot sign prod (waiting for the window would use the whole budget).", err=True)
+    for eid, hours in (factory_release.prod_charters(ws) if prod else []):
+        if prod["window_hours"] >= hours:
+            typer.echo(f"Warning: {eid}'s live charter signs prod with a {hours}-hour budget: with this "
+                       f"{prod['window_hours']}-hour window its production may never run under that charter.",
+                       err=True)
     rec = factory_release.set_recipe(ws, confirm_typed("RELEASE"), data, shown=pins)
     cli._out(rec, json_out, f"release recipe set: {', '.join(s['name'] for s in rec['stages'])}")
 
@@ -197,9 +209,37 @@ def release_clear(json_out: JsonOpt = False) -> None:
     cli._out({"cleared": had}, json_out, "release recipe cleared" if had else "there was no release recipe")
 
 
+@release_app.command("resolve")
+def release_resolve(epic: str, reason: Annotated[str, typer.Option("--reason", help="Why the hold can be lifted.")],
+                    json_out: JsonOpt = False) -> None:
+    """Lift the hold an epic's unresolved production puts on every other epic, without running it again. Human only:
+    needs the epic id typed."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_release
+    cli, ws = _ctx()
+    require_human_terminal("resolving a production hold")
+    eid = str(epic).upper()
+    typer.echo(f"Resolving the production hold of {eid}: other epics' production may run again; {eid}'s own "
+               "production does not run unless you retry it.", err=json_out)
+    text = factory_release.resolve(ws, confirm_typed(eid), eid, reason)
+    cli._out({"epic": eid, "resolved": True}, json_out, text)
+
+
+@release_app.command("clear-window")
+def release_clear_window(json_out: JsonOpt = False) -> None:
+    """Stop production times recorded beyond now (a future-dated record) from keeping the release window shut.
+    Human only: needs WINDOW typed. Earlier times still count; nothing is deleted."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_release
+    cli, ws = _ctx()
+    require_human_terminal("clearing a future-dated release window")
+    typer.echo("Production times recorded beyond now will no longer keep the release window shut.", err=json_out)
+    cli._out({"cleared": True}, json_out, factory_release.clear_window(ws, confirm_typed("WINDOW")))
+
+
 @release_app.command("retry")
 def release_retry(epic: str,
-                  stage: Annotated[str, typer.Option("--stage", help="merge or dev")],
+                  stage: Annotated[str, typer.Option("--stage", help="merge, dev or production")],
                   child: Annotated[Optional[str], typer.Option(
                       "--child", help="The child, for a stage that runs per child (default: the epic).")] = None,
                   json_out: JsonOpt = False) -> None:

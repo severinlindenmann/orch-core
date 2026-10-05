@@ -97,5 +97,46 @@ for (const [value, tail] of [["none", " · releases nothing"],
   fire("change", { target: { name: "release", closest: (sel) => (sel === "form[data-new-form]" ? newForm : null) } });
   assert.ok(newForm.dataset.inlineConfirm.endsWith(tail));
 }
+// Production names the window and whether the signed rollback runs
+let rollback = false;
+const withProd = (sel) => (sel === "input[name=rollback]" ? { checked: rollback } : withChoice(sel));
+charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset : withProd(sel));
+release = "prod";
+for (const [rb, tail] of [[false, "; no rollback by itself"],
+  [true, "; runs the recipe's rollback if the production check fails"]]) {
+  rollback = rb;
+  fire("change", { target: charter });
+  assert.ok(charter.dataset.inlineConfirm.endsWith(" · releases to production by itself (merge, dev, then production) " +
+    "using the recipe on this machine, after its release window" + tail), charter.dataset.inlineConfirm);
+}
+// the opt-in auto-close: the confirm says it replaces your verdict, and only while the box is ticked
+let close = true;
+charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset
+  : sel === "input[name=close]" ? { checked: close } : withProd(sel));
+fire("change", { target: charter });
+assert.ok(charter.dataset.inlineConfirm.endsWith(" · closes the epic by itself when everything is proven, on what the " +
+  "agents wrote under the close rules: nothing is executed or verified by the factory; this replaces your verdict for " +
+  "this run; Reopen stays yours"), charter.dataset.inlineConfirm);  // production is chosen above: no "nothing deployed"
+release = "none";
+fire("change", { target: charter });
+assert.ok(charter.dataset.inlineConfirm.includes("and with no release nothing is deployed or run"));
+release = "prod";
+close = false;
+fire("change", { target: charter });
+assert.ok(!charter.dataset.inlineConfirm.includes("closes the epic"));
+// a choice that hides the rollback or the close clears it, so a hidden box is never sent ticked
+const rbBox = { name: "rollback", checked: true };
+const closeBox = { name: "close", checked: true };
+const plainForm = { querySelectorAll: (sel) => (sel === "input[name=rollback], input[name=close]" ? [rbBox, closeBox] : []) };
+const pick = (name, value) => fire("change", { target: { name, value, closest: (sel) => (sel === "form" ? plainForm : null) } });
+pick("release", "dev");
+assert.strictEqual(rbBox.checked, false); assert.strictEqual(closeBox.checked, true);
+rbBox.checked = true;
+pick("release", "prod");
+assert.strictEqual(rbBox.checked, true);
+pick("mode", "dark");
+assert.strictEqual(rbBox.checked, true); assert.strictEqual(closeBox.checked, true);
+pick("start", "factory");
+assert.strictEqual(rbBox.checked, false); assert.strictEqual(closeBox.checked, false);
 assert.ok(!/[A-Z]{4,}/.test(fs.readFileSync(process.argv[2], "utf8").match(/DARK_START = "([^"]*)"/)[1]));
 console.log("factory forms ok");

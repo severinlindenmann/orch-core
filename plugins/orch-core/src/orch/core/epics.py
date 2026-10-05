@@ -35,7 +35,8 @@ from orch.errors import NotFoundError, UsageError
 EPIC = "epic"
 DELEGATE_DEFAULTS = {"max_children": 10, "max_size": "m"}
 FACTORY_DEFAULTS = {"max_children": 25, "max_size": "m", "max_hours": 72}
-RELEASE_TARGETS = ("merge", "dev")  # a Dark charter's release target (orch.core.factory_release.STAGES)
+# a Dark charter's release target: "prod" is the recipe's production stage (orch.core.factory_release.STAGES)
+RELEASE_TARGETS = ("merge", "dev", "prod")
 _SIZE_RANK = {s: i for i, s in enumerate(SIZES)}
 # What a child is with respect to its epic's charter (child_state).
 STATE_LABELS = {
@@ -110,11 +111,18 @@ def normalize_delegate(delegate) -> dict | None:
     release = given.get("release")
     release = None if release in (None, "none") else release
     if release is not None and release not in RELEASE_TARGETS:
-        raise UsageError("--release is merge or dev (production is not built yet)")
+        raise UsageError("--release is merge, dev or prod")
     if release is not None and not dark:
         raise UsageError("a release is signed only into a Dark charter: --release goes with --dark")
+    rollback, close = bool(given.get("rollback")), bool(given.get("close"))
+    if rollback and release != "prod":
+        raise UsageError("--rollback goes with --release prod: it pre-authorises the recipe's rollback for a failed "
+                         "production check only")
+    if close and not dark:
+        raise UsageError("closing the epic by itself is signed only into a Dark charter: --close goes with --dark")
     d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
-    d.update({k: v for k, v in given.items() if v is not None and k not in ("factory", "dark", "release")})
+    d.update({k: v for k, v in given.items()
+              if v is not None and k not in ("factory", "dark", "release", "rollback", "close")})
     try:
         d["max_children"] = int(d["max_children"])
     except (TypeError, ValueError):
@@ -138,6 +146,10 @@ def normalize_delegate(delegate) -> dict | None:
             out["dark"] = True
         if release is not None:  # only when set (phase 6): every charter signed without one hashes as before
             out["release"] = release
+        if rollback:  # only when set, as release: older charters hash as before
+            out["rollback"] = True
+        if close:  # the opt-in auto-close (orch.core.factory_close): it replaces the human verdict for this run
+            out["close"] = True
     return out
 
 
@@ -381,15 +393,27 @@ def within_limits(child, d: dict) -> str | None:
     return None
 
 
-def _delegated_ok(ws, epic, child, gate: str, g: dict, signed, events, entries=None) -> bool:
+def _delegated_ok(ws, epic, child, gate: str, g: dict, signed, events, entries=None, *, ended: bool = False) -> bool:
     """A delegated approval the agent may proceed on: the signed delegation is current (the epic unchanged); it is
     active, or it was paused and the signed pause kept this child with this hash; the child is within the limits,
     was created by an agent, was never in a charter, holds no hidden characters, its `gate.delegated` event matches,
-    and it is among the first `max_children` the delegation approved (events and frontmatter both counted)."""
+    and it is among the first `max_children` the delegation approved (events and frontmatter both counted).
+    `ended` (orch check, for a child whose own done verdict is signed): the same audit with only "the delegation is
+    active and unpaused" relaxed; the epic's text must still hash as the charter signed it (its done status aside)."""
     d = delegation(ws, epic, signed)
-    if not d or d["epic_changed"] or g.get("delegation") != d["id"] or within_limits(child, d):
+    if not d or g.get("delegation") != d["id"] or within_limits(child, d):
         return False
-    if d["paused"]:
+    if ended:
+        entry = latest_charter(ws, epic.id, signed)
+        try:
+            v = int((entry or {}).get("hash_v") or 1)
+        except (TypeError, ValueError):
+            return False
+        if not entry or entry.get("epic_hash") != gate_hash(epic, "requirements", v):
+            return False
+    elif d["epic_changed"]:
+        return False
+    if d["paused"] and not ended:
         kept = next((k for k in d["kept"] if k.get("id") == child.id), None)
         if kept is None or kept.get(gate) != g.get("hash"):
             return False  # the pause stops every auto-approval it did not keep

@@ -46,7 +46,7 @@
 <article class="card permit-card factory-ready" data-ready="{{ r.epic }}" aria-labelledby="fr-h-{{ r.epic }}">
   <div class="permit-head">{{ ui.status("ok", "Ready") }} <b id="fr-h-{{ r.epic }}">{{ r.title }}</b>
     {% if not here %}<a class="lnk key" href="/t/{{ r.epic }}#factory">{{ r.epic }}</a>{% endif %}</div>
-  <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign. Nothing is closed until you give the verdict.</p>
+  <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign.{% if r.auto %} Your charter signs closing it by itself: that replaces your verdict for this run.{% else %} Nothing is closed until you give the verdict.{% endif %}</p>
   {% set cv = r.coverage %}
   {% if cv %}
   <div class="factory-coverage" data-coverage="{{ 'gap' if not cv.readable or cv.uncovered else 'ok' if cv.files else 'none' }}">
@@ -76,6 +76,11 @@
     </li>
     {% endfor %}
   </ul>
+  {% if r.auto and r.auto.pending %}
+  <div data-auto-ready><p>Your charter closes it by itself, in place of your verdict, {% if r.auto.blockers %}when:{% else %}in the runner's next round: everything it needs is proven.{% endif %}</p>
+    {% if r.auto.blockers %}<ul class="plain">{% for b in r.auto.blockers %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}
+    <p class="muted">It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory. You can still accept it yourself now; Reopen stays yours afterwards.</p></div>
+  {% elif r.auto %}<p data-auto-not>Not closed by itself: {{ (r.auto.blockers|rejectattr("pending")|first).text }}. You can accept it yourself.</p>{% endif %}
   <div class="actions">
     <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ r.epic }} and {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}">
       <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ r.seen }}"><input type="hidden" name="next" value="{{ back }}">

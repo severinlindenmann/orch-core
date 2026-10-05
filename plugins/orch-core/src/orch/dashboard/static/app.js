@@ -393,7 +393,22 @@
     const v = r ? r.value : "none";
     if (v === "merge") return " · releases up to merge using the recipe on this machine; nothing releases to production";
     if (v === "dev") return " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production";
+    if (v === "prod") {
+      const rb = form.querySelector("input[name=rollback]");
+      return " · releases to production by itself (merge, dev, then production) using the recipe on this machine, after its release window"
+        + (rb && rb.checked ? "; runs the recipe's rollback if the production check fails" : "; no rollback by itself");
+    }
     return " · releases nothing";
+  };
+  // the opt-in auto-close of a Dark start: the confirm says plainly that it replaces the human verdict
+  const closeText = (form) => {
+    const c = form.querySelector && form.querySelector("input[name=close]");
+    if (!(c && c.checked)) return "";
+    const r = form.querySelector("input[name=release]:checked");
+    const none = !r || r.value === "none";
+    return " · closes the epic by itself when everything is proven, on what the agents wrote under the close rules:"
+      + " nothing is executed or verified by the factory" + (none ? ", and with no release nothing is deployed or run" : "")
+      + "; this replaces your verdict for this run; Reopen stays yours";
   };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
   // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
@@ -406,7 +421,7 @@
     if (box) box.dataset.start = start;
     if (start === "dark") {
       form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm
-        + releaseText(form);
+        + releaseText(form) + closeText(form);
       return;
     }
     if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
@@ -466,11 +481,22 @@
     if (box) box.dataset.mode = mode;
     if (armed.has(form)) disarm(form, false);
     if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form);
+    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form)
+      + closeText(form);
     else delete form.dataset.inlineConfirm;
   };
+  // A choice that hides a field also clears it, so a hidden box is never sent ticked (the server refuses it anyway):
+  // the rollback outside Production, the rollback and the close outside a Dark start.
   document.addEventListener("change", (event) => {
-    const form = (event.target.name === "mode" || event.target.name === "release") && event.target.closest
+    const t = event.target;
+    const form = t && t.closest && t.closest("form");
+    if (!form || !form.querySelectorAll || !["mode", "start", "release"].includes(t.name)) return;
+    form.querySelectorAll("input[name=rollback], input[name=close]").forEach((box) => {
+      if (t.name === "release" ? box.name === "rollback" && t.value !== "prod" : t.value !== "dark") box.checked = false;
+    });
+  }, true);
+  document.addEventListener("change", (event) => {
+    const form = ["mode", "release", "rollback", "close"].includes(event.target.name) && event.target.closest
       && event.target.closest("form[data-new-form]");
     if (form) newMode(form);
   });

@@ -1,0 +1,212 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{#- /guide: why orch, what is good about it, how it works. Static copy on core tokens and components (card, chip,
+    btn, page grid); page-only layout lives in guide.css. The gate flow is inline SVG painted with role tokens, so it
+    follows the theme; a portrait twin is shown on a phone. -#}
+{% block head %}<link rel="stylesheet" href="{{ static_url('guide.css') }}">{% endblock %}
+{% block main %}
+<div class="gd">
+
+<header class="gd-hero">
+  <div class="gd-hero-copy">
+    <h1>Agents do the work. You make the calls.</h1>
+    <p class="gd-lede">orch turns agent work into plain Markdown tickets with gates only a person can sign. Mission Control is where you see what waits on you, decide in a minute and get back to your day.</p>
+    <p class="actions gd-cta">
+      <a class="btn btn-primary" href="#start">Get started</a>
+      <a class="btn" href="#gates">See how the gates work</a>
+    </p>
+    <p class="gd-note muted">Local first: tickets live in your repository, decisions are signed on your machine, nothing is sent to a service.</p>
+  </div>
+  <div class="gd-hero-card" aria-hidden="true">
+    <p class="gd-example muted">What a decision looks like</p>
+    <div class="card gd-mock card-warn">
+      <p class="gd-mock-head"><span class="chip chip-you">Your move</span> <b>ACME-12</b> Add dark mode to the settings page</p>
+      <p class="gd-mock-why">The agent wrote a plan and cannot start before you approve it.</p>
+      <ul class="gd-mock-plan">
+        <li>Add a theme switch to Settings</li>
+        <li>Move colours to tokens, light and dark</li>
+        <li>Screenshot both themes as proof</li>
+      </ul>
+      <p class="gd-mock-hash muted">Binds plan <code>a41f9c</code>, 3 tasks, size s</p>
+      <p class="gd-mock-actions"><span class="btn btn-primary">Approve plan</span> <span class="btn">Request changes</span></p>
+    </div>
+  </div>
+</header>
+
+<section class="gd-section" aria-labelledby="idea-h">
+  <h2 id="idea-h">The idea in three lines</h2>
+  <div class="gd-trio">
+    <div class="card"><h3>Tickets are Markdown files</h3>
+      <p>Requirements, acceptance criteria, plan, tasks and proof live in <code>orchestrator/tickets/</code> in your repo, versioned with your code. No server, no account.</p></div>
+    <div class="card"><h3>Agents do the work</h3>
+      <p>They file tickets, draft requirements, plan, claim, work a task list with evidence and hand over for testing, all through one CLI, <code>orch</code>.</p></div>
+    <div class="card"><h3>You decide at gates</h3>
+      <p>Four decisions stay with you: the requirements, the plan, the verdict and the close. Everything between them runs without you.</p></div>
+  </div>
+</section>
+
+<section class="gd-section" id="gates" aria-labelledby="gates-h">
+  <h2 id="gates-h">Where a person has to say yes</h2>
+  <p class="gd-intro">A gate is a point the agent cannot pass on its own. You see the full text it binds, approve it, and orch signs that decision into a ledger. The agent proceeds only on what the ledger holds.</p>
+  <figure class="card gd-fig">
+    {%- macro defs() -%}{%- endmacro -%}
+    <svg class="gd-svg gd-svg-wide" viewBox="0 0 960 320" role="img" aria-labelledby="gf-t gf-d" focusable="false">
+      <title id="gf-t">The gate flow</title>
+      <desc id="gf-d">The agent drafts requirements, you approve them at the requirements gate. The agent writes a plan, you approve it at the plan gate. The agent works, proves each criterion and hands over for testing, you give the verdict, then you close the ticket. Each of your decisions is signed into a local ledger.</desc>
+      <defs><marker id="gf-ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M1 1.5 8.5 5 1 8.5z" class="gd-arrowhead"/></marker></defs>
+      <text class="gd-lane" x="16" y="24">Agent</text>
+      <text class="gd-lane" x="16" y="154">You</text>
+      <line class="gd-laneline" x1="16" y1="132" x2="944" y2="132"/>
+      <g class="gd-edges" marker-end="url(#gf-ar)">
+        <path d="M105 108 L 222 150"/><path d="M270 150 L 345 110"/>
+        <path d="M385 110 L 466 150"/><path d="M510 150 L 585 110"/>
+        <path d="M625 110 L 706 150"/><path d="M780 180 L 818 180"/>
+      </g>
+      <path class="gd-loop" d="M446 166 C 410 166 380 150 372 112" marker-end="url(#gf-ar)"/>
+      <text class="gd-loop-t" x="370" y="240" text-anchor="middle">edit gated text: approval void</text>
+      <g class="gd-agent"><rect x="30" y="52" width="150" height="56" rx="12"/><text x="105" y="76" text-anchor="middle">Draft</text><text x="105" y="94" text-anchor="middle" class="sub">requirements</text></g>
+      <g class="gd-agent"><rect x="320" y="52" width="100" height="56" rx="12"/><text x="370" y="76" text-anchor="middle">Write</text><text x="370" y="94" text-anchor="middle" class="sub">the plan</text></g>
+      <g class="gd-agent"><rect x="560" y="52" width="100" height="56" rx="12"/><text x="610" y="76" text-anchor="middle">Work and</text><text x="610" y="94" text-anchor="middle" class="sub">show proof</text></g>
+      <g class="gd-gate"><rect x="200" y="152" width="100" height="56" rx="28"/><text x="250" y="176" text-anchor="middle">Requirements</text><text x="250" y="194" text-anchor="middle" class="sub">approve</text></g>
+      <g class="gd-gate"><rect x="440" y="152" width="100" height="56" rx="28"/><text x="490" y="176" text-anchor="middle">Plan</text><text x="490" y="194" text-anchor="middle" class="sub">approve</text></g>
+      <g class="gd-gate"><rect x="680" y="152" width="100" height="56" rx="28"/><text x="730" y="176" text-anchor="middle">Verdict</text><text x="730" y="194" text-anchor="middle" class="sub">accept</text></g>
+      <g class="gd-gate"><rect x="820" y="152" width="110" height="56" rx="28"/><text x="875" y="176" text-anchor="middle">Close</text><text x="875" y="194" text-anchor="middle" class="sub">done</text></g>
+      <g class="gd-ledger"><rect x="200" y="262" width="730" height="40" rx="10"/><text x="565" y="287" text-anchor="middle">Signed into your local ledger: a hash of what you read, an HMAC key outside the repo</text></g>
+      <g class="gd-ticks"><path d="M250 210 V262"/><path d="M490 210 V262"/><path d="M730 210 V262"/><path d="M875 210 V262"/></g>
+    </svg>
+    <svg class="gd-svg gd-svg-tall" viewBox="0 0 340 600" role="img" aria-labelledby="gf2-t gf2-d" focusable="false">
+      <title id="gf2-t">The gate flow</title>
+      <desc id="gf2-d">The agent drafts requirements, you approve them. The agent writes a plan, you approve it. The agent works and shows proof, you give the verdict and close the ticket. Each decision is signed into a local ledger.</desc>
+      <defs><marker id="gf2-ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M1 1.5 8.5 5 1 8.5z" class="gd-arrowhead"/></marker></defs>
+      <text class="gd-lane" x="10" y="16">Agent</text><text class="gd-lane" x="330" y="16" text-anchor="end">You</text>
+      <g class="gd-edges" marker-end="url(#gf2-ar)">
+        <path d="M110 84 L 210 112"/><path d="M230 164 L 130 192"/><path d="M110 244 L 210 272"/><path d="M230 324 L 130 352"/>
+        <path d="M110 404 L 210 432"/><path d="M250 484 V 506"/>
+      </g>
+      <g class="gd-agent"><rect x="10" y="32" width="200" height="52" rx="12"/><text x="110" y="55" text-anchor="middle">Draft requirements</text><text x="110" y="73" text-anchor="middle" class="sub">asks, never decides</text></g>
+      <g class="gd-gate"><rect x="130" y="112" width="200" height="52" rx="26"/><text x="230" y="135" text-anchor="middle">Requirements gate</text><text x="230" y="153" text-anchor="middle" class="sub">you approve</text></g>
+      <g class="gd-agent"><rect x="10" y="192" width="200" height="52" rx="12"/><text x="110" y="215" text-anchor="middle">Write the plan</text><text x="110" y="233" text-anchor="middle" class="sub">tasks and approach</text></g>
+      <g class="gd-gate"><rect x="130" y="272" width="200" height="52" rx="26"/><text x="230" y="295" text-anchor="middle">Plan gate</text><text x="230" y="313" text-anchor="middle" class="sub">you approve</text></g>
+      <g class="gd-agent"><rect x="10" y="352" width="200" height="52" rx="12"/><text x="110" y="375" text-anchor="middle">Work and show proof</text><text x="110" y="393" text-anchor="middle" class="sub">then hand over</text></g>
+      <g class="gd-gate"><rect x="130" y="432" width="200" height="52" rx="26"/><text x="230" y="455" text-anchor="middle">Verdict, then close</text><text x="230" y="473" text-anchor="middle" class="sub">you accept</text></g>
+      <g class="gd-ledger"><rect x="10" y="510" width="320" height="76" rx="10"/><text x="170" y="540" text-anchor="middle">Every decision is signed</text><text x="170" y="560" text-anchor="middle" class="sub">into your local ledger,</text><text x="170" y="576" text-anchor="middle" class="sub">outside the repository</text></g>
+    </svg>
+    <figcaption class="muted">Blue is the agent, pink is your move, green is the signed record.</figcaption>
+  </figure>
+  <div class="gd-trio">
+    <div class="card"><h3>Signed, not just clicked</h3>
+      <p>Each approval, answer, verdict and close is bound to a hash of the exact text you saw and signed into a per-user ledger (<code>ledger.jsonl</code>, HMAC key in your orch config dir). <code>orch check</code> flags anything the ledger does not hold.</p></div>
+    <div class="card"><h3>Agents cannot approve</h3>
+      <p>Human commands are refused when any parent process is an agent harness, and a guard hook blocks the spellings it can read. An agent claims, works and moves to testing only on decisions the ledger holds.</p></div>
+    <div class="card"><h3>Changed text voids the approval</h3>
+      <p>Edit approved requirements or plan and the agent stops. Today shows a re-approval with a diff instead of letting stale consent carry over.</p></div>
+  </div>
+  <p class="gd-honest muted">The honest limit: code running as your user outside the guard can read your files, the key included. orch makes shortcuts hard and visible; it is not an OS sandbox. Run agents as a separate user if you need that.</p>
+</section>
+
+<section class="gd-section" aria-labelledby="loop-h">
+  <h2 id="loop-h">Your day in Mission Control</h2>
+  <p class="gd-intro">Five places, one rule: whatever needs a person comes first.</p>
+  <div class="gd-grid">
+    <a class="card gd-card" href="/"><h3>Today</h3>
+      <p>The decisions waiting on you, blocking first. Each card shows the full text it binds and one primary action: answer, approve, or give a verdict against a checklist of criteria and their evidence.</p></a>
+    <a class="card gd-card" href="/board"><h3>Board</h3>
+      <p>Your move on top, the agents' flow below: Ready, Working, Waiting, Testing. Group by epic, sprint, label, agent or repo. Drag a card to move it; gates still say no.</p></a>
+    <a class="card gd-card" href="/activity"><h3>Activity</h3>
+      <p>Which agents work now, which went silent, and every event, newest first. Same-actor runs fold into one line. Start an agent on a stale ticket from here.</p></a>
+    <div class="card"><h3>Epics and delegation</h3>
+      <p>Approve an epic once for all its children. Optionally delegate: agents may approve small children they add themselves, up to a limit you sign. Pause any time; verdicts stay yours.</p></div>
+    <div class="card"><h3>Claims</h3>
+      <p>An agent claims a ticket before touching it, so two agents never work the same one. A claim whose agent goes quiet shows as stale and you can release it.</p></div>
+    <a class="card gd-card" href="/reports"><h3>Reports</h3>
+      <p>Lead time, waiting time and sent-back rate over time: where work waits, and whether it is you.</p></a>
+  </div>
+</section>
+
+<section class="gd-section" aria-labelledby="addons-h">
+  <h2 id="addons-h">Addons that meet the work where it is</h2>
+  <p class="gd-intro">Off until you enable them per workspace. Custom addons run only after you trust that exact version.</p>
+  <div class="gd-grid gd-grid-2">
+    <div class="card"><h3>GitHub issues and reviews</h3>
+      <p>Pull requests and their checks next to their tickets, rerun failed runs, import an issue as a ticket, close and reopen in sync.</p></div>
+    <div class="card"><h3>Terminals</h3>
+      <p>Run, watch and type into agent sessions from the dashboard. Needs tmux.</p></div>
+    <div class="card"><h3>Ticket usage</h3>
+      <p>What a ticket cost: output tokens per model, an estimate at API list prices and your 5-hour and weekly limits with a pace sentence.</p></div>
+    <div class="card"><h3>Wiki</h3>
+      <p>Related pages on each ticket, and a hint when a page may need an update. From a GitHub wiki or a Markdown folder.</p></div>
+    {%- if not phone_covered %}
+    <div class="card gd-wide"><h3>Answer an agent from your phone</h3>
+      <p>A phone companion addon can pair a phone so you answer a blocked agent, approve or give a verdict from the train. The companion can be end-to-end encrypted, so the server in the middle holds only ciphertext. The decision still passes core's checks (pairing, signature, age, the hash of the exact text it was given for), is applied on your desktop and is signed into the same ledger, marked as made from your phone. The agent just keeps waiting on <code>orch wait</code>. Revoke a phone any time.</p></div>
+    {%- endif %}
+  </div>
+  {%- if guide_groups %}
+  <div class="gd-addons" aria-label="From your enabled addons">{{ ui.slot(guide_groups) }}</div>
+  {%- endif %}
+</section>
+
+<section class="gd-section" aria-labelledby="mod-h">
+  <h2 id="mod-h">Inside Claude Code</h2>
+  <div class="gd-split">
+    <div>
+      <p class="gd-intro">The optional <code>orch-session</code> plugin shows the tickets this session holds, without leaving the terminal. It only reads.</p>
+      <ul class="gd-list">
+        <li><b>Status line</b> with one entry per claimed ticket.</li>
+        <li><b>A band above the prompt</b> with the move that matters most, yours first.</li>
+        <li><b>An <code>/orch</code> pane</b> with each ticket's tasks, open question and the command to answer it.</li>
+        <li><b>Toasts</b> only when a move changes hands.</li>
+      </ul>
+    </div>
+    <div class="gd-term" role="img" aria-label="Example status line and band: ticket L-0001 working, ticket L-0002 waits for your answer to question 1">
+      <p><span class="gd-t-info">◐</span> L-0001 working &nbsp; <span class="gd-t-you">●</span> L-0002 Answer Q1</p>
+      <p class="gd-t-band"><span class="gd-t-you">●</span> L-0002 0/1 Your move: Answer Q1 · Which database?</p>
+      <p class="gd-t-dim">$ orch answer L-0002 --file answer.yaml</p>
+    </div>
+  </div>
+</section>
+
+<section class="gd-section" aria-labelledby="why-h">
+  <h2 id="why-h">What you get as a team lead</h2>
+  <div class="gd-grid gd-grid-4">
+    <div class="card"><h3>Control without babysitting</h3><p>You are not watching terminals. You are asked four kinds of question, each with the text it decides on.</p></div>
+    <div class="card"><h3>An audit trail</h3><p>Who approved which text, when and from where, in a signed ledger and an event log. Answerable months later.</p></div>
+    <div class="card"><h3>Fewer interruptions</h3><p>Agents batch their questions with options and a recommended default, then wait. Non-blocking ones wait for you to confirm.</p></div>
+    <div class="card"><h3>Parallel agents, safely</h3><p>Claims keep agents apart, epics cover many children with one decision, and nothing ships past a gate unseen.</p></div>
+  </div>
+</section>
+
+<section class="gd-section" aria-labelledby="cmp-h">
+  <h2 id="cmp-h">Compared with just letting an agent run</h2>
+  <div class="card gd-cmp-card">
+  <table class="gd-cmp">
+    <thead><tr><th scope="col">When</th><th scope="col">An agent on its own</th><th scope="col">With orch</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">The plan is wrong</th><td data-l="On its own">You find out in the diff.</td><td data-l="With orch">You read the plan first and approve or change it.</td></tr>
+      <tr><th scope="row">The agent is unsure</th><td data-l="On its own">It guesses and carries on.</td><td data-l="With orch">It asks with options and waits.</td></tr>
+      <tr><th scope="row">"Done"</th><td data-l="On its own">A claim in a chat message.</td><td data-l="With orch">Each criterion has evidence; you give the verdict.</td></tr>
+      <tr><th scope="row">Scope grows</th><td data-l="On its own">Quietly.</td><td data-l="With orch">Changing approved text stops the agent until you re-approve.</td></tr>
+      <tr><th scope="row">Two agents, one task</th><td data-l="On its own">They collide.</td><td data-l="With orch">One claim per ticket.</td></tr>
+      <tr><th scope="row">Cost to you</th><td data-l="On its own">None up front, review later.</td><td data-l="With orch">A short decision per gate. Overkill for a one-line fix.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="gd-section" id="start" aria-labelledby="start-h">
+  <h2 id="start-h">Get started in three steps</h2>
+  <ol class="gd-steps">
+    <li class="card"><h3>Install the plugin</h3>
+      <pre class="gd-code"><code>claude plugin marketplace add severinlindenmann/orch-core
+claude plugin install orch-core@orch-core</code></pre></li>
+    <li class="card"><h3>Set up your repository</h3>
+      <p>In the repo, say <i>"set up orch here"</i> or run <code>/orch-core:setup</code>. It asks one question at a time and writes nothing until you say yes.</p></li>
+    <li class="card"><h3>Open Mission Control</h3>
+      <p>In your own terminal, never through an agent:</p>
+      <pre class="gd-code"><code>orch serve</code></pre>
+      <p>Ask an agent for a ticket, then approve its requirements on <a href="/">Today</a>.</p></li>
+  </ol>
+  <p class="gd-honest muted">The full reference is the plugin README in the orch-core repository; this page is the short version.</p>
+</section>
+
+</div>
+{% endblock %}

@@ -142,6 +142,10 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
                         out.append(_b("release", f"the {s['name']} stage is {s['state']}"))
         if not epic_coverage_ok(ws, epic):
             out.append(_b("coverage", "the children do not cover the epic's requirements"))
+        from orch.core import factory_built  # what was built, not only mentioned: commits and clones, read fresh
+        testing = [r["id"] for r in (rep or {}).get("children", []) if r["status"] == "testing"]
+        for why in factory_built.close_blockers(ws, epic, d, fr._units(ws, epic), testing):
+            out.append(_b("built", why))
         return out
     except Exception as e:  # fail closed, and say why
         return [_b("error", f"orch could not tell whether everything is proven ({type(e).__name__})")]

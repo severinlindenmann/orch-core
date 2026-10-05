@@ -218,12 +218,21 @@ def coverage_ok(ws, epic, *, entries=None) -> bool | None:
 
 
 def _coverage(ws, epic, entries, signed) -> dict | None:
-    """coverage() for the Ready report; an error is shown as unreadable, never as covered."""
+    """coverage() for the Ready report, with `built` (factory_built.built: the named files in the children's commits,
+    and uncommitted work in their clones); an error is shown as unreadable, never as covered."""
     try:
-        return coverage(ws, epic, entries=entries, signed=signed)
+        c = coverage(ws, epic, entries=entries, signed=signed)
     except Exception:
         return {"asked": [], "files": [], "shown": [], "more": 0, "covered": {}, "uncovered": [],
-                "uncovered_shown": [], "uncovered_more": 0, "children": [], "readable": False}
+                "uncovered_shown": [], "uncovered_more": 0, "children": [], "readable": False, "built": None}
+    try:
+        from orch.core import factory_built, ledger
+        signed = ledger.entries(ws) if signed is None else signed
+        kids = [(e, t) for e, t in (_kids(ws, epic, entries) or []) if _counts(ws, t, signed)]
+        c["built"] = factory_built.built(ws, epic, c["files"], kids)
+    except Exception as e:
+        c["built"] = {"missing": [], "dirty": [], "unknown": [{"id": epic.id, "why": type(e).__name__}]}
+    return c
 
 
 def _ledger_cut_epic(kids) -> bool:

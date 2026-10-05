@@ -188,7 +188,9 @@ def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, 
         _refine(fa, c.id)
         fa.set_section(c.id, "Requirements", "Part of billing.py")
         fa.epic_auto_approve(c.id)
-        _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})
+        # every child commits the file the epic names (the release checks it is in a child's commit)
+        _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work",
+              {**(files or {f"src/{c.id}.py": "print(1)\n"}), "billing.py": "print(1)\n"})
         fa.claim(c.id)
         close_tasks(fa, c.id)
         fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")

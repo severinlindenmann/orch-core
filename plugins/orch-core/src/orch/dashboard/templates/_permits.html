@@ -58,6 +58,11 @@
     <ul class="plain">{% for c in cv.children %}<li><span class="key">{{ c.id }}</span> {{ c.title }}{% if not c.counts %} · closed without being built: covers nothing{% elif c.files %} · names {{ c.files|join(", ") }}{% endif %}</li>{% endfor %}</ul>
     {% if cv.uncovered %}<p class="permit-meta" data-uncovered>{{ ui.status("warn", "Not covered") }} Not mentioned by any child: {{ cv.uncovered_shown|join(", ") }}{% if cv.uncovered_more %} and {{ cv.uncovered_more }} more{% endif %}</p>{% endif %}
     {% if not cv.readable %}<p class="permit-meta">{{ ui.status("warn", "Unreadable") }} A child could not be read, so what the children cover is not known.</p>{% endif %}
+    {% set bt = cv.built %}{% if bt %}
+    {% if bt.missing %}<p class="permit-meta" data-missing>{{ ui.status("warn", "Not built") }} Not in any child's commit: {% for m in bt.missing %}{{ m.name }}{% if m.similar %} (found similar: {{ m.similar|join(", ") }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% for d in bt.dirty %}<p class="permit-meta" data-dirty="{{ d.id }}">{{ ui.status("warn", "Uncommitted") }} <span class="key">{{ d.id }}</span> has uncommitted work in its clone: {{ d.lines|join(" · ") }}</p>{% endfor %}
+    {% for u in bt.unknown %}<p class="permit-meta" data-built-unknown="{{ u.id }}">{{ ui.status("warn", "Unreadable") }} The commits of {{ u.id }} could not be read ({{ u.why }}), so what was built is not known.</p>{% endfor %}
+    {% endif %}
   </div>
   {% endif %}
   <ul class="plain factory-report">

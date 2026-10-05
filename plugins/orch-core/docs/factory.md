@@ -168,6 +168,24 @@ that anything was built. The rules, deterministic and with known limits:
 is not or anything cannot be read, and None (unknown, never a pass) when the epic names no file. The automatic close
 (below, "Closing by itself") reads it: only True lets the epic close by itself.
 
+**What was built, not only mentioned.** The text check above cannot see that nothing was built, or that it was built
+under another name: in the first live run the request misspelled the file names, the children faithfully wrote
+`elepthans.json` and `elpehant.html`, and one child left its file untracked and still counted as proven. So the
+Ready report also looks at commits, deterministically: each child's branch tip is fetched into the runner's release
+repository (the release step's git isolation; from its recorded clone, never a ticket field in place of a clone
+record) and its whole tree listed with `ls-tree`. A file the epic names is there when a path of that tree is the
+name or ends in `/<name>`, without case. The card says "Not in any child's commit: elephants.html, elephants.json
+(found similar: elepthans.json)"; the near match (a small edit distance) only helps you, it never decides. A child
+in testing whose clone has changes not committed or untracked files (`git status` in the clone, under its lock, its
+config written again first) is named: "<child> has uncommitted work in its clone". A child whose commits cannot be
+read is said too, and then nothing is called missing. The Ready report reuses what it read for 30 seconds.
+
+The same check is a condition: before the first merge command, a file the epic names that is in no child's commit
+(the classified tips and the commits already merged) blocks the merge stage with that reason ("Release could not
+start": commit the file, or fix the epic, then Retry release); and the auto-close keeps the epic open while a named
+file is in no merged commit (no child's commit, without a signed release) or a child in testing has uncommitted work
+in its clone. An epic that names no file has nothing to check here (and is not closed by itself, above).
+
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:
 

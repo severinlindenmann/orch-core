@@ -1346,11 +1346,13 @@ def _rev(ws, rec, ref: str) -> str | None:
     return sha if r.get("code") == 0 and _SHA.fullmatch(sha) else None
 
 
-def fetch_child(ws, rec, branch: str, src: Path | None = None, child: str | None = None) -> str | None:
+def fetch_child(ws, rec, branch: str, src: Path | None = None, child: str | None = None,
+                ns: str = "release-heads") -> str | None:
     """Fetch `branch` from `src` (the child's runner-made clone, see child_source; else the workspace checkout) into
     the release repository (objects and that one ref, nothing else), and return its commit, or None. From a clone
     (anything but the workspace checkout), only for `child` and through factory_clones.fetch_from: under the clone's
-    lock, the clone checked again and its config written again first."""
+    lock, the clone checked again and its config written again first. `ns`: the ref folder it lands in (the Ready
+    report's check of what was built uses its own, so it never touches a ref a release stage compares)."""
     from orch.core import factory_clones
     top = workspace_repo(ws)
     src = src or top
@@ -1359,8 +1361,8 @@ def fetch_child(ws, rec, branch: str, src: Path | None = None, child: str | None
 
     def fetch(where: Path) -> str | None:
         r = _git(ws, rec, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
-                 str(where), f"+refs/heads/{branch}:refs/release-heads/{branch}")
-        return _rev(ws, rec, f"refs/release-heads/{branch}") if r.get("code") == 0 else None
+                 str(where), f"+refs/heads/{branch}:refs/{ns}/{branch}")
+        return _rev(ws, rec, f"refs/{ns}/{branch}") if r.get("code") == 0 else None
     if top is not None and Path(src) == top:
         return fetch(top)
     if child is None:
@@ -1669,6 +1671,11 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
         if hits:
             _write(ddir / "sensitive.json", {"hits": hits, "at": _now()})
             return lines + [f"{epic.id}: release stopped: a sensitive path is touched; nothing was merged"]
+        if not errors:  # every file the epic names must be in a child's commit before anything is merged
+            from orch.core import factory_built
+            why = factory_built.merge_refusal(ws, rec, epic, kids, found)
+            if why:
+                return lines + [_block(ws, actor, epic.id, "merge", open_kids[0], why)]
         if errors:
             k = sorted(errors)[0]
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1

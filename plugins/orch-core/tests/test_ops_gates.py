@@ -244,3 +244,10 @@ def test_question_files_refuse_anchors_aliases_and_huge_files_fast():
     q, = build_questions(parse_ask_file("questions:\n  - text: x\n    options: [{key: A, label: No}, {key: B, label: Yes}]"), [], "t")
     assert [o["label"] for o in q["options"]] == ["No", "Yes"]
     assert parse_ask_file("questions:\n  - text: 'a & b * c'\n    options: [a, b]")  # & and * in text are not anchors
+
+
+@pytest.mark.parametrize("deep", ["questions: " + "[" * 100000, "questions: " + "{a: " * 50000 + "1" + "}" * 50000,
+                                  "questions:\n" + "- " * 60000 + "x"])
+def test_a_deeply_nested_question_file_is_refused_not_a_crash(deep):
+    with pytest.raises(ValidationError, match="nested too deeply|more than|larger than"):
+        parse_ask_file(deep)

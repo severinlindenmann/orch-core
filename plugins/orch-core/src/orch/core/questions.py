@@ -83,6 +83,13 @@ def _refuse_aliases(text: str) -> None:
 
 
 def _load_ask_yaml(text: str):
+    try:
+        return _load_ask_yaml_unbounded(text)
+    except RecursionError:  # a few KB of `[[[[…` or `{a: {a: …` overflows the recursive composer: a refusal, not a crash
+        raise ValidationError("invalid question file: nested too deeply") from None
+
+
+def _load_ask_yaml_unbounded(text: str):
     from orch.core import model  # the same loader as every other orch YAML file (C loader when available)
     if len(text.encode("utf-8", "replace")) > MAX_ASK_BYTES:
         raise ValidationError(f"invalid question file: larger than {MAX_ASK_BYTES // 1024} KB")

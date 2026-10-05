@@ -67,6 +67,7 @@
     </span>
     <pre class="term-screen term-tail" data-screen="{{ r.s.name }}" data-tail>{{ r.screen.tail|safe }}</pre>
     <span class="term-tile-foot"><span>last output <span data-ago="{{ r.s.activity }}"></span></span><span class="mono">{{ r.s.name }}{% if l.model %} · {{ l.model }}{% endif %}</span></span>
+    {% if r.started %}<span class="term-started muted">Started on {{ r.started }}</span>{% endif %}
   </a>
   {% endfor %}
 </div>

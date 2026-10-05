@@ -111,10 +111,11 @@ def _rows(ws) -> list[dict]:
     rows = []
     found = terminals.sessions(ws)
     screens = terminals.capture_many([s.name for s in found])  # one tmux call for every screen
+    notes = launch.launch_notes(ws)  # "Started on ..." from an addon's launch plan (model routing), when there is one
     for s in found:
         screen = screens.get(s.name) or NO_SCREEN
         i = _info(ws, s, screen)
-        rows.append({"s": s, "screen": screen, "info": i, "live": _live(s, i, ws)})
+        rows.append({"s": s, "screen": screen, "info": i, "live": _live(s, i, ws), "started": notes.get(s.name, "")})
     rows.sort(key=lambda r: (_ORDER.get(r["info"].get("status"), 3), -r["s"].activity))  # waiting first
     return rows
 
@@ -201,7 +202,8 @@ def view(request: Request, name: str):
     ws = request.app.state.ws
     i = _info(ws, s, screen)
     return page(request, "terminal.html", nav="terminals", title=s.name, s=s, info=i,
-                live=_live(s, i, ws), compact=agentinfo.compact, screen=screen)
+                live=_live(s, i, ws), compact=agentinfo.compact, screen=screen,
+                started=launch.launch_notes(ws).get(s.name, ""))
 
 
 @router.get("/terminals/{name}/stream")

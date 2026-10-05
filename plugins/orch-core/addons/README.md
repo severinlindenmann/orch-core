@@ -8,4 +8,5 @@ Addons shipped with orch-core. Each folder holds one addon with an `orch-addon.j
 | `github-issues` | Board · External for GitHub trackers (Mine, sprints from milestones), the ticket's issue, Import, Close/Reopen local, Ignore |
 | `databricks` | Databricks page: prod/int/dev workspaces and login state, failed and running job runs (Create ticket), pipelines, compute for local development; read-only CLI, profiles mapped by you, simulated environments for demos |
 | `wiki` | Related wiki pages on tickets, "may need an update" hints on Today, a Wiki page with search; GitHub wiki or local Markdown folder provider, page from a ticket, Confluence later |
+| `model-routing` | A model per Start agent mode (Light, Standard, Strong tiers), a subagent model, "next start on Strong" per ticket and an escalation card after a task failed its verify twice; off by default, a launch is unchanged while it is off |
 | `ticket-usage` | Claude Code usage per ticket: estimate at list prices, output tokens per model, an estimated share of the weekly limit, a Usage page; status line recorder script included |

@@ -82,8 +82,8 @@ def test_reports_and_timeline_share_one_escape_helper():
 
 def _addon_event(ws, kind, data):
     from orch.core.events import append_event
-    from orch.dashboard.views import HUMAN
-    append_event(ws, None, kind, HUMAN, data)
+    from orch.core.events import Actor
+    append_event(ws, None, kind, Actor("human", "you", "tty"), data)
 
 
 def test_addon_action_reads_as_a_sentence_under_code(ws, hops):

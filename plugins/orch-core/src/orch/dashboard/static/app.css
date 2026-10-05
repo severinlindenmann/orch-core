@@ -1635,6 +1635,10 @@ html.term-full-open { overflow: hidden; }
 .charter-factory .start-dark-only { display: none; }
 .charter-factory[data-start=dark] .start-dark-only,
 .charter-factory:has(input[name=start][value=dark]:checked) .start-dark-only { display: flex; }
+/* Production's rollback choice and typed word: only while Production is chosen (the server requires the word anyway). */
+.release-choice .only-prod { display: none; }
+.release-choice:has(input[name=release][value=prod]:checked) .only-prod { display: flex; flex-direction: column;
+                                                                           gap: var(--s-2); }
 .factory-budget { margin-left: var(--s-2); }
 
 /* Charts (templates/_charts.html, static/charts.js) */

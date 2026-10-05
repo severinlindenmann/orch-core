@@ -50,7 +50,8 @@
 {% set WORDS = {"waiting": "waiting", "running": "running", "proven": "proven", "failed": "failed", "unknown": "outcome unknown", "stale": "out of date"} %}
 <section class="card run-release" aria-labelledby="run-release-h" data-release>
   <h2 id="run-release-h">Release up to {{ rel.target }}</h2>
-  <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order, in its own repository: each child's branch at the commit it checked, dev at the base fetched from the recipe's remote. A stage is proven only by its check. Nothing releases to production, and nothing is closed: the verdict stays yours.</p>
+  <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order, in its own repository: each child's branch at the commit it checked, dev at the base fetched from the recipe's remote{% if rel.target == "production" %}, production at the commit dev was proven on, never before its release window opens{% endif %}. A stage is proven only by its check.{% if rel.target != "production" %} Nothing releases to production.{% endif %} Nothing is closed by the release: the verdict stays yours.</p>
+  {% if run.window and not run.window.open %}<p data-window>Production waits for its release window: {% if run.window.opens %}it opens at <time datetime="{{ run.window.opens }}">{{ run.window.opens|local }}</time> ({{ run.window.hours }} hours after the last production release the runner recorded, at <time datetime="{{ run.window.last }}">{{ run.window.last|local }}</time>){% else %}{{ run.window.why }}{% endif %}. Nothing runs until then; the runner checks again each round.</p>{% endif %}
   {% if not rel.recipe %}<p class="muted" data-release-off>{{ rel.why }}. Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
   <div class="release-stages">
     {% for s in rel.stages %}
@@ -68,6 +69,8 @@
         {% endif %}
       </div>
       {% if u.tail %}<details><summary>Output of attempt {{ u.attempt }} (the last 4 KB)</summary><pre class="release-tail">{{ u.tail }}</pre></details>{% endif %}
+      {% if u.rollback %}<div class="release-unit" data-rollback="{{ u.rollback.state }}"><span>Rollback (signed in your charter): {{ u.rollback.state }}{% if u.rollback.why %} · {{ u.rollback.why }}{% endif %}</span></div>
+      {% if u.rollback.tail %}<details><summary>Output of the rollback (the last 4 KB)</summary><pre class="release-tail">{{ u.rollback.tail }}</pre></details>{% endif %}{% endif %}
       {% else %}<p class="muted">No child in testing yet.</p>
       {% endfor %}
     </div>

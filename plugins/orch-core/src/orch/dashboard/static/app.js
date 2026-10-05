@@ -393,6 +393,11 @@
     const v = r ? r.value : "none";
     if (v === "merge") return " · releases up to merge using the recipe on this machine; nothing releases to production";
     if (v === "dev") return " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production";
+    if (v === "prod") {
+      const rb = form.querySelector("input[name=rollback]");
+      return " · releases to production by itself (merge, dev, then production) using the recipe on this machine, after its release window"
+        + (rb && rb.checked ? "; runs the recipe's rollback if the production check fails" : "; no rollback by itself");
+    }
     return " · releases nothing";
   };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
@@ -470,7 +475,7 @@
     else delete form.dataset.inlineConfirm;
   };
   document.addEventListener("change", (event) => {
-    const form = (event.target.name === "mode" || event.target.name === "release") && event.target.closest
+    const form = ["mode", "release", "rollback", "close"].includes(event.target.name) && event.target.closest
       && event.target.closest("form[data-new-form]");
     if (form) newMode(form);
   });

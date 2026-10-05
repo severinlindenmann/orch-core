@@ -26,17 +26,26 @@ def _epic(ws, ref: str):
     return t
 
 
-def release_text(target, long: bool = False) -> str:
-    """What a Dark charter signs about releasing: nothing, or up to merge or dev with the recipe on this machine.
-    Never production, never closing: the verdict stays the human's."""
+def release_text(d: dict | None, long: bool = False) -> str:
+    """What a Dark charter `d` signs about releasing: nothing; up to merge or dev with the recipe on this machine; or
+    production, after its release window, with the recipe's rollback when signed. Never closing: the verdict stays
+    the human's."""
+    target = (d or {}).get("release")
     if target in ("merge", "dev"):
         stages = "merge" if target == "merge" else "merge and dev"
         text = (f"releases up to {target} by itself using the recipe on this machine ({stages}, once every child is "
-                "Ready; nothing releases to production) and closes nothing: the verdict is yours")
-        return ("Release: " + text + ".") if long else text
-    if long:
+                "Ready; nothing releases to production)")
+    elif target == "prod":
+        text = ("releases to production by itself using the recipe on this machine (merge, dev, then production, "
+                "once every child is Ready), waits for the release window, and "
+                + ("runs the recipe's rollback when the production check fails" if d.get("rollback")
+                   else "does not roll back when the production check fails (no rollback signed)"))
+    elif long:
         return "Release: none. Dark releases and closes nothing by itself: the verdict stays yours."
-    return "releases and closes nothing (the charter signs no release: the verdict is yours)"
+    else:
+        return "releases and closes nothing (the charter signs no release: the verdict is yours)"
+    text += "; it closes nothing: the verdict is yours"
+    return ("Release: it " + text + ".") if long else text
 
 
 def charter_lines(s: dict) -> list[str]:
@@ -60,7 +69,7 @@ def charter_lines(s: dict) -> list[str]:
                      + (f" or {d['max_hours']} hours from {d['at']}" if d.get("max_hours") else ""))
         if d.get("dark"):
             lines.append("  runs without asking you: only shell commands the Dark profile lists; "
-                         + release_text(d.get("release")))
+                         + release_text(d))
     for a in s["auto_approvals"]:
         lines.append(f"  auto-approved {a['ticket']} {a['gate']} by {a['actor']} at {a['at']}"
                      + ("" if a["valid"] else " (no longer valid)"))
@@ -157,7 +166,7 @@ def render_charter(ws, epic, kids, delegate) -> list[str]:
         if delegate.get("dark"):
             out.append("Dark: on. Agents run without asking you: a shell command runs only if this checkout's Dark "
                        "profile lists it (`orch dark profile list`); anything else is denied and becomes a card. "
-                       + release_text(delegate.get("release"), long=True))
+                       + release_text(delegate, long=True))
     else:
         out.append(f"Delegation: on, up to {delegate['max_children']} children of size ≤ {delegate['max_size']}"
                    if delegate else "Delegation: off")

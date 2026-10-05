@@ -7,7 +7,8 @@ end for the verdict. Issue #2 tracks the whole feature; this page describes what
 AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface, phase 3 the
 Ready report and the Stopped message, phase 4 the runner that keeps the agents going, and phase 5 the core of Dark AI
 Factory (no permission prompts while it runs) with its dashboard start, run view and factory list, and phase 6 the
-release recipe (merge and dev stages the runner runs by itself for a Dark epic that signs them), all described below.
+release recipe (merge, dev and production stages the runner runs by itself for a Dark epic that signs them), all
+described below.
 
 ## Switching it on
 
@@ -516,8 +517,8 @@ orch approve <epic> requirements --dark       # implies --factory
 The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
 before the typed confirmation says it plainly: Dark runs without permission prompts in the session, only commands the
 profile lists run (anything else is denied and becomes a card for you), and it releases and closes only within what
-the charter signs: nothing, unless you add `--release merge|dev` (phase 6, below); it closes nothing, the verdict stays
-yours. The
+the charter signs: nothing, unless you add `--release merge|dev|prod` (phase 6, below); it closes nothing, the verdict
+stays yours. The
 command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
 **The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
@@ -748,8 +749,8 @@ refusal of a process under an agent harness, as for every approval).
 
 The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: any automatic closing (the
 verdict is yours, from the Ready report), and runner-side proof that tests ran or a review happened; the ring has no
-steps for those because no record of them exists. Merge and Dev steps appear only for a charter that signs a release
-(phase 6, below).
+steps for those because no record of them exists. Merge, Dev and Production steps appear only for a charter that signs a
+release up to them (phase 6, below).
 
 What the test suite covers for the planner and the baseline, and what it does not: the runner, the binding, the hook,
 the nudge, the readiness checks and the dashboard states are tested with a stand-in launcher and stand-in programs (no
@@ -774,8 +775,9 @@ redirects); the nudge depends on Claude Code's current screen markers.
 
 ## Release recipe (phase 6)
 
-A Dark epic can release its own work, up to a stage you sign at its start: **merge** (each child's branch) or **dev**
-(merge, then a deploy to your dev environment). Nothing releases to production, and nothing is closed: the verdict
+A Dark epic can release its own work, up to a stage you sign at its start: **merge** (each child's branch), **dev**
+(merge, then a deploy to your dev environment) or **prod** (merge, dev, then the recipe's production stage, never
+before its release window opens; see "The production stage" below). Nothing is closed by the release: the verdict
 stays yours. The runner (the dashboard you started) runs the stages; an agent cannot start, change or skip one.
 
 **The recipe is yours, on this machine.** It lives in `factory-release.json` in the permits folder of your orch config
@@ -790,7 +792,7 @@ terminal (each refused to agents and under an agent harness):
 orch factory release set --file recipe.json   # validates, prints the recipe and the program pins, needs RELEASE typed
 orch factory release show
 orch factory release clear                    # needs CLEAR typed; no release runs until you set one again
-orch factory release retry <epic> --stage merge|dev [--child <child>]   # one more attempt, needs the epic id typed
+orch factory release retry <epic> --stage merge|dev|production [--child <child>]   # one more attempt, needs the epic id typed
 ```
 
 **Program pins.** `set` resolves every program of the recipe with your terminal's PATH and the runner's trust checks
@@ -810,7 +812,10 @@ one you pinned"): after an upgrade of `gh` or a script of yours, set the recipe 
              "commands": [["<program>", "...", "{base}", "{branch}"], ["<program>", "...", "{sha}"]],
              "check": {"argv": ["<program>", "..."], "expect": "<exact trimmed stdout>"}},
             {"name": "dev", "timeout": 900,
-             "commands": [["<program>", "..."]], "check": {"argv": ["<program>", "..."]}}]}
+             "commands": [["<program>", "..."]], "check": {"argv": ["<program>", "..."]}},
+            {"name": "production", "timeout": 900, "window": {"min_hours_since_last": 20},
+             "commands": [["<program>", "...", "{sha}"]], "check": {"argv": ["<program>", "..."], "expect": "<text>"},
+             "rollback": {"commands": [["<program>", "..."]], "check": {"argv": ["<program>", "..."]}}}]}
 ```
 
 - `remote` (required): where the base comes from and where the work goes: an `https://`, `ssh://` or `file:///` URL,
@@ -819,8 +824,9 @@ one you pinned"): after an upgrade of `gh` or a script of yours, set the recipe 
 - `repo` (optional): `owner/name` for `gh --repo {repo}`; taken from `remote` when that is `owner/name`.
 - `base`: the branch the work goes to (default `main`), fetched from `remote`.
 - `git_config` (optional): only `credential.helper` and `core.sshCommand`, for the runner's own git calls (see below).
-- `stages`: `merge`, then `dev`, each at most once and in that order. `production` or any other name is refused
-  ("not built yet"). `merge` runs once per child (`per` may only say `child`); `dev` runs once per epic.
+- `stages`: `merge`, then `dev`, then `production`, each at most once and in that order; any other name is refused.
+  `production` needs a `dev` stage before it. `merge` runs once per child (`per` may only say `child`); `dev` and
+  `production` run once per epic.
 - `commands`: 1 to 10 argv lists of 1 to 64 printable ASCII words (at most 512 characters each). A shell string is
   refused, and so is a program that runs a string or another program (`sh`, `bash` and every shell, `env`, `sudo`,
   `xargs`, `nohup`, `timeout`, `nice`, `command`, `script`, `osascript`, `time`, `setsid`, ...), an interpreter given
@@ -833,8 +839,12 @@ one you pinned"): after an upgrade of `gh` or a script of yours, set the recipe 
 - `check`: the stage is **proven** only when this command exits 0 and, with `expect`, its trimmed standard output is
   exactly that text (at most 1024 characters; placeholders are filled in). A stage without a check is refused.
 - `timeout`: seconds per command, 1 to 1800 (default 600).
+- `window` (production only, optional): `{"min_hours_since_last": N}`, a whole number of hours from 1 to 720
+  (default 20). `rollback` (production only, optional): `{"commands": [...], "check": {"argv": [...], "expect":
+  "..."}}`, both required, with the same rules as a stage's commands and check; its programs are pinned with the rest.
 - Placeholders, in any word but the program, and in `expect`: `{epic}`, `{workspace}`, `{base}`, `{remote}`,
-  `{repo}`, and in the merge stage `{child}`, `{branch}` and `{sha}`. Each value is checked before it is put in:
+  `{repo}`, `{sha}` (in the merge stage the child's checked commit; in dev and production the base commit the stage
+  runs on), and in the merge stage `{child}` and `{branch}`. Each value is checked before it is put in:
   ticket ids by their form, the workspace id and the commit as hex, branch and base by a strict git branch form (a
   letter or digit first, so never an option; no `..`, `//`, `/.`, `@{`, trailing `/`, `.` or `.lock`), remote and
   repo as the recipe validated them. Any other brace is refused.
@@ -858,7 +868,9 @@ includes, aliases, hooks, fsmonitor, filters or remotes. Each release round:
    the precheck, the commands and the check there, with the working directory in the mirror; before every one of
    those commands it fetches the branch again and stops if it no longer points at the classified commit;
 5. for the dev stage, fetches the base again and checks out the remote base as it is then (the merged work, never
-   the agent's working tree), and runs the commands there.
+   the agent's working tree), and runs the commands there;
+6. for the production stage, checks out exactly the commit dev was proven on (recorded in dev's outcome), not the
+   remote base as it is later, and runs the commands there.
 
 Every git call the runner makes is an argv list with `--no-replace-objects`, `-c core.hooksPath=/dev/null`,
 `-c core.fsmonitor=false`, `-c core.attributesFile=/dev/null`, `-c core.sshCommand=ssh` and `-c credential.helper=`
@@ -899,10 +911,13 @@ that merges something else merges something else); the check proves what it chec
 touches no sensitive pattern is not judged; and the dev stage runs the base's own scripts (`make`, `package.json`),
 which are the merged, classified ones.
 
-**Signing it into the charter.** `orch approve <epic> requirements --dark --release merge|dev`, or the "Release up to"
-choice of the dashboard's Dark start. The text you confirm says it "releases up to <stage> by itself using the recipe
-on this machine". It is refused without `--dark`, while no valid recipe exists for this workspace, or when the recipe
-lacks a stage up to the target (dev needs merge and dev). The charter carries `release` only when you sign one, so
+**Signing it into the charter.** `orch approve <epic> requirements --dark --release merge|dev|prod [--rollback]`, or
+the "Release up to" choice of the dashboard's Dark start. The text you confirm says it "releases up to <stage> by itself
+using the recipe on this machine", and for prod that it releases to production by itself using the recipe on this
+machine, waits for the release window, and (with `--rollback`) runs the recipe's rollback when the production check
+fails. It is refused without `--dark`, while no valid recipe exists for this workspace, when the recipe lacks a stage
+up to the target (dev needs merge and dev; prod needs all three), and `--rollback` without `--release prod` or while
+the recipe's production stage has no rollback. The charter carries `release` and `rollback` only when you sign them, so
 every charter signed before hashes exactly as before. The recipe in force when a stage runs is the one used.
 
 **When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
@@ -945,6 +960,30 @@ child is added after dev was proven, the stage shows as out of date, not proven,
 "Release out of date". Retry release on that stage runs it again for the children as they are now (the merge first,
 then dev).
 
+**The production stage.** Production runs only for a charter that signs `--release prod`, after dev is proven and not
+out of date (a changed merge or a new child makes dev, and with it production, out of date; production never runs
+while dev is), on the commit dev was proven on, under the same lock, gate, intent-before-commands records and pinned
+programs as the other stages. It gets one automatic attempt: a failed or unknown production attempt stops the release,
+and only your Retry release allows one more.
+
+- *The release window.* Production never starts before `min_hours_since_last` hours (default 20) have passed since
+  the last proven production of this workspace. The runner trusts only its own record of that time: a file in the
+  guarded release records (`permits/release-records/production-last-<key>.json`), written by the runner when a
+  production stage is proven (before its outcome record, so a crash keeps the window shut), never by an agent, a
+  ticket or the recipe. No record means the window is open; a record it cannot read keeps the window shut until you
+  look at it. Only a proven production starts the clock: a failed or rolled-back attempt does not. While the window
+  is shut the epic is **waiting**, not Stopped: nothing runs, the run view says when the window opens, and the runner
+  checks again every round. A retry waits for the window too: it is never skipped.
+- *The rollback.* With `rollback` signed in the charter (`--rollback`, or the dashboard's "Roll back production by
+  itself if its check fails") and a rollback in the recipe, the runner runs the recipe's rollback commands and then
+  their check once, right after a production attempt whose commands all exited 0 and whose live check did not pass
+  (exit code, output or timeout). It never runs after a failed production command, a stop, a pause or the dashboard
+  stopping, never for another stage, and never again by itself. It has its own intent and outcome records beside the
+  production attempt's; the outcome says "rolled back" when its check passed, else "rollback failed", and a rollback
+  that started and has no outcome counts as failed. A charter that signs a rollback while the recipe no longer has one
+  does not start production at all. What a rollback does is what your recipe says; its check proves only what it
+  checks.
+
 **Stopped reasons** (the run view, Today and the Board, as for the earlier reasons):
 
 - *Sensitive path touched*: look at the named paths; merge by hand, or rewrite the branch without the change, then
@@ -955,24 +994,35 @@ then dev).
   Retry release runs it once more, so retry only when running it again is safe; otherwise finish it by hand.
 - *Release out of date*: children changed after the release stage was proven; Retry release on that stage, or
   release the change by hand.
+- *Production check failed*: production's commands ran and its live check did not pass, and nothing was rolled back
+  (none signed, or none in the recipe). Look at production now; roll back or fix it by hand.
+- *Production rolled back*: the live check failed and the signed rollback ran and its check passed. Fix the cause,
+  then Retry release on production (after its window).
+- *Rollback failed*: the rollback's check did not pass, or its outcome is unknown: production may be broken. Fix it by
+  hand.
 
 **Retry release** is yours: the run view's button (inline confirm) or `orch factory release retry`. It allows exactly
 one more attempt of one failed, unknown or out-of-date stage (or, after a sensitive-path stop, a fresh check of the
 branches) and runs nothing itself; the runner's next round does.
 
 **On the dashboard.** A Dark start (New ticket's Dark mode and the epic page's Start) has a "Release up to" choice:
-Nothing (the default), Merge or Dev. Merge and Dev are disabled, with a line naming
-`orch factory release set --file recipe.json`, while this workspace has no valid recipe with those stages; the server
-checks it again before anything is created or signed, and the confirm says what will run. For a charter that signs a
-release, the run view's ring gets Merge (and Dev) after Evidence, lit only from proven stage records (a failed,
-unknown, out-of-date or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage
-and unit as waiting, running, proven, failed, outcome unknown or out of date, the escaped output tail under a
-disclosure, and Retry release where it applies. While a stage runs the state reads "Releasing".
+Nothing (the default), Merge, Dev or Production. Each is disabled, with a line naming
+`orch factory release set --file recipe.json`, while this workspace has no valid recipe with the stages it needs
+(Production: merge, dev and production). Production shows a checkbox "Roll back production by itself if its check
+fails" (disabled while the recipe's production stage has no rollback) and a field for the word production, which the
+server requires in addition to dark. The server checks all of it again before anything is created or signed, and the
+confirm says what will run. For a charter that signs a release, the run view's ring gets Merge (and Dev, and
+Production, whose step is lit by its live check) after Evidence, lit only from proven stage records (a failed, unknown,
+out-of-date or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage and unit
+as waiting, running, proven, failed, outcome unknown or out of date, the rollback's state, the escaped output tails
+under a disclosure, and Retry release where it applies. While a stage runs the state reads "Releasing"; while
+production waits for its window it reads "Release window", with the time it opens.
 
 **Example** (an example only: the owner/name, the script paths and what they do are placeholders for your own; no
 secrets belong in the recipe). It pushes the checked commit to the remote, opens a pull request against the recipe's
 base, merges it only at that commit, and checks that the merged pull request went to that base at that commit; then it
-deploys dev through scripts of yours kept outside the repository:
+deploys dev through scripts of yours kept outside the repository, and (for a charter that signs prod) production at the
+commit dev was proven on, checked by the version production reports, with a rollback script for a failed check:
 
 ```json
 {"remote": "your-org/your-app", "base": "main",
@@ -991,7 +1041,12 @@ deploys dev through scripts of yours kept outside the repository:
              "expect": "{base} {sha} MERGED"}},
   {"name": "dev", "timeout": 1200,
    "commands": [["/Users/you/bin/deploy-dev", "--epic", "{epic}"]],
-   "check": {"argv": ["/Users/you/bin/dev-health"], "expect": "ok"}}]}
+   "check": {"argv": ["/Users/you/bin/dev-health"], "expect": "ok"}},
+  {"name": "production", "timeout": 1200, "window": {"min_hours_since_last": 20},
+   "commands": [["/Users/you/bin/deploy-prod", "--commit", "{sha}"]],
+   "check": {"argv": ["/Users/you/bin/prod-version"], "expect": "{sha}"},
+   "rollback": {"commands": [["/Users/you/bin/rollback-prod"]],
+                "check": {"argv": ["/Users/you/bin/prod-health"], "expect": "ok"}}}]}
 ```
 
 (`gh pr create` fails when a pull request for the branch exists already; make it a script of yours that tolerates that
@@ -1000,15 +1055,15 @@ agent sessions, `HOME` among it, and a PATH of the pinned programs' folders and 
 working directory, and no standard input. A program that needs a credential reads it from your own config (for
 example `gh` from its config under `HOME`), never from the recipe.
 
-**Not built.** A production stage, any automatic closing (the verdict stays yours), release windows, rollback, and
-runner-side proof that tests ran or a review happened. The test suite covers the recipe, the CLI, the guard, the
+**Not built.** Any automatic closing (the verdict stays yours), a notification when a release stops, a rollback
+for anything but a failed production check, and runner-side proof that tests ran or a review happened. The test suite covers the recipe, the CLI, the guard, the
 charter and the release step with real git in temporary repositories (a workspace and a bare remote on disk, no
 network) and a stand-in for the recipe's commands: no test runs a real `gh`, push, merge or deploy.
 
 ## Coming in later phases
 
-- A production stage; closing children under the charter (after a live test); release windows and rollback;
-  runner-side proof of tests and review (and ring steps for them).
+- Closing children under the charter (after a live test); a notification when a release stops; runner-side proof of
+  tests and review (and ring steps for them).
 - A second live end-to-end run after this round's fixes, and a repeatable one per release.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).

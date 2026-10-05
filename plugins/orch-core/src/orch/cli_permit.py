@@ -164,7 +164,8 @@ def release_set(file: Annotated[Path, typer.Option("--file", help="The recipe, a
     rec = factory_release.check_recipe(data, ws)  # refused before anything is shown or asked
     pins = factory_release.pin_programs(rec)
     typer.echo("Setting the release recipe of this workspace (Dark epics that sign a release run these commands "
-               "by themselves once Ready, in the runner's own repository; nothing releases to production):",
+               "by themselves once Ready, in the runner's own repository, up to the stage each charter signs; "
+               "production only for a charter that signs prod, never before its release window opens):",
                err=json_out)
     typer.echo(_recipe_text(rec), err=json_out)
     typer.echo("Programs, pinned by real path and sha256 (a release refuses to run one that changed):", err=json_out)
@@ -199,7 +200,7 @@ def release_clear(json_out: JsonOpt = False) -> None:
 
 @release_app.command("retry")
 def release_retry(epic: str,
-                  stage: Annotated[str, typer.Option("--stage", help="merge or dev")],
+                  stage: Annotated[str, typer.Option("--stage", help="merge, dev or production")],
                   child: Annotated[Optional[str], typer.Option(
                       "--child", help="The child, for a stage that runs per child (default: the epic).")] = None,
                   json_out: JsonOpt = False) -> None:

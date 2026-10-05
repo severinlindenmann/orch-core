@@ -35,7 +35,8 @@ from orch.errors import NotFoundError, UsageError
 EPIC = "epic"
 DELEGATE_DEFAULTS = {"max_children": 10, "max_size": "m"}
 FACTORY_DEFAULTS = {"max_children": 25, "max_size": "m", "max_hours": 72}
-RELEASE_TARGETS = ("merge", "dev")  # a Dark charter's release target (orch.core.factory_release.STAGES)
+# a Dark charter's release target: "prod" is the recipe's production stage (orch.core.factory_release.STAGES)
+RELEASE_TARGETS = ("merge", "dev", "prod")
 _SIZE_RANK = {s: i for i, s in enumerate(SIZES)}
 # What a child is with respect to its epic's charter (child_state).
 STATE_LABELS = {
@@ -110,11 +111,16 @@ def normalize_delegate(delegate) -> dict | None:
     release = given.get("release")
     release = None if release in (None, "none") else release
     if release is not None and release not in RELEASE_TARGETS:
-        raise UsageError("--release is merge or dev (production is not built yet)")
+        raise UsageError("--release is merge, dev or prod")
     if release is not None and not dark:
         raise UsageError("a release is signed only into a Dark charter: --release goes with --dark")
+    rollback = bool(given.get("rollback"))
+    if rollback and release != "prod":
+        raise UsageError("--rollback goes with --release prod: it pre-authorises the recipe's rollback for a failed "
+                         "production check only")
     d = dict(FACTORY_DEFAULTS if factory else DELEGATE_DEFAULTS)
-    d.update({k: v for k, v in given.items() if v is not None and k not in ("factory", "dark", "release")})
+    d.update({k: v for k, v in given.items()
+              if v is not None and k not in ("factory", "dark", "release", "rollback", "close")})
     try:
         d["max_children"] = int(d["max_children"])
     except (TypeError, ValueError):
@@ -138,6 +144,8 @@ def normalize_delegate(delegate) -> dict | None:
             out["dark"] = True
         if release is not None:  # only when set (phase 6): every charter signed without one hashes as before
             out["release"] = release
+        if rollback:  # only when set, as release: older charters hash as before
+            out["rollback"] = True
     return out
 
 

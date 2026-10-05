@@ -1007,7 +1007,7 @@ class Ops(TaskOpsMixin):
         delegate = epics.normalize_delegate(delegate)  # refuses `dark` without `factory`, `release` without `dark`
         if delegate and delegate.get("release"):
             from orch.core.factory_release import release_blocker
-            why = release_blocker(self.ws, delegate["release"])
+            why = release_blocker(self.ws, delegate["release"], rollback=bool(delegate.get("rollback")))
             if why:
                 raise ValidationError(f"no release can be signed: {why}")
         covered: dict = {}

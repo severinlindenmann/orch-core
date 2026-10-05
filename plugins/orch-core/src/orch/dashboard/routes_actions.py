@@ -47,7 +47,8 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
             delegate: Annotated[str, Form()] = "", max_children: Annotated[str, Form()] = "",
             max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = "",
             dark: Annotated[str, Form()] = "", confirm_dark: Annotated[str, Form()] = "",
-            start: Annotated[str, Form()] = "", release: Annotated[str, Form()] = ""):
+            start: Annotated[str, Form()] = "", release: Annotated[str, Form()] = "",
+            rollback: Annotated[str, Form()] = "", confirm_production: Annotated[str, Form()] = ""):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
@@ -64,9 +65,16 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
         return back(safe_next(next_url) or _ticket_url(request, ref),
                     err="type dark to start a Dark AI Factory: nothing was signed")
     if dark in ("1", "on", "true"):
+        from orch.dashboard.routes_new import release_problem
+        roll = rollback in ("1", "on", "true")
+        why = release_problem(request.app.state.ws, release, roll, confirm_production)
+        if why:
+            return back(safe_next(next_url) or _ticket_url(request, ref), err=f"{why}: nothing was signed")
         limits = {"factory": True, "dark": True}
-        if release in ("merge", "dev"):  # "Release up to" (a Dark start only); Ops checks the recipe
+        if release in ("merge", "dev", "prod"):  # "Release up to" (a Dark start only); Ops checks the recipe
             limits["release"] = release
+        if roll:
+            limits["rollback"] = True
     elif factory in ("1", "on", "true"):
         limits = {"factory": True}
     elif delegate in ("1", "on", "true"):

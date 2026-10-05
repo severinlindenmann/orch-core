@@ -74,18 +74,34 @@ def _form(request: Request, values: dict, problem: str | None = None, status_cod
     ws = request.app.state.ws
     git = ws.config.get("git") or {}
     dark_on = permits.dark_on(ws)
-    from orch.core import factory_release
-    release_off = factory_release.release_blocker(ws, "merge") if dark_on else None
+    from orch.dashboard.data.factory import release_offers
     return page(request, "new.html", status_code, nav="new", title="New ticket", types=TYPES, sizes=SIZES, priorities=PRIORITIES,
                 values=values, problem=problem, problem_href=problem_href, review_term=git.get("review_term") or "PR",
                 factory_on=permits.enabled(ws), dark_on=dark_on, done_when_default=DONE_WHEN,
                 profile_empty=dark_on and not dark_profile.rules(ws),
                 edits_off=permits.enabled(ws) and factory_runner.edits_why(),
-                limits=epics.FACTORY_DEFAULTS, once=_once(request).issue(), release_off=release_off,
-                dev_off=factory_release.release_blocker(ws, "dev") if dark_on and not release_off else None)
+                limits=epics.FACTORY_DEFAULTS, once=_once(request).issue(), offers=release_offers(ws, dark_on))
 
 
-def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: str, release: str = "") -> str | None:
+def release_problem(ws, release: str, rollback: bool, confirm_production: str) -> str | None:
+    """Why a Dark start cannot sign this "Release up to" choice, or None: the same checks on New ticket and on the
+    epic page, made here whatever the form offered (Ops checks the recipe again before it signs)."""
+    if release not in ("", "none", "merge", "dev", "prod"):
+        return "Release up to is nothing, merge, dev or production"
+    if rollback and release != "prod":
+        return "Rolling back by itself goes only with Release up to Production"
+    if release == "prod" and confirm_production.strip() != "production":
+        return "Type production to let the runner release to production by itself"
+    if release in ("merge", "dev", "prod"):
+        from orch.core import factory_release
+        why = factory_release.release_blocker(ws, release, rollback=rollback)
+        if why:
+            return f"No release can be signed ({_plain(why)})"
+    return None
+
+
+def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: str, release: str = "",
+                  rollback: bool = False, confirm_production: str = "") -> str | None:
     """Why this mode cannot start, judged here from the switches (never from what the form offered) and from the text
     the human typed, before anything is created, or None. The text checks are the ones the start itself makes, so a
     start refused for them leaves no epic behind."""
@@ -104,14 +120,10 @@ def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: 
                     "orch factory dark on.")
         if confirm.strip() != "dark":
             return "Type dark to start a Dark AI Factory: nothing was created."
-        if release not in ("", "none", "merge", "dev"):
-            return "Release up to is nothing, merge or dev: nothing was created."
-        if release in ("merge", "dev"):
-            from orch.core import factory_release
-            why = factory_release.release_blocker(ws, release)
-            if why:
-                return f"No release can be signed ({_plain(why)}): nothing was created."
-    elif release not in ("", "none"):
+        why = release_problem(ws, release, rollback, confirm_production)
+        if why:
+            return f"{why}: nothing was created."
+    elif release not in ("", "none") or rollback:
         return "Only a Dark AI Factory signs a release: nothing was created."
     if not ask.strip():
         return "Describe the work in Ask: it becomes the epic's Requirements. Nothing was created."
@@ -150,6 +162,8 @@ def create(
     done_when: Annotated[str, Form()] = "",
     confirm_dark: Annotated[str, Form()] = "",
     release: Annotated[str, Form()] = "",
+    rollback: Annotated[str, Form()] = "",
+    confirm_production: Annotated[str, Form()] = "",
     once: Annotated[str, Form()] = "",
     files: Annotated[Optional[list[UploadFile]], File()] = None,
 ):
@@ -165,7 +179,8 @@ def create(
     values = {"title": title, "type": "epic" if factory else type_, "size": size, "priority": priority,
               "external": external, "ask": ask, "mode": mode, "done_when": done_when or DONE_WHEN, "release": release}
     release = release if mode == "dark" else ""  # the field shows only in Dark mode; another mode signs no release
-    problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release)
+    roll = mode == "dark" and rollback in ("1", "on", "true")
+    problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release, roll, confirm_production)
     if problem:
         return _form(request, values, problem, 422)
     if factory:
@@ -218,7 +233,8 @@ def create(
     try:
         start_factory(ws, t.id, epics.charter(ws, t, tickets=[])["content_hash"],
                       {"factory": True, **({"dark": True} if mode == "dark" else {}),
-                       **({"release": release} if release in ("merge", "dev") else {})})
+                       **({"release": release} if release in ("merge", "dev", "prod") else {}),
+                       **({"rollback": True} if roll else {})})
     except OrchError as e:
         return back(f"/t/{t.id}", err=_plain(f"created {t.id}, but starting it as {name} failed: {error_text(e)}"))
     return back(f"/factory/{t.id}", msg=f"created {t.id} and started it as {name}")

@@ -97,5 +97,17 @@ for (const [value, tail] of [["none", " · releases nothing"],
   fire("change", { target: { name: "release", closest: (sel) => (sel === "form[data-new-form]" ? newForm : null) } });
   assert.ok(newForm.dataset.inlineConfirm.endsWith(tail));
 }
+// Production names the window and whether the signed rollback runs
+let rollback = false;
+const withProd = (sel) => (sel === "input[name=rollback]" ? { checked: rollback } : withChoice(sel));
+charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset : withProd(sel));
+release = "prod";
+for (const [rb, tail] of [[false, "; no rollback by itself"],
+  [true, "; runs the recipe's rollback if the production check fails"]]) {
+  rollback = rb;
+  fire("change", { target: charter });
+  assert.ok(charter.dataset.inlineConfirm.endsWith(" · releases to production by itself (merge, dev, then production) " +
+    "using the recipe on this machine, after its release window" + tail), charter.dataset.inlineConfirm);
+}
 assert.ok(!/[A-Z]{4,}/.test(fs.readFileSync(process.argv[2], "utf8").match(/DARK_START = "([^"]*)"/)[1]));
 console.log("factory forms ok");

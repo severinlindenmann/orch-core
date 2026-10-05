@@ -148,7 +148,7 @@ def test_epic_page_dark_start_signs_the_release_choice(fws, fa, human, recipe):
     _refine(fa, e.id, plan=None)
     c = _client(fws)
     html = c.get(f"/t/{e.id}").text
-    assert "data-release-choice" in html and "nothing releases to production" in html
+    assert "data-release-choice" in html and "never before its release window opens" in html
     seen = epics.charter(fws, store.load(fws, e.id)[1])["content_hash"]
     r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, start="dark", confirm_dark="dark",
               release="merge")
@@ -165,10 +165,11 @@ def test_copy_is_truthful(fws, ready, human):
     texts = pages + [(tpl / n).read_text() for n in ("new.html", "ticket.html", "factory_run.html", "_factory.html")]
     for t in texts:
         low = t.lower()
-        for claim in ("releases to production by", "deploys to production", "closes the children by itself",
-                      "closes children automatically", "there is no release"):
+        for claim in ("deploys to production", "closes the children by itself", "closes children automatically",
+                      "there is no release", "skips the release window", "production is not built"):
             assert claim not in low, claim
-    assert "nothing releases to production" in pages[1].lower()
+    assert "nothing releases to production" in pages[1].lower()  # this run signs dev, not production
+    assert "never before its release window opens" in pages[0]  # the production choice says when it may run
 
 
 def test_an_out_of_date_stage_is_shown_stale_not_proven(fws, ready, human):
@@ -197,3 +198,6 @@ def test_the_docs_example_recipe_is_a_valid_recipe(ws):
     assert fr.sensitive("app/migrations/1.sql", rec["sensitive_paths"]) and fr.sensitive("migrations/1.sql",
                                                                                           rec["sensitive_paths"])
     assert fr.sensitive("deploy/k8s/app.yml", rec["sensitive_paths"])
+    prod = rec["stages"][2]
+    assert prod["name"] == "production" and prod["window_hours"] == 20 and prod["rollback"]["check"]["expect"] == "ok"
+    assert prod["check"]["expect"] == "{sha}"

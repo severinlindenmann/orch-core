@@ -15,7 +15,12 @@ from orch.core import (dark_profile, epics, factory_clones as fc, factory_releas
                        factory_sessions as fs, ledger, permits, store)
 from orch.dashboard import launch
 from orch.hooks.guard import evaluate
-from test_factory_release import Fake as RecipeFake, _g, _recipe, _refine, _not_stopping, bin_dir, remote  # noqa: F401
+from test_factory_release import (Fake as RecipeFake, _g, _recipe, _refine, _not_stopping, bin_dir,  # noqa: F401
+                                  remote)
+
+
+def _msg(cid):
+    return ["-m", f"{cid} work", "-m", "What: work", "-m", "Why: the ticket", "-m", "Risk: low"]
 from test_factory_runner import Fake, _behavior, _payload
 
 pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="needs git")
@@ -42,6 +47,7 @@ def fws(configure, human, ws_root, remote):  # noqa: F811
     (ws_root / "app.txt").write_text("hello\n", encoding="utf-8")
     _g(ws_root, "add", ".gitattributes", "app.txt", "orchestrator/config.json")
     _g(ws_root, "commit", "-q", "-m", "app")
+    _g(ws_root, "push", "-q", str(remote), "main")  # the base the release compares with
     marks = ws_root.parent / "marks"
     marks.mkdir()
     hooks = ws_root.parent / "evil-hooks"
@@ -156,7 +162,7 @@ def test_a_relaunch_reuses_the_clone_keeps_its_work_and_writes_its_config_again(
     cid, clone = run["cid"], run["clone"]
     (clone / "elephants.html").write_text("<p>hi</p>\n", encoding="utf-8")
     _g(clone, "add", "elephants.html")
-    _g(clone, "commit", "-q", "-m", f"{cid} page")
+    _g(clone, "commit", "-q", *_msg(cid))
     head = _g(clone, "rev-parse", "HEAD")
     with open(clone / ".git" / "config", "a", encoding="utf-8") as f:
         f.write("[alias]\n\tst = !touch x\n")
@@ -218,6 +224,7 @@ def test_the_runner_never_deletes_a_clone_and_a_human_can(fws, run, human, agent
     assert [c["child"] for c in fc.listing(fws)] == [run["cid"]]
     with pytest.raises(HumanOnlyError):
         fc.clean(fws, agent, run["cid"])
+    fs.end(fws, run["b"]["session"])
     assert fc.clean(fws, human, run["cid"]) and not run["clone"].exists() and fc.listing(fws) == []
     assert not fc.clean(fws, human, run["cid"])
 
@@ -266,7 +273,7 @@ def test_a_commit_in_its_own_clone_on_its_branch_passes_both_gates(fws, run):
 @pytest.mark.parametrize("setup,why", [
     ("detached", "detached"), ("other-branch", "not the one the runner made"), ("default", "default branch"),
     ("reftable", "reftable"), ("damaged-recipe", "recipe"), ("no-record", "not a clone the runner made"),
-    ("gitfile", "not a plain .git folder"),
+    ("gitfile", ".git is a link or not a folder"),
 ])
 def test_the_clone_gate_refuses_everything_else(fws, run, monkeypatch, setup, why):
     clone, cid = run["clone"], run["cid"]
@@ -356,7 +363,7 @@ def test_the_release_fetches_the_childs_commit_from_its_clone(fws, fa, fh, human
     clone, _ = fc.ensure(fws, human, cid)
     (clone / "elephants.json").write_text("[]\n", encoding="utf-8")
     _g(clone, "add", "elephants.json")
-    _g(clone, "commit", "-q", "-m", f"{cid} data")
+    _g(clone, "commit", "-q", *_msg(cid))
     sha = _g(clone, "rev-parse", "HEAD")
     _to_testing(fa, cid, close_tasks)
     assert fr.child_source(fws, store.load(fws, cid)[1]) == (f"fx/{cid.lower()}", clone, "")
@@ -378,7 +385,7 @@ def test_a_sensitive_change_in_the_clone_stops_the_release(fws, fa, fh, human, c
     (clone / ".github").mkdir()
     (clone / ".github" / "ci.yml").write_text("evil\n", encoding="utf-8")
     _g(clone, "add", ".github/ci.yml")
-    _g(clone, "commit", "-q", "-m", f"{cid} ci")
+    _g(clone, "commit", "-q", *_msg(cid))
     _to_testing(fa, cid, close_tasks)
     fake = RecipeFake()
     fr.tick(fws, human, fake)

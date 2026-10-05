@@ -497,7 +497,14 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                       "at it. Open Claude once in this folder and accept the trust dialog"))
     from orch.core import factory_clones
     from orch.core.factory_release import workspace_repo
-    if workspace_repo(ws) is not None:  # children get clones of their own: git, and the trust of the clones folder
+    can, cwhy = factory_clones.clonable(ws)
+    if can is False:  # predicted here, before a planner makes children that could never start
+        out.append(_check("clones", False, f"the runner cannot make the children's clones: {cwhy}. Fix the "
+                                           "workspace checkout (or set the release recipe's base), then restart the "
+                                           "dashboard"))
+    elif can is None and workspace_repo(ws) is not None:
+        out.append(_check("clones", False, cwhy, level="warn"))
+    if can:  # children get clones of their own: git, and the trust of the clones folder
         git = resolve_bin("git")
         seen = f"{git} lies inside the workspace" if git else resolve_why("git")[1]
         out.append(_check("git", git is not None and not agent_writable(ws, git),
@@ -811,9 +818,11 @@ def start_dir(ws, t) -> str | None:
         except (OSError, RuntimeError, ValueError):
             pass
     rec = factory_clones.record(ws, t.id)
-    if rec is not None and own_work_tree(ws, rec["path"], t.id) is None:
-        p = Path(rec["path"]).resolve()
-        return str(p) if _harness_ok(root, p) else None
+    if rec is not None:
+        p = factory_clones.start_in(ws, rec)  # the clone's copy of the workspace folder
+        if own_work_tree(ws, p, t.id) is None:
+            p = p.resolve()
+            return str(p) if _harness_ok(root, p) else None
     return str(root)
 
 
@@ -905,17 +914,27 @@ def _launchable(ws, epic, d, t, signed) -> bool:
             and not epics.hidden_in(t) and epics.child_state(ws, epic, t, signed) in ("delegated", "covered"))
 
 
-def _ready(ws, settings, epic, d, t, lines, planner: bool = False, actor=None) -> tuple | None:
+ROUND_CLONE_SECONDS = 120  # what one runner round may spend making a clone (at most one new clone per round)
+
+
+def _ready(ws, settings, epic, d, t, lines, planner: bool = False, actor=None,
+           new_clones: list | None = None) -> tuple | None:
     """Everything a launch needs, checked before a launch is counted (a missing program or a refused worktree must not
     use up a child's or the planner's launches): (prompt, cwd, claude, env), or None. `planner`: `t` is the epic
     itself, the planner's prompt is used and the session starts in the workspace root. A child with no worktree of its
     own in a workspace that is a git checkout gets its own clone (factory_clones.ensure; `actor`: the runner)."""
     from orch.core import factory_clones
-    from orch.core.factory_release import workspace_repo
     root = str(Path(ws.root).resolve())
     cwd = root if planner else start_dir(ws, t)
-    if cwd == root and not planner and actor is not None and workspace_repo(ws) is not None:
-        path, why = factory_clones.ensure(ws, actor, t.id)
+    if cwd == root and not planner and actor is not None and factory_clones.clonable(ws)[0] is not None:
+        new = factory_clones.record(ws, t.id) is None
+        if new and new_clones is not None:  # one new clone per round, within a time budget: the round goes on
+            if new_clones:
+                lines.append(f"{t.id} waits: the runner makes one clone per round")
+                return None
+            new_clones.append(t.id)
+        path, why = factory_clones.ensure(ws, actor, t.id,
+                                          ROUND_CLONE_SECONDS if new_clones is not None else factory_clones.CLONE_TIMEOUT)
         if path is None:
             lines.append(f"{t.id} not started: its clone could not be prepared: {why}")
             return None
@@ -1255,6 +1274,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     dark_adds = sum(1 for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid
                     and e.get("op") == "add")
     checked: list = []
+    new_clones: list = []  # at most one clone is made per round
 
     def not_ready() -> bool:  # the readiness checks, once per round and only when something would start
         if not checked:
@@ -1315,12 +1335,14 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 return lines
             if fs.runs(ws, d["id"], t.id) == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
                 continue  # checked again under the lock; here so no clone is made for a child that cannot start
-            ready = _ready(ws, settings, epic, d, t, lines, actor=actor)
+            ready = _ready(ws, settings, epic, d, t, lines, actor=actor, new_clones=new_clones)
             if ready is None:
                 continue  # checked before its marker: a refused launch uses up none of its launches
             with epics.delegation_lock(d["id"]):
                 if any(x["child"] == t.id for x in fs.bindings(ws)):
                     continue  # another dashboard on this config dir started it meanwhile
+                if ready[1] != str(Path(ws.root).resolve()) and own_work_tree(ws, ready[1], t.id) is not None:
+                    continue  # its clone or worktree changed since (`orch factory clones clean` holds this lock)
                 if fs.runs(ws, d["id"], t.id) == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
                     continue
                 if not fs.mark_run(ws, d["id"], t.id):

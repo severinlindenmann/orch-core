@@ -439,9 +439,46 @@ def test_a_git_workspace_needs_git_and_the_clones_folder_trusted(ws, env):
     f = _failing(ws)
     assert "git was not found" in f["git"]["why"] and "Open Claude once in that folder" in f["clones trust"]["why"]
     assert str(factory_clones.root()) in f["clones trust"]["why"] and factory_clones.root().is_dir()
-    env["bins"]["git"] = "/usr/bin/git"
+    env["bins"]["git"] = REAL_RESOLVE(__import__("shutil").which("git"))  # the real trust rule for git
+    assert env["bins"]["git"]
     projects = {str(p.resolve()): {"hasTrustDialogAccepted": True} for p in (ws.root, factory_clones.root())}
     (env["dir"] / ".claude.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
     assert _failing(ws) == {}
     env["bins"]["git"] = str(ws.root / "bin" / "git")
     assert "lies inside the workspace" in _failing(ws)["git"]["why"]
+
+
+@pytest.mark.parametrize("setup,why,level", [
+    ("shallow", "shallow", "block"), ("detached", "names no plain branch", "block"),
+    ("alternates", "borrows objects", "block"), ("sha256", "sha256", "block"),
+])
+def test_readiness_predicts_a_clone_that_cannot_be_made(ws, env, setup, why, level):
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws.root, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "x"],
+                   cwd=ws.root, check=True)
+    git = ws.root / ".git"
+    if setup == "shallow":
+        (git / "shallow").write_text("0" * 40 + "\n", encoding="utf-8")
+    elif setup == "detached":
+        (git / "HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
+    elif setup == "alternates":
+        (git / "objects" / "info").mkdir(exist_ok=True)
+        (git / "objects" / "info" / "alternates").write_text("/elsewhere\n", encoding="utf-8")
+    else:
+        with open(git / "config", "a", encoding="utf-8") as f:
+            f.write("[extensions]\n\tobjectformat = sha256\n")
+    c = _failing(ws)["clones"]
+    assert why in c["why"] and c["level"] == level
+
+
+def test_readiness_warns_for_a_linked_worktree_workspace_and_blocks_nothing(ws, env, tmp_path):
+    main = tmp_path / "main-checkout"
+    main.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=main, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q", "--allow-empty", "-m", "x"],
+                   cwd=main, check=True)
+    subprocess.run(["git", "worktree", "add", "-q", "-b", "w", str(tmp_path / "wt")], cwd=main, check=True)
+    (ws.root / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n", encoding="utf-8")
+    c = _failing(ws)["clones"]
+    assert c["level"] == "warn" and "linked git worktree" in c["why"]
+    assert not [x for x in _failing(ws).values() if x["level"] == "block"]

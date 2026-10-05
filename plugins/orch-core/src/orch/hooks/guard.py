@@ -1120,7 +1120,37 @@ def _key_check_candidates(cmd: str) -> list[str]:
     resolved = _resolve_vars(cmd)
     resolved = _ECHO_SUB.sub(lambda m: m.group(1) if m.group(1) is not None else m.group(2), resolved)
     normalised = _strip_quotes_and_escapes(resolved)
-    return [cmd] + _expand_braces(normalised)
+    out = [cmd] + _expand_braces(normalised)
+    # what the shell itself turns the text into first: line continuations joined, $'...' strings decoded
+    shell = _ansi_c(re.sub(r"\\\r?\n", "", cmd))
+    if shell != cmd:
+        out += [shell] + _expand_braces(_strip_quotes_and_escapes(_resolve_vars(shell)))
+    return out
+
+
+_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
+
+
+def _ansi_c(cmd: str) -> str:
+    """`cmd` with every bash ANSI-C string ($'...') replaced by its decoded content (\\xHH, octal, \\u, \\n, ...)."""
+    import codecs
+
+    def dec(m):
+        try:
+            return codecs.decode(m.group(1).encode("latin-1", "backslashreplace"), "unicode_escape")
+        except (UnicodeError, ValueError):
+            return m.group(1)
+    return _ANSI_C.sub(dec, cmd)
+
+
+def _braces_over_budget(cmd: str, budget: int = 32) -> bool:
+    """More brace expansions than _expand_braces follows: the words it leaves out are unknown to the checks."""
+    total = 1
+    for m in re.finditer(r"\{([^{}]*,[^{}]*)\}", cmd):
+        total *= len(m.group(1).split(","))
+        if total > budget:
+            return True
+    return False
 
 
 def _config_paths() -> tuple[set[str], set[str]]:
@@ -1382,8 +1412,11 @@ def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
 
 def _bash_reaches_ledger(cmd: str) -> bool:
     from orch.core import ledger
-    if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
+    candidates = _key_check_candidates(cmd)
+    if any(_LEDGER.search(c) for c in candidates):
         return True
+    if _braces_over_budget(cmd) and any(re.search(r"(?i)permits|ledger", c) for c in candidates):
+        return True  # past the expansion cap: refuse rather than judge only some of the words
     base = str(ledger.base_dir())
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
@@ -1422,23 +1455,31 @@ def _root_reaches_config(root) -> bool:
     return any(_key_reaches_config(_path_key(s), dirs, above) for s in (str(root), os.path.realpath(root)))
 
 
+_JOIN_WORDS_MAX = 512
+
+
 def _bash_joins_permits(cmd: str, cwd=None) -> bool:
     """The config dir (or a directory above it, or the cwd being one) named anywhere together with the permits
     folder anywhere: an interpreter can join the two (a path built from separate words), which no pattern over a
     written path sees. Every path-like word is judged as the system would resolve it: variables assigned in the
     command, `~`, relative to the cwd, `.` and `..`, doubled separators, links and case. Best effort: text that
     spells neither the folder nor a path to the config dir plainly is beyond any text guard."""
-    if not re.search(r"(?i)\bpermits\b", cmd):
+    texts = [cmd, _ansi_c(re.sub(r"\\\r?\n", "", cmd))]  # as written, and as the shell reads it first
+    if not any(re.search(r"(?i)\bpermits\b", t) for t in texts):
         return False
-    if re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", cmd):
+    if any(re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", t) for t in texts):
         return True
     dirs, above = _config_keys()
     start = str(cwd) if cwd else os.getcwd()
+    words = [w for t in texts for w in re.findall(r"[^\s'\"`;&|()<>,=+\[\]{}]+", _resolve_vars(t))
+             if os.path.expanduser(w).startswith(("/", ".", "\\"))]
+    if len(words) > _JOIN_WORDS_MAX:
+        return True  # too many paths to judge one by one: refuse, never judge only some of them
     try:
         if _key_reaches_config(_path_key(os.path.realpath(start)), dirs, above) or \
                 _key_reaches_config(_path_key(start), dirs, above):
             return True
-        for word in re.findall(r"[^\s'\"`;&|()<>,=+\[\]{}]+", _resolve_vars(cmd))[:512]:
+        for word in words:
             text = os.path.expanduser(word)
             if not text.startswith(("/", ".", "\\")):
                 continue

@@ -205,3 +205,69 @@ def test_file_tools_still_allow_neighbours(ws, tmp_path, tool, inp):
     got = {k: v.format(**f) for k, v in inp.items()}
     d = evaluate(ws, {"tool_name": tool, "tool_input": got, "cwd": str(ws.root)})
     assert d.allow, (got, d.reason)
+
+
+# -- caps fail closed, and the forms the shell rewrites before it runs anything (fourth review) ------------------------
+
+P = "{base}/permits/bridge/" + WS + "/registry.json"
+R = "permits/bridge/" + WS + "/registry.json"
+_CAP_AND_PARSER = {
+    "long_filler": "echo " + "a" * 200_000 + "; cat " + P,
+    "long_filler_rel": "echo " + "a" * 200_000 + "; cat " + R,
+    "long_filler_join": "echo " + "a" * 200_000 + "; python3 -c \"import pathlib;pathlib.Path('{base}','permits')\"",
+    "many_segments": "; ".join(["true"] * 5000) + "; cat " + P,
+    "many_segments_rel": "; ".join(["true"] * 5000) + "; cat " + R,
+    "many_words_join": "echo " + " ".join(["w"] * 5000) + " && python3 -c \"import pathlib;pathlib.Path('{base}','permits')\"",
+    "many_paths_join": "ls " + " ".join(["./x"] * 3000) + " && python3 -c \"import pathlib;pathlib.Path('{base}','permits')\"",
+    "deep_subst": "$(" * 200 + "cat " + P + ")" * 200,
+    "deep_subst_rel": "$(" * 200 + "cat " + R + ")" * 200,
+    "bash_c": "bash -c 'cat " + R + "'",
+    "sh_c_dq": "sh -c \"cat " + R + "\"",
+    "eval": "eval 'cat " + R + "'",
+    "ansi_c": "cat $'permits/bri\\x64ge/" + WS + "/registry.json'",
+    "ansi_c_abs": "cat $'{base}/perm\\x69ts/bridge/x'",
+    "xargs": "echo " + R + " | xargs cat",
+    "env": "env cat " + R,
+    "command": "command cat " + R,
+    "continuation": "cat perm\\\nits/bridge/" + WS + "/registry.json",
+    "continuation_abs": "cat {base}/perm\\\nits/bridge/x",
+    "nbsp": "cat " + R,
+    "tab": "cat\t" + R,
+    "backticks": "cat `echo " + R + "`",
+    "heredoc_bash": "bash <<'EOF'\ncat " + R + "\nEOF",
+    "and_or_pipe": "true && false || cat " + R + " | head &",
+    "newline": "true\ncat " + R,
+    "brace": "cat permits/{{bridge,x}}/" + WS + "/registry.json",
+    "quote_split": "cat per'mi'ts/br\"id\"ge/x",
+    "empty_quote": "cat permits/''bridge/x",
+    "ansi_join": "python3 -c \"import pathlib;pathlib.Path('{base}',$'perm\\x69ts')\"",
+}
+
+
+
+@pytest.mark.parametrize("name", list(_CAP_AND_PARSER))
+def test_caps_and_shell_forms_around_the_bridge_records_are_refused(ws, name):
+    from orch.core.ledger import base_dir
+    from orch.hooks.guard import evaluate
+    c = _CAP_AND_PARSER[name].replace("{base}", str(base_dir())).replace("{{", "{").replace("}}", "}")
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": str(ws.root)}).allow, name
+
+
+def test_braces_past_the_expansion_cap_near_the_records_are_refused(ws):
+    from orch.hooks.guard import evaluate
+    opts = ",".join(f"a{i}" for i in range(40)) + ",bridge"
+    for c in ("cat permits/{" + opts + "}/" + WS + "/registry.json",
+              "cat {x,y}{x,y}{x,y}{x,y}{x,y}{x,y}permits/{a,bridge}/" + WS):
+        assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": str(ws.root)}).allow, c
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo " + "a" * 5_000 + "; ls src", "; ".join(["true"] * 5000) + "; ls src",
+    "echo " + " ".join(["./w"] * 3000), "bash -c 'ls src'", "sh -c \"git status\"", "echo $'hello\\tworld'",
+    "ls src/{" + ",".join(f"a{i}" for i in range(40)) + "}", "env ls src", "command ls src", "echo x | xargs ls",
+    "ls sr\\\nc", "echo $'bridge'",
+])
+def test_long_or_unusual_commands_away_from_the_records_still_pass(ws, cmd):
+    from orch.hooks.guard import evaluate
+    d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)})
+    assert d.allow, (cmd[:80], d.reason)

@@ -8,7 +8,7 @@ recipe, up to the signed stage, by the runner (the dashboard process the human s
   command (`orch factory release set`), which also pins each program (real path and sha256). Never workspace config,
   ticket text or charter text: an agent can edit those. Commands are argv lists (no shell strings); placeholders are
   filled in with values that were validated first.
-- **The runner's own mirror.** The workspace checkout is agent-written (its `.git/config`, hooks, refs and objects
+- **The runner's own release repository.** The workspace checkout is agent-written (its `.git/config`, hooks, refs and objects
   included), so nothing is classified or run there. The runner keeps a repository of its own under the guarded
   permits folder (`release-repos/<workspace id>/repo`), with a config only it writes. It fetches each child branch
   from the workspace (objects only, pinned by commit) and the base from the recipe's remote (never from the
@@ -85,7 +85,7 @@ _CODE_FLAGS = ("-c", "-e", "-E", "--eval", "-p", "--print", "-r", "-x")
 
 
 class ReleaseError(ValidationError):
-    """The runner's mirror or a git step failed: nothing runs this round (fail closed)."""
+    """The runner's release repository or a git step failed: nothing runs this round (fail closed)."""
 
 
 def valid_branch(name) -> bool:
@@ -810,14 +810,14 @@ def _context(epic_id: str, wsid: str, rec: dict | None = None, child: str | None
     return ctx
 
 
-# -- the runner's own repository (the mirror) ---------------------------------------------------------------------------
+# -- the runner's own release repository ----------------------------------------------------------------------------------
 
-# Written by the runner, every time it uses the mirror: no includes, aliases, hooks, fsmonitor, filters or remotes.
-MIRROR_CONFIG = ("[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n"
+# Written by the runner, every time it uses the release repository: no includes, aliases, hooks, fsmonitor, filters or remotes.
+REPO_CONFIG = ("[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n"
                  "\thooksPath = /dev/null\n\tfsmonitor = false\n\tsymlinks = true\n")
 
 
-def mirror_dir(ws) -> Path:
+def repo_dir(ws) -> Path:
     from orch.core.ledger import workspace_id
     return fs._root() / "release-repos" / workspace_id(ws) / "repo"
 
@@ -844,21 +844,21 @@ def _git_env(git: str) -> dict:
 
 
 def _git(ws, rec: dict, *args: str, timeout: int = 600, limit: int = TAIL) -> dict:
-    """One git command in the mirror, by argv; raises ReleaseError when git cannot be found."""
+    """One git command in the release repository, by argv; raises ReleaseError when git cannot be found."""
     from orch.core import factory_runner
     git = factory_runner.resolve_bin("git")
     if git is None:
         raise ReleaseError("git was not found at a trusted path")
-    repo = mirror_dir(ws)
+    repo = repo_dir(ws)
     return run_command([git, *_git_flags(rec), "-C", str(repo), *args], str(repo), _git_env(git), timeout,
                        limit=limit)
 
 
-def ensure_mirror(ws, rec: dict) -> Path:
+def ensure_repo(ws, rec: dict) -> Path:
     """The runner's repository, created on first use (`git init` without templates) and its config written by the
     runner every time. Raises ReleaseError on any failure."""
     from orch.core import factory_runner
-    repo = mirror_dir(ws)
+    repo = repo_dir(ws)
     try:
         if not os.path.isdir(repo / ".git") or os.path.islink(repo) or os.path.islink(repo / ".git"):
             git = factory_runner.resolve_bin("git")
@@ -869,7 +869,7 @@ def ensure_mirror(ws, rec: dict) -> Path:
                             str(repo.parent), _git_env(git), 60)
             if r["code"] != 0:
                 raise ReleaseError("the runner's repository could not be created")
-        _atomic(repo / ".git" / "config", MIRROR_CONFIG)
+        _atomic(repo / ".git" / "config", REPO_CONFIG)
         for extra in ("hooks", "info"):
             import shutil
             shutil.rmtree(repo / ".git" / extra, ignore_errors=True)
@@ -894,7 +894,7 @@ def _rev(ws, rec, ref: str) -> str | None:
 
 
 def fetch_child(ws, rec, branch: str) -> str | None:
-    """Fetch `branch` from the workspace checkout into the mirror (objects and that one ref, nothing else), and return
+    """Fetch `branch` from the workspace checkout into the release repository (objects and that one ref, nothing else), and return
     its commit, or None."""
     src = workspace_repo(ws)
     if src is None or not valid_branch(branch):
@@ -914,7 +914,7 @@ def fetch_base(ws, rec) -> str | None:
 
 
 def checkout(ws, rec, sha: str) -> bool:
-    """The mirror's work tree at exactly `sha`, clean (nothing left from an earlier stage)."""
+    """The release repository's work tree at exactly `sha`, clean (nothing left from an earlier stage)."""
     if not _SHA.fullmatch(sha or ""):
         return False
     for args in (("checkout", "-q", "--force", "--detach", sha), ("clean", "-q", "-ffdx")):
@@ -947,7 +947,7 @@ def child_branch(ws, t) -> tuple[str | None, str]:
 
 
 def changed_paths(ws, rec, sha: str) -> list[str] | None:
-    """Every path the commit brings in against the remote base, in the mirror: the net diff and each commit's own
+    """Every path the commit brings in against the remote base, in the release repository: the net diff and each commit's own
     changes (merges against each parent), renames as both paths, submodules included. None when git fails or the
     list is too long to check."""
     base = f"refs/remotes/release/{rec['base']}"
@@ -964,10 +964,10 @@ def changed_paths(ws, rec, sha: str) -> list[str] | None:
 
 def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
     """({child: (branch, sha)}, {child: [sensitive paths]}, {child: why it could not be checked}) for every child
-    ticket in `kids`, in the runner's mirror against the base fetched from the recipe's remote."""
+    ticket in `kids`, in the runner's release repository against the base fetched from the recipe's remote."""
     found, hits, errors = {}, {}, {}
     try:
-        ensure_mirror(ws, rec)
+        ensure_repo(ws, rec)
         base_sha = fetch_base(ws, rec)
     except ReleaseError as e:
         return {}, {}, {t.id: str(e) for t in kids}
@@ -1098,7 +1098,7 @@ def _mark_stale(ws, rec, epic, kids) -> list[str]:
         branch = child_branch(ws, t)[0] if t is not None else None
         if branch is None:
             continue
-        ensure_mirror(ws, rec)
+        ensure_repo(ws, rec)
         tip = fetch_child(ws, rec, branch)
         if tip is not None and tip != us["sha"]:
             _write(_dir(ws, epic.id) / _name("merge", k, us["attempt"], "stale"), {"was": us["sha"], "now": tip})
@@ -1155,7 +1155,7 @@ def _now() -> str:
 
 
 def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tuple[str, bool]:
-    """One attempt at stage `s` for `unit`, in the runner's mirror: the intent first, then the precheck, the commands
+    """One attempt at stage `s` for `unit`, in the runner's release repository: the intent first, then the precheck, the commands
     and the check, then the outcome."""
     from orch.core.factory_report import _full
     name = s["name"]
@@ -1202,7 +1202,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     env = _env(*progs.values())
-    cwd = str(mirror_dir(ws))
+    cwd = str(repo_dir(ws))
     codes, tail, why, check_code, proven = [], "", "", None, False
     for kind, argv, expect in steps:
         if gate(ws, epic.id, d["id"]) is None:

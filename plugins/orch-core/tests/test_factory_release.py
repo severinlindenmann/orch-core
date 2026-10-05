@@ -473,18 +473,18 @@ def test_commands_run_in_the_runners_repository_with_a_scrubbed_env(fws, ready, 
     eid, (c,), _ = ready()
     fake = Fake()
     seen_heads = []
-    fake.on_call = lambda argv: seen_heads.append(_g(fr.mirror_dir(fws), "rev-parse", "HEAD"))
+    fake.on_call = lambda argv: seen_heads.append(_g(fr.repo_dir(fws), "rev-parse", "HEAD"))
     fr.tick(fws, human, fake)
-    mirror = str(fr.mirror_dir(fws))
-    assert mirror.startswith(str(ledger.base_dir() / "permits" / "release-repos"))
+    repo = str(fr.repo_dir(fws))
+    assert repo.startswith(str(ledger.base_dir() / "permits" / "release-repos"))
     for argv, cwd, env, timeout in fake.calls:
-        assert cwd == mirror and cwd != str(fws.root)
+        assert cwd == repo and cwd != str(fws.root)
         assert set(env) <= set(__import__("orch.core.factory_runner", fromlist=["x"]).ENV_ALLOW) | {"PATH"}
         assert "GH_TOKEN" not in env
     sha = _g(fws.root, "rev-parse", f"feat/{c.lower()}-work")
     assert seen_heads[:3] == [sha] * 3  # the merge stage ran at exactly the checked commit
-    assert seen_heads[-1] == _g(fr.mirror_dir(fws), "rev-parse", "refs/remotes/release/main")  # dev at the remote base
-    cfg = (fr.mirror_dir(fws) / ".git" / "config").read_text()
+    assert seen_heads[-1] == _g(fr.repo_dir(fws), "rev-parse", "refs/remotes/release/main")  # dev at the remote base
+    cfg = (fr.repo_dir(fws) / ".git" / "config").read_text()
     assert "hooksPath = /dev/null" in cfg and "fsmonitor = false" in cfg and "[remote" not in cfg
 
 

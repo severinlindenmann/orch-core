@@ -1,9 +1,9 @@
 """Where the bridge keeps its records, and how it writes and reads them.
 
 Everything lives in the orch config directory, under its permits folder: `permits/bridge/<workspace hex>/` holds the
-host signing key, the device registry, the audit log, the request store and the per-device sequence state, and the
-channel key when the caller keeps one there. Never in the workspace. The caller passes the config directory in, so
-nothing here decides it.
+host signing key, the device registry, the audit log, the request store and the per-device sequence state. Never in
+the workspace. The workspace channel key K_ws is never written anywhere: it lives only in the host process's memory
+(spec §2.6). The caller passes the config directory in, so nothing here decides it.
 
 The operating-system user is shared with every agent on the computer, so file modes protect nothing against a local
 agent: orch's command guard, which refuses agents' commands and file-tool calls on the permits folder, is the only

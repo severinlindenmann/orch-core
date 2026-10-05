@@ -30,10 +30,21 @@ Authorisation is decided once, on one reading, and checked again right before an
   such a refusal: a request already running then answers the refusal, not its result.
 - The dispatcher MUST call still_authorized(run) immediately before it runs anything, and must not run when it is
   False (revoked, rescoped, key replaced, the kill switch, or the fresh or lease grant ended).
+
+What the dispatcher (R3b) must do, beyond calling these functions:
+
+- call Host.still_authorized(run) immediately before running, AND again before sealing every frame of a stream; on
+  False it ends the stream with a final chunk carrying the record's stored refusal;
+- when finish() returns False, send the record's stored refusal instead of the result;
+- registry.revoke_everywhere() changes the other workspaces' registries only: their hosts' in-memory streams, leases
+  and parked requests stay open until that process checks again (its next still_authorized() or check() sees the
+  revocation), so their frames stop at the next frame check, not at once;
+- show the owner a damaged registry or request store (Host.health()), not only drop its requests.
 """
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,7 +63,7 @@ from orch.remote.bridge_host.keys import InvalidTag, open_sealed, seal
 from orch.remote.bridge_host.outcome import Verdict, drop, refuse
 from orch.remote.bridge_host.pairing import Pairing
 from orch.remote.bridge_host.registry import SCOPES, Device, Registry
-from orch.remote.bridge_host.replay_store import MAX_REPLAY_BODY, ReplayStore, StoreFull
+from orch.remote.bridge_host.replay_store import MAX_REPLAY_BODY, DeviceFull, ReplayStore, StoreFull
 from orch.remote.bridge_host.shown import clean_shown
 from orch.remote.bridge_host.signatures import from_pem, generate, public_bytes, sign, signed_bytes, to_pem, verify
 
@@ -88,7 +99,7 @@ def seq_accept(high: int, bitmap: int, seq: int) -> tuple[bool, int, int]:
     return True, high, bitmap | 1 << i
 
 
-def load_host_key(root: Path, rand: Callable[[int], bytes]):
+def load_host_key(root: Path, rand: Callable[[int], bytes] = os.urandom):
     """The workspace's host signing key, created on first use (exclusively, owner-only) in its bridge directory.
     files.Damaged when the stored key cannot be read; it is never replaced silently (that would unpin every device)."""
     path = files.ensure_dir(Path(root)) / "host-key.pem"
@@ -109,20 +120,26 @@ def load_host_key(root: Path, rand: Callable[[int], bytes]):
 @dataclass
 class Host:
     """One workspace's bridge host. `root` is files.bridge_dir(config dir, workspace hex); `clock` returns the host's
-    time in ms; `rand(n)` returns n bytes from a CSPRNG; `route` is the scope hook; `phone_key(phone_id)` returns the
-    key of an existing phone pairing or None; `rp_id` and `origin` are the relay app's host name and origin."""
+    time in ms; `route` is the scope hook; `phone_key(phone_id)` returns the key of an existing phone pairing or
+    None; `rp_id` and `origin` are the relay app's host name and origin. `rand(n)` returns n bytes from the operating
+    system's CSPRNG (os.urandom, the default) for every salt, nonce, challenge, pairing id and secret: callers MUST NOT
+    pass anything else outside tests.
+
+    Every method that reads or changes the in-memory state (check, authorize, finish, offer, approve, reject, revoke,
+    set_scope, stop, still_authorized) takes the host lock; call those, never the Pairing or Registry objects directly."""
     workspace: bytes
     k_ws: bytes
     host_key: object
     root: Path
     clock: Callable[[], int]
-    rand: Callable[[int], bytes]
     route: RouteHook
     phone_key: Callable[[str], bytes | None]
     rp_id: str
     origin: str
+    rand: Callable[[int], bytes] = os.urandom
     key_version: int = KEY_VERSION
     max_records: int | None = None
+    per_device: int | None = None
     registry: Registry = field(init=False)
     store: ReplayStore = field(init=False)
     pairing: Pairing = field(init=False)
@@ -139,7 +156,8 @@ class Host:
             raise ValueError("the workspace id is 16 bytes and K_ws 32")
         self.root = files.ensure_dir(Path(self.root))
         self.registry = Registry(self.root, self.workspace)
-        self.store = ReplayStore(self.root, **({"max_records": self.max_records} if self.max_records else {}))
+        caps = {k: v for k, v in (("max_records", self.max_records), ("per_device", self.per_device)) if v}
+        self.store = ReplayStore(self.root, **caps)
         self.pairing = Pairing(self.workspace)
         self._lock = FileLock(str(self.root / "host.lock"), timeout=10)
 
@@ -173,7 +191,7 @@ class Host:
         with self._lock:
             try:
                 v = self._check(env, h, hb, body, sig, pt, now)
-            except (files.Damaged, StoreFull, OSError, ValueError) as e:  # cannot read or record: it must not run
+            except (files.Damaged, StoreFull, DeviceFull, OSError, ValueError) as e:  # cannot record: never runs
                 return drop(f"store: {type(e).__name__}")
         return v if v.result == "drop" else dataclasses.replace(v, header=h, device=v.device or h.device.hex())
 
@@ -225,6 +243,13 @@ class Host:
                     extra["high"] = self.store.seq_state(did)[0]
                 return refuse(out["refusal"], why="replay", **extra)
             return Verdict("replay", device=did, scope=dev.scope, outcome=out, body=known.body, rid=rid)
+        # the device's quota in the request store: a device over it is refused `busy`, recorded (its allowance of
+        # busy records is the store's own), and never takes room from another device; it does not consume its seq
+        if self.store.count_for(did, now) >= self.store.per_device:
+            try:
+                return self._recorded(h, did, dig, now, "busy")
+            except DeviceFull:
+                return drop("busy_unrecordable")  # a refusal that cannot be recorded is not sent
         # 5. framing; before the sequence, so a malformed envelope does not consume its seq
         try:
             meta, data = unframe(pt)
@@ -346,6 +371,31 @@ class Host:
         return dataclasses.replace(acc, result="run", scope=dev.scope, fresh=fresh, answer_rids=answer_rids,
                                    entry=dev, gen=dev.gen, at_ms=now, until_ms=until_ms)
 
+    def offer(self, scope: str):
+        """A new pairing offer and its link fragment (the Remote tab), under the host lock."""
+        with self._lock:
+            return self.pairing.offer(scope, self.clock(), self.rand, self.host_pub)
+
+    def approve(self, did: str, scope: str | None = None) -> Device:
+        """The owner approved a pending pairing (scope only lowered); writes and audits the registry entry."""
+        with self._lock:
+            return self.pairing.approve(did, self.registry, self.clock(), scope)
+
+    def reject(self, did: str) -> None:
+        with self._lock:
+            self.pairing.reject(did, self.registry, self.clock())
+
+    def health(self) -> dict:
+        """What the owner must be shown: damaged request records (kept, counted, never pruned) and whether the
+        registry can be read. R3b shows this at start and in the Remote tab rather than only dropping."""
+        with self._lock:
+            try:
+                self.registry.devices()
+                registry_ok = True
+            except files.Damaged:
+                registry_ok = False
+            return {"damaged_records": sorted(self.store.damaged), "registry_readable": registry_ok}
+
     def still_authorized(self, decision: Verdict) -> bool:
         """Whether `decision` (a run) may run now: not stopped, and still_authorized() for its entry and grant."""
         with self._lock:
@@ -381,14 +431,14 @@ class Host:
         if r1.gen != dev.gen:  # the registry entry changed between R1 and R2
             self.store.set_outcome(for_rid, {"refusal": "scope_changed"}, now)
             return self._final(rid2, now, "scope_changed")
-        if issued.purpose == "lease":
-            self.leases[did] = now + LEASE_MS
         req = self._requirement(r1)  # R1 runs exactly once, after its scope is checked again
         stream = r1.header.stream
         if req is None or req.scope != issued.scope or SCOPES[req.scope] > dev.level or (
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")
+        if issued.purpose == "lease":  # opened only once R1 passed its check again
+            self.leases[did] = now + LEASE_MS
         until = self.leases[did] if issued.purpose == "lease" else issued.expires_ms  # the grant behind this run
         return self._run(r1, dev, (for_rid, rid2), now, fresh=issued.purpose == "fresh", until_ms=until)
 

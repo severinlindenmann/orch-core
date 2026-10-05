@@ -3,6 +3,7 @@ each scalar checked to lie in 1 .. n-1 before verifying. A signature is malleabl
 never used as an identifier."""
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from orch.remote.bridge_host import CRYPTO_HINT, MissingCryptography
@@ -79,7 +80,7 @@ def private_key(d: bytes) -> ec.EllipticCurvePrivateKey:
     return ec.derive_private_key(int.from_bytes(d, "big"), ec.SECP256R1())
 
 
-def generate(rand: Callable[[int], bytes]) -> ec.EllipticCurvePrivateKey:
+def generate(rand: Callable[[int], bytes] = os.urandom) -> ec.EllipticCurvePrivateKey:
     """A new P-256 key from the injected CSPRNG: 32 random bytes, drawn again until the scalar is in 1 .. n-1."""
     for _ in range(64):
         d = int.from_bytes(rand(32), "big")

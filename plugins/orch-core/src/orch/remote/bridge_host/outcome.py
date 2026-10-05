@@ -7,7 +7,8 @@ from orch.remote.bridge_host.envelope import Header
 
 CODES = frozenset({"malformed", "not_paired", "revoked", "bad_signature", "rid_conflict", "already_done",
                    "stale_timestamp", "stale_sequence", "pairing_closed", "forbidden_scope", "assertion_required",
-                   "lease_required", "assertion_failed", "scope_changed", "stopped"})
+                   "lease_required", "assertion_failed", "scope_changed", "stopped",
+                   "busy"})  # busy: this host's addition (request store quota), carries no field
 # The only fields a refusal carries, per code: never anything taken from the request.
 REFUSAL_FIELDS = {"stale_sequence": {"high"}, "stale_timestamp": {"host_ms"}, "already_done": {"status"},
                   "assertion_required": {"purpose", "scope", "expires_ms", "nonce", "subject"},

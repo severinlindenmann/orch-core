@@ -58,7 +58,7 @@ def credential(count=0, be=False):
 
 def make_host(config_dir, clock, scope_a="type", cred=None, **kw):
     host = Host(workspace=WS, k_ws=V.K_WS, host_key=signatures.private_key(bytes.fromhex(V.VEC["keys"]["host"]["d"])),
-                root=files.bridge_dir(config_dir, WS_HEX), clock=clock, rand=os.urandom, route=route,
+                root=files.bridge_dir(config_dir, WS_HEX), clock=clock, route=route,
                 phone_key=lambda pid: None, rp_id=V.RP_ID, origin=V.ORIGIN, **kw)
     if not host.registry.devices():
         host.registry.add(Device(did(KEY_A), pub(KEY_A), scope_a, "Laptop", 0, credential=cred), 0)
@@ -375,7 +375,7 @@ def attestation(ch, flags=AD_UP | AD_UV | AD_AT, cid=CRED_ID, alg=-7, typ="webau
 
 
 def open_pairing(host, clock, scope="operate"):
-    offer, fragment = host.pairing.offer(scope, clock.now, os.urandom, host.host_pub)
+    offer, fragment = host.offer(scope)
     meta = {"op": "pair", "pairing_id": offer.pairing_id.hex(), "pub": pub(NEW).hex(), "label": "My \u200bphone",
             "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, pub(NEW)).hex()}
     v = send(host, env(NEW, meta, seq=1))
@@ -396,8 +396,8 @@ def test_pairing_registration_and_approval(host, clock):
     done = send(host, env(NEW, attestation(registration_challenge_of(begin)), seq=3))
     assert done.result == "credential_finish" and done.fields == {"registered": True, "synced": False}
     with pytest.raises(ValueError):
-        host.pairing.approve(did(NEW), host.registry, clock.now, scope="type")  # only ever lowered
-    dev = host.pairing.approve(did(NEW), host.registry, clock.now, scope="look")
+        host.approve(did(NEW), scope="type")  # only ever lowered
+    dev = host.approve(did(NEW), scope="look")
     assert dev.scope == "look" and dev.credential.pub == pub(AUTH) and dev.credential.sign_count == 0
     assert host.registry.get(did(NEW)).label == "My phone"
     v = host.authorize(send(host, env(NEW, {"op": "pair_status"}, seq=1)))
@@ -420,13 +420,13 @@ def test_a_bad_registration_is_refused(host, clock, bad):
 
 def test_a_rejected_pairing_is_reported_and_writes_nothing(host, clock):
     open_pairing(host, clock)
-    host.pairing.reject(did(NEW), host.registry, clock.now)
+    host.reject(did(NEW))
     assert send(host, env(NEW, {"op": "pair_status"}, seq=2)).fields == {"state": "rejected"}
     assert did(NEW) not in host.registry.devices()
 
 
 def test_an_offer_expires_after_ten_minutes(host, clock):
-    offer, _ = host.pairing.offer("look", clock.now, os.urandom, host.host_pub)
+    offer, _ = host.offer("look")
     clock.now += 600_000
     meta = {"op": "pair", "pairing_id": offer.pairing_id.hex(), "pub": pub(NEW).hex(),
             "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, pub(NEW)).hex()}
@@ -536,8 +536,16 @@ def test_the_module_has_no_network_dashboard_or_global_state():
                 assert name.split(".")[0] in allowed, (path.name, name)  # no network, clock or random source
                 assert not name.startswith("orch.") or name.startswith("orch.remote.bridge_host"), (path.name, name)
             assert not isinstance(node, (ast.Global, ast.Nonlocal)), path.name
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
-                assert node.attr != "urandom", path.name  # randomness is injected
+        defaults = set()  # os.urandom only as the default of a parameter or a dataclass field: injected, CSPRNG by default
+        for node in ast.walk(tree):
+            if isinstance(node, ast.arguments):
+                defaults |= {id(d) for d in node.defaults + [d for d in node.kw_defaults if d is not None]}
+            if isinstance(node, ast.AnnAssign) and node.value is not None:
+                defaults.add(id(node.value))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os" \
+                    and node.attr == "urandom":
+                assert id(node) in defaults, (path.name, node.lineno)
 
 
 # -- one decision, one reading of the registry, checked again right before anything runs ---------------------------
@@ -647,3 +655,167 @@ def test_readers_never_see_a_half_updated_registry(tmp_path, clock):
     for t in threads:
         t.join(60)
     assert errors == [] and host.registry.snapshot()[0] == 62  # two additions, sixty changes
+
+
+# -- review follow-ups: the request store quota, locked pairing calls, defaults, lease order, surviving mutants ------
+
+from orch.remote.bridge_host import replay_store as RS  # noqa: E402
+
+
+def test_the_store_caps():
+    assert (RS.PER_DEVICE, RS.MAX_RECORDS, RS.BUSY_ALLOWANCE) == (1024, 16384, 64)
+
+
+def test_a_device_over_its_quota_is_refused_busy_and_another_device_is_not(tmp_path, clock):
+    host = make_host(tmp_path, clock, per_device=3)
+    for seq in (1, 2, 3):
+        assert send(host, env(KEY_A, http("/"), seq=seq)).result == "accept"
+    over = env(KEY_A, http("/"), seq=4)
+    v = send(host, over)
+    assert (v.result, v.code, v.fields) == ("refuse", "busy", {})
+    assert host.store.get(rid_of(over), NOW).outcome == {"refusal": "busy"}  # recorded before it is sent
+    assert host.store.seq_state(did(KEY_A)) == (3, 0b111)  # busy does not consume the seq
+    again = send(host, over)
+    assert (again.code, again.why) == ("busy", "replay")  # replayable: the stored refusal
+    assert send(host, env(KEY_B, http("/"), seq=1)).result == "accept"  # another device is unaffected
+    chunk = host.seal_refusal(v)  # signed and sealed like every refusal, no field but the code
+    got = V.device_check(chunk, {rid_of(over): {"next": 0, "stream": False}},
+                         {"id": rid_of(over), "idx": 0, "last": True, "stream": False}, NOW, 0)
+    assert got["refusal"] and got["meta"] == {"refusal": "busy"}
+
+
+def test_past_the_busy_allowance_a_device_is_dropped_and_others_still_run(tmp_path, clock, monkeypatch):
+    monkeypatch.setattr(RS, "BUSY_ALLOWANCE", 2)
+    host = make_host(tmp_path, clock, per_device=2)
+    codes = [send(host, env(KEY_A, http("/"), seq=s)) for s in range(1, 6)]
+    assert [c.code or c.result for c in codes] == ["accept", "accept", "busy", "busy", "drop"]
+    assert codes[-1].why == "busy_unrecordable"
+    assert send(host, env(KEY_B, http("/"), seq=1)).result == "accept"
+    clock.now += 900_000  # the records expire: the device's quota is free again
+    assert send(host, env(KEY_A, http("/"), seq=10, ts=clock.now)).result == "accept"
+
+
+def test_a_store_that_cannot_record_drops(tmp_path, clock):
+    host = make_host(tmp_path, clock, max_records=2)
+    send(host, env(KEY_A, http("/"), seq=1))
+    send(host, env(KEY_B, http("/"), seq=1))
+    v = send(host, env(KEY_A, http("/"), seq=2))
+    assert v.result == "drop" and "StoreFull" in v.why
+
+
+def test_pruning_reads_no_file_and_damaged_files_are_counted(tmp_path, clock, monkeypatch):
+    host = make_host(tmp_path, clock, per_device=5000)
+    for seq in range(1, 51):
+        send(host, env(KEY_A, http("/"), seq=seq))
+    (host.store.dir / ("ab" * 16 + ".json")).write_text("not a record", encoding="utf-8")
+    reopened = RS.ReplayStore(host.root)  # the one full read is when the store opens
+    assert reopened.damaged == {"ab" * 16} and reopened.count_for(did(KEY_A), NOW) == 50
+    reads = []
+    real = files.read
+    monkeypatch.setattr(files, "read", lambda *a, **k: reads.append(a) or real(*a, **k))
+    assert reopened.prune(NOW + 900_000) == 50 and reads == []  # expiry from the index, no file read
+    assert reopened.damaged == {"ab" * 16} and (reopened.dir / ("ab" * 16 + ".json")).exists()  # kept, counted
+    monkeypatch.setattr(files, "read", real)
+    assert make_host(tmp_path, clock).health()["damaged_records"] == ["ab" * 16]
+
+
+# A vector-style table of the quota rule (the shared vector file cannot change in this PR). The spec text implemented:
+# "The request store keeps at most 1024 unexpired records per device and 16384 in total. A device over its quota is
+# refused `busy` (recorded); other devices are unaffected. A host that cannot record drops."
+QUOTA_CASES = [
+    {"name": "under_quota_runs", "per_device": 2, "held_a": 1, "held_b": 0, "sender": "a", "expect": "accept"},
+    {"name": "at_quota_refused_busy", "per_device": 2, "held_a": 2, "held_b": 0, "sender": "a", "expect": "busy"},
+    {"name": "other_device_unaffected", "per_device": 2, "held_a": 2, "held_b": 0, "sender": "b", "expect": "accept"},
+    {"name": "total_full_drops", "per_device": 2, "max_records": 3, "held_a": 2, "held_b": 1, "sender": "b",
+     "expect": "drop"},
+]
+
+
+@pytest.mark.parametrize("case", QUOTA_CASES, ids=lambda c: c["name"])
+def test_quota_case(tmp_path, clock, case):
+    host = make_host(tmp_path, clock, per_device=case["per_device"], max_records=case.get("max_records"))
+    for key, n in ((KEY_A, case["held_a"]), (KEY_B, case["held_b"])):
+        for seq in range(1, n + 1):
+            assert send(host, env(key, http("/"), seq=seq)).result == "accept"
+    key = KEY_A if case["sender"] == "a" else KEY_B
+    v = send(host, env(key, http("/"), seq=100))
+    assert (v.code if v.result == "refuse" else v.result) == case["expect"]
+
+
+def test_offers_and_approvals_go_through_the_host_lock(host, monkeypatch):
+    entered = []
+
+    class Lock:
+        def __enter__(self):
+            entered.append(1)
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(host, "_lock", Lock())
+    host.offer("look")
+    with pytest.raises(LookupError):
+        host.approve("00" * 16)
+    with pytest.raises(LookupError):
+        host.reject("00" * 16)
+    assert len(entered) == 3
+
+
+def test_the_random_source_defaults_to_the_os_csprng(tmp_path, clock):
+    import inspect
+    assert make_host(tmp_path, clock).rand is os.urandom
+    assert inspect.signature(load_host_key).parameters["rand"].default is os.urandom
+    assert inspect.signature(signatures.generate).parameters["rand"].default is os.urandom
+
+
+def test_a_lease_whose_r1_fails_its_recheck_opens_no_lease(tmp_path, clock):
+    host = make_host(tmp_path, clock, cred=credential())
+    opening = env(KEY_A, http("/terminal/stream"), seq=1, flags=E.F_STREAM)
+    host.authorize(send(host, opening))
+    k1 = env(KEY_A, http("/terminal/input"), b"ls\n", seq=2, stream=bytes.fromhex(rid_of(opening)))
+    refusal = host.authorize(send(host, k1))
+    assert refusal.code == "lease_required"
+    host.route = lambda meta, data: None  # R1's route is no longer remote when it is checked again
+    v = host.authorize(send(host, env(KEY_A, assertion_for(refusal, rid_of(k1)), seq=3)))
+    assert v.code == "forbidden_scope" and did(KEY_A) not in host.leases
+
+
+def test_an_assertion_for_one_request_never_runs_another_parked_one(fhost):
+    r1 = env(KEY_A, http("/factory/start"), seq=1)
+    r1b = env(KEY_A, http("/factory/start"), seq=2)
+    refusal1 = fhost.authorize(send(fhost, r1))
+    fhost.authorize(send(fhost, r1b))
+    a = assertion_for(refusal1, rid_of(r1))
+    a["for"] = rid_of(r1b)  # the challenge commits to R1; the request names R1b
+    v = fhost.authorize(send(fhost, env(KEY_A, a, seq=3)))
+    assert v.code == "assertion_failed" and v.why == "other_request"
+    assert send(fhost, r1b).code == "assertion_required"  # R1b never ran
+
+
+@pytest.mark.parametrize("bad", ["r_zero", "r_n", "s_n", "r_huge"])
+def test_out_of_range_scalars_are_refused_before_the_library_is_asked(monkeypatch, bad):
+    n = signatures.P256_N.to_bytes(32, "big")
+    good = signatures.sign(KEY_A, b"m")
+    sig = {"r_zero": bytes(32) + good[32:], "r_n": n + good[32:], "s_n": good[:32] + n,
+           "r_huge": b"\xff" * 32 + good[32:]}[bad]
+
+    def reached(_pub):
+        raise AssertionError("the library was asked")
+    monkeypatch.setattr(signatures, "load_public", reached)
+    assert signatures.verify(pub(KEY_A), sig, b"m") is False
+
+
+def test_a_record_with_a_second_hard_link_is_damaged(tmp_path):
+    f = tmp_path / "r.json"
+    f.write_text("{}", encoding="utf-8")
+    os.link(f, tmp_path / "other")
+    with pytest.raises(files.Damaged):
+        files.read(f, 1024)
+
+
+def test_a_resend_with_another_key_under_the_pending_device_id_is_pairing_closed(host, clock):
+    offer = open_pairing(host, clock)  # NEW holds the used offer's pending pairing
+    other = pub(AUTH)
+    meta = {"op": "pair", "pairing_id": offer.pairing_id.hex(), "pub": other.hex(),
+            "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, other).hex()}
+    v = send(host, env(AUTH, meta, seq=2, device=did(NEW)))  # the pending device's id, another key
+    assert (v.result, v.code) == ("refuse", "pairing_closed")  # not a resend: the offer is used

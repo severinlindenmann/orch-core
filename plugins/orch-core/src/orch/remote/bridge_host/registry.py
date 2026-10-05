@@ -187,7 +187,10 @@ class Registry:
 
 def revoke_everywhere(config_dir: Path, pub: bytes, now_ms: int) -> tuple[list[tuple[str, str]], list[str]]:
     """Revoke the device with public key `pub` in every workspace registry on this computer (D7: matched by key,
-    since device ids differ per workspace). Returns the (workspace hex, device id) of each revocation and the
+    since device ids differ per workspace). This changes the other workspaces' registry files only: a host process
+    serving another workspace keeps that device's open streams, lease and parked requests until it checks again (its
+    next check, authorize or still_authorized call reads the revocation). Returns the (workspace hex, device id) of
+    each revocation and the
     workspaces whose registry could not be read (the caller must show those: a damaged registry answers nothing, but
     the owner should know)."""
     base = Path(config_dir) / "permits" / "bridge"

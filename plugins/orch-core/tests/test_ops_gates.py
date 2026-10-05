@@ -224,21 +224,23 @@ def test_addon_context_show_is_read_only(ws, aops):
     assert len(read_events(ws)) == before
 
 
-def test_yaml_alias_bomb_is_fast_and_recursive_alias_is_clean():
+def test_question_files_refuse_anchors_aliases_and_huge_files_fast():
     import time
-    lines = ["questions:", "  - text: x", "    options: &l0 [a, b]"]
-    bomb = ["x: &a0 [z, z, z, z, z, z, z, z, z, z]"] + [f"x{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]" for i in range(1, 30)]
+    bomb = ["questions:", "  - text: x", "    options: [a, b]", "    meta:", "      x0: &a0 [z, z, z, z, z, z, z, z, z, z]"]
+    bomb += [f"      x{i}: &a{i} [" + ", ".join([f"*a{i - 1}"] * 10) + "]" for i in range(1, 30)]
+    many = ["questions:", "  - text: base", "    options: &o [" + ", ".join(f"o{i}" for i in range(500)) + "]"]
+    many += [f"  - text: q{i}\n    options: *o" for i in range(300)]
+    docs = ["\n".join(bomb), "questions: &a [*a]", "questions:\n  - text: x\n    options: &a [*a, *a]", "\n".join(many),
+            "questions:\n  - &m {key: A, label: x}\n  - *m"]
+    for doc in docs:
+        t = time.time()
+        with pytest.raises(ValidationError, match="anchors and aliases"):
+            parse_ask_file(doc)
+        assert time.time() - t < 1
     t = time.time()
-    try:
-        qs = parse_ask_file("\n".join(lines + ["    meta:"] + ["      " + b for b in bomb]))
-        assert qs[0]["options"]
-    except ValidationError:
-        pass
+    with pytest.raises(ValidationError, match="larger than"):
+        parse_ask_file("questions:\n  - text: " + "x" * 300_000)
     assert time.time() - t < 1
-    for doc in ("questions: &a [*a]", "questions:\n  - text: x\n    options: &a [*a, *a]"):
-        try:
-            build_questions(parse_ask_file(doc), [], "t")
-        except ValidationError:
-            pass  # rejected cleanly, never a RecursionError or a hang
     q, = build_questions(parse_ask_file("questions:\n  - text: x\n    options: [{key: A, label: No}, {key: B, label: Yes}]"), [], "t")
     assert [o["label"] for o in q["options"]] == ["No", "Yes"]
+    assert parse_ask_file("questions:\n  - text: 'a & b * c'\n    options: [a, b]")  # & and * in text are not anchors

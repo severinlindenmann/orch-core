@@ -68,8 +68,25 @@ def _keep_option_text(root) -> None:
                     todo.append(v)
 
 
+MAX_ASK_BYTES = 256 * 1024
+
+
+def _refuse_aliases(text: str) -> None:
+    """Question files never need anchors or aliases, and an alias bomb that survives parsing explodes when the data is
+    serialised later: refuse them on the event stream (linear in the text) before anything is composed."""
+    try:
+        for ev in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(ev, yaml.AliasEvent) or getattr(ev, "anchor", None) is not None:
+                raise ValidationError("invalid question file: anchors and aliases are not allowed in question files")
+    except yaml.YAMLError:
+        pass  # a syntax error is reported by the real load below
+
+
 def _load_ask_yaml(text: str):
     from orch.core import model  # the same loader as every other orch YAML file (C loader when available)
+    if len(text.encode("utf-8", "replace")) > MAX_ASK_BYTES:
+        raise ValidationError(f"invalid question file: larger than {MAX_ASK_BYTES // 1024} KB")
+    _refuse_aliases(text)
     for cls in (model._Loader, model._PyLoader):
         loader = cls(text)
         try:

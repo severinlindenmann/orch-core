@@ -47,8 +47,8 @@ def test_menu_today_and_ticket(mc):
     _, client, _ = mc
     html = client.get("/").text
     assert 'href="/addons/github-reviews/"' in html and "Checks failing" in html
-    assert "Review requested on acme-energy-data #90" in html
-    assert "acme-energy-data #23" in client.get("/t/DEMO-0009").text
+    assert "Review requested on Harness (acme-energy-data) #90" in html
+    assert "Harness (acme-energy-data) #23" in client.get("/t/DEMO-0009").text
 
 
 def test_failing_pr_starts_the_agent_in_fix_checks(mc):
@@ -106,6 +106,6 @@ def test_repo_card_labels_are_not_visible_text_and_nothing_overflows_with_author
     """GR-07: "acme: repository" is a screen-reader name, not a visible line; GR-01: no Author column."""
     _, client, _ = mc
     html = client.get("/addons/github-reviews/?state=all").text
-    assert 'aria-label="acme-energy-data: repository"' in html
-    assert 'filter-label" aria-hidden="true">acme-energy-data: repository' not in html
+    assert 'aria-label="Harness (acme-energy-data): repository"' in html
+    assert 'filter-label" aria-hidden="true">Harness (acme-energy-data): repository' not in html
     assert ">Author<" not in html

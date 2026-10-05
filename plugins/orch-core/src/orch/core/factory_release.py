@@ -826,7 +826,7 @@ def _git_flags(rec: dict) -> list[str]:
     """What every executor git call carries: no hooks, no fsmonitor, plain ssh, no credential helper unless the
     recipe's (human-owned) git_config names one, and no replace objects."""
     flags = ["--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-             "-c", "core.sshCommand=ssh", "-c", "credential.helper="]
+             "-c", "core.attributesFile=/dev/null", "-c", "core.sshCommand=ssh", "-c", "credential.helper="]
     for k in GIT_CONFIG_KEYS:
         v = (rec.get("git_config") or {}).get(k)
         if v is not None:
@@ -834,13 +834,42 @@ def _git_flags(rec: dict) -> list[str]:
     return flags
 
 
-def _git_env(git: str) -> dict:
-    env = _env(git)
-    env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_TERMINAL_PROMPT="0")
-    for k in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"):  # the human's own choice for global config, if any
-        if os.environ.get(k) and "\n" not in os.environ[k]:
-            env[k] = os.environ[k]
+def _isolation(ws) -> tuple[dict, Path]:
+    """No user or system git config at all: the user's global files (~/.gitconfig, ~/.config/git/*) are writable by
+    the agents' processes (same user), and `-c` cannot undo what they add (url.*.insteadOf, filters, attributes).
+    ({GIT_CONFIG_GLOBAL: an empty file the runner writes now, GIT_CONFIG_NOSYSTEM, GIT_ATTR_NOSYSTEM}, an empty home
+    folder the runner owns), both beside the release repository."""
+    import shutil
+    d = repo_dir(ws).parent
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home = d / "git-home"
+    if os.path.islink(home) or (os.path.lexists(home) and (not home.is_dir() or any(os.scandir(home)))):
+        if home.is_dir() and not os.path.islink(home):
+            shutil.rmtree(home)
+        else:
+            home.unlink()
+    home.mkdir(mode=0o700, exist_ok=True)
+    empty = d / "git-global"
+    _atomic(empty, "")
+    return {"GIT_CONFIG_GLOBAL": str(empty), "GIT_CONFIG_NOSYSTEM": "1", "GIT_ATTR_NOSYSTEM": "1"}, home
+
+
+def _git_env(ws, git: str) -> dict:
+    """The executor's git environment: the allowlist without XDG_CONFIG_HOME, HOME set to the runner's empty home,
+    no user or system config (_isolation), no replace objects, no prompt. Never the human's own git config."""
+    iso, home = _isolation(ws)
+    env = {k: v for k, v in _env(git).items() if k != "XDG_CONFIG_HOME"}
+    env.update(iso, HOME=str(home), GIT_NO_REPLACE_OBJECTS="1", GIT_TERMINAL_PROMPT="0")
     return env
+
+
+def command_env(ws, *programs: str) -> dict:
+    """The recipe commands' environment: the allowlist (HOME and XDG_CONFIG_HOME kept, so gh finds its own config)
+    and no user or system git config for any git they run (attributes file off too, through git's own environment
+    config: GIT_CONFIG_COUNT/KEY/VALUE are set by the runner, never forwarded)."""
+    iso, _ = _isolation(ws)
+    return {**_env(*programs), **iso, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.attributesFile",
+            "GIT_CONFIG_VALUE_0": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
 
 
 def _git(ws, rec: dict, *args: str, timeout: int = 600, limit: int = TAIL) -> dict:
@@ -850,7 +879,7 @@ def _git(ws, rec: dict, *args: str, timeout: int = 600, limit: int = TAIL) -> di
     if git is None:
         raise ReleaseError("git was not found at a trusted path")
     repo = repo_dir(ws)
-    return run_command([git, *_git_flags(rec), "-C", str(repo), *args], str(repo), _git_env(git), timeout,
+    return run_command([git, *_git_flags(rec), "-C", str(repo), *args], str(repo), _git_env(ws, git), timeout,
                        limit=limit)
 
 
@@ -866,7 +895,7 @@ def ensure_repo(ws, rec: dict) -> Path:
                 raise ReleaseError("git was not found at a trusted path")
             repo.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             r = run_command([git, "-c", "core.hooksPath=/dev/null", "init", "-q", "--template=", str(repo)],
-                            str(repo.parent), _git_env(git), 60)
+                            str(repo.parent), _git_env(ws, git), 60)
             if r["code"] != 0:
                 raise ReleaseError("the runner's repository could not be created")
         _atomic(repo / ".git" / "config", REPO_CONFIG)
@@ -1201,7 +1230,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     intent = {"stage": name, "unit": unit, "attempt": n, "argv_sha": digest, "started": _now(), **extra}
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
-    env = _env(*progs.values())
+    env = command_env(ws, *progs.values())
     cwd = str(repo_dir(ws))
     codes, tail, why, check_code, proven = [], "", "", None, False
     for kind, argv, expect in steps:

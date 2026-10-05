@@ -232,7 +232,7 @@ def test_the_18_example_shows_a_receipt_and_who_added_it():
     import jsonschema
     from orch.core.schema import SCHEMA_VERSION, example_document, ticket_schema
     doc = example_document()
-    assert SCHEMA_VERSION == "1.8.0" and doc["schema_version"] == "1.8.0"
+    assert SCHEMA_VERSION == "1.9.0" and doc["schema_version"] == "1.9.0"
     [item] = [i for i in doc["artifact_items"] if i["kind"] == "receipt"]
     assert item["by"] == "agent:claude-code:7f3c9a21" and item["run"]["exit"] == 1
     assert [s["status"] for s in item["run"]["steps"]] == ["pass", "fail"]

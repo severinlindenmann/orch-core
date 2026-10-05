@@ -9,6 +9,8 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 
 from orch.core import store
 from orch.core.ops import Ops
+from orch.core.constants import SUCCEEDED
+from orch.dashboard.data.metrics import RESOLUTION_LABELS
 from orch.dashboard.routes_ticket import load_or_error
 from orch.dashboard.reach import request_actor
 from orch.dashboard.views import back, confirm_page, error_text, page, safe_next
@@ -176,6 +178,20 @@ def move(request: Request, ref: str, to: Annotated[str, Form()], next_url: Next 
     except OrchError as e:
         return back(url, err=error_text(e))
     return back(url, msg="; ".join([f"moved to {to}", *ops.warnings]))
+
+
+@router.post("/t/{ref}/close")
+def close(request: Request, ref: str, as_: Annotated[str, Form(alias="as")] = "wont-do",
+          by: Annotated[str, Form()] = "", message: Annotated[str, Form()] = "", next_url: Next = ""):
+    """Close from any status, saying why (Ops.close: human only, a reason, --by for superseded and duplicate)."""
+    by = by.strip() if as_ in SUCCEEDED else ""  # the field is hidden for the other choices but still posted
+    return _run(request, ref, lambda: _ops(request).close(ref, message, as_, by or None),
+                f"closed as {RESOLUTION_LABELS.get(as_, as_).lower()}", next_url)
+
+
+@router.post("/t/{ref}/reopen")
+def reopen(request: Request, ref: str, message: Annotated[str, Form()] = "", next_url: Next = ""):
+    return _run(request, ref, lambda: _ops(request).reopen(ref, message), "reopened", next_url)
 
 
 @router.post("/t/{ref}/release")

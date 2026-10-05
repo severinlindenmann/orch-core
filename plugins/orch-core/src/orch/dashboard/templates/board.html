@@ -118,7 +118,7 @@
       <tr>
         <td class="no-prefix" data-label="Key"><a class="lnk key" href="/t/{{ c.id }}">{{ c.id }}</a></td>
         <td class="wrap">{{ c.title }}{% if c.hot %} <span class="tc-hot">{{ ui.icon("warn") }} {{ c.priority }}</span>{% endif %}</td>
-        <td class="no-prefix" data-label="Move">{{ tc.move_chip(c.move) }}</td>
+        <td class="no-prefix" data-label="Move">{{ tc.state_chip(c) }}</td>
         <td data-label="Progress">{{ tc.strip(c) }}</td>
         <td data-label="PR">{{ tc.code_token(c.code) }}</td>
         <td data-label="Size">{{ c.size }}</td>

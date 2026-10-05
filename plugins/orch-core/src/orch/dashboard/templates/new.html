@@ -4,51 +4,66 @@
 <div class="page-head">
   <div>
     <h1>New ticket</h1>
-    <p>Describe the ask. It lands in backlog; an agent refines it into requirements{% if prefix %} ("refine {{ prefix }}-00xx" with the key it gets){% endif %}, and you approve them.</p>
+    <p>Describe what you want. It goes to backlog, an agent turns it into requirements, and you approve them.</p>
   </div>
 </div>
 {% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
 <div class="grid-2">
-  <form class="card form-card" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
+  {#- What you write comes first (title, then the ask and its screenshots), then the triage details, always shown:
+      a human who files a ticket here is usually triaging it (agents file most tickets themselves). -#}
+  <form class="card form-card new-ticket" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
     <label class="field-col" for="title">Title
-      <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup job for the config tables">
+      <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup of the config tables">
     </label>
-    <fieldset class="seg">
-      <legend>Type</legend>
-      <div class="seg-options">
-        {% for t in types %}
-        <input class="sr-only" type="radio" id="type-{{ t }}" name="type" value="{{ t }}" {{ 'checked' if t == values.get('type') }}>
-        <label for="type-{{ t }}">{{ t }}</label>
-        {% endfor %}
-      </div>
-    </fieldset>
-    <div class="form-row">
-      <label class="field-col" for="priority">Priority
-        <select id="priority" name="priority">{% for p in priorities %}<option value="{{ p }}" {{ 'selected' if p == values.get('priority') }}>{{ p }}</option>{% endfor %}</select>
-      </label>
-      <label class="field-col" for="size">Size
-        <select id="size" name="size">{% for s in sizes %}<option value="{{ s }}" {{ 'selected' if s == values.get('size') }}>{{ s }}</option>{% endfor %}</select>
-      </label>
-      <label class="field-col" for="external">External key
-        <input id="external" name="external" value="{{ values.get('external', '') }}" placeholder="ABC-123">
-      </label>
+    <div class="field-col">
+      <label for="ask">What should be done, and why?</label>
+      <textarea id="ask" name="ask" rows="7" aria-describedby="ask-hint" placeholder="Links, examples, constraints.">{{ values.get('ask', '') }}</textarea>
+      <p id="ask-hint" class="field-hint">Markdown works. Paste a screenshot straight into this box to attach it.</p>
     </div>
-    <label class="field-col" for="ask">Ask <span class="muted">(markdown; paste screenshots here)</span>
-      <textarea id="ask" name="ask" rows="6" placeholder="What should be done and why? Links, examples, constraints.">{{ values.get('ask', '') }}</textarea>
-    </label>
-    <label class="field-col" for="files">Screenshots and files
+    <div class="field-col">
+      <label for="files">Attachments <span class="muted">(optional)</span></label>
       <input id="files" type="file" name="files" multiple>
-    </label>
-    {% set opts = ticket_options() %}
-    {% if opts %}<fieldset class="ticket-options"><legend>From your addons</legend>{{ ui.option_fields(opts) }}</fieldset>{% endif %}
-    <p id="paste-count" class="muted"></p>
-    <div><button type="submit" class="btn btn-primary">Create ticket</button></div>
+      <p id="paste-count" class="field-hint" aria-live="polite"></p>
+    </div>
+    <section class="new-details" aria-labelledby="new-details-h">
+      <h2 class="new-details-h" id="new-details-h">Details</h2>
+      <div class="new-details-body">
+        <fieldset class="seg">
+          <legend>Type</legend>
+          <div class="seg-options">
+            {% for t in types %}
+            <input class="sr-only" type="radio" id="type-{{ t }}" name="type" value="{{ t }}" {{ 'checked' if t == values.get('type') }}>
+            <label for="type-{{ t }}">{{ t|capitalize }}</label>
+            {% endfor %}
+          </div>
+          {% if "epic" in types %}<p class="field-hint">An epic groups other tickets; the work happens on its children.</p>{% endif %}
+        </fieldset>
+        <div class="form-row">
+          <label class="field-col" for="priority">Priority
+            <select id="priority" name="priority">{% for p in priorities %}<option value="{{ p }}" {{ 'selected' if p == values.get('priority') }}>{{ p|capitalize }}</option>{% endfor %}</select>
+          </label>
+          <label class="field-col" for="size">Size
+            <select id="size" name="size">{% for s in sizes %}<option value="{{ s }}" {{ 'selected' if s == values.get('size') }}>{{ s|upper }}</option>{% endfor %}</select>
+          </label>
+          <label class="field-col" for="external"><span>External key <span class="muted">(optional)</span></span>
+            <input id="external" name="external" value="{{ values.get('external', '') }}" placeholder="ABC-123">
+          </label>
+        </div>
+        <p class="field-hint">Type and size are part of what you approve with the requirements, so the agent may suggest others while it refines the ticket.</p>
+        {% set opts = ticket_options() %}
+        {% if opts %}<fieldset class="ticket-options"><legend>From your addons</legend>{{ ui.option_fields(opts) }}</fieldset>{% endif %}
+      </div>
+    </section>
+    <div class="new-submit">
+      <button type="submit" class="btn btn-primary">Create ticket</button>
+      <span class="muted">It goes to backlog.</span>
+    </div>
   </form>
   <aside>
     <section class="card">
       <h2>What happens next</h2>
       <ol class="next-steps">
-        <li>An agent turns the ask into requirements and asks you what is unclear.</li>
+        <li>An agent turns the ask into requirements and asks you what is unclear{% if prefix %} (tell it "refine {{ prefix }}-00xx" with the key the ticket gets){% endif %}.</li>
         <li>You approve the requirements, then the plan.</li>
         <li>The agent does the work and links branch and {{ review_term }}.</li>
         <li>You give the verdict. Only then is the ticket done.</li>

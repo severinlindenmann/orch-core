@@ -7,6 +7,7 @@
 {#- An epic's name without its own "Epic: " lead-in, where the card already says it is an epic (CORE-06). -#}
 {% macro epic_name(e) %}{% set t = e.title or e.id %}{{ t[6:] if t.startswith("Epic: ") and t|length > 6 else t }}{% endmacro %}
 {% macro move_chip(m) %}{{ ui.status(m.role, m.label) }}{% endmacro %}
+{% macro state_chip(c) %}{% if c.resolution %}<span class="chip chip-neu tc-resolution">{{ c.resolution_label }}{% if c.superseded_by %} {{ c.superseded_by }}{% endif %}</span>{% else %}{{ move_chip(c.move) }}{% endif %}{% endmacro %}
 
 {#- R✓ P● · T 1/4 · AC 0/3: gate glyphs in their role colour (the needs-you one stays neutral), counts in meta.
     An epic rolls its children up instead: R✓ · children 2/5 · ● 1 · AC 3/7. -#}
@@ -54,7 +55,7 @@
   <span class="tc-icon tc-{{ c.move.role }}">{{ ui.icon(c.move.role) }}</span>
   <a class="key lnk" href="/t/{{ c.id }}">{{ c.id }}</a>
   <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ epic_name(c.epic) }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
-  <span class="tc-move">{{ move_chip(c.move) }}</span>
+  <span class="tc-move">{{ state_chip(c) }}</span>
   <span class="tc-progress">{{ strip(c) }}{% if c.code %} {{ code_token(c.code) }}{% endif %}</span>
 </div>
 {%- endmacro %}
@@ -72,6 +73,7 @@
     {%- elif c.rollup %}<span class="tc-meta">EPIC</span>{% elif c.size or c.external %}<span class="tc-meta">{{ c.size|upper }}{% if c.size and c.external %} · {% endif %}{% if c.external %}{{ c.external.key }}{% endif %}</span>{% endif %}
     {%- if c.agent %}<span class="tc-av tc-av-{{ c.agent.status }}" title="{{ c.agent.harness }}" aria-hidden="true">{{ c.agent.harness|initials }}</span>{% endif %}</span>
   <span class="title">{{ c.title }}</span>
+  {%- if c.resolution %}<span class="tc-chips"><span class="chip chip-neu tc-resolution">{{ c.resolution_label }}{% if c.superseded_by %} {{ c.superseded_by }}{% endif %}</span></span>{% endif %}
   {%- if c.agent_idea %}<span class="tc-idea muted">agent idea</span>{% endif %}
   {%- if m.who == "you" or m.role in ("warn", "err") or c.hot %}
   <span class="tc-chips" title="{{ m.label }}">{% if m.who == "you" or m.role in ("warn", "err") %}<span class="chip chip-{{ m.role }}"><svg class="i" aria-hidden="true"><use href="#i-{{ m.role }}"/></svg> {{ m.label }}</span>{% endif %}{% if c.hot %} <span class="tc-hot"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg> {{ c.priority }}</span>{% endif %}</span>
@@ -142,7 +144,7 @@
     {%- if created_day %} · created {{ created_day }}{% endif %}
     {%- if c.parent %} · part of <a class="lnk" href="/t/{{ c.parent }}">{{ c.parent }}</a>{% endif %}</p>
   <h1>{{ c.title }}</h1>
-  <p class="tc-chips">{% if chip %}{{ ui.status(chip.role, chip.label) }}{% else %}{{ move_chip(c.move) }}{% endif %} <span class="muted tc-status">{{ c.status_label }}</span></p>
+  <p class="tc-chips">{% if chip %}{{ ui.status(chip.role, chip.label) }}{% else %}{{ state_chip(c) }}{% endif %} <span class="muted tc-status">{% if c.superseded_by %}<a class="lnk" href="/t/{{ c.superseded_by }}">go to {{ c.superseded_by }}</a>{% elif not c.resolution %}{{ c.status_label }}{% endif %}</span></p>
   {% if summary %}
   <div class="tc-summary"><p class="tc-summary-label muted">Agent's summary</p>{{ summary|md|safe }}</div>
   {% endif %}

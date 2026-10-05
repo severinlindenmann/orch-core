@@ -9,7 +9,7 @@ from typing import Callable
 
 from orch.clock import now, parse_stamp, stamp
 from orch.core import evidence, store, trackers
-from orch.core.constants import PRIORITIES, SECTIONS, SIZES, STATUSES, TYPES
+from orch.core.constants import PRIORITIES, RESOLUTIONS, SECTIONS, SIZES, STATUSES, SUCCEEDED, TYPES
 from orch.core.events import Actor, Event, append_event, log_line
 from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, clear_gate, gate_hash, gate_state, human_questions_in,
                              record_approval)
@@ -553,22 +553,39 @@ class Ops(TaskOpsMixin):
                        f"or `--branch <name>` so the human finds it")
         return out
 
-    def close(self, ref: str, reason: str) -> Ticket:
-        """Human only: any status but done → done, e.g. when the external issue was closed (spec v2 §13.2)."""
+    def close(self, ref: str, reason: str, resolution: str = "completed", by: str | None = None) -> Ticket:
+        """Human only: any status but done → done, e.g. when the external issue was closed (spec v2 §13.2).
+        `resolution` says why (RESOLUTIONS); superseded and duplicate name the replacing ticket in `by`."""
         require_human(self.actor, "closing a ticket")
         reason = " ".join((reason or "").split())
         if not reason:
             raise UsageError("closing a ticket needs a reason")
+        _choice("resolution", resolution, RESOLUTIONS)
+        if resolution in SUCCEEDED and not by:
+            raise UsageError(f"closing as {resolution} needs the ticket that replaces it", hint="--by <ID>")
+        if by and resolution not in SUCCEEDED:
+            raise UsageError(f"--by is only for {' or '.join(SUCCEEDED)}")
+        succ = store.resolve(self.ws, by).id if by else None
 
         def fn(t: Ticket) -> dict:
             _refuse_hidden("ticket title", t.title)
+            if succ == t.id:
+                raise UsageError(f"{t.id} cannot replace itself")
             check_move(t, "done", self.actor, plan_skip_sizes=self._skip_sizes, command="close")
             skipped = _skip_open_tasks(t, reason)
             t.meta["status"] = "done"
             t.meta["claim"] = dict(_EMPTY_CLAIM)
-            self._ledger(t, "close", reason=reason)
-            self._log(t, f"closed: {reason}" + (f" (skipped {', '.join(skipped)})" if skipped else ""))
-            return {"reason": reason, "command": "close", **({"tasks_skipped": skipped} if skipped else {})}
+            t.meta["resolution"] = resolution
+            t.meta.pop("superseded_by", None)
+            why = {}
+            if resolution != "completed":
+                why = {"resolution": resolution, **({"superseded_by": succ} if succ else {})}
+                if succ:
+                    t.meta["superseded_by"] = succ
+            self._ledger(t, "close", reason=reason, **why)
+            how = "" if resolution == "completed" else f" as {resolution}" + (f" by {succ}" if succ else "")
+            self._log(t, f"closed{how}: {reason}" + (f" (skipped {', '.join(skipped)})" if skipped else ""))
+            return {"reason": reason, "command": "close", **why, **({"tasks_skipped": skipped} if skipped else {})}
 
         return self._mutate(ref, "ticket.moved", fn)
 
@@ -584,6 +601,8 @@ class Ops(TaskOpsMixin):
             check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="reopen")
             t.meta["status"] = to
             t.meta.setdefault("gates", {}).pop("verify", None)
+            t.meta.pop("resolution", None)
+            t.meta.pop("superseded_by", None)
             self._ledger(t, "reopen", reason=reason)
             if to == "backlog":
                 clear_gate(t, "requirements")
@@ -1360,6 +1379,8 @@ class Ops(TaskOpsMixin):
                          verdict_hash=seen)
             if to == "done":
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
+                t.meta["resolution"] = "completed"
+                t.meta.pop("superseded_by", None)
             self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))
             return {"verdict": verdict, "message": message}
 

@@ -36,6 +36,8 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `sprint` | A sprint id from the workspace config, or null (1.2; planning only). |
 | `blocked_by` | Ticket IDs this ticket waits for. |
 | `follow_ups` | Follow-up ticket IDs. |
+| `resolution` | 1.9: why a done ticket is done: `completed`, `wont-do`, `superseded` or `duplicate` (`orch close --as`; a done verdict is `completed`); null while the ticket is not done. A done ticket without one in its file (closed before 1.9) reads as `completed`. Only `orch close`, a verdict and `orch reopen` change it. |
+| `superseded_by` | 1.9: for `superseded` and `duplicate`, the ticket that replaces it, else null. A ticket blocked by it waits for that replacement. |
 | `external` | External tracker keys: `{key, url}`. |
 | `repos` | Repositories the ticket touches. |
 | `branches` | Branches per repository. |

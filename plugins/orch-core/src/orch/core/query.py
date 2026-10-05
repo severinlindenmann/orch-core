@@ -6,7 +6,7 @@ from pathlib import Path
 
 from orch.clock import now as clock_now, parse_stamp
 from orch.core import store
-from orch.core.constants import PRIORITY_RANK, STATUSES
+from orch.core.constants import PRIORITY_RANK, STATUSES, SUCCEEDED
 from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state
 from orch.core.ids import normalize_ref
 from orch.errors import UsageError
@@ -164,6 +164,11 @@ def counts(items: list[dict]) -> dict:
     return {**out, "total": len(items)}
 
 
+def resolution(meta: dict | None, status: str) -> str | None:
+    """Why a done ticket is done; null while it is not. A done ticket without one (closed before resolutions) is completed."""
+    return (str((meta or {}).get("resolution") or "") or "completed") if status == "done" else None
+
+
 def open_blockers(ws, ticket, entries: list | None = None) -> list[str]:
     """`blocked_by` entries that are not done yet; unknown references count as blocking.
     `entries` (a `store.scan`) may be shared with the caller; it is scanned here when not given."""
@@ -178,6 +183,14 @@ def open_blockers(ws, ticket, entries: list | None = None) -> list[str]:
         except UsageError:  # includes NotFoundError
             out.append(str(ref))
             continue
+        seen = set()  # a superseded or duplicate blocker hands the block on to the ticket that replaced it
+        while (entry.status == "done" and (entry.meta or {}).get("resolution") in SUCCEEDED
+               and entry.id not in seen):
+            seen.add(entry.id)
+            try:
+                entry = store.resolve(ws, str(entry.meta.get("superseded_by")), entries)
+            except UsageError:
+                break
         if entry.status != "done":
             out.append(entry.id)
     return out

@@ -108,7 +108,9 @@ def describe(event) -> str:
     if kind == "ticket.moved":
         if data.get("command") in ("close", "reopen"):
             verb = "closed" if data["command"] == "close" else "reopened"
-            return f"{verb} the ticket ({data.get('from', '?')} → {data.get('to', '?')}): {data.get('reason', '')}"
+            how = (f" as {data['resolution']}" + (f" by {data['superseded_by']}" if data.get("superseded_by") else "")
+                   if data.get("resolution") else "")
+            return f"{verb} the ticket{how} ({data.get('from', '?')} → {data.get('to', '?')}): {data.get('reason', '')}"
         return f"moved {data.get('from', '?')} → {data.get('to', '?')}"
     if kind == "gate.approved":
         return f"approved the {data.get('gate', 'gate')}"

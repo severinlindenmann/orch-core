@@ -33,9 +33,20 @@ from orch.core import tasks as tk
 from orch.core.gates import changes_pending, gate_state
 from orch.core.lifecycle import unanswered_blocking
 from orch.dashboard.data import tasks as tasks_data
-from orch.dashboard.data.metrics import STATUS_LABELS
+from orch.dashboard.data.metrics import RESOLUTION_LABELS, STATUS_LABELS
 from orch.dashboard.data.steps import _span, need_gate, when, why_waiting
 from orch.errors import TicketParseError
+
+
+def _resolution(meta: dict, status: str) -> dict:
+    """A done ticket that was not built (won't do, superseded, duplicate): its label and the ticket that replaced it.
+    Completed and not-done tickets carry None, so nothing extra is drawn for them."""
+    r = query.resolution(meta, status)
+    if r in (None, "completed"):
+        return {"resolution": None, "resolution_label": "", "superseded_by": None}
+    succ = meta.get("superseded_by") if r in ("superseded", "duplicate") else None
+    return {"resolution": r, "resolution_label": RESOLUTION_LABELS.get(r, r),
+            "superseded_by": str(succ) if isinstance(succ, (str, int)) and str(succ) else None}
 
 ICONS = {"ok": "✓", "info": "◐", "you": "●", "warn": "▲", "err": "✕", "neu": "○"}
 GATE_GLYPH = {"approved": ("✓", "ok", "approved"), "you": ("●", "neu", "waits for you"),
@@ -358,7 +369,8 @@ class Cards:
 
     def broken(self, tid: str, status: str, error: str) -> dict:
         return _card({"id": tid, "title": f"⚠ {error}" if error else "⚠ cannot be read", "status": status,
-                "status_label": STATUS_LABELS.get(status, status), "size": "", "priority": "", "hot": False,
+                "status_label": STATUS_LABELS.get(status, status), "resolution": None, "resolution_label": "",
+                "superseded_by": None, "size": "", "priority": "", "hot": False,
                 "type": "", "external": None, "externals": [], "parent": None, "epic": None, "rollup": None,
                 "labels": [], "repos": [],
                 "updated": "", "updated_at": None,
@@ -445,6 +457,7 @@ class Cards:
         proven, total = evidence.progress(t)
         static = {
             "id": t.id, "title": t.title, "status": status, "status_label": STATUS_LABELS.get(status, status),
+            **_resolution(meta, status),
             "size": str(meta.get("size") or ""), "priority": str(meta.get("priority") or ""),
             "hot": meta.get("priority") in ("high", "urgent"), "type": str(meta.get("type") or ""),
             "external": _first_external(meta),

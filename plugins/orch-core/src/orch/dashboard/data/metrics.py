@@ -467,3 +467,7 @@ def report_markdown(r: dict, o: dict | None = None) -> str:
                      f"{f'{md:.1f} d' if md is not None else '–'} median, "
                      f"{t['sent_back']} sent back, {t['questions']} questions")
     return "\n".join(lines) + "\n"
+
+
+# How a done ticket was closed (orch.core.constants.RESOLUTIONS), as the dashboard says it.
+RESOLUTION_LABELS = {"completed": "Done", "wont-do": "Won't do", "superseded": "Superseded by", "duplicate": "Duplicate of"}

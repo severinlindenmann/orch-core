@@ -21,6 +21,9 @@ FILE_ORDER = (
 AGENT_NOTES = ("Current state", "Context", "Findings")
 FRONTMATTER_ORDER = (
     "id", "title", "type", "priority", "size", "status", "created", "updated", "external",
-    "repos", "branches", "worktrees", "prs", "parent", "sprint", "blocked_by", "follow_ups", "labels",
+    "repos", "branches", "worktrees", "prs", "parent", "sprint", "blocked_by", "follow_ups", "resolution", "superseded_by", "labels",
     "gates", "questions", "claim", "sessions",
 )
+# Why a done ticket is done (orch close --as). Absent on a done ticket means completed (closed before it existed).
+RESOLUTIONS = ("completed", "wont-do", "superseded", "duplicate")
+SUCCEEDED = ("superseded", "duplicate")  # these name the ticket that replaces them in `superseded_by`

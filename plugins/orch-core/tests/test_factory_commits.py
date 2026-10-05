@@ -82,7 +82,8 @@ def test_a_commit_pointed_elsewhere_is_refused(session, cmd):
     "git commit -m x", "env git commit -m x", "GIT_DIR=x git commit", 'sh -c "git commit -m x"',
     "command git commit", "nice git commit", "timeout 5 git commit", "git -c alias.ci=commit ci", "git merge feat",
     "git cherry-pick abc", "git revert abc", "git am p.patch", "git rebase main", "git pull", "git commit-tree t",
-    "git update-ref refs/heads/main abc", "git stash", '"g"it commit -m x', "g\\it commit",
+    "git update-ref refs/heads/main abc", "git stash", '"g"it commit -m x', "g\\it commit", "Git commit -m x",
+    "GIT commit",
 ])
 def test_every_commit_form_is_gated(cmd):
     assert permits._git_commit(cmd), cmd

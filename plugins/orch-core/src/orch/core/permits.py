@@ -611,7 +611,7 @@ def _git_commit(command) -> bool:
         return False
     t = re.sub(r"[\\'\"]", "", command)
     return bool(re.search(r"GIT_(?:DIR|WORK_TREE)\s*=", t)
-                or (re.search(r"(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t)))
+                or (re.search(r"(?i)(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t)))  # Git runs git too
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:

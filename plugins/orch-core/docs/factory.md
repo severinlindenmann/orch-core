@@ -1106,6 +1106,9 @@ signs a new charter.
 itself trusts both, as your Accept would have. Same-user trust holds as for the other release records: code an agent
 gets run as you could write the records.
 
+A safe local live test of the release and the close, with a bare repository as the remote and example scripts that
+record what they were told: [factory-release-live-test.md](factory-release-live-test.md).
+
 ## Coming in later phases
 
 - A notification when a release stops; runner-side proof of tests and review (and ring steps for them).

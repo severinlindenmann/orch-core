@@ -1,0 +1,38 @@
+#!/bin/sh
+# An EXAMPLE release step for a local live test of Dark AI Factory's release (docs/factory-release-live-test.md).
+# It never reaches the network: the "remote" is a bare git repository on disk, and dev and production are files.
+# Every call is appended to state/release.log next to the folder this script lives in. Not for real releases.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+state="$here/../state"
+mkdir -p "$state"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> "$state/release.log"
+step=${1:-}
+case "$step" in
+  merge)  # merge <remote> <base> <branch> <sha>: merge the checked commit into the base and push it
+    remote=$2 base=$3 sha=$5
+    [ "$(git rev-parse HEAD)" = "$sha" ] || { echo "not at $sha" >&2; exit 2; }
+    git fetch -q "$remote" "refs/heads/$base"
+    git -c user.name=orch-live-test -c user.email=live-test@example.invalid merge -q --no-edit FETCH_HEAD
+    git push -q "$remote" "HEAD:refs/heads/$base"
+    ;;
+  merged)  # merged <remote> <base> <sha>: the check that the commit is on the base
+    git --git-dir="$2" merge-base --is-ancestor "$4" "refs/heads/$3" && echo "merged $4"
+    ;;
+  deploy)  # deploy <env> <sha>: "deploy" by writing the commit into state/<env>.version
+    echo "$3" > "$state/$2.version"
+    ;;
+  version)  # version <env>: what is "deployed"; state/fail-<env>-check makes the live check fail on purpose
+    if [ -e "$state/fail-$2-check" ]; then echo "broken"; else cat "$state/$2.version"; fi
+    ;;
+  rollback)  # rollback <env>
+    echo "rolled-back" > "$state/$2.version"
+    ;;
+  health)  # health <env>: the rollback's check; state/fail-rollback makes it fail on purpose
+    if [ -e "$state/fail-rollback" ]; then echo "down"; else echo "ok"; fi
+    ;;
+  *)
+    echo "unknown step: $step" >&2
+    exit 64
+    ;;
+esac

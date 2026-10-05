@@ -797,6 +797,19 @@ _IDLE = ("? for shortcuts", "shift+tab to cycle")
 _EMPTY_INPUT = re.compile(r"[│|\s]*[>❯]\s*[│|\s]*")
 
 
+def typed_ok(text, nudge: str) -> bool:
+    """Whether a pane read right after typing `nudge` shows it on Claude's input line and nothing that Enter would
+    answer instead (a menu, a permission or trust prompt, a running command): only then is Enter pressed."""
+    if not isinstance(text, str):
+        return False
+    tail = [ln for ln in text.splitlines() if ln.strip()][-12:]
+    low = "\n".join(tail).casefold()
+    if any(m in low for m in _BUSY):
+        return False
+    head = nudge[:40]
+    return any(re.search(r"[>\u276f]\s+" + re.escape(head), ln) for ln in tail)
+
+
 def pane_idle(text) -> bool:
     """Whether a pane's text shows Claude Code idle at an empty input prompt, conservatively: its footer hint, an empty
     input line, and no sign of a running command, a permission or trust prompt or a menu in its last lines. Anything
@@ -810,16 +823,16 @@ def pane_idle(text) -> bool:
     return any(_EMPTY_INPUT.fullmatch(ln) for ln in tail)
 
 
-def answers(epic, signed, dark_marks) -> dict:
-    """What the human answered in this epic so far, as counts: grants, denials, revocations, and for a Dark charter
-    the changes to this checkout's Dark profile."""
+def answers(epic, signed, dark_adds: int) -> dict:
+    """What the human answered in this epic so far, as counts: grants, denials, and for a Dark charter the rules added
+    to this checkout's Dark profile (`dark_adds`). Revocations and removals take a permission away: they answer
+    nothing a waiting session could retry."""
     mine = [e for e in signed if e.get("ticket") == epic.id]
     charter = next((e for e in reversed(mine) if e.get("kind") == "charter"), None)
     dark = bool(charter and isinstance(charter.get("delegate"), dict) and charter["delegate"].get("dark"))
     return {"grant": sum(1 for e in mine if e.get("kind") == "grant"),
             "deny": sum(1 for e in mine if e.get("kind") == "permit_deny"),
-            "revoke": sum(1 for e in mine if e.get("kind") == "permit_revoke"),
-            "profile": len(dark_marks) if dark else 0}
+            "profile": dark_adds if dark else 0}
 
 
 def _nudge_base(b: dict, now_answers: dict) -> dict:
@@ -852,13 +865,16 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
             return
         old = rec["answers"]
         only_denied = (now_answers.get("deny", 0) > old.get("deny", 0)
-                       and all(now_answers.get(k, 0) == old.get(k, 0) for k in ("grant", "revoke", "profile")))
+                       and all(now_answers.get(k, 0) == old.get(k, 0) for k in ("grant", "profile")))
         kind = "planner" if fs.is_planner(b) else "denied" if only_denied else "answered"
         # counted before typing: a failure to type is not retried in a loop
         fs.write_nudge_record(actor, {**rec, "answers": now_answers, "count": rec["count"] + 1,
                                       "last": clock.stamp_s(), "pane": "", "pane_at": ""})
-        type_(b["name"], NUDGES[kind])
-        lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
+        if type_(b["name"], NUDGES[kind]) is True:
+            lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
+        else:  # the launcher cleared the input line again and pressed nothing: counted as an attempt
+            lines.append(f"{b['name']}: nudge not sent, the pane changed while typing ({rec['count'] + 1} of "
+                         f"{MAX_NUDGES})")
     except (OrchError, OSError, ValueError, TypeError, KeyError):
         return
 
@@ -969,6 +985,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     gone = fs.ended(ws)
     cid = ledger.checkout_id(ws)
     dark_marks = [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+    dark_adds = sum(1 for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid
+                    and e.get("op") == "add")
     checked: list = []
 
     def not_ready() -> bool:  # the readiness checks, once per round and only when something would start
@@ -981,7 +999,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     for b in keep:  # a session that waits at its prompt after the human answered: one built-in line wakes it
         epic = _ticket(ws, b["epic"])
         if epic is not None:
-            _nudge(ws, actor, launcher, b, answers(epic, signed, dark_marks), lines)
+            _nudge(ws, actor, launcher, b, answers(epic, signed, dark_adds), lines)
     for entry in store.scan(ws):
         if entry.meta is None or not epics.is_epic(entry.meta) or entry.status == "done":
             continue
@@ -1011,7 +1029,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 if not fs.mark_planner_run(ws, d["id"]):
                     continue
                 b = _start(ws, actor, launcher, settings, epic, d, epic, token, lines, ready,
-                           answers(epic, signed, dark_marks))
+                           answers(epic, signed, dark_adds))
             if b is not None:
                 keep.append(b)
             continue
@@ -1039,7 +1057,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 if not fs.mark_run(ws, d["id"], t.id):
                     continue
                 b = _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready,
-                           answers(epic, signed, dark_marks))
+                           answers(epic, signed, dark_adds))
             if b is not None:
                 keep.append(b)
     return lines

@@ -25,6 +25,7 @@ EVENT_KINDS = frozenset({
     "release.stage", "release.retry",
     # the opt-in auto-close (orch.core.factory_close): the runner gave the epic verdict under a charter that signs it
     "verdict.auto",
+    "release.resolved",  # the human lifted a production hold without a new attempt (factory_release.resolve)
 })
 
 

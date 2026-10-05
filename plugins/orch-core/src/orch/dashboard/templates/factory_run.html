@@ -69,7 +69,7 @@
   <h2 id="run-release-h">Release up to {{ rel.target }}</h2>
   <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order, in its own repository: each child's branch at the commit it checked, dev at the base fetched from the recipe's remote{% if rel.target == "production" %}, production at the commit dev was proven on, never before its release window opens{% endif %}. A stage is proven only by its check.{% if rel.target != "production" %} Nothing releases to production.{% endif %} Nothing is closed by the release: the verdict stays yours.</p>
   {% if run.window and not run.window.open %}<p data-window>Production waits for its release window: {% if run.window.opens %}it opens at <time datetime="{{ run.window.opens }}">{{ run.window.opens|local }}</time> ({{ run.window.hours }} hours after the last production attempt in this workspace began or ended, at <time datetime="{{ run.window.last }}">{{ run.window.last|local }}</time>){% else %}{{ run.window.why }}{% endif %}. Nothing runs until then; the runner checks again each round.{% if run.window.budget_ends %} The wait uses this run's time budget, which ends at <time datetime="{{ run.window.budget_ends }}">{{ run.window.budget_ends|local }}</time>{% if run.window.after_budget %}: the window opens after that, so production will not run under this charter. Approve the epic again for a new budget, or release by hand{% endif %}.{% endif %}</p>{% endif %}
-  {% if run.held %}<p data-held>Production is held: another epic's production is unresolved ({% for e in run.held %}<a class="lnk key" href="/factory/{{ e }}">{{ e }}</a>{{ ", " if not loop.last }}{% endfor %}: failed, outcome unknown or rolling back). No production runs in this workspace until you retry it there, or check production by hand and retry it.</p>{% endif %}
+  {% if run.held %}<p data-held>Production is held: another epic's production is unresolved ({% for e in run.held %}{% if e.startswith("the ") %}{{ e }}{% else %}<a class="lnk key" href="/factory/{{ e }}">{{ e }}</a>{% endif %}{{ ", " if not loop.last }}{% endfor %}: failed, outcome unknown, rolling back, or its epic's ticket is gone or unreadable). No production runs in this workspace until you retry it there, or resolve the hold after checking production by hand (Resolve on its run view, or the release resolve command in your terminal).</p>{% endif %}
   {% if not rel.recipe %}<p class="muted" data-release-off>{{ rel.why }}. Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
   <div class="release-stages">
     {% for s in rel.stages %}
@@ -101,6 +101,26 @@
       <input type="hidden" name="stage" value="merge">
       <input type="hidden" name="unit" value="{{ run.epic }}">
       <button type="submit" class="btn btn-quiet">Retry release…</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if rel.blocked %}
+  <div class="release-unit" data-release-blocked>
+    <span>The {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} could not start: {{ rel.blocked.why }}. Nothing ran.</span>
+    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · try the {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} again in the next round">
+      <input type="hidden" name="stage" value="{{ rel.blocked.stage }}">
+      <input type="hidden" name="unit" value="{{ rel.blocked.unit }}">
+      <button type="submit" class="btn btn-quiet">Retry release…</button>
+    </form>
+  </div>
+  {% endif %}
+  {% set prod = rel.stages|selectattr("name", "equalto", "production")|first %}
+  {% if prod and prod.state in ("failed", "unknown") and not prod.resolved %}
+  <div class="release-unit" data-release-resolve>
+    <span>While this production is unresolved, no other epic's production runs in this workspace.</span>
+    <form method="post" action="/factory/{{ run.epic }}/release/resolve" class="inline-confirm-form" data-inline-confirm="Confirm · lift the hold on other epics; this production does not run again">
+      <label class="field-col" for="resolve-reason"><span>Why the hold can be lifted (for example: production checked by hand)</span><input id="resolve-reason" name="reason" required autocomplete="off"></label>
+      <button type="submit" class="btn btn-quiet">Resolve…</button>
     </form>
   </div>
   {% endif %}

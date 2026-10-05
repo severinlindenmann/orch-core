@@ -795,6 +795,8 @@ orch factory release set --file recipe.json   # validates, prints the recipe and
 orch factory release show
 orch factory release clear                    # needs CLEAR typed; no release runs until you set one again
 orch factory release retry <epic> --stage merge|dev|production [--child <child>]   # one more attempt, needs the epic id typed
+orch factory release resolve <epic> --reason "..."   # lift a production hold without running it again; epic id typed
+orch factory release clear-window                     # future-dated times stop keeping the window shut; WINDOW typed
 ```
 
 **Program pins.** `set` resolves every program of the recipe with your terminal's PATH and the runner's trust checks
@@ -922,7 +924,8 @@ fails. It is refused without `--dark`, while no valid recipe exists for this wor
 up to the target (dev needs merge and dev; prod needs all three), and `--rollback` without `--release prod` or while
 the recipe's production stage has no rollback, and prod when the recipe's production window is as long as or longer
 than the charter's time budget (72 hours for a dashboard start; waiting for the window would use it up, so production
-might never run; `orch factory release set` warns about such a window). The charter carries `release` and `rollback`
+might never run; `orch factory release set` warns about such a window, and names every live charter that signs prod
+with a budget the new window would use up). The charter carries `release` and `rollback`
 only when you sign them, so every charter signed before hashes exactly as before. The recipe in force when a stage runs
 is the one used. On the dashboard, choosing Production also needs the word production typed (as well as dark); in the
 terminal the typed confirmation of `orch approve` (the epic's id) covers the whole charter text, which names
@@ -979,8 +982,14 @@ latest main" deploys whatever main is then).
 - *One unresolved production holds every other.* While any epic of the workspace has a production attempt that
   failed, whose outcome is unknown, or that is rolling back (a failed or unknown rollback included), no other epic's
   production starts: its run view says "Production is held: another epic's production is unresolved" and names that
-  epic. Retry release on that epic's production (after checking production by hand) resolves it; its own production then
-  waits for its window and its gate like any other.
+  epic. The runner finds those epics in its own append-only index of every epic that had a production attempt
+  (`permits/release-records/production-index-<key>.jsonl`, written with each production intent), not only from ticket
+  files: deleting, retyping or breaking the unresolved epic's ticket does not lift the hold (an indexed epic whose
+  ticket is gone or unreadable counts as held), and a damaged index holds everything. Two ways out, both yours: Retry
+  release on that epic's production (it may run again, after its window and its gate), or **Resolve** (the run view's
+  button next to Retry, or `orch factory release resolve <epic> --reason "..."` with the epic id typed), which lifts the
+  hold on the other epics WITHOUT letting that production run again: it records when, who and why beside the attempt,
+  and that epic stays Stopped with what happened.
 
 - *The release window.* Production never starts before `min_hours_since_last` hours (default 20) have passed since
   the last production attempt of this workspace began or ended, whatever came of it (a failed or rolled-back attempt
@@ -989,7 +998,8 @@ latest main" deploys whatever main is then).
   its first command, and every epic's production intent and outcome records, so deleting that file does not open the
   window while the attempts' records remain. Never an agent, a ticket or the recipe. No record means the window is open;
   a record it cannot read, or whose time lies in the future, keeps the window shut until you look at it. While the
-  window is shut the epic is **waiting**, not Stopped: nothing runs, the run view says when the window opens and when
+  window is shut the epic is **waiting**, not Stopped (a time recorded in the future: run `orch factory release
+  clear-window` in your terminal, which makes times beyond that moment stop counting and deletes nothing): nothing runs, the run view says when the window opens and when
   the charter's time budget ends (a wait uses it; if the window opens after the budget ends, production does not run
   under that charter), and the runner checks again every round. A retry waits for the window too: it is never
   skipped.
@@ -1021,7 +1031,9 @@ latest main" deploys whatever main is then).
   hand.
 - *Release could not start*: the runner could not start a stage for a reason it cannot get past by itself (a program
   that is not the one you pinned, the recipe cleared or lacking a stage the charter signs, the base not fetchable, the
-  commit not checkable out); nothing ran. Fix the cause, then Retry release: the runner tries again in its next round.
+  commit not checkable out); nothing ran. Fix the cause, then Retry release on exactly that stage and unit (the run
+  view's button names them; a retry of another stage is refused): the runner tries again in its next round. A block can
+  be retried as often as it recurs.
 - *Signed rollback missing*: the charter signs a rollback but the recipe's production stage has none now; production
   did not run. Put the rollback back into the recipe and Retry release, or approve the epic again without it.
 

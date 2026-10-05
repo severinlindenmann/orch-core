@@ -125,6 +125,9 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
                                       + ", ".join(s["held"]) + ")"))
                     elif (s.get("window") or {}).get("why"):
                         out.append(_b("release", s["window"]["why"]))
+                    elif _after_budget(s.get("window"), d):
+                        out.append(_b("release", "the production window opens only after this charter's time budget "
+                                                 "ends, so production will not run under it"))
                     elif s["state"] in ("waiting", "running"):
                         out.append(_b("release", f"the {s['name']} stage is proven by its check", pending=True))
                     elif s["state"] != "proven":
@@ -134,6 +137,19 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
         return out
     except Exception as e:  # fail closed, and say why
         return [_b("error", f"orch could not tell whether everything is proven ({type(e).__name__})")]
+
+
+def _after_budget(window, d) -> bool:
+    """Whether a shut production window opens at or after the charter's time budget ends (then it never runs)."""
+    from datetime import timedelta
+    from orch import clock
+    if not window or window.get("open") or not window.get("opens"):
+        return False
+    try:
+        ends = clock.parse_stamp(str(d.get("at"))) + timedelta(hours=int(d["max_hours"]))
+        return clock.parse_stamp(window["opens"]) >= ends
+    except (ValueError, TypeError, KeyError, OverflowError):
+        return True  # cannot tell: never promise a close that may not come
 
 
 def _evidence_blockers(ws, rep) -> list[dict]:

@@ -565,3 +565,11 @@ def test_the_charter_verdict_comes_from_the_ledger_not_the_event_via(fws, closin
     pytest.importorskip("fastapi")
     html = _client(fws).get(f"/factory/{eid}").text
     assert "The runner gave the done verdict by itself under your charter" in html  # from the ledger
+
+
+def test_a_window_that_opens_after_the_budget_ends_is_not_pending():
+    d = {"at": "2026-10-05T00:00:00Z", "max_hours": 72}
+    assert fc._after_budget({"open": False, "opens": "2026-10-08T00:00:00Z"}, d) is True
+    assert fc._after_budget({"open": False, "opens": "2026-10-07T23:59:00Z"}, d) is False
+    assert fc._after_budget({"open": True, "opens": None}, d) is False
+    assert fc._after_budget({"open": False, "opens": "nonsense"}, d) is True  # cannot tell: no promise

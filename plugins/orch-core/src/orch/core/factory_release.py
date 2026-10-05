@@ -647,6 +647,75 @@ def _epic_ids(ws) -> list[str]:
     return [e.id for e in store.scan(ws) if e.meta is not None and epics.is_epic(e.meta)]
 
 
+def _index_path(ws) -> Path:
+    """The runner's append-only index of the epics that ever had a production attempt in this workspace (guarded,
+    written by the runner with each production intent): the hold and the window read it, so deleting, retyping or
+    breaking an epic's ticket does not hide its production."""
+    return fs._root() / "release-records" / f"production-index-{fs._key(ws, 'production-index')}.jsonl"
+
+
+def _index_add(ws, epic_id: str) -> None:
+    p = _index_path(ws)
+    p.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"epic": str(epic_id).upper(), "at": _now()}) + "\n")
+
+
+def production_epics(ws) -> tuple[list[str], bool]:
+    """(the epics whose production records count for the hold and the window, whether the runner's index could not
+    be read whole). The index, plus every epic ticket that parses (records from before the index existed). Every id
+    is checked against the ticket id form before it names a path."""
+    from orch.core.artifacts import read_regular
+    ids, damaged = [], False
+    p = _index_path(ws)
+    if os.path.lexists(p):
+        raw = read_regular(p, 4 << 20, root=fs._root())
+        try:
+            lines = raw.decode("utf-8").splitlines() if raw is not None else None
+        except UnicodeDecodeError:
+            lines = None
+        if lines is None:
+            damaged = True
+        for line in lines or []:
+            try:
+                eid = json.loads(line).get("epic")
+            except (ValueError, AttributeError):
+                eid = None
+            if isinstance(eid, str) and KEY.fullmatch(eid):
+                ids.append(eid)
+            else:
+                damaged = True
+    for eid in _epic_ids(ws):
+        if KEY.fullmatch(eid.upper()):
+            ids.append(eid.upper())
+    return list(dict.fromkeys(ids)), damaged
+
+
+def _reset_path(ws) -> Path:
+    return fs._root() / "release-records" / f"window-reset-{fs._key(ws, 'window-reset')}.json"
+
+
+def prod_charters(ws) -> list[tuple[str, int]]:
+    """(epic, the charter's max hours) of every live charter of this workspace that signs release prod."""
+    from orch.core import permits
+    out = []
+    for eid in _epic_ids(ws):
+        t = _ticket(ws, eid)
+        d = permits.factory_delegation(ws, t) if t is not None else None
+        if d and d.get("release") == "prod" and d["active"] and isinstance(d.get("max_hours"), int):
+            out.append((eid, d["max_hours"]))
+    return out
+
+
+def clear_window(ws, actor) -> str:
+    """Human only: record that every production time the records hold beyond now (a future-dated record) no longer
+    counts for the window. Times up to now still count; nothing is deleted from the guarded records."""
+    fs.human_check(actor, "clearing a future-dated release window")
+    _atomic(_reset_path(ws), json.dumps({"at": _now(), "by": actor.to_str()}))
+    return "production times recorded beyond now no longer keep the window shut; earlier ones still count"
+
+
 def _production_times(ws) -> tuple[list, str]:
     """(every time a production attempt of this workspace began or ended, as the runner's records say, why one could
     not be read). Sources: the runner's window record, and every epic's production intent and outcome records, so a
@@ -663,7 +732,10 @@ def _production_times(ws) -> tuple[list, str]:
     p = _window_path(ws)
     if os.path.lexists(p):
         add((_read(p, 1024) or {}).get("at"), f"the runner's window record ({p.name})")
-    for eid in _epic_ids(ws):
+    ids, damaged = production_epics(ws)
+    if damaged:
+        bad = "the runner's production index"
+    for eid in ids:
         d = _dir(ws, eid)
         for n in range(1, MAX_ATTEMPTS + 1):
             ip = d / _name("production", eid, n, "intent")
@@ -675,6 +747,13 @@ def _production_times(ws) -> tuple[list, str]:
                 out = _read(op)
                 if out is None or out.get("ended") is not None:
                     add((out or {}).get("ended"), f"a production outcome record of {eid}")
+    reset = _read(_reset_path(ws), 1024) if os.path.lexists(_reset_path(ws)) else None
+    if reset is not None:  # the human cleared future-dated times (clear_window): those beyond that moment do not count
+        try:
+            cut = clock.parse_stamp(str(reset.get("at")))
+            times = [t for t in times if t <= cut]
+        except (ValueError, OverflowError):
+            bad = bad or "the window reset record"
     return times, bad
 
 
@@ -694,7 +773,8 @@ def window(ws, hours: int) -> dict:
     now, last = clock.now(), max(times)
     if last > now + timedelta(seconds=FUTURE_SKEW):
         return {**shut, "why": "the runner's record of the last production release lies in the future, so the window "
-                               "stays shut until you look at it"}
+                               "stays shut until you look at it (orch factory release clear-window, in your terminal, "
+                               "stops future-dated times from counting)"}
     try:
         opens = last + timedelta(hours=hours)
     except OverflowError:
@@ -702,18 +782,57 @@ def window(ws, hours: int) -> dict:
     return {"open": now >= opens, "opens": clock.stamp_s(opens), "last": clock.stamp_s(last), "why": ""}
 
 
+def _resolved_path(ws, epic_id: str, attempt: int) -> Path:
+    return _dir(ws, epic_id) / _name("production", epic_id, attempt, "resolved")
+
+
 def unresolved_production(ws, epic_id: str) -> list[str]:
-    """The other epics of this workspace whose production attempt is failed, unknown or rolling back (a failed or
-    unknown rollback included): no production runs anywhere in the workspace until the human retries or clears it."""
+    """The other epics of this workspace (from the runner's index, not only ticket files) whose production attempt is
+    failed, unknown or rolling back (a failed or unknown rollback included), or whose ticket is gone or cannot be read
+    while it has production records: no production runs anywhere in the workspace until the human retries it or
+    resolves it (resolve). A damaged index holds everything."""
+    from orch.core import epics
     holder = lock_holder(ws)
-    out = []
-    for eid in _epic_ids(ws):
+    ids, damaged = production_epics(ws)
+    out = ["the runner's production index (damaged)"] if damaged else []
+    for eid in ids:
         if eid.upper() == str(epic_id).upper():
             continue
         us = unit_state(ws, eid, "production", eid, holder)
-        if us["state"] in ("failed", "unknown") or (us.get("rollback") or {}).get("state") == "rolling back":
+        if (us.get("rollback") or {}).get("state") == "rolling back":
+            out.append(eid)
+            continue
+        if os.path.lexists(_resolved_path(ws, eid, us["attempt"])):
+            continue
+        t = _ticket(ws, eid)
+        if us["state"] in ("failed", "unknown") or t is None or not epics.is_epic(t):
             out.append(eid)
     return out
+
+
+def resolve(ws, actor, epic_id: str, reason: str) -> str:
+    """Human only: lift the workspace-wide production hold that epic `epic_id`'s unresolved production puts on every
+    other epic, WITHOUT letting its own production run again (that stays Retry's). Records who and why."""
+    from orch.core import epics
+    fs.human_check(actor, "resolving a production hold")
+    epic_id = str(epic_id).upper()
+    reason = " ".join((reason or "").split())
+    if not KEY.fullmatch(epic_id):
+        raise UsageError("give the epic whose production holds the others")
+    if not reason:
+        raise UsageError("say why the hold can be lifted (for example: production checked by hand)")
+    us = unit_state(ws, epic_id, "production", epic_id, lock_holder(ws))
+    if (us.get("rollback") or {}).get("state") == "rolling back":
+        raise ValidationError("the runner is rolling production back right now: wait for its outcome")
+    t = _ticket(ws, epic_id)
+    if us["state"] not in ("failed", "unknown") and t is not None and epics.is_epic(t):
+        raise ValidationError(f"the production of {epic_id} holds nothing (it is {us['state']})")
+    if not fs._create(_resolved_path(ws, epic_id, us["attempt"]),
+                      {"at": _now(), "by": actor.to_str(), "why": reason[:300], "attempt": us["attempt"]}):
+        raise ValidationError("this production attempt was resolved already")
+    _event(ws, actor, epic_id, "release.resolved", {"stage": "production", "child": epic_id})
+    return (f"the production of {epic_id} no longer holds the other epics; it does not run again unless you retry "
+            "it")
 
 
 def _record_production(ws, epic_id: str) -> None:
@@ -758,6 +877,9 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
                 w = window(ws, spec["window_hours"])
                 s["window"] = {**w, "hours": spec["window_hours"]}
             s["held"] = unresolved_production(ws, epic.id)
+        if s["name"] == "production" and s["units"]:
+            u = s["units"][0]
+            s["resolved"] = os.path.lexists(_resolved_path(ws, epic.id, u.get("attempt") or 0))
     sens = _sensitive_record(ws, epic.id)
     blocked = _blocked_record(ws, epic.id)
     return {"target": stages[-1]["name"], "recipe": rec is not None, "why": why, "stages": stages, "sensitive": sens,
@@ -1540,6 +1662,8 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     ddir = _dir(ws, epic.id)
     digest = "sha256:" + hashlib.sha256(json.dumps([a for _, a, _ in steps]).encode("utf-8")).hexdigest()
     intent = {"stage": name, "unit": unit, "attempt": n, "argv_sha": digest, "started": _now(), **extra}
+    if name == "production":
+        _index_add(ws, epic.id)  # with the intent: the hold and the window never depend on ticket files
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
@@ -1589,24 +1713,16 @@ def retry(ws, actor, epic_id: str, stage: str, unit: str) -> str:
     if stage not in STAGES or not KEY.fullmatch(epic_id) or not KEY.fullmatch(unit):
         raise UsageError("give a stage (merge, dev or production), an epic and a child or the epic itself")
     ddir = _dir(ws, epic_id)
-    if _blocked_record(ws, epic_id) is not None:  # a stage that could not start: the next round tries again
-        for k in range(1, MAX_ATTEMPTS + 1):
-            dst = ddir / f"blocked.{k}.cleared"
-            if not os.path.lexists(dst):
-                os.replace(ddir / "blocked.json", dst)
-                break
-        else:
-            raise ValidationError("the release was retried too often; approve the epic again for a new start")
+    blocked = _blocked_record(ws, epic_id)
+    if blocked is not None:  # a stage that could not start: only a retry of that stage and unit clears it
+        if (blocked.get("stage"), str(blocked.get("unit") or "").upper()) != (stage, unit):
+            raise ValidationError(f"the release is blocked on the {blocked.get('stage')} stage of "
+                                  f"{blocked.get('unit')}: retry that (fix what kept it from starting first)")
+        os.replace(ddir / "blocked.json", ddir / f"blocked.{_now()}.{secrets.token_hex(4)}.cleared")
         _event(ws, actor, epic_id, "release.retry", {"stage": stage, "child": unit})
         return "the release starts again in the runner's next round (fix what kept it from starting first)"
     if stage == "merge" and _sensitive_record(ws, epic_id) is not None:
-        for k in range(1, MAX_ATTEMPTS + 1):
-            dst = ddir / f"sensitive.{k}.cleared"
-            if not os.path.lexists(dst):
-                os.replace(ddir / "sensitive.json", dst)
-                break
-        else:
-            raise ValidationError("the release was retried too often; approve the epic again for a new start")
+        os.replace(ddir / "sensitive.json", ddir / f"sensitive.{_now()}.{secrets.token_hex(4)}.cleared")
         _event(ws, actor, epic_id, "release.retry", {"stage": stage, "child": unit})
         return "the branches are checked again in the runner's next round"
     us = unit_state(ws, epic_id, stage, unit, lock_holder(ws))

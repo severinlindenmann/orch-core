@@ -3,6 +3,7 @@
 As in test_factory_release.py, the runner's own git runs for real against temporary repositories (no network) and a
 fake runner stands in for the recipe's commands: no test runs a real deploy, rollback or live check."""
 import json
+import os
 import re
 from datetime import timedelta
 
@@ -490,7 +491,7 @@ def test_a_window_record_in_the_future_or_unreadable_keeps_the_window_shut(fws, 
 
 
 def test_a_stage_that_cannot_start_is_a_stopped_reason_until_the_human_retries(fws, ready, human, bin_dir, recipe):
-    eid, _, _ = ready()
+    eid, (c,), _ = ready()
     (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
     fake = Fake()
     assert "not the one you pinned" in fr.tick(fws, human, fake)[0]
@@ -499,7 +500,9 @@ def test_a_stage_that_cannot_start_is_a_stopped_reason_until_the_human_retries(f
     reason = fr.reasons(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))[0]
     assert "not the one you pinned" in reason["text"] and "nothing ran" in reason["text"]
     fr.set_recipe(fws, human, recipe)  # the human pins the program again
-    fr.retry(fws, human, eid, "merge", eid)
+    with pytest.raises(ValidationError, match=f"blocked on the merge stage of {c}"):
+        fr.retry(fws, human, eid, "dev", eid)  # a retry clears only the block it names
+    fr.retry(fws, human, eid, "merge", c)
     assert _stopped(fws, eid) == [] and fr.tick(fws, human, fake)[-1] == f"{eid}: dev of {eid} proven"
 
 
@@ -572,3 +575,117 @@ def test_a_window_longer_than_the_budget_is_refused_at_approval_and_warned_at_se
     pytest.importorskip("fastapi")
     html = _client(fws).get("/new").text
     assert re.search(r'value="prod"[^>]*disabled', html) and "data-prod-off" in html
+
+
+
+# -- round 2: the hold reads the runner's index, Resolve, retries never run out, the window reset ------------------
+
+def _broken_production(fws, prod):
+    a, _, _ = prod(signed_rollback=True)
+    fake = ProdFake()
+    fake.live, fake.healthy = False, False
+    fr.tick(fws, human_actor(), fake)
+    assert _stopped(fws, a) == ["rollback-failed"]
+    return a, fake
+
+
+def human_actor():
+    from orch.core.events import Actor
+    return Actor("human", "you", "tty")
+
+
+@pytest.mark.parametrize("hide", ["delete", "retype", "break"])
+def test_hiding_the_unresolved_epics_ticket_does_not_lift_the_hold(fws, prod, human, monkeypatch, hide):
+    a, fake = _broken_production(fws, prod)
+    b, _, _ = prod()
+    path = store.resolve(fws, a).path
+    if hide == "delete":
+        path.unlink()
+    elif hide == "retype":
+        path.write_text(path.read_text(encoding="utf-8").replace("type: epic", "type: feature"), encoding="utf-8")
+    else:
+        path.write_text("---\nthis: [is not\n---\n", encoding="utf-8")
+    _later(monkeypatch, 21)
+    fake.live, fake.healthy = True, True
+    fr.tick(fws, human, fake)
+    assert _states(fws, b)["production"] == "waiting" and _prod(fws, b)["held"] == [a]
+    assert sum("deploy-prod" in x for x in fake.ran()) == 1  # only A's own attempt ever ran
+    pytest.importorskip("fastapi")
+    assert "Production is held" in _client(fws).get(f"/factory/{b}").text
+
+
+def test_resolve_lifts_the_hold_without_running_the_production_again(fws, prod, human, agent, monkeypatch):
+    a, fake = _broken_production(fws, prod)
+    b, _, _ = prod()
+    with pytest.raises(HumanOnlyError):
+        fr.resolve(fws, agent, a, "checked by hand")
+    with pytest.raises(UsageError):
+        fr.resolve(fws, human, a, "  ")
+    with pytest.raises(ValidationError, match="holds nothing"):
+        fr.resolve(fws, human, b, "nothing to resolve")
+    assert "does not run again" in fr.resolve(fws, human, a, "checked production by hand")
+    with pytest.raises(ValidationError, match="resolved already"):
+        fr.resolve(fws, human, a, "again")
+    assert fr.unresolved_production(fws, b) == [] and _stopped(fws, a) == ["rollback-failed"]  # A still says it
+    _later(monkeypatch, 21)
+    fake.live, fake.healthy = True, True
+    fr.tick(fws, human, fake)
+    assert _states(fws, b)["production"] == "proven"
+    assert _states(fws, a)["production"] == "failed" and fake.ran().count(f"make rollback-prod {a}") == 1
+    rec = fr._read(fr._resolved_path(fws, a, 1))
+    assert rec["by"] == "human:you" and rec["why"] == "checked production by hand"
+
+
+def test_resolve_from_the_run_view_is_the_humans(fws, prod, human, monkeypatch):
+    pytest.importorskip("fastapi")
+    a, _ = _broken_production(fws, prod)
+    c = _client(fws)
+    assert "data-release-resolve" in c.get(f"/factory/{a}").text
+    r = c.post(f"/factory/{a}/release/resolve", data={"reason": "x"}, headers={"origin": "http://evil.example"},
+               follow_redirects=False)
+    assert r.status_code == 403
+    monkeypatch.setenv("ORCH_HARNESS", "test-agent")
+    r = c.post(f"/factory/{a}/release/resolve", data={"reason": "x"}, follow_redirects=False)
+    assert "err=" in r.headers["location"] and not os.path.lexists(fr._resolved_path(fws, a, 1))
+    monkeypatch.delenv("ORCH_HARNESS")
+    r = c.post(f"/factory/{a}/release/resolve", data={"reason": "checked"}, follow_redirects=False)
+    assert "err=" not in r.headers["location"] and os.path.lexists(fr._resolved_path(fws, a, 1))
+
+
+def test_a_block_can_be_retried_again_and_again(fws, ready, human, bin_dir, recipe):
+    eid, (c,), _ = ready()
+    for _ in range(fr.MAX_ATTEMPTS + 2):  # more than the old slots: never runs out
+        (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+        fr.tick(fws, human, Fake())
+        assert _stopped(fws, eid) == ["release-blocked"]
+        fr.retry(fws, human, eid, "merge", c)
+
+
+def test_a_future_dated_record_is_cleared_by_the_human_only(fws, human, agent):
+    _at(fws, -500)  # 500 hours ahead
+    assert "clear-window" in fr.window(fws, 20)["why"]
+    with pytest.raises(HumanOnlyError):
+        fr.clear_window(fws, agent)
+    fr.clear_window(fws, human)
+    assert fr.window(fws, 20)["open"]
+
+
+def test_release_set_names_live_prod_charters_whose_budget_the_window_uses_up(fws, prod, human, remote, capsys, switch,
+                                                                             tmp_path):
+    eid, _, _ = prod()
+    f = tmp_path / "r.json"
+    f.write_text(json.dumps(_prod_recipe(remote, hours=72)), encoding="utf-8")
+    switch.human("RELEASE")
+    assert cli_run(["factory", "release", "set", "--file", str(f)]) == 0
+    err = capsys.readouterr().err
+    assert f"{eid}'s live charter signs prod with a 72-hour budget" in err
+
+
+def test_the_new_human_verbs_and_records_are_guarded(ws):
+    from orch.hooks.guard import evaluate
+    base = ledger.base_dir()
+    for cmd in ("orch factory release resolve L-0001 --reason x", "orch factory release clear-window",
+                f"cat {base}/permits/release-records/production-index-x.jsonl",
+                f"rm {base}/permits/release-records/window-reset-x.json"):
+        assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)}).allow, cmd
+        assert permits.never_grantable(ws, cmd) is not None, cmd

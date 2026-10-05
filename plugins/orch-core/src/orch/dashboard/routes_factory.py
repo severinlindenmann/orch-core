@@ -64,6 +64,23 @@ def release_retry(request: Request, ref: str, stage: Annotated[str, Form()] = ""
     return back(url, msg=text)
 
 
+@router.post("/factory/{ref}/release/resolve")
+def release_resolve(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
+    """Resolve (yours): lift the hold this epic's unresolved production puts on every other epic, without letting it
+    run again (factory_release.resolve, human only, with your reason). Works for an id whose ticket is gone too."""
+    from orch.core import factory_release, permits
+    ws = request.app.state.ws
+    eid = str(ref).upper()
+    url = f"/factory/{eid}"
+    try:
+        if not permits.enabled(ws):
+            raise UsageError("AI Factory is switched off in this workspace")
+        text = factory_release.resolve(ws, HUMAN, eid, reason)
+    except OrchError as e:
+        return back(url, err=error_text(e))
+    return back(url, msg=text)
+
+
 @router.post("/factory/{ref}/reopen")
 def reopen(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
     """Reopen an epic the runner closed by itself under its charter: the existing reopen (Ops.reopen), yours only

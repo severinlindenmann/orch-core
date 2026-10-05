@@ -309,7 +309,7 @@ def log(ref: str, message: Annotated[str, typer.Option("--message", "-m")], json
 @app.command()
 def wait(ref: str,
          timeout: Annotated[float, typer.Option("--timeout", help="Give up after this many seconds (0 = never).")] = 0.0,
-         after: Annotated[Optional[int], typer.Option("--after", help="Event seq to start after (default: your last event on the ticket).")] = None,
+         after: Annotated[Optional[str], typer.Option("--after", help="Event seq or cursor to start after (default: your last event on the ticket).")] = None,
          json_out: JsonOpt = False) -> None:
     """Wait until the human answers, approves, requests changes or gives a verdict on a ticket. Agents may run it."""
     from dataclasses import asdict
@@ -319,13 +319,19 @@ def wait(ref: str,
     from orch.errors import WaitTimeout
 
     ws = _ws()
-    event = wait_for_human(ws, ref, after=after, timeout=timeout)
+    from orch.errors import UsageError
+    try:
+        event = wait_for_human(ws, ref, after=after, timeout=timeout)
+    except ValueError:
+        raise UsageError("--after takes an event number or the cursor a previous wait printed") from None
     if event is None:
         raise WaitTimeout(f"no human decision on {store.resolve(ws, ref).id} within {timeout:g} s",
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
     status = store.resolve(ws, event.ticket).status
-    _out({"ticket": event.ticket, "event": asdict(event), "status": status, "cursor": event.seq}, json_out,
-         f"{event.ticket}: {event.kind} by the human (status {status})")
+    who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
+    _out({"ticket": event.ticket, "event": asdict(event), "status": status,
+          "cursor": event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq}, json_out,
+         f"{event.ticket}: {event.kind} {who} (status {status})")
 
 
 @app.command()

@@ -60,9 +60,19 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
         limits = {"max_children": max_children.strip() or None, "max_size": max_size.strip() or None}
     else:
         limits = None
-    return _run(request, ref, lambda: _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite,
-                                                            delegate=limits),
-                f"{gate} approved", next_url)
+    def action():
+        epic = _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
+        if limits and limits.get("factory"):
+            _arm_runner(request.app.state.ws, epic)  # only this dashboard Start lets the runner work for it
+
+    return _run(request, ref, action, f"{gate} approved", next_url)
+
+
+def _arm_runner(ws, epic) -> None:
+    from orch.core import epics, factory_sessions
+    d = epics.delegation(ws, epic)
+    if d and d.get("factory"):
+        factory_sessions.arm(ws, HUMAN, d["id"])
 
 
 @router.post("/t/{ref}/approve-together")

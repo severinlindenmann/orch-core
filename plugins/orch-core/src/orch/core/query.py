@@ -121,13 +121,19 @@ NEEDS_LABELS = {
     "verdict": "give a verdict",
     "stale-claim": "release or check the silent claim",
     "confirm": "confirm the agent's assumption",
+    "factory-ready": "the factory is ready for your verdict",
+    "factory-stopped": "the factory stopped",
 }
+# AI Factory phase 3 (orch.core.factory_report): derived items of waiting(), never of needs_you() (they depend on
+# the ledger and the clock, not only on the ticket files) and never a Decision card of their own; Today draws them.
+FACTORY_KINDS = ("factory-ready", "factory-stopped")
+_FACTORY_RANK = {"factory-stopped": 4, "factory-ready": 7}  # beside approve-epic and verdict
 SCOPES = ("blocking", "later", "backlog")  # also the list order
 _SCOPE_RANK = {s: i for i, s in enumerate(SCOPES)}
 
 
 def _order(item: dict) -> tuple:
-    return (_SCOPE_RANK[item["scope"]], NEEDS_ORDER[item["kind"]], PRIORITY_RANK.get(item.get("priority"), 2),
+    return (_SCOPE_RANK[item["scope"]], NEEDS_ORDER.get(item["kind"], _FACTORY_RANK.get(item["kind"], 9)), PRIORITY_RANK.get(item.get("priority"), 2),
             _num(item["ticket"]))
 
 
@@ -267,6 +273,8 @@ def waiting(ws, *, entries: list[store.Entry] | None = None, events: list | None
         if events is None:
             events = store.memo(ws, "events", lambda: read_events(ws))
         needs = needs + stale_claims(ws, entries=entries, needs=needs, events=events, now=now or clock_now())
+    from orch.core import factory_report
+    needs = needs + factory_report.items(ws, entries, events)  # empty unless factory.enabled
     return sorted(needs, key=_order)
 
 

@@ -384,17 +384,23 @@
     armed.set(form, state);
     button.focus();
   };
+  const FACTORY_START = "start the AI Factory: ";
+  const DARK_START = "start the Dark AI Factory, only commands in the Dark profile run: ";
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
   // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
   const charterLabel = (form) => {
     const f = form.elements;
     const on = f.delegate && f.delegate.checked;
-    if (f.dark && f.dark.checked) {  // Dark wins over the plain factory box, as on the server
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START DARK AI FACTORY (PROFILE ONLY): " + form.dataset.factoryConfirm;
+    // the Start radios (None / AI Factory / Dark); the fieldset's data-start shows the typed-word field for Dark
+    const start = (f.start && f.start.value) || "";
+    const box = form.querySelector && form.querySelector(".charter-factory");
+    if (box) box.dataset.start = start;
+    if (start === "dark") {
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm;
       return;
     }
-    if (f.factory && f.factory.checked) {  // AI Factory: its own limits, whatever the delegation fields say
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START AI FACTORY: " + form.dataset.factoryConfirm;
+    if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + FACTORY_START + form.dataset.factoryConfirm;
       return;
     }
     form.dataset.inlineConfirm = form.dataset.charterConfirm + (on
@@ -449,8 +455,8 @@
     const box = form.closest("[data-mode]");
     if (box) box.dataset.mode = mode;
     if (armed.has(form)) disarm(form, false);
-    if (mode === "factory") form.dataset.inlineConfirm = "Confirm · start AI Factory: " + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · START DARK AI FACTORY (PROFILE ONLY): " + form.dataset.factoryConfirm;
+    if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
+    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm;
     else delete form.dataset.inlineConfirm;
   };
   document.addEventListener("change", (event) => {

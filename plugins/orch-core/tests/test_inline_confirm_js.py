@@ -25,3 +25,12 @@ def test_charter_confirm_label_follows_restored_fields():
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert "charter confirm ok" in r.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_factory_forms_follow_the_mode_and_send_once():
+    r = subprocess.run(["node", str(ROOT / "tests" / "js" / "factory_forms.js"),
+                        str(ROOT / "src" / "orch" / "dashboard" / "static" / "app.js")],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert "factory forms ok" in r.stdout

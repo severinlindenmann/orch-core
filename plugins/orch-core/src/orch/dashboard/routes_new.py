@@ -70,7 +70,7 @@ def _plain(text: str) -> str:
 
 def _form(request: Request, values: dict, problem: str | None = None, status_code: int = 200,
           problem_href: str | None = None):
-    from orch.core import dark_profile, epics, permits
+    from orch.core import dark_profile, epics, factory_runner, permits
     ws = request.app.state.ws
     git = ws.config.get("git") or {}
     dark_on = permits.dark_on(ws)
@@ -78,6 +78,7 @@ def _form(request: Request, values: dict, problem: str | None = None, status_cod
                 values=values, problem=problem, problem_href=problem_href, review_term=git.get("review_term") or "PR",
                 factory_on=permits.enabled(ws), dark_on=dark_on, done_when_default=DONE_WHEN,
                 profile_empty=dark_on and not dark_profile.rules(ws),
+                edits_off=permits.enabled(ws) and factory_runner.edits_blocked(),
                 limits=epics.FACTORY_DEFAULTS, once=_once(request).issue())
 
 

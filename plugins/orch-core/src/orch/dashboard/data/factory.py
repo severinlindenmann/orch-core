@@ -121,7 +121,8 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 # state: (chip role, list rank: needs you first, then working, then the rest, finished last, chip words). The chip
 # says the state in a word or two; the headline says it once, in a sentence.
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
-           "working": ("info", 1, "Working"), "planning": ("info", 1, "Working"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
+           "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
@@ -192,32 +193,38 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     look_dark = dark and permits.dark_on(ws)  # a Dark charter with the switch off runs (and looks) as an AI Factory
     name = "Dark AI Factory" if look_dark else "AI Factory"
     running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
+    planner_on = any(factory_sessions.is_planner(b) for b in running)
+    # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
     if n == 5:
-        state, headline = "finished", "Finished: you gave the verdict"
+        state, headline = "finished", "You gave the verdict"
     elif d["paused"]:
-        state, headline = "paused", "Paused: you stopped the run"
+        state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
         only_budget = all(r["code"] == "budget" for s in mine["stopped"] for r in s["reasons"])
-        state, headline = (("budget", "The budget is used up: agents stopped on this epic") if only_budget
-                           else ("stopped", "Stopped: the agents cannot go on by themselves"))
+        state, headline = (("budget", "Agents stopped on this epic") if only_budget
+                           else ("stopped", "The agents cannot go on by themselves"))
     elif d["epic_changed"]:
-        state, headline = "changed", "Suspended: the epic's text changed since you started it"
+        state, headline = "changed", "The epic's text changed since you started it"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
         state, headline = "waiting", "Your answer is needed on the cards below"
     elif not factory_sessions.armed(ws, d["id"]):
-        state, headline = "unarmed", ("Not running: the dashboard's start did not arm it (for example, it was approved "
-                                      "in a terminal)")
+        state, headline = "unarmed", ("The dashboard's start did not arm it (for example, it was approved in a "
+                                      "terminal)")
     elif blocker:
         state, headline = "blocked", "The runner starts nothing"
-    elif not kids and any(factory_sessions.is_planner(b) for b in running):
-        state, headline = "planning", "A planner session is splitting the epic into children."
+    elif any(not factory_sessions.is_planner(b) for b in running):
+        state, headline = "working", "Sessions are running on its children"
+    elif planner_on:
+        state, headline = "planning", "A planner session is splitting the epic into children"
     elif not kids:
         state, headline = "nokids", "Waiting for children"
-    elif running or any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
-        state, headline = "working", f"{name} is working"
+    elif any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
+        state, headline = "slot", "Waiting for a session slot"
     else:
-        state, headline = "idle", "Nothing is running: no child can start now"
+        state, headline = "idle", "No child can start now"
     role, rank, chip = _STATES[state]
+    if look_dark and state in ("working", "planning"):
+        role = "ok"  # a Dark run that works: the mint look of its panel, not the AI Factory's blue
     start = _at(d.get("at"))
     end = clock.now()
     if state == "finished":
@@ -225,12 +232,12 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "waiting": "wait", "unarmed": "todo", "nokids": "todo",
-            "idle": "todo"}.get(state, "stop")
+            "slot": "todo", "idle": "todo"}.get(state, "stop")
     marks = ["done" if i < n else here if i == n else "todo" for i in range(len(STEPS))]
     current = min(n, len(STEPS) - 1)
     live = state in ("working", "planning")  # motion and glow only while it really works
-    built = bool(running) or any(_tasks(t)[0] for _, t in kids)
-    # why no child is there yet (the planner's own launch markers, never ticket text)
+    built = any(_tasks(t)[0] for _, t in kids)  # real build evidence only: a task a child closed
+    # why no child is there yet (the planner's own launch markers, never ticket text); a card would be "waiting"
     planner = None
     if state == "nokids":
         used = factory_sessions.planner_runs(ws, d["id"])
@@ -240,6 +247,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "steps": n, "current": current, "step": STEPS[current], "live": live, "arc": STEP_ARCS[current],
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
+            "edits_off": factory_runner.edits_blocked(),
+            "cap": factory_runner.concurrency(ws),
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
 
 

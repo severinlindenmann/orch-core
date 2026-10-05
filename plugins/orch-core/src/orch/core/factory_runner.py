@@ -134,6 +134,26 @@ def user_settings_blocker(environ=None) -> str | None:
     return None if has("PreToolUse", "guard") and has("PermissionRequest", "permit", "hook") else why
 
 
+EDIT_MODES = ("acceptEdits", "auto", "bypassPermissions")  # permission modes that let file edits through
+
+
+def edits_blocked(environ=None) -> bool:
+    """Whether the user-scope Claude settings (the file user_settings_blocker reads: CLAUDE_CONFIG_DIR, else
+    ~/.claude, settings.json) leave file edits to a prompt: permissions.defaultMode is not one of EDIT_MODES. A
+    runner session's file-edit prompt is denied without a card (only shell commands are answered), so then its agent
+    cannot write a file, and the planner cannot write the files its children's text comes from. Read only."""
+    from orch.core.fsutil import read_regular_file
+    environ = os.environ if environ is None else environ
+    base = environ.get("CLAUDE_CONFIG_DIR")
+    raw = read_regular_file((Path(base) if base else Path.home() / ".claude") / "settings.json", 1 << 20)
+    try:
+        data = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    perms = data.get("permissions") if isinstance(data, dict) else None
+    return not (isinstance(perms, dict) and perms.get("defaultMode") in EDIT_MODES)
+
+
 def _orch_words(cmd) -> list[str]:
     """The words after the program of hook command `cmd`, when that program is `orch` or an absolute path ending in
     /orch; else an empty list. Parsed as a shell would split it, not matched as text."""

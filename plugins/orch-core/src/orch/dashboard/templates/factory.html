@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% import "_factory.html" as fx %}
+{#- Every factory epic of this workspace (phase 5): needs you first, then working, stopped, finished. -#}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Factories</h1>
+    <p>{{ counts.all }} {{ "factory" if counts.all == 1 else "factories" }}, {{ counts.working }} working, {{ counts.you }} {{ "needs" if counts.you == 1 else "need" }} you</p>
+  </div>
+  <div class="actions"><a class="btn" href="/new">New ticket</a></div>
+</div>
+{% if rows %}
+<ul class="plain factory-list">
+  {% for r in rows %}
+  <li class="card factory-row{{ ' is-dark' if r.dark }}" data-factory="{{ r.epic }}">
+    <div class="factory-row-head">
+      <a class="lnk" href="/factory/{{ r.epic }}"><b>{{ r.title }}</b></a>
+      <span class="key muted">{{ r.epic }}</span>
+    </div>
+    <p class="factory-row-chips"><span class="chip chip-neu{{ ' chip-dark' if r.dark }}">{{ "Dark" if r.dark else "AI Factory" }}</span> {{ ui.status(r.role, r.headline) }}</p>
+    {{ fx.marks(r, steps, True) }}
+    <p class="muted permit-meta">Step {{ r.current + 1 }} of {{ steps|length }}: {{ r.step }}{% if r.elapsed %} · {{ r.elapsed }}{% endif %}</p>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<section class="card"><p>No factories yet. Start one from <a class="lnk" href="/new">New ticket</a> (Mode: AI Factory), or from an epic's approval.</p></section>
+{% endif %}
+{% endblock %}

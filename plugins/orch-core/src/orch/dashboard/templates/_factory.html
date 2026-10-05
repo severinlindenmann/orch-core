@@ -1,0 +1,25 @@
+{#- The factory ring and step marks (phase 5). Five steps, lit only from records (data/factory.py). Never colour only:
+    done = solid thin, the current step thick, waiting for you = dashed, stopped = amber, and every mark has its words. -#}
+
+{% macro ring(run, steps) %}
+{% set MARK_WORDS = {"done": "done", "now": "in progress", "wait": "waiting for you", "stop": "stopped", "todo": "not yet"} %}
+{% set n = run.current + 1 %}
+<div class="ring" role="progressbar" aria-valuemin="0" aria-valuemax="{{ steps|length }}" aria-valuenow="{{ run.steps }}"
+     aria-valuetext="Step {{ n }} of {{ steps|length }}: {{ run.step }}, {{ MARK_WORDS[run.marks[run.current]] }}">
+  <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+    {% if run.dark %}<circle class="ring-core" cx="60" cy="60" r="38"/>{% endif %}
+    {% for m in run.marks %}
+    <circle class="ring-seg is-{{ m }}" cx="60" cy="60" r="52" pathLength="100" transform="rotate({{ -90 + 72 * loop.index0 }} 60 60)"/>
+    {% if m == "now" and not run.dark %}<circle class="ring-run" cx="60" cy="60" r="52" pathLength="100" transform="rotate({{ -90 + 72 * loop.index0 }} 60 60)"/>{% endif %}
+    {% endfor %}
+  </svg>
+  <div class="ring-center"><span class="muted">Step {{ n }} of {{ steps|length }}</span><b>{{ run.step }}</b></div>
+</div>
+{% endmacro %}
+
+{% macro marks(run, steps, compact=False) %}
+{% set MARK_WORDS = {"done": "done", "now": "in progress", "wait": "waiting for you", "stop": "stopped", "todo": "not yet"} %}
+<ol class="step-marks{{ ' is-compact' if compact }}" aria-label="Steps">
+  {% for m in run.marks %}<li class="step-mark is-{{ m }}"><span class="step-line" aria-hidden="true"></span><span class="{{ 'sr-only' if compact }}">{{ steps[loop.index0] }}<span class="muted">: {{ MARK_WORDS[m] }}</span></span></li>{% endfor %}
+</ol>
+{% endmacro %}

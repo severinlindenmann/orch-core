@@ -2120,3 +2120,69 @@ dialog.viewer-drawer::backdrop { background: var(--scrim); }
   .viewer-head, .viewer-body, .viewer-foot { padding-inline: var(--s-3); }
   .viewer-step { display: none; }
 }
+
+/* ---------- AI Factory and Dark AI Factory (phase 5): New ticket modes, the ring, the run view, the list ---------- */
+/* New ticket: what each mode shows is switched here (no JS); the server checks every switch again. */
+.new-modes:not(:has(#mode-factory:checked, #mode-dark:checked)) .only-factory,
+.new-modes:not(:has(#mode-dark:checked)) .only-dark,
+.new-modes:has(#mode-dark:checked) .only-plain,
+.new-modes:has(#mode-factory:checked, #mode-dark:checked) .only-ticket { display: none; }
+.new-mode .muted { margin: var(--s-2) 0 0; }
+.permit-dark { margin: 0; overflow-wrap: anywhere; }
+
+/* The ring: five steps, never colour only. Done = solid thin, current = thick, waiting for you = dashed,
+   stopped = amber. AI Factory: the blue current step with a moving dash. Dark: a darker panel, mint, and a slow
+   breathing core that glows faint until Build and stronger from there (.hot). Reduced motion: still. */
+.ring-panel { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-6); }
+.ring-panel.is-dark { background: color-mix(in srgb, var(--surface) 92%, black); border-color: var(--line2); }
+.ring-side { flex: 1 1 18rem; min-width: 0; display: flex; flex-direction: column; gap: var(--s-3); }
+.ring-side h2 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); overflow-wrap: anywhere; }
+.ring-side p, .ring-side .actions, .ring-side .actions form { margin: 0; }
+.ring { position: relative; flex: none; width: min(100%, 15rem); aspect-ratio: 1; margin-inline: auto; }
+.ring svg { display: block; width: 100%; height: 100%; }
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--s-1); padding: var(--s-8); }
+.ring-center b { font: var(--type-stat); overflow-wrap: anywhere; }
+.ring-seg { fill: none; stroke: var(--line2); stroke-width: 3; stroke-dasharray: 18 82; }
+.ring-seg.is-done { stroke: var(--text); stroke-width: 4; }
+.ring-seg.is-now { stroke: var(--info-mark); stroke-width: 10; }
+.ring-seg.is-wait { stroke: var(--you-mark); stroke-width: 6; stroke-dasharray: 3 2 3 2 3 2 3 82; }
+.ring-seg.is-stop { stroke: var(--warn-mark); stroke-width: 10; }
+.ring-run { fill: none; stroke: var(--surface); stroke-width: 4; stroke-dasharray: 3 97; animation: ring-run 2.4s linear infinite; }
+@keyframes ring-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -15; } }
+.is-dark .ring-seg.is-now { stroke: var(--mint); }
+.ring-core { fill: var(--mint); opacity: 0.08; animation: ring-breathe 6s ease-in-out infinite; }
+.hot .ring-core { animation-name: ring-breathe-hot; }
+@keyframes ring-breathe { 0%, 100% { opacity: 0.05; } 50% { opacity: 0.14; } }
+@keyframes ring-breathe-hot { 0%, 100% { opacity: 0.16; } 50% { opacity: 0.34; } }
+@media (prefers-reduced-motion: reduce) {
+  .ring-run { animation: none; }
+  .ring-core { animation: none; opacity: 0.1; }
+  .hot .ring-core { opacity: 0.25; }
+}
+
+/* Step marks: the same five states as the ring, as short lines with their words. */
+.step-marks { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); font: var(--type-meta); }
+.step-marks.is-compact { gap: var(--s-1); }
+.step-mark { display: inline-flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.step-line { display: inline-block; width: var(--s-6); border-top: 1px solid var(--line2); }
+.is-done > .step-line { border-top: 2px solid var(--text); }
+.is-now > .step-line { border-top: var(--s-1) solid var(--info-mark); }
+.is-dark .is-now > .step-line { border-top-color: var(--mint); }
+.is-wait > .step-line { border-top: 2px dashed var(--you-mark); }
+.is-stop > .step-line { border-top: var(--s-1) solid var(--warn-mark); }
+
+.run-waiting { margin-top: var(--s-6); }
+.run-waiting > h2 { margin: 0 0 var(--s-3); }
+.run-summary, .run-log { margin-top: var(--s-6); }
+.run-log > summary { list-style: none; display: inline-flex; }
+.run-log > summary::-webkit-details-marker { display: none; }
+.run-log-list { margin-top: var(--s-3); font: var(--type-meta); }
+.run-log-list time { font-variant-numeric: tabular-nums; color: var(--muted); }
+
+/* The factory list */
+.factory-list { gap: var(--s-3); }
+.factory-row { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
+.factory-row.is-dark { background: color-mix(in srgb, var(--surface) 92%, black); }
+.factory-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); overflow-wrap: anywhere; }
+.factory-row-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chip-dark { box-shadow: inset 0 0 0 1px var(--mint); }

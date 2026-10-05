@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
 {% block main %}
+{%- set mode = values.get('mode') or 'ticket' -%}
 <div class="page-head">
   <div>
     <h1>New ticket</h1>
@@ -8,18 +9,43 @@
   </div>
 </div>
 {% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
-<div class="grid-2">
+{#- With AI Factory on, a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on. What each
+    mode shows is switched by CSS (:has on .new-modes), so the page works without JS; the server checks the switches again. -#}
+<div class="grid-2 new-modes">
   {#- What you write comes first (title, then the ask and its screenshots), then the triage details, always shown:
       a human who files a ticket here is usually triaging it (agents file most tickets themselves). -#}
   <form class="card form-card new-ticket" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
     <label class="field-col" for="title">Title
       <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup of the config tables">
     </label>
+    {% if factory_on %}
+    <fieldset class="seg new-mode">
+      <legend>Mode</legend>
+      <div class="seg-options">
+        {% for m, label in (("ticket", "Ticket"), ("factory", "AI Factory"), ("dark", "Dark AI Factory")) if m != "dark" or dark_on %}
+        <input class="sr-only" type="radio" id="mode-{{ m }}" name="mode" value="{{ m }}" {{ 'checked' if m == mode or (m == 'ticket' and mode not in ('factory', 'dark')) }}>
+        <label for="mode-{{ m }}">{{ label }}</label>
+        {% endfor %}
+      </div>
+      {% if not dark_on %}<p class="muted" data-dark-off>Dark AI Factory is off. Turn it on in a terminal with <code>orch factory dark on</code>.</p>{% endif %}
+    </fieldset>
+    {% endif %}
     <div class="field-col">
-      <label for="ask">What should be done, and why?</label>
+      <label for="ask">What should be done, and why?{% if factory_on %} <span class="muted only-factory">(becomes the epic's Requirements, word for word)</span>{% endif %}</label>
       <textarea id="ask" name="ask" rows="7" aria-describedby="ask-hint" placeholder="Links, examples, constraints.">{{ values.get('ask', '') }}</textarea>
       <p id="ask-hint" class="field-hint">Markdown works. Paste a screenshot straight into this box to attach it.</p>
     </div>
+    {% if factory_on %}
+    <label class="field-col only-factory" for="done_when">Done when <span class="muted">(becomes the epic's Acceptance criteria)</span>
+      <textarea id="done_when" name="done_when" rows="2">{{ values.get('done_when') or done_when_default }}</textarea>
+    </label>
+    {% if dark_on %}
+    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to start it without any prompts</span>
+      <input id="confirm_dark" name="confirm_dark" autocomplete="off" spellcheck="false" aria-describedby="confirm-dark-hint">
+      <span class="muted" id="confirm-dark-hint">Nothing asks you while it runs: only the commands this checkout's Dark profile allows run.</span>
+    </label>
+    {% endif %}
+    {% endif %}
     <div class="field-col">
       <label for="files">Attachments <span class="muted">(optional)</span></label>
       <input id="files" type="file" name="files" multiple>
@@ -28,7 +54,7 @@
     <section class="new-details" aria-labelledby="new-details-h">
       <h2 class="new-details-h" id="new-details-h">Details</h2>
       <div class="new-details-body">
-        <fieldset class="seg">
+        <fieldset class="seg only-ticket">
           <legend>Type</legend>
           <div class="seg-options">
             {% for t in types %}
@@ -38,6 +64,7 @@
           </div>
           {% if "epic" in types %}<p class="field-hint">An epic groups other tickets; the work happens on its children.</p>{% endif %}
         </fieldset>
+        {% if factory_on %}<p class="field-hint only-factory">Type: <b>epic</b>. Agents split it into children of size m or smaller; larger ones wait for you.</p>{% endif %}
         <div class="form-row">
           <label class="field-col" for="priority">Priority
             <select id="priority" name="priority">{% for p in priorities %}<option value="{{ p }}" {{ 'selected' if p == values.get('priority') }}>{{ p|capitalize }}</option>{% endfor %}</select>
@@ -58,19 +85,33 @@
       </div>
     </section>
     <div class="new-submit">
-      <button type="submit" class="btn btn-primary">Create ticket</button>
-      <span class="muted">It goes to backlog.</span>
+      <button type="submit" class="btn btn-primary"><span class="only-ticket">Create ticket</span>{% if factory_on %}<span class="only-factory only-plain">Create and start the AI Factory</span><span class="only-dark">Create and start the Dark AI Factory</span>{% endif %}</button>
+      <span class="muted only-ticket">It goes to backlog.</span>
     </div>
   </form>
   <aside>
     <section class="card">
       <h2>What happens next</h2>
-      <ol class="next-steps">
+      <ol class="next-steps only-ticket">
         <li>An agent turns the ask into requirements and asks you what is unclear{% if prefix %} (tell it "refine {{ prefix }}-00xx" with the key the ticket gets){% endif %}.</li>
         <li>You approve the requirements, then the plan.</li>
         <li>The agent does the work and links branch and {{ review_term }}.</li>
         <li>You give the verdict. Only then is the ticket done.</li>
       </ol>
+      {% if factory_on %}
+      <ol class="next-steps only-factory only-plain">
+        <li>Creating it signs one epic: your ask is its Requirements, word for word.</li>
+        <li>Agents split it, specify the children and build them.</li>
+        <li>A permission card appears when an agent needs a command; you answer it.</li>
+        <li>You read the Ready report and sign the verdict.</li>
+      </ol>
+      <ol class="next-steps only-dark">
+        <li>You sign once, by typing dark.</li>
+        <li>The runner starts Claude sessions that may run only what this checkout's Dark profile allows.</li>
+        <li>Nothing asks you anything. A command that is not in the profile stops that child, with one button to add it.</li>
+        <li>There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
+      </ol>
+      {% endif %}
     </section>
   </aside>
 </div>

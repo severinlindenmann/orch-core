@@ -150,6 +150,10 @@
       <legend class="sr-only">AI Factory</legend>
       <label><input type="checkbox" name="factory" value="1"> <b>Start as an AI Factory</b>: agents split, specify, approve and build the children without asking you</label>
       <p class="muted">Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. You answer the permissions they ask for, and you give the verdict. It replaces the delegation choice below.</p>
+      {% if e.factory.dark_on %}
+      <label><input type="checkbox" name="dark" value="1"> <b>Start as a Dark AI Factory</b>: the same, but nothing asks you while it runs</label>
+      <p class="muted">Agents may run only the commands this checkout's Dark profile allows; anything else stops that child with a card. There is no release or automatic close: you read the Ready report and give the verdict.</p>
+      {% endif %}
     </fieldset>
     {% endif %}
     <fieldset class="charter-delegate">
@@ -179,6 +183,7 @@
 {% set f, p = e.factory, e.permits or {} %}
 <section class="epic-slot" id="epic-slot" aria-label="Waiting on you">
   {% if f and f.factory and f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
+  {% if f and f.factory %}<p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark else "AI Factory" }} run view</a></p>{% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
   {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#epic-slot", True) }}{% endfor %}

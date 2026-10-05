@@ -54,6 +54,7 @@
       {% for key, label, href, icon, badge, tone in items %}
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
+      {% if factory_nav %}{{ item("factory", "Factories", "/factory", "M20 12a8 8 0 1 1-8-8M16 12a4 4 0 1 1-4-4M12 4v4M20 12h-4", path=true) }}{% endif %}
       {% if addon_nav or graph_nav or terminals_nav or schedules_nav or (quick_nav and quick_nav.enabled) %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
         <p class="menu-group" id="menu-addons-h">Addons</p>

@@ -237,11 +237,11 @@ async def form_error(request, exc):
 def router_modules() -> tuple:
     """The route modules, in the order they are included (and so matched)."""
     from orch.dashboard import (routes_actions, routes_activity, routes_addons, routes_agent_start, routes_board,
-                                routes_design, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_schedules, routes_status, routes_terminals,
+                                routes_design, routes_factory, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_schedules, routes_status, routes_terminals,
                                 routes_quick, routes_theme, routes_ticket, routes_widgets, routes_workspace)
     return (routes_status, routes_board, routes_graph, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
             routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design,
-            routes_guide, routes_terminals, routes_schedules, routes_widgets, routes_remote, routes_quick)
+            routes_guide, routes_terminals, routes_schedules, routes_widgets, routes_remote, routes_quick, routes_factory)
 
 
 def dashboard_routes() -> list:

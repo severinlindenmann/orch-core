@@ -6,7 +6,7 @@ end for the verdict. Issue #2 tracks the whole feature; this page describes what
 
 AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface, phase 3 the
 Ready report and the Stopped message, phase 4 the runner that keeps the agents going, and phase 5 the core of Dark AI
-Factory (no permission prompts while it runs), all described below.
+Factory (no permission prompts while it runs) with its dashboard start, run view and factory list, all described below.
 
 ## Switching it on
 
@@ -265,10 +265,9 @@ command allowlist is unchanged (no settings file, no skip or bypass flags, no pe
 Instead of a card for every prompt, a Dark epic's hook answers from your **Dark profile**: a signed list of shell
 commands Dark runs in this checkout may run.
 
-**Not running yet.** Nothing in this phase starts a Dark run. The runner arms an epic only from the dashboard's start,
-and the dashboard has no Dark choice yet (it comes in the next phase). A Dark charter you sign with `orch approve
---dark` in the terminal is not armed, so no agent session is launched for it. What this page says about Dark sessions
-is how the hook will answer them once that start exists, and what the tests check today.
+**How it starts.** A Dark run starts only from the dashboard (below): its start signs the Dark charter and arms the
+runner. A Dark charter you sign with `orch approve --dark` in the terminal is not armed, so no agent session is
+launched for it.
 
 **Switching it on (you only).** Set `factory.enabled` to `true` in `orchestrator/config.json`, then in your own
 terminal:
@@ -360,7 +359,7 @@ script.py` as an exact rule) lets the agent run any code it can write into the r
 written, except the shapes above. Prefer exact rules, and for anything that matters, a wrapper script kept outside
 the repository the agent writes to, listed by its exact command.
 
-**In a Dark session** (one the runner bound to a Dark epic, as in phase 4; see "Not running yet" above):
+**In a Dark session** (one the runner bound to a Dark epic, as in phase 4):
 
 - a never-grantable command, or a tool other than the shell, is denied as before; a never-grantable command is never
   allowed, whatever the profile holds;
@@ -377,15 +376,42 @@ way your grants do, whether the Dark switch is on or off: a wake only relaunches
 Flipping the Dark switch alone wakes nothing, so switching it off and on does not relaunch every parked child; a child
 parked while Dark was off waits for your answer to its card, or a profile change.
 
-Not in this phase: starting a Dark epic from the dashboard (so nothing runs yet), the Dark switch and the "Add to the
-Dark profile" action on the dashboard, a ring or factory list view, release stages, and closing children under the
-charter.
+## Dark AI Factory on the dashboard (phase 5, dashboard)
+
+Only while `factory.enabled` is on; every start is yours (the dashboard's cookie and same-origin checks, and orch's
+refusal of a process under an agent harness, as for every approval).
+
+- **New ticket** has a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on (otherwise a
+  line says how to turn it on in a terminal). A factory mode makes an epic whose Requirements are your ask, word for
+  word, and whose Acceptance criteria are the "Done when" text; nothing else is written for you. Creating it is also the
+  start: the same signed charter approval and runner arming as the epic page's start. Dark needs the word `dark`
+  typed. The server checks the switches and the typed word again; a refused start creates nothing. If the epic was
+  created but its start failed, you land on the epic with the reason, and start it there.
+- **Epic page**: next to "Start as an AI Factory", "Start as a Dark AI Factory" while Dark is on.
+- **Run view** (`/factory/<epic>`): a ring of five steps, each lit only from records orch keeps: Understand (a current
+  signed charter and at least one child), Plan (every child covered, auto-approved or approved), Build (every child
+  has all its tasks closed, or is in testing or done with the record behind it), Evidence (the Ready report: every
+  criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state in words (working,
+  waiting for you, paused, stopped, budget used up, runner blocked, not armed, finished), the time since you signed
+  the start (there is no estimate), what waits for you (the same cards as elsewhere), a read-only log (time, ticket,
+  event kind and whether a human or an agent wrote it; no command text, hashes or session ids) and "Stop the run…",
+  which is the epic's pause. A finished epic shows a summary from the records: children, tasks done, and permission
+  requests answered on a card or by the Dark profile.
+- **Factories** (`/factory`, in the menu): every factory epic of the workspace, needs you first, then working, stopped,
+  finished.
+- **Add to the Dark profile** on a Dark card: the card's exact command becomes an exact rule (`orch dark profile add
+  --from-request`, the same checks), bound to the hash of the command the card showed.
+
+The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: release stages, any automatic
+closing (the verdict is yours, from the Ready report), and runner-side proof that tests ran, a review happened or a
+branch merged; the ring has no steps for those because no record of them exists.
 
 ## Coming in later phases
 
-- Dark AI Factory on the dashboard: starting a Dark epic (which arms the runner), the switch, "Add to the Dark
-  profile" on cards, the ring view and the factory list; release stages and closing under the charter.
+- Release stages and closing children under the charter; runner-side proof of tests, review and merge (and ring
+  steps for them).
+- The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).
-- The factory switch on the new-epic form, and phone cards through the signed phone-decision flow.
+- Phone cards through the signed phone-decision flow.
 - Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

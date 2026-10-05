@@ -13,7 +13,8 @@ from jinja2 import pass_context
 from orch import __version__
 from orch.clock import now as clock_now
 from orch.clock import parse_stamp
-from orch.core import query
+from orch.core import permits, query
+from orch.core.events import Actor
 from orch.dashboard import switcher
 from orch.dashboard import terminals
 from orch.dashboard.assets import static_url
@@ -332,6 +333,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
+        "factory_nav": permits.enabled(ws),  # AI Factory on: Factories in the menu
         "quick_nav": _quick_nav(ws),  # quick tasks (orch.core.quick): the menu item and its open count
         "graph_nav": addon_on(ws, GRAPH_ADDON),  # #167: the Graph page is the `graph` default addon's
         "schedules_nav": addon_on(ws, "schedules"),  # docs/schedules.md: the Schedules page is the addon's

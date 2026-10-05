@@ -123,3 +123,19 @@ def test_related_pages_at_the_caps_is_fast():
     related = related_pages(t, pages, no_scan, by_id(found))
     took = time.perf_counter() - start
     assert related[0][0]["id"] == "p3" and took < 0.25, took  # target 50 ms; loose for slow CI machines
+
+
+def test_wk03_a_term_on_most_pages_is_not_a_reason():
+    """The harness repo's name is on nearly every page: it must not be why a page is "related"."""
+    pages = [{"provider": "p", "space": "s", "id": f"P{i}", "title": f"P{i}", "updated_at": f"2026-10-0{i + 1}T00:00:00+00:00"}
+             for i in range(5)]
+    texts = {f"P{i}": "acme-energy-data is the repo. " for i in range(5)}
+    texts["P0"] += "demo-9 changed the loader"
+    t = ticket("DEMO-0009", repos=["acme-energy-data"])
+    got = related_pages(t, pages, lambda p: texts[p["id"]])
+    assert [(p["id"], why) for p, why in got] == [("P0", "mentions DEMO-9")]  # not "acme-energy-data" anywhere
+    assert related_pages(t, pages[:3], lambda p: texts[p["id"]])[0][1].startswith("mentions ")  # too few pages to judge
+
+
+def test_search_ignores_quotes_around_words():
+    assert [p["id"] for p in search(PAGES, text_of, '"nightly" "load"')] == ["Runbook"]

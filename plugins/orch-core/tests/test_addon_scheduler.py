@@ -400,3 +400,24 @@ def test_refresh_for_an_addon_without_scopes_is_not_requeued_forever(ws):
     s, _ = sched(ws, Scripted(scopes=()))
     s.request_refresh("demo")
     assert s.due() == [] and s._refresh == set() and s._refresh_all is False
+
+
+def test_snapshots_of_a_scope_the_provider_no_longer_lists_are_dropped(ws):
+    """WK-01: switching provider (or removing a repo) must not leave the old scope's failure showing on the page."""
+    cache.write_snapshot(ws, "demo", Snapshot("fake", "old", WALL, health="error", message="no longer wanted"))
+    cache.write_snapshot(ws, "demo", Snapshot("other", "old", WALL, health="error", message="another provider's"))
+    p = Scripted(snap())
+    s, _ = sched(ws, p, live=lambda: True)
+    assert s.step() == [JobKey("demo", "fake", "a")]
+    left = {(x.provider, x.scope) for x in cache.read_snapshots(ws, "demo")}
+    assert left == {("fake", "a"), ("other", "old")}  # only this provider's unlisted scope went
+
+
+def test_a_failing_scopes_call_does_not_delete_the_cache(ws):
+    class BadScopes(Scripted):
+        def scopes(self, ctx):
+            raise RuntimeError("no config")
+    cache.write_snapshot(ws, "demo", Snapshot("fake", "a", WALL, items=({"id": "x", "label": "X", "role": "ok", "text": "1"},)))
+    s, _ = sched(ws, BadScopes(), live=lambda: True)
+    s.step()
+    assert cache.read_snapshot(ws, "demo", "fake", "a") is not None

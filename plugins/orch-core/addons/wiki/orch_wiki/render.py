@@ -6,13 +6,13 @@ import re
 from datetime import datetime
 
 from orch.addons.api import PendingDecision
-from orch.addons.widgets import Action, Callout, Card, Copy, Link, Markdown, Search, Table, Time, safe_url
+from orch.addons.widgets import Action, Callout, Card, Copy, Link, Markdown, Search, Table, Text, Time, safe_url
 from orch.clock import now as clock_now
 
 from .create import page_id
 from .github_wiki import wiki_repos
 from .local import folder_of, resolve_folder
-from .relate import TARGET, related_pages, search
+from .relate import TARGET, related_pages, search, search_words
 
 DIFFS = "branch-diffs"
 TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]*-\d+")
@@ -55,6 +55,49 @@ def pages_of(view) -> list[dict]:
 
 def diff_items(view) -> list[dict]:
     return [i for snap in view.snapshots(DIFFS) for i in snap.items if isinstance(i, dict)]
+
+
+_MD = re.compile(r"([\\`*_{}\[\]()#+!<>|~&])")
+SNIPPET = 200  # characters of page text around the first match
+
+
+def _md(text: str) -> str:
+    """Page text as inert Markdown: nothing in it may become a link, a heading, emphasis or HTML."""
+    return _MD.sub(r"\\\1", text)
+
+
+def snippet(raw: str, words: list[str], fallback: str = "") -> str:
+    """Markdown for a search result: about SNIPPET characters of `raw` around the first match, the matched words in bold,
+    the page's own first paragraph (`fallback`) when only the title matched."""
+    text = " ".join(str(raw or "").split())
+    low = text.lower()
+    hits = [i for i in (low.find(w) for w in words) if i >= 0]
+    if not hits:
+        return _md(_str(fallback, 300))
+    first = min(hits)
+    start = max(0, first - SNIPPET // 3)
+    if start:  # begin at a word, not in the middle of one
+        cut = text.find(" ", start)
+        start = cut + 1 if 0 <= cut < first else start
+    end = min(len(text), start + SNIPPET)
+    if end < len(text):
+        cut = text.rfind(" ", first, end)
+        end = cut if cut > first else end
+    part = text[start:end]
+    pattern = re.compile("(" + "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True)) + ")", re.I)
+    out = "".join(f"**{_md(chunk)}**" if i % 2 else _md(chunk) for i, chunk in enumerate(pattern.split(part)))
+    return ("… " if start else "") + out + (" …" if end < len(text) else "")
+
+
+def result_widgets(pages: list[dict], addon, query: str) -> list:
+    """One block per result: the page link, how long ago it changed and the passage that matched, highlighted."""
+    words = search_words(query)
+    body = []
+    for p in pages[:30]:
+        title = _str(p.get("title") or p.get("id")) or "page"
+        body.append(page_link(p) if safe_url(p.get("url")) else Text(title))
+        body.append(Markdown(f"_{_md(ago(p.get('updated_at')))}_ · " + snippet(addon.raw_text_of(p), words, p.get("excerpt") or "")))
+    return body
 
 
 def page_link(page: dict):
@@ -120,8 +163,10 @@ def page(view, addon) -> list:
         out.append(Callout("info", "No wiki repo set",
                            "Add owner/name in Workspace & addons, or give the harness repo a GitHub origin."))
     if query:
-        rows = tuple((page_link(p), ago(p.get("updated_at")), _str(p.get("excerpt"))) for p in search(pages, addon.text_of, query))
-        out.append(Card(f"Results for {_str(query, 100)}", (Table(("Page", "Updated", "Excerpt"), rows, empty="No page matches this search. Try other or fewer words."),)))
+        found = search(pages, addon.text_of, query)
+        out.append(Card(f"Results for {_str(query, 100)}", tuple(result_widgets(found, addon, query)) + (
+            (Link("Clear search", "/addons/wiki/"),) if found else
+            (Text("No page matches this search. Try other or fewer words."), Link("Clear search", "/addons/wiki/")))))
     hints = addon.hints(view)
     if hints:
         rows = tuple((Link(h.ticket, f"/t/{h.ticket}"), Link(_str(h.title), h.url) if safe_url(h.url) else _str(h.title),

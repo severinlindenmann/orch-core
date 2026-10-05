@@ -1279,6 +1279,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 /* ---------- Phone width (<= 480 px): every page in one column ---------- */
 
 @media (max-width: 480px) {
+  /* Page heads: the title, then its action underneath, left aligned on every page (the action used to sit beside
+     the title on some pages and wrap on others). */
+  .page-head { flex-direction: column; align-items: flex-start; gap: var(--s-3); }
   /* Board: the columns stack (each one full width) instead of scrolling sideways; Done stays a one-line link. */
   .board, .board.board-rail { display: flex; flex-direction: column; gap: var(--s-4); overflow: visible; mask-image: none; padding-bottom: 0; }
   .board .col { flex: none; width: 100%; }
@@ -1392,7 +1395,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 .artifact-list { display: grid; gap: var(--s-2); }
 .artifact-item { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-2); }
 .artifact-thumb img { max-width: 160px; max-height: 120px; object-fit: cover; }
-.artifact-url { word-break: break-all; }
+.artifact-url { overflow-wrap: anywhere; }  /* break at a / or - first; mid-word only when nothing else fits */
 .artifact-proof { margin-top: var(--s-2); }
 
 /* ---------- M (v4): Your move strip, agent flow with rails, Backlog drawer ---------- */

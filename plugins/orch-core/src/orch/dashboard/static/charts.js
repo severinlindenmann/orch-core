@@ -5,7 +5,8 @@
 (() => {
   const reduced = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const live = new Map();  // figure -> Chart
-  const LIB = "/static/vendor/chartjs/chart.umd.min.js";
+  // The layout hands over the library's content-versioned URL (?v=<hash>), so an upgraded Chart.js is never an old cached copy.
+  const LIB = (document.currentScript && document.currentScript.dataset.lib) || "/static/vendor/chartjs/chart.umd.min.js";
   let loading = null;
 
   const css = (name, fallback) => {

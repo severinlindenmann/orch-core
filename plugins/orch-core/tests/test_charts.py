@@ -97,6 +97,15 @@ def test_the_vendored_chart_library_is_served_and_is_the_one_in_the_readme(dash)
     assert dash.get("/static/charts.js").status_code == 200
 
 
+def test_the_chart_library_is_loaded_by_a_content_versioned_url(dash):
+    html = dash.get("/").text
+    m = re.search(r'src="/static/charts\.js\?v=[0-9a-f]{12}" data-lib="(/static/vendor/chartjs/chart\.umd\.min\.js\?v=[0-9a-f]{12})"', html)
+    assert m, "the layout must give charts.js the versioned library URL"
+    r = dash.get(m.group(1))
+    assert r.status_code == 200 and "immutable" in r.headers["cache-control"]
+    assert "currentScript.dataset.lib" in dash.get("/static/charts.js").text
+
+
 def test_the_series_tokens_exist_in_both_themes():
     from pathlib import Path
     css = (Path(__file__).parents[1] / "src/orch/dashboard/static/tokens.css").read_text()

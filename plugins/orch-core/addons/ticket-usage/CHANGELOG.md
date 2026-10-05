@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The transcript parse cache is kept in the addon's state folder (`parse-cache.json`), so the first fetch after `orch serve` restarts re-reads only transcripts that changed.
 - A missing Limits log is named ("File not found: <path>") instead of blaming the recorder; a relative path is refused on save and a file that is not there yet is saved with a note. The Usage page refreshes after settings are saved. No empty Estimate column while dollar figures are off. A pace sentence no longer projects past the reset; limit cards no longer repeat their title; the weekly-pace hint says how much history there is; the limits history axis shows the date when it spans two calendar days.
 
 ## 0.4.0

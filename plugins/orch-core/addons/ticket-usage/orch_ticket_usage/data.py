@@ -12,7 +12,62 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-_PARSED: dict = {}  # path -> (size, mtime_ns, parsed); ponytail: in memory only, re-parsed after a restart
+_PARSED: dict = {}  # path -> (size, mtime_ns, parsed); also kept in the addon's state folder (open_cache / save_cache)
+_CACHE: dict = {"file": None, "dirty": False, "touched": set()}
+CACHE_VERSION = 1
+_RUN_KEYS = ("totalCostUSD", "totalDuration", "totalLinesAdded", "totalLinesRemoved")
+
+
+def open_cache(path: Path) -> None:
+    """Use `path` (a JSON file in the addon's state folder) as the parse cache: transcripts whose size and mtime did not
+    change since the last run are not parsed again, so the first fetch after `orch serve` restarts stays cheap. A missing
+    or unreadable file is an empty cache."""
+    if _CACHE["file"] == path:
+        return
+    _CACHE.update(file=path, dirty=False, touched=set())
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("v") != CACHE_VERSION:
+            return
+        for p, e in raw["files"].items():
+            msgs = [(float(t), str(m), int(o)) for t, m, o in e["msgs"]]
+            _PARSED.setdefault(p, (int(e["size"]), int(e["mtime_ns"]), {"msgs": msgs, "runs": dict(e["runs"])}))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return
+
+
+def begin_fetch() -> None:
+    _CACHE["touched"] = set()
+
+
+def save_cache() -> None:
+    """Write the entries this fetch used (so deleted transcripts drop out), only when something was parsed or dropped."""
+    path = _CACHE["file"]
+    if path is None:
+        return
+    keep = {p: v for p, v in _PARSED.items() if p in _CACHE["touched"]}
+    if not _CACHE["dirty"] and len(keep) == len(_PARSED):
+        return
+    for p in set(_PARSED) - set(keep):
+        del _PARSED[p]
+    doc = {"v": CACHE_VERSION, "files": {p: {"size": s, "mtime_ns": m, "msgs": [list(x) for x in parsed["msgs"]],
+                                              "runs": parsed["runs"]} for p, (s, m, parsed) in keep.items()}}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(doc, separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, path)
+        _CACHE["dirty"] = False
+    except OSError:
+        pass  # a cache that cannot be written only costs a re-parse next time
+
+
+def _slim(run: dict) -> dict:
+    """The fields cost_of reads from a cost-state row: the cache keeps nothing else."""
+    out = {k: run.get(k) for k in _RUN_KEYS}
+    usage = run.get("modelUsage")
+    out["modelUsage"] = {m: {"costUSD": u.get("costUSD")} for m, u in usage.items() if isinstance(u, dict)} if isinstance(usage, dict) else {}
+    return out
 
 
 def claude_dir() -> Path:
@@ -33,6 +88,7 @@ def parse_file(path: Path) -> dict:
         st = path.stat()
     except OSError:
         return {"msgs": [], "runs": {}}
+    _CACHE["touched"].add(str(path))
     hit = _PARSED.get(str(path))
     if hit and hit[:2] == (st.st_size, st.st_mtime_ns):
         return hit[2]
@@ -57,11 +113,12 @@ def parse_file(path: Path) -> dict:
                     except ValueError:
                         continue
                     if row.get("type") == "cost-state":
-                        runs[str(row.get("startTime"))] = row  # cumulative per run: the last one wins
+                        runs[str(row.get("startTime"))] = _slim(row)  # cumulative per run: the last one wins
     except OSError:
         pass
     parsed = {"msgs": sorted(last.values()), "runs": runs}
     _PARSED[str(path)] = (st.st_size, st.st_mtime_ns, parsed)
+    _CACHE["dirty"] = True
     return parsed
 
 

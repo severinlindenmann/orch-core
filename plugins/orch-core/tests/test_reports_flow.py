@@ -155,4 +155,6 @@ def test_a_clock_behind_the_log_still_gives_a_page_and_markdown(ws, put):
 
 
 def test_pages_without_a_chart_do_not_name_the_library(dash):
-    assert "chart.umd" not in dash.get("/board").text
+    html = dash.get("/board").text
+    assert '<script src="/static/vendor/chartjs' not in html  # the library is loaded on demand by charts.js (data-lib only names it)
+    assert not re.search(r'<script[^>]+src="[^"]*chart\.umd', html)

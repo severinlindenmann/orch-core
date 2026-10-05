@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="{{ static_url('tasks.css') }}">
   {% block head %}{% endblock %}
   <script src="{{ static_url('app.js') }}" defer></script>
-  <script src="{{ static_url('charts.js') }}" defer></script>
+  <script src="{{ static_url('charts.js') }}" data-lib="{{ static_url('vendor/chartjs/chart.umd.min.js') }}" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>

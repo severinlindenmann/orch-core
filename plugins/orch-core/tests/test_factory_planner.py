@@ -1038,3 +1038,32 @@ def test_the_hook_refuses_a_commit_on_the_default_branch_or_a_detached_head(conf
     out = answer(_repo(tmp_path / "f2", "main"))
     assert "HEAD is the default branch main" in out["hookSpecificOutput"]["decision"]["message"]
     assert permits._git_commit("cd x && git commit -m y") and not permits._git_commit("git log --oneline")
+
+
+# -- the evidence format: what the planner writes and what the workers prove, read by orch's own parser ----------------
+
+def test_the_prompts_examples_are_what_orchs_evidence_parser_proves():
+    from orch.core import evidence
+    from orch.core.model import Ticket
+    planner = factory_runner.planner_prompt("L-0001")
+    assert f"`{factory_runner.CRITERION_EXAMPLE}`" in planner and "top-level checkbox lines" in planner
+    worker = factory_runner.factory_work_prompt("L-0002")
+    for p in (worker, factory_runner.factory_work_prompt("L-0002", "git commit -m \"L-0002 x\"")):
+        assert f"`{factory_runner.EVIDENCE_EXAMPLE}`" in p
+        assert "`orch section set L-0002 Verification --file FILE`" in p and "Leave the Acceptance criteria" in p
+        assert p.index("Verification --file") < p.index("orch move L-0002 testing")
+    criteria = "\n".join(factory_runner.CRITERION_EXAMPLE.replace("one row", f"row {i}") for i in (1, 2, 3))
+    verification = "\n".join(factory_runner.EVIDENCE_EXAMPLE.replace("AC1", f"AC{i}") for i in (1, 2, 3))
+    t = Ticket(meta={}, sections={"Acceptance criteria": criteria, "Verification": verification})
+    assert evidence.progress(t) == (3, 3) and evidence.missing(t) == []
+    # what the live run wrote instead proves nothing: plain bullets are no criteria, prose is no evidence
+    t = Ticket(meta={}, sections={"Acceptance criteria": "- Data file created\n- Page shows it",
+                                  "Verification": "Checked everything ✓"})
+    assert evidence.progress(t) == (0, 0)
+
+
+def test_section_set_replaces_the_whole_verification(fws, fa):
+    t = fa.new("x")
+    fa.set_section(t.id, "Verification", "- AC1: an old line that said something")
+    fa.set_section(t.id, "Verification", factory_runner.EVIDENCE_EXAMPLE)
+    assert store.load(fws, t.id)[1].section("Verification").strip() == factory_runner.EVIDENCE_EXAMPLE

@@ -370,15 +370,29 @@ def grants(ws, signed=None) -> list[dict]:
 
 
 def open_requests(ws, signed=None, events=None) -> list[dict]:
-    """Requests the human has not answered yet: what the cards show. A Dark request (source "dark") whose command the
-    Dark profile now lists is answered by that rule."""
+    """Requests the human has not answered yet: what the cards show. A request whose command the Dark profile now
+    lists is answered by that rule when it is a Dark request (source "dark") or, whatever its source, its epic is an
+    active Dark epic now (where the profile answers the command); elsewhere it stays a card."""
     from orch.core import dark_profile
     done = decisions(ws, signed)
     out = [r for r in requests(ws, events).values() if (r["id"], r["sha"]) not in done]
-    if any(r["source"] == "dark" for r in out):
-        listed = dark_profile.rules(ws, signed)
-        out = [r for r in out if r["source"] != "dark" or dark_profile.match(ws, r["command"], listed) is None]
-    return out
+    listed = dark_profile.rules(ws, signed) if out else []
+    if not listed:
+        return out
+    dark: dict[str, bool] = {}
+
+    def answers(r) -> bool:
+        if r["source"] != "dark":
+            eid = str(r["epic"])
+            if eid not in dark:
+                try:
+                    dark[eid] = dark_delegation(ws, store.read_ticket(store.resolve(ws, eid).path), signed) is not None
+                except Exception:
+                    dark[eid] = False
+            if not dark[eid]:
+                return False
+        return dark_profile.match(ws, r["command"], listed) is not None
+    return [r for r in out if not answers(r)]
 
 
 def find_live_grant(ws, epic_id: str, command: str, signed=None) -> dict | None:
@@ -394,7 +408,8 @@ def find_live_grant(ws, epic_id: str, command: str, signed=None) -> dict | None:
 
 def request(ws, actor, ticket, command, *, reason: str = "", source: str = "agent") -> dict:
     """File a request (an agent may; it signs nothing). Refused outside a factory epic and for a command that is
-    never grantable. An open request for the same epic and command is returned instead of a second one."""
+    never grantable. An open request for the same epic and command is returned instead of a second one. From a bound
+    Dark session, a command the Dark profile already allows files nothing: {allowed: True, rule, epic, command}."""
     from orch.clock import stamp_s
     from orch.core.events import append_event
     from orch.core.ledger import workspace_id
@@ -417,6 +432,11 @@ def request(ws, actor, ticket, command, *, reason: str = "", source: str = "agen
         if b is not None and epic.id.upper() != b["epic"].upper():
             raise ValidationError(f"this AI Factory session works on epic {b['epic']}: it asks for permissions there "
                                   f"only, not for {epic.id}")
+        if b is not None and dark_delegation(ws, epic, checkout=b["checkout"]) is not None:
+            from orch.core import dark_profile  # a Dark session: the profile of the checkout the runner bound it to
+            rule = dark_profile.match(ws, command, dark_profile.rules(ws, checkout=b["checkout"]))
+            if rule is not None:
+                return {"allowed": True, "rule": rule["id"], "epic": epic.id, "command": command}
     with lock(ws, "permits"):
         for r in open_requests(ws):
             if r["epic"] == epic.id and r["command"] == command:
@@ -611,10 +631,14 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
         return _decision("allow")
     if dark:
         r = request(ws, actor, ticket, command, reason="not in the Dark profile", source="dark")
+        if r.get("allowed"):  # a rule was added since the check above
+            return _decision("allow")
         return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory. "
                                  f"Request {r['id']} is open: the human can add it to the Dark profile. Do other work "
                                  f"or run `orch wait {ticket.id}`. Do not retry variants of this command and do not "
                                  f"file another request for it.")
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
+    if r.get("allowed"):  # the Dark switch came on since the check above, and the profile lists it
+        return _decision("allow")
     return _decision("deny", f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
                              f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")

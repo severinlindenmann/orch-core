@@ -513,7 +513,15 @@ the repository the agent writes to, listed by its exact command.
   Nothing is asked in the session. The denial tells the agent which request is open, that you can add it, to do other
   work or `orch wait`, and not to retry variants of the command or file another request for it.
 - A rule that covers an open Dark card hides the card from your lists without signing an answer to it; removing the
-  rule brings the card back.
+  rule brings the card back. The same holds for a request of any source (one an agent filed itself, or a harness card
+  from before Dark was on) while its epic is an active Dark epic, where the profile answers that command; in an
+  ordinary factory epic a card stays a card whatever the profile lists.
+
+**Requests the profile already covers.** In the live run agents filed `orch permit request` for commands the profile
+already allowed (`orch task done …` after a variant of it was denied), then waited for an answer that never needed
+giving. From a session the runner bound to a Dark epic, `orch permit request "<command>"` for a command the Dark profile
+of the session's checkout allows files nothing: it prints "already allowed by the Dark profile: just run it" and
+exits 0. Everywhere else it files a request as before.
 
 **Waking.** Adding or removing a rule wakes the parked children (and a parked planner) of Dark epics (the runner relaunches them), the same
 way your grants do, whether the Dark switch is on or off: a wake only relaunches a child, it allows nothing by itself.

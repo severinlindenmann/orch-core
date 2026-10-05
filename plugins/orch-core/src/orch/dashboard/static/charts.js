@@ -36,10 +36,12 @@
     plot.style.height = horizontal ? Math.max(200, spec.labels.length * 30 + 48) + "px" : "";
     const timed = spec.x === "time";
     const linear = spec.x === "linear" || timed;
-    const span = timed ? Math.max(...spec.labels) - Math.min(...spec.labels) : 0;
+    const lo = timed ? Math.min(...spec.labels) : 0, hi = timed ? Math.max(...spec.labels) : 0;
+    // two calendar days is enough to need the date: 14 h from 20:00 to 10:00 would otherwise show times only
+    const dated = timed && (hi - lo > 86400 || new Date(lo * 1000).toDateString() !== new Date(hi * 1000).toDateString());
     const clock = (v) => {  // epoch seconds in the browser's local time: HH:MM within a day, dd.MM HH:MM across days
       const d = new Date(v * 1000), p2 = (n) => String(n).padStart(2, "0");
-      return (span > 86400 ? p2(d.getDate()) + "." + p2(d.getMonth() + 1) + " " : "") + p2(d.getHours()) + ":" + p2(d.getMinutes());
+      return (dated ? p2(d.getDate()) + "." + p2(d.getMonth() + 1) + " " : "") + p2(d.getHours()) + ":" + p2(d.getMinutes());
     };
     const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
     const ink = css("--muted"), grid = css("--line");

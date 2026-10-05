@@ -522,3 +522,90 @@ def test_open_in_mission_control_is_not_offered_to_a_non_local_browser(ws, put, 
     remote = _client(ws, base_url="http://192.168.1.20:8765", client=("192.168.1.30", 50000))
     assert "Open in Mission Control" not in remote.get(f"/t/{tid}").text
     assert "Open in Mission Control" not in remote.get(f"/t/{tid}/agent/panel").text
+
+
+# ---- QA 2026-10-05: TM-01 .. TM-05 ---------------------------------------------------------------------------------
+
+@pytest.fixture
+def running(monkeypatch, ws, put):
+    """A ticket with a Mission Control session already running for it (named like the ticket)."""
+    tid = put("open")
+    t = FakeTmux(sessions=[(tid, str(ws.root)), ("scratch", str(ws.root))])
+    monkeypatch.setattr(terminals, "tmux", t)
+    monkeypatch.setattr(terminals, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(terminals, "addon_on", lambda ws: True)
+    return tid, t
+
+
+def test_for_ticket_finds_its_sessions_only(ws, monkeypatch):
+    t = FakeTmux(sessions=[("DEMO-1", str(ws.root)), ("DEMO-1-2", str(ws.root)), ("DEMO-12", str(ws.root)),
+                           ("DEMO-1-x", str(ws.root)), ("scratch", str(ws.root))])
+    monkeypatch.setattr(terminals, "tmux", t)
+    monkeypatch.setattr(terminals, "which", lambda name: "/usr/bin/tmux")
+    assert sorted(s.name for s in terminals.for_ticket(ws, "DEMO-1")) == ["DEMO-1", "DEMO-1-2"]
+
+
+def test_tm01_ticket_page_shows_the_running_session_and_offers_to_open_it(dash, running):
+    tid, _ = running
+    html = dash.get(f"/t/{tid}").text
+    assert "data-running-here" in html and f'href="/terminals/{tid}"' in html
+    assert "Open session" in html and "Start another in Mission Control" in html
+    assert "you will be asked first" in html
+
+
+def test_tm01_a_second_start_asks_first_and_does_not_launch(dash, running, launched):
+    tid, _ = running
+    data = {"mode": "refine", "harness": "claude", "where": "tmux"}
+    r = dash.post(f"/t/{tid}/agent/start", data=data, follow_redirects=False)
+    assert r.status_code == 200 and "already runs in Terminals" in r.text and not launched
+    assert 'name="another" value="1"' in r.text and f'href="/terminals/{tid}"' in r.text
+    r = dash.post(f"/t/{tid}/agent/start", data={**data, "another": "1"}, follow_redirects=False)  # the confirmed one
+    assert r.status_code == 303 and r.headers["location"].startswith(f"/terminals/{tid}-2") and len(launched) == 1
+
+
+def test_tm01_no_question_for_a_ticket_without_a_session(dash, put, fake, launched):
+    tid = put("open")
+    r = dash.post(f"/t/{tid}/agent/start", data={"mode": "refine", "harness": "claude", "where": "tmux"},
+                  follow_redirects=False)
+    assert r.status_code == 303 and len(launched) == 1
+
+
+def test_tm02_mission_control_button_is_disabled_for_another_harness(dash, put, fake, monkeypatch):
+    import re as _re
+    from orch.dashboard.data import agent_start
+    tid = put("open")
+    ok = dash.get(f"/t/{tid}").text
+    assert "data-mc-why hidden" in ok and not _re.search(r"<button[^>]*data-mc[^>]*disabled", ok)
+    monkeypatch.setattr(agent_start, "default_harness", lambda ws, settings=None: "codex")
+    bad = dash.get(f"/t/{tid}").text
+    assert _re.search(r"<button[^>]*data-mc[^>]*disabled", bad)
+    assert "Mission Control runs Claude Code only for now" in bad and "data-mc-why hidden" not in bad
+    assert 'data-mc-harness="claude"' in bad  # app.js follows the select with it
+
+
+def test_tm03_tiles_are_named_by_session_and_link_the_ticket(dash, ws, put, running):
+    tid, _ = running
+    grid = dash.get("/terminals").text
+    assert f'<b class="term-title" data-f="title">{tid}</b>' in grid
+    assert f'data-f="ticket">{tid}</' in grid  # not "no ticket": the session is named for it
+    assert 'data-f="ticket">no ticket<' in grid  # scratch
+
+
+def test_tm03_model_and_context_are_read_off_the_pane_when_the_transcript_is_missing(dash, running):
+    tid, fake = running
+    fake.screen = "some output\n\nOpus 4.8 · 54k tokens · auto mode on"
+    page = dash.get(f"/terminals/{tid}").text
+    assert "Opus 4.8" in page and "54k tokens" in page
+    from orch.dashboard import agentinfo
+    assert agentinfo.from_screen("hello world") == {}
+    assert agentinfo.from_screen("Context: 12.5k") == {"context": "12.5k"}
+
+
+def test_tm04_scratch_button_says_what_it_runs_and_where(dash, ws, fake):
+    html = dash.get("/terminals").text
+    assert "with no prompt, in" in html and str(ws.root) in html and "permission mode" in html
+
+
+def test_tm05_mode_help_and_idle_wording(dash, fake):
+    html = dash.get("/terminals/DEMO-1").text
+    assert 'id="term-mode-help"' in html and "<b>Type</b> gives you a reply field" in html

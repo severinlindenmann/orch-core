@@ -56,13 +56,13 @@ def test_category_is_text_and_tickets_carry_their_title(dash, hops):
     assert '<li class="tl-run"><details>' not in feed or "times" in feed
 
 
-def test_release_claim_is_quiet_and_the_action_column_never_clips(dash, put):
+def test_release_claim_is_a_bordered_button_and_the_action_column_never_clips(dash, put):
     from datetime import timedelta
     from orch.clock import now, stamp
     tid = put("in-progress", claim={"harness": "claude-code", "session": "s1", "at": stamp(now() - timedelta(hours=9))})
     html = dash.get("/activity").text
     form = html.split(f'action="/t/{tid}/release"', 1)[1].split("</form>", 1)[0]
     assert "data-dialog=" in html.split(f'action="/t/{tid}/release"', 1)[1][:200]
-    assert f'<button class="btn btn-quiet" type="submit" aria-label="Release claim on {tid}">Release…</button>' in form
+    assert f'<button class="btn" type="submit" aria-label="Release claim on {tid}">Release…</button>' in form
     assert '<td class="cell-action col-actions">' in html
     assert re.search(r"\.agents-table \.col-actions \{ width: 1%; white-space: nowrap; \}", CSS.read_text(encoding="utf-8"))

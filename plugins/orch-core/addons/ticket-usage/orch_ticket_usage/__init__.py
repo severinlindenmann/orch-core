@@ -13,7 +13,8 @@ from orch.addons.api import Snapshot
 from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Countdown, Link, MenuStatus, Table, Tabs,
                                  Text, Time)
 
-from .data import (FAMILIES, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, monday_of, names, pace,
+from .data import (FAMILIES, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
+                   monday_of, names, pace,
                    parse_file, read_limits, subagents, transcripts, week_rises)
 
 WEEK_S = 7 * 86400
@@ -32,7 +33,8 @@ def build(claude, tickets, log_path, now) -> list[dict]:
     for tid, _, sids in tickets:
         for sid in sids:
             by_session.setdefault(sid, []).append(tid)
-    log = read_limits(log_path)
+    log_state = limits_log_state(log_path)
+    log = [] if log_state["state"] == "relative" else read_limits(log_path)
     rises = week_rises(log)
     resets = [r["week_reset"] for r in log if isinstance(r.get("week_reset"), (int, float))]
     win = (resets[-1] - WEEK_S) if resets else now - WEEK_S
@@ -116,7 +118,7 @@ def build(claude, tickets, log_path, now) -> list[dict]:
         row("unlinked", "unlinked", "Not linked to a ticket")
     last = log[-1] if log else None
     items.append({"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "window_start": win,
-                  "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None,
+                  "log": log_state, "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None,
                   "pace": {k: pace(log, k) for k in ("five", "week")}})
     attrib = {"none": 0, "shared": 0, "ticket": 0}
     top: dict = {}
@@ -253,7 +255,7 @@ def _limit_card(title, v, reset, now, pace_text):
     if not isinstance(v, (int, float)):
         return Card(title, (Text("unknown"),))
     past = isinstance(reset, (int, float)) and reset <= now
-    body = [KV(((title, "0 %, reset" if past else f"{v:.0f} %"),), layout="stats")]
+    body = [KV((("Used", "0 %, reset" if past else f"{v:.0f} %"),), layout="stats")]  # the card's own title says which
     if isinstance(reset, (int, float)):
         body.append(KV((("Resets" if not past else "Reset", Time(iso(reset), "at")),)))
     if pace_text and not past:
@@ -263,23 +265,28 @@ def _limit_card(title, v, reset, now, pace_text):
 
 def _pace_text(p, key, reset, now):
     """One sentence from the readings of the newest window. Five hours: needs two points. Week: a day of data."""
+    def too_early(span):
+        have = f"{span / 3600:.0f} h" if span >= 3600 else f"{max(round(span / 60), 0)} min"
+        return f"Weekly pace needs a day of readings; there are {have} so far."
+
     if not p or p["n"] < 2 or p["last_ts"] <= p["first_ts"] or p["last"] <= p["first"]:
         if key == "week":
-            return "Recording started recently, so there is no weekly pace yet. It appears after a day."
+            return too_early(p["last_ts"] - p["first_ts"] if p else 0)
         return None
     span = p["last_ts"] - p["first_ts"]
     if key == "week" and span < 86400:
-        return "Recording started recently, so there is no weekly pace yet. It appears after a day."
+        return too_early(span)
     if p["last"] >= 100:
         return "The limit is reached; it frees up at the reset."
     rate = (p["last"] - p["first"]) / span
     eta = p["last_ts"] + (100 - p["last"]) / rate
     if not (eta < p["last_ts"] + 366 * 86400):  # a tiny rise says nothing about when it fills
         return f"Up {p['last'] - p['first']:.0f} points in the newest window; too slow to say when it fills."
-    after = isinstance(reset, (int, float)) and eta > reset
     dur = f"{span / 3600:.1f} h" if span >= 7200 else f"{round(span / 60)} min"
+    if isinstance(reset, (int, float)) and eta > reset:  # the window resets first: "100 % after the reset" says nothing
+        return f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it will not fill before the reset."
     return (f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it would reach 100 % around "
-            f"{_clock(eta)}{', after the reset' if after else ''}.")
+            f"{_clock(eta)}.")
 
 
 def _days(daily: dict, rng: str, today: str) -> tuple[list, list, str, str]:
@@ -390,7 +397,14 @@ def page(snaps, show_cost: bool, params: dict | None = None, now: float | None =
     stats = next((i for i in items if i["kind"] == "stats"), None)
     last = limits.get("last")
     out: list = []
-    if not last:
+    log = limits.get("log") or {}
+    if not last and log.get("state") in ("missing", "relative"):  # TU-01: the configured file is the problem, not the recorder
+        out.append(Callout("warn", "Limits log not found", (
+            f"File not found: {log.get('path')}. Change \"Limits log\" in this addon's settings on Workspace & addons."
+            if log["state"] == "missing" else
+            f"{log.get('path')} is a relative path, which depends on where Mission Control was started. Use an absolute "
+            "path or one starting with ~/.") + " If the recorder is not installed yet: " + RECORDER))
+    elif not last:
         out.append(Callout("neu", "No limits recorded", "Limits come from the status line. " + RECORDER))
     else:
         pc = limits.get("pace") or {}
@@ -413,10 +427,13 @@ def page(snaps, show_cost: bool, params: dict | None = None, now: float | None =
         label = i["label"] if i["kind"] != "shared" else f"Shared orchestrator ({len(i['tickets'])} tickets)"
         if i["kind"] == "unlinked":
             label = "Not linked to a ticket"
-        rows.append((label, ", ".join(model_name(m) for m in i["week"]), tokens(total(i["week"])),
-                     cost_text(i, True) if show_cost and i["kind"] != "unlinked" else "—",
-                     "—" if week is None else f"about {week:.0f} %" if week >= 1 else "under 1 %"))
-    out.append(Card("Details", (Table(("Ticket", "Models", "Output this week", "Estimate", "Week share"), tuple(rows),
+        cells = [label, ", ".join(model_name(m) for m in i["week"]), tokens(total(i["week"]))]
+        if show_cost:  # TU-03: no Estimate column of dashes while dollar figures are off
+            cells.append(cost_text(i, True) if i["kind"] != "unlinked" else "—")
+        cells.append("—" if week is None else f"about {week:.0f} %" if week >= 1 else "under 1 %")
+        rows.append(tuple(cells))
+    heads = ("Ticket", "Models", "Output this week") + (("Estimate",) if show_cost else ()) + ("Week share",)
+    out.append(Card("Details", (Table(heads, tuple(rows),
                      empty="No Claude output found this week. Sessions on this machine show up here once they run."),)))
     return out
 
@@ -461,6 +478,17 @@ def menu_chip(snaps, now: float):
     return MenuStatus(badge, line)
 
 
+def check_settings(values: dict) -> tuple[list[str], list[str]]:
+    """(errors, notes) for a settings save (called by Workspace & addons): a relative Limits log is refused, a file
+    that is not there yet is saved with a note (the recorder creates it)."""
+    state = limits_log_state(str(values.get("limits_log") or "~/.claude/orch-usage/limits.jsonl"))
+    if state["state"] == "relative":
+        return [f"Limits log: {state['path']} is a relative path; use an absolute path or one starting with ~/"], []
+    if state["state"] == "missing":
+        return [], [f"File not found: {state['path']}. The Usage page shows no limits until it exists"]
+    return [], []
+
+
 class TicketUsage:
     def __init__(self, ctx):
         self.page = f"page.{ctx.name}"
@@ -471,6 +499,9 @@ class TicketUsage:
             return self._widgets(slot, view)
         except Exception:  # a snapshot from another version of this addon, or a shape we do not know: never raise
             return [Text("Usage could not be read. Press Refresh.")] if slot in (self.page, "ticket.code") else []
+
+    def check_settings(self, values):
+        return check_settings(values)
 
     def menu_badge(self, view):
         return menu_chip(view.snapshots("usage"), time.time())

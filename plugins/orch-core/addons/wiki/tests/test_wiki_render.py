@@ -155,10 +155,11 @@ def test_search_on_the_wiki_page(wiki):
     fw, addon = wiki
     widgets = render(fw, addon, "page.wiki", params={"q": "nightly"})
     assert widgets[0].value == "nightly"
-    results = card(widgets, "Results for nightly").body[0]
-    assert [r[0].text for r in results.rows] == ["Runbook: nightly load"]
-    empty = card(render(fw, addon, "page.wiki", params={"q": "zzz"}), "Results for zzz").body[0]
-    assert empty.rows == () and empty.empty == "No page matches this search. Try other or fewer words."
+    results = card(widgets, "Results for nightly").body
+    assert [w.text for w in results if isinstance(w, Link) and w.text != "Clear search"] == ["Runbook: nightly load"]
+    empty = card(render(fw, addon, "page.wiki", params={"q": "zzz"}), "Results for zzz").body
+    assert [w.text for w in empty if w.kind == "text"] == ["No page matches this search. Try other or fewer words."]
+    assert Link("Clear search", "/addons/wiki/") in empty and Link("Clear search", "/addons/wiki/") in results
 
 
 def test_no_repo_configured(tmp_path):
@@ -224,3 +225,31 @@ def test_wiki_render_survives_odd_cached_items(wiki):
 class TestAddon(AddonContract):
     addon_dir = ADDON
     runner = FakeRunner(strict=False)
+
+
+def test_wk02_excerpt_is_the_matching_passage_with_the_match_in_bold(wiki):
+    fw, addon = wiki
+    out = card(render(fw, addon, "page.wiki", params={"q": "nightly"}), "Results for nightly").body
+    md = [w.text for w in out if w.kind == "markdown"]
+    assert len(md) == 1 and "**nightly**" in md[0] and md[0].startswith("_")
+
+
+def test_wk02_quotes_and_spaces_around_a_query_are_ignored(wiki):
+    fw, addon = wiki
+    for q in ('"nightly"', "  nightly  ", "\u201cnightly\u201d"):
+        out = card(render(fw, addon, "page.wiki", params={"q": q}), f"Results for {q.strip()}").body
+        assert [w.text for w in out if isinstance(w, Link) and w.text != "Clear search"] == ["Runbook: nightly load"]
+
+
+def test_wk02_snippet_is_centred_on_the_match_and_neutralises_markdown():
+    from orch_wiki.render import snippet
+    text = "intro " * 40 + "the [retry](http://evil) loop *waits* here " + "tail " * 40
+    out = snippet(text, ["retry"])
+    assert out.startswith("… ") and out.endswith(" …") and "**retry**" in out
+    assert "[" not in out.replace("\\[", "") and "*waits*" not in out  # the page's own markup is escaped
+    assert snippet("nothing here", ["zzz"], "First paragraph") == "First paragraph"
+
+
+def test_wk04_confluence_stub_is_not_offered_in_the_provider_select():
+    field = next(f for f in MANIFEST.settings_schema if f.key == "provider")
+    assert "confluence" not in field.options and field.default in field.options

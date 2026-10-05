@@ -52,6 +52,28 @@ def read_snapshots(ws, addon: str, provider: str | None = None) -> list[Snapshot
     return out
 
 
+def prune_scopes(ws, addon: str, provider: str, keep) -> int:
+    """Delete the cached snapshots of `provider` whose scope is not in `keep`: the provider no longer lists them (the
+    wiki provider was switched, a repo left the settings), so their health must not speak for the addon any more.
+    Returns how many were removed; the change marker is rewritten so open pages reload."""
+    folder = cache_dir(ws, addon)
+    if not folder.is_dir():
+        return 0
+    keep, gone = set(keep), 0
+    for path in sorted(folder.glob("*.json")):
+        s = _read(path)
+        if s is None or s.provider != provider or s.scope in keep:
+            continue
+        try:
+            path.unlink()
+            gone += 1
+        except OSError:
+            pass
+    if gone:
+        atomic_write_text(changed_marker(ws), f"{stamp_s()} {addon} {provider} pruned\n")
+    return gone
+
+
 def write_snapshot(ws, addon: str, snapshot: Snapshot) -> bool:
     old = read_snapshot(ws, addon, snapshot.provider, snapshot.scope)
     atomic_write_text(cache_path(ws, addon, snapshot.provider, snapshot.scope),

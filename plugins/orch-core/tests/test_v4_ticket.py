@@ -122,3 +122,17 @@ def test_agreed_names_a_human_only_when_the_ledger_signs_it(dash, ws, put):
     assert "approval not signed here" in agreed and "you" not in agreed and "phone" not in agreed
     html = dash.get(f"/t/{tid}").text
     assert 'class="jstage-note jstage-warn"' in html
+
+
+def test_doing_stage_in_progress_never_says_not_started(dash, working, plan_approved):
+    plan_approved(working)  # worked on, no tasks and no code yet
+    doing = _journey(dash.get(f"/t/{working}").text)[2]
+    assert doing[0] == "now" and "not started" not in doing[3] and "under way" in doing[3]
+
+
+def test_epic_name_drops_the_epics_own_lead_in():
+    from orch.dashboard.views import TEMPLATES
+    mod = TEMPLATES.env.get_template("_ticket_card.html").module
+    name = lambda title: str(mod.epic_name({"id": "DEMO-1", "title": title})).strip()  # noqa: E731
+    assert name("Epic: harden the pipeline") == "harden the pipeline"
+    assert name("Harden the pipeline") == "Harden the pipeline" and name("") == "DEMO-1"

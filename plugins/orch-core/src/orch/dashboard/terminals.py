@@ -134,6 +134,13 @@ def sessions(ws) -> list[Session]:
     return sorted(out, key=lambda s: s.activity, reverse=True)
 
 
+def for_ticket(ws, ticket_id: str) -> list[Session]:
+    """This workspace's sessions that Mission Control started for `ticket_id`: named `<id>` or `<id>-2`, `<id>-3`, …
+    (free_name), most recently active first. The ticket page uses it to show what already runs on a ticket."""
+    pattern = re.compile(re.escape(str(ticket_id)) + r"(?:-[0-9]+)?")
+    return [s for s in sessions(ws) if pattern.fullmatch(s.name)]
+
+
 def find(ws, name: str) -> Session:
     """The session `name` of this workspace, or ValidationError (the routes answer 404)."""
     if not isinstance(name, str) or not NAME.fullmatch(name):
@@ -205,6 +212,14 @@ def capture_many(names: list[str]) -> dict[str, dict | None]:
         if name in names and name not in got:
             got[name] = _screen(text[:-1] if text.endswith("\n") else text, size)  # capture-pane's last newline
     return {n: got[n] if got.get(n) is not None else capture(n) for n in names}
+
+
+_TAGS = re.compile(r"<[^>]*>")
+
+
+def plain(screen_html: str) -> str:
+    """The text of a screen's escaped HTML (tags dropped, entities decoded), for reading a status line off it."""
+    return html.unescape(_TAGS.sub("", screen_html or ""))
 
 
 def _screen(text: str, size: str) -> dict | None:

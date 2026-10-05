@@ -12,6 +12,7 @@
   };
   const SEEN = "orch.terminals.seen"; // name -> the sig this browser last saw on that terminal's own page
   const LABELS = { waiting: "waiting for you", busy: "busy", idle: "idle" };
+  const LONG = { idle: "idle: ready for your next prompt" }; // the page header has the room to say what idle means
   const ago = (epoch) => {
     const s = Math.max(0, Math.round(Date.now() / 1000 - Number(epoch)));
     if (s < 60) return s + " s";
@@ -22,9 +23,9 @@
   const tickAgo = () => document.querySelectorAll("[data-ago]").forEach((el) => { el.textContent = ago(el.dataset.ago); });
   tickAgo();
   setInterval(tickAgo, 5000);
-  const setState = (el, status) => {
+  const setState = (el, status, long) => {
     if (!el) return;
-    el.textContent = LABELS[status] || "running";
+    el.textContent = (long && LONG[status]) || LABELS[status] || "running";
     el.className = el.className.replace(/term-state-\S+/, "term-state-" + (status || "none"));
   };
   const lineOf = (l) => [l.ticket ? l.ticket + (l.tasks ? " " + l.tasks + " tasks" : "") + (l.more ? " +" + l.more : "") : "",
@@ -121,6 +122,8 @@
         tile.dataset.status = l.status;
         tile.dataset.sig = l.sig;
         tile.querySelector('[data-f="title"]').textContent = l.title || name;
+        const topic = tile.querySelector('[data-f="topic"]');
+        if (topic) { topic.textContent = l.topic || ""; topic.hidden = !l.topic; }
         setState(tile.querySelector('[data-f="state"]'), l.status);
         const now = tile.querySelector('[data-f="now"]');
         now.textContent = l.now || "No agent activity read yet";
@@ -248,7 +251,9 @@
     const l = JSON.parse(e.data);
     summary.querySelector('[data-f="now"]').textContent = l.now || "No agent activity read yet";
     summary.querySelector('[data-f="line"]').textContent = lineOf(l);
-    setState(document.querySelector('.page-head [data-f="state"]'), l.status);
+    setState(document.querySelector('.page-head [data-f="state"]'), l.status, true);
+    const topic = document.querySelector('.page-head [data-f="topic"]');
+    if (topic) topic.textContent = l.topic || "";
     summary.dataset.sig = l.sig;
     seeNow(l.sig); // watching it counts as looking
   }, gone: () => {

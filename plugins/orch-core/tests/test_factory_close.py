@@ -409,3 +409,81 @@ def test_start_forms_sign_close_only_in_dark_mode_and_say_what_it_means(fws, fa,
     r = c.post(f"/t/{e.id}/approve", data={"gate": "requirements", "seen": seen, "start": "dark",
                                            "confirm_dark": "dark", "close": "1"}, follow_redirects=False)
     assert "err=" not in r.headers["location"] and epics.delegation(fws, _epic(fws, e.id))["close"] is True
+
+
+def test_a_release_that_cannot_start_is_never_shown_as_pending_and_accept_stays(fws, closing, human, bin_dir):
+    """The review's probe P5: a pinned program changed after signing. The merge never starts; that is a Stopped reason
+    the human fixes, never a close promised for later."""
+    eid, _, _ = closing(release="merge")
+    (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+    for _ in range(3):
+        fr.tick(fws, human, Fake())
+    v = _view(fws, eid)
+    assert not v["pending"] and "stopped" in [b["code"] for b in v["blockers"]]
+    assert [r["code"] for r in factory_report.stopped(fws, _epic(fws, eid))] == ["release-blocked"]
+    pytest.importorskip("fastapi")
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "Not closed by itself: it is Stopped: Release could not start" in html and "Accept the epic" in html
+
+
+# -- orch check after a close: what may turn an unsigned-decision warning into info, and what may not -----------------
+
+def _findings(fws, tid):
+    from orch.core.check import run_checks
+    return {(f.level, f.code) for f in run_checks(fws, emit_events=False) if f.ticket == tid}
+
+
+def _rewrite_events(fws, change):
+    import json
+    p = fws.state_dir / "events.jsonl"
+    lines = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    p.write_text("".join(json.dumps(e) + "\n" for e in change(lines)), encoding="utf-8")
+
+
+@pytest.mark.parametrize("break_it", ["none", "event-missing", "event-other-epic", "charter-unsigned",
+                                      "child-outside-epic"])
+def test_delegated_approvals_of_a_closed_child_stay_info_only_when_everything_backs_them(fws, closing, human, fa,
+                                                                                       monkeypatch, break_it):
+    eid, (c,), _ = closing()
+    fc.tick(fws, human)
+    assert _epic(fws, c).status == "done"
+    if break_it == "event-missing":
+        _rewrite_events(fws, lambda ev: [e for e in ev if not (e["kind"] == "gate.delegated" and e["ticket"] == c)])
+    elif break_it == "event-other-epic":
+        other = fa.new("Another epic", type="epic")
+
+        def move(ev):
+            for e in ev:
+                if e["kind"] == "gate.delegated" and e["ticket"] == c:
+                    e["data"]["epic"] = other.id
+            return ev
+        _rewrite_events(fws, move)
+    elif break_it == "charter-unsigned":
+        real = ledger.entries
+        monkeypatch.setattr(ledger, "entries", lambda ws, *a, **k: [e for e in real(ws, *a, **k)
+                                                                     if e.get("kind") != "charter"])
+    elif break_it == "child-outside-epic":
+        other = fa.new("Another epic", type="epic")
+        path, t = store.load(fws, c)
+        t.meta["parent"] = other.id
+        store.save(fws, t, path)
+    found = _findings(fws, c)
+    if break_it == "none":
+        assert ("info", "delegated-approval") in found and ("warning", "unsigned-decision") not in found
+    else:
+        assert ("warning", "unsigned-decision") in found, (break_it, found)
+
+
+def test_an_open_child_with_an_ended_delegation_keeps_the_warning(fws, closing, human, fh):
+    """A paused delegation (not a verdict) on a child that is not done: the warning stays, as before."""
+    eid, (c,), _ = closing()
+    fh.set_section(eid, "Requirements", "r, changed by you")  # suspends the delegation
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_a_charter_verdict_without_its_close_record_is_a_warning(fws, closing, human):
+    eid, (c,), d = closing()
+    fc.tick(fws, human)
+    fc._marker(fws, eid, d["id"], "outcome").unlink()
+    assert ("warning", "charter-verdict-unbacked") in _findings(fws, eid)
+    assert ("info", "charter-verdict") not in _findings(fws, eid)

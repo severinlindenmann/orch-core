@@ -315,17 +315,25 @@ baseline cannot create a branch) is told not to commit: it leaves its changes in
 Whatever the prompt says, a runner-bound session's command that may make or move a commit or a ref (the word `git`
 and `commit`, `commit-tree`, `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `pull`, `update-ref`, `symbolic-ref`,
 `stash`, `replace` or `notes` anywhere in its text, quotes and backslashes taken out, so wrappers such as `env`, `sh -c`
-or an alias count; any `GIT_*=` assignment; or a `git branch`, `tag`, `push` or `fetch` that writes a ref) is refused
+or an alias count; a git option that redirects it, `-c` included, so `git -c alias.p=push p` counts; any `GIT_*=`
+assignment; or a `git branch`, `tag`, `push`, `fetch`, `checkout`, `switch` or `worktree` that writes a ref) is refused
 unless the folder the runner started it in passes the rule above, the session's folder is that folder or below it in
 the same git checkout, the command carries nothing that points git at other folders, config or refs (`-C`, `-c`,
 `--git-dir`, `--work-tree`, `--config-env`, `--exec-path`, `--namespace`, any `GIT_*=` assignment such as `GIT_DIR`,
 `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY` or `GIT_INDEX_FILE`, a `cd` or `pushd`), and it writes no ref but the
-session's own branch: `update-ref`, `symbolic-ref`, `replace` and `notes` are refused, `branch` and `tag` only list,
-`push` names only the session's own branch (no `--all`, `--mirror`, `--tags`, `--delete`, `--prune`), and `fetch`
-writes no local ref (no `:` refspec). The guard checks this on every command (PreToolUse runs in every permission
-mode, so an allow rule, auto mode or bypass does not skip it), and the permission hook checks it again; a session whose
-binding exists but does not verify is refused. Anything that cannot be read is a refusal. These are text checks of the
-command line: a script the agent writes and then runs is not seen (see the guard's known limits).
+session's own branch: `update-ref`, `symbolic-ref`, `replace`, `notes`, `fast-import`, `send-pack`, `filter-branch` and
+the like are refused, `branch` and `tag` only list, `checkout` and `switch` create or reset no branch (`-b`, `-B`, `-c`,
+`-C`, `--orphan`), `worktree` only lists, `push` names the session's own branch and nothing else (a bare `git push`
+follows the user's `push.default` and is refused; no `--all`, `--mirror`, `--tags`, `--delete`, `--prune`), and
+`fetch` writes no local ref (no `:` refspec). One function answers each of these questions and both the guard (which
+runs on every command: PreToolUse runs in every permission mode, so an allow rule, auto mode or bypass does not skip
+it) and the permission hook call it. The command is read two ways, as the shell splits it and as its plain text
+(quotes and backslashes out, line continuations joined, split at blanks and shell operators, so a `sh -c "git push
+..."` payload or `$(which git)` is seen), and a refusal in either reading refuses. A session whose binding exists but
+does not verify is refused. Anything that cannot be read is a refusal; the coarse reading can refuse a commit whose
+message text reads like such a command ("git push now"). These are text checks of the command line: a variable
+holding `git`, a git alias from the user's own config, and a script the agent writes and then runs are not seen (see
+the guard's known limits).
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,
@@ -1074,7 +1082,10 @@ with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) 
 match of `sensitive_paths`, or of the workspace's orch folder (normally `orchestrator`, sensitive whatever the recipe
 says: tickets change only through orch), stops the release with "Sensitive path touched", naming the paths (escaped):
 nothing is merged. Then the message of every commit the branch brings in is checked with orch's commit-msg logic and
-the workspace's commit format; a message it refuses fails the merge stage of that child, naming the commit. Because every commit counts, a later commit that removes the change does not clear it: merge by hand, or
+the workspace's commit format, each commit listed by its id and its message read on its own from the raw commit
+object (no separator a message could contain decides where it ends; more than 500 commits is refused); a message it
+refuses fails the merge stage of that child, naming the commit. Because every commit counts, a later commit that
+removes the change does not clear it: merge by hand, or
 rewrite the branch without it, then Retry release on the merge stage. For a child with a runner-made clone the runner
 takes the branch and clone of its own record (never a ticket field); otherwise the one branch a child names (`orch
 link --branch`), else the branch of its one worktree, from the workspace. The name must be a valid branch name that

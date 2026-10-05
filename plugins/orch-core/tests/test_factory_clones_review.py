@@ -181,8 +181,7 @@ def test_the_commit_gate_refuses_other_dirs_config_and_refs(fws, run, cmd):
     assert not guard.allow and _behavior(hook) == "deny", cmd
 
 
-@pytest.mark.parametrize("cmd", ["git push origin fx/{c}", "git push origin HEAD:refs/heads/fx/{c}", "git push",
-                                 COMMIT])
+@pytest.mark.parametrize("cmd", ["git push origin fx/{c}", "git push origin HEAD:refs/heads/fx/{c}", COMMIT])
 def test_the_sessions_own_branch_still_passes(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower())
     assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
@@ -317,3 +316,35 @@ def test_the_case_probe_never_reads_the_work_tree(fws, run, human, monkeypatch):
     monkeypatch.setattr(os.path, "exists", lambda p: (seen.append(str(p)), real(p))[1])
     assert fc.ensure(fws, human, run["cid"])[0] == run["clone"]
     assert seen and not any(str(fc.root()) in s or str(fc.root().resolve()) in s for s in seen)
+
+
+# -- one reading per question: the guard and the hook decide the same, whatever the spelling ---------------------
+
+@pytest.mark.parametrize("cmd", [
+    'sh -c "git push origin main"', "bash -c 'git branch -f main HEAD'", "git -c alias.p=push p origin main",
+    "$(which git) push origin main", "git pu\\\nsh origin main", "git push", "git push origin",
+    "git checkout -B main", "git switch -C main", "git checkout --orphan=x", "git worktree add -b x ../x",
+    "git fast-import", "git send-pack /tmp/x main", "Git push origin main", "/usr/bin/git push origin main",
+    "true;git push origin main", "echo hi&&git branch -D other", "GIT_DIR=x  git status", "git --namespace=x push",
+])
+def test_every_spelling_is_gated_and_both_gates_agree(fws, run, cmd):
+    assert permits._git_commit(cmd), cmd
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny", cmd
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
+
+
+def test_a_message_cannot_hide_behind_a_separator(fws, fa, fh, human, close_tasks, remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    clone, _ = fc.ensure(fws, human, cid)
+    (clone / "x.txt").write_text("x\n", encoding="utf-8")
+    _g(clone, "add", "x.txt")
+    good = f"{cid} work\n\nWhat: a\nWhy: b\nRisk: c"
+    # the old check split `git log` output on 0x1e/0x1f: this attribution line sat in a forged "commit id" field
+    msg = f"{good}\n\x1e\nCo-Authored-By: Claude <noreply@anthropic.com>\n\x1f\n{good}"
+    _g(clone, "commit", "-q", "--cleanup=verbatim", "-m", msg)
+    _to_testing(fa, cid, close_tasks)
+    lines = fr.tick(fws, human, RecipeFake())
+    assert any("commit-msg check refuses" in x and "attribution" in x for x in lines), lines

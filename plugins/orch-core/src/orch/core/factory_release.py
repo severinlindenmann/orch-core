@@ -1016,19 +1016,28 @@ def always_sensitive(ws) -> list[str]:
     return [rel or Path(ws.home).name]
 
 
+MAX_MESSAGES = 500  # commits a child branch may bring in for the message check; more is refused
+
+
 def message_refusal(ws, rec: dict, sha: str) -> str | None:
     """Why a commit the branch brings in (`base..sha`, in the release repository) has a message orch's commit-msg
     check refuses (the workspace's commit format, no AI attribution), or None. A child's clone runs no hooks, so
-    this is where its messages are checked. Unreadable is a refusal."""
+    this is where its messages are checked. Each commit is listed by its id (`rev-list`) and its message read on its
+    own from the raw commit object (`cat-file commit`, everything after the header's blank line): no separator a
+    message could contain decides where one message ends. Unreadable, or more than MAX_MESSAGES, is a refusal."""
     from orch.hooks.commit_msg import check_message
-    r = _git(ws, rec, "log", "--format=%H%x1f%B%x1e", f"refs/remotes/release/{rec['base']}..{sha}", limit=GIT_OUT)
+    r = _git(ws, rec, "rev-list", f"refs/remotes/release/{rec['base']}..{sha}", limit=GIT_OUT)
     if r.get("code") != 0 or r.get("out_size", 0) > GIT_OUT:
-        return "its commit messages could not be read"
-    for chunk in (r.get("out") or "").split("\x1e"):
-        if not chunk.strip():
-            continue
-        commit, _, msg = chunk.strip().partition("\x1f")
-        problems = check_message(ws, msg)
+        return "its commits could not be listed"
+    shas = (r.get("out") or "").split()
+    if len(shas) > MAX_MESSAGES or not all(_SHA.fullmatch(c) for c in shas):
+        return f"it brings in more than {MAX_MESSAGES} commits, or an unreadable list of them"
+    for commit in shas:
+        c = _git(ws, rec, "cat-file", "commit", commit, limit=GIT_OUT)
+        raw = c.get("out") or ""
+        if c.get("code") != 0 or c.get("out_size", 0) > GIT_OUT or "\n\n" not in raw:
+            return f"the message of commit {commit[:12]} could not be read"
+        problems = check_message(ws, raw.split("\n\n", 1)[1])
         if problems:
             return f"commit {commit[:12]} has a message orch's commit-msg check refuses ({problems[0]})"
     return None

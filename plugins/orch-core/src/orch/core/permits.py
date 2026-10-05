@@ -599,44 +599,74 @@ def hook_decision(ws, payload: dict) -> dict | None:
 _MOVES_REFS = re.compile(r"(?<![\w-])(?:commit|commit-tree|merge|cherry-pick|revert|am|rebase|pull|update-ref|stash"
                          r"|symbolic-ref|replace|notes)(?![\w-])")
 # Anything that points git at other folders, other config or other refs: -C, --git-dir, --work-tree, -c and
-# --config-env (core.worktree, includes, ...), --exec-path, --namespace, ANY GIT_*= assignment (GIT_DIR,
+# --config-env (core.worktree, includes, aliases, ...), --exec-path, --namespace, ANY GIT_*= assignment (GIT_DIR,
 # GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY, GIT_INDEX_FILE, ...), a cd or pushd.
-_ELSEWHERE = re.compile(r"(?<![\w-])(?:-C|-c|--git-dir|--work-tree|--config-env|--exec-path|--namespace)(?![\w-])"
-                        r"|(?<![\w-])--(?:git-dir|work-tree|config-env|exec-path|namespace)="
-                        r"|(?<![\w])GIT_[A-Z0-9_]+\s*=|(?<![\w-])(?:cd|pushd)(?![\w-])")
+_GIT_OPTS = r"(?<![\w-])(?:-C|-c|--git-dir|--work-tree|--config-env|--exec-path|--namespace)(?![\w-])"
+_ELSEWHERE = re.compile(_GIT_OPTS + r"|(?<![\w])GIT_[A-Z0-9_]+\s*=|(?<![\w-])(?:cd|pushd)(?![\w-])")
 _GIT_ASSIGN = re.compile(r"(?<![\w])GIT_[A-Z0-9_]+\s*=")
+_GIT_WORD = re.compile(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])")
+_SPLIT = re.compile(r"[\s;&|()`<>]+")
+
+
+def _plain(command) -> str:
+    """The text every commit check reads: line continuations joined (the shell joins them; the guard judges the joined
+    text too), quotes and backslashes taken out. One reading for the guard and the permission hook."""
+    return re.sub(r"[\\'\"]", "", str(command).replace("\\\n", ""))
+
+
+def _readings(command) -> list[list[str]]:
+    """The command's words, read two ways: as the shell splits them (quotes resolved), and from _plain split on blanks
+    and shell operators (so `sh -c "git push ..."`, a substitution or `;git` without spaces are seen as words too). A
+    check refuses when either reading refuses: no parser difference between them can let a command through."""
+    import shlex
+    out = []
+    try:
+        out.append(shlex.split(str(command).replace("\\\n", "")))
+    except ValueError:
+        pass
+    out.append([w for w in _SPLIT.split(_plain(command)) if w])
+    return out
 
 
 def _git_commit(command) -> bool:
-    """Whether `command` may make or move a commit or a ref: the word git and a verb that does so (commit, merge,
-    cherry-pick, revert, am, rebase, pull, update-ref, symbolic-ref, stash, replace, notes, commit-tree) anywhere in
-    its text with quotes and backslashes taken out (so wrappers, aliases and `"g"it` count), any GIT_*= assignment, or
-    a branch, tag, push or fetch that writes a ref (_ref_refusal; listing branches stays a read). Coarse on purpose:
-    such a command gets the commit checks."""
+    """Whether `command` may make or move a commit or a ref, or point git elsewhere: the word git (any case, any path,
+    `git.exe`) and a verb that does so (commit, merge, cherry-pick, revert, am, rebase, pull, update-ref,
+    symbolic-ref, stash, replace, notes, commit-tree) or a git option that redirects it (-C, -c, --git-dir,
+    --work-tree, --config-env, --exec-path, --namespace: an alias given with -c counts), anywhere in _plain(command);
+    any GIT_*= assignment; or a ref write _ref_refusal finds. Coarse on purpose: such a command gets the commit checks
+    (commit_refusal), in the guard and the permission hook alike."""
     if not isinstance(command, str):
         return False
-    t = re.sub(r"[\\'\"]", "", command)
+    t = _plain(command)
     return bool(_GIT_ASSIGN.search(t)
-                or (re.search(r"(?i)(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t))  # Git runs git too
+                or (_GIT_WORD.search(t) and (_MOVES_REFS.search(t) or re.search(_GIT_OPTS, t)))
                 or _ref_refusal(command, None))
 
 
 _READ_BRANCH = {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}
 _OPS = {"&&", "||", ";", "|", "&"}
+_ALWAYS = ("update-ref", "symbolic-ref", "replace", "notes", "fast-import", "send-pack", "receive-pack",
+           "filter-branch", "filter-repo", "http-push")
+_NEW_BRANCH = {"-b", "-B", "-c", "-C", "--orphan"}
 
 
 def _ref_refusal(command: str, own: str | None) -> str | None:
-    """Why `command` writes a ref other than the session's own branch `own`, or None: update-ref, symbolic-ref,
-    replace and notes always; branch and tag beyond listing; push of anything but `own` (no --all, --mirror, --tags,
-    --delete, --prune); fetch into a local ref (a refspec with `:`). Judged per git word, on the shell's words."""
-    import shlex
-    try:
-        words = shlex.split(command)
-    except ValueError:
-        words = command.split()
+    """Why `command` writes a ref other than the session's own branch `own`, or None, on every reading (_readings):
+    update-ref, symbolic-ref, replace, notes, fast-import, send-pack, filter-branch and the like always; branch and
+    tag beyond listing; checkout or switch that create or reset a branch; worktree beyond list; push that does not
+    name only `own` (a bare push follows push.default, so it is refused too; no --all, --mirror, --tags, --delete,
+    --prune); fetch into a local ref (a refspec with `:`)."""
+    for words in _readings(command):
+        why = _ref_words(words, own)
+        if why:
+            return why
+    return None
+
+
+def _ref_words(words: list[str], own: str | None) -> str | None:
     i = 0
     while i < len(words):
-        if os.path.basename(words[i]).casefold() not in ("git", "git.exe"):
+        if not _GIT_WORD.fullmatch(os.path.basename(words[i]).rstrip(")")):
             i += 1
             continue
         j = i + 1
@@ -649,12 +679,16 @@ def _ref_refusal(command: str, own: str | None) -> str | None:
                 break
             args.append(w)
         i = j + 1
-        if verb in ("update-ref", "symbolic-ref", "replace", "notes"):
+        if verb in _ALWAYS:
             return f"git {verb} writes refs directly"
         if verb == "branch" and not set(args) <= _READ_BRANCH:
             return "git branch may only list or show branches here"
         if verb == "tag" and not set(args) <= {"-l", "--list"}:
             return "git tag may only list tags here"
+        if verb in ("checkout", "switch") and any(a.split("=")[0] in _NEW_BRANCH for a in args):
+            return f"git {verb} may not create or reset a branch here"
+        if verb == "worktree" and args[:1] != ["list"]:
+            return "git worktree may only list worktrees here"
         if verb == "fetch" and any(":" in a or a.startswith("--update-head-ok") for a in args):
             return "git fetch may not write a local ref"
         if verb == "push":
@@ -663,29 +697,41 @@ def _ref_refusal(command: str, own: str | None) -> str | None:
                 return "git push may push only the session's own branch"
             mine = {own, f"HEAD:{own}", f"HEAD:refs/heads/{own}", f"refs/heads/{own}", f"{own}:{own}",
                     f"refs/heads/{own}:refs/heads/{own}", f"+{own}", f"+HEAD:{own}", f"+HEAD:refs/heads/{own}"}
-            if any(r not in mine for r in plain[1:]) or not own:
-                return "git push may push only the session's own branch"
+            if not own or not plain[1:] or any(r not in mine for r in plain[1:]):
+                return "git push may push only the session's own branch, named"
     return None
+
+
+def _in_start(b: dict, cwd) -> bool:
+    """Whether the payload's working directory (resolved; none: the start itself) is binding `b`'s start folder or
+    below it. Any error is a no. The one rule for the commit gate and for Dark answers."""
+    try:
+        start = Path(str(b["start"])).resolve()
+        here = Path(str(cwd)).resolve() if cwd else start
+        return here == start or start in here.parents
+    except Exception:
+        return False
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     """Why runner-bound session `b` must not run commit command `command` now, or None. Allowed only in the folder
     the runner started it in (the session's own work tree, a linked worktree or the child's runner-made clone:
-    factory_runner.own_work_tree, the rule its prompt follows), from that folder or below it, in the same git checkout
-    as that folder, with nothing that points git elsewhere (_ELSEWHERE), and writing no ref but the session's own
-    branch (_ref_refusal). Everything that cannot be read is a refusal."""
+    factory_runner.own_work_tree, the rule its prompt follows), from that folder or below it (_in_start), in the same
+    git checkout as that folder, with nothing that points git elsewhere (_ELSEWHERE on _plain), and writing no ref but
+    the session's own branch (_ref_refusal). The guard and the permission hook both call exactly this. Everything that
+    cannot be read is a refusal."""
     from orch.core import factory_clones, factory_runner
     try:
-        if _ELSEWHERE.search(re.sub(r"[\\'\"]", "", str(command))):
+        if _ELSEWHERE.search(_plain(command)):
             return ("a commit command may not point git at another folder, config or refs (-C, -c, --git-dir, "
                     "--work-tree, --config-env, GIT_*=, cd)")
+        if not _in_start(b, cwd):
+            return "the session's folder is not inside the folder the runner started it in"
         start = Path(str(b["start"])).resolve()
         here = Path(str(cwd)).resolve() if cwd else start
 
         def checkout(p):  # the folder of the first .git upwards: the checkout git would use
             return next((d for d in (p, *p.parents) if os.path.lexists(d / ".git")), None)
-        if here != start and start not in here.parents:
-            return "the session's folder is not inside the folder the runner started it in"
         if checkout(here) != checkout(start):
             return "the session's folder is in another git checkout than the one it was started in"
         why = factory_runner.own_work_tree(ws, start, b["child"])
@@ -699,17 +745,6 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     except Exception as e:
         return f"orch could not check where it would commit ({type(e).__name__})"
     return None
-
-
-def _in_start(b: dict, cwd) -> bool:
-    """Whether the payload's working directory (resolved; none: the start itself) is binding `b`'s start folder or
-    below it. Any error is a no."""
-    try:
-        start = Path(str(b["start"])).resolve()
-        here = Path(str(cwd)).resolve() if cwd else start
-        return here == start or start in here.parents
-    except Exception:
-        return False
 
 
 def _factory_answer(ws, payload: dict, ticket) -> dict:

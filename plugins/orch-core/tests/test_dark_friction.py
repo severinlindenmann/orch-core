@@ -273,3 +273,16 @@ def test_compound_means_chains_pipes_redirects_and_substitutions_only(cmd, want)
 def test_the_read_only_git_verbs_workers_use(dws, human, cmd, ok):
     dark_profile.add_baseline(dws, human, name="git-basic")
     assert (dark_profile.match(dws, cmd) is not None) is ok, cmd
+
+
+@pytest.mark.parametrize("cmd,ok", [
+    ('git commit -m "T-1 fix /api/users path" -m "What: moved ../lib into src"', True),
+    ('git commit -am "Risk: see ~/notes"', True), ('git commit --message="/tmp cleanup"', True),
+    ('git commit -m "/etc" --amend', False), ('git commit -m x -F /etc/hosts', False),
+    ('git commit -m x /etc/hosts', False),  # a pathspec after the message is still checked
+    ('git log -m /etc', False), ('git show -m ../x', False),  # -m of other verbs takes no message
+    ('git commit -m x --template=/t', False),
+])
+def test_commit_message_text_is_not_a_path(dws, human, cmd, ok):
+    dark_profile.add_baseline(dws, human, name="git-basic")
+    assert (dark_profile.match(dws, cmd) is not None) is ok, cmd

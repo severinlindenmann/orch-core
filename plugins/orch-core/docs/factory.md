@@ -550,7 +550,9 @@ argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git 
 rule also refuses what reads files outside the repository or rewrites other commits: `--no-index`,
 `--pathspec-from-file`, `--template`, `--orderfile`, `--amend`, `--fixup`, `--squash`, `--file` (and every
 abbreviation git accepts), a short option word holding `F` or `t`, and any argument (or the value after `=` or `:`)
-that is an absolute path, starts with `~` or has a `..` path component. `git commit` passes only
+that is an absolute path, starts with `~` or has a `..` path component. The text of a `git commit` message (the word
+after `-m` or `--message`, or attached to them) is message text, not a path: only its option checks apply, so
+`-m "Fix the /api path"` matches; `-m` of other git verbs takes no message and changes nothing. `git commit` passes only
 where the workspace lets agents commit (`git.agent_may.commit`); elsewhere the guard denies it, and `--baseline
 git-basic` adds the other rules and reports `git commit` as not added, with the reason.
 

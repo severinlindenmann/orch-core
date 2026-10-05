@@ -75,13 +75,21 @@ _GIT_REFUSED = frozenset(("--no-index", "--pathspec-from-file", "--template", "-
 _GIT_SHORT = frozenset("Ft")
 
 
-def _git_bad(w: str) -> bool:
+def _git_bad(w: str, message: bool = False, commit: bool = False) -> bool:
+    """`message`: `w` is the text of a commit message (the word after -m or --message of `git commit`): its text is
+    not a path, so the path checks are skipped, every option check stays. `commit`: the command is `git commit`."""
     if w.startswith("--") and len(w) > 2:
         name = "--" + w[2:].split("=", 1)[0].casefold()
         if any(o.startswith(name) for o in _GIT_REFUSED):
             return True
+        if commit and name in ("--message", "--mess", "--messa", "--messag"):
+            return False  # --message=<text>: the rest is message text
     elif w.startswith("-") and len(w) > 1 and any(c in _GIT_SHORT for c in w[1:]):
         return True
+    elif commit and re.fullmatch(r"-[a-zA-Z]*m.*", w):
+        return False  # -m<text> or -am<text> of git commit: what follows m is message text
+    if message:
+        return False
     for v in (w, w.split("=", 1)[1] if "=" in w else "", w.split(":", 1)[1] if ":" in w else ""):
         if v.startswith(("/", "~")) or ".." in v.split("/"):
             return True
@@ -176,7 +184,13 @@ def _is_orch(word) -> bool:
 def _runs_code(words) -> str | None:
     orch = bool(words) and _is_orch(words[0])
     git = bool(words) and _prog(words[0]) == "git"
-    return next((w for w in words if _bad_arg(w, orch) or (git and _git_bad(w))), None)
+    commit = git and words[1:2] == ["commit"]
+    for i, w in enumerate(words):
+        prev = words[i - 1] if i else ""
+        message = commit and (prev in ("-m", "--message") or bool(re.fullmatch(r"-[a-zA-Z]*m", prev)))
+        if _bad_arg(w, orch) or (git and _git_bad(w, message, commit)):
+            return w
+    return None
 
 
 def refusal(kind, value) -> str | None:

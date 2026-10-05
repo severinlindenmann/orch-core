@@ -2,7 +2,7 @@
 (orch-tix#90), with no network. Driven by the directory in FAKE_SHARING_DIR:
 
   space.json        what `space show --json` prints (exit 0); {"error": code, "exit": n} makes it fail
-  key               the hex K_ws `bridge-key` prints; key-exit holds an exit code to fail with instead
+  key               the hex K_ws `bridge-key` prints; key-exit holds an exit code to fail with after printing it
   queue/*.json      consumed in name order: {"rid", "body"} is delivered by the next poll;
                     {"op", "code"} makes the next command of that op fail with that code;
                     {"op", "delay"} delays the next answer of that op; {"op": "...", "exit": n} exits instead
@@ -93,11 +93,9 @@ def main(argv):
     if argv[:1] == ["bridge-key"]:
         if sys.stdout.isatty():
             return 6
+        print((DIR / "key").read_text().strip())  # printed even when it then fails: the host must never show it
         code = DIR / "key-exit"
-        if code.exists():
-            return int(code.read_text().strip())
-        print((DIR / "key").read_text().strip())
-        return 0
+        return int(code.read_text().strip()) if code.exists() else 0
     if argv[:1] == ["bridge-host"]:
         return bridge_host()
     return 1

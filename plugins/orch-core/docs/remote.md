@@ -90,9 +90,29 @@ against a local agent; orch's command guard refuses agents' commands and file-to
 refuses agents running `sharing bridge-key` or `sharing bridge-host`, also when the name is split by quotes,
 escapes, variables, substitutions or globs, or wrapped in another shell. The guard reads command text, so it deters
 careless or accidental access; it is a deterrent, not a wall: a command that assembles the name at run time, or a
-program outside the agent's tools, gets past it. The start-up
-listing and the audit log expose registry changes made that way, as long as the audit log itself was not rewritten
-too.
+program outside the agent's tools, gets past it. The start-up listing and the audit log expose registry changes made
+that way, as long as the audit log itself was not rewritten too.
+
+What this change does not guard:
+
+- The relay tool's own files. For TIX, the master key and the device token sit in the workspace's sharing
+  configuration, which orch-core does not guard. An agent that can read them can derive the workspace channel key
+  without `bridge-key` at all, so the `bridge-key` rule protects less than it may seem. What a stolen channel key or
+  relay access gains is limited: every request still needs a registered device's signature, so it allows denial of
+  service and reading traffic metadata, not acting as a device.
+- The relay tool itself. When it lies inside the workspace (as the sharing skill usually does), an agent can change
+  it, and `--remote` then runs that code with this device's relay credentials. The start warns about this; keeping
+  the tool outside every workspace avoids it.
+
+The rule also refuses more than it needs: any agent command with `bridge-key` or `bridge-host` as a word is refused,
+a search such as `grep -rn bridge-key docs/` or a commit message that names the command included. Agents can use the
+file tools (Read, Grep) for such searches.
+
+Known limits of the host loop itself: a response chunk retried after a lost answer may reach the mailbox twice (the
+device keeps the first by its index); a page's chunks are sealed after its outcome is stored and posted over the next
+seconds without another authorisation check, as the protocol specifies; a cancelled stream's final, empty chunk is
+posted without one; and the host's record writes run on the dashboard's event loop, so a slow disk (or a record lock
+held elsewhere, up to 10 s) delays pages for that moment.
 
 ## Damaged records
 

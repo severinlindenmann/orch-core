@@ -148,7 +148,20 @@ def preflight(ws) -> dict:
     if missing:
         raise RemoteNotReady(f"the remote bridge cannot start: {len(missing)} thing(s) missing",
                              hint="\n".join(f"- {m.what}: {m.fix}" for m in missing))
-    return {"tool": tool, "space": space, "server": server}
+    return {"tool": tool, "space": space, "server": server, "warnings": tool_warnings(ws, tool)}
+
+
+def tool_warnings(ws, tool: str) -> list[str]:
+    """What the owner should know about the relay tool: one inside the workspace can be changed by any agent working
+    there, and it runs outside the guard with this device's relay credentials (a warning, not a refusal)."""
+    try:
+        inside = Path(os.path.realpath(tool)).is_relative_to(Path(ws.root).resolve())
+    except (OSError, ValueError):
+        inside = True
+    if not inside:
+        return []
+    return [f"remote: warning: the relay tool ({os.path.basename(tool)}) lies inside this workspace, where agents can "
+            "change it; it runs with this device's relay credentials, outside the guard (see docs/remote.md)"]
 
 
 _KEY_REFUSALS = {2: "the space does not exist on the relay", 3: "this device is not approved (or was revoked)",
@@ -259,6 +272,8 @@ class Remote:
 def prepare(ws, *, take_over: bool = False, out=print) -> Remote:
     """Preflight, K_ws, the host and the start-up listing; RemoteNotReady before anything binds."""
     info = preflight(ws)
+    for warning in info["warnings"]:
+        out(warning)
     from orch.dashboard.app import dashboard_routes
     from orch.dashboard.bridge_loop import route_hook
     from orch.dashboard.launch import config_dir

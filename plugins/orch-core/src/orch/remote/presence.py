@@ -11,7 +11,7 @@ heartbeat travels in the clear.
     children_done, children_total   that epic's children: done (backed by a signed verdict or close) and all
     budget_pct    the larger of the child budget and the time budget used, in percent
 
-Anything that cannot be read is left out or counted as zero, never guessed upwards.
+A required field that cannot be read raises (the beat is skipped); the optional ones are left out. Never guessed.
 """
 from __future__ import annotations
 
@@ -37,25 +37,22 @@ def factory(ws) -> dict:
     for e in entries:
         if e.meta is None or not epics.is_epic(e.meta):
             continue
-        try:
-            epic = store.read_ticket(e.path)
-            d = permits.factory_delegation(ws, epic, signed)
-            if d is None:
-                continue
-            if epic.status == "done":
-                state = "done"
-            elif factory_report.stopped(ws, epic, entries=entries, signed=signed, events=events):
-                state = "stopped"
-            elif epic.id in asked:
-                state = "waiting"
-            elif factory_report.ready(ws, epic, entries=entries, signed=signed, events=events):
-                state = "ready"
-            elif d.get("active"):
-                state = "running"
-            else:
-                state = "paused"
-        except Exception:  # noqa: BLE001 - an epic that cannot be read says nothing
+        epic = store.read_ticket(e.path)  # an epic that cannot be read fails the beat: never a false "none"
+        d = permits.factory_delegation(ws, epic, signed)
+        if d is None:
             continue
+        if epic.status == "done":
+            state = "done"
+        elif factory_report.stopped(ws, epic, entries=entries, signed=signed, events=events):
+            state = "stopped"
+        elif epic.id in asked:
+            state = "waiting"
+        elif factory_report.ready(ws, epic, entries=entries, signed=signed, events=events):
+            state = "ready"
+        elif d.get("active"):
+            state = "running"
+        else:
+            state = "paused"
         if best is None or _RANK.index(state) < _RANK.index(best[0]):
             best = (state, epic, d)
     if best is None:
@@ -91,24 +88,12 @@ def _budget_pct(ws, epic, d, events, entries) -> int | None:
 
 
 def heartbeat(ws) -> dict:
-    """The heartbeat's fields, read now."""
+    """The heartbeat's fields, read now. The four required fields raise when they cannot be read, so the caller skips
+    the whole beat and the status page shows the host as not answering, never a false zero or "none"."""
     from orch.core import query, store
     from orch.dashboard import terminals
-    out = {}
-    try:
-        out["sessions"] = _count(len(terminals.sessions(ws)))
-    except Exception:  # noqa: BLE001
-        out["sessions"] = 0
-    try:
-        out["in_progress"] = _count(sum(1 for e in store.scan(ws) if e.status == "in-progress"))
-    except Exception:  # noqa: BLE001
-        out["in_progress"] = 0
-    try:
-        out["needs_you"] = _count(query.counts(query.waiting(ws))["blocking"])
-    except Exception:  # noqa: BLE001
-        out["needs_you"] = 0
-    try:
-        out.update(factory(ws))
-    except Exception:  # noqa: BLE001
-        out["factory"] = "none"
+    out = {"sessions": _count(len(terminals.sessions(ws))),  # no tmux or no server: really none
+           "in_progress": _count(sum(1 for e in store.scan(ws) if e.status == "in-progress")),
+           "needs_you": _count(query.counts(query.waiting(ws))["blocking"])}
+    out.update(factory(ws))
     return out

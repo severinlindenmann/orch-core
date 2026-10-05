@@ -580,10 +580,13 @@ def test_the_heartbeat_counts_come_from_the_workspace(ws, put, monkeypatch):
     put("in-progress")
     put("in-progress")
     put("backlog")
+    put("testing")  # waits for your verdict: a needs-you item, so a hard-coded 0 cannot pass
+    put("testing")
     monkeypatch.setattr(terminals, "sessions", lambda w: ["one", "two", "three"])
     beat = presence.heartbeat(ws)
-    assert beat == {"sessions": 3, "in_progress": 2, "needs_you": query.counts(query.waiting(ws))["blocking"],
-                    "factory": "none"}
+    needs = query.counts(query.waiting(ws))["blocking"]
+    assert needs >= 2
+    assert beat == {"sessions": 3, "in_progress": 2, "needs_you": needs, "factory": "none"}
     assert set(beat) <= {"sessions", "in_progress", "needs_you", "factory", "children_done", "children_total",
                          "budget_pct"}
     assert len(json.dumps(beat)) <= 512 and all(type(v) is int for k, v in beat.items() if k != "factory")
@@ -712,7 +715,7 @@ def _missing(ws):
 
 def test_preflight_passes_when_everything_is_there(ws, ready):
     assert remote_start.preflight(ws) == {"tool": ready["sharing"], "space": WS_HEX,
-                                          "server": "https://tix.example"}
+                                          "server": "https://tix.example", "warnings": []}
 
 
 @pytest.mark.parametrize("brk,expect", [
@@ -895,3 +898,240 @@ def test_the_bridge_commands_are_never_grantable(ws):
     from orch.core import permits
     assert permits.never_grantable(ws, "sharing bridge-key --workspace " + WS_HEX)
     assert permits.never_grantable(ws, "sharing bridge-host --workspace " + WS_HEX)
+
+
+# -- review follow-ups: the windows the dispatcher's own checks do not cover -----------------------------------------
+
+def _deny_from(host, n):
+    """host.still_authorized answers yes for its first n-1 calls and no from call n: the device is "revoked" right
+    after the dispatcher's own checks, inside the loop's window before sealing."""
+    real, calls = host.still_authorized, []
+
+    def fake(run):
+        calls.append(1)
+        return len(calls) < n and real(run)
+    host.still_authorized = fake
+    return calls
+
+
+def test_a_stream_head_is_checked_again_before_it_is_sealed(ws, fake):
+    host, a = make_host(), Device_(KEY_A)
+    _deny_from(host, 3)  # 1: before running, 2: before the Start event (dispatcher), 3: the loop's own head check
+
+    async def main():
+        loop = make_loop(ws, host, keepalive_s=60)
+        task = await started(loop)
+        rid = fake.request(_stream(a))
+        await until(lambda: fake.chunks(rid))
+        (h, meta, _), = fake.chunks(rid)  # only the refusal: no head went out
+        assert h.flags & E.F_REFUSAL and h.flags & E.F_STREAM and "refusal" in meta
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_a_stream_frame_the_app_produced_before_a_revocation_is_not_sent(ws, fake):
+    host, a = make_host(), Device_(KEY_A)
+    _deny_from(host, 5)  # 3: head (loop), 4: the first body event (dispatcher), 5: the loop's check before its frame
+
+    async def main():
+        loop = make_loop(ws, host, keepalive_s=60)
+        task = await started(loop)
+        rid = fake.request(_stream(a))
+        await until(lambda: fake.chunks(rid) and fake.chunks(rid)[-1][0].flags & E.F_LAST)
+        chunks = fake.chunks(rid)
+        assert len(chunks) == 2 and "status" in chunks[0][1]  # the head, then the refusal: the frame never left
+        assert chunks[1][0].flags & E.F_REFUSAL and chunks[1][2] == b""
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def _big_app(ws, size):
+    from fastapi import FastAPI
+    from fastapi.responses import Response
+    from orch.dashboard.remote_gate import RemoteGate
+    app = FastAPI()
+    app.state.token = TOKEN
+
+    @app.get("/palette.json")
+    async def big():
+        return Response(b"x" * size, media_type="application/octet-stream")
+    app.add_middleware(RemoteGate, routes=app.routes, ws=ws)
+    return app
+
+
+def test_a_page_too_large_to_store_is_checked_once_more_before_it_is_sent(ws, fake):
+    from orch.dashboard.bridge_dispatch import Limits
+    host, b = make_host(), Device_(KEY_B)
+    _deny_from(host, 4)  # 1: run, 2: Start, 3: the one body event, 4: the loop's check for an unstored body
+
+    async def main():
+        loop = make_loop(ws, host, app=_big_app(ws, 100 * 1024), limits=Limits(max_chunk=1 << 20))
+        task = await started(loop)
+        rid = fake.request(b.envelope(http("GET", "/palette.json")))
+        await until(lambda: fake.chunks(rid))
+        (h, meta, data), = fake.chunks(rid)
+        assert h.flags & E.F_REFUSAL and "refusal" in meta and data == b""
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_a_page_too_large_to_store_is_sent_while_still_authorised(ws, fake):
+    from orch.dashboard.bridge_dispatch import Limits
+    host, b = make_host(), Device_(KEY_B)
+
+    async def main():
+        loop = make_loop(ws, host, app=_big_app(ws, 100 * 1024), limits=Limits(max_chunk=1 << 20))
+        task = await started(loop)
+        rid = fake.request(b.envelope(http("GET", "/palette.json")))
+        await until(lambda: fake.chunks(rid) and fake.chunks(rid)[-1][0].flags & E.F_LAST)
+        assert len(b"".join(d for _, _, d in fake.chunks(rid))) == 100 * 1024
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_an_envelope_delivered_under_another_mailbox_id_is_dropped(ws, fake):
+    host, b = make_host(), Device_(KEY_B)
+
+    async def main():
+        loop = make_loop(ws, host)
+        task = await started(loop)
+        env = b.envelope(http("GET", "/palette.json"))
+        other = os.urandom(16).hex()
+        fake._put({"rid": other, "body": E.b64u(env)})  # noqa: SLF001 - the child claims another id for these bytes
+        ok = fake.request(b.envelope(http("GET", "/palette.json")))  # a proper one after it: the loop is alive
+        await until(lambda: fake.chunks(ok))
+        await asyncio.sleep(0.2)
+        assert {x["rid"] for x in fake.ops("respond")} == {ok}  # nothing answered for either id of the first
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_the_origin_scope_comes_from_the_decision_not_from_the_request(ws, fake, put):
+    """A Decide device that writes "scope": "type" (and "fresh") into its meta gets the gate's answer for Decide."""
+    from orch.dashboard.remote_gate import FRESH, NO_WAY
+    tid = put("backlog")
+    host, a = make_host(scope_a="decide"), Device_(KEY_A)
+
+    async def main():
+        loop = make_loop(ws, host)
+        task = await started(loop)
+        meta = {**http("POST", f"/t/{tid}/approve", FORM), "scope": "type", "fresh": True, "label": "x"}
+        rid = fake.request(a.envelope(meta, b"gate=requirements&seen=x&factory=1"))  # arming: Type and fresh
+        await until(lambda: fake.chunks(rid) and fake.chunks(rid)[-1][0].flags & E.F_LAST)
+        body = b"".join(d for _, _, d in fake.chunks(rid))
+        assert fake.chunks(rid)[0][1]["status"] == 403 and NO_WAY.encode() in body and FRESH.encode() not in body
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_end_run_never_replaces_a_finished_outcome(ws):
+    host, a = make_host(), Device_(KEY_A)
+    e, r = _run(host, a)
+    assert host.finish(r.answer_rids, {"status": 200, "headers": []}, b"done-once") is True
+    host.end_run(r, "busy")
+    assert host.store.get(r.rid, now_ms()).outcome == {"status": 200, "headers": []}
+    again = host.check(e, r.rid)
+    assert (again.result, again.body) == ("replay", b"done-once")
+
+
+def test_a_failing_key_tool_never_shows_its_output(ws, ready, fake):
+    (fake.dir / "key-exit").write_text("1")  # it prints the key, then fails
+    with pytest.raises(remote_start.RemoteNotReady) as e:
+        remote_start.prepare(ws, out=lambda s: None)
+    text = e.value.message + (e.value.hint or "")
+    assert V.K_WS.hex() not in text and V.K_WS.hex()[:16] not in text and "code 1" in text
+
+
+def test_a_key_that_is_not_64_hex_characters_is_refused(ws, ready, fake):
+    (fake.dir / "key").write_text("zz" * 32)
+    with pytest.raises(remote_start.RemoteNotReady):
+        remote_start.prepare(ws, out=lambda s: None)
+    (fake.dir / "key").write_text(V.K_WS.hex()[:62])
+    with pytest.raises(remote_start.RemoteNotReady):
+        remote_start.prepare(ws, out=lambda s: None)
+
+
+def test_a_relative_tool_path_is_refused(ws, ready):
+    rel = Path(_wrapper(ws.root)).relative_to(ws.root)  # an executable at bin/sharing below the cwd
+    ready["sharing"] = str(rel)
+    assert "its sharing_path setting" in _missing(ws).hint
+
+
+def test_a_tool_inside_the_workspace_is_warned_about(ws, ready):
+    lines = []
+    ready["sharing"] = _wrapper(ws.root)
+    remote_start.prepare(ws, out=lines.append)
+    assert any("inside this workspace" in s for s in lines)
+    ready["sharing"] = _wrapper(ws.root.parent / "elsewhere")
+    lines.clear()
+    remote_start.prepare(ws, out=lines.append)
+    assert not any("inside this workspace" in s for s in lines)
+
+
+@pytest.mark.parametrize("broken", ["sessions", "in_progress", "needs_you", "factory"])
+def test_a_heartbeat_field_that_cannot_be_read_fails_the_beat(configure, broken, monkeypatch):
+    from orch.core import ledger, query, store
+    from orch.dashboard import terminals
+    fws = configure(factory={"enabled": True})
+
+    def boom(*a, **k):
+        raise OSError("unreadable")
+    target = {"sessions": (terminals, "sessions"), "in_progress": (store, "scan"), "needs_you": (query, "waiting"),
+              "factory": (ledger, "entries")}[broken]
+    monkeypatch.setattr(*target, boom)
+    with pytest.raises(OSError):
+        presence.heartbeat(fws)
+
+
+def test_an_epic_that_cannot_be_read_fails_the_beat_instead_of_reading_none(configure, agent, human, monkeypatch):
+    from conftest import human_ops
+    from orch.core import store
+    from orch.core.ops import Ops
+    fws = configure(factory={"enabled": True})
+    a, h = Ops(fws, agent), human_ops(fws, human)
+    epic = a.new("Revamp", type="epic")
+    a.set_section(epic.id, "Requirements", "r")
+    a.set_section(epic.id, "Acceptance criteria", "- [ ] a")
+    h.approve(epic.id, "requirements", delegate={"factory": True})
+
+    def boom(*a, **k):
+        raise OSError("unreadable")
+    monkeypatch.setattr(store, "read_ticket", boom)
+    with pytest.raises(OSError):
+        presence.factory(fws)
+
+
+def test_a_failed_beat_sends_nothing_and_the_next_one_goes_out(ws, fake):
+    host, beats = make_host(), []
+
+    def beat(w):
+        beats.append(1)
+        if len(beats) == 1:
+            raise OSError("unreadable")
+        return {"sessions": 0, "in_progress": 0, "needs_you": 1, "factory": "none"}
+
+    async def main():
+        loop = make_loop(ws, host, beat=beat)
+        task = await started(loop)
+        await until(lambda: fake.ops("heartbeat"))
+        assert len(beats) >= 2 and fake.ops("heartbeat")[0]["needs_you"] == 1
+        await finish(loop, task)
+    asyncio.run(main())
+
+
+def test_a_crash_in_the_loop_shows_as_an_error_and_leaves_nothing_running(ws, fake):
+    host, said = make_host(), []
+
+    async def main():
+        loop = make_loop(ws, host, said)
+
+        async def broken():
+            raise RuntimeError("bug")
+        loop._polling = broken  # noqa: SLF001
+        task = asyncio.ensure_future(loop.run())
+        await asyncio.wait_for(task, 10)
+        st = loop.link.status()
+        assert (st["state"], st["last_error"], st["host_online"]) == ("error", "loop_crashed", False)
+        assert any("failed" in s for s in said) and fake.log()[-1] == {"eof": True}
+        await finish(loop, task)
+    asyncio.run(main())

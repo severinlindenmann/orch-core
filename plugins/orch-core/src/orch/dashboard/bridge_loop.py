@@ -71,6 +71,8 @@ FATAL = {
     "no_space": "remote: the workspace's space on the relay no longer exists.",
     "transport_exited": "remote: the transport (the relay addon's tool) stopped; see its message above. The local "
                         "dashboard keeps running.",
+    "loop_crashed": "remote: the remote link failed and is stopped; the local dashboard keeps running. Restart to "
+                    "try again.",
     "transport_failed": "remote: the transport (the relay addon's tool) did not start; see its message above. The "
                         "local dashboard keeps running.",
 }
@@ -172,14 +174,18 @@ class HostLoop:
         self._loop = asyncio.get_running_loop()
         self.link.set("connecting")
         try:
-            await self.child.start()
-        except TransportError:
-            await self._end("error", "transport_failed", goodbye=False)
-            return
-        self._beat_task = asyncio.create_task(self._heartbeats())
-        code = await self._polling()
-        if code:
-            await self._end("error", code, goodbye=False)
+            try:
+                await self.child.start()
+            except TransportError:
+                await self._end("error", "transport_failed", goodbye=False)
+                return
+            self._beat_task = asyncio.create_task(self._heartbeats())
+            code = await self._polling()
+            if code:
+                await self._end("error", code, goodbye=False)
+        except Exception as e:  # noqa: BLE001 - a bug here must not leave the link reading "online"
+            log.error("remote: the host loop failed (%s)", type(e).__name__)
+            await self._end("error", "loop_crashed", goodbye=False)
 
     async def stop(self) -> None:
         """A clean stop (the dashboard shuts down): streams end `stopped`, a goodbye, the lease released."""

@@ -10,7 +10,9 @@ import pytest
 
 from orch.core import dark_profile
 
-SHELLS = [s for s in (["/bin/sh"], ["/bin/bash", "--norc", "--noprofile"], ["/bin/zsh", "-f"]) if os.path.exists(s[0])]
+ZSH_OPTS = ["/bin/zsh", "-f", "-o", "extendedglob", "-o", "rcquotes"]
+SHELLS = [s for s in (["/bin/sh"], ["/bin/bash", "--norc", "--noprofile"], ["/bin/zsh", "-f"], ZSH_OPTS)
+          if os.path.exists(s[0])]
 PUNCT = ";&|<>()#$`\\!*?[]{}~'\" =-_.,:/@%+^"
 BARE = "abcxyz019-_.,:/@%+"
 
@@ -75,7 +77,7 @@ def test_quoted_words_split_exactly_as_the_real_shells_split_them():
     ('git commit -m "T-3 add the <list> & #tags"', ["git", "commit", "-m", "T-3 add the <list> & #tags"]),
     ("orch log X -m ''", ["orch", "log", "X", "-m", ""]),
     ("orch log X -m 'a'\"(b)\"c", ["orch", "log", "X", "-m", "a(b)c"]),
-    ("orch log X a#b", ["orch", "log", "X", "a#b"]),
+    ("orch log X 'a#b' \"c^d\" 'e!'", ["orch", "log", "X", "a#b", "c^d", "e!"]),
 ])
 def test_metacharacters_inside_quotes_are_plain_text(command, words):
     assert dark_profile.simple_tokens(command) == words
@@ -87,6 +89,14 @@ def test_metacharacters_inside_quotes_are_plain_text(command, words):
     'orch log X -m "a\\"b"', 'orch log X -m "hi!"', 'orch log X -m "${HOME}"', "orch log X -m 'open",
     'orch log X -m "open', "orch show X # a comment", "orch show X #", "orch log X -m 'a'; rm x",
     "orch log X -m \"a\"$(id)", "orch log X\n-m a",
+    # zsh's extendedglob and rcquotes, and history: # ^ ! anywhere outside quotes, a quote right after a quote
+    "orch log X a#b", "orch log X --#exec=x", "orch log X a^b", "orch log X ^x", "orch log X a!b", "! orch show X",
+    "orch log X 'a''b'", "orch log X ''''", "orch log X 'a'''",
+    # ANSI-C and locale quoting, and an empty quote before # or =
+    "orch log X $'a\\nb'", 'orch log X $"a"', "orch log X ''#x", 'orch log X ""=x',
+    # whitespace and control characters other than a plain space
+    "orch log X\ta", "orch log X\ra", "orch log X a", "orch log X a", "orch log X a", "orch log\x00 X",
+    "orch log X\x7f", "orch log X\x0ba", "orch log X\x0ca",
 ])
 def test_active_text_still_refuses(command):
     assert dark_profile.simple_tokens(command) is None
@@ -111,5 +121,17 @@ def test_a_prefix_rule_itself_stays_plain_words(configure, human):
         dark_profile.add(ws, human, "prefix", "orch log 'a(b'")
 
 
-def test_shells_are_real():  # the differential test above ran against at least the POSIX shell
-    assert SHELLS and shutil.which("sh")
+def test_the_options_the_shells_differ_on_are_real():
+    """Not vacuous: under zsh's rcquotes and extendedglob these really split differently from sh (in a folder holding
+    a file named --exec=x), and orch refuses each of them."""
+    if not os.path.exists(ZSH_OPTS[0]):
+        pytest.skip("no zsh")
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        (__import__("pathlib").Path(d) / "--exec=x").write_text("", encoding="utf-8")
+        for cmd in ("'a''b'", "--#exec=x", "^nothing"):
+            run = lambda sh: subprocess.run([*sh, "-c", f"printf '%s\\0' X {cmd}"], capture_output=True,  # noqa: E731
+                                            text=True, cwd=d, env={"PATH": "/usr/bin:/bin"}).stdout
+            assert run(ZSH_OPTS) != run(["/bin/sh"]), cmd
+            assert dark_profile.simple_tokens(f"orch log X {cmd}") is None
+    assert shutil.which("sh")

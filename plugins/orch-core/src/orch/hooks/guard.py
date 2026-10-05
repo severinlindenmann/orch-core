@@ -1717,9 +1717,49 @@ def evaluate(ws, payload: dict) -> Decision:
     if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and _harness_file(
             str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
         return Decision(False, _HARNESS_DENIED)
+    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        why = _clone_file(str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws)
+        if why:
+            return Decision(False, why)
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW
+
+
+_CLONE_TICKETS_DENIED = ("this is a child clone's copy of the orch folder (tickets, state, config): tickets change "
+                         "only through orch, which works on the workspace's own tickets from here too")
+_CLONE_HARNESS_DENIED = ("a child clone's harness settings (.claude/settings.json, .claude/settings.local.json, "
+                         ".mcp.json) are not written: the runner refuses to start a session in a clone whose settings "
+                         "differ from the workspace's")
+
+
+def _clone_file(raw: str, cwd, ws) -> str | None:
+    """Why a file tool may not write `raw` inside one of the runner's child clones, or None: the clone's copy of the
+    workspace's orch folder (tickets, .state, config.json) and its harness settings, matched without case, as written
+    or after links."""
+    if not raw:
+        return None
+    try:
+        from orch.core import factory_clones
+        from orch.core.factory_release import always_sensitive
+        forms = _path_forms(raw, cwd, ws)
+        roots = {Path(os.path.normpath(factory_clones.root())), factory_clones.root().resolve()}
+        home = always_sensitive(ws)[0].strip("/").casefold()
+    except Exception:
+        return None
+    for f in forms:
+        for r in roots:
+            try:
+                rest = f.relative_to(r).parts[3:]  # <workspace id>/<child>/repo/...
+            except ValueError:
+                continue
+            text = "/".join(rest).casefold()
+            if (text in (f"{home}/config.json", f"{home}/tickets", f"{home}/.state")
+                    or text.startswith((f"{home}/tickets/", f"{home}/.state/"))):
+                return _CLONE_TICKETS_DENIED
+            if re.search(r"(?:^|/)\.claude/settings(?:\.local)?\.json$|(?:^|/)\.mcp\.json$", text):
+                return _CLONE_HARNESS_DENIED
+    return None
 
 
 # A repository's own files (`.git/config`, refs, packed-refs, info, objects/info/alternates, HEAD, worktrees, hooks,

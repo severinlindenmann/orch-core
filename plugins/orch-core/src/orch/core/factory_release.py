@@ -958,8 +958,9 @@ def child_source(ws, t) -> tuple[str | None, Path | None, str]:
     workspace checkout (the fallback for children with a worktree of their own). (None, None, why) otherwise."""
     from orch.core import factory_clones
     rec = factory_clones.record(ws, t.id)
-    if rec is not None:
-        return rec["branch"], Path(rec["path"]), ""
+    if rec is not None:  # checked as the commit gate checks it (no link, the pinned folder and .git) before a fetch
+        path, why = factory_clones.verify(ws, t.id)
+        return (rec["branch"], path, "") if path is not None else (None, None, why)
     branch, why = child_branch(ws, t)
     return branch, workspace_repo(ws) if branch else None, why
 
@@ -1003,6 +1004,36 @@ def changed_paths(ws, rec, sha: str) -> list[str] | None:
     return sorted(set(out))
 
 
+def always_sensitive(ws) -> list[str]:
+    """What the release treats as sensitive whatever the recipe says: the workspace's orch folder (its tickets,
+    state and config) as a path of the repository (normally `orchestrator`). A child's clone carries a copy of it that
+    the session's file tools can write; tickets change only through orch, never through a merge."""
+    top = workspace_repo(ws)
+    try:
+        rel = Path(ws.home).resolve().relative_to(top.resolve()).as_posix() if top else None
+    except ValueError:
+        rel = None
+    return [rel or Path(ws.home).name]
+
+
+def message_refusal(ws, rec: dict, sha: str) -> str | None:
+    """Why a commit the branch brings in (`base..sha`, in the release repository) has a message orch's commit-msg
+    check refuses (the workspace's commit format, no AI attribution), or None. A child's clone runs no hooks, so
+    this is where its messages are checked. Unreadable is a refusal."""
+    from orch.hooks.commit_msg import check_message
+    r = _git(ws, rec, "log", "--format=%H%x1f%B%x1e", f"refs/remotes/release/{rec['base']}..{sha}", limit=GIT_OUT)
+    if r.get("code") != 0 or r.get("out_size", 0) > GIT_OUT:
+        return "its commit messages could not be read"
+    for chunk in (r.get("out") or "").split("\x1e"):
+        if not chunk.strip():
+            continue
+        commit, _, msg = chunk.strip().partition("\x1f")
+        problems = check_message(ws, msg)
+        if problems:
+            return f"commit {commit[:12]} has a message orch's commit-msg check refuses ({problems[0]})"
+    return None
+
+
 def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
     """({child: (branch, sha, source)}, {child: [sensitive paths]}, {child: why it could not be checked}) for every
     child ticket in `kids`, in the runner's release repository against the base fetched from the recipe's remote."""
@@ -1030,9 +1061,13 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if paths is None:
             errors[t.id] = f"the changes of {t.id}'s branch could not be listed"
             continue
-        bad = [p for p in paths if sensitive(p, rec["sensitive_paths"])]
+        bad = [p for p in paths if sensitive(p, [*rec["sensitive_paths"], *always_sensitive(ws)])]
         if bad:
             hits[t.id] = bad[:20]
+        why = None if bad else message_refusal(ws, rec, sha)  # a sensitive hit stops the release anyway
+        if why:
+            errors[t.id] = f"{t.id}'s branch: {why}"
+            continue
         found[t.id] = (branch, sha, src)
     return found, hits, errors
 

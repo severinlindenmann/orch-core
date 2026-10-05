@@ -66,13 +66,21 @@ def _main_commit(ws_root, remote, files: dict, push: bool = True) -> None:
         _g(ws_root, "push", "-q", str(remote), "main")
 
 
+def _msg(name: str) -> list[str]:
+    """A message orch's commit-msg check takes (the release checks every child commit's message)."""
+    import re
+    key = re.search(r"[a-z]+-\d+", name)
+    return ["-m", f"{key.group(0).upper() if key else 'L-0001'} work on {name}", "-m", "What: work", "-m",
+            "Why: the ticket", "-m", "Risk: low"]
+
+
 def _branch(ws_root, name: str, files: dict, start: str = "main") -> str:
     _g(ws_root, "checkout", "-q", "-B", name, start)
     for f, body in files.items():
         (ws_root / f).parent.mkdir(parents=True, exist_ok=True)
         (ws_root / f).write_text(body, encoding="utf-8")
         _g(ws_root, "add", f)
-    _g(ws_root, "commit", "-q", "--allow-empty", "-m", f"work on {name}")
+    _g(ws_root, "commit", "-q", "--allow-empty", *_msg(name))
     sha = _g(ws_root, "rev-parse", "HEAD")
     _g(ws_root, "checkout", "-q", "main")
     return sha

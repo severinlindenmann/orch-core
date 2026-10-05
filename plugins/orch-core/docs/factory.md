@@ -176,15 +176,21 @@ repository (the release step's git isolation; from its recorded clone, never a t
 record) and its whole tree listed with `ls-tree`. A file the epic names is there when a path of that tree is the
 name or ends in `/<name>`, without case. The card says "Not in any child's commit: elephants.html, elephants.json
 (found similar: elepthans.json)"; the near match (a small edit distance) only helps you, it never decides. A child
-in testing whose clone has changes not committed or untracked files (`git status` in the clone, under its lock, its
-config written again first) is named: "<child> has uncommitted work in its clone". A child whose commits cannot be
-read is said too, and then nothing is called missing. The Ready report reuses what it read for 30 seconds.
+in testing whose clone has changes not committed or untracked files is named: "<child> has uncommitted work in its
+clone". That is `git status` in the clone under its lock, after the runner wrote its config again and removed its
+`hooks` and `info` folders (so a Ready card's read rewrites those, as every launch and release fetch does), with
+`--ignore-submodules=all` and submodule recursion, the submodule summary and the untracked cache off: git never
+enters a gitlink, whose own config and attributes could name a filter. Gitlinks are listed from the index instead and
+shown as "a submodule, not inspected". A child whose commits or clone state cannot be read is said too ("Unreadable":
+never taken as clean), and then nothing is called missing. The check reads each tip's whole tree, so a named file
+that is on the base already counts as there. The Ready report reuses what it read for 30 seconds.
 
 The same check is a condition: before the first merge command, a file the epic names that is in no child's commit
 (the classified tips and the commits already merged) blocks the merge stage with that reason ("Release could not
-start": commit the file, or fix the epic, then Retry release); and the auto-close keeps the epic open while a named
-file is in no merged commit (no child's commit, without a signed release) or a child in testing has uncommitted work
-in its clone. An epic that names no file has nothing to check here (and is not closed by itself, above).
+start"), recorded on the child whose text names the file (else the first): Retry release works once a child commits
+it on its branch (or after you fix the epic); and the auto-close keeps the epic open while a named file is in no
+merged commit (no child's commit, without a signed release), a child in testing has uncommitted work in its clone,
+its clone holds a submodule, or its clone's state cannot be read. An epic that names no file has nothing to check here (and is not closed by itself, above).
 
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:

@@ -54,21 +54,37 @@ def child_tree(ws, t) -> tuple[str | None, list[str] | None, str]:
     return (sha, paths, "") if paths is not None else (None, None, f"the tree of {t.id}'s commit could not be read")
 
 
-def uncommitted(ws, child: str) -> list[str] | None:
-    """What `git status` shows in the child's runner-made clone (untracked files and changes not committed, as
-    porcelain lines, at most 20), [] when clean, None when there is no clone or it cannot be read."""
+UNREADABLE = {"ok": False, "lines": [], "submodules": []}
+
+
+def uncommitted(ws, child: str) -> dict | None:
+    """What the child's runner-made clone holds that is not committed: {ok: True, lines: [porcelain lines, at most
+    20], submodules: [gitlink paths, never inspected]}; UNREADABLE ({ok: False}) when it has a clone record but its
+    state cannot be read (never taken as clean); None when the runner made no clone for it.
+
+    No program of the clone's runs: `git status` with `--ignore-submodules=all` (git never enters a gitlink, whose own
+    config and attributes could name a filter), submodule recursion, the submodule summary and the untracked cache
+    off (factory_clones._git adds these to the release isolation), under the clone's lock with its config written
+    again first (factory_clones.fetch_from). Gitlinks are listed from the index (`ls-files -s`, mode 160000)."""
     from orch.core import factory_clones, factory_runner
-    git = factory_runner.resolve_bin("git")
-    if git is None or factory_clones.record(ws, child) is None:
+    if factory_clones.record(ws, child) is None:
         return None
+    git = factory_runner.resolve_bin("git")
+    if git is None:
+        return UNREADABLE
 
     def status(path):
         r = factory_clones._git(git, ws, "-C", str(path), "status", "--porcelain=v1", "-z", "--untracked-files=all",
-                                "--ignore-submodules=none", cwd=str(path), timeout=30)
-        if r.get("code") != 0:
+                                "--ignore-submodules=all", cwd=str(path), timeout=30)
+        s = factory_clones._git(git, ws, "-C", str(path), "ls-files", "-s", "-z", cwd=str(path), timeout=30)
+        if r.get("code") != 0 or s.get("code") != 0:
             return None
-        return [x for x in (r.get("out") or "").split("\x00") if x.strip()][:20]
-    return factory_clones.fetch_from(ws, child, status)
+        subs = [x.split("\t", 1)[1] for x in (s.get("out") or "").split("\x00")
+                if x.startswith("160000 ") and "\t" in x]
+        return {"ok": True, "lines": [x for x in (r.get("out") or "").split("\x00") if x.strip()][:20],
+                "submodules": subs[:20]}
+    got = factory_clones.fetch_from(ws, child, status)
+    return got if got is not None else UNREADABLE
 
 
 def has(paths, name: str) -> bool:
@@ -118,21 +134,28 @@ def _cached(ws, t):
 
 
 def built(ws, epic, files, kids) -> dict | None:
-    """For the Ready report: {missing: [{name, similar}], dirty: [{id, lines}], unknown: [{id, why}]} over the
-    children `kids` ([(entry, Ticket)], those that count), or None outside a git checkout (nothing to look at)."""
+    """For the Ready report: {missing: [{name, similar}], dirty: [{id, lines}], unknown: [{id, why}], subs: [{id,
+    paths}]} over the children `kids` ([(entry, Ticket)], those that count), or None outside a git checkout (nothing
+    to look at). A clone whose state cannot be read is `unknown`, never clean."""
     from orch.core import factory_release as fr
     if fr.workspace_repo(ws) is None:
         return None
-    trees, dirty, unknown = [], [], []
+    trees, dirty, unknown, subs = [], [], [], []
     for _, t in kids:
         (sha, paths, why), status = _cached(ws, t)
         if paths is None:
             unknown.append({"id": t.id, "why": why})
         else:
             trees.append(paths)
-        if status:
-            dirty.append({"id": t.id, "lines": status})
-    return {"missing": missing(files, trees) if files and not unknown else [], "dirty": dirty, "unknown": unknown}
+        if status is not None and not status["ok"]:
+            unknown.append({"id": t.id, "why": "the state of its clone could not be read"})
+        elif status:
+            if status["lines"]:
+                dirty.append({"id": t.id, "lines": status["lines"]})
+            if status["submodules"]:
+                subs.append({"id": t.id, "paths": status["submodules"]})
+    return {"missing": missing(files, trees) if files and not unknown else [], "dirty": dirty, "unknown": unknown,
+            "subs": subs}
 
 
 def epic_files(epic) -> list[str]:
@@ -141,10 +164,13 @@ def epic_files(epic) -> list[str]:
     return named_files(f"{epic.section('Requirements')}\n{epic.section('Acceptance criteria')}")
 
 
-def merge_refusal(ws, rec: dict, epic, kids: list[str], found: dict) -> str | None:
-    """Why the merge stage may not start: a file the epic names that is in no child's commit (the classified tips in
-    `found`, and the commits already merged), or commits that cannot be listed. None when the epic names no file."""
-    from orch.core import factory_release as fr
+def merge_refusal(ws, rec: dict, epic, kids: list[str], found: dict) -> tuple[str, str] | None:
+    """(the child the merge block is recorded on, why) when the merge stage may not start: a file the epic names that
+    is in no child's commit (the classified tips in `found`, and the commits already merged; a file already on the
+    base counts, since a tip's whole tree is read), or commits that cannot be listed. The block goes to the child
+    whose text names the missing file (factory_report.coverage), else the first child. None when the epic names no
+    file."""
+    from orch.core import factory_release as fr, factory_report
     files = epic_files(epic)
     if not files:
         return None
@@ -155,10 +181,18 @@ def merge_refusal(ws, rec: dict, epic, kids: list[str], found: dict) -> str | No
             continue  # not checked this round and never merged: it fails its merge stage on its own
         paths = tree(ws, rec, sha)
         if paths is None:
-            return f"the commit of {k} could not be listed to check the files the epic names"
+            return k, f"the commit of {k} could not be listed to check the files the epic names"
         trees.append(paths)
     miss = missing(files, trees)
-    return missing_text(miss) + ": the epic names it, so the merge does not start" if miss else None
+    if not miss:
+        return None
+    try:
+        named = factory_report.coverage(ws, epic)["covered"].get(miss[0]["name"]) or []
+    except Exception:
+        named = []
+    owner = next((k for k in named if k in kids), sorted(found)[0] if found else kids[0])
+    return owner, (missing_text(miss) + f": the epic names it, so the merge does not start; Retry release once "
+                   f"{owner} (or another child) commits it on its branch")
 
 
 def close_blockers(ws, epic, d, units: list[str], testing: list[str]) -> list[str]:
@@ -188,6 +222,14 @@ def close_blockers(ws, epic, d, units: list[str], testing: list[str]) -> list[st
         if miss:
             out.append(missing_text(miss, "any merged commit" if d.get("release") else "any child's commit"))
     for k in testing:
-        if uncommitted(ws, k):
+        st = uncommitted(ws, k)
+        if st is None:
+            continue
+        if not st["ok"]:
+            out.append(f"the state of {k}'s clone could not be read")
+            continue
+        if st["lines"]:
             out.append(f"{k} has uncommitted work in its clone")
+        if st["submodules"]:
+            out.append(f"{k}'s clone holds a submodule orch does not inspect ({', '.join(st['submodules'][:5])})")
     return out

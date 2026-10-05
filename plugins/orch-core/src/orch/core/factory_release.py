@@ -1673,9 +1673,9 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
             return lines + [f"{epic.id}: release stopped: a sensitive path is touched; nothing was merged"]
         if not errors:  # every file the epic names must be in a child's commit before anything is merged
             from orch.core import factory_built
-            why = factory_built.merge_refusal(ws, rec, epic, kids, found)
-            if why:
-                return lines + [_block(ws, actor, epic.id, "merge", open_kids[0], why)]
+            refused = factory_built.merge_refusal(ws, rec, epic, kids, found)
+            if refused:
+                return lines + [_block(ws, actor, epic.id, "merge", refused[0], refused[1])]
         if errors:
             k = sorted(errors)[0]
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1

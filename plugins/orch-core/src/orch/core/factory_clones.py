@@ -462,7 +462,11 @@ def clonable(ws) -> tuple[bool | None, str]:
 
 def _git(git: str, ws, *args: str, cwd: str, timeout: float) -> dict:
     from orch.core import factory_release as fr
-    flags = [*fr._git_flags({}), "-c", "core.protectHFS=true", "-c", "core.protectNTFS=true"]
+    # what a git call in a clone's work tree never does: enter a submodule (its own config and attributes could name a
+    # filter), print a submodule summary, or trust an untracked cache the agent could have written
+    flags = [*fr._git_flags({}), "-c", "core.protectHFS=true", "-c", "core.protectNTFS=true",
+             "-c", "submodule.recurse=false", "-c", "status.submoduleSummary=false", "-c", "core.untrackedCache=false",
+             "-c", "diff.ignoreSubmodules=all", "-c", "fetch.recurseSubmodules=false"]
     return fr.run_command([git, *flags, *args], cwd, fr._git_env(ws, git), max(1, int(timeout)))
 
 

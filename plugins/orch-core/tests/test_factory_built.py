@@ -30,10 +30,10 @@ def _epic(fws, fa, fh, human, **charter):
     return e.id
 
 
-def _child(fws, fa, human, eid, title, files=None, untracked=None):
+def _child(fws, fa, human, eid, title, files=None, untracked=None, reqs=None):
     c = fa.new(title, epic=eid)
     _refine(fa, c.id)
-    fa.set_section(c.id, "Requirements", f"Write {' '.join(files or untracked or {})}")
+    fa.set_section(c.id, "Requirements", reqs or f"Write {' '.join(files or untracked or {})}")
     fa.epic_auto_approve(c.id)
     clone, why = fc_ensure(fws, human, c.id)
     for name, body in (files or {}).items():
@@ -120,3 +120,63 @@ def test_near_matches_help_and_never_decide():
     assert fb.similar(["giraffes.json"], "elephants.json") == []
     assert fb.has(["Web/Elephants.HTML"], "elephants.html") and not fb.has(["xelephants.html"], "elephants.html")
     assert fb.missing(["a.json"], [["b/a.json"]]) == []
+
+
+def test_a_planted_submodule_with_a_clean_filter_never_runs_and_is_named(fws, fa, fh, human, close_tasks, remote,
+                                                                         tmp_path):  # noqa: F811
+    eid = _epic(fws, fa, fh, human, close=True)
+    a = _child(fws, fa, human, eid, "data", files={"elephants.json": "[]\n", "elephants.html": "<p>x</p>\n"})
+    clone, _ = fc_ensure(fws, human, a)
+    marker = tmp_path / "MARKER"
+    sub = clone / "sub"
+    sub.mkdir()
+    _g(sub, "init", "-q")
+    (sub / "f").write_text("a\n", encoding="utf-8")
+    (sub / ".gitattributes").write_text("* filter=m\n", encoding="utf-8")
+    _g(sub, "add", "f", ".gitattributes")
+    _g(sub, "commit", "-q", "-m", "s")
+    _g(sub, "config", "filter.m.clean", f"touch {marker}; cat")
+    (clone / ".gitattributes").write_text("* filter=x diff=x\n", encoding="utf-8")  # names drivers nobody configured
+    _g(clone, "add", "sub")  # a gitlink in the index
+    (sub / "f").write_text("b\n", encoding="utf-8")  # the submodule's work tree changed: a nested status would filter
+    _to_testing(fa, a, close_tasks)
+    st = fb.uncommitted(fws, a)
+    assert st["ok"] and st["submodules"] == ["sub"] and not marker.exists()
+    rep = factory_report.ready(fws, store.load(fws, eid)[1])
+    assert rep["coverage"]["built"]["subs"] == [{"id": a, "paths": ["sub"]}] and not marker.exists()
+    e = store.load(fws, eid)[1]
+    texts = [x["text"] for x in factory_close.blockers(fws, e, epics.delegation(fws, e))]
+    assert any("submodule orch does not inspect" in t for t in texts) and not marker.exists(), texts
+
+
+def test_a_clone_whose_state_cannot_be_read_is_never_clean(fws, fa, fh, human, close_tasks, remote,
+                                                           monkeypatch):  # noqa: F811
+    from orch.core import factory_clones
+    eid = _epic(fws, fa, fh, human, close=True)
+    a = _child(fws, fa, human, eid, "data", files={"elephants.json": "[]\n", "elephants.html": "<p>x</p>\n"})
+    _to_testing(fa, a, close_tasks)
+    monkeypatch.setattr(factory_clones, "fetch_from", lambda ws, child, fn: None)  # locked, moved or unreadable
+    assert fb.uncommitted(fws, a) == fb.UNREADABLE
+    fb._CACHE.clear()
+    bt = factory_report.ready(fws, store.load(fws, eid)[1])["coverage"]["built"]
+    assert {"id": a, "why": "the state of its clone could not be read"} in bt["unknown"]
+    e = store.load(fws, eid)[1]
+    texts = [x["text"] for x in factory_close.blockers(fws, e, epics.delegation(fws, e)) if x["code"] == "built"]
+    assert f"the state of {a}'s clone could not be read" in texts
+    pytest.importorskip("fastapi")
+    from test_dark_dashboard import _client
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert f'data-built-unknown="{a}"' in html and "Unreadable" in html
+
+
+def test_the_merge_block_goes_to_the_child_that_names_the_file_and_says_how_to_retry(fws, fa, fh, human, close_tasks,
+                                                                                   remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid = _epic(fws, fa, fh, human, release="merge")
+    a = _child(fws, fa, human, eid, "data", files={"elephants.json": "[]\n"})
+    b = _child(fws, fa, human, eid, "page", files={"notes.txt": "x\n"}, reqs="Write elephants.html")
+    for c in (a, b):
+        _to_testing(fa, c, close_tasks)
+    lines = fr.tick(fws, human, Fake())
+    blocked = fr._blocked_record(fws, eid)
+    assert blocked["unit"] == b and f"Retry release once {b} (or another child) commits it" in blocked["why"], lines

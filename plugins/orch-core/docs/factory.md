@@ -142,15 +142,29 @@ give the verdict (D1: the verdict stays whole).
 
 **What was asked against what the children cover.** In a live run the epic asked for "one HTML file named
 elephants.html that reads a short data file elephants.json"; the planner made one child, "Design elephant chart
-component" (a schema and a mockup), and the Ready report still said every criterion cited evidence. So the report now
-opens with the epic's own acceptance criteria ("The epic asked for:"), the file names its Requirements and Acceptance
-criteria name, and per child the names its Requirements or Acceptance criteria mention ("The children cover"). A
-name no child mentions is a warning: "Not mentioned by any child: elephants.html, elephants.json". This is a text
-check and says so: a name counts when it appears in a child's text, which is not a check that anything was built.
-File names are words ending in a known extension (`.html`, `.json`, `.csv`, `.py`, ...) and anything in backticks that
-holds a `/` or such an extension, compared without case and as whole names (`out.csv` is not covered by `about.csv` or
-`out.csv.bak`). `factory_report.coverage_ok` (True when no named file is uncovered and every child could be read) is
-there for a later automatic close; nothing reads it yet.
+component" (a schema and a mockup), and the Ready report still said every criterion cited evidence. So the report,
+right after its opening line, shows the epic's own acceptance criteria ("The epic asked for:"), the file names its
+Requirements and Acceptance criteria name, and per child the names its Requirements or Acceptance criteria name ("The
+children cover"). A name no child names is a warning: "Not mentioned by any child: elephants.html, elephants.json".
+An epic that names no file says so ("The epic names no file, so there is nothing to compare") rather than claiming
+coverage. This is a text check and says so: a name counts when it appears in a child's text, which is not a check
+that anything was built. The rules, deterministic and with known limits:
+
+- A file name is a word ending in a known extension (`.html`, `.json`, `.csv`, `.py`, ...) or anything in backticks
+  holding a `/` or such an extension, compared without case and as a whole name (`out.csv` is not `about.csv` or
+  `out.csv.bak`). Version-like words (`v1.2.c`, `3.11.md`) and a bare library name from a short list (`node.js`,
+  `vue.js`, `chart.js`, ...; `src/chart.js` is a file) are not names.
+- A name on a line where a negation comes before it (`not`, `never`, `no`, `without`, `except`, `instead of`,
+  `don't`, `avoid`, ...) does not count, in the epic and in a child ("Do not build legacy.html"). Limit: the check is
+  per line and word based; a negation on another line, or phrased otherwise, is not seen.
+- A child covers a name when it names the same path, or a longer path ending in it (`web/elephants.html` covers
+  `elephants.html`); a bare `elephants.json` does not cover `data/elephants.json`.
+- A child the human closed without it being built (a signed close) covers nothing.
+- No name is dropped: the card lists the first 50 and says how many more, and every name counts.
+
+`factory_report.coverage_ok` is True when the epic names at least one file and every one is covered, False when one
+is not or anything cannot be read, and None (unknown, never a pass) when the epic names no file. It is there for a
+later automatic close; nothing reads it yet.
 
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:

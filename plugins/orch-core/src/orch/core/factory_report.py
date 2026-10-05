@@ -112,7 +112,7 @@ def _ready_state(ws, epic, entries, signed, events):
                      "where": [_text(r) for r in (t.meta.get("repos") or []) if isinstance(r, str)][:5]})
     return {"epic": epic.id, "title": _text(epic.title), "children": rows, "open": len(testing),
             "seen": epics.verdict_hash(testing, ws), "proven": sum(r["proven"] for r in rows),
-            "total": sum(r["total"] for r in rows), "coverage": coverage(ws, epic, entries=entries)}, []
+            "total": sum(r["total"] for r in rows), "coverage": _coverage(ws, epic, entries, signed)}, []
 
 
 def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
@@ -123,7 +123,14 @@ def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
 
 # -- what the epic asked for against what its children mention ----------------------------------------------------------
 # Pure text, deterministic: the file names the epic's Requirements and Acceptance criteria name, and for each whether one
-# child's Requirements or Acceptance criteria mention it too. A mention is not a check that anything was built.
+# child's Requirements or Acceptance criteria name it too. A mention is not a check that anything was built.
+# Rules (docs/factory.md, "What was asked against what the children cover"):
+# - a file name is a word ending in a known extension, or anything in backticks holding a `/` or such an extension;
+#   version-like words (`v1.2.c`, `3.11.md`) and a bare `<library>.js` from a short list (node.js, vue.js, ...) are not;
+# - a name on a line that negates before it ("do not build x.html", "without y.json", "no z.csv") is not a name there;
+# - a child covers a name when it names the same path, or a longer path ending in it (`web/elephants.html` covers
+#   `elephants.html`; a bare `elephants.json` does not cover `data/elephants.json`);
+# - a child the human closed without it being built (a signed close) covers nothing.
 _EXTS = ("html", "htm", "json", "csv", "tsv", "md", "txt", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "scss",
          "yaml", "yml", "toml", "xml", "svg", "png", "jpg", "jpeg", "gif", "webp", "pdf", "sh", "sql", "go", "rs", "rb",
          "java", "kt", "swift", "c", "h", "cpp", "hpp", "php", "ini", "cfg", "ipynb", "vue", "svelte", "lua", "r")
@@ -131,32 +138,53 @@ _BOUND = r"[\w./-]"
 _END = r"(?![\w/-]|\.\w)"  # a sentence's full stop may follow a name
 _FILE_RE = re.compile(rf"(?<!{_BOUND})(\w[\w./-]*\.(?:{'|'.join(_EXTS)})){_END}", re.I)
 _TICK_RE = re.compile(r"`([^`\s]{1,200})`")
-MAX_TOKENS = 50
+_VERSION = re.compile(r"v?\d+(?:\.\d+)+(?:\.[a-z]+)?", re.I)
+_JS_LIBS = frozenset(("node", "vue", "next", "nuxt", "express", "chart", "three", "d3", "react", "angular", "ember",
+                      "backbone", "socket.io", "moment", "lodash", "jquery", "alpine", "preact", "solid", "svelte",
+                      "deno", "bun", "p5", "anime", "leaflet", "plotly", "highcharts"))
+_NEGATION = re.compile(r"(?i)\b(?:not|never|no|without|except|excluding|instead of|don't|doesn't|won't|avoid)\b")
+MAX_TOKENS = 50  # names shown on the card; every name counts
+
+
+def _is_name(tok: str) -> bool:
+    stem = tok.rsplit(".", 1)[0]
+    if _VERSION.fullmatch(tok) or _VERSION.fullmatch(stem):
+        return False
+    return not (tok.endswith(".js") and "/" not in tok and stem in _JS_LIBS)
 
 
 def named_files(text: str) -> list[str]:
-    """The concrete file names in `text`, in order and each once (casefolded): names with a known extension, and
-    anything in backticks that looks like a path (it holds a `/` or ends in a known extension)."""
+    """The concrete file names in `text`, in order and each once (casefolded), leaving out a name on a line that
+    negates before it (see the rules above). Never cut: every name counts."""
     out: list[str] = []
-    found = sorted([*_FILE_RE.finditer(text or ""), *_TICK_RE.finditer(text or "")], key=lambda m: m.start())
-    for m in found:
-        tok = m.group(1).rstrip(".,;:").casefold()
-        if (m.re is _TICK_RE and not ("/" in tok or _FILE_RE.fullmatch(tok))) or "://" in tok or tok.startswith("-"):
-            continue
-        if tok and tok not in out:
-            out.append(tok)
-    return out[:MAX_TOKENS]
+    for line in (text or "").splitlines():
+        found = sorted([*_FILE_RE.finditer(line), *_TICK_RE.finditer(line)], key=lambda m: m.start())
+        for m in found:
+            tok = m.group(1).rstrip(".,;:").casefold()
+            if (m.re is _TICK_RE and not ("/" in tok or _FILE_RE.fullmatch(tok))) or "://" in tok \
+                    or tok.startswith("-") or not _is_name(tok) or _NEGATION.search(line[:m.start()]):
+                continue
+            if tok and tok not in out:
+                out.append(tok)
+    return out
 
 
-def _mentions(text: str, tok: str) -> bool:
-    return re.search(rf"(?<!{_BOUND}){re.escape(tok)}{_END}", (text or "").casefold()) is not None \
-        or f"`{tok}`" in (text or "").casefold()
+def _covers(child_names: list[str], tok: str) -> bool:
+    return any(c == tok or c.endswith("/" + tok) for c in child_names)
 
 
-def coverage(ws, epic, *, entries=None) -> dict:
-    """{asked: [the epic's acceptance criteria lines], files: [named file names], covered: {name: [child ids that
-    mention it]}, uncovered: [names no child mentions], children: [{id, title, files}], readable: bool}. Text only,
-    never a claim that anything was built; a child that cannot be read leaves `readable` False."""
+def _counts(ws, t, signed) -> bool:
+    """Whether child `t` may cover anything: not closed by the human without being built (a signed close)."""
+    return not (t.status == "done" and any(e.get("kind") == "close" and e.get("ticket") == t.id for e in signed))
+
+
+def coverage(ws, epic, *, entries=None, signed=None) -> dict:
+    """{asked: [the epic's acceptance criteria lines], files: [every named file name], shown: [the first MAX_TOKENS],
+    more: how many more, covered: {name: [child ids]}, uncovered: [names no counting child names], children: [{id,
+    title, files, counts}], readable: bool}. Text only, never a claim that anything was built; a child that cannot be
+    read leaves `readable` False."""
+    from orch.core import ledger
+    signed = ledger.entries(ws) if signed is None else signed
     asked_text = f"{epic.section('Requirements')}\n{epic.section('Acceptance criteria')}"
     files = named_files(asked_text)
     asked = [_text(re.sub(r"^\s*[-*]\s*(\[[ xX]\]\s*)?", "", ln), 300)
@@ -164,23 +192,38 @@ def coverage(ws, epic, *, entries=None) -> dict:
     kids = _kids(ws, epic, entries)
     rows, covered = [], {f: [] for f in files}
     for _, t in kids or []:
-        text = f"{t.section('Requirements')}\n{t.section('Acceptance criteria')}"
-        mine = [f for f in files if _mentions(text, f)]
+        names = named_files(f"{t.section('Requirements')}\n{t.section('Acceptance criteria')}")
+        counts = _counts(ws, t, signed)
+        mine = [f for f in files if _covers(names, f)] if counts else []
         for f in mine:
             covered[f].append(t.id)
-        rows.append({"id": t.id, "title": _text(t.title, 120), "files": mine})
-    return {"asked": asked, "files": files, "covered": covered, "uncovered": [f for f in files if not covered[f]],
-            "children": rows, "readable": kids is not None}
+        rows.append({"id": t.id, "title": _text(t.title, 120), "files": mine[:MAX_TOKENS], "counts": counts})
+    uncovered = [f for f in files if not covered[f]]
+    return {"asked": asked, "files": files, "shown": files[:MAX_TOKENS], "more": max(0, len(files) - MAX_TOKENS),
+            "covered": covered, "uncovered": uncovered, "uncovered_shown": uncovered[:MAX_TOKENS],
+            "uncovered_more": max(0, len(uncovered) - MAX_TOKENS), "children": rows, "readable": kids is not None}
 
 
-def coverage_ok(ws, epic, *, entries=None) -> bool:
-    """True when every file name the epic names is mentioned in at least one child's Requirements or Acceptance
-    criteria (and every child could be read). Mentioned, not checked as built."""
+def coverage_ok(ws, epic, *, entries=None) -> bool | None:
+    """True when the epic names at least one file and every one is named by a child that counts (and every child
+    could be read); False when one is not, or anything cannot be read; None (unknown, never a pass for a gate) when
+    the epic names no file. Named in text, not checked as built."""
     try:
         c = coverage(ws, epic, entries=entries)
     except Exception:
         return False
-    return c["readable"] and not c["uncovered"]
+    if not c["readable"] or c["uncovered"]:
+        return False
+    return True if c["files"] else None
+
+
+def _coverage(ws, epic, entries, signed) -> dict | None:
+    """coverage() for the Ready report; an error is shown as unreadable, never as covered."""
+    try:
+        return coverage(ws, epic, entries=entries, signed=signed)
+    except Exception:
+        return {"asked": [], "files": [], "shown": [], "more": 0, "covered": {}, "uncovered": [],
+                "uncovered_shown": [], "uncovered_more": 0, "children": [], "readable": False}
 
 
 def _ledger_cut_epic(kids) -> bool:

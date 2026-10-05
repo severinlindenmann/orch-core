@@ -36,8 +36,8 @@ def _cov(ws, eid):
 
 
 def test_named_files_finds_names_with_extensions_and_paths_in_backticks():
-    text = ("Write `web/index` and elephants.html, then ELEPHANTS.JSON and docs/Read.me.md. Not e.g. this, not "
-            "`npm run build` nor https://x.org/a.html; `tools/` counts, so does `a.py`.")
+    text = ("Write `web/index` and elephants.html, then ELEPHANTS.JSON and docs/Read.me.md.\n"
+            "Run `npm run build`, see https://x.org/a.html; `tools/` counts, so does `a.py`.")
     assert factory_report.named_files(text) == ["web/index", "elephants.html", "elephants.json", "docs/read.me.md",
                                                 "tools/", "a.py"]
     assert factory_report.named_files("") == [] and factory_report.named_files("no file here.") == []
@@ -69,17 +69,19 @@ def test_a_mention_inside_another_name_does_not_count(fws, fa, fh):
     assert _cov(fws, eid)["uncovered"] == ["out.csv"]
 
 
-def test_no_named_file_is_ok_and_an_unreadable_child_is_not(fws, fa, fh, monkeypatch):
+def test_no_named_file_is_unknown_and_an_unreadable_child_is_not_ok(fws, fa, fh, monkeypatch):
     eid = _epic(fa, fh, req="Make the export faster", ac="- [ ] it is faster")
     _child(fa, eid, "x", "r", "- [ ] a")
     epic = store.load(fws, eid)[1]
-    assert factory_report.coverage_ok(fws, epic)
+    assert factory_report.coverage_ok(fws, epic) is None  # unknown: never a pass for a gate
     monkeypatch.setattr(factory_report, "_kids", lambda ws, epic, entries: None)
     assert factory_report.coverage(fws, epic)["readable"] is False and not factory_report.coverage_ok(fws, epic)
 
 
 def test_the_ready_report_carries_the_coverage(fws, fa, fh, close_tasks):
-    _ready_design_only(fws, fa, fh, close_tasks)
+    eid = _ready_design_only(fws, fa, fh, close_tasks)
+    rep = factory_report.ready(fws, store.load(fws, eid)[1])
+    assert rep is not None and rep["coverage"]["uncovered"] == ["elephants.html", "elephants.json"]
 
 
 def _ready_design_only(fws, fa, fh, close_tasks):
@@ -90,8 +92,6 @@ def _ready_design_only(fws, fa, fh, close_tasks):
     close_tasks(fa, cid)
     fa.set_section(cid, "Verification", "- AC1: drew the mockup and saw it")
     fa.move(cid, "testing")
-    rep = factory_report.ready(fws, store.load(fws, eid)[1])
-    assert rep is not None and rep["coverage"]["uncovered"] == ["elephants.html", "elephants.json"]
     return eid
 
 
@@ -167,3 +167,63 @@ def test_the_planner_runs_the_planner_model_and_children_the_work_model(fws, fa,
     _tick(fws, human, fake)
     child = [a for _, _, a in fake.started if any(cid in w for w in a)]
     assert child and child[-1][child[-1].index("--model") + 1] == "haiku"
+
+
+def test_a_name_in_a_negated_line_does_not_count():
+    assert factory_report.named_files("Build page.html\nDo not build legacy.html, and never data.csv") == ["page.html"]
+    assert factory_report.named_files("- [ ] works without config.json") == []
+
+
+def test_versions_and_library_names_are_not_files():
+    assert factory_report.named_files("Use Node.js and Vue.js 3, python 3.11.md, v1.2.c and chart.js") == []
+    assert factory_report.named_files("Write src/chart.js and app.js") == ["src/chart.js", "app.js"]
+
+
+def test_a_longer_child_path_covers_a_bare_name_but_not_the_other_way(fws, fa, fh):
+    eid = _epic(fa, fh, req="Write elephants.html and data/elephants.json", ac="- [ ] both exist")
+    _child(fa, eid, "x", "Write web/elephants.html and elephants.json", "- [ ] done")
+    c = _cov(fws, eid)
+    assert c["uncovered"] == ["data/elephants.json"] and c["covered"]["elephants.html"]
+
+
+def test_a_child_in_backlog_or_closed_covers_nothing(fws, fa, fh, human):
+    from conftest import human_ops
+    eid = _epic(fa, fh, req="Write a.csv and b.csv", ac="- [ ] both")
+    a = _child(fa, eid, "a", "Write a.csv", "- [ ] a.csv")
+    b = _child(fa, eid, "b", "Write b.csv", "- [ ] b.csv")
+    human_ops(fws, human).close(b, "not needed")
+    c = _cov(fws, eid)
+    assert c["covered"] == {"a.csv": [a], "b.csv": []} and [r["counts"] for r in c["children"]] == [True, False]
+
+
+def test_no_name_is_dropped_and_extra_names_count_as_uncovered(fws, fa, fh):
+    names = [f"f{i}.csv" for i in range(60)]
+    eid = _epic(fa, fh, req="\n".join(f"Write {n}" for n in names), ac="- [ ] all")
+    _child(fa, eid, "x", "Write f0.csv", "- [ ] f0.csv")
+    c = _cov(fws, eid)
+    assert len(c["files"]) == 60 and len(c["shown"]) == factory_report.MAX_TOKENS and c["more"] == 10
+    assert len(c["uncovered"]) == 59 and "f59.csv" in c["uncovered"]
+    assert factory_report.coverage_ok(fws, store.load(fws, eid)[1]) is False
+
+
+def test_a_coverage_error_shows_as_unreadable_not_covered(fws, fa, fh, close_tasks, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(factory_report, "coverage", boom)
+    eid = _ready_design_only(fws, fa, fh, close_tasks)
+    rep = factory_report.ready(fws, store.load(fws, eid)[1])
+    assert rep is not None and rep["coverage"]["readable"] is False
+
+
+def test_the_ready_card_says_when_the_epic_names_no_file(fws, fa, fh, close_tasks):
+    pytest.importorskip("fastapi")
+    from test_factory_dashboard import _card, _client
+    eid = _epic(fa, fh, req="Make it faster", ac="- [ ] it is faster")
+    cid = _child(fa, eid, "Speed", "Speed it up.", "- [ ] faster")
+    fa.epic_auto_approve(cid)
+    fa.claim(cid)
+    close_tasks(fa, cid)
+    fa.set_section(cid, "Verification", "- AC1: timed it and saw it faster")
+    fa.move(cid, "testing")
+    card = _card(_client(fws).get(f"/t/{eid}").text, "ready")
+    assert 'data-coverage="none"' in card and "names no file" in card and "Not covered" not in card

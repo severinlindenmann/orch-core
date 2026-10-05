@@ -45,27 +45,42 @@ def _run(request: Request, ref: str, action, success: str, next_url: str = ""):
 def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Annotated[str, Form()] = "",
             next_url: Next = "", despite_open_question: Annotated[str, Form()] = "",
             delegate: Annotated[str, Form()] = "", max_children: Annotated[str, Form()] = "",
-            max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = ""):
+            max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = "",
+            dark: Annotated[str, Form()] = ""):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
-    `delegate`; Ops refuses it while factory.enabled is off, and for any process under an agent harness."""
+    `delegate`; Ops refuses it while factory.enabled is off, and for any process under an agent harness. `dark`
+    (Start as a Dark AI Factory) signs the same factory charter with `dark: True`; Ops refuses it while Dark is off."""
     if not seen:
         url = safe_next(next_url) or _ticket_url(request, ref)
         return back(url, err="reload the page and review again")
     despite = despite_open_question in ("1", "on", "true")
-    if factory in ("1", "on", "true"):
+    if dark in ("1", "on", "true"):
+        limits = {"factory": True, "dark": True}
+    elif factory in ("1", "on", "true"):
         limits = {"factory": True}
     elif delegate in ("1", "on", "true"):
         limits = {"max_children": max_children.strip() or None, "max_size": max_size.strip() or None}
     else:
         limits = None
+
     def action():
-        epic = _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
         if limits and limits.get("factory"):
-            _arm_runner(request.app.state.ws, epic)  # only this dashboard Start lets the runner work for it
+            start_factory(request.app.state.ws, ref, seen, limits, despite, gate=gate)
+        else:
+            _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
 
     return _run(request, ref, action, f"{gate} approved", next_url)
+
+
+def start_factory(ws, ref: str, seen: str, limits: dict, despite: bool = False, *, gate: str = "requirements"):
+    """The dashboard's factory start (the epic page and the New ticket page): the human's signed charter approval with
+    the factory's limits (`dark` too, for a Dark one), then the runner is armed for that delegation. Only this start
+    lets the runner work for an epic."""
+    epic = Ops(ws, HUMAN).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
+    _arm_runner(ws, epic)
+    return epic
 
 
 def _arm_runner(ws, epic) -> None:

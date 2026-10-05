@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block main %}
+{%- set mode = values.get('mode') or 'ticket' -%}
 <div class="page-head">
   <div>
     <h1>New ticket</h1>
@@ -7,12 +8,26 @@
   </div>
 </div>
 {% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
-<div class="grid-2">
+{#- With AI Factory on, a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on. What each
+    mode shows is switched by CSS (:has), so the page works without JS; the server checks the switches again. -#}
+<div class="grid-2 new-ticket">
   <form class="card form-card" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
     <label class="field-col" for="title">Title
       <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup job for the config tables">
     </label>
-    <fieldset class="seg">
+    {% if factory_on %}
+    <fieldset class="seg new-mode">
+      <legend>Mode</legend>
+      <div class="seg-options">
+        {% for m, label in (("ticket", "Ticket"), ("factory", "AI Factory"), ("dark", "Dark AI Factory")) if m != "dark" or dark_on %}
+        <input class="sr-only" type="radio" id="mode-{{ m }}" name="mode" value="{{ m }}" {{ 'checked' if m == mode or (m == 'ticket' and mode not in ('factory', 'dark')) }}>
+        <label for="mode-{{ m }}">{{ label }}</label>
+        {% endfor %}
+      </div>
+      {% if not dark_on %}<p class="muted" data-dark-off>Dark AI Factory is off. Turn it on in a terminal with <code>orch factory dark on</code>.</p>{% endif %}
+    </fieldset>
+    {% endif %}
+    <fieldset class="seg only-ticket">
       <legend>Type</legend>
       <div class="seg-options">
         {% for t in types %}
@@ -21,6 +36,7 @@
         {% endfor %}
       </div>
     </fieldset>
+    {% if factory_on %}<p class="muted only-factory">Type: <b>epic</b>. Agents split it into children of size m or smaller; larger ones wait for you.</p>{% endif %}
     <div class="form-row">
       <label class="field-col" for="priority">Priority
         <select id="priority" name="priority">{% for p in priorities %}<option value="{{ p }}" {{ 'selected' if p == values.get('priority') }}>{{ p }}</option>{% endfor %}</select>
@@ -32,24 +48,49 @@
         <input id="external" name="external" value="{{ values.get('external', '') }}" placeholder="ABC-123">
       </label>
     </div>
-    <label class="field-col" for="ask">Ask <span class="muted">(markdown; paste screenshots here)</span>
+    <label class="field-col" for="ask">Ask <span class="muted only-ticket">(markdown; paste screenshots here)</span>{% if factory_on %}<span class="muted only-factory">(becomes the epic's Requirements, word for word)</span>{% endif %}
       <textarea id="ask" name="ask" rows="6" placeholder="What should be done and why? Links, examples, constraints.">{{ values.get('ask', '') }}</textarea>
     </label>
+    {% if factory_on %}
+    <label class="field-col only-factory" for="done_when">Done when <span class="muted">(becomes the epic's Acceptance criteria)</span>
+      <textarea id="done_when" name="done_when" rows="2">{{ values.get('done_when') or done_when_default }}</textarea>
+    </label>
+    {% if dark_on %}
+    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to start it without any prompts</span>
+      <input id="confirm_dark" name="confirm_dark" autocomplete="off" spellcheck="false" aria-describedby="confirm-dark-hint">
+      <span class="muted" id="confirm-dark-hint">Nothing asks you while it runs: only the commands this checkout's Dark profile allows run.</span>
+    </label>
+    {% endif %}
+    {% endif %}
     <label class="field-col" for="files">Screenshots and files
       <input id="files" type="file" name="files" multiple>
     </label>
     <p id="paste-count" class="muted"></p>
-    <div><button type="submit" class="btn btn-primary">Create ticket</button></div>
+    <div><button type="submit" class="btn btn-primary"><span class="only-ticket">Create ticket</span>{% if factory_on %}<span class="only-factory only-plain">Create and start the AI Factory</span><span class="only-dark">Create and start the Dark AI Factory</span>{% endif %}</button></div>
   </form>
   <aside>
     <section class="card">
       <h2>What happens next</h2>
-      <ol class="next-steps">
+      <ol class="next-steps only-ticket">
         <li>An agent turns the ask into requirements and asks you what is unclear.</li>
         <li>You approve the requirements, then the plan.</li>
         <li>The agent does the work and links branch and {{ review_term }}.</li>
         <li>You give the verdict. Only then is the ticket done.</li>
       </ol>
+      {% if factory_on %}
+      <ol class="next-steps only-factory only-plain">
+        <li>Creating it signs one epic: your ask is its Requirements, word for word.</li>
+        <li>Agents split it, specify the children and build them.</li>
+        <li>A permission card appears when an agent needs a command; you answer it.</li>
+        <li>You read the Ready report and sign the verdict.</li>
+      </ol>
+      <ol class="next-steps only-dark">
+        <li>You sign once, by typing dark.</li>
+        <li>The runner starts Claude sessions that may run only what this checkout's Dark profile allows.</li>
+        <li>Nothing asks you anything. A command that is not in the profile stops that child, with one button to add it.</li>
+        <li>There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
+      </ol>
+      {% endif %}
     </section>
   </aside>
 </div>

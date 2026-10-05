@@ -12,7 +12,7 @@ from jinja2 import pass_context
 
 from orch.clock import now as clock_now
 from orch.clock import parse_stamp
-from orch.core import query
+from orch.core import permits, query
 from orch.core.events import Actor
 from orch.dashboard import switcher
 from orch.dashboard import terminals
@@ -296,6 +296,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
+        "factory_nav": permits.enabled(ws),  # AI Factory on: Factories in the menu
         "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None: []),
         # spec §4.2: other running workspaces this one knows about, for the footer switcher line.
         "other_workspaces": switcher.others(ws),

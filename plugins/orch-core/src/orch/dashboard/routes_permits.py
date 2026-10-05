@@ -39,6 +39,17 @@ def deny(request: Request, rid: str, sha: Annotated[str, Form()] = "", next_url:
                    f"{rid.upper()} denied")
 
 
+@router.post("/permits/{rid}/profile")
+def add_to_profile(request: Request, rid: str, sha: Annotated[str, Form()] = "", next_url: Next = ""):
+    """Dark AI Factory: an open Dark card's exact command becomes a rule of this checkout's Dark profile, signed by
+    dark_profile.add_from_request (human only; refused for a card a Dark epic did not file, a stale sha, another
+    workspace's request, or while Dark is off)."""
+    from orch.core import dark_profile
+    return _answer(request, next_url,
+                   lambda ws: dark_profile.add_from_request(ws, HUMAN, rid, expected_sha=sha or None),
+                   f"{rid.upper()}: its command is in the Dark profile now")
+
+
 @router.post("/permits/grants/{gid}/revoke")
 def revoke(request: Request, gid: str, next_url: Next = ""):
     return _answer(request, next_url, lambda ws: permits.permit_revoke(ws, HUMAN, gid), "grant revoked")

@@ -41,6 +41,7 @@
       {% for key, label, href, icon, badge, tone in items %}
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
+      {% if factory_nav %}{{ item("factory", "Factories", "/factory", "M20 12a8 8 0 1 1-8-8M16 12a4 4 0 1 1-4-4M12 4v4M20 12h-4", path=true) }}{% endif %}
       {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
       {% if addon_nav %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">

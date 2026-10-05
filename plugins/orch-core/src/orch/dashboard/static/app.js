@@ -389,6 +389,10 @@
   const charterLabel = (form) => {
     const f = form.elements;
     const on = f.delegate && f.delegate.checked;
+    if (f.dark && f.dark.checked) {  // Dark wins over the plain factory box, as on the server
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START DARK AI FACTORY, NO PROMPTS: " + form.dataset.factoryConfirm;
+      return;
+    }
     if (f.factory && f.factory.checked) {  // AI Factory: its own limits, whatever the delegation fields say
       form.dataset.inlineConfirm = form.dataset.charterConfirm + " · START AI FACTORY: " + form.dataset.factoryConfirm;
       return;

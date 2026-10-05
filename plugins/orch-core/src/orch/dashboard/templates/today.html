@@ -42,6 +42,13 @@
 
 <div class="grid-2 today-main">
   <div class="decision-cards" id="decisions">
+    {% if from_origin %}
+    {#- Addon items that name an origin (a phone answer): received, but nothing happens until the human applies them here. -#}
+    <section class="dc-section origin-section" id="from-origin" aria-labelledby="from-origin-h">
+      <h2 id="from-origin-h" class="dc-section-h sr-only">Waiting for Apply</h2>
+      {% for addon, d in from_origin %}{{ ui.origin_decision(addon, d) }}{% endfor %}
+    </section>
+    {% endif %}
     {% if permits and (permits.ready or permits.stopped or permits.suspect) %}
     {#- AI Factory (off unless factory.enabled): the Ready report and the Stopped message. Part of the count above. -#}
     <section class="dc-section permit-section" id="factory-cards" aria-labelledby="factory-cards-h">

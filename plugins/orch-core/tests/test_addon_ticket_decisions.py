@@ -290,3 +290,22 @@ def test_answer_matching_the_anchor_or_without_one_applies(ws, asked):
     intent = Intent("answer", ref=asked, qid="Q1", value="A", expected_hash=question_hash(q))
     assert "Answered Q1" in intents.execute(ws, intent, allowed_ref=asked, tickets=False, actor=HUMAN,
                                              source="resolve", anchor="Q1")
+
+
+def test_today_highlights_an_answer_waiting_for_apply_from_its_origin(ws, client, phone, asked):
+    phone.items = [PendingDecision("p1", "Answer from phone: A", body="ISO 8601", ticket=asked, anchor="Q1", origin="phone"),
+                   PendingDecision("p2", "Loose item", ticket=asked)]
+    html = client.get("/").text
+    card = html[html.index('id="from-origin"'):html.index('id="decisions"') + 4000]
+    assert "From your phone" in card and "waiting for Apply" in card and "Answer from phone: A" in card
+    assert 'value="apply"' in card and 'value="ignore"' in card and 'action="/addons/phone/decisions"' in card
+    assert html.index('id="from-origin"') < html.index('id="q-Q1"') if 'id="q-Q1"' in html else True
+    assert html.count("Answer from phone: A") == 1                      # not repeated on its question card
+    assert "Loose item" in html[html.index('id="from-addons-h"'):]      # items without an origin are unchanged
+
+
+def test_origin_card_names_a_generic_origin_and_disables_a_stale_apply(ws, client, phone, asked):
+    phone.items = [PendingDecision("p9", "Late answer", ticket=asked, stale=True, origin="watch")]
+    html = client.get("/").text
+    card = html[html.index('id="from-origin"'):]
+    assert "From watch" in card and "stale" in card and "disabled" in card

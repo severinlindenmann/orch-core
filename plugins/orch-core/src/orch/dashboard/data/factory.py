@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from orch import clock
-from orch.core import epics, factory_report, permits, store
+from orch.core import dark_profile, epics, factory_report, permits, store
 
 
 def _raw(text) -> str:
@@ -18,7 +18,8 @@ def _raw(text) -> str:
 def _card(r: dict, profile: bool = False) -> dict:
     return {"id": r["id"], "epic": r["epic"], "ticket": r["ticket"], "sha": r["sha"], "short": r["sha"][7:15],
             "command": _raw(r["command"]), "reason": _raw(r["reason"]),
-            "asked_by": _raw(r["actor"]), "source": _raw(r["source"]), "at": r["at"], "profile": profile}
+            "asked_by": _raw(r["actor"]), "source": _raw(r["source"]), "at": r["at"], "profile": profile,
+            "compound": profile and dark_profile.compound(r["command"])}
 
 
 def _dark_epics(ws, reqs) -> set[str]:

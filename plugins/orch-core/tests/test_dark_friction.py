@@ -186,3 +186,41 @@ def test_the_dark_denial_names_the_request_and_says_not_to_retry(dws, dark_child
     for words in ("not in the Dark profile", f"Request {r['id']} is open", "the human can add it",
                   f"orch wait {cid}", "Do not retry variants", "do not file another request"):
         assert words in msg, words
+
+
+# -- profile hygiene --------------------------------------------------------------------------------------------------
+
+def test_prune_removes_only_exact_rules_for_compound_commands(dws, human, agent):
+    from orch.errors import HumanOnlyError
+    junk = ["git add x && git commit -m y", "orch wait L-1 2>&1 | head -20", "make test > out.txt"]
+    for j in junk:
+        dark_profile.add(dws, human, "exact", j)
+    dark_profile.add(dws, human, "exact", "pytest -x tests")  # one plain command: kept
+    dark_profile.add(dws, human, "prefix", "make test")
+    assert sorted(r["rule"] for r in dark_profile.prunable(dws)) == sorted(junk)
+    with pytest.raises(HumanOnlyError):
+        dark_profile.prune(dws, agent, [r["id"] for r in dark_profile.prunable(dws)])
+    first = dark_profile.prunable(dws)[0]
+    assert len(dark_profile.prune(dws, human, [first["id"]])) == 1  # only what the human was shown
+    assert len(dark_profile.prunable(dws)) == 2
+    dark_profile.prune(dws, human, [r["id"] for r in dark_profile.prunable(dws)])
+    assert dark_profile.prunable(dws) == []
+    assert {dark_profile.text(r["kind"], r["rule"]) for r in dark_profile.rules(dws)} == {"pytest -x tests",
+                                                                                         "make test"}
+
+
+def test_cli_prune_is_human_only_and_typed(capsys, switch, configure, human):  # noqa: F811
+    ws = configure(factory={"enabled": True})
+    switch.human("x")
+    dark_profile.add(ws, human, "exact", "a && b")
+    switch.agent()
+    code, _ = _run(capsys, "dark", "profile", "prune")
+    assert code != 0 and len(dark_profile.rules(ws)) == 1  # an agent never prunes
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "orch dark profile prune"},
+                             "cwd": str(ws.root)}).allow  # the guard denies it too
+    switch.human("wrong")
+    code, _ = _run(capsys, "dark", "profile", "prune")
+    assert code != 0 and len(dark_profile.rules(ws)) == 1
+    switch.human("PRUNE")
+    assert "removed 1 rules" in _ok(capsys, "dark", "profile", "prune") and dark_profile.rules(ws) == []
+    assert "nothing to prune" in _ok(capsys, "dark", "profile", "prune")

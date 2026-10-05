@@ -316,6 +316,26 @@ def profile_remove(rule_id: str, json_out: JsonOpt = False) -> None:
     cli._out(entry, json_out, f"{r['id']}: removed from the Dark profile")
 
 
+@profile_app.command("prune")
+def profile_prune(json_out: JsonOpt = False) -> None:
+    """Remove exact rules for commands that are not one plain command (chains, pipes, redirects, substitutions):
+    they match only that identical text again. Human only: lists them and needs PRUNE typed."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import dark_profile
+    cli, ws = _ctx()
+    require_human_terminal("changing the Dark profile")
+    todo = dark_profile.prunable(ws)
+    if not todo:
+        cli._out({"removed": []}, json_out, "nothing to prune: no exact rule for a compound command")
+        return
+    typer.echo("Removing from the Dark profile (exact rules for compound commands, which match only that identical "
+               "text again):", err=json_out)
+    for r in todo:
+        typer.echo("  " + _rule_line(r), err=json_out)
+    removed = dark_profile.prune(ws, confirm_typed("PRUNE"), [r["id"] for r in todo])
+    cli._out({"removed": removed}, json_out, f"removed {len(removed)} rules from the Dark profile")
+
+
 @permit_app.command("hook")
 def hook() -> None:
     """Claude Code PermissionRequest hook: answers from live signed grants in a factory epic; silent elsewhere."""

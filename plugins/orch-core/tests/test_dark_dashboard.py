@@ -21,7 +21,7 @@ from orch.dashboard import launch  # noqa: E402
 
 ASK = "Build the <b>export</b> & keep \"quotes\".\n\n### Detail\n- one line\n- `two` lines\n\nlast line"
 DONE = "Exports open in the viewer."
-CMD = "make <deploy> 'staging'"
+CMD = "make deploy '<staging>'"  # one plain command (quoted), with text a page must escape
 STATIC = Path(orch.__file__).parent / "dashboard" / "static"
 
 
@@ -495,6 +495,19 @@ def test_the_add_button_shows_only_while_dark_is_on(dws, human, dark_request):
     Ops(dws, human).set_factory_dark(False)
     card = c.get("/").text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
     assert "Add to the Dark profile" not in card and "Grant once" in card
+
+
+def test_a_compound_card_offers_no_profile_button_and_says_why(dws, fa, dark_request):
+    c, eid, cid, plain = dark_request
+    for cmd in ("make a && make b", "orch wait L-1 2>&1 | head -20", "make test > out.txt",
+                "orch log L-1 -m \"$(id)\""):
+        r = permits.request(dws, fa.actor, _epic(dws, cid), cmd, source="dark")
+        card = c.get("/").text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
+        assert "Add to the Dark profile" not in card and "data-compound" in card, cmd
+        assert "adding it would not help. Grant once or Deny." in card
+        assert '<button type="submit" class="btn btn-primary">Grant once</button>' in card
+    card = c.get("/").text.split(f'data-permit="{plain["id"]}"', 1)[1].split("</article>", 1)[0]
+    assert "Add to the Dark profile" in card and "data-compound" not in card  # a plain command keeps the button
 
 
 def test_a_card_from_an_ordinary_factory_has_no_profile_button(fws, fa, fh):

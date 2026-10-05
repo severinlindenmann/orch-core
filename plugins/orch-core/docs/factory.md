@@ -280,6 +280,16 @@ processes of the same user, and the guard stops an agent naming it, best effort.
 concatenation that uses none of the characters it looks for, a string built in another language (perl, osascript,
 python), and a script file written and then run.
 
+**A repository's own files.** A checkout's `.git` (its config, refs, packed-refs, info, objects, HEAD, worktrees and
+hooks) and a worktree's `.git` pointer file decide what later git commands run: hooksPath, fsmonitor, aliases, refs.
+Agents' file tools (Write, Edit, MultiEdit, NotebookEdit) never write a path with a `.git` component, in any case, as
+written (a relative path taken from the hook's working directory) or after symlinks; reading stays open. In the shell
+the guard denies a write into those `.git` files (a redirect, `tee`, `cp`, `mv`, `sed -i`, ...) and `git config` of a
+key that runs a program (fsmonitor, sshCommand, pager, editor, askpass, aliases, includes, filters, diff and merge
+drivers, credential helpers, gpg programs), as it already did for hooksPath; all of these are never grantable. The
+same text-check limits apply (a script written and then run is not seen); the release step does not depend on this:
+it never uses the workspace's `.git` for anything but fetching objects.
+
 **The launch command** is yours, in `factory-command.json` inside the permits folder of the orch config dir, which the
 guard keeps agents from reading and writing (never the workspace config, ticket text or anything else an agent can
 edit; the prompt is built in):

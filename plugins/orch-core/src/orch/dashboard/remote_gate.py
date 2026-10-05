@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 from urllib.parse import parse_qs, parse_qsl
 
+from starlette.requests import Request
 from starlette.routing import Match
 
 from orch.dashboard.reach import SCOPE_KEY, BadOrigin, RemoteOrigin, Scope, remote_origin
@@ -112,6 +113,7 @@ _ENCODED_LEFT = re.compile(r"%[0-9a-fA-F]{2}")  # a decoded path that still hold
 FRESH = "This needs a fresh confirmation on this device first."
 NO_WAY = "Open the dashboard on the computer where it runs to do this."  # the one text of every refusal
 REMOTE_ADDON_UPLOAD = 25 * 1024 * 1024  # most a remote device may send to an addon action (local: MAX_UPLOAD)
+REMOTE_POST_LIMIT = 25 * 1024 * 1024  # most any other remote POST body may carry
 REMOTE_ARTIFACT_UPLOAD = 10 * 1024 * 1024  # most a remote device may send in one artifact upload request
 TOO_BIG_REMOTE = "This file is too large for remote use. Send it as a separate file transfer instead."
 
@@ -173,7 +175,7 @@ def action_unlisted(request, name, action_id) -> bool:
     refused here, and a malformed remote marker counts as remote."""
     if SCOPE_KEY not in request.scope:
         return False
-    la = request.app.state.addons.registry.get(name)
+    la = request.scope["app"].state.addons.registry.get(name)
     return la is None or not la.manifest.remote_action(action_id)
 
 
@@ -238,10 +240,24 @@ class RemoteGate:
                 and factory_guarded(self.ws, self._ref(scope))):
             # a change under a running factory epic can start agents or alter a launched one's prompt
             return await _respond(send, 403, FRESH)
+        action = self._addon_action(scope)
+        if action is not None and action_unlisted(Request(scope), *action):
+            return await _respond(send, 403, no)  # this layer sits outside the others: the same bytes as any refusal
         if tag.fresh and not origin.fresh:  # only a device that may do this at all hears that it needs a confirmation
             return await _respond(send, 403, FRESH)
         await self.app(scope, replay, send)
 
+
+    def _addon_action(self, scope):
+        """(addon name, action id) when the router matches an addon action route, else None."""
+        for route in self.routes:
+            match, child = route.matches(scope)
+            if match is Match.FULL:
+                if route.path != "/addons/{name}/actions/{action_id}":
+                    return None
+                p = child.get("path_params", {})
+                return p.get("name"), p.get("action_id")
+        return None
 
     def _ref(self, scope):
         for route in self.routes:

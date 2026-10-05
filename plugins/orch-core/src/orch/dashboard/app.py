@@ -76,16 +76,20 @@ async def upload_limit_middleware(request, call_next):
     the same way — so a lying Content-Length (for instance alongside a Transfer-Encoding header, or any other
     framing mismatch) can never let an unbounded body reach Starlette's form parser, whatever a header claimed."""
     remote = SCOPE_KEY in request.scope  # a malformed marker counts as remote; the gate refuses it anyway
-    art = request.method == "POST" and remote and _ARTIFACT_UPLOAD.match(request.url.path)
-    if request.method == "POST" and (art or _ADDON_ACTION.match(request.url.path)):
+    post = request.method == "POST"
+    art = post and remote and _ARTIFACT_UPLOAD.match(request.url.path)
+    act = post and _ADDON_ACTION.match(request.url.path)
+    if post and (art or act or remote):  # every remote POST is capped; local only the addon actions
         if art:
             cap, takes_file = remote_gate.REMOTE_ARTIFACT_UPLOAD, False
+        elif not act:
+            cap, takes_file = remote_gate.REMOTE_POST_LIMIT, False
         else:
             m = _ADDON_ACTION.match(request.url.path)
             if remote and remote_gate.action_unlisted(request, m.group("name"), m.group("action")):
                 return remote_gate.refusal_response()  # before a byte of the body is read
             cap, takes_file = _action_cap(request, remote)
-        too_big = (PlainTextResponse(remote_gate.TOO_BIG_REMOTE, status_code=413) if remote and (takes_file or art) else
+        too_big = (PlainTextResponse(remote_gate.TOO_BIG_REMOTE, status_code=413) if remote and (takes_file or art or not act) else
                    PlainTextResponse("upload too large" if takes_file else "request body too large", status_code=413))
         length = request.headers.get("content-length")
         if takes_file and request.headers.get("content-type", "").lower().startswith("multipart/"):

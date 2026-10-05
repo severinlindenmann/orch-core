@@ -142,8 +142,12 @@ def test_a_remote_request_for_an_unlisted_action_is_refused_before_any_addon_cod
     app, obj = setup
     refused = [post(app, f"/addons/rem/actions/{a}", remote=origin(), body=FORM)
                for a in ("other", "nosuch")] + [post(app, "/addons/ghost/actions/ping", remote=origin(), body=FORM)]
+    # the gate's own refusals: a device below Type, and a route that is never remote
+    refused += [post(app, "/addons/rem/actions/ping", remote=origin(Scope.OPERATE), body=FORM),
+                post(app, "/workspace/tidy", remote=origin(), body=FORM)]
     assert {r[0] for r in refused} == {403}
-    assert len({r[2] for r in refused}) == 1 and remote_gate.NO_WAY.encode() in refused[0][2]  # same body, no hint
+    assert remote_gate.NO_WAY.encode() in refused[0][2]
+    assert len({(r[0], tuple(sorted(r[1].items())), r[2]) for r in refused}) == 1  # status, every header, body
     assert obj.calls == []
 
 
@@ -167,14 +171,64 @@ def test_local_requests_are_unchanged(setup):
     assert obj.calls[-1] == ("upload", 30 * MB)  # past the remote cap, within the local one
 
 
-def test_the_route_itself_refuses_too(setup, ws):
-    """Defence in depth: the route handler checks the list even if the middleware were skipped."""
+def _request(app, path, remote=None):
     from starlette.requests import Request
+    scope = {"type": "http", "method": "POST", "path": path, "app": app, "query_string": b"",
+             "headers": [(b"host", b"h"), (b"origin", b"http://h")]}
+    if remote is not None:
+        scope[reach.SCOPE_KEY] = remote
+    return Request(scope)
+
+
+def test_the_helper_answers_the_same_for_unknown_and_unlisted(setup):
     app, _ = setup
-    req = Request({"type": "http", "app": app, "headers": [], reach.SCOPE_KEY: origin()})
+    req = _request(app, "/x", origin())
     assert remote_gate.action_unlisted(req, "rem", "other") and remote_gate.action_unlisted(req, "rem", "nosuch")
-    assert not remote_gate.action_unlisted(req, "rem", "ping")
-    assert remote_gate.refusal_response().status_code == 403
+    assert remote_gate.action_unlisted(req, "ghost", "ping") and not remote_gate.action_unlisted(req, "rem", "ping")
+    assert not remote_gate.action_unlisted(_request(app, "/x"), "rem", "other")  # local
+
+
+# Each layer alone: the gate, the upload middleware and the route each refuse without the others.
+
+def test_the_route_alone_refuses_an_unlisted_action(setup):
+    from orch.dashboard.routes_addons import run_action
+    app, obj = setup
+    resp = run_action(_request(app, "/addons/rem/actions/other", origin()), "rem", "other", target="", file=None,
+                      ask="", return_to="")
+    assert resp.status_code == 403 and obj.calls == []
+    assert run_action(_request(app, "/addons/rem/actions/other"), "rem", "other", target="", file=None, ask="",
+                      return_to="").status_code == 303 and obj.calls == [("other", None)]
+
+
+def test_the_route_alone_caps_a_remote_file(setup):
+    import io
+    from starlette.datastructures import UploadFile
+    from orch.dashboard.routes_addons import run_action
+
+    def run(remote, size):
+        app, obj = setup
+        up = UploadFile(io.BytesIO(b"x" * size), filename="a.txt")
+        resp = run_action(_request(app, "/addons/rem/actions/upload", remote), "rem", "upload", target="", file=up,
+                          ask="", return_to="")
+        return resp, obj
+    resp, obj = run(origin(), remote_gate.REMOTE_ADDON_UPLOAD + 1)
+    assert resp.status_code == 303 and "err=" in resp.headers["location"] and obj.calls == []
+    resp, obj = run(None, remote_gate.REMOTE_ADDON_UPLOAD + 1)  # the local limit is the action's own
+    assert "err=" not in resp.headers["location"] and obj.calls == [("upload", remote_gate.REMOTE_ADDON_UPLOAD + 1)]
+
+
+def test_the_middleware_alone_refuses_an_unlisted_action_and_passes_a_listed_one(setup):
+    from orch.dashboard.app import upload_limit_middleware
+    app, _ = setup
+    seen = []
+
+    async def call_next(request):
+        seen.append(request.url.path)
+        return "downstream"
+    refused = asyncio.run(upload_limit_middleware(_request(app, "/addons/rem/actions/other", origin()), call_next))
+    assert refused.status_code == 403 and seen == []
+    ok = asyncio.run(upload_limit_middleware(_request(app, "/addons/rem/actions/ping", origin()), call_next))
+    assert ok == "downstream" and seen == ["/addons/rem/actions/ping"]
 
 
 # -- upload caps ------------------------------------------------------------------------------------------------
@@ -218,3 +272,31 @@ def test_the_artifact_upload_has_its_own_remote_cap(setup):
     assert status == 413 and b"too large for remote use" in body
     # local: no remote cap (the ticket does not exist, so some other answer, but never the size one)
     assert post(app, path, body=b"x", ctype=MULTI, length=str(over))[0] != 413
+
+
+# -- every remote POST is capped ----------------------------------------------------------------------------------
+
+def _written(ws):
+    return sorted(p.name for d in (ws.temporary_dir, ws.artifacts_dir, ws.tickets_dir) for p in d.rglob("*"))
+
+
+def test_a_remote_new_ticket_over_the_general_cap_is_refused_and_writes_nothing(setup, ws):
+    app, _ = setup
+    before = _written(ws)
+    cap = remote_gate.REMOTE_POST_LIMIT
+    status, _, body = post(app, "/new", remote=origin(), body=b"x", ctype=MULTI, length=str(cap + 1))
+    assert status == 413 and b"too large for remote use" in body
+    chunks = [HEAD] + [b"x" * MB for _ in range(cap // MB + 2)]
+    status, _, body = post(app, "/new", remote=origin(), chunks=chunks, ctype=MULTI, length="10")
+    assert status == 413 and b"too large for remote use" in body
+    chunks = [b"t=" + b"x" * 900_000 + b"&"] * (cap // 900_000 + 2)  # a large urlencoded body, no length
+    assert post(app, "/new", remote=origin(), chunks=chunks, length=None)[0] == 413
+    assert _written(ws) == before
+
+
+def test_a_remote_post_under_the_general_cap_works_and_local_is_unaffected(setup, ws):
+    app, _ = setup
+    status, _, _ = post(app, "/new", remote=origin(), body=b"title=Hello+there")
+    assert status == 303
+    cap = remote_gate.REMOTE_POST_LIMIT
+    assert post(app, "/new", body=b"title=Local", length=str(cap + 1))[0] != 413

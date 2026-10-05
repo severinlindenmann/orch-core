@@ -489,6 +489,45 @@ def _reuse(ws, child: str, rec: dict) -> None:
         os.close(top)
 
 
+def _start_point(ws, git: str, dest: Path, base: str, deadline: float, budget: float) -> tuple[str, str]:
+    """(what the child's branch starts from, "") or ("", why). With a release recipe: the base as the recipe's remote
+    has it, the commit the release will classify against, fetched into the runner's release repository (its isolation,
+    a ref of its own) and from there into the clone; commits on the workspace's local base that the remote does not
+    have never reach the child. Refused when the workspace's base and the remote's share no history. Without a recipe:
+    the workspace's local base (there is no remote base to compare with)."""
+    from orch.core import factory_release as fr
+    rec, _ = fr.load(ws)
+    if rec is None:
+        return f"refs/remotes/origin/{base}", ""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return "", f"the clone did not finish within {int(budget)} seconds (a large repository?)"
+    fr.ensure_repo(ws, rec)
+    ref = f"refs/clone-base/{base}"
+    r = fr._git(ws, rec, "fetch", "-q", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
+                rec["remote_url"], f"+refs/heads/{base}:{ref}", timeout=max(1, int(left)))
+    sha = fr._rev(ws, rec, ref) if r.get("code") == 0 else None
+    if sha is None:
+        return "", (f"the base {base} could not be fetched from the recipe's remote, so the clone has nothing to "
+                    "start from")
+    left = deadline - time.monotonic()
+    why = _failed(_git(git, ws, "-C", str(dest), "fetch", "-q", "--no-tags", "--no-recurse-submodules",
+                       "--no-write-fetch-head", str(fr.repo_dir(ws)), f"+{ref}:refs/remotes/release/{base}",
+                       cwd=str(dest), timeout=left), f"fetching the remote's {base}", budget) if left > 0 else \
+        f"the clone did not finish within {int(budget)} seconds (a large repository?)"
+    if why:
+        return "", why
+    local = _git(git, ws, "-C", str(dest), "rev-parse", "--verify", "--quiet",
+                 f"refs/remotes/origin/{base}^{{commit}}", cwd=str(dest), timeout=30)
+    if local.get("code") == 0:  # the workspace has the base locally: it must share history with the remote's
+        mb = _git(git, ws, "-C", str(dest), "merge-base", (local.get("out") or "").strip(), sha, cwd=str(dest),
+                  timeout=30)
+        if mb.get("code") != 0:
+            return "", (f"the workspace's {base} and the recipe remote's {base} share no history: the runner cannot "
+                        "tell which one the child should start from (fetch or fix the workspace's base first)")
+    return sha, ""
+
+
 def ensure(ws, actor, child: str, budget: float = CLONE_TIMEOUT) -> tuple[Path | None, str]:
     """Human only (the runner): the child's clone, made at its first launch and reused (config written again) after;
     (None, why) when it cannot be had. `budget`: seconds the clone and checkout may take together. Never deletes a
@@ -569,11 +608,13 @@ def _ensure(ws, child: str, git: str, budget: float) -> tuple[Path | None, str]:
                     os.close(g)
             finally:
                 os.close(top)
+            start, why = _start_point(ws, git, dest, base, deadline, budget)
             left = deadline - time.monotonic()
-            why = _failed(_git(git, ws, "-C", str(dest), "checkout", "--quiet", "--no-recurse-submodules", "-b",
-                               branch_for(child), f"refs/remotes/origin/{base}", cwd=str(dest), timeout=left),
-                          f"checking out {base}", budget) if left > 0 else \
-                f"the clone did not finish within {int(budget)} seconds (a large repository?)"
+            if not why:
+                why = _failed(_git(git, ws, "-C", str(dest), "checkout", "--quiet", "--no-recurse-submodules", "-b",
+                                   branch_for(child), start, cwd=str(dest), timeout=left),
+                              f"checking out {base}", budget) if left > 0 else \
+                    f"the clone did not finish within {int(budget)} seconds (a large repository?)"
         if not why:
             pinned = {"inode": inode, "git_inode": git_inode}
             top, g = _open_clone(ws, child, pinned)  # after git ran by path: still the folders this attempt made

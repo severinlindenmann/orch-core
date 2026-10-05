@@ -421,8 +421,50 @@ def test_a_child_without_commits_of_its_own_is_refused_and_never_closes(fws, fa,
     assert factory_close.tick(fws, human) == [] and store.load(fws, eid)[1].status == "open"
 
 
+@pytest.mark.parametrize("where", ["app.txt", "orchestrator/note.md"])
+def test_an_unpushed_workspace_commit_never_rides_along_in_a_clone(fws, fa, fh, human, close_tasks, remote,
+                                                                    where):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    pushed = _g(fws.root, "rev-parse", "main")
+    (fws.root / where).write_text("local only\n", encoding="utf-8")  # the human's work on main, not pushed yet
+    tame = ["git", "-c", "filter.evil.process=", "-c", "filter.evil.clean=cat", "-c", "core.hooksPath=/dev/null",
+            "-c", "core.fsmonitor=false", "-c", "user.name=t", "-c", "user.email=t@x.invalid"]  # the hostile config
+    subprocess.run([*tame, "add", "-f", where], cwd=fws.root, check=True)
+    subprocess.run([*tame, "commit", "-q", "-m", "local only"], cwd=fws.root, check=True)
+    assert _g(fws.root, "rev-parse", "main") != pushed
+    clone, why = fc.ensure(fws, human, cid)
+    assert why == "" and _g(clone, "rev-parse", "HEAD") == pushed == _g(remote, "rev-parse", "main")
+    (clone / "x.json").write_text("[]\n", encoding="utf-8")
+    _g(clone, "add", "x.json")
+    _g(clone, "commit", "-q", *_msg(cid))
+    assert _g(clone, "log", "--format=%s", f"{pushed}..HEAD").splitlines() == [f"{cid} work"]  # its own commit only
+    _to_testing(fa, cid, close_tasks)
+    fake = RecipeFake()
+    lines = fr.tick(fws, human, fake)
+    assert fr.status(fws, store.load(fws, eid)[1], d)["stages"][0]["state"] == "proven", lines
+    assert sorted(os.listdir(fws.marks)) == []
+
+
+def test_a_workspace_base_with_no_history_in_common_with_the_remote_gets_no_clone(fws, fa, fh, human, remote,
+                                                                                   tmp_path):  # noqa: F811
+    other = tmp_path / "other"
+    other.mkdir()
+    _g(other, "init", "-q", "-b", "main")
+    _g(other, "commit", "-q", "--allow-empty", "-m", "unrelated")
+    _g(other, "push", "-q", "--force", str(remote), "main")
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    clone, why = fc.ensure(fws, human, cid)
+    assert clone is None and "share no history" in why and fc.record(fws, cid) is None
+    assert fc.failure(fws, cid)["why"] == why
+
+
 @pytest.mark.parametrize("how", ["damaged", "removed", "cleaned"])
-def test_a_missing_clone_record_never_falls_back_to_the_ticket_branch(fws, fa, fh, human, close_tasks, remote, how):  # noqa: F811
+def test_a_missing_clone_record_never_falls_back_to_the_ticket_branch(fws, fa, fh, human, close_tasks, remote,
+                                                                       how):  # noqa: F811
     eid, d, cid, clone = _committed_clone(fws, fa, fh, human, remote)
     _to_testing(fa, cid, close_tasks)
     if how == "damaged":

@@ -598,9 +598,15 @@ worktree the readiness checks say so, as a warning).
   `core.protectHFS`/`protectNTFS` on, `--no-replace-objects`). It then writes the clone's `.git/config` itself (no
   includes, aliases, filters or credential helpers; hooks off, fsmonitor off, `symlinks`, `protectHFS`/`protectNTFS`;
   `origin` the workspace path with `pushurl` set to a path that cannot work), removes its `hooks` and `info` folders,
-  and checks out the base's tip onto a new branch `fx/<child id>` (lower case; it names the child as a word, the
-  release's branch rule), without submodules. The base is the release recipe's `base` when this workspace has a
-  recipe, else the branch the workspace checkout's HEAD names.
+  and checks out the base onto a new branch `fx/<child id>` (lower case; it names the child as a word, the
+  release's branch rule), without submodules. With a release recipe, the base is the recipe's `base` as the recipe's
+  remote has it, the very commit the release classifies against: the runner fetches it into its release repository
+  (its isolation, a ref of its own) and from there into the clone. Commits on the workspace's local base that are not
+  pushed never reach a child (they would otherwise ride along in every child's branch and be merged under its name);
+  push them first if the children should build on them. A workspace whose local base shares no history with the
+  remote's gets no clone ("share no history"), and a base the remote does not have gets none either. Without a
+  recipe, the base is the branch the workspace checkout's HEAD names, as it is locally (there is no remote base to
+  compare with).
 - The session starts in the clone's copy of the workspace folder (the clone's top, or `clone/<sub>` when the
   workspace is the subfolder `<sub>` of its repository, so relative paths land where they would in the workspace),
   with `ORCH_HOME` set to the workspace (above). It commits there on `fx/<child id>`; the guard and the permission hook

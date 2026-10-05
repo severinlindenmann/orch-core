@@ -312,12 +312,40 @@ Every other session (a workspace that is not a git checkout: every child starts 
 baseline cannot create a branch) is told not to commit: it leaves its changes in the working tree and says so with
 `orch log`.
 
-Whatever the prompt says, every git command of a runner-bound session goes through one allowlist (`commit_refusal`),
-which the guard (on every command: PreToolUse runs in every permission mode, so an allow rule, auto mode or bypass
-does not skip it) and the permission hook both call. A command is git's when the word `git` appears in its plain text
-(any case, any path, `git.exe`, behind `env`, `command`, `exec`, `nice`, `sh -c`, ...), or when it sets any `GIT_*=`
-variable. Allowed, each verb only with the options listed for it in orch (exact names, no abbreviations; an unknown
-option is refused) and no path outside the repository (absolute, `~` or `..`) as an operand or option value:
+Whatever the prompt says, every shell command of a runner-bound session first goes through one entry point
+(`permits.bash_gate`), which the guard (on every command: PreToolUse runs in every permission mode, so an allow rule,
+auto mode or bypass does not skip it) and the permission hook both call, with the same binding: the guard's
+`session_state` and the hook's session lookup both trust only `factory_sessions.trusted` (the record the runner wrote,
+for a process under the one it recorded). In the hook it runs before any grant or Dark profile rule, so no rule, exact
+or prefix, can allow what it refuses. It refuses a tool input that is not an object; a command that is not text, is
+empty, holds a NUL or an odd line separator (`\r`, form feed, U+2028, ...) or is longer than 100,000 characters; and
+a payload whose working directory is missing or not text (never "the start folder by default"). If the hook's
+session lookup itself fails, the hook gives no opinion (the harness asks you as usual) and the guard refuses: its
+`session_state` says "unknown". The readiness checks require the guard to be installed and to run.
+
+Then the git allowlist (`commit_refusal`). The command is read once as the shell splits it (`_scan`, operators as
+words of their own):
+
+- git is a **program** when a word that is git (any case, any path, `git.exe`, any quoting such as `g''it` or
+  `"git"`) starts a simple command: at the start of the line or after `;`, `&&`, `||`, `&`, `(`, `{`, `!`, `<(`, `>(`.
+  Such an invocation is checked against the allowlist below. git as a later stage of a pipeline, or after a variable
+  assignment (`x=1 git ...`), is refused.
+- git is **carried** when it appears among the words of a program that runs others (`xargs`, `find -exec`, `parallel`,
+  `env`, `command`, `exec`, `nice`, `nohup`, `time`, `timeout`, `watch`, `sudo`, `su`, `doas`, `ssh`, `script`, `eval`,
+  `source`, `.`, any shell such as `sh -c` or `bash -lc`, an interpreter such as `python -c`, `awk`, `make`, a shell
+  keyword such as `if` or `while`, ...): refused, the gate cannot see the arguments git would get.
+- git is **data** when it is an argument of any other program: `orch log L-1 -m "committed with git"`, `orch new
+  --title "fix git hooks"`, `grep -rn git src`. Not git's; the gate lets it through to the other checks.
+- Fails closed: a `$` or backtick anywhere in a command that names git (a variable, `$(...)` or `$'...'` has its value
+  only when the shell runs it), a program word built from a variable or substitution (`$G push`, `` `echo git` push
+  ``), a variable or substitution handed to a program that runs others (`sh -c "$CMD"`, `eval $X`), quoting that cannot
+  be read, a parse that accounts for a different number of git words than the text holds, and any error inside the
+  check are refusals. A line that runs git may not also `cd`, `pushd` or `popd`, redirect (`<`, `>`, `2>&1`) or use a
+  process substitution. Any `GIT_*=` assignment is refused.
+
+Allowed git, each verb only with the options listed for it in orch (exact names, no abbreviations; an unknown option
+is refused; `--color`, `--word-diff` and `--decorate` may carry their usual values) and no path outside the
+repository (absolute, `~` or `..`) and no pathspec magic (`:/`, `:(top)`, `:!`) as an operand or option value:
 
 - reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, and `branch` that
   only lists; never `--output`, `--ext-diff`, `--textconv`, `--no-index` or the like;
@@ -325,29 +353,16 @@ option is refused) and no path outside the repository (absolute, `~` or `..`) as
   session in or below it;
 - `commit` with `-m`/`--message`, `-a`, `-q`, `-v`, `-s`, `--allow-empty` (no `--amend`, `--no-verify`, `-n`, `-F`,
   `-C`, `-c`, `--fixup`, `--author`, `--template`, ...), and `checkout` or `switch` of the session's own branch and
-  nothing else (no `--`, no paths, no new branch), only when that folder passes the rule above (the child's own clone
-  or linked worktree) and the session's folder is that folder or below it in the same git checkout.
+  nothing else, only when that folder passes the rule above (the child's own clone or linked worktree) and the
+  session's folder is that folder or below it in the same git checkout.
 
 Refused by default: every other verb (`push` in any form, to any remote, URL or path; `fetch`, `remote`, `config`,
 `update-ref`, `symbolic-ref`, `tag`, `reset`, `worktree`, `submodule`, `filter-branch`, `gc`, `reflog`, `am`, `apply`,
-`merge`, `rebase`, an alias, ...), any option before the verb but `--no-pager` (so `-C`, `-c`, `--git-dir`,
-`--work-tree`, `--config-env`, `--exec-path`, `--namespace` and abbreviations such as `--git-d=`), a `cd`, `pushd` or
-`popd` in a line that runs git, and any `GIT_*=` assignment. It fails closed: a `$` or backtick in a line that runs
-git (a variable, a substitution or `$'...'` quoting has its value only when the shell runs it), quoting that cannot
-be read, a verb missing, a git the parser cannot account for (the word git in a message, a note or a wrapper payload
-it does not read as a command), and any error inside the check are refusals. git counts only as the program of a simple command (at the start of the line or right after
-`;`, `&&`, `||`, `&`, `(`, `{` or `!`): git as an argument of another program (`xargs`, `find -exec`, `parallel`,
-`env`, `command`, `exec`, `nice`, `nohup`, `time`, `timeout`, `watch`, `sudo`, `ssh`, `script`, `eval`, `source`,
-...), inside a word that is itself a command line (`sh -c`, `bash -lc`, `su -c`), as a later stage of a pipeline, or
-in a line with a redirect or a process substitution is refused, because the gate cannot see the arguments git would
-really get. (Dark profile prefix rules match a single simple command only, so they never match such a line either.)
-The command is read as the shell splits
-it (operators as words of their own); each place the word git appears in the plain text must be one of the
-invocations read. A
-session whose binding exists but does not verify is refused. The cost: a title, `-m` text or `orch log` note that
-names git is refused (the built-in prompts say so). These are text checks of the command line: a variable holding
-`git` is refused, but a git alias from the user's own config, and a script the agent writes and then runs, are not
-seen (see the guard's known limits).
+`merge`, `rebase`, an alias, ...) and any option before the verb but `--no-pager` (so `-C`, `-c`, `-P`, `--git-dir`,
+`--work-tree`, `--config-env`, `--exec-path`, `--namespace` and abbreviations such as `--git-d=`). These are text
+checks of the command line: a git alias from the user's own config, an unknown program that runs git (a script or
+binary of the repository's own, called with the word git as data), and a script the agent writes and then runs are
+not seen (see the guard's known limits, and "A prefix rule trusts the repository").
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,

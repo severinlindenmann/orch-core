@@ -93,8 +93,11 @@ def _tick(fws, human, fake, settings=None):
     return factory_runner.tick(fws, human, fake, settings=settings or launch.load_settings())
 
 
-def _payload(session, command="make e2e"):
-    return {"session_id": session, "tool_name": "Bash", "tool_input": {"command": command}}
+def _payload(session, command="make e2e", cwd=None):
+    """A shell PermissionRequest/PreToolUse payload; `cwd` defaults to the process's folder (the tests' workspace root,
+    where the runner starts these sessions): a bound session's payload without one is refused."""
+    return {"session_id": session, "tool_name": "Bash", "tool_input": {"command": command},
+            "cwd": str(cwd or Path.cwd())}
 
 
 def _behavior(out):

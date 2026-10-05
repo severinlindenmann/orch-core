@@ -1,5 +1,6 @@
 """AI Factory, phase 1 (#2): factory epics, signed permission grants and the PermissionRequest hook."""
 import json
+from pathlib import Path
 from datetime import timedelta
 
 import pytest
@@ -60,7 +61,7 @@ def bind(ws, human, epic_id, child_id, session=SESSION):
 
 def _payload(command, session=SESSION, tool="Bash"):
     return {"session_id": session, "hook_event_name": "PermissionRequest", "tool_name": tool,
-            "tool_input": {"command": command}, "permission_mode": "default"}
+            "tool_input": {"command": command}, "permission_mode": "default", "cwd": str(Path.cwd())}
 
 
 def _behavior(out):

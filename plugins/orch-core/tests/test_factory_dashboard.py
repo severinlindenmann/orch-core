@@ -156,7 +156,7 @@ def test_grant_once_signs_into_the_ledger_and_answers_the_hook(fws, fd, running)
     assert g["kind"] == "grant" and g["scope"] == "once" and g["command"] == CMD and g["actor"].startswith("human")
     assert not permits.open_requests(fws) and "permit-card" not in fd.get("/").text
     out = permits.hook_decision(fws, {"session_id": "11111111-2222-4333-8444-555555555555", "tool_name": "Bash",
-                                      "tool_input": {"command": CMD}})
+                                      "tool_input": {"command": CMD}, "cwd": str(__import__("pathlib").Path.cwd())})
     assert out["hookSpecificOutput"]["decision"]["behavior"] == "allow"
 
 

@@ -63,10 +63,13 @@ def test_its_own_worktree_commits_and_its_prompt_says_so(session, fake):  # noqa
     ws, b, wt, cid = session["ws"], session["b"], session["wt"], session["cid"]
     prompt = next(a for n, c, a in fake.started if cid in n)[-1]
     assert "on this worktree's branch" in prompt and f'git commit -m "{cid} short summary"' in prompt
-    for cwd in (wt, wt / "src", None):  # no cwd in the payload: the binding's start folder
+    for cwd in (wt, wt / "src"):
         (wt / "src").mkdir(exist_ok=True)
         guard, hook = _both(ws, b, COMMIT, cwd)
         assert guard.allow and _behavior(hook) == "allow", cwd
+    p = {**_payload(b["session"], COMMIT)}
+    p.pop("cwd")  # no working directory in the payload: refused by both gates
+    assert not evaluate(ws, p).allow and _behavior(permits.hook_decision(ws, p)) == "deny"
 
 
 @pytest.mark.parametrize("cmd", [

@@ -427,10 +427,10 @@ def test_the_guard_and_the_hook_decide_every_spelling_the_same(fws, run, cmd):
     if why is not None:  # the gate refuses: both gates deny (the hook may name an earlier reason, never an allow)
         assert not guard.allow and _behavior(hook) == "deny", (cmd, why)
     else:  # the gate passes: neither gate says the git gate refused it
-        assert "git commit is refused here" not in (guard.reason or "") + hook_msg, cmd
+        assert "refused in this AI Factory session" not in (guard.reason or "") + hook_msg, cmd
 
 
-@pytest.mark.parametrize("broken", ["_invocations", "_arg_refusal", "_own_place", "_words"])
+@pytest.mark.parametrize("broken", ["_scan", "_arg_refusal", "_own_place", "_words"])
 def test_any_error_inside_the_gate_is_a_refusal(fws, run, monkeypatch, broken):
     def boom(*a, **k):
         raise RuntimeError("x")
@@ -475,3 +475,109 @@ def test_no_prefix_rule_matches_a_program_carried_as_an_argument(fws, cmd):
 @pytest.mark.parametrize("cmd", ["git add src/git/x.py", "git add docs/.git-notes.md", "git status && git diff"])
 def test_git_as_the_program_of_each_simple_command_still_passes(fws, run, cmd):
     assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
+
+
+# -- review of bf7dbee: odd payloads, missing folders, git as data, one entry point --------------------------------
+
+def _ev_both(fws, payload):
+    return evaluate(fws, payload), permits.hook_decision(fws, payload)
+
+
+@pytest.mark.parametrize("cwd", [None, "", 7, ["/tmp"], {"a": 1}, "x\x00y"])
+def test_a_bound_session_without_a_readable_folder_is_refused_by_both_gates(fws, run, cwd):
+    for cmd in (COMMIT, "git status", "make e2e"):
+        p = {**_payload(run["b"]["session"], cmd)}
+        if cwd is None:
+            p.pop("cwd")
+        else:
+            p["cwd"] = cwd
+        guard, hook = _ev_both(fws, p)
+        assert not guard.allow and _behavior(hook) == "deny", (cwd, cmd)
+    assert permits._in_start(run["b"], cwd) is False
+
+
+@pytest.mark.parametrize("tool_input", [None, [], ["git push"], 7, "git push", {"command": None},
+                                        {"command": ["git", "push"]}, {"command": 7}, {"command": ""},
+                                        {"command": "   "}, {"command": "git status\x00; git push"},
+                                        {"command": "git status git push"}, {"command": "git status\rgit push"},
+                                        {"command": "x" * (permits.MAX_COMMAND + 1)}, {}])
+def test_an_odd_shell_payload_of_a_bound_session_is_refused_by_both_gates(fws, run, tool_input):
+    p = {"session_id": run["b"]["session"], "tool_name": "Bash", "tool_input": tool_input, "cwd": str(run["clone"])}
+    guard, hook = _ev_both(fws, p)
+    assert not guard.allow and _behavior(hook) == "deny", tool_input
+
+
+def test_an_odd_payload_of_an_unbound_session_is_left_alone(fws):
+    p = {"session_id": "22222222-3333-4444-8555-666666666666", "tool_name": "Bash", "tool_input": None}
+    assert evaluate(fws, p).allow and permits.hook_decision(fws, p) is None
+
+
+def test_the_hook_uses_the_verified_binding_not_a_bare_record(fws, run, monkeypatch):
+    import inspect
+    assert "factory_sessions.binding(" not in inspect.getsource(permits._factory_answer)
+    seen = []
+    real = permits.bash_gate
+    monkeypatch.setattr(permits, "bash_gate", lambda ws, b, p: (seen.append(b), real(ws, b, p))[1])
+    out = permits.hook_decision(fws, {**_payload(run["b"]["session"], "git status"), "cwd": str(run["clone"])})
+    assert _behavior(out) == "allow" and seen == [fs.trusted(fws, run["b"]["session"])]
+
+
+GIT_SPELLINGS = ["git status", "g''it push", "gi\\t push", '"git" push', "'git' push", "./git push", "/usr/bin/git push",
+                 "GIT push", "Git push", "git.exe push", "GIT.EXE push", "g\\\nit push", "$'git' push", "${G}it push",
+                 '"g"i"t" push', "\\git push", "$G push", "`echo git` push", "x=1 $G push", 'sh -c "$CMD"',
+                 "eval $X", "xargs $P"]
+
+
+@pytest.mark.parametrize("cmd", GIT_SPELLINGS)
+def test_every_spelling_of_git_is_seen_as_git(fws, run, cmd):
+    assert permits._git_commit(cmd), cmd
+    why = permits.commit_refusal(fws, run["b"], run["clone"], cmd)
+    assert (why is None) == (cmd == "git status"), (cmd, why)
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert (guard.allow and _behavior(hook) == "allow") == (cmd == "git status"), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    'orch log L-0002 -m "committed with git"', 'orch new --title "fix git hooks" --epic L-0001',
+    "orch log L-0002 -m 'git push is not allowed here'", "grep -rn git src", 'echo "use git status"',
+    "orch section set L-0002 Verification --file v.md",
+])
+def test_git_named_as_data_of_another_program_is_not_gated(fws, run, cmd):
+    assert not permits._git_commit(cmd), cmd
+    assert permits.bash_gate(fws, run["b"], {**_payload(run["b"]["session"], cmd), "cwd": str(run["clone"])}) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x | xargs git commit -m x", "find . -exec git push \\;", "git log | xargs git push", "env git push",
+    "command git push", "timeout 5 git push", "nice git status", "nohup git status", "sh -c 'git push'",
+    "bash -lc 'git status'", 'echo "$(git push)"', "echo `git push`", "x=1 git status", "if git status; then :; fi",
+    "cat <(git log)", "python3 -c 'import os; os.system(\"git push\")'", "make git", "awk '{system(\"git push\")}'",
+])
+def test_git_carried_or_hidden_is_refused_by_both_gates(fws, run, cmd):
+    assert permits._git_commit(cmd), cmd
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ["git log --color=always", "git diff --color=never --stat", "git show --decorate=short",
+                                 "git diff --word-diff=color"])
+def test_display_flags_take_their_values(fws, run, cmd):
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
+
+
+@pytest.mark.parametrize("cmd", ["git add ':/x'", "git diff ':(top)'", "git add ':!secret'", "git log --color=x",
+                                 "git -P log"])
+def test_pathspec_magic_unknown_values_and_minus_p_are_refused(fws, run, cmd):
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
+
+
+def test_a_dark_prefix_rule_never_allows_what_the_gate_refuses(fws, run, human):
+    """The gate (bash_gate) runs before dark_profile.match in the hook and on its own in the guard: a git-basic prefix
+    rule that matches a command the gate refuses allows nothing, and an exact rule for a carried git neither."""
+    from orch.core import dark_profile
+    dark_profile.add(fws, human, "exact", "echo x | xargs git status")
+    for cmd in ("git add -A", "git log --color=red", "git commit --no-edit -m x",
+                "echo x | xargs git status"):
+        assert dark_profile.match(fws, cmd) is not None, cmd  # a rule matches it
+        guard, hook = _both(fws, run["b"], cmd, run["clone"])
+        assert not guard.allow and _behavior(hook) == "deny", cmd

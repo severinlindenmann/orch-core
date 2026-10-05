@@ -1638,7 +1638,7 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
 
-def _factory_commit(ws, payload: dict, command: str) -> Decision | None:
+def _factory_commit(ws, payload: dict, command=None) -> Decision | None:
     """An AI Factory session the runner bound runs only the allowlisted git commands, and commits only in its own work
     tree (orch.core.permits.commit_refusal, the one function the permission hook calls too).
     Checked here, in every permission mode (an allow rule, auto mode or bypass never reach the PermissionRequest hook,
@@ -1646,17 +1646,15 @@ def _factory_commit(ws, payload: dict, command: str) -> Decision | None:
     alone."""
     try:
         from orch.core import factory_sessions, permits
-        if not permits._git_commit(command):
-            return None
         state, b = factory_sessions.session_state(ws, payload.get("session_id"))
         if state == "none":
             return None
-        why = (permits.commit_refusal(ws, b, payload.get("cwd"), command) if state == "trusted"
+        why = (permits.bash_gate(ws, b, payload) if state == "trusted"
                else "orch cannot tell whether this is an AI Factory session (its binding does not verify)")
     except Exception as e:
         why = f"orch could not check where an AI Factory session would commit ({type(e).__name__})"
     if why:
-        return Decision(False, f"git commit is refused here: {why}. Leave your changes in the working tree and say so "
+        return Decision(False, f"refused in this AI Factory session: {why}. Leave your changes in the working tree and say so "
                                "with orch log; do not retry it in another form.")
     return None
 
@@ -1665,6 +1663,10 @@ def evaluate(ws, payload: dict) -> Decision:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
     cwd = payload.get("cwd")
+    if tool == "Bash":  # a bound session's shell call, whatever its input, goes through the shared gate first
+        commit = _factory_commit(ws, payload)
+        if commit is not None:
+            return commit
     if not isinstance(tool_input, dict):
         return ALLOW
     command = tool_input.get("command")
@@ -1679,10 +1681,6 @@ def evaluate(ws, payload: dict) -> Decision:
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):
         return Decision(False, _LEDGER_DENIED)
-    if tool == "Bash" and isinstance(command, str):
-        commit = _factory_commit(ws, payload, command)
-        if commit is not None:
-            return commit
     if tool in ("Grep", "Glob"):
         root = _resolve_root(tool_input.get("path")) or _resolve_root(cwd)
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")

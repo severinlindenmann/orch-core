@@ -403,7 +403,8 @@ def test_end_to_end_dark_through_the_dashboard_start(dws, fa, human):
     d = epics.delegation(dws, _epic(dws, eid))
     assert (b["epic"], b["child"], b["delegation"]) == (eid, cid, d["id"]) and permits.dark_delegation(dws, _epic(dws, eid))
     dark_profile.add(dws, human, "prefix", "make test")
-    pay = lambda cmd: {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": cmd}}  # noqa: E731
+    pay = lambda cmd: {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": cmd},
+                   "cwd": b["start"]}  # noqa: E731
     assert _behavior(permits.hook_decision(dws, pay("make test --quiet"))) == "allow"  # the profile covers it
     out = permits.hook_decision(dws, pay("make lint"))
     assert _behavior(out) == "deny" and "not in the Dark profile" in out["hookSpecificOutput"]["decision"]["message"]
@@ -930,7 +931,8 @@ def test_a_parked_planner_with_an_open_card_shows_the_card_not_the_parked_text(d
     fake = Fake()
     _tick(dws, human, fake)
     (b,) = fs.bindings(dws)
-    permits.hook_decision(dws, {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": "make x"}})
+    permits.hook_decision(dws, {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": "make x"},
+                                "cwd": b["start"]})
     fake.names.clear()
     _tick(dws, human, fake)
     html = c.get(f"/factory/{eid}").text

@@ -540,7 +540,7 @@ def use(ws, actor, g: dict, ticket_id: str | None) -> bool:
 
 # -- the PermissionRequest hook ---------------------------------------------------------------------------------------
 
-def _session_ticket(ws, session: str | None):
+def _session_ticket(ws, session: str | None):  # (ticket, the trusted binding) or None
     """The factory ticket this harness session works on: the child its binding names (for the planner, which splits a
     childless epic, the epic itself: charter_epic of an epic is the epic, so it gets that epic's grants, Dark profile
     and refusals like any of its children). Only the runner's binding
@@ -557,7 +557,7 @@ def _session_ticket(ws, session: str | None):
     d = factory_delegation(ws, epic) if epic is not None else None
     if epic is None or epic.id != b["epic"] or d is None or d["id"] != b["delegation"]:
         return None
-    return t
+    return t, b
 
 
 def _bound(ws, session) -> bool:
@@ -584,13 +584,14 @@ def hook_decision(ws, payload: dict) -> dict | None:
         return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
                                  "grant counts; nothing was allowed. Stop and ask the human to look at it.")
     try:
-        ticket = _session_ticket(ws, payload.get("session_id"))
+        found = _session_ticket(ws, payload.get("session_id"))
     except Exception:
-        return None  # not known to be a factory session: the harness asks as usual (never an allow)
-    if ticket is None:
+        return None  # not known to be a factory session: the harness asks as usual (never an allow); the guard refuses
+    if found is None:
         return None
+    ticket, b = found
     try:
-        return _factory_answer(ws, payload, ticket)
+        return _factory_answer(ws, payload, ticket, b)
     except Exception as e:
         return _decision("deny", f"orch could not check the permission ({type(e).__name__}); nothing was allowed. "
                                  f"File it with `orch permit request`, then `orch wait {ticket.id}`.")
@@ -602,10 +603,9 @@ def hook_decision(ws, payload: dict) -> dict | None:
 # option, ...), and anything the parser cannot tell is refused too.
 _GIT_ASSIGN = re.compile(r"(?<![\w])GIT_[A-Z0-9_]+\s*=")
 _GIT_WORD = re.compile(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])")
-_SPLIT = re.compile(r"[\s;&|()`<>]+")
 _OPS = {"&&", "||", ";", "|", "&", ";;", "|&", "(", ")", "<", ">", ">>", "<<", ">&", "<&", "&>", "<>", ">|"}
 _UNCHECKABLE = re.compile(r"[$`]")  # a substitution, a variable or ANSI-C quoting: its value is known only when it runs
-_PRE_OPTS = {"--no-pager", "-P"}  # the only options allowed before the verb
+_PRE_OPTS = {"--no-pager"}  # the only option allowed before the verb
 _READ_BRANCH = {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}
 
 
@@ -669,49 +669,117 @@ def _is_git(word: str) -> bool:
     return bool(_GIT_WORD.fullmatch(os.path.basename(word)))
 
 
-class _Hidden(ValueError):
-    """git appears where the gate cannot see its real arguments: refused with this reason."""
+_SHELL_PROG = re.compile(r"(?:ba|z|k|c|tc|da|fi|pw|mk|r)?sh[\d.]*|busybox")
+# Programs that run another program with arguments they choose, or a command line given as text, and shell keywords
+# that start a command: git anywhere among their words is "carried", and the gate cannot see what it would really get.
+_CARRIERS = frozenset((
+    "xargs", "find", "gfind", "parallel", "env", "command", "builtin", "exec", "nice", "nohup", "time", "timeout",
+    "gtimeout", "watch", "sudo", "su", "doas", "ssh", "script", "eval", "source", ".", "stdbuf", "setsid", "flock",
+    "unbuffer", "caffeinate", "arch", "xcrun", "ionice", "taskset", "chroot", "chrt", "strace", "ltrace", "dtruss",
+    "gdb", "lldb", "expect", "osascript", "open", "launchctl", "at", "batch", "crontab", "tmux", "screen", "entr",
+    "make", "gmake", "just", "npx", "pnpx", "bunx", "uvx", "pipx", "poetry", "pdm", "hatch", "tox", "nox",
+    "if", "then", "else", "elif", "do", "while", "until", "for", "case", "select", "function", "coproc",
+    "python", "python3", "node", "perl", "ruby", "php", "lua", "awk", "gawk", "sed",
+))
+_CD = frozenset(("cd", "pushd", "popd", "chdir"))
+# where a program word starts: the line's start or an operator, then any assignments; a `$` or backtick in it means the
+# program is known only when the shell runs it
+_PROGRAMS = re.compile(r"(?:^|[;&|(){}!]|\b(?:then|do|else|elif)\b)\s*(?:[A-Za-z_]\w*=\S*\s+)*([^\s;&|()<>]+)")
+_HIDDEN_PROGRAM = re.compile(r"(?:^|[;&|(){}!]|\b(?:then|do|else|elif)\b)\s*(?:[A-Za-z_]\w*=\S*\s+)*[^\s;&|()<>]*[$`]")
+_ASSIGN_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 
 
-_STARTS = {"&&", "||", ";", "&", ";;", "(", "{", "!"}  # what may come right before the program of a simple command
+def _carrier(prog: str) -> bool:
+    p = prog.casefold()
+    return p in _CARRIERS or bool(_SHELL_PROG.fullmatch(p)) or bool(re.fullmatch(
+        r"(?:python|pypy|node|nodejs|perl|ruby|php|lua)[\d.]*", p))
 
 
-def _invocations(command: str) -> list[tuple[list[str], str, list[str]]]:
-    """[(options before the verb, verb, arguments)] for every git word of `command` as the shell reads it. git counts
-    only as the program of a simple command, at the start of the line or right after `;`, `&&`, `||`, `&`, `(`, `{`
-    or `!`, and never as a later stage of a pipeline (it would read another program's output). git anywhere else (an
-    argument of `xargs`, `find -exec`, `env`, `nice`, `time`, `exec`, `sudo`, `ssh`, ..., a word that is itself a
-    command line for `sh -c`, `bash -lc`, `eval` or `source`, a stage after `|`) raises _Hidden: the gate cannot see
-    the arguments it would really get. Raises ValueError when the quoting cannot be read."""
-    words, out = _words(command), []
-    for i, w in enumerate(words):
-        if re.search(r"\s", w) and _GIT_WORD.search(_plain(w)):  # a word that is itself a command line or text
-            raise _Hidden("git appears inside another word (a sh -c, bash -lc or eval payload, a message, a note): "
-                          "orch cannot tell how it runs")
-        if not _is_git(w):
+def _scan(command) -> tuple[list[tuple[list[str], str, list[str]]], str | None, bool]:
+    """(git invocations, why the command must be refused or None, whether it runs anything that is git's) for one
+    command line, read once as the shell splits it (operators as words of their own). The one reading every git
+    question of a bound session goes through, for the guard and the permission hook alike.
+
+    - A GIT_*= assignment anywhere: refused.
+    - No `git` word (any case, any path, `git.exe`) in the plain text: nothing of git's (None, not git's).
+    - A `$` or backtick where the plain text names git (a variable, a substitution or `$'...'` quoting has its value
+      only when the shell runs it), quoting that cannot be read, or a parse that accounts for a different number of
+      git words than the plain text holds: refused (fail closed).
+    - git as the program of a simple command (at the start or after `;`, `&&`, `||`, `&`, `(`, `{`, `!`, with no
+      variable assignment before it): an invocation; as a later stage of a pipeline, or after an assignment: refused.
+    - git anywhere among the words of a carrier (xargs, find, env, nice, time, sudo, ssh, sh -c, eval, a shell keyword
+      such as if or while, an interpreter, ...): refused, the gate cannot see its real arguments.
+    - git as an argument of any other program (`orch log -m "committed with git"`, `grep git`): data, not git's.
+    - A line that runs git and also cd, pushd or popd, or redirects or substitutes input or output: refused."""
+    plain = _plain(command)
+    if _GIT_ASSIGN.search(plain):
+        return [], ("a GIT_* variable may not be set in a factory session's command: it points git at another "
+                    "folder, config or refs"), True
+    found = _GIT_WORD.findall(plain)
+    if not found:
+        if _UNCHECKABLE.search(str(command)) and (_HIDDEN_PROGRAM.search(str(command)) or any(
+                _carrier(os.path.basename(m.group(1))) for m in _PROGRAMS.finditer(str(command)))):
+            return [], ("a program named through a variable or a substitution, or a variable handed to a program "
+                        "that runs others (sh -c, eval, xargs, ...), may be git: orch cannot tell, so it is refused"), True
+        return [], None, False
+    if _UNCHECKABLE.search(str(command)):
+        return [], "a command naming git with a variable, a substitution or $'...' quoting cannot be checked", True
+    try:
+        words = _words(command)
+    except ValueError:
+        return [], "the quoting of this command, which names git, cannot be read", True
+    if sum(len(_GIT_WORD.findall(_plain(w))) for w in words) != len(found):
+        return [], "this command names git in a way orch cannot account for", True
+    calls, progs, prog, assigned, prev = [], [], None, False, None
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in _OPS or re.fullmatch(r"[<>&|();{}!]+", w):  # an operator: <( and >( start a command too
+            prog, assigned, prev = None, False, w
+            i += 1
             continue
-        before = words[i - 1] if i else None
-        if before in ("|", "|&"):
-            raise _Hidden("git as a later stage of a pipeline reads another program's output: run it on its own")
-        if before is not None and before not in _STARTS:
-            raise _Hidden(f"git is an argument of {before} here, which can hand it other arguments (xargs, "
-                          "find -exec, env, nice, time, exec, sudo, ...): run git as a plain command")
-        j = i + 1
-        while j < len(words) and words[j].startswith("-") and words[j] not in _OPS:
-            j += 1
-        args = []
-        for x in words[j + 1:]:
-            if x in _OPS:
-                break
-            args.append(x)
-        out.append((words[i + 1:j], words[j] if j < len(words) and words[j] not in _OPS else "", args))
-    return out
+        if prog is None and _ASSIGN_WORD.match(w):
+            assigned = True
+            i += 1
+            continue
+        if prog is None:
+            prog = os.path.basename(w)
+            progs.append(prog.casefold())
+            if _is_git(w):
+                if prev in ("|", "|&"):
+                    return [], "git as a later stage of a pipeline reads another program's output: run it alone", True
+                if assigned:
+                    return [], "a variable set before git changes what it reads: run git as a plain command", True
+                j = i + 1
+                while j < len(words) and words[j].startswith("-") and words[j] not in _OPS:
+                    j += 1
+                args = []
+                for x in words[j + 1:]:
+                    if x in _OPS:
+                        break
+                    args.append(x)
+                calls.append((words[i + 1:j], words[j] if j < len(words) and words[j] not in _OPS else "", args))
+            i += 1
+            continue
+        if _GIT_WORD.search(_plain(w)) and _carrier(prog):
+            return [], (f"git is carried by {prog} here, which can hand it other arguments or run it as text "
+                        "(xargs, find -exec, env, nice, time, sudo, sh -c, eval, ...): run git as a plain command"), True
+        i += 1
+    if calls and any(p in _CD for p in progs):
+        return [], "a line that runs git may not change folder (cd, pushd): git would run in another folder", True
+    if calls and any(re.fullmatch(r"[<>&|();]+", w) and re.search(r"[<>]", w) for w in words):
+        return [], "a line that runs git may not redirect or substitute input or output (<, >, <(...), >(...))", True
+    return calls, None, bool(calls)
 
 
 def _outside(value: str) -> bool:
     """Whether a path operand or value may name something outside the repository: absolute, `~`, or a `..`
     component."""
     return value.startswith(("/", "~")) or ".." in value.replace("\\", "/").split("/")
+
+
+_FLAG_VALUES = {"--color": ("always", "never", "auto"), "--word-diff": ("plain", "color", "porcelain", "none"),
+                "--decorate": ("short", "full", "auto", "no")}  # display flags that may carry one of these values
 
 
 def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
@@ -739,6 +807,8 @@ def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
         if verb == "diff" and re.fullmatch(r"-U\d+", a):
             continue
         name, eq, val = a.partition("=")
+        if eq and val in _FLAG_VALUES.get(name, ()):
+            continue
         if a.startswith("--"):
             if name in values and (eq or name not in flags):
                 if not eq:
@@ -772,24 +842,31 @@ def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
         return f"git {verb} may only switch to the session's own branch {own}"
     if kind in ("paths", "revs") and any(_outside(o) for o in operands):
         return f"git {verb} names a path outside the repository"
+    if kind in ("paths", "revs") and any(o.startswith(":") for o in operands):
+        return f"git {verb} may not use pathspec magic (:/, :(top), :!, ...): name paths plainly"
     return None
 
 
 def _git_commit(command) -> bool:
-    """Whether `command` gets the git gate (commit_refusal) in a runner-bound session: the word git anywhere in its
-    plain text (quotes, backslashes and line continuations out), or any GIT_*= assignment. Cheap; the gate decides."""
+    """Whether `command` gets the git gate (commit_refusal) in a runner-bound session: _scan finds git as a program,
+    or refuses (a carried git, a GIT_*= assignment, anything it cannot read). git named only as data of another
+    program (`orch log -m "committed with git"`) is not git's. A command that is not text is git's (fail closed)."""
     if not isinstance(command, str):
-        return False
-    t = _plain(command)
-    return bool(_GIT_ASSIGN.search(t) or _GIT_WORD.search(t))
+        return True
+    calls, why, _ = _scan(command)
+    return bool(calls or why)
 
 
 def _in_start(b: dict, cwd) -> bool:
-    """Whether the payload's working directory (resolved; none: the start itself) is binding `b`'s start folder or
-    below it. Any error is a no. The one rule for the git gate and for Dark answers."""
+    """Whether the payload's working directory is binding `b`'s start folder or below it (resolved). A missing,
+    empty or non-text working directory, and any error, is a no. The one rule for the git gate and for Dark answers."""
+    if isinstance(cwd, os.PathLike):  # internal callers; a payload's cwd is checked as text by bash_gate
+        cwd = os.fspath(cwd)
+    if not isinstance(cwd, str) or not cwd or "\x00" in cwd:
+        return False
     try:
         start = Path(str(b["start"])).resolve()
-        here = Path(str(cwd)).resolve() if cwd else start
+        here = Path(cwd).resolve()
         return here == start or start in here.parents
     except Exception:
         return False
@@ -800,9 +877,9 @@ def _own_place(ws, b: dict, cwd) -> tuple[str | None, str | None]:
     in the same git checkout, and the start folder its own work tree (factory_runner.own_work_tree)."""
     from orch.core import factory_clones, factory_runner
     if not _in_start(b, cwd):
-        return "the session's folder is not inside the folder the runner started it in", None
+        return "the session's folder is not given, or not inside the folder the runner started it in", None
     start = Path(str(b["start"])).resolve()
-    here = Path(str(cwd)).resolve() if cwd else start
+    here = Path(os.fspath(cwd)).resolve()
 
     def checkout(p):  # the folder of the first .git upwards: the checkout git would use
         return next((d for d in (p, *p.parents) if os.path.lexists(d / ".git")), None)
@@ -821,48 +898,32 @@ _ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, 
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
-    """Why runner-bound session `b` must not run `command` (one _git_commit selects) now, or None. The one function
-    the guard and the permission hook both call for every git command of a bound session. Fails closed: anything it
-    cannot read or tell, and any error inside it, is a refusal.
+    """Why runner-bound session `b` must not run `command` now, or None. The one function the guard and the
+    permission hook both call (through bash_gate) for every command of a bound session that _scan finds git's. Fails
+    closed: anything it cannot read or tell, and any error inside it, is a refusal.
 
-    - no GIT_*= assignment; no `$` or backtick in a line that runs git (a variable, a substitution or `$'...'`
-      quoting has a value only when it runs); quoting that cannot be read is refused;
-    - the command is read as the shell splits it, and every word that is itself a command line (`sh -c`, `bash -lc`,
-      `eval`) the same way; every place the word git appears in its plain text must be one of those invocations (a
-      git the parser does not account for, in a message, a note or a wrapper it cannot read, is refused);
+    - _scan: one shell reading; git as a program is checked, git carried by another program is refused, git as data
+      of another program is not git's; GIT_*= assignments, `$` and backticks near git, unreadable quoting, cd and
+      redirects in a git line are refused;
     - per invocation: no option before the verb but --no-pager; the verb in _VERBS, with only its listed options and
-      operands of its kind (_arg_refusal: no path outside the repository, `checkout`/`switch` only to the own branch);
+      operands of its kind (_arg_refusal: no path outside the repository, no pathspec magic, `checkout`/`switch` only
+      to the own branch);
     - add and restore from the start folder or below it; commit, checkout and switch only in the session's own work
       tree (_own_place: the runner-made clone or its own linked worktree)."""
     try:
-        plain = _plain(command)
-        if _GIT_ASSIGN.search(plain):
-            return ("a GIT_* variable may not be set in a factory session's command: it points git at another "
-                    "folder, config or refs")
-        if not _GIT_WORD.search(plain):
-            return None
-        if _UNCHECKABLE.search(str(command)):
-            return "a git command line with a variable, a substitution or $'...' quoting cannot be checked"
-        try:
-            calls = _invocations(command)
-        except _Hidden as e:
-            return str(e)
-        except ValueError:
-            return "the quoting of this git command cannot be read"
-        if any(re.fullmatch(r"[<>&|();]+", w) and re.search(r"[<>]", w) for w in _words(command)):
-            return "a line that runs git may not redirect or substitute input or output (<, >, <(...), >(...))"
-        if len(calls) != len([w for w in _SPLIT.split(plain) if _is_git(w)]) or not calls:
-            return ("this command names git where orch cannot tell how it runs (inside a message, a note or a "
-                    "wrapper): run git as a plain command, and do not name git commands in -m texts")
-        if re.search(r"(?<![\w-])(?:cd|pushd|popd|chdir)(?![\w-])", plain):
-            return "a line that runs git may not change folder (cd, pushd): git would run in another folder"
+        if not isinstance(command, str):
+            return "the command is not text"
+        calls, why, _ = _scan(command)
+        if why:
+            return why
         place = None
         for pre, verb, args in calls:
             if not set(pre) <= _PRE_OPTS:
                 return (f"git options before the command ({' '.join(pre)}) are not allowed in a factory session: "
                         "they point git at another folder, config or refs")
             if verb not in _VERBS:
-                return f"git {verb or '(no command)'} is not one of the git commands a factory session may run ({_ALLOWED_TEXT})"
+                return (f"git {verb or '(no command)'} is not one of the git commands a factory session may run "
+                        f"({_ALLOWED_TEXT})")
             own = None
             if verb in _COMMIT_VERBS:
                 if place is None:
@@ -871,7 +932,7 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
                 if why:
                     return why
             elif verb in _TREE_VERBS and not _in_start(b, cwd):
-                return "the session's folder is not inside the folder the runner started it in"
+                return "the session's folder is not given, or not inside the folder the runner started it in"
             why = _arg_refusal(verb, args, own)
             if why:
                 return why
@@ -880,34 +941,60 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     return None
 
 
-def _factory_answer(ws, payload: dict, ticket) -> dict:
+MAX_COMMAND = 100_000  # characters of one bound session's command orch reads; a longer one is refused
+_ODD_TEXT = re.compile("[\x00\r\x0b\x0c\x85  ﻿]")
+
+
+def bash_gate(ws, b: dict, payload) -> str | None:
+    """Why a runner-bound session's shell tool call must be refused before anything else is judged, or None: the one
+    entry point the guard (PreToolUse) and the permission hook share. Refused: a tool input that is not an object, a
+    command that is not text, is empty, holds a NUL or an odd line separator, or is longer than MAX_COMMAND; a
+    working directory that is missing or not text; and any command that commit_refusal refuses."""
+    try:
+        ti = payload.get("tool_input") if isinstance(payload, dict) else None
+        if not isinstance(ti, dict):
+            return "the tool's input is not an object orch can read"
+        command = ti.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return "the command is not text, or empty"
+        if len(command) > MAX_COMMAND or _ODD_TEXT.search(command):
+            return "the command is too long or holds characters orch does not read (NUL, odd line separators)"
+        cwd = payload.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            return "the session's folder is not given"
+        if not _git_commit(command):
+            return None
+        return commit_refusal(ws, b, cwd, command)
+    except Exception as e:
+        return f"orch could not check this command ({type(e).__name__}); it is refused"
+
+
+def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
+    """The answer for a session whose binding `b` the caller verified (_session_ticket: factory_sessions.trusted, the
+    record the guard's session_state trusts too)."""
     from orch.core.events import Actor
     epic = factory_epic(ws, ticket)
     if payload.get("tool_name") != "Bash":
         return _decision("deny", "in a factory epic only shell commands can be granted (this tool is not one); do "
                                  "without it and record why in the ticket")
-    command = (payload.get("tool_input") or {}).get("command") if isinstance(payload.get("tool_input"), dict) else None
-    why = never_grantable(ws, command)
+    ti = payload.get("tool_input")
+    command = ti.get("command") if isinstance(ti, dict) else None
+    why = never_grantable(ws, command) if isinstance(command, str) else None
     if why:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")
-    if _git_commit(command):  # the second layer: the guard (PreToolUse) runs the same check in every mode
-        from orch.core import factory_sessions
-        b = factory_sessions.binding(ws, payload.get("session_id"))
-        why = commit_refusal(ws, b, payload.get("cwd"), command) if b else "the session's binding cannot be read"
-        if why:
-            return _decision("deny", f"git commit is refused here: {why}. Leave your changes in the working tree and "
-                                     f"say so with orch log {ticket.id}; do not retry it in another form.")
+    why = bash_gate(ws, b, payload)  # the same entry point the guard runs, before any grant or Dark profile rule
+    if why:
+        return _decision("deny", f"refused in this AI Factory session: {why}. Leave your changes in the working tree "
+                                 f"and say so with orch log {ticket.id}; do not retry it in another form.")
     actor = Actor("agent", "claude-code", "hook", str(payload.get("session_id") or "") or None)
     fd = factory_delegation(ws, epic)
     checkout = None
     if fd and fd.get("dark"):
         # A Dark epic answers from the checkout the runner launched the session in (its binding), never from the one
         # the hook's working directory or an agent-writable `.git` file names now: a session that moved is denied.
-        from orch.core import factory_sessions
         from orch.core.ledger import checkout_id
-        b = factory_sessions.binding(ws, payload.get("session_id"))
-        checkout = b["checkout"] if b else None
+        checkout = b["checkout"]
         # ORCH_HOME makes `ws` the workspace whatever the session's folder, so the checkout id alone no longer tells a
         # session that moved: its working directory must be the folder the runner started it in, or below it
         if not checkout or checkout != checkout_id(ws) or not _in_start(b, payload.get("cwd")):

@@ -603,7 +603,7 @@ def hook_decision(ws, payload: dict) -> dict | None:
 # option, ...), and anything the parser cannot tell is refused too.
 _GIT_ASSIGN = re.compile(r"(?<![\w])GIT_[A-Z0-9_]+\s*=")
 _GIT_WORD = re.compile(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])")
-_OPS = {"&&", "||", ";", "|", "&", ";;", "|&", "(", ")", "<", ">", ">>", "<<", ">&", "<&", "&>", "<>", ">|"}
+_OPS = {"&&", "||", ";", "|", "&", ";;", "|&", "(", ")", "<", ">", ">>", "<<", ">&", "<&", "&>", "<>", ">|", "\n"}
 _UNCHECKABLE = re.compile(r"[$`]")  # a substitution, a variable or ANSI-C quoting: its value is known only when it runs
 _PRE_OPTS = {"--no-pager"}  # the only option allowed before the verb
 _READ_BRANCH = {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}
@@ -615,8 +615,7 @@ def _spec(flags="", values="", operands="paths", value_paths=True) -> dict:
 
 
 # verb: allowed flags, options that take a value (`--opt=value`, `--opt value`, `-xvalue`, `-x value`), what the
-# operands are ("paths": paths inside the repository, "revs": revisions or such paths, "none", "own": exactly the
-# session's own branch), and whether option values are checked as paths (not for commit messages or formats).
+# operands are ("paths": paths inside the repository, "revs": revisions or such paths, "none"), and whether option values are checked as paths (not for commit messages or formats).
 _VERBS = {
     "status": _spec("-s --short -b --branch --long -v --verbose --ignored --porcelain -uno -unormal -uall",
                     "--porcelain --untracked-files -u"),
@@ -640,14 +639,14 @@ _VERBS = {
     "blame": _spec("-w -s -e --", "-L", "revs"),
     "branch": _spec(" ".join(_READ_BRANCH), "", "none"),
     "add": _spec("-v --verbose -N --intent-to-add --"),
-    "restore": _spec("--staged -S --worktree -W --"),
     "commit": _spec("-q --quiet -v --verbose -a --all --allow-empty -s --signoff", "-m --message", "paths",
                     value_paths=False),
-    "checkout": _spec("-q --quiet", "", "own"),
-    "switch": _spec("-q --quiet", "", "own"),
 }
-_TREE_VERBS = {"add", "restore"}  # write the work tree and index only: from the start folder or below it
-_COMMIT_VERBS = {"commit", "checkout", "switch"}  # need the session's own work tree
+_TREE_VERBS = {"add"}  # writes the index only: from the start folder or below it
+_COMMIT_VERBS = {"commit"}  # needs the session's own work tree
+# Left out on purpose (they cannot be fully constrained, or the session never needs them): restore and checkout (they
+# overwrite the work tree from any revision), switch (the session is on its own branch already), and every verb that
+# writes refs, config or other repositories.
 
 
 def _plain(command) -> str:
@@ -660,8 +659,12 @@ def _words(command: str) -> list[str]:
     """The command's words as the shell splits them, operators as words of their own. Raises ValueError when the
     quoting cannot be read."""
     import shlex
-    lx = shlex.shlex(str(command).replace("\\\n", ""), posix=True, punctuation_chars=True)
+    # a newline ends a command in the shell: it is an operator here, never whitespace; `#` is read as a word (a comment
+    # is never dropped, so the gate sees at least what the shell runs)
+    lx = shlex.shlex(str(command).replace("\\\n", ""), posix=True, punctuation_chars="();<>|&\n")
     lx.whitespace_split = True
+    lx.whitespace = " \t"
+    lx.commenters = ""
     return list(lx)
 
 
@@ -838,8 +841,6 @@ def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
     kind = spec["operands"]
     if kind == "none" and operands:
         return f"git {verb} takes no arguments here"
-    if kind == "own" and operands != [own]:
-        return f"git {verb} may only switch to the session's own branch {own}"
     if kind in ("paths", "revs") and any(_outside(o) for o in operands):
         return f"git {verb} names a path outside the repository"
     if kind in ("paths", "revs") and any(o.startswith(":") for o in operands):
@@ -893,8 +894,8 @@ def _own_place(ws, b: dict, cwd) -> tuple[str | None, str | None]:
     return (None, own) if own else ("the session's own branch cannot be read", None)
 
 
-_ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add, restore, commit, "
-                 "and checkout or switch of its own branch, each with its listed options")
+_ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add and commit, each "
+                 "with its listed options")
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
@@ -936,6 +937,9 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
             why = _arg_refusal(verb, args, own)
             if why:
                 return why
+            if verb == "commit" and not any(a in ("-m", "--message") or a.startswith("--message=")
+                                            or re.fullmatch(r"-[aqvs]*m.*", a) for a in args):
+                return "git commit needs its message with -m here (no editor is opened in a factory session)"
     except Exception as e:
         return f"orch could not check this git command ({type(e).__name__}); it is refused"
     return None

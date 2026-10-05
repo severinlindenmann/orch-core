@@ -181,8 +181,7 @@ def test_the_commit_gate_refuses_other_dirs_config_and_refs(fws, run, cmd):
     assert not guard.allow and _behavior(hook) == "deny", cmd
 
 
-@pytest.mark.parametrize("cmd", [COMMIT, "git checkout fx/{c}", "git switch -q fx/{c}", "git add a.txt",
-                                 "git restore a.txt", "git --no-pager log -p", "git status", "git branch --show-current",
+@pytest.mark.parametrize("cmd", [COMMIT, "git add a.txt", "git --no-pager log -p", "git status", "git branch --show-current",
                                  "git diff HEAD", "git rev-parse HEAD", "git ls-files", "git blame a.txt"])
 def test_the_allowlist_passes_the_sessions_own_work(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower())
@@ -398,7 +397,7 @@ def test_an_allowed_verb_with_an_argument_that_changes_it_is_refused(fws, run, c
     "git log main..HEAD", 'git show "HEAD^"', "git rev-parse --git-dir", "git rev-parse --show-toplevel",
     "git diff --cached --stat", "git diff -U3", "git diff -- src/a.py", 'git commit -am "{C} x" -m "What: y"',
     'git commit -m "{C} Fix the /api path" -m "What: y"', "git commit -mshort", "git add src/a.py docs/",
-    "git restore --staged a.txt", "git ls-tree -r HEAD", "git blame -L 1,2 a.txt", "git --no-pager log",
+    "git ls-tree -r HEAD", "git blame -L 1,2 a.txt", "git --no-pager log",
 ])
 def test_an_allowed_verb_with_its_listed_options_passes(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower()).replace("{C}", run["cid"])
@@ -581,3 +580,24 @@ def test_a_dark_prefix_rule_never_allows_what_the_gate_refuses(fws, run, human):
         assert dark_profile.match(fws, cmd) is not None, cmd  # a rule matches it
         guard, hook = _both(fws, run["b"], cmd, run["clone"])
         assert not guard.allow and _behavior(hook) == "deny", cmd
+
+# -- the fourth scan: verbs dropped, the newline differential, commit without a message ----------------------------
+
+@pytest.mark.parametrize("cmd", [
+    "git status\ngit push origin x", "git log\ngit fetch", "git status # ; git push", "git log x#; git push",
+    "git restore a.txt", "git restore --staged a.txt", "git checkout fx/{c}", "git switch -q fx/{c}",
+    "git checkout -- a.txt", "git commit", "git commit -a", "git commit --allow-empty", "git STATUS",
+    "git -- status", "git status\r\ngit push",
+])
+def test_the_fourth_scan_spellings_are_refused_by_both_gates(fws, run, cmd):
+    cmd = cmd.replace("{c}", run["cid"].lower())
+    assert permits._git_commit(cmd), cmd
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", ['git commit -am "{C} x" -m "What: y"', "git commit --message=x", "git commit -mx",
+                                 'orch log L-0002 -m "line one\nline two names git"'])
+def test_a_commit_with_its_message_and_multi_line_data_still_pass(fws, run, cmd):
+    cmd = cmd.replace("{C}", run["cid"])
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd

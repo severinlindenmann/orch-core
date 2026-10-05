@@ -324,7 +324,8 @@ session lookup itself fails, the hook gives no opinion (the harness asks you as 
 `session_state` says "unknown". The readiness checks require the guard to be installed and to run.
 
 Then the git allowlist (`commit_refusal`). The command is read once as the shell splits it (`_scan`, operators as
-words of their own):
+words of their own; a newline is an operator, as it ends a command in the shell, and `#` is read as a word, so a
+comment is never dropped and the gate sees at least what the shell runs):
 
 - git is a **program** when a word that is git (any case, any path, `git.exe`, any quoting such as `g''it` or
   `"git"`) starts a simple command: at the start of the line or after `;`, `&&`, `||`, `&`, `(`, `{`, `!`, `<(`, `>(`.
@@ -349,12 +350,14 @@ repository (absolute, `~` or `..`) and no pathspec magic (`:/`, `:(top)`, `:!`) 
 
 - reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, and `branch` that
   only lists; never `--output`, `--ext-diff`, `--textconv`, `--no-index` or the like;
-- `add` (paths only: no `-A`, `--all`, `-u`) and `restore` (no `--source`), from the folder the runner started the
-  session in or below it;
-- `commit` with `-m`/`--message`, `-a`, `-q`, `-v`, `-s`, `--allow-empty` (no `--amend`, `--no-verify`, `-n`, `-F`,
-  `-C`, `-c`, `--fixup`, `--author`, `--template`, ...), and `checkout` or `switch` of the session's own branch and
-  nothing else, only when that folder passes the rule above (the child's own clone or linked worktree) and the
-  session's folder is that folder or below it in the same git checkout.
+- `add` (paths only: no `-A`, `--all`, `-u`), from the folder the runner started the session in or below it;
+- `commit` with its message given by `-m`/`--message` (no editor is opened), and `-a`, `-q`, `-v`, `-s`,
+  `--allow-empty` (no `--amend`, `--no-verify`, `-n`, `-F`, `-C`, `-c`, `--fixup`, `--author`, `--template`, ...),
+  only when that folder passes the rule above (the child's own clone or linked worktree) and the session's folder is
+  that folder or below it in the same git checkout.
+
+Left out on purpose, because they cannot be fully constrained or a session never needs them: `restore` and
+`checkout` (they overwrite the work tree from any revision), `switch` (the session is on its own branch already).
 
 Refused by default: every other verb (`push` in any form, to any remote, URL or path; `fetch`, `remote`, `config`,
 `update-ref`, `symbolic-ref`, `tag`, `reset`, `worktree`, `submodule`, `filter-branch`, `gc`, `reflog`, `am`, `apply`,

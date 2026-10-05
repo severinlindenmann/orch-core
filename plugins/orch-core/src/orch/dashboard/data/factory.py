@@ -142,7 +142,7 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
-           "idle": ("neu", 2, "Idle"), "finished": ("ok", 3, "Finished")}
+           "idle": ("neu", 2, "Idle"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
 
 
@@ -224,6 +224,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     look_dark = dark and permits.dark_on(ws)  # a Dark charter with the switch off runs (and looks) as an AI Factory
     name = "Dark AI Factory" if look_dark else "AI Factory"
     running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
+    early = None
     planner_on = any(factory_sessions.is_planner(b) for b in running)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
     if lit[-1]:
@@ -249,6 +250,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "working", "Sessions are running on its children"
     elif planner_on:
         state, headline = "planning", "A planner session is splitting the epic into children"
+    elif not running and (early := _early(ws, d, bound)):
+        state, headline = "early", "A session ended right after it started"
     elif not kids:
         state, headline = "nokids", "Waiting for children"
     elif any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
@@ -276,6 +279,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         used = factory_sessions.planner_runs(ws, d["id"])
         planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
+            "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel,
@@ -306,6 +310,18 @@ def _epic_events(events, ids) -> list[dict]:
                else "You" if str(e.actor).startswith("human") else "An agent")
         rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {_LOG_PHRASE.get(e.kind) or action_phrase(e)}"})
     return rows[::-1][:200]
+
+
+def _early(ws, d, bound) -> list[dict]:
+    """The runner's records of sessions of this delegation that ended right after their start, newest first, leaving
+    out a child (or the planner) started again since."""
+    from orch.core import factory_sessions
+    try:
+        later = [*factory_sessions.ended(ws), *bound]
+        return [e for e in factory_sessions.early_ends(ws, d["id"])
+                if not any(g["delegation"] == d["id"] and g["child"] == e["child"] and g["at"] > e["at"] for g in later)]
+    except Exception:
+        return []
 
 
 def _bound(ws) -> list[dict]:

@@ -987,7 +987,7 @@ class _Run:
 
 
 @pytest.mark.parametrize("result,want", [
-    (_Run(0, "a\nb\n"), {"a", "b"}),
+    (_Run(0, "a 0\nb 0\nc 1\n"), {"a", "b"}),  # c's process ended (its pane stays for reap): not alive
     (_Run(1, "", "no server running on /x/factory"), set()),
     (_Run(1, "", "error connecting to /x/factory (No such file or directory)"), set()),
     (_Run(1, "", "protocol version mismatch"), None),

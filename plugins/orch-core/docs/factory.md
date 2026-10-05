@@ -180,6 +180,30 @@ runner for that delegation. Every few seconds the dashboard then, for each armed
   child starts again with the next dashboard); when it starts, a binding whose session is not running ends. If tmux does
   not answer, the runner concludes nothing that round and asks again.
 
+**Waking a session that waits (the idle nudge).** An interactive Claude session that waits for you does not end, so
+the wake above never reaches it (in the live run each pane had to be told by hand that the cards were answered). So
+after you answer something in its epic (a grant, a denial, a revocation, or for a Dark epic a change to the Dark
+profile), the runner types **one** built-in line into the session's pane and presses Enter: "The human answered your
+permission requests. Retry the blocked commands, then finish your ticket and move it to testing." (a denial alone gets
+a line saying to do without the command and record why; a planner one saying to finish splitting the epic). The text
+is a constant in orch, never taken from a ticket, the config or an agent, and the tmux launcher refuses any other.
+It types only when, read with tmux's `capture-pane`, the pane shows Claude Code's footer hint ("? for shortcuts" or
+"shift+tab to cycle") and an empty input line, nothing in its last lines looks like a running command ("esc to
+interrupt"), a permission, trust or other menu ("Do you want", "1.", "(y/n)"), and the screen stayed exactly the same
+for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. Anything else, or a record or pane
+it cannot read, types nothing. The run view says how often it nudged. What it cannot tell: a session that waits at a
+prompt Claude Code draws differently from these markers (a future version) is never nudged, and an idle session that
+was not waiting for that answer still gets the line (it is idle anyway). The runner keeps a small record per session
+(`permits/nudges/` in your orch config dir, guarded like the rest of the permits folder).
+
+**A session that ends right after it starts.** The runner's tmux server keeps a pane after its process exits
+(`remain-on-exit`), so the runner reads its exit status and last screen, then ends it. A session that ended within 90
+seconds of its start is recorded (`permits/early-ends/`: the exit status and the last 15 non-empty lines, each cut to
+200 characters, everything outside printable ASCII escaped; one record per child, the latest), and the run view says
+"A session ended right after it started" with those lines, instead of "Waiting for children", until that child (or the
+planner) is started again. Such a session is parked like any that ended: fix the cause, then answer a card in the epic,
+change the Dark profile, or approve the epic again.
+
 **The planner.** An armed, active factory epic that has no child at all (in any status) gets one planner session, under
 the same gates as a child's session (the factory on, the user-scope settings below, the budget not used up, not
 paused, edited or suspended, tmux and the programs found) and taking one of the concurrency slots. It is bound like a

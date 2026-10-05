@@ -92,7 +92,13 @@ questions:
     type: confirm
     recommended: yes
     blocking: false
+  - text: Keep the old endpoint?
+    options:
+      - {key: A, label: "Yes", cost: "two APIs to maintain"}
+      - {key: B, label: "No"}
 ```
+
+Quote labels like `"Yes"`, `"No"`, `"On"` and `"Off"`: unquoted, YAML would read them as booleans. orch keeps the text you wrote for them, but a quoted label is unambiguous.
 
 Types: `single` (default), `multi`, `confirm`, `text`. Questions are blocking unless `blocking: false`.
 

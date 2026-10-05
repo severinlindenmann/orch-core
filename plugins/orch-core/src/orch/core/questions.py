@@ -5,7 +5,6 @@ import hashlib
 import yaml
 
 from orch.core.canonical import canonical_json
-from orch.core.model import yaml_load
 from orch.errors import NotFoundError, ValidationError
 
 QTYPES = ("single", "multi", "confirm", "text")
@@ -22,9 +21,50 @@ def question_hash(q: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical_json(core)).hexdigest()
 
 
+_STR_TAG = "tag:yaml.org,2002:str"
+_PLAIN_TAGS = ("tag:yaml.org,2002:bool", "tag:yaml.org,2002:int", "tag:yaml.org,2002:float")
+
+
+def _as_text(node) -> None:
+    """Keep a bare option label or key as written: `No`, `Yes`, `On`, `Off` and `1.0` are not YAML booleans or numbers here."""
+    if isinstance(node, yaml.ScalarNode) and node.tag in _PLAIN_TAGS:
+        node.tag = _STR_TAG
+
+
+def _keep_option_text(node) -> None:
+    if not isinstance(node, yaml.MappingNode):
+        if isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                _keep_option_text(item)
+        return
+    for k, v in node.value:
+        if isinstance(k, yaml.ScalarNode) and k.value == "options" and isinstance(v, yaml.SequenceNode):
+            for opt in v.value:
+                if isinstance(opt, yaml.MappingNode):
+                    for ok, ov in opt.value:
+                        if isinstance(ok, yaml.ScalarNode) and ok.value in ("label", "key"):
+                            _as_text(ov)
+                else:
+                    _as_text(opt)
+        else:
+            _keep_option_text(v)
+
+
+def _load_ask_yaml(text: str):
+    loader = yaml.SafeLoader(text)
+    try:
+        node = loader.get_single_node()
+        if node is None:
+            return None
+        _keep_option_text(node)
+        return loader.construct_document(node)
+    finally:
+        loader.dispose()
+
+
 def parse_ask_file(text: str) -> list:
     try:
-        data = yaml_load(text.lstrip("﻿"))
+        data = _load_ask_yaml(text.lstrip("﻿"))
     except yaml.YAMLError as e:
         raise ValidationError(f"invalid question file: {e}") from e
     if isinstance(data, dict):
@@ -62,8 +102,15 @@ def _options(i: int, qtype: str, raw) -> list[dict]:
             o = {"label": "Yes" if o else "No"}
         elif isinstance(o, str):
             o = {"label": o}
+        if isinstance(o, dict) and isinstance(o.get("label"), bool):  # JSON true/false; YAML files keep the source text
+            raise ValidationError(f"question {i}: option {j + 1}: label must be text, not true/false; "
+                                  f"quote it, e.g. label: \"No\"")
+        if isinstance(o, dict) and isinstance(o.get("label"), (int, float)):
+            o = {**o, "label": str(o["label"])}
         if not isinstance(o, dict) or not o.get("label"):
             raise ValidationError(f"question {i}: option {j + 1} needs a label")
+        if not isinstance(o["label"], str):
+            raise ValidationError(f"question {i}: option {j + 1}: label must be text; quote it, e.g. label: \"No\"")
         key = str(o.get("key") or chr(ord("A") + j)).strip()
         if key.upper() in seen:
             raise ValidationError(f"question {i}: duplicate option key {key}")

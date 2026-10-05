@@ -40,6 +40,31 @@ def test_build_questions_rejects(raw, msg):
         build_questions(raw, [], "t")
 
 
+def test_unquoted_yaml_option_labels_keep_their_source_text():
+    f = """questions:
+  - text: Ship it?
+    options:
+      - {key: A, label: Yes}
+      - {key: B, label: No}
+      - {key: C, label: On}
+      - {key: D, label: 2.50}
+    recommended: A
+    blocking: false
+  - text: Bare?
+    options: [Off, 3]
+"""
+    q1, q2 = build_questions(parse_ask_file(f), [], "t")
+    assert [o["label"] for o in q1["options"]] == ["Yes", "No", "On", "2.50"]
+    assert q1["recommended"] == "A"
+    assert q1["blocking"] is False  # other YAML booleans are untouched
+    assert [o["label"] for o in q2["options"]] == ["Off", "3"]
+
+
+def test_boolean_label_from_json_gets_a_quote_hint():
+    with pytest.raises(ValidationError, match='quote it, e.g. label: "No"'):
+        build_questions([{"text": "x", "options": [{"key": "A", "label": "Yes"}, {"key": "B", "label": False}]}], [], "t")
+
+
 def test_parse_ask_file_rejects_empty():
     with pytest.raises(ValidationError):
         parse_ask_file("questions: []")

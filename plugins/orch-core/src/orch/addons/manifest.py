@@ -34,7 +34,7 @@ MENU_ICONS = {
     "share": "M15 5l4 4-4 4M19 9H9a4 4 0 0 0-4 4v6",
 }
 _KEYS = {"name", "title", "version", "requires_api", "kind", "description", "capabilities", "slots", "binaries",
-         "env", "entry", "settings_schema", "menu", "actions", "remote_humans", "ticket_options"}
+         "env", "entry", "settings_schema", "menu", "actions", "remote_actions", "remote_humans", "ticket_options"}
 _REQUIRED = ("name", "title", "version", "requires_api", "kind", "capabilities", "entry")
 
 
@@ -68,6 +68,7 @@ class TicketOption:
 
 
 MAX_TICKET_OPTIONS = 3
+MAX_REMOTE_ACTIONS = 32
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class Manifest:
     menu: dict | None = None
     actions: tuple[ActionSpec, ...] = ()
     remote_humans: bool = False
+    remote_actions: tuple[str, ...] = ()  # action ids a paired remote device may run; none by default
     ticket_options: tuple[TicketOption, ...] = ()
 
     @property
@@ -110,6 +112,9 @@ class Manifest:
     def ticket_option(self, option_id: str) -> TicketOption | None:
         return next((o for o in self.ticket_options if o.id == option_id), None)
 
+    def remote_action(self, action_id) -> bool:
+        return isinstance(action_id, str) and action_id in self.remote_actions
+
     def action(self, action_id: str) -> ActionSpec | None:
         return next((a for a in self.actions if a.id == action_id), None)
 
@@ -126,7 +131,7 @@ class Manifest:
         return {"capabilities": sorted(self.capabilities), "binaries": list(self.binaries), "env": list(self.env),
                 "requires_api": self.requires_api, "actions": sorted(a.id + (" (tickets)" if a.tickets else "") for a in self.actions),
                 "uploads": sorted(a.id for a in self.actions if a.accepts_file),
-                "remote_humans": self.remote_humans}
+                "remote_humans": self.remote_humans, "remote_actions": sorted(self.remote_actions)}
 
 
 def _str_list(data: dict, key: str, problems: list[str]) -> list[str]:
@@ -239,6 +244,24 @@ def _ticket_options(data: dict, problems: list[str]) -> list[TicketOption]:
     return out
 
 
+def _remote_actions(data: dict, problems: list[str]) -> list[str]:
+    raw = data.get("remote_actions", [])
+    if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
+        problems.append("remote_actions must be a list of action ids")
+        return []
+    if len(raw) > MAX_REMOTE_ACTIONS:
+        problems.append(f"remote_actions: at most {MAX_REMOTE_ACTIONS} action ids")
+        return []
+    acts = data.get("actions", [])
+    declared = {a.get("id") for a in acts if isinstance(a, dict)} if isinstance(acts, list) else set()
+    for i, v in enumerate(raw):
+        if raw.index(v) != i:
+            problems.append(f"remote_actions: {v!r} is listed twice")
+        elif v not in declared:
+            problems.append(f"remote_actions: {v!r} is not one of this addon's actions")
+    return raw
+
+
 def manifest_problems(data) -> list[str]:
     if not isinstance(data, dict):
         return ["the manifest must be a JSON object"]
@@ -305,6 +328,7 @@ def manifest_problems(data) -> list[str]:
             problems.append(f"menu.icon must be one of {', '.join(sorted(MENU_ICONS))}")
     _actions(data, problems)
     _ticket_options(data, problems)
+    _remote_actions(data, problems)
     if "remote_humans" in data and not isinstance(data["remote_humans"], bool):
         problems.append("remote_humans must be true or false")
     elif data.get("remote_humans") is True and "decisions" not in caps:
@@ -327,6 +351,7 @@ def parse_manifest(data, where: str = MANIFEST_NAME) -> Manifest:
         menu={"title": menu["title"].strip(), "icon": menu.get("icon", "box")} if menu else None,
         actions=tuple(_actions(data, sink)),
         remote_humans=bool(data.get("remote_humans", False)),
+        remote_actions=tuple(data.get("remote_actions", [])),
         ticket_options=tuple(_ticket_options(data, sink)),
     )
 

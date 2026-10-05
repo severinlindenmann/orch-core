@@ -29,7 +29,7 @@ router = APIRouter()
 
 _BACK = "/workspace#addons"
 _KIND_LABEL = {"capabilities": "capability", "binaries": "binary", "env": "env", "actions": "action",
-               "uploads": "file upload action"}
+               "uploads": "file upload action", "remote_actions": "action a paired device may run"}
 
 
 def _checks(ws, hook_states=None) -> tuple[list, str | None]:

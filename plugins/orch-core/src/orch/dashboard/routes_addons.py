@@ -18,7 +18,7 @@ from orch.core.events import append_event
 from orch.dashboard.addon_files import save_upload, stage_download
 from orch.dashboard.auth import strict_same_origin
 from orch.dashboard import remote_gate
-from orch.dashboard.reach import request_actor
+from orch.dashboard.reach import SCOPE_KEY, request_actor
 from orch.dashboard.views import back, confirm_page, error_text, page, safe_next
 from orch.errors import OrchError
 
@@ -75,6 +75,8 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
     # A multipart body was already size-checked by upload_limit_middleware (app.py) before it was parsed.
     if not strict_same_origin(request):
         return _refused()
+    if remote_gate.action_unlisted(request, name, action_id):  # before anything else; the middleware says it first
+        return remote_gate.refusal_response()
     ws = request.app.state.ws
     # return_to: the page a no-JS confirm page was opened from (its own URL is this POST's referer)
     dest = safe_next(return_to) or _return_to(request, f"/addons/{name}/")
@@ -97,7 +99,10 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
             if spec.accepts_file:
                 if file is None or not file.filename:
                     return back(dest, err="choose a file first")
-                upload = save_upload(ws, name, file, *spec.accepts_file)
+                limit, types = spec.accepts_file
+                if SCOPE_KEY in request.scope:
+                    limit = min(limit, remote_gate.REMOTE_ADDON_UPLOAD)
+                upload = save_upload(ws, name, file, limit, types)
                 kwargs["upload"] = upload
             # never an Ops: an Intent (or a FileResult / Reveal) comes back
             result = la.obj.act(action_id, target, la.ctx.provider_context(), **kwargs)

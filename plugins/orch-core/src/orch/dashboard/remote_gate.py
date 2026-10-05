@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, parse_qsl
 
 from starlette.routing import Match
 
-from orch.dashboard.reach import BadOrigin, RemoteOrigin, Scope, remote_origin
+from orch.dashboard.reach import SCOPE_KEY, BadOrigin, RemoteOrigin, Scope, remote_origin
 
 NEVER = None
 ALLOWED_METHODS = ("GET", "HEAD", "POST")
@@ -111,6 +111,9 @@ _RAW_BAD = re.compile(rb"%2f|%5c|%00", re.I)
 _ENCODED_LEFT = re.compile(r"%[0-9a-fA-F]{2}")  # a decoded path that still holds an escape was double-encoded
 FRESH = "This needs a fresh confirmation on this device first."
 NO_WAY = "Open the dashboard on the computer where it runs to do this."  # the one text of every refusal
+REMOTE_ADDON_UPLOAD = 25 * 1024 * 1024  # most a remote device may send to an addon action (local: MAX_UPLOAD)
+REMOTE_ARTIFACT_UPLOAD = 10 * 1024 * 1024  # most a remote device may send in one artifact upload request
+TOO_BIG_REMOTE = "This file is too large for remote use. Send it as a separate file transfer instead."
 
 
 def _odd_path(path: str, raw: bytes) -> bool:
@@ -154,6 +157,24 @@ async def _respond(send, status: int, message: str) -> None:
         (b"cache-control", b"no-store"), (b"x-content-type-options", b"nosniff"),
         (b"content-security-policy", b"default-src 'none'; style-src 'unsafe-inline'")]})
     await send({"type": "http.response.body", "body": body})
+
+
+def refusal_response():
+    """The gate's own refusal (403, the one text) for a route-level check that runs before a body is read."""
+    from starlette.responses import HTMLResponse
+    return HTMLResponse(REFUSED % NO_WAY, status_code=403, headers={
+        "cache-control": "no-store", "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'"})
+
+
+def action_unlisted(request, name, action_id) -> bool:
+    """Remote only: True when the addon does not list this action id in its manifest's remote_actions. An unknown
+    addon or action answers the same, so a refusal never says whether the action exists. A local request is never
+    refused here, and a malformed remote marker counts as remote."""
+    if SCOPE_KEY not in request.scope:
+        return False
+    la = request.app.state.addons.registry.get(name)
+    return la is None or not la.manifest.remote_action(action_id)
 
 
 class RemoteGate:

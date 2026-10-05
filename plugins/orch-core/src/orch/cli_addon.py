@@ -157,7 +157,7 @@ def review_text(r) -> str:
     """What the human sees before being asked: new permissions, changed files, the changelog."""
     lines = [f"{r.name} {r.version} from {r.source}" + (f" (trusted before: {r.old_version})" if r.old_version else "")]
     label = {"capabilities": "capability", "binaries": "binary", "env": "env", "actions": "action",
-             "uploads": "file upload action"}
+             "uploads": "file upload action", "remote_actions": "action a paired device may run"}
     news = [f"  + {label[kind]} {v}" for kind, values in r.added.items() for v in values]
     if r.remote_humans_added:
         news.append("  ! remote_humans: paired phones may answer and decide for you")

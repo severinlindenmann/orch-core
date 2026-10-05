@@ -114,7 +114,7 @@ class Action:
     action: str  # an id from the manifest's actions
     label: str
     target: str = ""
-    confirm: str | None = None  # overrides the manifest's confirm text for this one instance; None keeps the manifest's; "" asks nothing (an idempotent action)
+    confirm: str | None = None  # overrides the manifest's confirm text for this one instance; None keeps the manifest's; "" asks nothing, but only when the manifest declares the action `idempotent: true` (else the manifest's confirm still asks)
     quiet: bool = False  # API 2.1: the lesser action of a row or card (Ignore, Dismiss), drawn without a border
     detail: str | None = None  # the confirm dialog's second line for this instance; None keeps core's generic text
     kind: ClassVar[str] = "action"

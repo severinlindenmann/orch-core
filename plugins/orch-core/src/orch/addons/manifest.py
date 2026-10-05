@@ -54,6 +54,7 @@ class ActionSpec:
     confirm: str | None = None
     tickets: bool = False  # true: act() may return close/reopen/import intents for its target
     accepts_file: tuple | None = None  # (max_bytes, types): act() gets upload=Upload; types lower-case, () = any
+    idempotent: bool = False  # true: running it twice is harmless, so a widget may drop its confirm (Action(confirm=""))
 
 
 @dataclass(frozen=True)
@@ -191,9 +192,10 @@ def _actions(data: dict, problems: list[str]) -> list[ActionSpec]:
                 or not isinstance(a.get("label"), str) or not a["label"].strip() \
                 or not isinstance(a.get("confirm", None), (str, type(None))) \
                 or not isinstance(a.get("tickets", False), bool) \
-                or set(a) - {"id", "label", "confirm", "tickets", "accepts_file"}:
+                or not isinstance(a.get("idempotent", False), bool) \
+                or set(a) - {"id", "label", "confirm", "tickets", "accepts_file", "idempotent"}:
             problems.append(f"actions[{i}] must be {{id: 'rerun', label: 'Rerun failed', confirm: optional text, "
-                            f"tickets: optional bool, accepts_file: optional}}")
+                            f"tickets: optional bool, idempotent: optional bool, accepts_file: optional}}")
             continue
         accepts = None
         if "accepts_file" in a:
@@ -202,7 +204,7 @@ def _actions(data: dict, problems: list[str]) -> list[ActionSpec]:
                 problems.append(f"actions[{i}].accepts_file must be {{max_bytes: 1..{MAX_UPLOAD_BYTES}, "
                                 f"types: optional list like ['.pdf', 'image/png']}}")
                 continue
-        out.append(ActionSpec(a["id"], a["label"], a.get("confirm"), a.get("tickets", False), accepts))
+        out.append(ActionSpec(a["id"], a["label"], a.get("confirm"), a.get("tickets", False), accepts, a.get("idempotent", False)))
     return out
 
 

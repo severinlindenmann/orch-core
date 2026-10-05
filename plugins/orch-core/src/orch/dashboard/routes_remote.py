@@ -264,13 +264,20 @@ def remote_scope(request: Request, did: str, scope: str = Form(...), allow_type:
     if (scope := _scope_form(scope, "1" if allow_type == "1" or current.scope == "type" else "")) is None:
         return back(_REMOTE, err="choose a scope; Type also needs its own switch")
     try:
-        host.set_scope(did, scope)
+        _close_streams(request, host.set_scope(did, scope), "scope_changed")
     except _FAILS as e:
         return back(_REMOTE, err=f"scope not changed: {safe_text(e, 100)}")
     return back(_REMOTE, msg=f"Scope is now {scope}")
 
 
-def revoke_steps(registry, host, dev, ws_root) -> tuple[list[str], list[str]]:
+def _close_streams(request: Request, rids, code: str) -> None:
+    """End the device's open streams at once with `code` (the bridge loop's close_streams); without a loop, none run."""
+    loop = getattr(request.app.state, "bridge_loop", None)
+    if loop is not None and rids:
+        loop.close_streams(rids, code)
+
+
+def revoke_steps(registry, host, dev, ws_root, request=None) -> tuple[list[str], list[str]]:
     """Revoke `dev` here, in every other workspace's registry on this computer (matched by key, D7) and in the
     phone pairing linked to it. Safe to run again on an already revoked device: it then does the remaining steps.
     Returns (what was done, what failed); only a failure of the first step (revoking here) stops the others."""
@@ -281,7 +288,9 @@ def revoke_steps(registry, host, dev, ws_root) -> tuple[list[str], list[str]]:
     if not dev.revoked:
         try:
             if host is not None:
-                host.revoke(dev.id)
+                ended = host.revoke(dev.id)
+                if request is not None:  # its open streams end now with `revoked`, not at their next frame
+                    _close_streams(request, ended, "revoked")
             else:
                 registry.revoke(dev.id, now)
             done.append("revoked here")
@@ -322,7 +331,7 @@ def revoke_linked_devices(request: Request, phone_id: str) -> tuple[int, list[st
     for d in linked:
         if d.revoked:
             continue  # its other steps are finished with "Finish revoking" on the Remote tab
-        done, bad = revoke_steps(registry, host, d, request.app.state.ws.root)
+        done, bad = revoke_steps(registry, host, d, request.app.state.ws.root, request)
         n += bool(done)
         problems += [f"{safe_label(d.label) or 'a device'}: {m}" for m in bad]
     return n, problems, []
@@ -351,7 +360,7 @@ def remote_revoke(request: Request, did: str, ask: str = Form("")):
                                  " is revoked in every workspace on this computer. To use it again it must pair again."
                                  + extra, confirm="Finish revoking" if dev.revoked else "Revoke device",
                             cancel="Keep device", cancel_href=_REMOTE, danger=True, nav="workspace")
-    done, problems = revoke_steps(host.registry, host, dev, request.app.state.ws.root)
+    done, problems = revoke_steps(host.registry, host, dev, request.app.state.ws.root, request)
     if problems:
         return back(_REMOTE, err="not fully revoked: " + "; ".join(problems) + ". Use Finish revoking to try again.",
                     msg=("Done: " + ", ".join(done)) if done else None)

@@ -204,7 +204,19 @@ class HostLoop:
 
     def close_streams(self, rids, code: str) -> None:
         """End these streams with refusal `code` (what Host.revoke and Host.set_scope return, with `revoked` or
-        `scope_changed`); on the loop's thread."""
+        `scope_changed`). Safe from any thread: the Remote tab's routes run in the threadpool."""
+        rids = list(rids)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if self._loop is not None and running is not self._loop:
+            if not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(self._close_streams, rids, code)
+            return
+        self._close_streams(rids, code)
+
+    def _close_streams(self, rids, code: str) -> None:
         for rid in rids:
             st = self._streams.get(rid)
             if st is not None and st.code is None:

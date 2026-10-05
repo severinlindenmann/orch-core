@@ -663,8 +663,10 @@ def test_a_local_dashboard_does_not_import_the_bridge(tmp_path):
         "orch.actor.require_human_terminal = lambda *a, **k: None\n"
         "uvicorn.Server.run = lambda self, sockets=None: [s.close() for s in sockets]\n"
         "assert cli.run(['serve', '--no-open', '--no-update']) == 0\n"
+        # the Remote tab reads the records' file helpers (no crypto, no state) for its read-only view; nothing else
+        "ok = {'orch.remote.bridge_host', 'orch.remote.bridge_host.files'}\n"
         "bad = [m for m in sys.modules if m.startswith(('orch.remote.bridge_host', 'orch.dashboard.bridge_loop',"
-        " 'orch.remote.transport', 'orch.remote.remote_start', 'orch.remote.presence'))]\n"
+        " 'orch.remote.transport', 'orch.remote.remote_start', 'orch.remote.presence')) and m not in ok]\n"
         "assert not bad, bad\n")
     env = {**os.environ, "ORCH_STATE_DIR": str(tmp_path / "state"), "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
            "CLAUDE_CONFIG_DIR": str(tmp_path / "claude")}
@@ -1116,6 +1118,46 @@ def test_a_malformed_mailbox_id_is_ignored_before_anything_is_checked(ws):
         asyncio.run(loop._handle({"rid": bad, "body": E.b64u(env)}))  # noqa: SLF001
     asyncio.run(loop._handle({"rid": rid, "body": 5}))  # noqa: SLF001
     assert seen == []
+
+
+@pytest.mark.parametrize("action,code", [("revoke", "revoked"), ("scope", "scope_changed")])
+def test_the_remote_tab_closes_the_devices_streams(ws, action, code, monkeypatch):
+    from fastapi.testclient import TestClient
+    from orch.dashboard import views
+    monkeypatch.setattr(views, "_setup_count", lambda ws, checks=None: 0)
+    host, closed = make_host(), []
+    stream = "ab" * 16
+    host.streams[stream] = did(KEY_B)
+
+    class Loop:
+        def close_streams(self, rids, c):
+            closed.append((list(rids), c))
+    app = create_app(ws, TOKEN)
+    app.state.bridge_host, app.state.bridge_loop = host, Loop()
+    client = TestClient(app)
+    client.get(f"/?token={TOKEN}")
+    path = f"/workspace/remote/devices/{did(KEY_B)}/{action}"
+    client.post(path, data={"scope": "decide"} if action == "scope" else {}, headers={"origin": "http://testserver"},
+                follow_redirects=False)
+    assert closed == [([stream], code)]
+
+
+def test_close_streams_from_another_thread_ends_the_stream(ws, fake):
+    import threading
+    host, a = make_host(), Device_(KEY_A)
+
+    async def main():
+        loop = make_loop(ws, host, keepalive_s=60)
+        task = await started(loop)
+        rid = fake.request(_stream(a))
+        await until(lambda: len(fake.chunks(rid)) >= 2)
+        t = threading.Thread(target=loop.close_streams, args=(host.revoke(did(KEY_A)), "revoked"))
+        t.start()
+        t.join()
+        await until(lambda: fake.chunks(rid)[-1][0].flags & E.F_LAST, timeout=3)
+        assert fake.chunks(rid)[-1][1] == {"refusal": "revoked"}
+        await finish(loop, task)
+    asyncio.run(main())
 
 
 def test_an_unknown_error_code_from_the_child_reads_as_protocol(fake):

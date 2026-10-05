@@ -59,35 +59,75 @@ class Launcher(Protocol):
     def stop(self, name: str) -> None: ...
 
 
-def resolve_bin(name: str) -> str | None:
-    """The absolute path of program `name`, looked up only in the absolute entries of this server's PATH, and only when
-    the file (after links) is a regular file owned by this user or root that no group or other can write. None
-    otherwise: the runner then does not start anything."""
+def resolve_why(name: str) -> tuple[str | None, str]:
+    """(the absolute path of program `name`, ""), or (None, why it is refused). Looked up only in the absolute entries
+    of this server's PATH. Trusted means: the file (after links) is a regular file owned by this user or root that no
+    group or other can write, and its folder (as found and after links) is owned by this user or root and not
+    writable by others (a group-writable folder of yours, such as Homebrew's /opt/homebrew/bin, is fine). This keeps
+    out another user's programs and world-writable folders such as /tmp; it is no defence against code running as you
+    (an agent can write any folder you own): agent_writable and the session PATH rules are."""
     if not isinstance(name, str) or not name:
-        return None
+        return None, "no program name"
     if "/" in name:
         found = name if os.path.isabs(name) else None
+        if found is None:
+            return None, f"{name} is a relative path"
     else:
         entries = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and os.path.isabs(d)]
         found = which(name, path=os.pathsep.join(entries)) if entries else None
-    if not found:
-        return None
+        if not found:
+            return None, f"{name} is not on the dashboard's PATH ({os.pathsep.join(entries) or 'empty'})"
     try:
         st = os.stat(os.path.realpath(found))
-    except OSError:
-        return None
-    if not stat.S_ISREG(st.st_mode) or st.st_uid not in (os.getuid(), 0) or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return None
-    # its folder goes on the sessions' PATH: owned by this user or root and not writable by group or others either (as
-    # found and after links)
+    except OSError as e:
+        return None, f"{found} cannot be read ({type(e).__name__})"
+    if not stat.S_ISREG(st.st_mode):
+        return None, f"{found} is not a regular file"
+    if st.st_uid not in (os.getuid(), 0):
+        return None, f"{found} is owned by someone other than you or root"
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return None, f"{found} is writable by group or others"
     for folder in {os.path.dirname(os.path.abspath(found)), os.path.dirname(os.path.realpath(found))}:
         try:
             ds = os.stat(folder)
-        except OSError:
-            return None
-        if ds.st_uid not in (os.getuid(), 0) or ds.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            return None
-    return str(found)
+        except OSError as e:
+            return None, f"its folder {folder} cannot be read ({type(e).__name__})"
+        if ds.st_uid not in (os.getuid(), 0):
+            return None, f"its folder {folder} is owned by someone other than you or root"
+        if ds.st_mode & stat.S_IWOTH:
+            return None, f"its folder {folder} is writable by everyone"
+    return str(found), ""
+
+
+def resolve_bin(name: str) -> str | None:
+    """The absolute path of trusted program `name` (resolve_why), or None: the runner then does not start anything."""
+    return resolve_why(name)[0]
+
+
+def program_blocker(settings=None) -> str | None:
+    """Why the runner cannot start anything for want of a program: tmux, env or the launch command's claude not found
+    at a trusted path (with the path it saw and why it was refused), or None. Tests stand in for it."""
+    if settings is None:
+        from orch.dashboard.launch import load_settings
+        settings = load_settings()
+    for name in ("tmux", "env", settings["factory_command"][0]):
+        if resolve_bin(name) is None:
+            return f"{name} was not found at a trusted path: {resolve_why(name)[1]}"
+    return None
+
+
+def runner_blocker(ws, settings=None) -> str | None:
+    """The runner's current reason to start nothing, or None: a program it needs (program_blocker), the user-scope
+    settings (user_settings_blocker), or the last readiness run's first blocking check (never run here). One function
+    for the runner round and every view, so nothing fails silently."""
+    why = program_blocker(settings)
+    if why:
+        return why
+    why = user_settings_blocker()
+    if why:
+        return why + "; enable the orch-core plugin in your user-scope Claude settings"
+    failing = [c for c in (readiness_report(ws) or []) if c["level"] == "block"]
+    return failing[0]["why"] if failing else None
 
 
 def child_path(*bins: str) -> str:

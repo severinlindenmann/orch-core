@@ -194,7 +194,7 @@
   {% else %}
   <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
     <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
-  {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
+  {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}.</p>{% endif %}
   <p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark and f.dark_on else "AI Factory" }} run view</a></p>
   {% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}

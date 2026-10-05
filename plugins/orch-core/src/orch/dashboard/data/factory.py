@@ -110,7 +110,7 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
     else:
         state = "running"
     from orch.core import factory_runner, factory_sessions
-    blocker = (factory_runner.user_settings_blocker() if factory_sessions.armed(ws, d["id"]) and state == "running"
+    blocker = (factory_runner.runner_blocker(ws) if factory_sessions.armed(ws, d["id"]) and state == "running"
                else None)
     return {"factory": True, "limits": limits, "dark_on": dark_on, **rel, "release": d.get("release"),
             "dark": bool(d.get("dark")), "state": state, "runner_blocker": blocker, "children": used, "max_children": d["max_children"],
@@ -352,9 +352,12 @@ def _checks(ws) -> list[dict]:
     return factory_runner.readiness_report(ws) or []
 
 
-def _blocker():
+def _blocker(ws):
     from orch.core import factory_runner
-    return factory_runner.user_settings_blocker()
+    try:
+        return factory_runner.runner_blocker(ws)
+    except Exception as e:  # never silent: an error is shown as the reason
+        return f"orch could not tell whether the runner can start anything ({type(e).__name__})"
 
 
 def run_view(ws, epic) -> dict | None:
@@ -369,7 +372,7 @@ def run_view(ws, epic) -> dict | None:
         return None
     view = permit_view(ws)
     r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
-                   blocker=_blocker(), bound=_bound(ws), checks=_checks(ws))
+                   blocker=_blocker(ws), bound=_bound(ws), checks=_checks(ws))
     r["log"] = _epic_events(events, [epic.id] + [t.id for _, t in r["kids"]])
     r["profile_empty"] = r["look_dark"] and r["state"] != "finished" and not dark_profile.rules(ws, signed)
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
@@ -399,7 +402,7 @@ def factory_list(ws) -> list[dict] | None:
     from orch.core.events import read_events
     signed, events, entries = ledger.entries(ws), read_events(ws), store.scan(ws)
     view, out, bound = permit_view(ws), [], _bound(ws)
-    blocker, checks = _blocker(), _checks(ws)  # read once for the whole list
+    blocker, checks = _blocker(ws), _checks(ws)  # read once for the whole list
     for e in entries:
         if e.meta is None or not epics.is_epic(e.meta):
             continue

@@ -17,7 +17,7 @@ Agents are fast. They are also confident, and they will happily approve their ow
 
 ## Features
 
-- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
+- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `graph`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
 - **Skills** for Claude Code: `orch-tickets`, `orch-refine-ticket` (requirements engineering), `orch-work-on-ticket` (claim, plan, implement, verify) and `orch-setup` (guided onboarding).
 - **Hooks**: the guard, and a `SessionStart` hook that prints the active rules, your claimed tickets and what is waiting on you.
 - **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key in every commit.
@@ -91,6 +91,7 @@ Statuses run `backlog → open → in-progress → waiting → testing → done`
 - **Today**: what waits for you, blocking first. Each card shows the full text it binds and one primary action: answer, approve requirements and plan side by side, or give a verdict against a checklist of acceptance criteria with their evidence.
 - **Board**: your decisions on top, the agents' flow below (Ready, Working, Waiting, Testing), a backlog drawer, swimlanes by epic, sprint, label, agent or repo, and a sortable list view.
 - **Ticket pages**: the ticket as a story, from what was asked through what was agreed, the work, the proof per criterion and the verdict, with artifacts and the event timeline.
+- **Graph**: which tickets changed which code (from commit subjects), dependency lanes per epic, and the links around one ticket. Files that two open tickets both change are marked as collisions; clicking a node shows what an agent reads with `orch related`.
 - **Activity and Reports**: which agents are working or stale, and lead time, waiting time and sent-back rate over time.
 - **Workspace & addons**: setup checks with copyable fixes, addon trust and settings, and keyboard shortcuts (`j`/`k`, `1`–`9`, `⌘K`).
 

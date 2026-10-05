@@ -55,7 +55,7 @@ DEFAULT_PER = {"merge": "child", "dev": "epic", "production": "epic"}
 TARGET_STAGE = {"merge": "merge", "dev": "dev", "prod": "production"}  # a charter's `release` -> the recipe's stage
 # the Stopped reasons this module adds (orch.dashboard.data.factory._CAN says what the human can do for each)
 RELEASE_CODES = ("sensitive", "release-failed", "release-unknown", "release-stale", "production-failed",
-                 "rolled-back", "rollback-failed", "release-blocked", "rollback-missing")
+                 "rolled-back", "rollback-failed", "release-blocked", "rollback-missing", "release-conflict")
 FUTURE_SKEW = 300  # seconds a record's time may lie ahead of this clock before it counts as unreadable
 DEFAULT_WINDOW = 20  # hours after any production attempt of a workspace (begun or ended) before the next may begin
 MAX_WINDOW = 720
@@ -585,6 +585,7 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     info = {**base, "codes": out.get("codes"), "tail": str(out.get("tail") or ""), "why": str(out.get("why") or ""),
             "ended": out.get("ended"), "check": out.get("check"), "sha": out.get("sha"),
             "base_sha": out.get("base_sha"), "failed_at": out.get("failed_at"),
+            "conflicts": out.get("conflicts") if isinstance(out.get("conflicts"), list) else [],
             "children": out.get("children") if isinstance(out.get("children"), dict) else None}
     if os.path.lexists(d / _name(stage, unit, n, "rollback-intent")):  # production only: the signed rollback ran
         rb = _read(d / _name(stage, unit, n, "rollback"))
@@ -701,6 +702,20 @@ def quiet(ws, epic_id: str, needed: bool):
         yield
     finally:
         release_lock(ws)
+
+
+_CONFLICT = re.compile(r"^CONFLICT \(([^)\n]{1,40})\): (?:Merge conflict in )?(\S[^\n]{0,300})$", re.M)
+
+
+def conflicts(output: str) -> list[str]:
+    """The paths git names in the CONFLICT lines of a merge's output (the runner's own capture of the recipe's
+    commands; at most 20), as `<path> (<kind>)`."""
+    out = []
+    for kind, rest in _CONFLICT.findall(str(output or "")):
+        item = f"{rest.strip()} ({kind})"
+        if item not in out:
+            out.append(item)
+    return out[:20]
 
 
 def own_merge(us: dict) -> bool:
@@ -1041,6 +1056,12 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                 out.append({"code": "production-failed", "label": "Production check failed",
                             "text": "the production stage's commands ran, but its live check did not pass ("
                                     + _text(u.get("why") or "not proven", 200) + "); nothing was rolled back"})
+            elif u["state"] == "failed" and s["name"] == "merge" and u.get("conflicts"):
+                out.append({"code": "release-conflict", "label": "Merge conflict",
+                            "text": f"the merge of {_text(u['unit'], 40)} conflicts in "
+                                    + ", ".join(_text(c, 120) for c in u["conflicts"][:10])
+                                    + ": two children changed the same file; this will not go away on Retry; send one "
+                                      "child back"})
             elif u["state"] == "failed":
                 codes = [c for c in (u.get("codes") or []) if c != 0] or [u.get("check")]
                 code = codes[0] if codes else None
@@ -1707,6 +1728,13 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
             refused = factory_built.merge_refusal(ws, rec, epic, kids, found)
             if refused:
                 return lines + [_block(ws, actor, epic.id, "merge", refused[0], refused[1])]
+            dups, why = factory_built.release_doubles(ws, rec, epic, kids, found)
+            if why or dups:  # two children add the same file: the second merge would conflict
+                unit = next((c for c in reversed(dups[0]["children"]) if c in found), open_kids[0]) if dups \
+                    else open_kids[0]
+                text = (f"{factory_built.double_text(dups)}: the release will conflict; remove it from one child "
+                        "(send it back) and Retry" if dups else why)
+                return lines + [_block(ws, actor, epic.id, "merge", unit, text)]
         if errors:
             k = sorted(errors)[0]
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1
@@ -1891,7 +1919,8 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     r = _run_steps(ws, epic, d, s, steps, run, env, cwd, moved)
     proven = r["proven"]
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),
-               "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"]}
+               "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"],
+               **({"conflicts": conflicts(r["tail"])} if not proven and name == "merge" else {})}
     _write(ddir / _name(name, unit, n, "outcome"), outcome)
     bad = next((c for c in r["codes"] if c != 0), r["check"])
     _event(ws, actor, epic.id, "release.stage", {"stage": name, "child": unit, "proven": proven,

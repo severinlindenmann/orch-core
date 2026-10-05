@@ -61,6 +61,7 @@
     {% set bt = cv.built %}{% if bt %}
     {% if bt.missing %}<p class="permit-meta" data-missing>{{ ui.status("warn", "Not built") }} Not in any child's commit: {% for m in bt.missing %}{{ m.name }}{% if m.similar %} (found similar: {{ m.similar|join(", ") }}){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
     {% for d in bt.dirty %}<p class="permit-meta" data-dirty="{{ d.id }}">{{ ui.status("warn", "Uncommitted") }} <span class="key">{{ d.id }}</span> has uncommitted work in its clone: {{ d.lines|join(" · ") }}</p>{% endfor %}
+    {% for d in bt.double %}<p class="permit-meta" data-double="{{ d.path }}">{{ ui.status("warn", "Conflict") }} {{ d.children|join(" and ") }} both add {{ d.path }}: the release will conflict.</p>{% endfor %}
     {% for s in bt.subs %}<p class="permit-meta" data-subs="{{ s.id }}">{{ ui.status("warn", "Submodule") }} <span class="key">{{ s.id }}</span>'s clone holds a submodule, not inspected: {{ s.paths|join(", ") }}</p>{% endfor %}
     {% for u in bt.unknown %}<p class="permit-meta" data-built-unknown="{{ u.id }}">{{ ui.status("warn", "Unreadable") }} What {{ u.id }} built could not be read ({{ u.why }}), so it is not known.</p>{% endfor %}
     {% endif %}

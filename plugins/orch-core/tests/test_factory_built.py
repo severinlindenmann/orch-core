@@ -21,10 +21,10 @@ def _fresh():
     fb._CACHE.clear()
 
 
-def _epic(fws, fa, fh, human, **charter):
+def _epic(fws, fa, fh, human, asked=ASKED, **charter):
     e = fa.new("Elephants", type="epic")
     _refine(fa, e.id, plan=None)
-    fa.set_section(e.id, "Requirements", ASKED)
+    fa.set_section(e.id, "Requirements", asked)
     fh.approve(e.id, "requirements", delegate={"factory": True, "dark": True, **charter})
     fs.arm(fws, human, epics.delegation(fws, store.load(fws, e.id)[1])["id"])
     return e.id
@@ -180,3 +180,98 @@ def test_the_merge_block_goes_to_the_child_that_names_the_file_and_says_how_to_r
     lines = fr.tick(fws, human, Fake())
     blocked = fr._blocked_record(fws, eid)
     assert blocked["unit"] == b and f"Retry release once {b} (or another child) commits it" in blocked["why"], lines
+
+
+
+# -- the third live run's add/add conflict: two clones each add elefant.json ------------------------------------------
+
+def _two_adds(fws, fa, fh, human, close_tasks, **charter):
+    eid = _epic(fws, fa, fh, human, asked="A page elefant.html that reads elefant.json", **charter)
+    data = _child(fws, fa, human, eid, "data", files={"elefant.json": "[1]\n"})
+    page = _child(fws, fa, human, eid, "page", files={"elefant.html": "<p>x</p>\n", "elefant.json": "[2]\n"},
+                  reqs="Write elefant.html, which reads elefant.json")  # the page child made its own copy
+    for c in (data, page):
+        _to_testing(fa, c, close_tasks)
+    return eid, data, page
+
+
+def test_two_children_adding_one_file_are_named_at_ready(fws, fa, fh, human, close_tasks, remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, data, page = _two_adds(fws, fa, fh, human, close_tasks, release="merge")
+    bt = factory_report.ready(fws, store.load(fws, eid)[1])["coverage"]["built"]
+    assert bt["double"] == [{"path": "elefant.json", "children": [data, page]}]
+    pytest.importorskip("fastapi")
+    from test_dark_dashboard import _client
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert f"{data} and {page} both add elefant.json: the release will conflict." in html
+
+
+def test_two_children_adding_one_file_stop_the_release_before_any_merge(fws, fa, fh, human, close_tasks,
+                                                                        remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, data, page = _two_adds(fws, fa, fh, human, close_tasks, release="merge")
+    fake = Fake()
+    lines = fr.tick(fws, human, fake)
+    assert not fake.calls, lines  # nothing merged, not even the first child
+    reasons = factory_report.stopped(fws, store.load(fws, eid)[1])
+    assert [r["code"] for r in reasons] == ["release-blocked"]
+    assert (f"{data} and {page} both add elefant.json: the release will conflict; remove it from one child (send "
+            "it back) and Retry") in reasons[0]["text"]
+
+
+def test_two_children_adding_one_file_never_close_by_themselves(fws, fa, fh, human, close_tasks,
+                                                                remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, data, page = _two_adds(fws, fa, fh, human, close_tasks, close=True)
+    e = store.load(fws, eid)[1]
+    texts = [x["text"] for x in factory_close.blockers(fws, e, epics.delegation(fws, e)) if x["code"] == "built"]
+    assert f"{data} and {page} both add elefant.json: the release will conflict" in texts
+    assert factory_close.tick(fws, human) == [] and store.load(fws, eid)[1].status == "open"
+
+
+def test_a_merge_conflict_names_its_paths_and_says_retry_will_not_help(fws, fa, fh, human, close_tasks,
+                                                                       remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid = _epic(fws, fa, fh, human, asked="A data file elefant.json", release="merge")
+    data = _child(fws, fa, human, eid, "data", files={"elefant.json": "[1]\n"})
+    _to_testing(fa, data, close_tasks)
+    fake = Fake()
+    fake.results["pr merge"] = {"code": 1, "out": "Auto-merging elefant.json\nCONFLICT (add/add): Merge conflict "
+                                                  "in elefant.json\nAutomatic merge failed\n"}
+    fr.tick(fws, human, fake)
+    (r,) = factory_report.stopped(fws, store.load(fws, eid)[1])
+    assert r["code"] == "release-conflict" and r["label"] == "Merge conflict"
+    assert f"the merge of {data} conflicts in elefant.json (add/add): two children changed the same file; this " \
+           "will not go away on Retry; send one child back" == r["text"]
+    assert fr.conflicts("CONFLICT (content): Merge conflict in a/b.txt\nCONFLICT (modify/delete): c.txt deleted "
+                        "in HEAD and modified in x.") == ["a/b.txt (content)",
+                                                         "c.txt deleted in HEAD and modified in x. (modify/delete)"]
+
+
+def test_the_prompts_say_each_file_has_one_maker_and_where_the_verification_file_goes():
+    from orch.core import factory_runner
+    planner = factory_runner.planner_prompt("L-0001")
+    assert "Every file is created by exactly one child" in planner and "make them one child" in planner
+    assert "says that it does not create it" in planner and "never require that file in its own commit" in planner
+    worker = factory_runner.factory_work_prompt("L-0002", None, clone_tmp="/abs/ws/orchestrator/temporary")
+    assert "Do not create a file your ticket says another child creates" in worker
+    assert "outside the repository and never commit it" in worker
+    assert "/abs/ws/orchestrator/temporary/L-0002-verification.md" in worker and "outside this clone" in worker
+
+
+def test_a_later_child_adding_a_file_an_earlier_merge_added_is_stopped_too(fws, fa, fh, human, close_tasks,
+                                                                           remote):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid = _epic(fws, fa, fh, human, asked="A page elefant.html that reads elefant.json", release="merge")
+    data = _child(fws, fa, human, eid, "data", files={"elefant.json": "[1]\n", "elefant.html": "<p>0</p>\n"})
+    _to_testing(fa, data, close_tasks)
+    fake = Fake()
+    fr.tick(fws, human, fake)
+    assert fr.unit_state(fws, eid, "merge", data)["state"] == "proven"
+    page = _child(fws, fa, human, eid, "page", files={"elefant.json": "[2]\n"}, reqs="Uses elefant.json")
+    _to_testing(fa, page, close_tasks)
+    n = len(fake.calls)
+    fr.tick(fws, human, fake)
+    assert len(fake.calls) == n  # the second merge never starts
+    reasons = factory_report.stopped(fws, store.load(fws, eid)[1])
+    assert any(f"{data} and {page} both add elefant.json" in r["text"] for r in reasons), reasons

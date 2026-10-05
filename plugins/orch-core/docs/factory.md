@@ -1114,6 +1114,20 @@ redirects); the nudge depends on Claude Code's current screen markers.
   neither in testing nor done shows as "<child> is idle and still <status>: its agent stopped without finishing"
   (needs you), with its last three lines (escaped, on this machine only), how often it was nudged or that the three
   nudges are used up, and what you can do: type into it on Terminals, or Stop.
+- *Two children adding the same file (the third run).* The data child added `elefant.json` and merged; the page
+  child, which only reads it, made its own `elefant.json` in its own clone (it cannot see a sibling's files), and its
+  merge failed with `CONFLICT (add/add)`. The release failed closed. Now the planner prompt says every file is
+  created by exactly one child: a child that only reads or links to another's file states its agreed path and shape,
+  says it does not create it, and its criteria never require it in its own commit; deliverables that depend on each
+  other become one child. The worker prompt says not to create a file another child creates (a temporary copy for a
+  test stays outside the repository, never committed), and that the Verification file goes outside the clone, at
+  the full workspace path it names. What each child adds (its tip's tree minus its merge base with the recipe's
+  base, `ls-tree` in the runner's release repository) is compared: a path two children add is named on the Ready
+  card ("T-0002 and T-0003 both add elefant.json: the release will conflict"), keeps the epic from closing by
+  itself, and stops the release before any merge ("Release could not start: ... remove it from one child (send it
+  back) and Retry"), also for a child that joins after the other was merged. A merge stage that fails with git's
+  `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths: two
+  children changed the same file, and Retry will not make that go away; send one child back.
 
 ## Release recipe (phase 6)
 

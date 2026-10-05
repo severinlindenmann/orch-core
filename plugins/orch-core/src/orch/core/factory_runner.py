@@ -631,7 +631,11 @@ PLANNER_PROMPT = (
     "Requirements and Acceptance criteria name: each file by its exact name with its extension (such as elephants.html "
     "or elephants.json), each format and each behaviour, and record that list with `orch log {key} -m \"...\"`. Then "
     "create at least one child per deliverable and one deliverable per child, and write that deliverable's exact file "
-    "name into the child's Acceptance criteria. Create no design, spec, mockup or research child unless the epic asks "
+    "name into the child's Acceptance criteria. Every file is created by exactly one child: each child works in its "
+    "own clone and cannot see the others' files, and two children that add the same file conflict when they are "
+    "merged. A child that only reads or links to a file another child creates states in its Requirements the agreed "
+    "path and shape of that file and says that it does not create it, and its Acceptance criteria never require that "
+    "file in its own commit. When two deliverables depend on each other, make them one child. Create no design, spec, mockup or research child unless the epic asks "
     "for a design, and no placeholder child. Split the work into children within those limits, each created with one "
     "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is "
     "xs, s or m, never larger), the Requirements and Acceptance criteria written into files under "
@@ -648,7 +652,9 @@ PLANNER_PROMPT = (
 # orch skills at user scope: the live run's agent then invented `orch work-on`), so it carries the command forms.
 FACTORY_WORK_PROMPT = (
     "You work on {key}, a child of an AI Factory epic. Follow the orch-work-on-ticket skill if you have it; these "
-    "rules come first. " + _PLAIN + "Start with `orch claim {key}` and read it with `orch show {key}`. Add each task "
+    "rules come first. " + _PLAIN + "Do not create a file your ticket says another child creates (its own clone "
+    "makes it; two children adding one file conflict when they are merged); if you need such data to test, build a "
+    "temporary copy outside the repository and never commit it. Start with `orch claim {key}` and read it with `orch show {key}`. Add each task "
     "with `orch task add {key} \"TASK\"`, then for each one run `orch task start {key} TN`, do the work and run "
     "`orch task done {key} TN` with no -m; put notes in `orch log {key} -m \"...\"`. `orch ask` is refused in this "
     "epic: decide within the ticket's text and record why with `orch log`. {commit} When the work is done, prove "
@@ -718,8 +724,9 @@ def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | No
             return None
         part = CLONE_COMMIT.replace("{form}", commit) if commit else CLONE_NO_COMMIT
         # the one path a clone worker needs: where the file it hands orch goes, as a file path, never a folder to enter
-        text = FACTORY_WORK_PROMPT.replace(_TMP, f"in {clone_tmp} (give the Write tool and --file that full path; "
-                                                 "never cd there)")
+        text = FACTORY_WORK_PROMPT.replace(_TMP, f"in {clone_tmp}, outside this clone (give the Write tool and --file "
+                                                 f"that full path, {clone_tmp}/{{key}}-verification.md; never write it "
+                                                 "inside your working folder, never commit it, never cd there)")
         return text.replace("{commit}", part).replace("{key}", key)
     part = COMMIT_HERE.replace("{form}", commit) if commit else NO_COMMIT
     return FACTORY_WORK_PROMPT.replace("{commit}", part).replace("{key}", key)

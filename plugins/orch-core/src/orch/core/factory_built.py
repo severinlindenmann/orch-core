@@ -140,13 +140,14 @@ def built(ws, epic, files, kids) -> dict | None:
     from orch.core import factory_release as fr
     if fr.workspace_repo(ws) is None:
         return None
-    trees, dirty, unknown, subs = [], [], [], []
+    trees, dirty, unknown, subs, tips = [], [], [], [], {}
     for _, t in kids:
         (sha, paths, why), status = _cached(ws, t)
         if paths is None:
             unknown.append({"id": t.id, "why": why})
         else:
             trees.append(paths)
+            tips[t.id] = sha
         if status is not None and not status["ok"]:
             unknown.append({"id": t.id, "why": "the state of its clone could not be read"})
         elif status:
@@ -155,7 +156,24 @@ def built(ws, epic, files, kids) -> dict | None:
             if status["submodules"]:
                 subs.append({"id": t.id, "paths": status["submodules"]})
     return {"missing": missing(files, trees) if files and not unknown else [], "dirty": dirty, "unknown": unknown,
-            "subs": subs}
+            "subs": subs, "double": _ready_doubles(ws, tips)}
+
+
+def _ready_doubles(ws, tips: dict) -> list[dict]:
+    """The Ready card's paths two children add, against the recipe's base (none without a recipe: nothing merges)."""
+    rec = _git_rec(ws)
+    if len(tips) < 2 or not rec:
+        return []
+    base = _base_sha(ws, rec)
+    if base is None:
+        return []
+    per = {}
+    for k, tip in tips.items():
+        got = adds(ws, rec, tip, base)
+        if got is None:
+            return []
+        per[k] = got
+    return double_adds(per)
 
 
 def epic_files(epic) -> list[str]:
@@ -221,6 +239,20 @@ def close_blockers(ws, epic, d, units: list[str], testing: list[str]) -> list[st
         miss = missing(files, trees) if not out and not later else []
         if miss:
             out.append(missing_text(miss, "any merged commit" if d.get("release") else "any child's commit"))
+    rec = _git_rec(ws)
+    if rec and len(units) > 1:  # two children adding the same path: their merges conflict
+        base = _base_sha(ws, rec)
+        per = {}
+        for k in units:
+            us = fr.unit_state(ws, epic.id, "merge", k)
+            t = fr._ticket(ws, k)
+            tip = us["sha"] if fr.own_merge(us) else (child_tree(ws, t)[0] if t is not None else None)
+            got = adds(ws, rec, tip, us["base_sha"] if fr.own_merge(us) else base) if tip and base else None
+            if got is not None:
+                per[k] = got
+        dups = double_adds(per)
+        if dups:
+            out.append(double_text(dups) + ": the release will conflict")
     for k in testing:
         st = uncommitted(ws, k)
         if st is None:
@@ -233,3 +265,66 @@ def close_blockers(ws, epic, d, units: list[str], testing: list[str]) -> list[st
         if st["submodules"]:
             out.append(f"{k}'s clone holds a submodule orch does not inspect ({', '.join(st['submodules'][:5])})")
     return out
+
+
+# -- the same file added by two children: their merges conflict ------------------------------------------------------
+# Each child works in its own clone and cannot see a sibling's files, so two children can each add the same path (the
+# third live run: the page child made its own elefant.json and its merge failed with an add/add conflict). What each
+# child adds is its tip's tree minus the tree of its merge base with the base (`git merge-base`): what it brought in,
+# whatever the base became since.
+
+def adds(ws, rec: dict, tip: str, base: str) -> set[str] | None:
+    """The paths commit `tip` adds against its merge base with `base`, or None when git cannot tell."""
+    from orch.core import factory_release as fr
+    r = fr._git(ws, rec, "merge-base", tip, base)
+    mb = (r.get("out") or "").strip()
+    if r.get("code") != 0 or not fr._SHA.fullmatch(mb):
+        return None
+    now, then = tree(ws, rec, tip), tree(ws, rec, mb)
+    if now is None or then is None:
+        return None
+    return set(now) - set(then)
+
+
+def double_adds(per_child: dict) -> list[dict]:
+    """[{path, children}] for each path more than one child adds ({child: set of paths})."""
+    by: dict[str, list] = {}
+    for child, paths in sorted(per_child.items()):
+        for p in paths:
+            by.setdefault(p, []).append(child)
+    return [{"path": p, "children": kids} for p, kids in sorted(by.items()) if len(kids) > 1]
+
+
+def double_text(dups: list[dict]) -> str:
+    """'T-0002 and T-0003 both add elefant.json; ...'"""
+    return "; ".join(f"{' and '.join(d['children'])} both add {d['path']}" for d in dups[:10])
+
+
+def _base_sha(ws, rec: dict) -> str | None:
+    from orch.core import factory_release as fr
+    try:
+        fr.ensure_repo(ws, rec)
+        return fr._rev(ws, rec, f"refs/remotes/release/{rec['base']}") or fr.fetch_base(ws, rec)
+    except fr.ReleaseError:
+        return None
+
+
+def release_doubles(ws, rec: dict, epic, kids: list[str], found: dict) -> tuple[list[dict], str | None]:
+    """(paths two children add, why it cannot tell) for the release, before any merge: each child not yet merged by
+    its classified tip against the base it was classified against, each merged one by its recorded commit against
+    the base it was merged onto."""
+    from orch.core import factory_release as fr
+    per = {}
+    for k in kids:
+        if k in found:
+            tip, base = found[k][1], found[k][3]
+        else:
+            us = fr.unit_state(ws, epic.id, "merge", k)
+            if not fr.own_merge(us):
+                continue
+            tip, base = us["sha"], us["base_sha"]
+        got = adds(ws, rec, tip, base)
+        if got is None:
+            return [], f"what {k} adds could not be listed"
+        per[k] = got
+    return double_adds(per), None

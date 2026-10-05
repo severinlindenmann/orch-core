@@ -973,6 +973,14 @@ MAX_COMMAND = 100_000  # characters of one bound session's command orch reads; a
 _ODD_TEXT = re.compile("[\x00\r\x0b\x0c\x85  ﻿]")
 
 
+# What every denial of a factory session's command says: a card is not something to wait for (the live run of 5
+# October: an agent sat idle "awaiting approval" for requests answered long before). The runner's nudge names the
+# answer; `orch permit show` reads it. Fixed text, ids from orch.
+_NO_WAIT = ("Do not wait for approval: a person answers cards separately and you are not notified here. Request {rid} "
+            "is open for it (do not file another request). Run only plain commands from your instructions: go on "
+            "with the next step, or end your turn with orch log {key} -m saying exactly what is missing. The runner "
+            "tells you the answer; `orch permit show {rid}` shows it. Do not retry variants of this command.")
+
 # `cd <folder> && orch ...` (or `;`): a worker going to the workspace first. orch acts on the workspace from anywhere a
 # session runs, so the denial says to drop the cd instead of asking for a variant (the live run of 5 October).
 _CD_ORCH = re.compile(r"\s*(?:cd|pushd)\s+\S+(?:\s+\S+)*?\s*(?:&&|;)\s*(?:\S*/)?orch(?:\s|$)")
@@ -1053,13 +1061,12 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
             return _decision("deny", f"{hint}: orch already acts on the workspace's tickets (ORCH_HOME is set for "
                                      f"you). Run just the orch command, as one plain command. Request {r['id']} "
                                      "stays open for the human; do not file another one.")
-        return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory. "
-                                 f"Request {r['id']} is open: the human can add it to the Dark profile. Do other work "
-                                 f"or run `orch wait {ticket.id}`. Do not retry variants of this command and do not "
-                                 f"file another request for it.")
+        return _decision("deny", f"This command was not run: it is not in the Dark profile of this checkout. "
+                                 + _NO_WAIT.format(rid=r["id"], key=ticket.id)
+                                 + " A person can add it to the Dark profile or grant it.")
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
     if r.get("allowed"):  # the Dark switch came on since the check above, and the profile lists it
         return _decision("allow")
     return _decision("deny", (f"{hint}: orch already acts on the workspace's tickets. " if hint else "")
-                     + f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
-                       f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")
+                     + f"This command was not run (waiting for permission {r['id']}). "
+                     + _NO_WAIT.format(rid=r["id"], key=ticket.id))

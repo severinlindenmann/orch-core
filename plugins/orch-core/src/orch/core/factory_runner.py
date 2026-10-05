@@ -612,7 +612,10 @@ _PLAIN = (
     "python3 -m json.tool on it. Never run mkdir, printf or echo to make a file or folder: the Write tool makes the "
     "folder it needs. File `orch permit request` only for "
     "a command that was actually denied with a request id P-n in the denial message, never for one that was not "
-    "denied, and never retry variants of a denied command. Never run `orch instructions sync` or `orch setup`. "
+    "denied, and never retry variants of a denied command. If a command is denied, do not wait for approval: run "
+    "the next plain step from your instructions, or end your turn with `orch log {key} -m \"...\"` stating exactly "
+    "what is missing; the runner tells you when a person answered, and `orch permit show P-n` shows an answer. "
+    "Never run `orch instructions sync` or `orch setup`. "
 )
 
 # orch's evidence format (orch.core.evidence): criteria are top-level checkbox lines, evidence a top-level Verification
@@ -657,8 +660,7 @@ FACTORY_WORK_PROMPT = (
     "section). Leave the Acceptance criteria as they are: a tick proves nothing, and a criterion counts as "
     "proven only by its Verification line. Read `orch show {key}` to check that every criterion has its line, then "
     "run `orch move {key} testing` and stop; if the move warns that a criterion has no evidence, add its line, set "
-    "Verification again and stop. If a command was denied with a request id, do other work or wait for the human "
-    "with `orch wait {key}`."
+    "Verification again and stop."
 )
 # {commit}: a session in a worktree of its own commits there; one in the shared checkout never commits (its branch may
 # be the default branch, and the baseline cannot create one). The permission hook refuses `git commit` on the default
@@ -1089,6 +1091,54 @@ NUDGES = {
     "planner": "The human answered your permission requests. Retry the blocked commands, then finish splitting the "
                "epic and approving its children.",
 }
+# After the human answered a card this session's own denial filed, the nudge names each answer instead (fixed template,
+# request ids validated by their own shape, nothing an agent wrote): the live run's agent waited for approvals that
+# had long been answered, because "the human answered your permission requests" did not say what came of them.
+_RID = re.compile(r"P-[0-9A-F]{8}")
+OUTCOME = ("A person answered your permission request: {answers}. Retry a granted command now, exactly as before; "
+           "for a denied one do the work without it, or end your turn with orch log saying what is missing.")
+_ANSWER = r"P-[0-9A-F]{8} (?:granted|denied)"
+_OUTCOME_RE = re.compile(re.escape(OUTCOME).replace(re.escape("{answers}"), _ANSWER + r"(?:, " + _ANSWER + r"){0,4}"))
+MAX_OUTCOMES = 5
+
+
+def outcome_nudge(outcomes) -> str | None:
+    """The outcome nudge for [(request id, "granted"|"denied")], or None (nothing to say, or an id of another shape)."""
+    outcomes = list(outcomes)[:MAX_OUTCOMES]
+    if not outcomes or not all(_RID.fullmatch(str(r)) and how in ("granted", "denied") for r, how in outcomes):
+        return None
+    return OUTCOME.replace("{answers}", ", ".join(f"{r} {how}" for r, how in outcomes))
+
+
+def nudge_ok(text) -> bool:
+    """Whether `text` is one of the runner's own nudges: a fixed line, or the outcome template with valid ids."""
+    return isinstance(text, str) and (text in NUDGES.values() or bool(_OUTCOME_RE.fullmatch(text)))
+
+
+def outcomes(ws, b: dict, signed=None) -> list[tuple[str, str]]:
+    """The answers the human signed, since session `b` started, to the requests filed for its ticket: [(id,
+    "granted"|"denied")], newest first. From the event log and the signed ledger only."""
+    from orch import clock
+    signed = ledger.entries(ws) if signed is None else signed
+    dec = permits.decisions(ws, signed)
+    try:
+        start = clock.parse_stamp(str(b.get("at")))
+    except (ValueError, TypeError):
+        return []
+    out = []
+    for r in permits.requests(ws).values():
+        e = dec.get((r["id"], r["sha"]))
+        if e is None or str(r["ticket"]).upper() != str(b.get("child")).upper():
+            continue
+        try:
+            if clock.parse_stamp(str(e.get("at"))) < start:
+                continue
+        except (ValueError, TypeError):
+            continue
+        out.append((str(e.get("at")), r["id"], "granted" if e.get("kind") == "grant" else "denied"))
+    return [(rid, how) for _, rid, how in sorted(out, reverse=True)][:MAX_OUTCOMES]
+
+
 MAX_NUDGES = 3  # per session
 NUDGE_GAP = 300  # seconds between two nudges of one session
 IDLE_SECONDS = 45  # the pane must show the same idle prompt this long
@@ -1241,10 +1291,11 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         only_denied = (now_answers.get("deny", 0) > old.get("deny", 0)
                        and all(now_answers.get(k, 0) == old.get(k, 0) for k in ("grant", "profile")))
         kind = "planner" if fs.is_planner(b) else "denied" if only_denied else "answered"
+        text = outcome_nudge(outcomes(ws, b)) or NUDGES[kind]  # the answers themselves, when they were to its asks
         # counted before typing: a failure to type is not retried in a loop
         fs.write_nudge_record(actor, {**rec, "answers": now_answers, "count": rec["count"] + 1,
                                       "last": clock.stamp_s(), "pane": "", "pane_at": "", "idle": ""})
-        if type_(b["name"], NUDGES[kind]) is True:
+        if type_(b["name"], text) is True:
             lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
         else:  # the launcher typed nothing, or cleared the input line again and pressed nothing: an attempt
             lines.append(f"{b['name']}: nudge not sent, the pane changed while typing ({rec['count'] + 1} of "

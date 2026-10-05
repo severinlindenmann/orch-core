@@ -312,8 +312,8 @@ def add(ws, actor, kind: str, value) -> dict:
 BASELINE = ("orch show", "orch list", "orch search", "orch next", "orch state", "orch check", "orch new",
             "orch section set", "orch task add", "orch task start", "orch task done", "orch task skip",
             "orch task block", "orch task list", "orch claim", "orch release", "orch log", "orch link", "orch move",
-            "orch wait", "orch permit request", "orch permit list", "orch artifact add", "orch epic show",
-            "orch epic auto-approve")
+            "orch wait", "orch permit request", "orch permit list", "orch permit show", "orch artifact add",
+            "orch epic show", "orch epic auto-approve")
 # The git a worker needs to commit its own work, read-only verbs and add/commit only: no push, fetch, reset, clean,
 # checkout, switch, rebase, config or `-c` (refusal() refuses those as prefixes anyway). `git branch` is never a
 # prefix rule, so its read-only form is an exact one.

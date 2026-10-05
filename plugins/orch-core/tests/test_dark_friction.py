@@ -208,9 +208,13 @@ def test_the_dark_denial_names_the_request_and_says_not_to_retry(dws, dark_child
     out = permits.hook_decision(dws, _payload("make deploy"))
     msg = out["hookSpecificOutput"]["decision"]["message"]
     (r,) = permits.open_requests(dws)
-    for words in ("not in the Dark profile", f"Request {r['id']} is open", "the human can add it",
-                  f"orch wait {cid}", "Do not retry variants", "do not file another request"):
+    # the third live run: an agent waited for approvals answered long before; a card is not a thing to wait for
+    for words in ("This command was not run", "not in the Dark profile", f"Request {r['id']} is open",
+                  "can add it", "Do not wait for approval", "you are not notified here",
+                  f"end your turn with orch log {cid} -m", f"`orch permit show {r['id']}`", "Do not retry variants",
+                  "do not file another request"):
         assert words in msg, words
+    assert "orch wait" not in msg
 
 
 # -- profile hygiene --------------------------------------------------------------------------------------------------

@@ -187,8 +187,8 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
-           "trust": ("you", 0, "Trust question"), "finished": ("ok", 3, "Finished")}
-NEEDS_YOU = ("waiting", "stopped", "budget", "trust")
+           "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished")}
+NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled")
 
 
 def span(seconds) -> str:
@@ -307,6 +307,9 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "closing", "It closes by itself when everything is proven"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
         state, headline = "waiting", "Your answer is needed on the cards below"
+    elif stalled := _stalled(running, kids):
+        state, headline = "stalled", "; ".join(f"{s['child']} is idle and still {s['status']}: its agent stopped "
+                                               "without finishing" for s in stalled)
     elif not factory_sessions.armed(ws, d["id"]):
         state, headline = "unarmed", ("The dashboard's start did not arm it (for example, it was approved in a "
                                       "terminal)")
@@ -339,7 +342,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
-            "closing": "todo", "held": "wait", "trust": "wait"}.get(state, "stop")
+            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
@@ -351,7 +354,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
             "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
-            "clones": clones,
+            "clones": clones, "stalled": stalled if state == "stalled" else [],
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
@@ -407,6 +410,34 @@ def _unreleased(ws, epic):
         return factory_release.unreleased(ws, epic)
     except Exception:
         return None  # Ops.close decides again
+
+
+STALL_SECONDS = 600  # idle this long at its prompt, not nudged, and not finished: its agent stopped
+
+
+def _stalled(running, kids) -> list[dict]:
+    """The child sessions whose agent stopped without finishing: idle at its prompt (as the runner last read its
+    pane) for STALL_SECONDS, or for IDLE_SECONDS after a nudge, while its ticket is neither in testing nor done (the
+    live run: an agent sat "awaiting approval" for 13 minutes, nudged between, while the view said Working).
+    [{child, status, name, nudges, spent}]; unknown is never stalled."""
+    from orch.core import factory_runner, factory_sessions
+    status = {t.id: t.status for _, t in kids or []}
+    out = []
+    for b in running:
+        if factory_sessions.is_planner(b) or status.get(b["child"]) in (None, "testing", "done"):
+            continue
+        try:
+            rec = factory_sessions.nudge_record(b["session"])
+            since = factory_sessions.idle_since(b["session"])
+            if rec is None or since is None:
+                continue
+            idle = (clock.now() - since).total_seconds()
+        except Exception:
+            continue
+        if idle >= STALL_SECONDS or (rec["count"] >= 1 and idle >= factory_runner.IDLE_SECONDS):
+            out.append({"child": b["child"], "status": status[b["child"]], "name": b["name"],
+                        "nudges": rec["count"], "spent": rec["count"] >= factory_runner.MAX_NUDGES})
+    return out
 
 
 def _all_idle(running) -> bool:

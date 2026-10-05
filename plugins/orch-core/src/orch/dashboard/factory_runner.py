@@ -179,7 +179,7 @@ class TmuxLauncher:
         the text sits on the input line itself and nothing Enter would answer instead is on screen (typed_ok);
         otherwise clear the input line (C-u) and press nothing more. True when Enter was pressed. Nothing else is
         ever typed."""
-        if text not in factory_runner.NUDGES.values():
+        if not factory_runner.nudge_ok(text):
             raise UsageError("the runner types only its built-in nudges")
         if factory_runner.input_line(self.capture(name)) != "":
             return False

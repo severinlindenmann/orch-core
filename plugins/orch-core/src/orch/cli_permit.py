@@ -54,6 +54,29 @@ def list_(json_out: JsonOpt = False) -> None:
     cli._out({"requests": reqs, "grants": grants, "cards": cards}, json_out, "\n".join(lines))
 
 
+@permit_app.command("show")
+def show(rid: str, json_out: JsonOpt = False) -> None:
+    """What came of one permission request: open (no answer yet), granted (run the command again now) or denied. For
+    agents too: a plain read-only command, so a session can look instead of waiting."""
+    from orch.core import permits
+    from orch.errors import NotFoundError
+    cli, ws = _ctx()
+    r = permits.requests(ws).get(rid.upper())
+    if r is None:
+        raise NotFoundError(f"no permission request {rid}")
+    e = permits.decisions(ws).get((r["id"], r["sha"]))
+    if e is not None:
+        state = "granted" if e.get("kind") == "grant" else "denied"
+    else:
+        state = "open" if any(o["id"] == r["id"] for o in permits.open_requests(ws)) else "allowed by the Dark profile"
+    say = {"granted": "granted: run the command again now, exactly as before",
+           "denied": "denied: do the work without it, or end your turn with orch log saying what is missing",
+           "open": "open: no answer yet; do not wait for it, go on with other steps or end your turn",
+           "allowed by the Dark profile": "allowed by the Dark profile now: run the command again"}[state]
+    cli._out({"id": r["id"], "ticket": r["ticket"], "state": state, "command": r["command"]}, json_out,
+             f"{r['id']} ({r['ticket']}): {say}")
+
+
 def _show_request(ws, rid: str, verb: str) -> dict:
     """Print what the answer binds: every character outside printable ASCII escaped, so nothing hides."""
     from orch.core import permits

@@ -1102,6 +1102,18 @@ redirects); the nudge depends on Claude Code's current screen markers.
   without cd", on the card too. A test reads every orch command the built-in prompts, the orch skills and the
   session-start hook name, from their text, and checks that each agent one is a single plain command the baseline
   runs.
+- *An agent waiting for approvals (the third run).* A worker sat "awaiting approval for several permissions" whose
+  cards had long been answered, the runner's fixed nudge did not move it, its ticket stayed in progress, and the
+  run view said "Working" for 13 minutes. Now a denial says plainly that the command was not run and that a card is
+  not a thing to wait for (a person answers cards separately and the session is not notified): go on with the next
+  plain step, or end the turn with `orch log <id> -m` saying what is missing; the request is filed already, and
+  `orch permit show <id>` (read-only, in the baseline) says whether it is open, granted or denied. The worker prompt
+  says the same. After a person answers a card the session itself filed, the nudge names each answer ("A person
+  answered your permission request: P-... granted. Retry a granted command now ..."; a fixed template, request ids
+  checked by their shape). A child session idle at its prompt for 10 minutes, or after a nudge, whose ticket is
+  neither in testing nor done shows as "<child> is idle and still <status>: its agent stopped without finishing"
+  (needs you), with its last three lines (escaped, on this machine only), how often it was nudged or that the three
+  nudges are used up, and what you can do: type into it on Terminals, or Stop.
 
 ## Release recipe (phase 6)
 

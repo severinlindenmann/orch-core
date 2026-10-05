@@ -1349,15 +1349,35 @@ def _ledger_path_closed(raw: str, cwd=None) -> bool:
         return True
 
 
-def _filter_could_reach_ledger(pattern: str) -> bool:
-    """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`)."""
+_HEX32 = "0123456789abcdef" * 2
+# Sample paths, below the config dir, of every record kind in the permits folder: a filter with several components
+# is judged against these whole paths, so `*/bridge/*/registry.json` from the config dir is seen to reach one.
+_PERMIT_SAMPLES = tuple("permits/" + s for s in (
+    "requests/P-0123ABCD.json", "used/0123456789abcdef", "sessions/x.json", "armed/x", "runs/x", "children/x",
+    "factory-command.json", "tmux/x", f"bridge/{_HEX32}/registry.json", f"bridge/{_HEX32}/host-key.pem",
+    f"bridge/{_HEX32}/audit.jsonl", f"bridge/{_HEX32}/requests/{_HEX32}.json", f"bridge/{_HEX32}/seq/{_HEX32}.json"))
+
+
+def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
+    """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`) or the
+    permit records beside them (the AI Factory's and the remote bridge's). `root` is where the filter is applied."""
     import fnmatch
+    from orch.core import ledger
     if (not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower()
             or "permits" in pattern.lower()):
         return True
-    name = pattern.rsplit("/", 1)[-1]
-    # the ledger files and the shapes of the permit records (a request body, a once-use marker)
-    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "P-0123ABCD.json", "0123456789abcdef"))
+    if "/" in pattern.strip("/"):
+        try:
+            rel = Path(ledger.base_dir()).resolve().relative_to(Path(root).resolve()).as_posix() if root else "."
+        except (OSError, RuntimeError, ValueError):
+            rel = "."
+        pfx = "" if rel == "." else rel + "/"
+        if any(fnmatch.fnmatch((pfx + s).lower(), pattern.strip("/").lower()) for s in _PERMIT_SAMPLES):
+            return True
+    name = pattern.rsplit("/", 1)[-1].lower()
+    # the ledger files and the shapes of the permit records (a request body, a once-use marker, the bridge's files)
+    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "p-0123abcd.json", "0123456789abcdef",
+                                                   "registry.json", "host-key.pem", "audit.jsonl", f"{_HEX32}.json"))
 
 
 def _bash_reaches_ledger(cmd: str) -> bool:
@@ -1366,6 +1386,15 @@ def _bash_reaches_ledger(cmd: str) -> bool:
         return True
     base = str(ledger.base_dir())
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
+
+
+def _bash_joins_permits(cmd: str) -> bool:
+    """The config dir named anywhere together with the permits folder anywhere: an interpreter can join the two
+    (a path built from separate words), which no pattern over a written path sees. Best effort: text that spells
+    neither word plainly is beyond any text guard."""
+    from orch.core import ledger
+    return bool((str(ledger.base_dir()) in cmd or re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", cmd))
+                and re.search(r"(?i)\bpermits\b", cmd))
 
 
 def evaluate(ws, payload: dict) -> Decision:
@@ -1385,8 +1414,15 @@ def evaluate(ws, payload: dict) -> Decision:
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")
         type_ = str(tool_input.get("type") or "") if tool == "Grep" else ""
         safe_type = bool(type_) and type_ in _SAFE_RG_TYPES and not tool_input.get("glob")
+        if tool == "Glob" and os.path.isabs(os.path.expanduser(filt)):
+            # an absolute pattern: judged from the plain directory it starts with, on the rest of the pattern
+            full = os.path.expanduser(filt)
+            head = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+            start = head if head.endswith("/") else head.rsplit("/", 1)[0] + "/"
+            root = _resolve_root(start) or root
+            filt = full[len(start):] or "*"
         if (root is not None and _is_config_dir_or_ancestor(root) and not safe_type
-                and _filter_could_reach_ledger(filt)):
+                and _filter_could_reach_ledger(filt, root)):
             return Decision(False, _LEDGER_DENIED)
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and _pairing_key_path(
             str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")):
@@ -1404,7 +1440,9 @@ def evaluate(ws, payload: dict) -> Decision:
     if tool == "Read" and _reaches_config_dir_recursively(tool_input.get("file_path"), None):
         return Decision(False, _CONFIG_SECRETS_DENIED)  # Read given a directory: some clients list it
     if tool == "Bash":
-        return _bash(ws, str(tool_input.get("command") or ""), cwd)
+        cmd = str(tool_input.get("command") or "")
+        d = _bash(ws, cmd, cwd)
+        return Decision(False, _LEDGER_DENIED) if d.allow and _bash_joins_permits(cmd) else d
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW

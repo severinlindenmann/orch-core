@@ -11,6 +11,10 @@ Everything leads with whose move it is, as orch-core says it (`move` in `orch sh
 
 It only reads: `orch list --mine --json` with the session's id and `orch show <id> --json` for each ticket. It refreshes after every `orch` command the agent runs and every 20 seconds, one refresh at a time, without holding up the tool call. A refresh in which any read fails keeps the last complete state and says so in the pane. It never runs a command that writes or that only a human may run; it shows the `orch answer` command, it does not run it.
 
+**What it shows.** `orch list --mine` lists only the claims held by this session's own id, so a fresh `claude` shows nothing until the agent runs `orch claim`. Epics cannot be claimed: an epic appears only as "in epic DEMO-0031" on its claimed children, without progress of its own (open it in Mission Control for that). In a folder without an orch workspace, `/orch` shows a short toast instead of a pane, and the refresh slows to every 5 minutes.
+
+The status line is drawn by Claude Code, which currently styles every plugin status like a warning (`⚠ orch-session: ...`) and ignores plugin colours there. That is the host's behaviour, so the line is kept short.
+
 The plugin has no rules of its own for whose move it is. An orch that predates `move` (orch-core schema below 1.4.0) shows "Update orch-core" on each ticket and an amber note in the pane, never a guess.
 
 ## Install

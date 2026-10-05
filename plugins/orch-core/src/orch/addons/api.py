@@ -13,6 +13,9 @@ the addon object may define (by capability):
                declared in the manifest; an action with accepts_file gets the human's file as act(..., upload=Upload),
                a private copy that core deletes once act returns. A FileResult (a file inside ctx.state_dir) is moved
                out and served once; a Reveal is shown to the human once and never logged.
+    launch     launch(req: LaunchRequest, ctx: AddonContext) -> LaunchPlan | None, called when Start agent previews or
+               starts a session (read-only: no writes, no commands); optional launched(req, routing, ctx, session),
+               called after core started it, for one-shot state. Core validates the plan and applies it; see ADDONS.md
     events     on_event(event, outbox) (enqueue only); drain(ctx: ProviderContext, items) -> list of acked ids
     (remote)   with manifest remote_humans: true (needs decisions): pairing_target(view) -> PairingTarget | None
                (read-only, runs while the page renders); ctx.remote_decision(decision) hands a phone's signed
@@ -207,6 +210,69 @@ class PendingDecision:
                              f"and its body at most {MAX_DECISION_BODY}")
         if len(self.choices) > MAX_DECISION_CHOICES or any(len(str(label)) > MAX_CHOICE_LABEL for _, label in self.choices):
             raise ValueError(f"at most {MAX_DECISION_CHOICES} choices, each label at most {MAX_CHOICE_LABEL} characters")
+
+
+_MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]:/-]{0,63}")
+_ENV_NAME = re.compile(r"(?:ORCH|CLAUDE_CODE)_[A-Z0-9_]{1,60}")
+_ENV_VALUE = re.compile(r"[A-Za-z0-9._\[\]:/+@=-]{0,200}")
+_CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")  # every control character but a newline
+MAX_LAUNCH_NOTE = 400
+MAX_LAUNCH_LINE = 200
+
+
+@dataclass(frozen=True)
+class LaunchRequest:
+    """What a Start agent preview or launch is about: the ticket id, the mode (refine | work | fix-checks |
+    continue) and the harness (claude | copilot | codex | a name from launch.json)."""
+    ticket: str
+    mode: str
+    harness: str
+
+
+@dataclass(frozen=True)
+class LaunchPlan:
+    """What an addon with the `launch` capability asks of a session start. Core checks every field and applies it;
+    nothing here can add a flag, a program or a shell fragment.
+
+        model     a model name for the harness's model argument (`--model <model>` for claude); None leaves the
+                  harness default. Letters, digits and . _ [ ] : / - only, at most 64 characters.
+        env       variables set for the launched process only (never the dashboard's): names ORCH_* or
+                  CLAUDE_CODE_*, values of letters, digits and . _ [ ] : / + @ = - (at most 200 characters)
+        note      one sentence appended to the prompt as its own paragraph (at most 400 characters, no control
+                  characters, never starting with "-"); never ticket text
+        label     short text recorded with the session and shown on its Terminals tile ("Started on opus")
+        reason    one line for the Start agent box: why this plan (what the human sees before starting)
+        warnings  sentences shown in the Start agent box for this plan
+    """
+    model: str | None = None
+    env: dict = field(default_factory=dict)
+    note: str = ""
+    label: str = ""
+    reason: str = ""
+    warnings: tuple = ()
+
+    def __post_init__(self):
+        if self.model is not None and not (isinstance(self.model, str) and _MODEL_NAME.fullmatch(self.model)):
+            raise ValueError("model is not a model name (letters, digits and . _ [ ] : / - , at most 64 characters)")
+        if not isinstance(self.env, dict):
+            raise ValueError("env must be a dict of variable name to value")
+        for k, v in self.env.items():
+            if not (isinstance(k, str) and _ENV_NAME.fullmatch(k)):
+                raise ValueError(f"env name {k!r} must be ORCH_* or CLAUDE_CODE_*, upper case")
+            if not (isinstance(v, str) and _ENV_VALUE.fullmatch(v)):
+                raise ValueError(f"env {k} has a value with characters a launch may not pass")
+        if not isinstance(self.note, str) or len(self.note) > MAX_LAUNCH_NOTE or _CONTROL.search(self.note) \
+                or self.note.strip().startswith("-"):
+            raise ValueError(f"note is one short text (at most {MAX_LAUNCH_NOTE} characters), no control characters, "
+                             "not starting with '-'")
+        for name in ("label", "reason"):
+            v = getattr(self, name)
+            if not isinstance(v, str) or len(v) > MAX_LAUNCH_LINE or "\n" in v or _CONTROL.search(v):
+                raise ValueError(f"{name} is one line of at most {MAX_LAUNCH_LINE} characters")
+        if not isinstance(self.warnings, (tuple, list)) or not all(
+                isinstance(w, str) and len(w) <= 400 and "\n" not in w for w in self.warnings):
+            raise ValueError("warnings is a list of one-line sentences")
+        object.__setattr__(self, "warnings", tuple(self.warnings))
 
 
 INTENT_KINDS = ("answer", "approve", "request_changes", "verdict", "move", "new", "close", "reopen", "import", "none")

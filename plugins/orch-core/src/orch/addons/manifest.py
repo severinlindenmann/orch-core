@@ -19,7 +19,7 @@ _ENV = re.compile(r"[A-Z_][A-Z0-9_]*")
 _KEY = re.compile(r"[a-z][a-z0-9_]*")
 _TYPE = re.compile(r"\.[a-z0-9]{1,10}|[a-z]+/[a-z0-9.+-]+")  # an upload type: ".pdf" or "image/png"
 MAX_UPLOAD_BYTES = 209_715_200  # 200 MiB, the hard cap for any accepts_file action
-CAPABILITIES = frozenset({"provider", "page", "panel", "decisions", "settings", "events"})
+CAPABILITIES = frozenset({"provider", "page", "panel", "decisions", "settings", "events", "launch"})
 SLOT_NAMES = frozenset({"today.summary", "today.from_addons", "ticket.code", "ticket.sync", "ticket.external",
                         "ticket.pages", "board.external", "workspace.settings", "guide.section"})
 FIELD_TYPES = frozenset({"text", "select", "bool", "map"})

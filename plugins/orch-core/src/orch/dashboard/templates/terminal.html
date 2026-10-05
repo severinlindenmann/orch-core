@@ -87,6 +87,7 @@
   </section>
   <section>
     <h2>Session</h2>
+    {% if started %}<p class="term-row"><span class="muted">Started on</span><span>{{ started }}</span></p>{% endif %}
     <p class="term-row"><span class="muted">Model</span><span>{{ info.model or "—" }}{% for m, n in info.models[1:] %} · {{ m }}{% endfor %}</span></p>
     <p class="term-row"><span class="muted">Context now</span><span>{{ compact(info.context) }} tokens</span></p>
     {% if info.cache %}<p class="term-row"><span class="muted">Prompt cache</span><span>{{ "warm" if info.cache.warm else "cold: the next prompt writes the context again" }} ({{ info.cache.ttl // 60 }}m lifetime)</span></p>{% endif %}

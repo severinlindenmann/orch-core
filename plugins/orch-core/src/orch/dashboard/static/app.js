@@ -1049,6 +1049,27 @@
       const button = form.querySelector('[data-copy-of="' + what + '"]');
       if (button) button.dataset.copy = option.dataset[what];
     });
+    // model routing (an addon with a launch plan): the reason line and warnings of the picked combination
+    const route = form.querySelector("[data-route-text]");
+    if (route) {
+      route.hidden = !option.dataset.route;
+      route.replaceChildren();
+      const b = document.createElement("b");
+      b.textContent = "Model";
+      route.append(b, " \u00b7 " + option.dataset.route);
+    }
+    const warns = form.querySelector("[data-route-warnings]");
+    if (warns) {
+      warns.replaceChildren(...(option.dataset.warnings || "").split("\n").filter(Boolean).map((w) => {
+        const p = document.createElement("p");
+        p.className = "sa-note";
+        const chip = document.createElement("span");
+        chip.className = "chip chip-warn";
+        chip.textContent = "Warning: " + w;
+        p.append(chip);
+        return p;
+      }));
+    }
   });
 
   // ---------- Per-page setup, run on load and after a partial page swap ----------

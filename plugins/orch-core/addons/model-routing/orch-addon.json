@@ -1,0 +1,27 @@
+{
+  "name": "model-routing",
+  "title": "Model routing",
+  "version": "0.1.0",
+  "requires_api": "2",
+  "kind": "in-process",
+  "description": "Start each agent session on a model chosen by its Start agent mode, set a subagent model, and offer one tier up after a task failed its verify twice.",
+  "capabilities": ["provider", "panel", "decisions", "settings", "launch"],
+  "slots": ["workspace.settings"],
+  "binaries": [],
+  "env": [],
+  "entry": "model_routing:create",
+  "ticket_options": [
+    {"id": "strong_next", "label": "Next start on the Strong model", "help": "Applies to the next session you start on this ticket, then turns itself off. A running session keeps its model.", "default": false}
+  ],
+  "settings_schema": [
+    {"key": "tier_light", "label": "Light model (optional): a Claude Code model name, e.g. haiku", "type": "text", "default": ""},
+    {"key": "tier_standard", "label": "Standard model: a Claude Code model name, e.g. sonnet", "type": "text", "default": ""},
+    {"key": "tier_strong", "label": "Strong model: a Claude Code model name, e.g. opus", "type": "text", "default": ""},
+    {"key": "mode_refine", "label": "Tier for Refine", "type": "select", "options": ["none", "light", "standard", "strong"], "default": "none"},
+    {"key": "mode_work", "label": "Tier for Work on ticket (a Standard model of opusplan plans on Opus, builds on Sonnet)", "type": "select", "options": ["none", "light", "standard", "strong"], "default": "none"},
+    {"key": "mode_fix_checks", "label": "Tier for Fix failing checks", "type": "select", "options": ["none", "light", "standard", "strong"], "default": "none"},
+    {"key": "mode_continue", "label": "Tier for Continue after feedback (same: the tier of the last start on the ticket)", "type": "select", "options": ["none", "same", "light", "standard", "strong"], "default": "same"},
+    {"key": "subagent_model", "label": "Subagent model for every session (CLAUDE_CODE_SUBAGENT_MODEL), e.g. haiku", "type": "text", "default": ""}
+  ],
+  "actions": []
+}

@@ -166,7 +166,7 @@ def run_addon_contract(folder, *, runner=None, warnings: list[str] | None = None
             if getattr(obj, hook, None) is not None:
                 problems.append(f"uses MC2-1 hook {hook}, which API 2 does not support")
         needs = {"page": ("widgets",), "panel": ("widgets",), "decisions": ("decisions", "resolve"),
-                 "events": ("on_event", "drain")}
+                 "events": ("on_event", "drain"), "launch": ("launch",)}
         for cap, methods in needs.items():
             if m.has(cap):
                 problems.extend(f"capability {cap!r} needs {meth}()" for meth in methods if not callable(getattr(obj, meth, None)))

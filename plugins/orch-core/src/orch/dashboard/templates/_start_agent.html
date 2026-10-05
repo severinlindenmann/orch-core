@@ -23,6 +23,10 @@
       </label>
     </div>
     <div class="sa-field"><span>Prompt · read-only</span><pre class="sa-pre" aria-label="Prompt preview" data-preview="prompt">{{ s.prompt }}</pre></div>
+    {% if s.route or s.warnings %}<div class="sa-route" data-route>
+      <p class="sa-note" data-route-text{% if not s.route %} hidden{% endif %}><b>Model</b> · {{ s.route }}</p>
+      <div data-route-warnings>{% for w in s.warnings %}<p class="sa-note"><span class="chip chip-warn">Warning: {{ w }}</span></p>{% endfor %}</div>
+    </div>{% endif %}
     <div class="sa-field"><span>Command</span><pre class="sa-pre" aria-label="Command preview" data-preview="command">{{ s.command }}</pre></div>
     <div class="row">
       {#- Terminals addon (issue #40): "Open in Mission Control" is the primary when its "start here by default" is on.
@@ -52,7 +56,7 @@
     {% if s.launcher %}<div class="sa-field"><span>Launcher</span><pre class="sa-pre" aria-label="Launcher preview" data-preview="launcher">{{ s.launcher }}</pre></div>{% endif %}
     <span class="muted sa-foot">Terminal: {{ s.terminal_label }} · set in {{ s.launch_path }}</span>
     <ul class="sa-options" hidden>
-      {% for o in s.options %}<li data-harness="{{ o.harness }}" data-mode="{{ o.mode }}" data-prompt="{{ o.prompt }}" data-command="{{ o.command }}" data-launcher="{{ o.launcher or '' }}"></li>{% endfor %}
+      {% for o in s.options %}<li data-harness="{{ o.harness }}" data-mode="{{ o.mode }}" data-prompt="{{ o.prompt }}" data-command="{{ o.command }}" data-launcher="{{ o.launcher or '' }}" data-route="{{ o.route or '' }}" data-warnings="{{ o.warnings|join('\n') }}"></li>{% endfor %}
     </ul>
   </form>
 </section>

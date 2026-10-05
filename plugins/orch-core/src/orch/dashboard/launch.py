@@ -312,10 +312,55 @@ def _write_script(ws, key: str, argv: list[str]) -> str:
     return str(path)
 
 
+LAUNCHES = "launches.json"
+MAX_LAUNCHES = 200
+ALIVE_AFTER = 1.5  # seconds a routed tmux session must survive before the start counts as good
+
+
+def _launches_path(ws) -> Path:
+    return ws.state_dir / "run" / LAUNCHES
+
+
+def launch_notes(ws) -> dict[str, str]:
+    """{session name: the label an addon's launch plan gave it} for the sessions orch started with a plan; the
+    Terminals tiles show it as "Started on ...". Local to this machine (state folder run/), never raises."""
+    try:
+        data = json.loads(_launches_path(ws).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(data, dict) else {}
+
+
+def record_launch(ws, name: str, label: str) -> None:
+    """Remember `label` for session `name` (the newest 200 are kept). Best effort: the session already runs."""
+    if not label:
+        return
+    try:
+        from orch.core.fsutil import atomic_write_text
+        data = launch_notes(ws)
+        data.pop(name, None)
+        data[name] = label
+        path = _launches_path(ws)
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        atomic_write_text(path, json.dumps(dict(list(data.items())[-MAX_LAUNCHES:]), indent=1) + "\n")
+    except OSError:
+        pass
+
+
+def _still_running(name: str) -> bool:
+    try:
+        return _subprocess.run(["tmux", "-L", "orch", "has-session", "-t", f"={name}"], stdin=_subprocess.DEVNULL,
+                               capture_output=True, timeout=5).returncode == 0
+    except (OSError, _subprocess.TimeoutExpired):
+        return True  # cannot tell: do not report a failure that may not be one
+
+
 def start(ws, key: str, argv: list[str], *, terminal: str, name: str, harness: str | None = None,
-          settings: dict | None = None) -> str:
+          settings: dict | None = None, watch: str | None = None) -> str:
     """Open `terminal` running `argv` in the workspace root, detached; returns the flash message
-    "Opened <harness> in <terminal> for <key>". `argv` comes from `agent_start.build`."""
+    "Opened <harness> in <terminal> for <key>". `argv` comes from `agent_start.build`. `watch`: the model name a
+    launch plan asked for; a tmux session that ends within ALIVE_AFTER seconds is then reported as a failed start
+    that names it (a harness refuses an unknown model and exits at once). Other terminals cannot tell."""
     settings = settings if settings is not None else load_settings()
     preflight(terminal, settings)
     custom = list(settings.get("terminal_command") or [])
@@ -331,4 +376,10 @@ def start(ws, key: str, argv: list[str], *, terminal: str, name: str, harness: s
         raise UsageError(f"could not open {LABELS.get(terminal, terminal)}: {e.strerror or e}") from e
     except _subprocess.TimeoutExpired as e:
         raise UsageError("tmux did not answer within 10 seconds") from e
+    if watch and terminal == "tmux":
+        time.sleep(ALIVE_AFTER)
+        if not _still_running(name):
+            raise UsageError(f"{harness or argv[0]} ended right after it started on model {watch}: the harness may "
+                             f"have refused it. Run the command shown in Start agent in a terminal to see its message, "
+                             f"or correct the model in Workspace & addons")
     return f"Opened {harness or argv[0]} in {LABELS.get(terminal, terminal)} for {key}"

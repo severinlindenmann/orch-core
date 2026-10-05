@@ -11,6 +11,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 
+from orch.addons import launching
+from orch.addons.api import LaunchRequest
 from orch.clock import now as clock_now
 from orch.core import query, store
 from orch.core.ops import Ops
@@ -69,12 +71,23 @@ def start_agent(request: Request, ref: str, mode: Annotated[str, Form()], harnes
             return back(url, err=s["disabled"])
         if mode not in [m["value"] for m in s["modes"]]:  # e.g. work on an epic: only what the panel offers
             return back(url, err=f"{mode} is not offered for {t.id}")
-        _, argv, _ = agent_start.build(ws, t.id, mode, harness, pr=s["pr"], settings=settings)
+        request_for = LaunchRequest(t.id, mode, harness)
+        routing = launching.resolve(ws, request_for, strict=True)  # None unless an addon with `launch` is on
+        if routing is not None and routing.env and terminal == "windows":
+            return back(url, err="Windows Terminal cannot pass environment variables to the session; turn the "
+                                 "addon's subagent setting off or use another terminal")
+        _, argv, _ = agent_start.build(ws, t.id, mode, harness, pr=s["pr"], settings=settings, routing=routing)
         launch.preflight(terminal, settings)  # cheap launcher checks before the claim is touched
         if s["warning"]:  # a stale claim: release it so the new agent can claim the ticket
             Ops(ws, request_actor(request)).release(t.id)
         name = terminals.free_name(ws, t.id) if terminal == "tmux" else t.id
-        msg = launch.start(ws, t.id, argv, terminal=terminal, name=name, harness=harness, settings=settings)
+        msg = launch.start(ws, t.id, argv, terminal=terminal, name=name, harness=harness, settings=settings,
+                           watch=routing.model if routing is not None else None)
+        if routing is not None:
+            launch.record_launch(ws, name, routing.label)
+            launching.launched(ws, request_for, routing, name)
+            if routing.label:
+                msg = f"{msg} ({routing.label})"
     except OrchError as e:
         return back(url, err=error_text(e))
     if terminal == "tmux":

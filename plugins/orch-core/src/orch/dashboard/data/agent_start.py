@@ -11,6 +11,8 @@ import re
 import shlex
 import sys
 
+from orch.addons import launching
+from orch.addons.api import LaunchRequest
 from orch.config.load import DEFAULTS
 from orch.core.events import read_events
 from orch.core.gates import GATE_SECTIONS, changes_pending
@@ -22,11 +24,20 @@ EPIC_MODES = ("refine", "continue")  # an epic has no plan, tasks or claim of it
 MODE_LABELS = {"refine": "Refine", "work": "Work on ticket", "fix-checks": "Fix failing checks",
                "continue": "Continue after feedback"}
 HARNESS_LABELS = {"claude": "Claude Code", "copilot": "Copilot CLI", "codex": "Codex"}
+# The model argument group of a harness, put in front of the prompt only when an addon's launch plan names a model
+# (docs: ADDONS.md, the `launch` capability). A harness without a group refuses a plan that names a model: a bare
+# `--model` with its value dropped would swallow the prompt. Harness argv from launch.json is never edited otherwise.
+MODEL_ARGS = {"claude": ["--model", "{model}"]}
 STALE_WARNING = "Starting releases the stale claim first"
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9]*-\d+")  # always used with fullmatch: no trailing newline slips through
 _PR_RE = re.compile(r"(?:#?\d+|https?://[A-Za-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9._~%+/-]*)?)")
 IGNORED_WARNING = "terminal settings in orchestrator/config.json are ignored — use ~/.config/orch/launch.json"
+
+
+def route_text(routing) -> str:
+    """The Start agent box's one line about an addon's launch plan: its reason, else its label, else ''."""
+    return (routing.reason or routing.label) if routing is not None else ""
 
 
 def _agents_cfg(ws) -> dict:
@@ -104,7 +115,8 @@ def valid_pr(pr) -> bool:
     return isinstance(pr, (str, int)) and not isinstance(pr, bool) and bool(_PR_RE.fullmatch(str(pr)))
 
 
-def build(ws, key: str, mode: str, harness: str, *, pr=None, settings=None) -> tuple[str, list[str], str]:
+def build(ws, key: str, mode: str, harness: str, *, pr=None, settings=None,
+          routing=None) -> tuple[str, list[str], str]:
     """(prompt, argv, display_command) for starting `harness` on ticket `key` in `mode`.
 
     Raises ValidationError for a key not matching ^[A-Z][A-Z0-9]*-\\d+$, an unknown mode or
@@ -123,7 +135,19 @@ def build(ws, key: str, mode: str, harness: str, *, pr=None, settings=None) -> t
     prompt = template.replace("{key}", key).replace("{pr}", str(pr) if pr is not None else "")
     if prompt.strip().startswith("-") or _CONTROL.search(prompt):  # belt and braces: never a flag
         raise ValidationError(f"the {mode} prompt must not start with '-' or hold control characters")
-    argv = [part.replace("{prompt}", prompt) for part in known[harness]]
+    if routing is not None and routing.note:
+        prompt = f"{prompt}\n\n{routing.note}"
+    template_argv = list(known[harness])
+    if routing is not None and routing.model:
+        group = MODEL_ARGS.get(harness)
+        if group is None:
+            raise ValidationError(f"{harness} has no model argument: a model can be set for "
+                                  f"{', '.join(MODEL_ARGS)} only")
+        at = next((i for i, part in enumerate(template_argv) if "{prompt}" in part), len(template_argv))
+        template_argv[at:at] = [part.replace("{model}", routing.model) for part in group]
+    argv = [part.replace("{prompt}", prompt) for part in template_argv]
+    if routing is not None and routing.env:
+        argv = ["env", *(f"{k}={v}" for k, v in routing.env), *argv]
     return prompt, argv, f"cd {shlex.quote(str(ws.root))} && {shlex.join(argv)}"
 
 
@@ -187,7 +211,8 @@ def suggest(ws, ticket, *, needs_items, rows=None, now=None, events=None, settin
     checks that a reviews addon links to this ticket; the first becomes {pr} and turns work into fix-checks.
 
     Returns {key, mode, harness, prompt, command, disabled, disabled_role, warning, pr, terminal,
-    terminal_label, launch_path, launcher, modes, harnesses, options}; `disabled` is "Waiting for your
+    terminal_label, launch_path, launcher, route, warnings, modes, harnesses, options}; `route`/`warnings`: the one line and the
+    warnings of an addon's launch plan (model routing), "" and [] while none is on; `disabled` is "Waiting for your
     <gate> approval", "Waiting for you: move it back to <status>" (or ": <hint text>") for a changed
     gate that cannot be re-approved in this status, "Waiting for your answer", "Waiting for your
     verdict" or "<harness> is working on it" (fresh claim), else None; a stale claim keeps it enabled with `warning` = STALE_WARNING. `options`
@@ -228,14 +253,17 @@ def suggest(ws, ticket, *, needs_items, rows=None, now=None, events=None, settin
     terminal = launch.choose(os.environ, settings["terminal"], sys.platform)
     options = []
     epic = ticket.meta.get("type") == "epic"
+    routed = launching.active(ws)  # an addon with the launch capability is on (model routing): every option is planned
     for h in harnesses(ws, settings):
         for m in EPIC_MODES if epic else MODES:  # an epic is refined, never worked: its children are
+            routing = launching.resolve(ws, LaunchRequest(ticket.id, m, h)) if routed else None
             try:  # a mode whose prompt needs a PR is left out while none is linked
-                p, argv, c = build(ws, ticket.id, m, h, pr=pr, settings=settings)
+                p, argv, c = build(ws, ticket.id, m, h, pr=pr, settings=settings, routing=routing)
             except ValidationError:
                 continue
             options.append({"harness": h, "mode": m, "prompt": p, "command": c,
-                            "launcher": launch.preview(ws, ticket.id, argv, terminal=terminal, settings=settings)})
+                            "launcher": launch.preview(ws, ticket.id, argv, terminal=terminal, settings=settings),
+                            "route": route_text(routing), "warnings": list(routing.warnings) if routing else []})
     modes = [m for m in MODES if any(o["mode"] == m for o in options)]
     mode = _mode(ticket, events)
     if epic and mode == "work":
@@ -265,6 +293,8 @@ def suggest(ws, ticket, *, needs_items, rows=None, now=None, events=None, settin
         # sessions Mission Control already runs for this ticket: the box links them and asks before starting another
         "running": [s.name for s in terminals.for_ticket(ws, ticket.id)] if here else [],
         "launcher": chosen["launcher"], "launch_path": settings["path"],
+        # what an addon's launch plan (model routing) did to this start, and its warnings; "" / [] when none is on
+        "route": chosen["route"], "warnings": chosen["warnings"],
         "modes": [{"value": m, "label": "Refine epic" if epic and m == "refine" else MODE_LABELS[m]} for m in modes],
         "harnesses": [{"value": h, "label": HARNESS_LABELS.get(h, h)} for h in harnesses(ws, settings)],
         "options": options,

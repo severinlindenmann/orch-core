@@ -116,3 +116,73 @@ def test_cli_baseline_git_basic(capsys, switch, configure):  # noqa: F811
     assert "already" in _ok(capsys, "dark", "profile", "add", "--baseline", "git-basic")
     out = _ok(capsys, "dark", "profile", "add", "--baseline")  # the default is still the orch one
     assert f"added {len(dark_profile.BASELINE)} baseline rules" in out
+
+
+# -- requests for commands the profile already covers ---------------------------------------------------------------
+
+@pytest.fixture
+def dark_child(dws, agent, human):
+    from conftest import human_ops
+    from orch.core.ops import Ops
+    from test_dark_profile import _dark
+    return _dark(Ops(dws, agent), human_ops(dws, human))
+
+
+def _session_actor():
+    from orch.core.events import Actor
+    from test_factory import SESSION
+    return Actor("agent", "claude-code", "cli", SESSION)
+
+
+def test_a_bound_dark_session_asking_for_an_allowed_command_files_nothing(dws, dark_child, human):
+    from orch.core import store
+    from orch.core.events import read_events
+    eid, cid = dark_child
+    dark_profile.add_baseline(dws, human)
+    t = store.load(dws, cid)[1]
+    r = permits.request(dws, _session_actor(), t, f"orch task done {cid} T1-T4")
+    assert r["allowed"] and r["rule"] and permits.open_requests(dws) == []
+    assert not [e for e in read_events(dws) if e.kind == "permit.requested"]
+    r = permits.request(dws, _session_actor(), t, "make deploy")  # not in the profile: a card, as before
+    assert r["id"].startswith("P-") and [x["id"] for x in permits.open_requests(dws)] == [r["id"]]
+
+
+def test_cli_says_just_run_it(dws, dark_child, human, capsys, monkeypatch):
+    from test_factory import SESSION
+    eid, cid = dark_child
+    dark_profile.add_baseline(dws, human)
+    monkeypatch.setenv("ORCH_HARNESS", "test-agent")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    out = _ok(capsys, "permit", "request", f"orch task done {cid} T1", "--ticket", cid)
+    assert "already allowed by the Dark profile: just run it" in out and permits.open_requests(dws) == []
+
+
+def test_a_request_the_profile_covers_later_is_hidden_in_a_dark_epic_only(dws, dark_child, human, agent):
+    from orch.core import store
+    from test_factory import _refine
+    from conftest import human_ops
+    from orch.core.ops import Ops
+    eid, cid = dark_child
+    r = permits.request(dws, agent, store.load(dws, cid)[1], "make deploy")  # an agent without a binding
+    a, h = Ops(dws, agent), human_ops(dws, human)
+    plain_epic = a.new("Plain", type="epic").id  # an ordinary factory epic
+    _refine(a, plain_epic, plan=None)
+    h.approve(plain_epic, "requirements", delegate={"factory": True})
+    plain_child = a.new("child", epic=plain_epic).id
+    p = permits.request(dws, agent, store.load(dws, plain_child)[1], "make deploy")
+    assert {x["id"] for x in permits.open_requests(dws)} == {r["id"], p["id"]}
+    dark_profile.add(dws, human, "exact", "make deploy")
+    assert [x["id"] for x in permits.open_requests(dws)] == [p["id"]]  # the profile answers nothing there
+    a.set_factory_dark(False)  # the brake: the Dark epic is an ordinary one again, its card is back
+    assert {x["id"] for x in permits.open_requests(dws)} == {r["id"], p["id"]}
+
+
+def test_the_dark_denial_names_the_request_and_says_not_to_retry(dws, dark_child):
+    from test_factory import _payload
+    eid, cid = dark_child
+    out = permits.hook_decision(dws, _payload("make deploy"))
+    msg = out["hookSpecificOutput"]["decision"]["message"]
+    (r,) = permits.open_requests(dws)
+    for words in ("not in the Dark profile", f"Request {r['id']} is open", "the human can add it",
+                  f"orch wait {cid}", "Do not retry variants", "do not file another request"):
+        assert words in msg, words

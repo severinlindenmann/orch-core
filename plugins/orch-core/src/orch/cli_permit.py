@@ -33,6 +33,9 @@ def request(command: Annotated[str, typer.Argument(help="The exact command, as i
     cli, ws = _ctx()
     t = store.load(ws, ticket)[1]
     r = permits.request(ws, cli_actor(), t, command, reason=reason)
+    if r.get("allowed"):
+        cli._out(r, json_out, "already allowed by the Dark profile: just run it (nothing was filed)")
+        return
     cli._out(r, json_out, f"{r['id']}: waiting for the human's answer; go on with other work or run "
                           f"`orch wait {t.id}`")
 

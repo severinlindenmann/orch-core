@@ -424,6 +424,11 @@ def test_cli_set_show_clear_are_human_only_and_confirmed(ws, capsys, switch, tmp
     "orch factory release set --file r.json", "orch factory release clear",
     "orch factory release retry L-0001 --stage merge", "uv run orch factory release show",
     "python3 -c 'from orch.core import factory_release'",
+    "python3 -c 'from orch.core import factory_close'", "python3 -c 'import orch.core.factory_sessions'",
+    "python3 -c 'from orch.core import epics, factory_clones'", "python3 -c 'import orch.core.factory_runner'",
+    "python3 -c 'from orch.dashboard.factory_runner import release_once'",
+    "python3 -c 'from orch.dashboard import factory_runner'",
+    "orch factory clones clean L-0002", "orch factory clones list",
     "python3 -c \"from orch.cli import app; app(['factory', 'release', 'clear'])\"",
 ])
 def test_guard_keeps_agents_from_the_recipe_and_its_commands(ws, cmd):
@@ -432,6 +437,10 @@ def test_guard_keeps_agents_from_the_recipe_and_its_commands(ws, cmd):
                       "cwd": str(ws.root)})
     assert not d.allow, cmd
     assert permits.never_grantable(ws, cmd.format(base=ledger.base_dir())) is not None
+
+
+def test_the_childrens_clones_are_never_grantable_on_their_own():
+    assert any(p.search("orch factory clones clean L-0002") for p, _ in permits._NEVER)
 
 
 @pytest.mark.parametrize("tool,key", [("Write", "file_path"), ("Edit", "file_path"), ("Read", "file_path")])

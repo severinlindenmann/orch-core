@@ -683,7 +683,11 @@ makes at most one new clone per round, within 120 seconds for the clone and chec
 does not hold the round (stops, nudges and other children go on in the next rounds); a child that needs a clone while
 another is being made waits a round.
 
-**Cleaning up (you only).** In your own terminal, refused to agents and under an agent harness:
+**Cleaning up (you only).** In your own terminal, refused to agents and under an agent harness, and never grantable
+(no permission card or Dark profile rule lets an agent run it). The guard also refuses a command that drives orch's
+record-writing modules from code (`orch.core.ledger`, `permits`, `dark_profile`, `factory_release`, `factory_clones`,
+`factory_close`, `factory_sessions`, `factory_runner`, and `orch.dashboard.factory_runner`), and a file tool write
+into a clone whose path it cannot judge (fail closed):
 
 ```bash
 orch factory clones list            # every clone the runner made for this workspace: child, branch, path

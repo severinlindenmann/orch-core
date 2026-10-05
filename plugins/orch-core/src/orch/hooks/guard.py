@@ -651,11 +651,15 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
 # grant) are protected the same way: removing a marker would revive a used grant. The Dark profile's module
 # (orch.core.dark_profile) is driven from code no more than the permits module.
+# The modules that write the ledger or the runner's records (or drive the runner that does): driven from code by an
+# agent, any of them would write a record as the human would. One list for the guard's module rule.
+_RECORD_MODULES = ("ledger|permits|dark_profile|factory_release|factory_clones|factory_close|factory_sessions"
+                   "|factory_runner")
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
                      r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release"
                      r"|release-records|release-repos|child-clones|nudges|early-ends|tmux)\b"
-                     r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release|factory_clones)\b"
-                     r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release|factory_clones)\b")
+                     r"|\borch\.(?:core|dashboard)\.(?:" + _RECORD_MODULES + r")\b"
+                     r"|\bfrom\s+orch\.(?:core|dashboard)\s+import\b[^;\n]*\b(?:" + _RECORD_MODULES + r")\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
@@ -1730,6 +1734,8 @@ _CLONE_TICKETS_DENIED = ("this is a child clone's copy of the orch folder (ticke
 _CLONE_HARNESS_DENIED = ("a child clone's harness settings (.claude/settings.json, .claude/settings.local.json, "
                          ".mcp.json) are not written: the runner refuses to start a session in a clone whose settings "
                          "differ from the workspace's")
+_CLONE_UNKNOWN_DENIED = ("orch could not tell whether this path is a child clone's orch folder or harness settings, "
+                         "so it is not written (fail closed)")
 
 
 def _clone_file(raw: str, cwd, ws) -> str | None:
@@ -1745,7 +1751,7 @@ def _clone_file(raw: str, cwd, ws) -> str | None:
         roots = {Path(os.path.normpath(factory_clones.root())), factory_clones.root().resolve()}
         home = always_sensitive(ws)[0].strip("/").casefold()
     except Exception:
-        return None
+        return _CLONE_UNKNOWN_DENIED
     for f in forms:
         for r in roots:
             try:

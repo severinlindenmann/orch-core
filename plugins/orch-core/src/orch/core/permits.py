@@ -168,7 +168,8 @@ _ENV_VARS = r"(?:ORCH_STATE_DIR|XDG_CONFIG_HOME|CLAUDE_CODE_SESSION_ID|ORCH_SESS
 _NEVER = (
     (re.compile(_ORCH + r"permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)\b"), "granting, denying and revoking are the human's"),
     (re.compile(_ORCH + r"serve\b"), "the dashboard is started by the human"),
-    (re.compile(_ORCH + r"factory\s+(?:-\S+\s+)*release\b"), "the release recipe and its retries are the human's"),
+    (re.compile(_ORCH + r"factory\s+(?:-\S+\s+)*(?:release|clones)\b"),
+     "the release recipe, its retries and the children's clones are the human's"),
     (re.compile(r"\.claude[/\\]+(?:settings|hooks|plugins)|\.claude\.json|managed-settings|hooks[/\\]+hooks\.json"
                 r"|CLAUDE_PLUGIN_ROOT|CLAUDE_CONFIG_DIR"),
      "the harness's settings, hooks and plugins are the human's"),

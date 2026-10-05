@@ -157,6 +157,16 @@ def test_a_child_commit_to_harness_files_stops_the_release_whatever_the_recipe(f
     assert not fake.calls
 
 
+def test_a_clone_path_the_guard_cannot_judge_is_denied(fws, run, monkeypatch):
+    def boom():
+        raise RuntimeError("no config dir")
+    monkeypatch.setattr(fc, "root", boom)
+    d = evaluate(fws, {"session_id": run["b"]["session"], "tool_name": "Write",
+                       "tool_input": {"file_path": str(run["clone"] / "notes.md"), "content": "x"},
+                       "cwd": str(run["clone"])})
+    assert not d.allow and "fail closed" in d.reason
+
+
 @pytest.mark.parametrize("rel,why", [
     ("orchestrator/tickets/open/L-0002-x.md", "copy of the orch folder"), ("orchestrator/config.json", "orch folder"),
     ("Orchestrator/.state/events.jsonl", "orch folder"), (".claude/settings.json", "harness settings"),

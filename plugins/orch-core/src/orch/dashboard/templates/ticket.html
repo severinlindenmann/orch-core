@@ -5,6 +5,7 @@
 {% from "_start_agent.html" import start_agent %}
 {% from "_tasks.html" import tasks_card as render_tasks %}
 {% import "_artifacts.html" as art %}
+{% import "_factory.html" as fx %}
 {% block head %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
 <script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
 {#- The ticket as a story (#16): header (L card), status card (with what is left), in testing the agent's
@@ -156,9 +157,10 @@
       </div>
       <p class="muted">AI Factory: agents split, specify, approve and build the children; you answer the commands they need on cards, and you give the verdict. Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. It replaces the delegation choice below.</p>
       {% if e.factory.dark_on %}
-      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. There is no release or automatic close: you read the Ready report and give the verdict.</p>
+      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. Release up to Merge or Dev runs the recipe on this machine once the epic is Ready; nothing releases to production, and nothing is closed by itself: you read the Ready report and give the verdict.</p>
       <label class="field-col start-dark-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
         <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false"></label>
+      <div class="start-dark-only">{{ fx.release_choice(t.id, e.factory.release_off, e.factory.dev_off) }}</div>
       {% endif %}
     </fieldset>
     {% endif %}

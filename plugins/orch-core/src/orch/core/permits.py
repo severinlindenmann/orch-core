@@ -596,49 +596,120 @@ def hook_decision(ws, payload: dict) -> dict | None:
                                  f"File it with `orch permit request`, then `orch wait {ticket.id}`.")
 
 
-_MOVES_REFS = re.compile(r"(?<![\w-])(?:commit|commit-tree|merge|cherry-pick|revert|am|rebase|pull|update-ref|stash)"
-                         r"(?![\w-])")
-_ELSEWHERE = re.compile(r"(?<![\w-])(?:-C|--git-dir|--work-tree)(?![\w-])|GIT_(?:DIR|WORK_TREE)\s*="
-                        r"|(?<![\w-])(?:cd|pushd)(?![\w-])")
+_MOVES_REFS = re.compile(r"(?<![\w-])(?:commit|commit-tree|merge|cherry-pick|revert|am|rebase|pull|update-ref|stash"
+                         r"|symbolic-ref|replace|notes)(?![\w-])")
+# Anything that points git at other folders, other config or other refs: -C, --git-dir, --work-tree, -c and
+# --config-env (core.worktree, includes, ...), --exec-path, --namespace, ANY GIT_*= assignment (GIT_DIR,
+# GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY, GIT_INDEX_FILE, ...), a cd or pushd.
+_ELSEWHERE = re.compile(r"(?<![\w-])(?:-C|-c|--git-dir|--work-tree|--config-env|--exec-path|--namespace)(?![\w-])"
+                        r"|(?<![\w-])--(?:git-dir|work-tree|config-env|exec-path|namespace)="
+                        r"|(?<![\w])GIT_[A-Z0-9_]+\s*=|(?<![\w-])(?:cd|pushd)(?![\w-])")
+_GIT_ASSIGN = re.compile(r"(?<![\w])GIT_[A-Z0-9_]+\s*=")
 
 
 def _git_commit(command) -> bool:
-    """Whether `command` may make or move a commit: the word git and a verb that does so (commit, commit-tree, merge,
-    cherry-pick, revert, am, rebase, pull, update-ref, stash) anywhere in its text with quotes and backslashes taken
-    out (so wrappers, aliases and `"g"it` count), or a GIT_DIR / GIT_WORK_TREE assignment. Coarse on purpose: such a
-    command gets the commit checks."""
+    """Whether `command` may make or move a commit or a ref: the word git and a verb that does so (commit, merge,
+    cherry-pick, revert, am, rebase, pull, update-ref, symbolic-ref, stash, replace, notes, commit-tree) anywhere in
+    its text with quotes and backslashes taken out (so wrappers, aliases and `"g"it` count), any GIT_*= assignment, or
+    a branch, tag, push or fetch that writes a ref (_ref_refusal; listing branches stays a read). Coarse on purpose:
+    such a command gets the commit checks."""
     if not isinstance(command, str):
         return False
     t = re.sub(r"[\\'\"]", "", command)
-    return bool(re.search(r"GIT_(?:DIR|WORK_TREE)\s*=", t)
-                or (re.search(r"(?i)(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t)))  # Git runs git too
+    return bool(_GIT_ASSIGN.search(t)
+                or (re.search(r"(?i)(?<![\w-])git(?![\w-])", t) and _MOVES_REFS.search(t))  # Git runs git too
+                or _ref_refusal(command, None))
+
+
+_READ_BRANCH = {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}
+_OPS = {"&&", "||", ";", "|", "&"}
+
+
+def _ref_refusal(command: str, own: str | None) -> str | None:
+    """Why `command` writes a ref other than the session's own branch `own`, or None: update-ref, symbolic-ref,
+    replace and notes always; branch and tag beyond listing; push of anything but `own` (no --all, --mirror, --tags,
+    --delete, --prune); fetch into a local ref (a refspec with `:`). Judged per git word, on the shell's words."""
+    import shlex
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    i = 0
+    while i < len(words):
+        if os.path.basename(words[i]).casefold() not in ("git", "git.exe"):
+            i += 1
+            continue
+        j = i + 1
+        while j < len(words) and words[j].startswith("-"):
+            j += 1
+        verb = words[j] if j < len(words) else ""
+        args = []
+        for w in words[j + 1:]:
+            if w in _OPS:
+                break
+            args.append(w)
+        i = j + 1
+        if verb in ("update-ref", "symbolic-ref", "replace", "notes"):
+            return f"git {verb} writes refs directly"
+        if verb == "branch" and not set(args) <= _READ_BRANCH:
+            return "git branch may only list or show branches here"
+        if verb == "tag" and not set(args) <= {"-l", "--list"}:
+            return "git tag may only list tags here"
+        if verb == "fetch" and any(":" in a or a.startswith("--update-head-ok") for a in args):
+            return "git fetch may not write a local ref"
+        if verb == "push":
+            plain = [a for a in args if not a.startswith("-")]
+            if any(a.split("=")[0] in ("--all", "--mirror", "--tags", "--delete", "-d", "--prune") for a in args):
+                return "git push may push only the session's own branch"
+            mine = {own, f"HEAD:{own}", f"HEAD:refs/heads/{own}", f"refs/heads/{own}", f"{own}:{own}",
+                    f"refs/heads/{own}:refs/heads/{own}", f"+{own}", f"+HEAD:{own}", f"+HEAD:refs/heads/{own}"}
+            if any(r not in mine for r in plain[1:]) or not own:
+                return "git push may push only the session's own branch"
+    return None
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
     """Why runner-bound session `b` must not run commit command `command` now, or None. Allowed only in the folder
     the runner started it in (the session's own work tree, a linked worktree or the child's runner-made clone:
-    factory_runner.own_work_tree, the rule its prompt follows),
-    from that folder or below it, with nothing that points git elsewhere (-C, --git-dir, --work-tree, GIT_DIR,
-    GIT_WORK_TREE, a cd). Everything that cannot be read is a refusal."""
-    from orch.core import factory_runner
+    factory_runner.own_work_tree, the rule its prompt follows), from that folder or below it, in the same git checkout
+    as that folder, with nothing that points git elsewhere (_ELSEWHERE), and writing no ref but the session's own
+    branch (_ref_refusal). Everything that cannot be read is a refusal."""
+    from orch.core import factory_clones, factory_runner
     try:
         if _ELSEWHERE.search(re.sub(r"[\\'\"]", "", str(command))):
-            return "a commit command may not point git at another folder (-C, --git-dir, --work-tree, GIT_DIR, cd)"
+            return ("a commit command may not point git at another folder, config or refs (-C, -c, --git-dir, "
+                    "--work-tree, --config-env, GIT_*=, cd)")
         start = Path(str(b["start"])).resolve()
         here = Path(str(cwd)).resolve() if cwd else start
+
+        def checkout(p):  # the folder of the first .git upwards: the checkout git would use
+            return next((d for d in (p, *p.parents) if os.path.lexists(d / ".git")), None)
         if here != start and start not in here.parents:
             return "the session's folder is not inside the folder the runner started it in"
-        for d in (here, *here.parents):  # the checkout git would use: the first .git upwards must be the start's
-            if os.path.lexists(d / ".git"):
-                if d != start:
-                    return "the session's folder is in another git checkout than the one it was started in"
-                break
+        if checkout(here) != checkout(start):
+            return "the session's folder is in another git checkout than the one it was started in"
         why = factory_runner.own_work_tree(ws, start, b["child"])
         if why:
             return f"the session runs in {start}, and {why}"
+        rec = factory_clones.record(ws, b["child"])
+        own = rec["branch"] if rec is not None and factory_clones.in_root(start) else factory_runner._branch_of(start)
+        why = _ref_refusal(str(command), own)
+        if why:
+            return why
     except Exception as e:
         return f"orch could not check where it would commit ({type(e).__name__})"
     return None
+
+
+def _in_start(b: dict, cwd) -> bool:
+    """Whether the payload's working directory (resolved; none: the start itself) is binding `b`'s start folder or
+    below it. Any error is a no."""
+    try:
+        start = Path(str(b["start"])).resolve()
+        here = Path(str(cwd)).resolve() if cwd else start
+        return here == start or start in here.parents
+    except Exception:
+        return False
 
 
 def _factory_answer(ws, payload: dict, ticket) -> dict:
@@ -669,7 +740,9 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
         from orch.core.ledger import checkout_id
         b = factory_sessions.binding(ws, payload.get("session_id"))
         checkout = b["checkout"] if b else None
-        if not checkout or checkout != checkout_id(ws):
+        # ORCH_HOME makes `ws` the workspace whatever the session's folder, so the checkout id alone no longer tells a
+        # session that moved: its working directory must be the folder the runner started it in, or below it
+        if not checkout or checkout != checkout_id(ws) or not _in_start(b, payload.get("cwd")):
             return _decision("deny", "this session is not in the checkout the runner started it in; nothing was "
                                      "allowed. Go back to it, or do without this and record why in the ticket.")
     dark = dark_delegation(ws, epic, checkout=checkout) is not None

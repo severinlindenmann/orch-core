@@ -124,6 +124,22 @@ class Registry:
     def get(self, did: str) -> Device | None:
         return self.devices().get(did)
 
+    def audit_entries(self, limit: int = 100) -> list[dict]:
+        """The newest `limit` audit lines, newest first. A line that cannot be read is skipped; an unreadable file is
+        Damaged."""
+        raw = files.read(self.audit_path, 8 * _LIMIT)
+        out: list[dict] = []
+        for line in reversed((raw or b"").decode("utf-8", "replace").splitlines()):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and type(d.get("at")) is int and isinstance(d.get("event"), str):
+                out.append(d)
+                if len(out) >= limit:
+                    break
+        return out
+
     # -- write (the Remote tab), every change audited ------------------------------------------------------------------
 
     def audit(self, now_ms: int, event: str, **fields) -> None:

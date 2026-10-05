@@ -103,6 +103,10 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,
     ("POST", "/workspace/phones/pair"): NO, ("POST", "/workspace/phones/{phone_id}/revoke"): NO,
     ("POST", "/workspace/phones/permissions"): NO,
+    # the Remote tab: pairing, approving, rescoping, revoking and cutting off devices is only ever done here
+    ("POST", "/workspace/remote/offer"): NO, ("POST", "/workspace/remote/disconnect"): NO,
+    ("POST", "/workspace/remote/pending/{did}/approve"): NO, ("POST", "/workspace/remote/pending/{did}/reject"): NO,
+    ("POST", "/workspace/remote/devices/{did}/scope"): NO, ("POST", "/workspace/remote/devices/{did}/revoke"): NO,
 }
 STATIC_PREFIX = "/static/"  # the stylesheet, script and fonts: Look, GET or HEAD only
 

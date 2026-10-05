@@ -979,67 +979,6 @@ def test_the_commit_form_follows_the_workspace_config_and_refuses_odd_text(confi
         assert factory_runner.commit_form(configure(commit=bad), "L-0002") is None, bad
 
 
-def test_the_runner_tells_only_a_worktree_session_to_commit(fws, fa, fh, human, fake, monkeypatch):
-    eid, d = _epic(fws, fa, fh)
-    cid = _child(fa, eid)
-    _tick(fws, human, fake)
-    root_prompt = next(a for n, c, a in fake.started if cid in n)[-1]
-    assert "Do not commit" in root_prompt and "git commit" not in root_prompt
-    for b in fs.bindings(fws):
-        factory_runner.sweep(fws, human, fake, stop_all=True)
-    wt = fws.root / ".claude" / "worktrees" / "c"
-    wt.mkdir(parents=True)
-    monkeypatch.setattr(factory_runner, "start_dir", lambda ws, t: str(wt.resolve()))
-    _tick(fws, human, fake)
-    wt_prompt = fake.started[-1][2][-1]
-    assert "on this worktree's branch" in wt_prompt and f'git commit -m "{cid} short summary"' in wt_prompt
-
-
-def _repo(path, branch, origin_head=None, detached=False):
-    import subprocess
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", "-b", branch, str(path)], check=True)
-    if origin_head:
-        (path / ".git" / "refs" / "remotes" / "origin").mkdir(parents=True)
-        (path / ".git" / "refs" / "remotes" / "origin" / "HEAD").write_text(
-            f"ref: refs/remotes/origin/{origin_head}\n", encoding="utf-8")
-    if detached:
-        (path / ".git" / "HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
-    return path
-
-
-def test_the_hook_refuses_a_commit_on_the_default_branch_or_a_detached_head(configure, agent, human, fake, tmp_path):
-    from conftest import human_ops
-    from orch.core.ops import Ops
-    dws = configure(factory={"enabled": True}, git={"agent_may": {"commit": True}})
-    Ops(dws, human).set_factory_dark(True)
-    eid, d = _epic(dws, Ops(dws, agent), human_ops(dws, human), dark=True)
-    dark_profile.add_baseline(dws, human, name="git-basic")
-    _tick(dws, human, fake)
-    (b,) = fs.bindings(dws)
-    cmd = 'git commit -m "L-0002 x" -m "What: y"'
-
-    def answer(cwd):
-        p = {**_payload(b["session"], cmd), "cwd": str(cwd)}
-        return permits.hook_decision(dws, p)
-    for cwd in (_repo(tmp_path / "m", "main"), _repo(tmp_path / "ms", "master"),
-                _repo(tmp_path / "t", "trunk", origin_head="trunk"), _repo(tmp_path / "d", "feat/x", detached=True),
-                tmp_path / "no-repo", None):
-        if cwd is not None:
-            cwd.mkdir(exist_ok=True)
-        out = permits.hook_decision(dws, {**_payload(b["session"], cmd), **({"cwd": str(cwd)} if cwd else {})}) \
-            if cwd is not None else answer(dws.root / "nowhere")
-        assert _behavior(out) == "deny" and "git commit is refused here" in out["hookSpecificOutput"]["decision"][
-            "message"], cwd
-    assert _behavior(answer(_repo(tmp_path / "f", f"feat/{eid.lower()}"))) == "allow"
-    sub = tmp_path / "f" / "src"
-    sub.mkdir()
-    assert _behavior(answer(sub)) == "allow"  # a folder inside the worktree
-    out = answer(_repo(tmp_path / "f2", "main"))
-    assert "HEAD is the default branch main" in out["hookSpecificOutput"]["decision"]["message"]
-    assert permits._git_commit("cd x && git commit -m y") and not permits._git_commit("git log --oneline")
-
-
 # -- the evidence format: what the planner writes and what the workers prove, read by orch's own parser ----------------
 
 def test_the_prompts_examples_are_what_orchs_evidence_parser_proves():

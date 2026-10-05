@@ -1563,6 +1563,28 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
 
+def _factory_commit(ws, payload: dict, command: str) -> Decision | None:
+    """An AI Factory session the runner bound may commit only in its own worktree (orch.core.permits.commit_refusal).
+    Checked here, in every permission mode (an allow rule, auto mode or bypass never reach the PermissionRequest hook,
+    which checks it again). A session whose binding exists but does not verify is refused; any other session is left
+    alone."""
+    try:
+        from orch.core import factory_sessions, permits
+        if not permits._git_commit(command):
+            return None
+        state, b = factory_sessions.session_state(ws, payload.get("session_id"))
+        if state == "none":
+            return None
+        why = (permits.commit_refusal(ws, b, payload.get("cwd"), command) if state == "trusted"
+               else "orch cannot tell whether this is an AI Factory session (its binding does not verify)")
+    except Exception as e:
+        why = f"orch could not check where an AI Factory session would commit ({type(e).__name__})"
+    if why:
+        return Decision(False, f"git commit is refused here: {why}. Leave your changes in the working tree and say so "
+                               "with orch log; do not retry it in another form.")
+    return None
+
+
 def evaluate(ws, payload: dict) -> Decision:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
@@ -1581,6 +1603,10 @@ def evaluate(ws, payload: dict) -> Decision:
         return Decision(False, _LEDGER_DENIED)
     if tool == "Bash" and _bash_reaches_ledger(str(tool_input.get("command") or "")):
         return Decision(False, _LEDGER_DENIED)
+    if tool == "Bash" and isinstance(command, str):
+        commit = _factory_commit(ws, payload, command)
+        if commit is not None:
+            return commit
     if tool in ("Grep", "Glob"):
         root = _resolve_root(tool_input.get("path")) or _resolve_root(cwd)
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")

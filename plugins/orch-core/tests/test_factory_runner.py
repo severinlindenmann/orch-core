@@ -658,30 +658,37 @@ def test_session_id_comes_from_the_system_random_source():
     assert len(ids) == 50 and all(fs.SESSION_ID.match(i) for i in ids)
 
 
-def _git_worktree(path, branch):
+def _git_worktree(path, branch, common=None):
+    """A linked git worktree's files (as `git worktree add` writes them): a .git gitfile naming a gitdir in the common
+    dir's worktrees/ folder, with HEAD and commondir."""
     path.mkdir(parents=True)
-    gitdir = path.parent / (path.name + ".gitdir")
-    gitdir.mkdir()
+    common = common or path.parent / "common.git"
+    gitdir = common / "worktrees" / path.name
+    gitdir.mkdir(parents=True)
     (gitdir / "HEAD").write_text(f"ref: refs/heads/{branch}\n", encoding="utf-8")
+    (gitdir / "commondir").write_text("../..\n", encoding="utf-8")
     (path / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
 
 
-def test_start_dir_is_the_childs_own_worktree_in_the_workspaces_worktree_folder_only(fws, fa, fh, tmp_path):
+def test_start_dir_is_the_childs_own_linked_worktree_only(fws, fa, fh, tmp_path):
     eid, (cid,), d = _started(fws, fa, fh)
     t = store.load(fws, cid)[1]
     root = str(fws.root.resolve())
     wt = fws.root / ".claude" / "worktrees" / "child"
-    wt.mkdir(parents=True)
-    t.meta["worktrees"] = {"app": str(wt)}
-    assert factory_runner.start_dir(fws, t) == str(wt.resolve())
-    t.meta["worktrees"] = {"app": ".claude/worktrees/child"}
-    assert factory_runner.start_dir(fws, t) == str(wt.resolve())
-    # anywhere else in the workspace is not taken on the agent's word
-    other = fws.root / "wt" / "child"
-    other.mkdir(parents=True)
+    _git_worktree(wt, f"feat/{cid.lower()}")
+    for v in (str(wt), ".claude/worktrees/child"):
+        t.meta["worktrees"] = {"app": v}
+        assert factory_runner.start_dir(fws, t) == str(wt.resolve())
+    # a plain folder, another child's worktree, a default branch, a detached HEAD: never taken on the agent's word
+    plain = fws.root / ".claude" / "worktrees" / "plain"
+    plain.mkdir(parents=True)
+    _git_worktree(fws.root / ".claude" / "worktrees" / "other", "feat/l-9999")
+    _git_worktree(fws.root / ".claude" / "worktrees" / "main", "main")
+    _git_worktree(fws.root / ".claude" / "worktrees" / "Master", "MASTER")
     outside = tmp_path / "elsewhere"
-    outside.mkdir()
-    for bad in (str(outside), "../elsewhere", "/", str(fws.root), "wt/missing", "", "wt/child", "src"):
+    _git_worktree(outside, f"feat/{cid.lower()}")
+    for bad in (str(outside), "../elsewhere", "/", str(fws.root), "wt/missing", "", ".claude/worktrees/plain",
+                ".claude/worktrees/other", ".claude/worktrees/main", ".claude/worktrees/Master", "src"):
         t.meta["worktrees"] = {"app": bad}
         assert factory_runner.start_dir(fws, t) == root, bad
     (fws.root / "link").symlink_to(outside)
@@ -711,6 +718,7 @@ def test_a_worktree_with_settings_the_workspace_does_not_carry_is_refused_until_
     eid, (cid,), d = _started(fws, fa, fh)
     t = store.load(fws, cid)[1]
     wt = fws.root / ".claude" / "worktrees" / "child"
+    _git_worktree(wt, f"feat/{cid.lower()}")
     (wt / ".claude").mkdir(parents=True)
     (wt / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
     t.meta["worktrees"] = {"app": str(wt)}
@@ -767,7 +775,8 @@ def test_launch_gate_fails_closed(fws, fa, fh, configure, monkeypatch, what):
 def test_a_worktree_with_agent_written_settings_is_refused(fws, fa, fh, human, fake, name, body):
     eid, (cid,), d = _started(fws, fa, fh)
     wt = fws.root / ".claude" / "worktrees" / "wt"
-    (wt / name).parent.mkdir(parents=True)
+    _git_worktree(wt, f"feat/{cid.lower()}")
+    (wt / name).parent.mkdir(parents=True, exist_ok=True)
     (wt / name).write_text(body, encoding="utf-8")
     fa.link(cid, repo="app", worktree=str(wt))
     lines = _tick(fws, human, fake)

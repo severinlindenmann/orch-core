@@ -333,3 +333,8 @@ def test_orch_show_limits_its_output_without_a_pipe(dws, capsys):
     assert run(["show", t.id, "--lines", "3"]) == 0
     assert len(capsys.readouterr().out.splitlines()) == 3
     assert run(["show", t.id, "--section", "Nope"]) != 0
+    capsys.readouterr()
+    for extra in (["--section", "Verification"], ["--lines", "3"]):
+        assert run(["show", t.id, "--json", *extra]) != 0
+        io = capsys.readouterr()
+        assert "--json gives the whole ticket" in io.out + io.err  # the JSON error with --json

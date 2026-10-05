@@ -255,10 +255,13 @@ def show(ref: str, json_out: JsonOpt = False,
     """Show a ticket (by ID, number or external key). --section and --lines limit the output, so no pipe into head
     or grep is needed."""
     from orch.core import store
+    if json_out and (section is not None or lines is not None):
+        raise UsageError("--section and --lines limit the text output; --json gives the whole ticket",
+                         hint="use one of them: --json, or --section/--lines")
     ws = _ws()
     path, t = store.load(ws, ref)
     raw = path.read_text(encoding="utf-8")
-    if section is not None and not json_out:
+    if section is not None:
         name = next((s for s in t.sections if s.casefold() == section.strip().casefold()), None)
         if name is None:
             raise UsageError(f"{t.id} has no section {section!r}", hint="sections: " + ", ".join(t.sections))

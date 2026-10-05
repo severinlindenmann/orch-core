@@ -4,7 +4,7 @@
 {% block head %}{% if tab == "widgets" %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
 <script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endif %}{% endblock %}
 {% block main %}
-{#- Four in-page tabs (visual review §7): Addons (default) · Setup · Phones · Advanced. Every panel is in the page; the
+{#- In-page tabs: Addons (default) · Setup · Widgets · Phones · Remote · Advanced. Every panel is in the page; the
     server marks all but the chosen one `hidden` (?tab=, no JS needed), and app.js opens the panel that holds a
     #fragment (an action's redirect to #phones or #trust-x). -#}
 {% macro tab_link(key, label, count=0) %}<a href="/workspace{{ '' if key == 'addons' else '?tab=' ~ key }}" class="{{ 'on' if tab == key }}" data-tab="{{ key }}"{% if tab == key %} aria-current="true"{% endif %}>{{ label }}{% if count %} <span class="badge badge-warn" aria-label="{{ count }} open">{{ count }}</span>{% endif %}</a>{% endmacro %}
@@ -15,7 +15,7 @@
   </div>
 </div>
 <nav class="tabs ws-tabs" aria-label="Workspace sections">
-  {{ tab_link("addons", "Addons") }}{{ tab_link("setup", "Setup", setup_count) }}{{ tab_link("widgets", "Widgets") }}{{ tab_link("phones", "Phones") }}{{ tab_link("advanced", "Advanced") }}
+  {{ tab_link("addons", "Addons") }}{{ tab_link("setup", "Setup", setup_count) }}{{ tab_link("widgets", "Widgets") }}{{ tab_link("phones", "Phones") }}{{ tab_link("remote", "Remote") }}{{ tab_link("advanced", "Advanced") }}
 </nav>
 
 <div class="ws-panel" id="tab-setup" data-tab-panel="setup"{% if tab != "setup" %} hidden{% endif %}>
@@ -235,6 +235,10 @@
 {% else %}
 <section class="card"><h2>Phones</h2><p class="empty">No addon here pairs phones. An addon that does (such as a phone companion) adds pairing here once it is enabled.</p></section>
 {% endif %}
+</div>
+
+<div class="ws-panel" id="tab-remote" data-tab-panel="remote"{% if tab != "remote" %} hidden{% endif %}>
+{% if tab == "remote" %}{% include "_remote.html" %}{% endif %}
 </div>
 
 <div class="ws-panel" id="tab-advanced" data-tab-panel="advanced"{% if tab != "advanced" %} hidden{% endif %}>

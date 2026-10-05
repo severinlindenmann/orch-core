@@ -479,7 +479,10 @@ def test_commands_run_in_the_runners_repository_with_a_scrubbed_env(fws, ready, 
     assert repo.startswith(str(ledger.base_dir() / "permits" / "release-repos"))
     for argv, cwd, env, timeout in fake.calls:
         assert cwd == repo and cwd != str(fws.root)
-        assert set(env) <= set(__import__("orch.core.factory_runner", fromlist=["x"]).ENV_ALLOW) | {"PATH"}
+        assert set(env) <= set(__import__("orch.core.factory_runner", fromlist=["x"]).ENV_ALLOW) | {
+            "PATH", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_ATTR_NOSYSTEM", "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_TERMINAL_PROMPT"}
+        assert env["GIT_CONFIG_NOSYSTEM"] == "1" and os.path.getsize(env["GIT_CONFIG_GLOBAL"]) == 0
         assert "GH_TOKEN" not in env
     sha = _g(fws.root, "rev-parse", f"feat/{c.lower()}-work")
     assert seen_heads[:3] == [sha] * 3  # the merge stage ran at exactly the checked commit
@@ -946,3 +949,57 @@ def test_records_are_written_through_random_temporary_names(tmp_path):
     (tmp_path / ".x.json.tmp").symlink_to(trap)  # a planted predictable name is never followed
     fr._atomic(target, "{}")
     assert target.read_text() == "{}" and not trap.exists()
+
+
+# -- the human's own git config is never used by the release (re-review: an agent can write it) -------------------
+
+def _hostile_home(tmp_path, monkeypatch, marker, extra=""):
+    """HOME and XDG_CONFIG_HOME as an agent could leave them: a global smudge filter, an attributes file that applies
+    it everywhere, and `extra`; conftest's empty GIT_CONFIG_GLOBAL is taken away so nothing protects git but the
+    runner itself."""
+    home = tmp_path / "hostile-home"
+    xdg = home / ".config"
+    (xdg / "git").mkdir(parents=True)
+    attrs = home / "attrs"
+    attrs.write_text("* filter=pwn\n", encoding="utf-8")
+    cfg = (f'[filter "pwn"]\n\tsmudge = touch {marker}; cat\n\tclean = cat\n[core]\n\tattributesFile = {attrs}\n'
+           f'{extra}')
+    (home / ".gitconfig").write_text(cfg, encoding="utf-8")
+    (xdg / "git" / "config").write_text(cfg, encoding="utf-8")
+    (xdg / "git" / "attributes").write_text("* filter=pwn\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+    monkeypatch.delenv("GIT_CONFIG_NOSYSTEM", raising=False)
+
+
+def test_a_hostile_global_filter_and_attributes_file_run_nothing(fws, ready, human, tmp_path, monkeypatch):
+    eid, (c,), _ = ready(files={".gitattributes": "* filter=pwn\n", "src/a.py": "x\n"})
+    marker = tmp_path / "PWNED_BY_SMUDGE"
+    _hostile_home(tmp_path, monkeypatch, marker)
+    # the attack is real: plain git with this HOME runs the filter on checkout
+    subprocess.run(["git", "clone", "-q", "--branch", f"feat/{c.lower()}-work", str(fws.root), str(tmp_path / "c")],
+                   check=True, capture_output=True)
+    assert marker.exists()
+    marker.unlink()
+    fr.tick(fws, human, Fake())
+    assert _states(fws, eid) == {"merge": "proven", "dev": "proven"}
+    assert not marker.exists()  # neither the runner's fetches, classification nor its checkouts ran it
+
+
+def test_a_hostile_global_url_rewrite_does_not_swap_the_base(fws, ready, human, tmp_path, monkeypatch, remote):
+    eid, (c,), _ = ready(files={".github/workflows/ci.yml": "evil\n"})
+    fake = tmp_path / "fake.git"
+    _g(tmp_path, "init", "-q", "--bare", str(fake))
+    _g(fws.root, "push", "-q", str(fake), f"feat/{c.lower()}-work:refs/heads/main")
+    real_base = _g(fws.root, "rev-parse", "main")
+    _hostile_home(tmp_path, monkeypatch, tmp_path / "PWNED",
+                  extra=f'[url "{fake}"]\n\tinsteadOf = {remote}\n')
+    seen = subprocess.run(["git", "ls-remote", str(remote), "refs/heads/main"], check=True, capture_output=True,
+                          text=True).stdout.split()[0]
+    assert seen != real_base  # the attack is real: plain git would read the fake base
+    rec = fr.load(fws)[0]
+    fr.ensure_repo(fws, rec)
+    assert fr.fetch_base(fws, rec) == real_base
+    fr.tick(fws, human, Fake())
+    assert _stopped(fws, eid) == ["sensitive"]  # compared with the real base, the sensitive path is seen

@@ -626,14 +626,25 @@ includes, aliases, hooks, fsmonitor, filters or remotes. Each release round:
    the agent's working tree), and runs the commands there.
 
 Every git call the runner makes is an argv list with `--no-replace-objects`, `-c core.hooksPath=/dev/null`,
-`-c core.fsmonitor=false`, `-c core.sshCommand=ssh` and `-c credential.helper=` (an empty helper list, then the
-recipe's `git_config` values when it names them), in an environment of the allowlist below plus
-`GIT_NO_REPLACE_OBJECTS=1` and `GIT_TERMINAL_PROMPT=0` (no `GIT_DIR`, `GIT_WORK_TREE` or the like). Your global and
-system git config still apply; only repository-level config was the attack surface, and in the mirror the runner
-writes it. A private https remote therefore needs `git_config.credential.helper` (for example the helper your global
-config names). `SSH_AUTH_SOCK` is not passed, so an ssh remote works only with a key ssh can use without an agent
-(an unencrypted key, or one named in your ssh config); https with your credential helper is the simpler choice. Any
-mirror or git failure stops the round (fail closed): nothing runs.
+`-c core.fsmonitor=false`, `-c core.attributesFile=/dev/null`, `-c core.sshCommand=ssh` and `-c credential.helper=`
+(an empty helper list, then the recipe's `git_config` values when it names them).
+
+**Your own git config is deliberately not used by the release.** Your global git config (`~/.gitconfig`,
+`~/.config/git/*`) is a file of your user, so code an agent gets run as you could write into it, and a `-c` flag
+cannot undo what it adds (a `url.*.insteadOf` that swaps the remote the base comes from, a smudge filter or an
+attributes file that runs a program on checkout). So every executor git runs with `GIT_CONFIG_GLOBAL` pointing at an
+empty file the runner writes before each use (`permits/release-repos/<workspace id>/git-global`), `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_ATTR_NOSYSTEM=1`, `HOME` set to an empty folder the runner owns there (`git-home`), no `XDG_CONFIG_HOME`, and no
+`GIT_CONFIG_COUNT`/`KEY`/`VALUE` of yours, plus `GIT_NO_REPLACE_OBJECTS=1` and `GIT_TERMINAL_PROMPT=0` (no `GIT_DIR`,
+`GIT_WORK_TREE` or the like). The recipe's commands get the same `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` and
+`GIT_ATTR_NOSYSTEM`, and the runner's own `GIT_CONFIG_COUNT=1` setting `core.attributesFile=/dev/null`, but keep the
+allowlist's `HOME` and `XDG_CONFIG_HOME` (so `gh` finds its own login); git's default ignore file under them still
+applies to a git they run. The consequence: your credential helper and ssh command reach the release only through the
+recipe's `git_config` (`credential.helper`, `core.sshCommand`), for the runner's git; a `git` command in the recipe
+names its own (`git -c credential.helper=<yours> push …`). A private https remote therefore needs them in the recipe.
+`SSH_AUTH_SOCK` is not passed, so an ssh remote works only with a key ssh can use without an agent (an unencrypted
+key, or one named in your ssh config); https with a credential helper is the simpler choice. Any mirror or git failure
+stops the round (fail closed): nothing runs.
 
 **The diff classification.** Before the first merge command of an epic, every child branch not yet merged is compared
 with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) and every commit the branch brings in

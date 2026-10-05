@@ -1,20 +1,26 @@
 {% extends "layout.html" %}
 {% import "_ui.html" as ui %}
 {% block main %}
-{%- set mode = values.get('mode') or 'ticket' -%}
+{%- set mode = values.get('mode') if values.get('mode') in ('factory', 'dark') and factory_on else 'ticket' -%}
+{%- set limit_text = "up to " ~ limits.max_children ~ " children or " ~ limits.max_hours ~ " hours, children of size " ~ limits.max_size ~ " or smaller" -%}
+{#- With AI Factory on, a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on. data-mode
+    (rendered here, kept in step by app.js) shows each mode's fields, and :has() follows the radios with JS off; without
+    either, the page shows the Ticket view. The server checks every switch again. -#}
+<div class="new-ticket" data-mode="{{ mode }}">
 <div class="page-head">
   <div>
     <h1>New ticket</h1>
-    <p>Describe what you want. It goes to backlog, an agent turns it into requirements, and you approve them.</p>
+    <p class="only-ticket">Describe the ask. It lands in backlog; an agent refines it into requirements{% if prefix %} ("refine {{ prefix }}-00xx" with the key it gets){% endif %}, and you approve them.</p>
+    {% if factory_on %}<p class="only-factory">Creates an epic and starts it at once.</p>{% endif %}
   </div>
 </div>
-{% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
-{#- With AI Factory on, a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on. What each
-    mode shows is switched by CSS (:has on .new-modes), so the page works without JS; the server checks the switches again. -#}
-<div class="grid-2 new-modes">
+{% if problem %}<p class="flash err" role="alert">{{ problem }}{% if problem_href %} <a class="lnk" href="{{ problem_href }}">Open it</a>{% endif %}</p>{% endif %}
+<div class="grid-2">
   {#- What you write comes first (title, then the ask and its screenshots), then the triage details, always shown:
       a human who files a ticket here is usually triaging it (agents file most tickets themselves). -#}
-  <form class="card form-card new-ticket" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
+  <form class="card form-card" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files"
+        data-new-form data-factory-confirm="{{ limit_text }}">
+    <input type="hidden" name="once" value="{{ once }}">
     <label class="field-col" for="title">Title
       <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup of the config tables">
     </label>
@@ -23,7 +29,7 @@
       <legend>Mode</legend>
       <div class="seg-options">
         {% for m, label in (("ticket", "Ticket"), ("factory", "AI Factory"), ("dark", "Dark AI Factory")) if m != "dark" or dark_on %}
-        <input class="sr-only" type="radio" id="mode-{{ m }}" name="mode" value="{{ m }}" {{ 'checked' if m == mode or (m == 'ticket' and mode not in ('factory', 'dark')) }}>
+        <input class="sr-only" type="radio" id="mode-{{ m }}" name="mode" value="{{ m }}" {{ 'checked' if m == mode }}>
         <label for="mode-{{ m }}">{{ label }}</label>
         {% endfor %}
       </div>
@@ -36,13 +42,13 @@
       <p id="ask-hint" class="field-hint">Markdown works. Paste a screenshot straight into this box to attach it.</p>
     </div>
     {% if factory_on %}
-    <label class="field-col only-factory" for="done_when">Done when <span class="muted">(becomes the epic's Acceptance criteria)</span>
+    <label class="field-col only-factory" for="done_when"><span>Done when <span class="muted">(becomes the epic's Acceptance criteria)</span></span>
       <textarea id="done_when" name="done_when" rows="2">{{ values.get('done_when') or done_when_default }}</textarea>
     </label>
     {% if dark_on %}
-    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to start it without any prompts</span>
+    <label class="field-col only-dark" for="confirm_dark"><span>Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session</span>
       <input id="confirm_dark" name="confirm_dark" autocomplete="off" spellcheck="false" aria-describedby="confirm-dark-hint">
-      <span class="muted" id="confirm-dark-hint">Nothing asks you while it runs: only the commands this checkout's Dark profile allows run.</span>
+      <span class="muted" id="confirm-dark-hint">A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict.</span>
     </label>
     {% endif %}
     {% endif %}
@@ -64,7 +70,7 @@
           </div>
           {% if "epic" in types %}<p class="field-hint">An epic groups other tickets; the work happens on its children.</p>{% endif %}
         </fieldset>
-        {% if factory_on %}<p class="field-hint only-factory">Type: <b>epic</b>. Agents split it into children of size m or smaller; larger ones wait for you.</p>{% endif %}
+        {% if factory_on %}<p class="field-hint only-factory" data-limits>Type: <b>epic</b>. You sign {{ limit_text }}; larger children wait for you.</p>{% endif %}
         <div class="form-row">
           <label class="field-col" for="priority">Priority
             <select id="priority" name="priority">{% for p in priorities %}<option value="{{ p }}" {{ 'selected' if p == values.get('priority') }}>{{ p|capitalize }}</option>{% endfor %}</select>
@@ -79,7 +85,7 @@
             <input id="labels" name="labels" value="{{ values.get('labels', '') }}" placeholder="customer:acme, admin">
           </label>
         </div>
-        <p class="field-hint">Type and size are part of what you approve with the requirements, so the agent may suggest others while it refines the ticket.</p>
+        <p class="field-hint only-ticket">Type and size are part of what you approve with the requirements, so the agent may suggest others while it refines the ticket.</p>
         {% set opts = ticket_options() %}
         {% if opts %}<fieldset class="ticket-options"><legend>From your addons</legend>{{ ui.option_fields(opts) }}</fieldset>{% endif %}
       </div>
@@ -93,26 +99,27 @@
     <section class="card">
       <h2>What happens next</h2>
       <ol class="next-steps only-ticket">
-        <li>An agent turns the ask into requirements and asks you what is unclear{% if prefix %} (tell it "refine {{ prefix }}-00xx" with the key the ticket gets){% endif %}.</li>
+        <li>An agent turns the ask into requirements and asks you what is unclear.</li>
         <li>You approve the requirements, then the plan.</li>
         <li>The agent does the work and links branch and {{ review_term }}.</li>
         <li>You give the verdict. Only then is the ticket done.</li>
       </ol>
       {% if factory_on %}
       <ol class="next-steps only-factory only-plain">
-        <li>Creating it signs one epic: your ask is its Requirements, word for word.</li>
-        <li>Agents split it, specify the children and build them.</li>
-        <li>A permission card appears when an agent needs a command; you answer it.</li>
+        <li>Creating it signs one epic: your ask is its Requirements, word for word; {{ limit_text }}.</li>
+        <li>Nothing splits the epic into children yet: start an agent on it and ask it to split it, or add the children yourself.</li>
+        <li>The runner starts a session for each child that is approved or covered by your charter. A permission card appears when an agent needs a command; you answer it.</li>
         <li>You read the Ready report and sign the verdict.</li>
       </ol>
       <ol class="next-steps only-dark">
-        <li>You sign once, by typing dark.</li>
-        <li>The runner starts Claude sessions that may run only what this checkout's Dark profile allows.</li>
-        <li>Nothing asks you anything. A command that is not in the profile stops that child, with one button to add it.</li>
-        <li>There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
+        <li>You type dark to confirm; that signs the Dark charter ({{ limit_text }}).</li>
+        <li>Nothing splits the epic into children yet: start an agent on it and ask it to split it, or add the children yourself.</li>
+        <li>The runner starts a session for each child that is approved or covered by your charter. No permission prompts in the session: a command outside the Dark profile is denied and becomes a card here, with a button to add it to the profile.</li>
+        <li>You still answer cards, larger children and the verdict. There is no release or automatic close yet: you read the Ready report and sign the verdict.</li>
       </ol>
       {% endif %}
     </section>
   </aside>
+</div>
 </div>
 {% endblock %}

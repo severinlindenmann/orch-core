@@ -2122,19 +2122,45 @@ dialog.viewer-drawer::backdrop { background: var(--scrim); }
 }
 
 /* ---------- AI Factory and Dark AI Factory (phase 5): New ticket modes, the ring, the run view, the list ---------- */
-/* New ticket: what each mode shows is switched here (no JS); the server checks every switch again. */
-.new-modes:not(:has(#mode-factory:checked, #mode-dark:checked)) .only-factory,
-.new-modes:not(:has(#mode-dark:checked)) .only-dark,
-.new-modes:has(#mode-dark:checked) .only-plain,
-.new-modes:has(#mode-factory:checked, #mode-dark:checked) .only-ticket { display: none; }
+/* New ticket: data-mode (rendered by the server, kept in step by app.js) shows each mode's fields; with :has() the
+   radios decide (JS off too). Without either, the Ticket view. --shown is each element's own display. */
+.new-ticket { --shown: block; }
+.new-ticket span { --shown: inline; }
+.new-ticket .field-col, .new-ticket .next-steps { --shown: flex; }
+.new-ticket[data-mode=ticket] :is(.only-factory, .only-dark),
+.new-ticket[data-mode=factory] :is(.only-ticket, .only-dark),
+.new-ticket[data-mode=dark] :is(.only-ticket, .only-plain) { display: none; }
+.new-ticket:has(#mode-ticket:checked) .only-ticket,
+.new-ticket:has(#mode-factory:checked) .only-factory:not(.only-dark),
+.new-ticket:has(#mode-dark:checked) .only-factory:not(.only-plain),
+.new-ticket:has(#mode-dark:checked) .only-dark { display: var(--shown); }
+.new-ticket:has(#mode-ticket:checked) :is(.only-factory, .only-dark),
+.new-ticket:has(#mode-factory:checked) :is(.only-ticket, .only-dark),
+.new-ticket:has(#mode-dark:checked) :is(.only-ticket, .only-plain) { display: none; }
 .new-mode .muted { margin: var(--s-2) 0 0; }
+/* A factory start uses the inline confirm on the whole New ticket form: the form keeps its column layout while armed,
+   and on a phone it stays in place (it does not dock like a small confirm form; the button is the last field). */
+form.form-card.inline-confirm { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: calc(var(--s-4) + 2px); }
+@media (max-width: 559px) {
+  form.form-card.inline-confirm[data-armed] { position: static; margin: 0; padding: var(--s-4); background: var(--surface);
+                                              border-radius: var(--r-lg); box-shadow: none; }
+}
 .permit-dark { margin: 0; overflow-wrap: anywhere; }
 
 /* The ring: five steps, never colour only. Done = solid thin, current = thick, waiting for you = dashed,
-   stopped = amber. AI Factory: the blue current step with a moving dash. Dark: a darker panel, mint, and a slow
-   breathing core that glows faint until Build and stronger from there (.hot). Reduced motion: still. */
+   stopped = amber. AI Factory: the blue current step with a moving dash. Dark: a darker panel with a faint mint
+   ring, a green current step (--ok-mark: dark enough on light, mint on dark) and a core that breathes only while it
+   works, stronger once there is real build evidence (.hot). Motion only while working (.is-live); reduced motion:
+   still. */
 .ring-panel { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-6); }
-.ring-panel.is-dark { background: color-mix(in srgb, var(--surface) 92%, black); border-color: var(--line2); }
+.ring-panel.is-dark, .factory-row.is-dark {
+  background: color-mix(in srgb, var(--surface) 94%, black);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint) 35%, transparent);
+}
+[data-theme=dark] :is(.ring-panel, .factory-row).is-dark { background: color-mix(in srgb, var(--bg) 70%, black); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) :is(.ring-panel, .factory-row).is-dark { background: color-mix(in srgb, var(--bg) 70%, black); }
+}
 .ring-side { flex: 1 1 18rem; min-width: 0; display: flex; flex-direction: column; gap: var(--s-3); }
 .ring-side h2 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); overflow-wrap: anywhere; }
 .ring-side p, .ring-side .actions, .ring-side .actions form { margin: 0; }
@@ -2147,17 +2173,21 @@ dialog.viewer-drawer::backdrop { background: var(--scrim); }
 .ring-seg.is-now { stroke: var(--info-mark); stroke-width: 10; }
 .ring-seg.is-wait { stroke: var(--you-mark); stroke-width: 6; stroke-dasharray: 3 2 3 2 3 2 3 82; }
 .ring-seg.is-stop { stroke: var(--warn-mark); stroke-width: 10; }
-.ring-run { fill: none; stroke: var(--surface); stroke-width: 4; stroke-dasharray: 3 97; animation: ring-run 2.4s linear infinite; }
-@keyframes ring-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -15; } }
-.is-dark .ring-seg.is-now { stroke: var(--mint); }
-.ring-core { fill: var(--mint); opacity: 0.08; animation: ring-breathe 6s ease-in-out infinite; }
-.hot .ring-core { animation-name: ring-breathe-hot; }
-@keyframes ring-breathe { 0%, 100% { opacity: 0.05; } 50% { opacity: 0.14; } }
-@keyframes ring-breathe-hot { 0%, 100% { opacity: 0.16; } 50% { opacity: 0.34; } }
+/* the moving dash runs along the current arc only, thin inside the thick stroke (so it never reads as the dashed
+   "waiting for you"): a repeating pattern of period 2 moved by exactly one period, so the loop has no snap */
+.ring-run { fill: none; stroke: var(--surface); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 0.4 1.6; }
+.is-live .ring-run { animation: ring-run 1.6s linear infinite; }
+@keyframes ring-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -2; } }
+.is-dark .ring-seg.is-now { stroke: var(--ok-mark); }
+.ring-core { fill: var(--mint); opacity: 0.06; }
+.is-live .ring-core { animation: ring-breathe 6s ease-in-out infinite; }
+.is-live.hot .ring-core { animation-name: ring-breathe-hot; }
+@keyframes ring-breathe { 0%, 100% { opacity: 0.05; } 50% { opacity: 0.12; } }
+@keyframes ring-breathe-hot { 0%, 100% { opacity: 0.12; } 50% { opacity: 0.26; } }
 @media (prefers-reduced-motion: reduce) {
-  .ring-run { animation: none; }
-  .ring-core { animation: none; opacity: 0.1; }
-  .hot .ring-core { opacity: 0.25; }
+  .is-live .ring-run, .is-live .ring-core { animation: none; }
+  .is-live .ring-core { opacity: 0.08; }
+  .is-live.hot .ring-core { opacity: 0.18; }
 }
 
 /* Step marks: the same five states as the ring, as short lines with their words. */
@@ -2167,22 +2197,20 @@ dialog.viewer-drawer::backdrop { background: var(--scrim); }
 .step-line { display: inline-block; width: var(--s-6); border-top: 1px solid var(--line2); }
 .is-done > .step-line { border-top: 2px solid var(--text); }
 .is-now > .step-line { border-top: var(--s-1) solid var(--info-mark); }
-.is-dark .is-now > .step-line { border-top-color: var(--mint); }
+.is-dark .is-now > .step-line { border-top-color: var(--ok-mark); }
 .is-wait > .step-line { border-top: 2px dashed var(--you-mark); }
 .is-stop > .step-line { border-top: var(--s-1) solid var(--warn-mark); }
 
 .run-waiting { margin-top: var(--s-6); }
 .run-waiting > h2 { margin: 0 0 var(--s-3); }
 .run-summary, .run-log { margin-top: var(--s-6); }
-.run-log > summary { list-style: none; display: inline-flex; }
-.run-log > summary::-webkit-details-marker { display: none; }
+.run-log > summary { cursor: pointer; color: var(--link); font-weight: 600; width: fit-content; }
 .run-log-list { margin-top: var(--s-3); font: var(--type-meta); }
 .run-log-list time { font-variant-numeric: tabular-nums; color: var(--muted); }
 
 /* The factory list */
 .factory-list { gap: var(--s-3); }
 .factory-row { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
-.factory-row.is-dark { background: color-mix(in srgb, var(--surface) 92%, black); }
 .factory-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); overflow-wrap: anywhere; }
 .factory-row-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
-.chip-dark { box-shadow: inset 0 0 0 1px var(--mint); }
+.chip-dark { box-shadow: inset 0 0 0 1px var(--ok-mark); }

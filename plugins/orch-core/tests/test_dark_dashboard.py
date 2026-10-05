@@ -1,10 +1,12 @@
 """Dark AI Factory on the dashboard (phase 5): the New ticket modes, the Dark start on the epic page, the run view, the
 factory list and "Add to the Dark profile" on a card. Everything that starts or signs is the human's: a forged mode,
-a missing typed word, Dark off, an agent harness, a missing cookie and a cross-origin post are refused."""
+a missing typed word, Dark off, a second submit of the same form, an agent harness, a missing cookie and a
+cross-origin post are refused, and a start the text would make fail creates nothing."""
 import json
 import os
 import re
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +14,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+import orch  # noqa: E402
 from orch.core import dark_profile, epics, factory_report, factory_runner, factory_sessions as fs  # noqa: E402
 from orch.core import ledger, permits, store  # noqa: E402
 from orch.dashboard import launch  # noqa: E402
@@ -19,6 +22,7 @@ from orch.dashboard import launch  # noqa: E402
 ASK = "Build the <b>export</b> & keep \"quotes\".\n\n### Detail\n- one line\n- `two` lines\n\nlast line"
 DONE = "Exports open in the viewer."
 CMD = "make <deploy> 'staging'"
+STATIC = Path(orch.__file__).parent / "dashboard" / "static"
 
 
 class Fake:
@@ -84,8 +88,13 @@ def _loc(resp):
     return resp.headers.get("location", "")
 
 
+def _once(c):
+    return re.search(r'name="once" value="([^"]+)"', c.get("/new").text).group(1)
+
+
 def _new(c, mode="dark", **over):
-    data = {"title": "Export revamp", "mode": mode, "ask": ASK, "done_when": DONE, "size": "m", "priority": "normal"}
+    data = {"title": "Export revamp", "mode": mode, "ask": ASK, "done_when": DONE, "size": "m", "priority": "normal",
+            "once": _once(c)}
     if mode == "dark":
         data["confirm_dark"] = "dark"
     data.update(over)
@@ -125,11 +134,33 @@ def _behavior(out):
     return out["hookSpecificOutput"]["decision"]["behavior"] if out else None
 
 
+def _panel(html):
+    return html.split('class="card ring-panel', 1)[1].split('"', 1)[0]
+
+
+def _ring(html):
+    return html.split('class="ring"', 1)[1].split("</svg>", 1)[0]
+
+
+def _status(html):
+    return html.split('id="run-status"', 1)[1].split("</h2>", 1)[0]
+
+
+def _finish(c, ws, fa, close_tasks, eid, cid):
+    fa.claim(cid)
+    close_tasks(fa, cid)
+    fa.set_section(cid, "Verification", "- AC1: ran it, green")
+    fa.move(cid, "testing")
+    seen = factory_report.ready(ws, _epic(ws, eid))["seen"]
+    assert "err=" not in _loc(_post(c, f"/t/{eid}/verdict", verdict="done", seen=seen, next=f"/factory/{eid}"))
+
+
 # -- the New ticket page: the mode choice --------------------------------------------------------------------------
 
 def test_no_mode_choice_while_the_factory_is_off(dash):
     html = dash.get("/new").text
     assert 'name="mode"' not in html and "AI Factory" not in html and 'name="done_when"' not in html
+    assert 'data-mode="ticket"' in html
 
 
 def test_mode_choice_with_the_factory_on_and_dark_off(fws):
@@ -138,14 +169,34 @@ def test_mode_choice_with_the_factory_on_and_dark_off(fws):
     assert re.search(r'id="mode-ticket"[^>]*checked', html)
     assert "Dark AI Factory is off. Turn it on in a terminal with <code>orch factory dark on</code>." in html
     assert 'name="confirm_dark"' not in html
-    assert "Everything in Requirements is built, checked and works as written." in html  # Done when, prefilled
+    assert "Everything in Requirements is done." in html  # Done when, prefilled
+    assert "Creates an epic and starts it at once." in html and 'class="only-ticket">Describe the ask.' in html
+    assert 'data-factory-confirm="up to 25 children or 72 hours, children of size m or smaller"' in html
 
 
-def test_mode_choice_with_dark_on(dws):
+def test_mode_choice_with_dark_on_says_what_reaches_you(dws):
     html = _client(dws).get("/new").text
     assert 'id="mode-dark"' in html and 'name="confirm_dark"' in html and "data-dark-off" not in html
-    assert "You sign once, by typing dark." in html and "There is no release or automatic close yet" in html
-    assert "A permission card appears when an agent needs a command" in html
+    assert "Type <b>dark</b> to confirm; that signs the Dark charter without permission prompts in the session" in html
+    assert "you still answer cards, larger children and the verdict" in html
+    assert "with a button to add it to the profile" in html and "Nothing splits the epic into children yet" in html
+    for claim in ("Nothing asks you", "nothing asks you", "without any prompts", "Agents split it", "one button"):
+        assert claim not in html
+
+
+def test_the_page_shows_the_ticket_view_without_has_or_js():
+    """The mode rules: a plain data-mode rule hides the factory fields by default (no :has() needed), and :has() rules
+    follow the radios with JS off."""
+    css = (STATIC / "app.css").read_text()
+    assert ".new-ticket[data-mode=ticket] :is(.only-factory, .only-dark)" in css
+    assert ".new-ticket:has(#mode-dark:checked) .only-dark { display: var(--shown); }" in css
+    js = (STATIC / "app.js").read_text()
+    assert "box.dataset.mode = mode" in js and "form[data-new-form]" in js
+
+
+def test_a_refused_dark_post_keeps_the_dark_view(dws):
+    r = _new(_client(dws), "dark", confirm_dark="")
+    assert r.status_code == 422 and 'data-mode="dark"' in r.text and re.search(r'id="mode-dark"[^>]*checked', r.text)
 
 
 # -- the New ticket page: creating and starting ----------------------------------------------------------------------
@@ -153,7 +204,7 @@ def test_mode_choice_with_dark_on(dws):
 def test_dark_start_from_the_new_page_creates_signs_and_arms(dws, human):
     c = _client(dws)
     r = _new(c, "dark", type="feature")  # the type is forced to epic
-    assert r.status_code == 303 and "err=" not in _loc(r)
+    assert r.status_code == 303 and "err=" not in _loc(r) and "started+it+as+a+Dark+AI+Factory" in _loc(r)
     eid = re.search(r"/factory/([A-Z]+-\d+)", _loc(r)).group(1)
     t = _epic(dws, eid)
     assert t.meta["type"] == "epic" and t.status == "open"
@@ -167,14 +218,16 @@ def test_dark_start_from_the_new_page_creates_signs_and_arms(dws, human):
 
 def test_ai_factory_start_from_the_new_page(fws):
     c = _client(fws)
-    eid = _started(c, fws, "factory")
+    r = _new(c, "factory")
+    assert "started+it+as+an+AI+Factory" in _loc(r)
+    eid = re.search(r"/factory/([A-Z]+-\d+)", _loc(r)).group(1)
     d = epics.delegation(fws, _epic(fws, eid))
     assert d["factory"] and not d.get("dark") and fs.armed(fws, d["id"])
 
 
 def test_a_ticket_from_the_new_page_is_as_before(fws):
     c = _client(fws)
-    r = _post(c, "/new", title="Plain one", mode="ticket", ask="just do it", done_when=DONE)
+    r = _post(c, "/new", title="Plain one", mode="ticket", ask="just do it", done_when=DONE)  # no token needed
     assert "/t/" in _loc(r) and "err=" not in _loc(r)
     (e,) = store.scan(fws)
     t = store.read_ticket(e.path)
@@ -183,17 +236,21 @@ def test_a_ticket_from_the_new_page_is_as_before(fws):
 
 
 @pytest.mark.parametrize("ws_kind, data, why", [
-    ("dark", {"confirm_dark": ""}, "type dark"),
-    ("dark", {"confirm_dark": "Dark"}, "type dark"),
-    ("dark", {"confirm_dark": "yes"}, "type dark"),
+    ("dark", {"confirm_dark": ""}, "Type dark"),
+    ("dark", {"confirm_dark": "Dark"}, "Type dark"),
+    ("dark", {"confirm_dark": "yes"}, "Type dark"),
     ("factory", {}, "Dark AI Factory is off"),  # Dark off: a posted Dark mode is refused
     ("off", {}, "AI Factory is switched off"),
-    ("dark", {"mode": "darker"}, "unknown mode"),  # a forged mode
+    ("dark", {"mode": "darker"}, "Unknown mode"),  # a forged mode
     ("off", {"mode": "factory"}, "AI Factory is switched off"),
-    ("dark", {"ask": "  "}, "describe the work"),
-    ("dark", {"done_when": ""}, "say when it is done"),
+    ("dark", {"ask": "  "}, "Describe the work"),
+    ("dark", {"done_when": ""}, "Say when it is done"),
+    ("dark", {"ask": "Build it.\nFormat: TBD"}, "reads as a question still open for you"),
+    ("dark", {"done_when": "Open questions for you: which viewer?"}, "reads as a question still open for you"),
+    ("dark", {"ask": "Build​ it."}, "hidden or control characters"),
+    ("dark", {"title": "Export‮ revamp"}, "hidden or control characters"),
 ])
-def test_a_start_the_switches_or_the_typed_word_do_not_allow_creates_nothing(configure, human, ws_kind, data, why):
+def test_a_start_that_would_be_refused_creates_nothing(configure, human, ws_kind, data, why):
     from orch.core.ops import Ops
     ws = configure(factory={"enabled": ws_kind != "off"})
     if ws_kind == "dark":
@@ -202,16 +259,60 @@ def test_a_start_the_switches_or_the_typed_word_do_not_allow_creates_nothing(con
     r = _new(_client(ws), **{"mode": "dark", **data})
     assert r.status_code == 422 and why in r.text
     assert store.scan(ws) == [] and len(ledger.entries(ws)) == n
+    assert "`" not in r.text.split('role="alert"', 1)[1].split("</p>", 1)[0]  # plain words, no code marks
+
+
+def test_a_second_submit_of_the_same_form_starts_nothing(dws):
+    c = _client(dws)
+    once = _once(c)
+    data = {"title": "Export revamp", "mode": "dark", "ask": ASK, "done_when": DONE, "confirm_dark": "dark", "once": once}
+    first = _post(c, "/new", **data)
+    eid = re.search(r"/factory/([A-Z]+-\d+)", _loc(first)).group(1)
+    second = _post(c, "/new", **data)
+    assert second.status_code == 409 and f"This form was sent already: it created {eid}" in second.text
+    assert f'href="/factory/{eid}"' in second.text and 'value="Export revamp"' not in second.text
+    assert len(store.scan(dws)) == 1 and len([e for e in ledger.entries(dws) if e.get("kind") == "charter"]) == 1
+    for token in ("", "made-up"):
+        r = _post(c, "/new", **{**data, "once": token})
+        assert r.status_code == 409 and "sent already or is too old" in r.text
+    assert len(store.scan(dws)) == 1
+
+
+def test_the_submit_button_is_disabled_after_the_first_factory_submit():
+    js = (STATIC / "app.js").read_text()
+    assert "form.dataset.sent" in js and "b.disabled = true" in js
+    assert 'modeOf(form) === "ticket") return' in js  # Ticket mode posts as before
+    assert "Confirm · start AI Factory: " in js and "START DARK AI FACTORY (PROFILE ONLY)" in js
+    assert "NO PROMPTS" not in js
 
 
 def test_a_failed_start_after_creation_goes_to_the_epic_not_a_form_error(dws, monkeypatch):
+    c = _client(dws)
+    once = _once(c)
     monkeypatch.setenv("ORCH_HARNESS", "test-agent")  # the dashboard process runs under an agent: no start
-    r = _new(_client(dws), "dark")
+    r = _post(c, "/new", title="x", mode="dark", ask=ASK, done_when=DONE, confirm_dark="dark", once=once)
     assert r.status_code == 303 and "err=" in _loc(r) and "/t/" in _loc(r)
     assert "but+starting+it+as+a+Dark+AI+Factory+failed" in _loc(r) and "agent+harness" in _loc(r)
+    assert "%60" not in _loc(r)  # no backticks in the flash
     (e,) = store.scan(dws)
     assert epics.delegation(dws, store.read_ticket(e.path)) is None
     assert not [x for x in ledger.entries(dws) if x.get("kind") == "charter"]
+
+
+def test_a_start_is_refused_when_the_stored_text_is_not_what_was_sent(dws, monkeypatch):
+    from orch.core import ops as ops_mod
+    real = ops_mod.Ops.new
+
+    def edited(self, title, **kw):  # something rewrites the epic between creation and the start
+        t = real(self, title, **kw)
+        real_set = ops_mod.Ops.set_section
+        real_set(self, t.id, "Requirements", "something else")
+        return t
+    monkeypatch.setattr(ops_mod.Ops, "new", edited)
+    r = _new(_client(dws), "dark")
+    assert "err=" in _loc(r) and "not+exactly+what+you+typed" in _loc(r)
+    (e,) = store.scan(dws)
+    assert epics.delegation(dws, store.read_ticket(e.path)) is None
 
 
 def test_the_new_page_needs_the_cookie_and_the_origin(dws):
@@ -227,36 +328,39 @@ def test_the_new_page_needs_the_cookie_and_the_origin(dws):
 
 # -- the epic page: Start as a Dark AI Factory -------------------------------------------------------------------------
 
-def test_the_epic_page_offers_dark_only_while_dark_is_on(fws, fa, human):
+def test_the_epic_page_offers_dark_only_while_dark_is_on_and_needs_the_word(fws, fa, human):
     e = fa.new("Epic", type="epic")
     _refine(fa, e.id, plan=None)
     assert 'name="dark"' not in _client(fws).get(f"/t/{e.id}").text
     seen = epics.charter(fws, _epic(fws, e.id))["content_hash"]
-    r = _post(_client(fws), f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1")
+    r = _post(_client(fws), f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1", confirm_dark="dark")
     assert "err=" in _loc(r) and epics.delegation(fws, _epic(fws, e.id)) is None  # Dark off: refused
     from orch.core.ops import Ops
     Ops(fws, human).set_factory_dark(True)
     c = _client(fws)
-    assert 'name="dark"' in c.get(f"/t/{e.id}").text and "Start as a Dark AI Factory" in c.get(f"/t/{e.id}").text
-    r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1")
+    page = c.get(f"/t/{e.id}").text
+    assert 'name="dark"' in page and 'name="confirm_dark"' in page and "Start as a Dark AI Factory" in page
+    assert "no permission prompts in the session" in page and "nothing asks you" not in page
+    for word in ("", "Dark", "no"):
+        r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1", confirm_dark=word)
+        assert "err=" in _loc(r) and "type+dark" in _loc(r) and epics.delegation(fws, _epic(fws, e.id)) is None
+    r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1", confirm_dark="dark")
     assert "err=" not in _loc(r)
     d = epics.delegation(fws, _epic(fws, e.id))
     assert d["factory"] and d["dark"] and fs.armed(fws, d["id"])
 
 
-def test_the_epic_page_dark_start_is_refused_to_an_agent_harness(dws, fa, monkeypatch):
+def test_the_epic_page_dark_start_is_refused_to_an_agent_harness_and_cross_origin(dws, fa, monkeypatch):
     e = fa.new("Epic", type="epic")
     _refine(fa, e.id, plan=None)
     seen = epics.charter(dws, _epic(dws, e.id))["content_hash"]
     c = _client(dws)
+    data = {"gate": "requirements", "seen": seen, "dark": "1", "confirm_dark": "dark"}
+    assert c.post(f"/t/{e.id}/approve", data=data, headers={"origin": "http://evil.example"},
+                  follow_redirects=False).status_code == 403
     monkeypatch.setenv("ORCH_HARNESS", "test-agent")
-    r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, dark="1")
+    r = _post(c, f"/t/{e.id}/approve", **data)
     assert "err=" in _loc(r) and "agent+harness" in _loc(r) and epics.delegation(dws, _epic(dws, e.id)) is None
-
-
-def test_the_confirm_label_names_a_dark_start():
-    js = (__import__("pathlib").Path(__import__("orch").__file__).parent / "dashboard/static/app.js").read_text()
-    assert "START DARK AI FACTORY" in js
 
 
 # -- end to end: only the dashboard's start, then the runner, the hook and the card ------------------------------------
@@ -279,8 +383,10 @@ def test_end_to_end_dark_through_the_dashboard_start(dws, fa, human):
     assert r["source"] == "dark" and r["command"] == "make lint"
     for url in ("/", f"/factory/{eid}"):
         card = c.get(url).text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
-        assert "Add to the Dark profile" in card and f'action="/permits/{r["id"]}/profile"' in card
-        assert "not in the Dark profile" in card and "Grant once" in card and "Deny" in card
+        assert f'action="/permits/{r["id"]}/profile"' in card and "not in the Dark profile" in card
+        assert '<button type="submit" class="btn">Add to the Dark profile</button>' in card  # not the primary
+        assert '<button type="submit" class="btn btn-primary">Grant once</button>' in card and "Deny" in card
+        assert "this exact command runs from now on in Dark epics of this checkout" in card
     resp = _post(c, f"/permits/{r['id']}/profile", sha=r["sha"], next=f"/factory/{eid}")
     assert "err=" not in _loc(resp) and _loc(resp).startswith(f"/factory/{eid}")
     assert any(x["kind"] == "exact" and x["rule"] == "make lint" for x in dark_profile.rules(dws))
@@ -289,7 +395,7 @@ def test_end_to_end_dark_through_the_dashboard_start(dws, fa, human):
     assert b["session"] not in c.get(f"/factory/{eid}").text  # session ids never reach a page
 
 
-# -- POST /permits/{rid}/profile refusals ------------------------------------------------------------------------------
+# -- POST /permits/{rid}/profile and the Add button --------------------------------------------------------------------
 
 @pytest.fixture
 def dark_request(dws, fa, human):
@@ -315,6 +421,8 @@ def test_profile_post_refuses_a_request_dark_did_not_file(dws, fa, dark_request)
     n = len(ledger.entries(dws))
     resp = _post(c, f"/permits/{r['id']}/profile", sha=r["sha"])
     assert "err=" in _loc(resp) and "not+filed+by+a+Dark+factory" in _loc(resp) and len(ledger.entries(dws)) == n
+    card = c.get("/").text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
+    assert "Add to the Dark profile" not in card
 
 
 def test_profile_post_refuses_another_workspaces_request(dws, dark_request):
@@ -327,11 +435,22 @@ def test_profile_post_refuses_another_workspaces_request(dws, dark_request):
     assert "err=" in _loc(resp) and len(ledger.entries(dws)) == n and dark_profile.rules(dws) == []
 
 
+def _agent():
+    from orch.core.events import Actor
+    return Actor("agent", "claude-code", "cli", "7f3c9a21-0000")
+
+
 def test_profile_post_is_the_humans_only(dws, dark_request, monkeypatch):
     c, eid, cid, r = dark_request
     from orch.dashboard.app import create_app
-    assert TestClient(create_app(dws, "tok")).post(f"/permits/{r['id']}/profile", data={"sha": r["sha"]},
-                                                   follow_redirects=False).status_code == 401
+    app = create_app(dws, "tok")
+    assert TestClient(app).post(f"/permits/{r['id']}/profile", data={"sha": r["sha"]},
+                                follow_redirects=False).status_code == 401
+    other = TestClient(app)
+    other.get("/?token=tok")
+    assert other.post(f"/permits/{r['id']}/profile", data={"sha": r["sha"]}, headers={"origin": "http://evil.example"},
+                      follow_redirects=False).status_code == 403
+    assert dark_profile.rules(dws) == []
     assert _post(c, f"/permits/{r['id']}/profile", sha=r["sha"]).status_code == 303
     assert dark_profile.rules(dws)  # the human's own post works ...
     r2 = permits.request(dws, _agent(), _epic(dws, cid), "make two", source="dark")
@@ -341,9 +460,13 @@ def test_profile_post_is_the_humans_only(dws, dark_request, monkeypatch):
     assert "err=" in _loc(resp) and "agent+harness" in _loc(resp) and len(ledger.entries(dws)) == n
 
 
-def _agent():
-    from orch.core.events import Actor
-    return Actor("agent", "claude-code", "cli", "7f3c9a21-0000")
+def test_the_add_button_shows_only_while_dark_is_on(dws, human, dark_request):
+    from orch.core.ops import Ops
+    c, eid, cid, r = dark_request
+    assert "Add to the Dark profile" in c.get("/").text
+    Ops(dws, human).set_factory_dark(False)
+    card = c.get("/").text.split(f'data-permit="{r["id"]}"', 1)[1].split("</article>", 1)[0]
+    assert "Add to the Dark profile" not in card and "Grant once" in card
 
 
 def test_a_card_from_an_ordinary_factory_has_no_profile_button(fws, fa, fh):
@@ -358,41 +481,78 @@ def test_a_card_from_an_ordinary_factory_has_no_profile_button(fws, fa, fh):
 
 # -- the run view -----------------------------------------------------------------------------------------------------
 
-def _ring(html):
-    return html.split('class="ring"', 1)[1].split("</svg>", 1)[0]
-
-
-def test_run_view_working_dark(dws, fa):
+def test_run_view_without_children_waits_for_them(dws):
     c = _client(dws)
     eid = _started(c, dws, "dark")
     html = c.get(f"/factory/{eid}").text
-    assert "ring-panel is-dark" in html and " hot" not in html.split("ring-panel", 1)[1].split(">", 1)[0]
-    assert 'aria-valuetext="Step 1 of 5: Understand' in html  # no child yet: not even Understand is done
-    _child(fa, eid)
+    assert "Waiting for children" in _status(html) and "chip-neu" in _status(html) and "is working" not in html
+    assert "Nothing splits an epic into children yet. Start an agent on the epic and ask it to split it" in html
+    assert 'aria-valuetext="Step 1 of 5: Understand, not yet"' in html  # Understand needs a child
+    assert "is-live" not in _panel(html) and "hot" not in _panel(html)
+
+
+def test_run_view_working_dark_and_the_glow(dws, fa, human, close_tasks):
+    c = _client(dws)
+    eid = _started(c, dws, "dark")
+    cid = _child(fa, eid)
     html = c.get(f"/factory/{eid}").text
-    assert "Dark AI Factory is working" in html and 'role="status"' in html and 'role="progressbar"' in html
+    assert "Dark AI Factory is working" in _status(html) and ">Working<" not in html
+    assert 'role="status"' in html and 'role="progressbar"' in html
     assert 'aria-valuenow="2"' in html and 'aria-valuetext="Step 3 of 5: Build, in progress"' in html
-    assert "ring-panel is-dark hot" in html  # the run reached real work: the glow is stronger
+    assert _panel(html).strip() == "is-dark is-live"  # no build evidence yet: the faint glow
     ring = _ring(html)
     assert ring.count("is-done") == 2 and ring.count("is-now") == 1 and "ring-run" not in ring and "ring-core" in ring
     assert "No estimate yet." in html and "Running for" in html and "Stop the run…" in html
+    assert "Build is as the agents report it" in html
     for gone in ("Test", "Review", "Merge", "Release"):
         assert f">{gone}<" not in html
+    _tick(dws, human, Fake())  # a live session: real work
+    assert "hot" in _panel(c.get(f"/factory/{eid}").text)
 
 
-def test_run_view_working_ai_factory(fws, fa):
+def test_run_view_working_ai_factory_moves_its_dash(fws, fa):
     c = _client(fws)
     eid = _started(c, fws, "factory")
     _child(fa, eid)
     html = c.get(f"/factory/{eid}").text
-    assert "AI Factory is working" in html and "is-dark" not in html and "ring-run" in _ring(html)
-    assert "ring-core" not in html
+    assert "AI Factory is working" in html and "is-dark" not in html and "is-live" in _panel(html)
+    assert '<path class="ring-run"' in _ring(html) and "ring-core" not in html
+    css = (STATIC / "app.css").read_text()
+    assert "stroke-dasharray: 0.4 1.6" in css and "to { stroke-dashoffset: -2; }" in css  # one period: no snap
+
+
+def test_run_view_no_motion_unless_working(dws, fa):
+    c = _client(dws)
+    eid = _started(c, dws, "dark")
+    _child(fa, eid)
+    _post(c, f"/t/{eid}/epic/pause", next=f"/factory/{eid}")
+    html = c.get(f"/factory/{eid}").text
+    assert "is-live" not in _panel(html) and "hot" not in _panel(html) and "ring-run" not in html
+    css = (STATIC / "app.css").read_text()
+    assert ".is-live .ring-core { animation" in css and ".ring-core { fill: var(--mint); opacity: 0.06; }" in css
+
+
+def test_run_view_with_the_dark_switch_off_is_an_ai_factory(dws, fa, human):
+    from orch.core.ops import Ops
+    c = _client(dws)
+    eid = _started(c, dws, "dark")
+    _child(fa, eid)
+    Ops(dws, human).set_factory_dark(False)
+    html = c.get(f"/factory/{eid}").text
+    assert "AI Factory is working" in html and "Dark AI Factory is working" not in html
+    assert "is-dark" not in html and "ring-core" not in html and '<path class="ring-run"' in html
+    assert "Dark switch is off" in html and "Commands outside your grants and the harness's allowlist are cards" in html
+    assert "every command it needs is a card" not in html
+    row = c.get("/factory").text
+    assert "AI Factory (Dark switch off)" in row
 
 
 def test_run_view_waiting_for_you_shows_the_card(dws, fa, dark_request):
     c, eid, cid, r = dark_request
     html = c.get(f"/factory/{eid}").text
-    assert "Waiting for you" in html and f'data-permit="{r["id"]}"' in html and "is-wait" in _ring(html)
+    assert "Needs you" in _status(html) and "Your answer is needed on the cards below" in _status(html)
+    assert html.count("Waiting for you") == 0 and ">Your cards<" in html
+    assert f'data-permit="{r["id"]}"' in html and "is-wait" in _ring(html)
     assert f'name="next" value="/factory/{eid}"' in html
 
 
@@ -412,21 +572,23 @@ def test_run_view_stopped_and_budget_used_up(dws, fa, human, dark_request, monke
     permits.permit_deny(dws, human, r["id"], expected_sha=r["sha"])
     html = c.get(f"/factory/{eid}").text
     assert "data-stopped=" in html and "Permission denied" in html and "is-stop" in _ring(html)
-    assert re.search(r'chip-warn">.*?stopped</span> Stopped</h2>', html, re.S)
+    assert "Stopped: the agents cannot go on by themselves" in _status(html) and "chip-warn" in _status(html)
     real = clock.now()
     monkeypatch.setattr(clock, "now", lambda: real + timedelta(hours=73))
     html = c.get(f"/factory/{eid}").text
-    assert "Stopped" in html and "time budget of 72 hours used up" in html
+    assert "Stopped" in _status(html) and "time budget of 72 hours used up" in html
 
 
-def test_run_view_only_budget_says_budget_used_up(dws, fa, monkeypatch):
+def test_run_view_expired_time_budget(dws, fa, monkeypatch):
     from orch import clock
     c = _client(dws)
     eid = _started(c, dws, "dark")
     _child(fa, eid)
     real = clock.now()
     monkeypatch.setattr(clock, "now", lambda: real + timedelta(hours=73))
-    assert "Budget used up" in c.get(f"/factory/{eid}").text.split("</h2>", 1)[0]
+    html = c.get(f"/factory/{eid}").text
+    assert "Budget used up" in _status(html) and "The budget is used up: agents stopped on this epic" in _status(html)
+    assert "is-live" not in _panel(html) and "time budget of 72 hours used up" in html
 
 
 def test_run_view_runner_blocked_and_unarmed(dws, fa, fh, monkeypatch):
@@ -435,11 +597,14 @@ def test_run_view_runner_blocked_and_unarmed(dws, fa, fh, monkeypatch):
     _child(fa, eid)
     monkeypatch.setattr(factory_runner, "user_settings_blocker", lambda environ=None: "the orch hooks are missing")
     html = c.get(f"/factory/{eid}").text
-    assert "The runner starts nothing" in html and "the orch hooks are missing" in html
+    assert "The runner starts nothing" in _status(html) and "Blocked" in _status(html)
+    assert "the orch hooks are missing" in html
     e2 = fa.new("Terminal start", type="epic")
     _refine(fa, e2.id, plan=None)
     fh.approve(e2.id, "requirements", delegate={"factory": True})  # the terminal's start arms nothing
-    assert "Not running: it was started in a terminal" in c.get(f"/factory/{e2.id}").text
+    html = c.get(f"/factory/{e2.id}").text
+    assert ("Not running: the dashboard&#39;s start did not arm it (for example, it was approved in a terminal)"
+            in _status(html))
 
 
 def test_run_view_evidence_then_finished_with_a_summary(fws, fa, fh, close_tasks):
@@ -458,11 +623,24 @@ def test_run_view_evidence_then_finished_with_a_summary(fws, fa, fh, close_tasks
     seen = factory_report.ready(fws, _epic(fws, e.id))["seen"]
     assert "err=" not in _loc(_post(c, f"/t/{e.id}/verdict", verdict="done", seen=seen, next=f"/factory/{e.id}"))
     html = c.get(f"/factory/{e.id}").text
-    assert "Finished" in html
+    assert "Finished: you gave the verdict" in _status(html)
     assert 'aria-valuenow="5"' in html and _ring(html).count("is-done") == 5
     summary = html.split('id="run-summary-h"', 1)[1].split("</section>", 1)[0]
-    assert "1 child, 1 task done" in summary and "0 permission requests" in summary and "from your start to your verdict" in summary
-    assert "Stop the run…" not in html and "Ran for" in html
+    assert "1 child, 1 task done, as the agents report it" in summary
+    assert "0 permission requests: 0 answered on a card, 0 added to the Dark profile" in summary
+    assert "Commands the Dark profile allowed directly leave no record and are not counted." in summary
+    assert re.search(r"<li>[A-Z][^<]* from your start to your verdict</li>", summary)
+    assert "Stop the run…" not in html and "Ran for" in html and "No estimate yet." not in html
+
+
+def test_the_summary_counts_cards_added_to_the_profile(dws, fa, close_tasks, dark_request):
+    c, eid, cid, r = dark_request
+    assert "err=" not in _loc(_post(c, f"/permits/{r['id']}/profile", sha=r["sha"]))
+    r2 = permits.request(dws, fa.actor, _epic(dws, cid), "make lint", source="dark")
+    _post(c, f"/permits/{r2['id']}/grant", sha=r2["sha"], scope="once")
+    _finish(c, dws, fa, close_tasks, eid, cid)
+    summary = c.get(f"/factory/{eid}").text.split('id="run-summary-h"', 1)[1].split("</section>", 1)[0]
+    assert "2 permission requests: 1 answered on a card, 1 added to the Dark profile" in summary
 
 
 def test_run_view_steps_come_from_records_not_ticket_text(fws, fa, fh):
@@ -477,15 +655,17 @@ def test_run_view_steps_come_from_records_not_ticket_text(fws, fa, fh):
     assert 'aria-valuenow="1"' in html and "Finished" not in html and "Not verifiable" in html
 
 
-def test_run_view_escapes_the_title_and_keeps_command_text_out_of_the_log(dws, fa, dark_request):
+def test_run_view_escapes_the_title_and_the_log_is_plain_words(dws, fa, dark_request):
     c, eid, cid, r = dark_request
     path, t = store.load(dws, eid)
     t.meta["title"] = "<script>alert(1)</script>"
     store.save(dws, t, path)
     html = c.get(f"/factory/{eid}").text
     assert "<script>alert(1)</script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
-    log = html.split('class="card run-log"', 1)[1]
-    assert "permit.requested" in log and "make" not in log and "deploy" not in log and r["sha"][7:] not in log
+    log = html.split('<details class="run-log">', 1)[1]
+    assert "<summary>Show the log</summary>" in log and "Who wrote each entry is as the agents report it." in log
+    assert "An agent asked for a permission" in log and "You approved a gate" in log
+    assert "permit.requested" not in log and "make" not in log and "deploy" not in log and r["sha"][7:] not in log
     assert "7f3c9a21" not in log  # no agent session id
     lst = c.get("/factory").text
     assert "<script>alert(1)</script>" not in lst and "&lt;script&gt;" in lst
@@ -501,31 +681,33 @@ def test_run_view_is_absent_for_a_plain_epic_and_with_the_factory_off(fws, fa, c
 
 # -- the factory list ---------------------------------------------------------------------------------------------------
 
-def test_factory_list_order_counts_and_menu(dws, fa, human, close_tasks):
+def test_factory_list_order_counts_and_menu(dws, fa, human, close_tasks, monkeypatch):
     c = _client(dws)
     working = _started(c, dws, "dark")
     _child(fa, working)
     waiting = _started(c, dws, "factory")
     w_child = _child(fa, waiting)
     permits.request(dws, fa.actor, _epic(dws, w_child), CMD)
-    stopped = _started(c, dws, "factory")
-    _child(fa, stopped)
-    _post(c, f"/t/{stopped}/epic/pause")
+    paused = _started(c, dws, "factory")
+    _child(fa, paused)
+    _post(c, f"/t/{paused}/epic/pause")
     finished = _started(c, dws, "factory")
-    f_child = _child(fa, finished)
-    fa.claim(f_child)
-    close_tasks(fa, f_child)
-    fa.set_section(f_child, "Verification", "- AC1: ran it, green")
-    fa.move(f_child, "testing")
-    seen = factory_report.ready(dws, _epic(dws, finished))["seen"]
-    assert "err=" not in _loc(_post(c, f"/t/{finished}/verdict", verdict="done", seen=seen))
+    _finish(c, dws, fa, close_tasks, finished, _child(fa, finished))
+    calls = []
+    monkeypatch.setattr(factory_runner, "user_settings_blocker", lambda environ=None: calls.append(1))
     html = c.get("/factory").text
+    assert len(calls) == 1  # read once for the whole list
     assert "4 factories, 1 working, 1 needs you" in html
-    order = re.findall(r'data-factory="([A-Z]+-\d+)"', html)
-    assert order == [waiting, working, stopped, finished]
+    assert re.findall(r'data-factory="([A-Z]+-\d+)"', html) == [waiting, working, paused, finished]
     row = html.split(f'data-factory="{working}"', 1)[1].split("</li>\n", 1)[0]
-    assert ">Dark<" in row and "chip-info" in row and row.count('class="step-mark is-') == 5
+    assert ">Dark AI Factory<" in row and "chip-info" in row and row.count('class="step-mark is-') == 5
     assert 'href="/factory"' in html and ">Factories<" in html
+
+
+def test_factory_list_counts_stopped_as_needing_you(dws, fa, human, dark_request):
+    c, eid, cid, r = dark_request
+    permits.permit_deny(dws, human, r["id"], expected_sha=r["sha"])
+    assert "1 factory, 0 working, 1 needs you" in c.get("/factory").text
 
 
 def test_factory_list_empty_state_and_no_menu_entry_while_off(fws, configure):

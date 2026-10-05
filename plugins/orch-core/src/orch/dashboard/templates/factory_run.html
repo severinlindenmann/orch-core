@@ -2,7 +2,7 @@
 {% import "_ui.html" as ui %}
 {% import "_permits.html" as pm %}
 {% import "_factory.html" as fx %}
-{#- One factory's run (phase 5): the ring of five steps lit from records, the state in words, what waits for you (the
+{#- One factory's run (phase 5): the ring of five steps lit from records, the state said once, what waits for you (the
     existing cards), the log and the one brake (pause). Nothing here approves, grants or closes by itself. -#}
 {% block main %}
 {% set here = "/factory/" ~ run.epic %}
@@ -12,14 +12,17 @@
     <h1>{{ run.title }}</h1>
   </div>
 </div>
-<section class="card ring-panel{{ ' is-dark' if run.dark }}{{ ' hot' if run.hot }}" aria-labelledby="run-status">
+<section class="card ring-panel{{ ' is-dark' if run.look_dark }}{{ ' is-live' if run.live }}{{ ' hot' if run.hot }}" aria-labelledby="run-status">
   {{ fx.ring(run, steps) }}
   <div class="ring-side">
-    <div role="status" id="run-status"><h2>{{ ui.status(run.role, run.state if run.state != "unarmed" else "not armed") }} {{ run.headline }}</h2></div>
-    {% if run.blocker %}<p class="muted">{{ run.blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
-    {% if run.dark and not run.dark_live %}<p class="muted">Dark is off in this checkout, so this epic runs as an ordinary AI Factory: every command it needs is a card for you.</p>{% endif %}
-    <p class="muted">No estimate yet.{% if run.elapsed %} {{ "Ran for" if run.state == "finished" else "Running for" }} {{ run.elapsed }} since you signed the start.{% endif %}</p>
+    <div role="status" id="run-status"><h2>{{ ui.status(run.role, run.chip) }} {{ run.headline }}</h2></div>
+    {% if run.state == "nokids" %}<p data-nokids>Nothing splits an epic into children yet. Start an agent on the epic and ask it to split it, or add the children yourself. The runner starts a session for each child that is approved or covered by your charter.</p>{% endif %}
+    {% if run.state == "idle" %}<p>The runner starts a session for each child that is approved or covered by your charter, of size m or smaller, and open, in progress or waiting. None is right now.</p>{% endif %}
+    {% if run.blocker and run.state == "blocked" %}<p class="muted">{{ run.blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
+    {% if run.dark and not run.look_dark %}<p class="muted" data-dark-switch-off>Dark switch is off: this epic runs as an ordinary AI Factory. Commands outside your grants and the harness's allowlist are cards for you.</p>{% endif %}
+    <p class="muted">{% if run.state != "finished" %}No estimate yet. {% endif %}{% if run.elapsed %}{{ "Ran for" if run.state == "finished" else "Running for" }} {{ run.elapsed }} since you signed the start.{% endif %}</p>
     {{ fx.marks(run, steps) }}
+    <p class="muted permit-meta">Build is as the agents report it: the children's tasks they closed.</p>
     <div class="actions">
       {% if run.active %}
       <form method="post" action="/t/{{ run.epic }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · stop the run: sessions end, tickets and work stay">
@@ -36,7 +39,7 @@
 {% set p = run.permits %}
 {% if p.requests or p.ready or p.stopped or p.budget or p.suspect %}
 <section class="run-waiting" aria-labelledby="run-waiting-h">
-  <h2 id="run-waiting-h">Waiting for you</h2>
+  <h2 id="run-waiting-h">Your cards</h2>
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
   {% for r in p.ready %}{{ pm.ready_card(r, here, True) }}{% endfor %}
@@ -49,18 +52,20 @@
 <section class="card run-summary" aria-labelledby="run-summary-h">
   <h2 id="run-summary-h">Summary</h2>
   <ul class="plain">
-    <li>{{ s.children }} {{ "child" if s.children == 1 else "children" }}, {{ s.tasks }} {{ "task" if s.tasks == 1 else "tasks" }} done</li>
-    <li>{{ s.requests }} permission {{ "request" if s.requests == 1 else "requests" }}: {{ s.card }} answered on a card, {{ s.profile }} by the Dark profile{% if s.open %}, {{ s.open }} never answered{% endif %}</li>
-    {% if run.elapsed %}<li>{{ run.elapsed }} from your start to your verdict</li>{% endif %}
+    <li>{{ s.children }} {{ "child" if s.children == 1 else "children" }}, {{ s.tasks }} {{ "task" if s.tasks == 1 else "tasks" }} done, as the agents report it</li>
+    <li>{{ s.requests }} permission {{ "request" if s.requests == 1 else "requests" }}: {{ s.card }} answered on a card, {{ s.profile }} added to the Dark profile{% if s.open %}, {{ s.open }} never answered{% endif %}</li>
+    {% if run.elapsed %}<li>{{ run.elapsed|capitalize }} from your start to your verdict</li>{% endif %}
   </ul>
+  <p class="muted permit-meta">Commands the Dark profile allowed directly leave no record and are not counted.</p>
 </section>
 {% endif %}
 
-<details class="card run-log">
-  <summary class="btn btn-quiet">Show the log</summary>
+<details class="run-log">
+  <summary>Show the log</summary>
   {% if run.log %}
+  <p class="muted permit-meta">Who wrote each entry is as the agents report it.</p>
   <ol class="plain run-log-list">
-    {% for e in run.log %}<li><time datetime="{{ e.at }}">{{ e.at }}</time> <a class="lnk key" href="/t/{{ e.ticket }}">{{ e.ticket }}</a> {{ e.kind }} <span class="muted">by {{ e.who }}</span></li>{% endfor %}
+    {% for e in run.log %}<li><time datetime="{{ e.at }}">{{ e.at|local }}</time> · <a class="lnk key" href="/t/{{ e.ticket }}">{{ e.ticket }}</a> · {{ e.text }}</li>{% endfor %}
   </ol>
   {% else %}<p class="muted">Nothing recorded yet.</p>{% endif %}
 </details>

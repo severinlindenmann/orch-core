@@ -23,7 +23,7 @@ def factory_list(request: Request):
     if rows is None:
         return _not_found(request, "AI Factory is switched off in this workspace")
     counts = {"all": len(rows), "working": sum(r["state"] == "working" for r in rows),
-              "you": sum(r["state"] == "waiting" for r in rows)}
+              "you": sum(r["state"] in factory_data.NEEDS_YOU for r in rows)}
     return page(request, "factory.html", nav="factory", title="Factories", rows=rows, counts=counts,
                 steps=factory_data.STEPS)
 

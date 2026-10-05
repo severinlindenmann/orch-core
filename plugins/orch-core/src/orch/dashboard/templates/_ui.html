@@ -11,3 +11,17 @@
   {% if d.stale %}<p>{{ status("warn", "stale: the question changed since") }}</p>{% endif %}
   <div class="actions">{% for value, label in d.choices %}<form method="post" action="/addons/{{ addon }}/decisions" class="inline"><input type="hidden" name="id" value="{{ d.id }}"><input type="hidden" name="choice" value="{{ value }}"><button type="submit" class="btn"{% if d.stale and value == "apply" %} disabled{% endif %}>{{ label }}</button></form>{% endfor %}</div>
 </div>{% endmacro %}
+
+{#- Addon ticket options (manifest `ticket_options`): one checkbox per option inside a form that already posts. The hidden
+    "offered" field lets the server tell an unticked box from an option the form never showed. -#}
+{% macro option_fields(options) %}{% for o in options %}<input type="hidden" name="option_offered" value="{{ o.key }}">
+<label class="ticket-option"><input type="checkbox" name="option_on" value="{{ o.key }}"{{ " checked" if o.value }}><span>{{ o.label }}{% if o.help %}<small class="muted">{{ o.help }}</small>{% endif %}</span></label>{% endfor %}{% endmacro %}
+{#- The ticket page's own card: one small form per option with the state in words and the button that flips it. -#}
+{% macro option_card(ticket_id, options) %}{% if options %}<section class="card" id="ticket-options" aria-labelledby="ticket-options-h">
+  <h2 id="ticket-options-h">Addon options</h2>
+  {% for o in options %}<form method="post" action="/t/{{ ticket_id }}/option" class="ticket-option-row">
+    <input type="hidden" name="option" value="{{ o.key }}"><input type="hidden" name="value" value="{{ "" if o.value else "1" }}">
+    <div><b>{{ o.label }}</b> {{ status("ok", "On") if o.value else status("neu", "Off") }}{% if o.help %}<p class="muted">{{ o.help }}</p>{% endif %}<p class="muted">From {{ o.addon_title }}.</p></div>
+    <button type="submit" class="btn btn-quiet">{{ "Turn off" if o.value else "Turn on" }}</button>
+  </form>{% endfor %}
+</section>{% endif %}{% endmacro %}

@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% import "_decisions.html" as dc %}
+{% import "_decisions.html" as dc with context %}
 {#- One decision at a time (#11/#17): the backlog (grooming), or the blocking / later decisions Today lists as rows.
     The card has its full gated text, then Previous / Next (j and k too). After an action the next one is shown. -#}
 {% set q = "/groom?scope=" ~ scope ~ "&at=" %}

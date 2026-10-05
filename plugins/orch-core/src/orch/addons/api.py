@@ -389,6 +389,14 @@ class AddonOps:
             return _new_ops(self._ws, self._name).artifact_add(ref, src, name, context=context,
                                                                stream=_Capped(f, MAX_ARTIFACT_BYTES))
 
+    def relay_ticket_option(self, ref: str, option_id: str, value: bool) -> bool:
+        """Record a choice for one of THIS addon's own `ticket_options` that its human made somewhere core cannot see
+        (a paired phone). Returns whether it changed. Another addon's option, or one the manifest does not declare, is
+        refused. It is recorded as `addon:<name>`, never as the human; the dashboard and the CLI write as the human."""
+        from orch.addons import ticket_options
+        from orch.core import store
+        return ticket_options.relay_value(self._ws, store.resolve(self._ws, ref).id, self._name, option_id, bool(value))
+
     def import_external(self, key: str, title: str, *, ask: str = "") -> str:
         """A backlog ticket for an external key; the existing ticket's id if one already has that key. `ask` is
         free text from outside: it goes through `neutral_text`, so it can never open a fence or forge a section."""
@@ -521,6 +529,13 @@ class AddonContext:
         from orch.core.schema import ticket_document
         return ticket_document(self.ws, self.show(ref))
 
+    def ticket_option(self, ref: str, option_id: str) -> bool:
+        """This addon's `ticket_options` value on a ticket (the declared default when the human never set it): the
+        human's yes/no from the new-ticket form, the approve card, the ticket page or the CLI. Read-only."""
+        from orch.addons import ticket_options
+        from orch.core import store
+        return ticket_options.value(self.ws, self.name, store.resolve(self.ws, ref).id, option_id)
+
     def ticket_widgets(self, ref: str, *, theme: str = "system") -> list[dict]:
         """The ticket's ```orch widget blocks (docs/widgets.md), each drawn as far as this desktop can, for a
         companion addon that shows them elsewhere: {section, index, key, layer ("type" | "widget" | "html" |
@@ -619,6 +634,9 @@ class ProviderContext:
 
     def document(self, ref: str) -> dict:
         return self.addon.document(ref)
+
+    def ticket_option(self, ref: str, option_id: str) -> bool:
+        return self.addon.ticket_option(ref, option_id)
 
     def ticket_widgets(self, ref: str, *, theme: str = "system") -> list[dict]:
         return self.addon.ticket_widgets(ref, theme=theme)

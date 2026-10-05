@@ -16,6 +16,7 @@
 <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ gv.gate }} {{ gv.seen_short|replace('sha256 ', '') }}">
   <input type="hidden" name="gate" value="{{ gv.gate }}">
   <input type="hidden" name="seen" value="{{ gv.seen }}">
+  {{ ui.option_fields(ticket_options(t.id)) }}
   {% if gv.question %}
   <p class="hint">A line reads as an open question for you: &ldquo;{{ gv.question[:80] }}&rdquo;. Request changes so the agent asks it with <code>orch ask</code>, or approve if it is not a question for you.</p>
   <label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
@@ -31,6 +32,7 @@
 <form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ req.seen_short|replace('sha256 ', '') }} + plan {{ plan.seen_short|replace('sha256 ', '') }}">
   <input type="hidden" name="seen" value="{{ req.seen }}">
   <input type="hidden" name="seen_plan" value="{{ plan.seen }}">
+  {{ ui.option_fields(ticket_options(t.id)) }}
   {#- every open-question line of both gates: the one override box covers them all -#}
   {% set qs = together_questions %}
   {% if qs %}
@@ -671,6 +673,7 @@
     <ul class="plain">{% for x in external %}<li>{% if x.url %}<a class="lnk" href="{{ x.url }}" target="_blank" rel="noopener">{{ x.key }} ↗</a>{% else %}{{ x.key }}{% endif %}</li>{% endfor %}</ul>
   </section>
   {% endif %}
+  {{ ui.option_card(t.id, ticket_options(t.id)) }}
   {{ ui.slot(addon_slot("ticket.sync", t)) }}
   {{ ui.slot(addon_slot("ticket.external", t)) }}
   {{ ui.slot(addon_slot("ticket.pages", t)) }}

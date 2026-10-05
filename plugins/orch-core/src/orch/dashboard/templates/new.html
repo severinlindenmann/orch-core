@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% import "_ui.html" as ui %}
 {% block main %}
 <div class="page-head">
   <div>
@@ -38,6 +39,8 @@
     <label class="field-col" for="files">Screenshots and files
       <input id="files" type="file" name="files" multiple>
     </label>
+    {% set opts = ticket_options() %}
+    {% if opts %}<fieldset class="ticket-options"><legend>From your addons</legend>{{ ui.option_fields(opts) }}</fieldset>{% endif %}
     <p id="paste-count" class="muted"></p>
     <div><button type="submit" class="btn btn-primary">Create ticket</button></div>
   </form>

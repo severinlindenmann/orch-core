@@ -73,6 +73,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/t/{ref}/answer"): _t(Scope.DECIDE, kind="answer"),
     ("POST", "/t/{ref}/verdict"): _t(Scope.DECIDE, kind="verdict"),
     ("POST", "/t/{ref}/move"): DECIDE,
+    ("POST", "/t/{ref}/option"): DECIDE,  # an addon's yes/no on a ticket (the approve forms carry the same fields)
     ("POST", "/t/{ref}/epic/pause"): DECIDE,  # only stops delegation
     ("POST", "/permits/{rid}/deny"): DECIDE,  # only refuses a request
     ("POST", "/permits/grants/{gid}/revoke"): DECIDE,  # only takes a grant away

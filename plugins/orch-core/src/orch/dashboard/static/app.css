@@ -1768,3 +1768,12 @@ a.ec-pill:hover { background: var(--hover); }
 .factory-child:first-child { border-top: 0; padding-top: 0; }
 .factory-reasons li { overflow-wrap: anywhere; }
 .factory-ready, .factory-stopped { max-width: 100%; }
+
+/* Addon ticket options (manifest ticket_options): a tick box line in a form, and the ticket page's card. */
+.ticket-options { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s-2); }
+.ticket-options legend { padding: 0; font-weight: 600; margin-bottom: var(--s-1); }
+.ticket-option { display: flex; align-items: flex-start; gap: var(--s-2); flex: 1 1 100%; }
+.ticket-option input { margin-top: var(--s-1); flex: none; }
+.ticket-option small { display: block; }
+.ticket-option-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--s-3); }
+.ticket-option-row p { margin: var(--s-1) 0 0; }

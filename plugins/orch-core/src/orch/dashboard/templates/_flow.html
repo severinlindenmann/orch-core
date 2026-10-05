@@ -5,7 +5,7 @@
     full-text approve view on the ticket page. Every form is the decision card's own macro: same hashes, same
     inline confirm, no popups. -#}
 {% import "_ui.html" as ui %}
-{% import "_decisions.html" as dc %}
+{% import "_decisions.html" as dc with context %}
 
 {% macro thumb(pic, cls="ym-thumb") -%}
 <a class="{{ cls }}" href="{{ pic.href }}" target="_blank" rel="noopener"><img src="{{ pic.href }}" alt="{{ pic.alt }}" loading="lazy" decoding="async"></a>

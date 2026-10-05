@@ -436,3 +436,81 @@ def test_a_clone_moved_off_its_branch_is_not_started_in_and_the_run_view_says_wh
     assert len(run["fake"].started) == 1 and any("not its own work tree" in x for x in lines), lines
     r = run_view(fws, store.load(fws, run["eid"])[1])
     assert r["clones"] and "not the one the runner made" in r["clones"][0]["why"]
+
+
+# -- links planted in the agent-writable clones folder ------------------------------------------------------------
+
+@pytest.fixture
+def outside(tmp_path):
+    d = tmp_path / "outside"
+    (d / "repo").mkdir(parents=True)
+    (d / "repo" / "precious.txt").write_text("keep\n", encoding="utf-8")
+    (d / "precious.txt").write_text("keep\n", encoding="utf-8")
+    return d
+
+
+def _intact(d):
+    assert (d / "precious.txt").read_text(encoding="utf-8") == "keep\n"
+    assert (d / "repo" / "precious.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.parametrize("level", ["clones-root", "workspace", "child"])
+def test_a_link_on_the_way_to_a_new_clone_makes_nothing_there(fws, fa, fh, human, outside, level):
+    eid, d = _epic(fa, fh, human, fws)
+    cid = _child(fa, eid)
+    dest = fc.clone_dir(fws, cid)
+    at = {"clones-root": fc.root(), "workspace": dest.parent.parent, "child": dest.parent}[level]
+    at.parent.mkdir(parents=True, exist_ok=True)
+    if at.exists():
+        shutil.rmtree(at)
+    at.symlink_to(outside, target_is_directory=True)
+    path, why = fc.ensure(fws, human, cid)
+    assert path is None and "is a link or not a folder" in why
+    assert sorted(os.listdir(outside)) == ["precious.txt", "repo"] and fc.record(fws, cid) is None
+    _intact(outside)
+
+
+def test_clean_never_follows_a_link_inside_the_clone(fws, run, human, outside):
+    (run["clone"] / "evil").symlink_to(outside, target_is_directory=True)
+    (run["clone"] / "evil-file").symlink_to(outside / "precious.txt")
+    fs.end(fws, run["b"]["session"])
+    assert fc.clean(fws, human, run["cid"]) and not os.path.lexists(run["clone"])
+    _intact(outside)
+
+
+@pytest.mark.parametrize("swap", ["clone-is-link", "parent-is-link", "clones-root-is-link", "other-folder"])
+def test_clean_reverifies_the_exact_clone_right_before_deleting(fws, run, human, outside, swap):
+    from orch.errors import ValidationError
+    clone = run["clone"]
+    fs.end(fws, run["b"]["session"])
+    if swap == "clone-is-link":
+        shutil.move(str(clone), str(clone.parent / "moved"))
+        clone.symlink_to(outside / "repo", target_is_directory=True)
+    elif swap == "parent-is-link":
+        shutil.move(str(clone.parent), str(clone.parent.parent / "moved"))
+        clone.parent.symlink_to(outside, target_is_directory=True)
+    elif swap == "clones-root-is-link":
+        shutil.move(str(fc.root()), str(fc.root().parent / "moved-clones"))
+        (outside / fc.clone_dir(fws, run["cid"]).relative_to(fc.root()).parent).mkdir(parents=True)
+        (outside / fc.clone_dir(fws, run["cid"]).relative_to(fc.root())).mkdir()
+        fc.root().symlink_to(outside, target_is_directory=True)
+    else:  # a real folder of the same name, not the one the runner made
+        shutil.move(str(clone), str(clone.parent / "moved"))
+        clone.mkdir()
+        (clone / "precious.txt").write_text("keep\n", encoding="utf-8")
+    with pytest.raises(ValidationError):
+        fc.clean(fws, human, run["cid"])
+    assert fc.record(fws, run["cid"]) is not None  # the record stays: nothing was removed
+    _intact(outside)
+    if swap == "other-folder":
+        assert (clone / "precious.txt").exists()
+    assert fc.own_clone(fws, clone, run["cid"])  # and it is not the child's own work tree any more
+
+
+def test_a_swapped_clone_is_never_reused(fws, run, human):
+    clone = run["clone"]
+    shutil.move(str(clone), str(clone.parent / "moved"))
+    shutil.copytree(clone.parent / "moved", clone, symlinks=True)  # same content, another inode
+    path, why = fc.ensure(fws, human, run["cid"])
+    assert path is None and "not the folder the runner made" in why
+    assert "inode" in fc.own_clone(fws, clone, run["cid"])

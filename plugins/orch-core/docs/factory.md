@@ -568,6 +568,16 @@ child's clone of the repository", with the reason), as for any clone that cannot
 a failed or timed-out clone, a missing base); a failed attempt removes only what that attempt created, and the runner
 tries again in its next round.
 
+**Links in the clones folder.** The clones folder is outside the guarded permits folder, so an agent could plant a
+link in it. The runner never writes or deletes through one: before it makes, reuses or writes the config of a clone it
+checks every component from the clones folder down without following links (a link or a non-folder refuses, and the
+child is not started); the record pins the clone by device and inode, and a clone whose folder is not that one is
+neither reused nor accepted by the commit gate; a removal (a failed attempt's own folder, or `clean`) opens each folder
+from the clones folder down with `O_NOFOLLOW`, re-checks that the clone is a folder and, for `clean`, exactly the
+recorded one, and deletes relative to its parent's descriptor (links inside the clone are removed, never followed).
+Residual: `git clone` and the first checkout take the clone's path by name, so a link swapped in during those seconds
+would redirect git's writes; the inode check right after refuses such a clone and no session starts in it.
+
 **Cleaning up (you only).** In your own terminal, refused to agents and under an agent harness:
 
 ```bash

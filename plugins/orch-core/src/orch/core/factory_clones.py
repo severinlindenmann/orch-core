@@ -32,7 +32,7 @@ from pathlib import Path
 from orch.core import factory_sessions as fs
 
 CLONE_TIMEOUT = 300  # seconds for one git clone or checkout: a large repository fails clearly instead of hanging
-_KEYS = {"workspace", "child", "path", "branch", "base", "source", "at"}
+_KEYS = {"workspace", "child", "path", "branch", "base", "source", "inode", "at"}
 _FAIL_KEYS = {"workspace", "child", "why", "at"}
 NO_PUSH = "/dev/null/orch-runner-never-pushes"
 
@@ -67,6 +67,90 @@ def clone_dir(ws, child: str) -> Path:
 def branch_for(child: str) -> str:
     """The branch the runner makes for the child: it names the child as a word (the release's branch rule)."""
     return f"fx/{child.lower()}"
+
+
+# -- paths below the clones folder: never through a link ------------------------------------------------------------
+# The clones folder lies outside the guarded permits folder and agents can write it: a link planted anywhere from the
+# clones folder down to a clone would point the runner's writes and deletes elsewhere. Every component is checked
+# without following links, a clone is pinned by device and inode in the runner's record, and a removal walks the
+# folders by descriptor (O_NOFOLLOW) and deletes relative to the last one.
+_DIR_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _parts(path: Path) -> list[str]:
+    """The components of `path` below the clones folder; raises ValueError for a path outside it or one with `..`."""
+    rel = Path(os.path.normpath(path)).relative_to(os.path.normpath(root()))
+    if not rel.parts or any(p in ("..", ".", "") for p in rel.parts) or ".." in Path(path).parts:
+        raise ValueError("not a path below the clones folder")
+    return list(rel.parts)
+
+
+def link_on_path(path: Path) -> str | None:
+    """Why the clones folder or a component of `path` below it is a link or not a folder (a missing tail is fine),
+    or None. Never follows a link."""
+    import stat
+    try:
+        cur = Path(os.path.normpath(root()))
+        for part in [None, *_parts(path)]:
+            cur = cur if part is None else cur / part
+            try:
+                st = os.lstat(cur)
+            except FileNotFoundError:
+                return None
+            if not stat.S_ISDIR(st.st_mode):
+                return f"{cur} is a link or not a folder: nothing is written or removed through it"
+    except (OSError, ValueError) as e:
+        return f"{path} cannot be checked ({type(e).__name__})"
+    return None
+
+
+def _open_parent(path: Path) -> int:
+    """A descriptor of `path`'s parent folder, reached from the clones folder one component at a time, never through
+    a link (O_NOFOLLOW): a link swapped in after a check makes the open fail."""
+    parts = _parts(path)
+    fd = os.open(os.path.normpath(root()), _DIR_FLAGS)
+    try:
+        for part in parts[:-1]:
+            nxt = os.open(part, _DIR_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _inode(path: Path) -> str | None:
+    """"device:inode" of the folder `path`, read through _open_parent (no link followed), or None."""
+    import stat
+    try:
+        fd = _open_parent(path)
+    except (OSError, ValueError):
+        return None
+    try:
+        st = os.stat(Path(path).name, dir_fd=fd, follow_symlinks=False)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return f"{st.st_dev}:{st.st_ino}" if stat.S_ISDIR(st.st_mode) else None
+
+
+def _remove(path: Path, inode: str | None = None) -> None:
+    """Delete the folder `path` below the clones folder: reached by descriptor without following a link, a folder
+    (not a link) and, with `inode`, exactly the one recorded; removed relative to its parent's descriptor (rmtree
+    with dir_fd never follows a link inside). Raises OSError (or ValueError) and removes nothing otherwise."""
+    import stat
+    fd = _open_parent(path)
+    try:
+        st = os.stat(Path(path).name, dir_fd=fd, follow_symlinks=False)
+        if not stat.S_ISDIR(st.st_mode):
+            raise OSError(f"{path} is not a folder")
+        if inode is not None and f"{st.st_dev}:{st.st_ino}" != inode:
+            raise OSError(f"{path} is not the clone the runner made")
+        shutil.rmtree(Path(path).name, dir_fd=fd)
+    finally:
+        os.close(fd)
 
 
 def _rec_path(ws, child: str) -> Path:
@@ -132,6 +216,9 @@ def config_text(source: str, case_insensitive: bool) -> str:
 
 def _write_config(dest: Path, source: str) -> None:
     from orch.core.factory_release import _atomic
+    why = link_on_path(dest / ".git")
+    if why:
+        raise OSError(why)
     git = dest / ".git"
     _atomic(git / "config", config_text(source, os.path.exists(dest / ".GIT")))
     shutil.rmtree(git / "hooks", ignore_errors=True)
@@ -198,13 +285,18 @@ def ensure(ws, actor, child: str) -> tuple[Path | None, str]:
     rec = record(ws, child)
     try:
         if rec is not None:
-            why = _odd_repo(dest / ".git") if os.path.isdir(dest) and not os.path.islink(dest) else \
-                f"its recorded clone {dest} is missing"
+            why = link_on_path(dest) or (
+                (_odd_repo(dest / ".git") or (None if _inode(dest) == rec["inode"] else
+                                              f"{dest} is not the folder the runner made (another device or inode)"))
+                if os.path.isdir(dest) else f"its recorded clone {dest} is missing")
             if why:
                 return None, _fail(ws, child, why + ": look at it, or remove the record's folder by hand")
             _write_config(dest, rec["source"])
             _clear(ws, child)
             return dest, ""
+        why = link_on_path(dest)
+        if why:
+            return None, _fail(ws, child, why)
         if os.path.lexists(dest):
             return None, _fail(ws, child, f"{dest} exists but the runner has no record of it; nothing there was "
                                           "touched: move it away to let the runner make the clone")
@@ -218,6 +310,9 @@ def ensure(ws, actor, child: str) -> tuple[Path | None, str]:
         if base is None:
             return None, _fail(ws, child, why)
         dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        why = link_on_path(dest)
+        if why:
+            return None, _fail(ws, child, why)
         made = True
         try:
             why = _failed(_git(git, ws, "clone", "--quiet", "--local", "--no-hardlinks", "--no-checkout",
@@ -233,14 +328,20 @@ def ensure(ws, actor, child: str) -> tuple[Path | None, str]:
                 why = _failed(_git(git, ws, "-C", str(dest), "checkout", "--quiet", "--no-recurse-submodules", "-b",
                                    branch_for(child), f"refs/remotes/origin/{base}", cwd=str(dest)),
                               f"checking out {base}")
+            inode = None if why or link_on_path(dest) else _inode(dest)
+            if not why and inode is None:
+                why = f"{dest} or a folder above it was replaced while the clone was made"
             if not why and not fs._create(_rec_path(ws, child), {
                     "workspace": workspace_id(ws), "child": child, "path": str(dest), "branch": branch_for(child),
-                    "base": base, "source": str(src), "at": stamp_s()}):
+                    "base": base, "source": str(src), "inode": inode, "at": stamp_s()}):
                 why = "another runner recorded a clone for it meanwhile"
             made = bool(why)
         finally:
-            if made:  # only what this attempt created
-                shutil.rmtree(dest, ignore_errors=True)
+            if made:  # only what this attempt created, never through a link
+                try:
+                    _remove(dest)
+                except (OSError, ValueError):
+                    pass
         if why:
             return None, _fail(ws, child, why)
         _clear(ws, child)
@@ -276,6 +377,11 @@ def own_clone(ws, path, child: str) -> str | None:
         p = Path(str(path)).resolve()
         if p != Path(rec["path"]).resolve():
             return f"it is not {child}'s own clone"
+        why = link_on_path(Path(rec["path"]))
+        if why:
+            return why
+        if _inode(Path(rec["path"])) != rec["inode"]:
+            return f"it is not the folder the runner made for {child} (another device or inode)"
         dot = p / ".git"
         why = _odd_repo(dot)
         if why:
@@ -314,14 +420,24 @@ def listing(ws) -> list[dict]:
 
 
 def clean(ws, actor, child: str) -> bool:
-    """Human only: delete the child's clone and its record. True when there was one. The runner never calls it."""
+    """Human only: delete the child's clone and its record. True when there was one. The runner never calls it. The
+    folder is re-verified right before the deletion: reached from the clones folder without following a link, a
+    folder, and the very one recorded (device and inode); otherwise nothing is removed and the record stays."""
+    from orch.errors import ValidationError
     fs.human_check(actor, "removing a child's clone")
     rec = record(ws, child)
     if rec is None:
         return False
     path = Path(rec["path"])
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
+    why = link_on_path(path)
+    if why:
+        raise ValidationError(f"{why}; nothing was removed")
+    try:
+        _remove(path, rec["inode"])
+    except FileNotFoundError:
+        pass  # removed by hand already: only the record goes
+    except (OSError, ValueError) as e:
+        raise ValidationError(f"the clone of {child} was not removed: {e}") from None
     _rec_path(ws, child).unlink()
     _clear(ws, child)
     return True

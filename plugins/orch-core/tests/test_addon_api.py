@@ -98,7 +98,8 @@ def test_addon_ops_exposes_no_reachable_ops_instance(ws):
     from orch.core.ops import Ops
 
     ops = AddonContext(ws, "tix").ops()
-    allowed = {"log", "set_extra", "link_external", "import_external", "actor", "add_artifact"}
+    allowed = {"log", "set_extra", "link_external", "import_external", "actor", "add_artifact",
+               "relay_ticket_option"}  # relay_ticket_option: only the addon's own declared option, recorded as the addon
     for name in dir(ops):
         if name.startswith("__"):
             continue

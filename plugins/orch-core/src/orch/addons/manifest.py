@@ -34,7 +34,7 @@ MENU_ICONS = {
     "share": "M15 5l4 4-4 4M19 9H9a4 4 0 0 0-4 4v6",
 }
 _KEYS = {"name", "title", "version", "requires_api", "kind", "description", "capabilities", "slots", "binaries",
-         "env", "entry", "settings_schema", "menu", "actions", "remote_humans"}
+         "env", "entry", "settings_schema", "menu", "actions", "remote_humans", "ticket_options"}
 _REQUIRED = ("name", "title", "version", "requires_api", "kind", "capabilities", "entry")
 
 
@@ -57,6 +57,19 @@ class ActionSpec:
 
 
 @dataclass(frozen=True)
+class TicketOption:
+    """A yes/no choice an addon adds to every ticket: core draws it on the new-ticket form, on the approve card and on
+    the ticket page, keeps the value per ticket in the addon's own state, and only a human sets it."""
+    id: str
+    label: str
+    help: str = ""
+    default: bool = False
+
+
+MAX_TICKET_OPTIONS = 3
+
+
+@dataclass(frozen=True)
 class Manifest:
     name: str
     title: str
@@ -73,6 +86,7 @@ class Manifest:
     menu: dict | None = None
     actions: tuple[ActionSpec, ...] = ()
     remote_humans: bool = False
+    ticket_options: tuple[TicketOption, ...] = ()
 
     @property
     def entry_module(self) -> str:
@@ -91,6 +105,9 @@ class Manifest:
 
     def field(self, key: str) -> SettingField | None:
         return next((f for f in self.settings_schema if f.key == key), None)
+
+    def ticket_option(self, option_id: str) -> TicketOption | None:
+        return next((o for o in self.ticket_options if o.id == option_id), None)
 
     def action(self, action_id: str) -> ActionSpec | None:
         return next((a for a in self.actions if a.id == action_id), None)
@@ -189,6 +206,37 @@ def _actions(data: dict, problems: list[str]) -> list[ActionSpec]:
     return out
 
 
+def _ticket_options(data: dict, problems: list[str]) -> list[TicketOption]:
+    raw = data.get("ticket_options", [])
+    if not isinstance(raw, list):
+        problems.append("ticket_options must be a list")
+        return []
+    if len(raw) > MAX_TICKET_OPTIONS:
+        problems.append(f"ticket_options: at most {MAX_TICKET_OPTIONS} options")
+    out, seen = [], set()
+    for i, o in enumerate(raw[:MAX_TICKET_OPTIONS]):
+        where = f"ticket_options[{i}]"
+        if not isinstance(o, dict) or set(o) - {"id", "label", "help", "default"}:
+            problems.append(f"{where} must be {{id: 'notify', label: 'Notify my phone', help: optional text, default: optional bool}}")
+            continue
+        oid, label, help_, default = o.get("id"), o.get("label"), o.get("help", ""), o.get("default", False)
+        if not isinstance(oid, str) or not _KEY.fullmatch(oid) or oid in seen:
+            problems.append(f"{where}.id must be a unique name like 'notify'")
+            continue
+        seen.add(oid)
+        if not isinstance(label, str) or not label.strip() or len(label) > 80:
+            problems.append(f"{where}.label must be a non-empty string of at most 80 characters")
+            continue
+        if not isinstance(help_, str) or len(help_) > 240:
+            problems.append(f"{where}.help must be a string of at most 240 characters")
+            continue
+        if not isinstance(default, bool):
+            problems.append(f"{where}.default must be true or false")
+            continue
+        out.append(TicketOption(oid, label.strip(), help_.strip(), default))
+    return out
+
+
 def manifest_problems(data) -> list[str]:
     if not isinstance(data, dict):
         return ["the manifest must be a JSON object"]
@@ -254,6 +302,7 @@ def manifest_problems(data) -> list[str]:
         elif menu.get("icon", "box") not in MENU_ICONS:
             problems.append(f"menu.icon must be one of {', '.join(sorted(MENU_ICONS))}")
     _actions(data, problems)
+    _ticket_options(data, problems)
     if "remote_humans" in data and not isinstance(data["remote_humans"], bool):
         problems.append("remote_humans must be true or false")
     elif data.get("remote_humans") is True and "decisions" not in caps:
@@ -276,6 +325,7 @@ def parse_manifest(data, where: str = MANIFEST_NAME) -> Manifest:
         menu={"title": menu["title"].strip(), "icon": menu.get("icon", "box")} if menu else None,
         actions=tuple(_actions(data, sink)),
         remote_humans=bool(data.get("remote_humans", False)),
+        ticket_options=tuple(_ticket_options(data, sink)),
     )
 
 

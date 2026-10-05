@@ -17,6 +17,7 @@ EVENT_KINDS = frozenset({
     "addon.decision",
     "task.added", "task.edited", "task.moved", "ledger.adopted",
     "gate.delegated", "delegation.paused",  # epics: an agent's approval under delegation; the human's pause
+    "ticket.option",  # a human (or the addon relaying the human's phone) set an addon's yes/no option on a ticket
     "setting.changed",  # a workspace setting changed through orch (`orch widget html`)
     # AI Factory (orch.core.permits): an agent's request and a grant's use; the human's answers (signed in the ledger)
     "permit.requested", "permit.used", "permit.granted", "permit.denied", "permit.revoked",

@@ -48,12 +48,12 @@ _QUOTED_SERVE = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch[
 _SERVE_DENIED = "the dashboard is the human's; ask the user to open it"
 # `orch addon install|update|trust|enable|disable|remove|rollback` in any form (`uv run orch`, `python -m orch.cli`,
 # `orch --quiet addon ...`); `list` and `check` stay open to agents.
-_ADMIN_VERBS = r"(?:install|update|trust|enable|disable|remove|rollback)\b"
+_ADMIN_VERBS = r"(?:install|update|trust|enable|disable|remove|rollback|ticket-option\s+set)\b"
 _ADDON_ADMIN = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*" + _ADMIN_VERBS)
 # A quoted wrapper path ("${CLAUDE_PLUGIN_ROOT}/bin/orch" addon trust x): the quote must close right after `orch`,
 # so a quoted sentence such as a commit message 'orch addon trust is human-only' is not mistaken for the command.
 _QUOTED_ADDON_ADMIN = re.compile(r"""['"]\s*(?:[^'"\n]*/)?orch['"]\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*""" + _ADMIN_VERBS)
-_ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons is the "
+_ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons, and setting an addon ticket option (e.g. phone notifications), is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
 # grant|deny|revoke` (AI Factory), and moves to a status only

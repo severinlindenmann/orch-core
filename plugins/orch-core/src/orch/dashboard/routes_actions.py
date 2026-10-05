@@ -42,11 +42,43 @@ def _run(request: Request, ref: str, action, success: str, next_url: str = ""):
     return back(url, msg=success)
 
 
+def _apply_options(request: Request, ticket_id: str, offered: list[str], on: list[str]) -> None:
+    """The addon ticket options the approve card showed (ticked = on). Best effort: the approval already happened, and a
+    failing option write must not turn it into an error page."""
+    if not offered:
+        return
+    from orch.addons import ticket_options
+    try:
+        ticket_options.apply_form(request.app.state.ws, ticket_id, offered, on, request_actor(request))
+    except Exception:
+        pass
+
+
+@router.post("/t/{ref}/option")
+def set_option(request: Request, ref: str, option: Annotated[str, Form()], value: Annotated[str, Form()] = "",
+               next_url: Next = ""):
+    """Turn an addon's ticket option (manifest `ticket_options`) on or off. Human only: this route is behind the dashboard
+    token and the same-origin check, and `set_value` refuses any actor but a human."""
+    from orch.addons import ticket_options
+    ws = request.app.state.ws
+    url = safe_next(next_url) or _ticket_url(request, ref)
+    on = value in ("1", "on", "true")
+    try:
+        t_id = store.resolve(ws, ref).id
+        addon, _, option_id = option.partition("/")
+        label = next((o.label for la, o in ticket_options.declared(ws) if la.name == addon and o.id == option_id), option)
+        ticket_options.set_value(ws, t_id, addon, option_id, on, request_actor(request))
+    except OrchError as e:
+        return back(url, err=error_text(e))
+    return back(url, msg=f"{label}: {'on' if on else 'off'}")
+
+
 @router.post("/t/{ref}/approve")
 def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Annotated[str, Form()] = "",
             next_url: Next = "", despite_open_question: Annotated[str, Form()] = "",
             delegate: Annotated[str, Form()] = "", max_children: Annotated[str, Form()] = "",
-            max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = ""):
+            max_size: Annotated[str, Form()] = "", factory: Annotated[str, Form()] = "",
+            option_offered: Annotated[list[str], Form()] = [], option_on: Annotated[list[str], Form()] = []):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
@@ -65,6 +97,7 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
         epic = _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
         if limits and limits.get("factory"):
             _arm_runner(request.app.state.ws, epic, request_actor(request))  # only this dashboard Start lets the runner work for it
+        _apply_options(request, epic.id, option_offered, option_on)
 
     return _run(request, ref, action, f"{gate} approved", next_url)
 
@@ -79,15 +112,20 @@ def _arm_runner(ws, epic, actor) -> None:
 @router.post("/t/{ref}/approve-together")
 def approve_together(request: Request, ref: str, seen: Annotated[str, Form()] = "",
                      seen_plan: Annotated[str, Form()] = "", next_url: Next = "",
-                     despite_open_question: Annotated[str, Form()] = ""):
+                     despite_open_question: Annotated[str, Form()] = "",
+                     option_offered: Annotated[list[str], Form()] = [], option_on: Annotated[list[str], Form()] = []):
     """F2: requirements and plan in one confirm. `seen` and `seen_plan` are the hashes of the two texts the page
     showed in full; Ops.approve_together checks each gate as a single approval would."""
     if not seen or not seen_plan:
         return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
     despite = despite_open_question in ("1", "on", "true")
-    return _run(request, ref, lambda: _ops(request).approve_together(ref, requirements_hash=seen, plan_hash=seen_plan,
-                                                                     despite_open_question=despite),
-                "requirements and plan approved", next_url)
+    def action():
+        t = _ops(request).approve_together(ref, requirements_hash=seen, plan_hash=seen_plan,
+                                           despite_open_question=despite)
+        _apply_options(request, getattr(t, "id", None) or store.resolve(request.app.state.ws, ref).id,
+                       option_offered, option_on)
+
+    return _run(request, ref, action, "requirements and plan approved", next_url)
 
 
 @router.post("/t/{ref}/epic/pause")

@@ -225,3 +225,46 @@ def remove(name: str) -> None:
     _confirm(name, "remove")
     manage.remove(name)
     typer.echo(f"removed {name}")
+
+
+option_app = typer.Typer(no_args_is_help=True, help="Yes/no options enabled addons add to a ticket. list is for everyone "
+                                                    "(agents may read them); set is human-only.")
+addon_app.add_typer(option_app, name="ticket-option")
+
+
+@option_app.command("list")
+def option_list(ref: Annotated[str, typer.Argument(help="A ticket (ID, number or external key).")],
+                json_out: JsonOpt = False) -> None:
+    """The options of enabled, trusted addons on a ticket, with their values."""
+    from orch.addons import ticket_options
+    from orch.core import store
+    ws = _current_workspace()
+    if ws is None:
+        raise typer.Exit(2)
+    tid = store.resolve(ws, ref).id
+    rows = [{"option": o.key, "label": o.label, "value": o.value} for o in ticket_options.views(ws, tid)]
+    _echo({"ticket": tid, "options": rows}, json_out,
+          "\n".join(f"{r['option']:<28} {'on' if r['value'] else 'off'}  {r['label']}" for r in rows) or "no ticket options")
+
+
+@option_app.command("set")
+def option_set(ref: Annotated[str, typer.Argument(help="A ticket (ID, number or external key).")],
+               option: Annotated[str, typer.Argument(help="<addon>/<option>, as `list` shows it.")],
+               state: Annotated[str, typer.Argument(help="on | off")]) -> None:
+    """Turn an addon's ticket option on or off. Human-only: an agent (or a call without a terminal) is refused,
+    because the option is a human decision (for example whether a ticket may notify your phone)."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.addons import ticket_options
+    from orch.core import store
+    from orch.errors import UsageError
+    if state not in ("on", "off"):
+        raise UsageError("state is on or off")
+    require_human_terminal("setting a ticket option")
+    ws = _current_workspace()
+    if ws is None:
+        raise typer.Exit(2)
+    tid = store.resolve(ws, ref).id
+    actor = confirm_typed(tid)
+    addon, _, option_id = option.partition("/")
+    changed = ticket_options.set_value(ws, tid, addon, option_id, state == "on", actor)
+    typer.echo(f"{tid}: {option} {state}" + ("" if changed else " (already)"))

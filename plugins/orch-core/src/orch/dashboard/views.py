@@ -25,6 +25,14 @@ from orch.errors import OrchError
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 
 
+def _ticket_options(ws, ticket_id):
+    from orch.addons import ticket_options
+    try:
+        return ticket_options.views(ws, ticket_id)
+    except Exception:
+        return []
+
+
 def _finalize(value):
     """Every value a template prints: a plain string holding hidden characters (bidi, zero-width, controls; see
     orch.textsafe) is escaped with each one as a visible `<U+XXXX>`, so ticket text can never reorder or hide what
@@ -302,6 +310,8 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
         "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None: []),
+        # the yes/no options enabled, trusted addons add to a ticket (the form, the approve card, the ticket page)
+        "ticket_options": (lambda ticket_id=None: _ticket_options(ws, ticket_id)) if runtime else (lambda ticket_id=None: []),
         # spec §4.2: other running workspaces this one knows about, for the footer switcher line.
         "other_workspaces": switcher.others(ws),
         "page_title": title or nav.title(),

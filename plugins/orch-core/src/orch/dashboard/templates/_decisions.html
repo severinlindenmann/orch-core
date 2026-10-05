@@ -104,6 +104,7 @@
   <input type="hidden" name="gate" value="{{ d.gate }}">
   <input type="hidden" name="seen" value="{{ d.seen }}">
   <input type="hidden" name="next" value="{{ back_to }}">
+  {% if not d.together %}{{ ui.option_fields(ticket_options(d.ticket)) }}{% endif %}
   {% if d.question and not d.together %}{{ question_override(d.question) }}{% endif %}
   {% if d.together %}<button type="submit" class="btn">Approve requirements only</button>
   {% else %}<button type="submit" class="btn btn-primary" data-key-primary>{{ ("Re-approve " ~ d.gate) if d.kind == "re-approve" else kind_labels.get(d.kind, d.kind) }}</button>{% endif %}
@@ -216,6 +217,7 @@
         <input type="hidden" name="seen" value="{{ d.seen }}">
         <input type="hidden" name="seen_plan" value="{{ d.together.seen }}">
         <input type="hidden" name="next" value="{{ back_to }}">
+        {{ ui.option_fields(ticket_options(d.ticket)) }}
         {% if qs %}{{ questions_override(qs) }}{% endif %}
         <button type="submit" class="btn btn-primary" data-key-primary>Approve requirements and plan</button>
       </form>

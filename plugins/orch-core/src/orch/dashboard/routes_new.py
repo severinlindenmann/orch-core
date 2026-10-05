@@ -40,6 +40,8 @@ def create(
     external: Annotated[str, Form()] = "",
     ask: Annotated[str, Form()] = "",
     files: Annotated[Optional[list[UploadFile]], File()] = None,
+    option_offered: Annotated[list[str], Form()] = [],
+    option_on: Annotated[list[str], Form()] = [],
 ):
     ws = request.app.state.ws
     ops = Ops(ws, request_actor(request))
@@ -54,6 +56,12 @@ def create(
                     sections=sections)
     except OrchError as e:
         return _form(request, values, error_text(e), 422)
+    if option_offered:  # addon ticket options from the form (best effort: the ticket exists either way)
+        from orch.addons import ticket_options
+        try:
+            ticket_options.apply_form(ws, t.id, option_offered, option_on, request_actor(request))
+        except Exception:
+            pass
     # The ticket now exists: any failure past this point must not be reported as a form
     # validation error (422), which would invite a duplicate ticket on resubmit.
     try:

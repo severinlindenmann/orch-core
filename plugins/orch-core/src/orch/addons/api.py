@@ -214,6 +214,10 @@ class PendingDecision:
 
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]:/-]{0,63}")
 _ENV_NAME = re.compile(r"(?:ORCH|CLAUDE_CODE)_[A-Z0-9_]{1,60}")
+# Names core itself reads (where the ledger and its key live, who counts as an agent, the session id) or that carry
+# credentials or endpoints: a launch plan may not set them, whatever the prefix.
+_ENV_DENIED = re.compile(r"ORCH_(?:STATE_DIR|HOME|HARNESS|SESSION|RECORDS|UPDATE_CONTINUE)|CLAUDE_CODE_SESSION_ID"
+                         r"|.*(?:TOKEN|SECRET|KEY|AUTH|CREDENTIAL|PROXY|URL|HOST|CERT).*")
 _ENV_VALUE = re.compile(r"[A-Za-z0-9._\[\]:/+@=-]{0,200}")
 _CONTROL = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")  # every control character but a newline
 MAX_LAUNCH_NOTE = 400
@@ -259,6 +263,8 @@ class LaunchPlan:
         for k, v in self.env.items():
             if not (isinstance(k, str) and _ENV_NAME.fullmatch(k)):
                 raise ValueError(f"env name {k!r} must be ORCH_* or CLAUDE_CODE_*, upper case")
+            if _ENV_DENIED.fullmatch(k):
+                raise ValueError(f"env {k} is one a launch may not set (core settings, credentials and endpoints)")
             if not (isinstance(v, str) and _ENV_VALUE.fullmatch(v)):
                 raise ValueError(f"env {k} has a value with characters a launch may not pass")
         if not isinstance(self.note, str) or len(self.note) > MAX_LAUNCH_NOTE or _CONTROL.search(self.note) \

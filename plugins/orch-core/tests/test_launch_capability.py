@@ -104,7 +104,8 @@ def test_the_note_is_a_paragraph_after_the_prompt(ws):
 
 @pytest.mark.parametrize("kw", [
     {"model": "--dangerously-skip-permissions"}, {"model": "opus; rm -rf ~"}, {"model": "a b"}, {"model": ""},
-    {"env": {"PATH": "/tmp"}}, {"env": {"LD_PRELOAD": "x"}}, {"env": {"ORCH_MODEL": "a b"}},
+    {"env": {"PATH": "/tmp"}}, {"env": {"LD_PRELOAD": "x"}}, {"env": {"ORCH_STATE_DIR": "/tmp/x"}}, {"env": {"ORCH_HARNESS": "none"}},
+    {"env": {"CLAUDE_CODE_SESSION_ID": "x"}}, {"env": {"CLAUDE_CODE_OAUTH_TOKEN": "x"}}, {"env": {"ORCH_MODEL": "a b"}},
     {"env": {"ORCH_MODEL": "$(x)"}}, {"env": []}, {"note": "-x"}, {"note": "a\x07b"}, {"note": "x" * 401},
     {"label": "a\nb"}, {"reason": "x" * 201}, {"warnings": ("a\nb",)}])
 def test_a_plan_with_anything_unsafe_is_refused(kw):

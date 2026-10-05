@@ -669,28 +669,41 @@ def _is_git(word: str) -> bool:
     return bool(_GIT_WORD.fullmatch(os.path.basename(word)))
 
 
-def _invocations(command: str, depth: int = 0) -> list[tuple[list[str], str, list[str]]]:
-    """[(options before the verb, verb, arguments)] for every git word of `command` as the shell reads it, and of every
-    word that is itself a command line (a `sh -c` or `bash -lc` payload, an `eval` argument): those are read the same
-    way, recursively. Raises ValueError when the quoting cannot be read or it nests too deep."""
-    if depth > 4:
-        raise ValueError("nested too deep")
+class _Hidden(ValueError):
+    """git appears where the gate cannot see its real arguments: refused with this reason."""
+
+
+_STARTS = {"&&", "||", ";", "&", ";;", "(", "{", "!"}  # what may come right before the program of a simple command
+
+
+def _invocations(command: str) -> list[tuple[list[str], str, list[str]]]:
+    """[(options before the verb, verb, arguments)] for every git word of `command` as the shell reads it. git counts
+    only as the program of a simple command, at the start of the line or right after `;`, `&&`, `||`, `&`, `(`, `{`
+    or `!`, and never as a later stage of a pipeline (it would read another program's output). git anywhere else (an
+    argument of `xargs`, `find -exec`, `env`, `nice`, `time`, `exec`, `sudo`, `ssh`, ..., a word that is itself a
+    command line for `sh -c`, `bash -lc`, `eval` or `source`, a stage after `|`) raises _Hidden: the gate cannot see
+    the arguments it would really get. Raises ValueError when the quoting cannot be read."""
     words, out = _words(command), []
     for i, w in enumerate(words):
-        if " " in w or "\t" in w or "\n" in w:
-            if _GIT_WORD.search(_plain(w)):
-                out += _invocations(w, depth + 1)
-            continue
+        if re.search(r"\s", w) and _GIT_WORD.search(_plain(w)):  # a word that is itself a command line or text
+            raise _Hidden("git appears inside another word (a sh -c, bash -lc or eval payload, a message, a note): "
+                          "orch cannot tell how it runs")
         if not _is_git(w):
             continue
+        before = words[i - 1] if i else None
+        if before in ("|", "|&"):
+            raise _Hidden("git as a later stage of a pipeline reads another program's output: run it on its own")
+        if before is not None and before not in _STARTS:
+            raise _Hidden(f"git is an argument of {before} here, which can hand it other arguments (xargs, "
+                          "find -exec, env, nice, time, exec, sudo, ...): run git as a plain command")
         j = i + 1
         while j < len(words) and words[j].startswith("-") and words[j] not in _OPS:
             j += 1
         args = []
-        for a in words[j + 1:]:
-            if a in _OPS:
+        for x in words[j + 1:]:
+            if x in _OPS:
                 break
-            args.append(a)
+            args.append(x)
         out.append((words[i + 1:j], words[j] if j < len(words) and words[j] not in _OPS else "", args))
     return out
 
@@ -832,8 +845,12 @@ def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
             return "a git command line with a variable, a substitution or $'...' quoting cannot be checked"
         try:
             calls = _invocations(command)
+        except _Hidden as e:
+            return str(e)
         except ValueError:
             return "the quoting of this git command cannot be read"
+        if any(re.fullmatch(r"[<>&|();]+", w) and re.search(r"[<>]", w) for w in _words(command)):
+            return "a line that runs git may not redirect or substitute input or output (<, >, <(...), >(...))"
         if len(calls) != len([w for w in _SPLIT.split(plain) if _is_git(w)]) or not calls:
             return ("this command names git where orch cannot tell how it runs (inside a message, a note or a "
                     "wrapper): run git as a plain command, and do not name git commands in -m texts")

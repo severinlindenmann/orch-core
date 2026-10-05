@@ -439,3 +439,39 @@ def test_any_error_inside_the_gate_is_a_refusal(fws, run, monkeypatch, broken):
     assert why and ("could not check" in why or "cannot be read" in why)
     guard, hook = _both(fws, run["b"], COMMIT, run["clone"])
     assert not guard.allow and _behavior(hook) == "deny"
+
+
+# -- an allowed program carried as an argument: xargs, find -exec, wrappers, pipes, substitutions ----------------
+
+CARRIED = [
+    "echo x | xargs git commit -m y", "git log | xargs git push", "printf x | git commit -F -",
+    "printf x | git add .", "find . -exec git add {} ;", "find . -execdir git add {} +", "find . -ok git add {} ;",
+    "parallel git add ::: a b", "env git commit -m x", "command git status", "exec git status", "nice git commit -m x",
+    "nohup git commit -m x", "time git status", "timeout 5 git commit -m x", "watch git status", "sudo git status",
+    "su -c 'git status'", "doas git status", "ssh host git status", "script -q /dev/null git status",
+    "sh -c 'git status'", "bash -c 'git commit -m x'", "eval git status", "source x git", ". ./x git",
+    "echo $(git status)", "echo `git status`", "git diff <(cat x)", "cat <(git log)", "git log > /tmp/out",
+    "git log 2>&1", "if git status; then true; fi",
+]
+
+
+@pytest.mark.parametrize("cmd", CARRIED)
+def test_git_carried_by_another_program_is_refused_by_both_gates(fws, run, cmd):
+    assert permits._git_commit(cmd), cmd
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny", cmd
+
+
+@pytest.mark.parametrize("cmd", [*CARRIED, "git log | head", "echo L-0002 | xargs orch log L-0002 -m x", "xargs orch move L-1 testing",
+                                 "env orch log L-1 -m x", "sh -c 'orch log L-1 -m x'", "git log | orch log L-1 -m x",
+                                 "orch log L-1 -m x | xargs git push", "find . -exec orch show {} ;"])
+def test_no_prefix_rule_matches_a_program_carried_as_an_argument(fws, cmd):
+    from orch.core import dark_profile
+    dark_profile.add_baseline(fws, __import__("orch.core.events", fromlist=["Actor"]).Actor("human", "you", "tty"))
+    assert dark_profile.rules(fws) and dark_profile.match(fws, cmd) is None, cmd
+
+
+@pytest.mark.parametrize("cmd", ["git add src/git/x.py", "git add docs/.git-notes.md", "git status && git diff"])
+def test_git_as_the_program_of_each_simple_command_still_passes(fws, run, cmd):
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd

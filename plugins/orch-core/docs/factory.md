@@ -335,9 +335,15 @@ Refused by default: every other verb (`push` in any form, to any remote, URL or 
 `popd` in a line that runs git, and any `GIT_*=` assignment. It fails closed: a `$` or backtick in a line that runs
 git (a variable, a substitution or `$'...'` quoting has its value only when the shell runs it), quoting that cannot
 be read, a verb missing, a git the parser cannot account for (the word git in a message, a note or a wrapper payload
-it does not read as a command), and any error inside the check are refusals. The command is read as the shell splits
-it (operators as words of their own), and every word that is itself a command line (`sh -c`, `bash -lc`, `eval`) the
-same way, recursively; each place the word git appears in the plain text must be one of the invocations read. A
+it does not read as a command), and any error inside the check are refusals. git counts only as the program of a simple command (at the start of the line or right after
+`;`, `&&`, `||`, `&`, `(`, `{` or `!`): git as an argument of another program (`xargs`, `find -exec`, `parallel`,
+`env`, `command`, `exec`, `nice`, `nohup`, `time`, `timeout`, `watch`, `sudo`, `ssh`, `script`, `eval`, `source`,
+...), inside a word that is itself a command line (`sh -c`, `bash -lc`, `su -c`), as a later stage of a pipeline, or
+in a line with a redirect or a process substitution is refused, because the gate cannot see the arguments git would
+really get. (Dark profile prefix rules match a single simple command only, so they never match such a line either.)
+The command is read as the shell splits
+it (operators as words of their own); each place the word git appears in the plain text must be one of the
+invocations read. A
 session whose binding exists but does not verify is refused. The cost: a title, `-m` text or `orch log` note that
 names git is refused (the built-in prompts say so). These are text checks of the command line: a variable holding
 `git` is refused, but a git alias from the user's own config, and a script the agent writes and then runs, are not

@@ -191,12 +191,15 @@ class PendingDecision:
     choices: tuple = (("apply", "Apply"), ("ignore", "Ignore"))
     role: str = "info"
     anchor: str | None = None  # where it is drawn on its ticket: Q<n>, gate:requirements, gate:plan or verdict
+    origin: str | None = None  # where the decision came from (e.g. "phone"): kept in the event log when it is applied
 
     def __post_init__(self):
         if self.role not in ("info", "warn", "err"):
             raise ValueError("a pending decision is drawn in info, warn or err, never as needs-you")
         if self.anchor is not None and not (isinstance(self.anchor, str) and _ANCHOR.fullmatch(self.anchor)):
             raise ValueError("anchor must be Q<n>, gate:requirements, gate:plan or verdict")
+        if self.origin is not None and not (isinstance(self.origin, str) and 0 < len(self.origin) <= 40):
+            raise ValueError("origin is a short text (at most 40 characters)")
         if not self.choices or not all(isinstance(c, tuple) and len(c) == 2 for c in self.choices):
             raise ValueError("choices must be (value, label) pairs")
         if len(str(self.title)) > MAX_DECISION_TITLE or len(str(self.body)) > MAX_DECISION_BODY:

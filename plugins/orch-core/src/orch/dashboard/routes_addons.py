@@ -86,7 +86,7 @@ def run_action(request: Request, name: str, action_id: str, target: str = Form("
         return back(dest, err="that action target is too long")
     if ask and not spec.accepts_file:  # posted without JS from the dialog-tier form: confirm on a page first
         return confirm_page(request, action=f"/addons/{name}/actions/{action_id}", fields=[("target", target), ("return_to", dest)],
-                            title=spec.confirm or f"{spec.label}?", body=f"{la.manifest.title} does this outside orch.",
+                            title=spec.confirm or f"{spec.label}?", body=f"The {la.manifest.title} addon carries this out and may send data off this machine.",
                             confirm=spec.label, cancel_href=dest, nav=f"addon:/addons/{name}/")
     refusal = remote_gate.action_target_refusal(request, ws, target)
     if refusal:
@@ -205,5 +205,6 @@ def resolve(request: Request, name: str, id: str = Form(...), choice: str = Form
                 _log_error(ws, name, f"on_intent_result {id[:200]}")
     append_event(ws, None, "addon.decision", request_actor(request), {"addon": name, "decision": id[:200], "choice": choice[:50],
                                                       "intent": intent.kind, "ref": decision.ticket,
-                                                      "outcome": outcome})
+                                                      "outcome": outcome,
+                                                      **({"origin": decision.origin} if decision.origin else {})})
     return back(dest, msg=text) if outcome == "applied" else back(dest, err=text)

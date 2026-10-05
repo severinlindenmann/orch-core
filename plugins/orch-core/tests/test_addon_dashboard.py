@@ -34,6 +34,8 @@ class Demo:
             return []
         if self.mode == "qr":
             return [QR("hello", "cap")]
+        if self.mode == "noconfirm":
+            return [Card("Quiet", (Action("rerun", "Rerun failed", "a/b#1", confirm=""),))]
         if self.mode == "params":
             if slot == "today.summary":
                 return []
@@ -56,7 +58,7 @@ class Demo:
         return self.chip
 
     def decisions(self, view):
-        return [PendingDecision("phone/1", "Answer from phone", "ISO 8601", ticket="L-0001"),
+        return [PendingDecision("phone/1", "Answer from phone", "ISO 8601", ticket="L-0001", origin="phone"),
                 PendingDecision("phone/2", "Old answer", stale=True)]
 
     def resolve(self, decision_id, choice, ctx):
@@ -163,6 +165,17 @@ def test_addon_page_renders_widgets_escaped_with_core_csp(client, ws):
     assert "Branch" in r.text and "main" in r.text and "<h1>Demo status</h1>" in r.text
     assert 'action="/addons/demo/actions/rerun"' in r.text and 'data-dialog="Rerun the failed checks?"' in r.text
     assert 'action="/addons/demo/refresh"' in r.text
+
+
+def test_action_confirm_body_names_the_addon_and_empty_confirm_asks_nothing(client, ws, demo):
+    cache.write_snapshot(ws, "demo", _snap())
+    r = client.get("/addons/demo/")
+    assert "carries this out and may send data off this machine" in r.text and "outside orch" not in r.text
+    demo.mode = "noconfirm"
+    html = client.get("/addons/demo/").text
+    form = html[html.index('action="/addons/demo/actions/rerun"'):]
+    form = form[:form.index("</form>")]
+    assert "data-dialog" not in form and 'name="ask"' not in form
 
 
 def test_qr_widget_renders_as_an_inline_svg(client, demo):
@@ -290,6 +303,7 @@ def test_resolve_gets_a_provider_context_and_refuses_stale_or_unknown(client, de
     assert ok.status_code == 303 and demo.resolved == [("phone/1", "apply", "ProviderContext")]
     e = read_events(ws)[-1]
     assert e.kind == "addon.decision" and e.actor == "human:you" and e.data["intent"] == "none"
+    assert e.data["origin"] == "phone"      # where the decision came from stays in the event log (TF-20)
     for data in ({"id": "phone/2", "choice": "apply"}, {"id": "phone/1", "choice": "approve"}, {"id": "gone", "choice": "apply"}):
         r = client.post("/addons/demo/decisions", data=data, headers=ORIGIN, follow_redirects=False)
         assert "err=" in r.headers["location"], data

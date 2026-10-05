@@ -60,7 +60,7 @@ def test_question_with_options_shows_recommended_first_as_buttons(ws, put, aops,
     html = dash.get("/").text
     assert f'action="/t/{tid}/answer"' in html
     assert 'name="value" value="pg"' in html and 'name="value" value="mysql"' in html
-    assert '<span class="opt-n">1</span> · Postgres</button> <span class="chip chip-ok"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg> recommended</span>' in html
+    assert '<span class="opt-n">pg</span> · Postgres</button> <span class="chip chip-ok"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg> recommended</span>' in html
     # the recommended option comes first
     assert html.index('value="pg"') < html.index('value="mysql"')
 

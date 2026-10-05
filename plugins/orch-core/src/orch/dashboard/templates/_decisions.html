@@ -54,8 +54,8 @@
 {% endmacro %}
 
 {% macro options(d, q, back_to, send_label) %}
-{#- Numbered options (1–9 focus them from the keyboard; Enter sends after the Undo window), the recommended one
-    first and marked; any other answer is folded. -#}
+{#- Options named by their own key (A, B, C: the same letters the ticket page and the phone show; 1–9 still focus
+    them by position from the keyboard; Enter sends after the Undo window), the recommended one first and marked; any other answer is folded. -#}
 {% if q.options %}
 <form method="post" action="/t/{{ d.ticket }}/answer" class="decision-answer" data-delayed-send="{{ send_label }}">
   <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
@@ -63,15 +63,15 @@
   {% if q.multi %}
   <div class="opts">
     {% for opt in q.options %}
-    <label class="opt-row{{ ' rec' if opt.key == q.recommended }}"><input type="checkbox" name="value" value="{{ opt.key }}"{{ ' checked' if opt.key == q.recommended }} data-option="{{ loop.index }}">
-      <span><span class="opt-n">{{ loop.index }}</span> · {{ opt.label }}</span>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</label>
+    <label class="opt-row{{ ' rec' if opt.key == q.recommended }}"><input type="checkbox" name="value" value="{{ opt.key }}"{{ ' checked' if opt.key == q.recommended }} data-option="{{ loop.index }}" aria-keyshortcuts="{{ loop.index }}">
+      <span><span class="opt-n">{{ opt.key }}</span> · {{ opt.label }}</span>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</label>
     {% endfor %}
   </div>
   <button type="submit" class="btn">Send answer</button>
   {% else %}
   <div class="opts">
     {% for opt in q.options %}
-    <div class="opt-row{{ ' rec' if opt.key == q.recommended }}"><button type="submit" class="btn opt" name="value" value="{{ opt.key }}" data-option="{{ loop.index }}"><span class="opt-n">{{ loop.index }}</span> · {{ opt.label }}</button>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</div>
+    <div class="opt-row{{ ' rec' if opt.key == q.recommended }}"><button type="submit" class="btn opt" name="value" value="{{ opt.key }}" data-option="{{ loop.index }}" aria-keyshortcuts="{{ loop.index }}"><span class="opt-n">{{ opt.key }}</span> · {{ opt.label }}</button>{% if opt.key == q.recommended %} {{ ui.status("ok", "recommended") }}{% endif %}</div>
     {% endfor %}
   </div>
   {% endif %}

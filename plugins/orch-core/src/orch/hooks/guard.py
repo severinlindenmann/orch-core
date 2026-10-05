@@ -1148,14 +1148,20 @@ def _harness_in_text(cmd: str, ws=None) -> bool:
         def names(text: str) -> bool:
             low = text.lower()
             return bool(_HARNESS_TEXT.search(text)) or any(m in low for m in marks)
-        inside = False
+        inside, here = False, None
         for seg in _command_segments(cmd):
             t = _tilde(seg)
             cd = re.match(r"^\s*(?:cd|pushd)(?:\s+(\S+))?", t)
             if cd:
-                inside = bool(cd.group(1)) and names(cd.group(1) + "/")
+                target = cd.group(1) or "~"
+                here = target if target.startswith(("/", "~")) else (f"{here}/{target}" if here else None)
+                inside = names(target + "/") or (here is not None and names(here + "/"))
                 continue
-            if _is_git_write(seg) and (inside or names(t)):
+            if not _is_git_write(seg):
+                continue
+            # a relative word after a cd counts from where that cd went (`cd ~ && echo x > .claude/settings.json`)
+            rel = [f"{here}/{w}" for w in t.split() if here and not w.startswith(("/", "~", "-"))]
+            if inside or names(t) or any(names(w) for w in rel):
                 return True
         return False
     except Exception:

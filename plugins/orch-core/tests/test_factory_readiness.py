@@ -347,7 +347,8 @@ def _shell_allowed(ws, cmd):
     "sed -i '' s/a/b/ ~/'.claude'/settings.json", "cd ~/.claude; rm -rf plugins", 'cp a "${HOME}/.claude.json"',
     "echo x > ~/.claude/hooks/pre.sh", "rm -rf ~/.claude/skills", "touch ~/.claude/agents/x.md",
     "echo x >> ~/.claude/CLAUDE.md", "pushd ~/.claude/plugins; touch x", "rm -rf ~/.claude",
-    "echo x > \\~/.claude/settings.json",
+    "echo x > \\~/.claude/settings.json", "cd ~ && echo x > .claude/settings.json",
+    "cd ~; cd .claude; rm -rf plugins", "mv /tmp/s ~/.claude/settings.json",
 ])
 def test_the_guard_sees_through_spellings_of_the_users_claude_files(ws, cmd):
     assert not _shell_allowed(ws, cmd), cmd

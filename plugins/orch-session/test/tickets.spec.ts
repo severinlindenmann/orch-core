@@ -106,10 +106,16 @@ test('the status line and the band lead with the human’s move', () => {
   const w = ticket('working')
   const q = ticket('answer')
   const b = ticket('blocked_by')
-  assert.equal(statusLine([w, q, b]), `◐ ${w.id} working  ● ${q.id} Answer Q1  ▲ ${b.id} blocked`)
+  assert.equal(statusLine([w, q, b]), `● ${q.id} Answer Q1  ▲ ${b.id} blocked  ◐ ${w.id} working`)
   assert.equal(statusLine([]), undefined)
   assert.equal(active([w, b, q]), q)
   assert.equal(active([b, w]), w)
+})
+
+test('with more than three tickets the status line names two moves of the human and counts the rest', () => {
+  const mk = (name: string, id: string) => ({ ...ticket(name), id })
+  const list = [mk('working', 'A-1'), mk('working', 'A-2'), mk('answer', 'A-3'), mk('answer', 'A-4'), mk('answer', 'A-5'), mk('working', 'A-6')]
+  assert.equal(statusLine(list), '● A-3 Answer Q1  ● A-4 Answer Q1  ● +1 your move  ◐ 3 working')
 })
 
 test('text from tickets is shown without control or bidi characters', () => {

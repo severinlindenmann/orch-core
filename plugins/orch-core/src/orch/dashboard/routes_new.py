@@ -7,7 +7,8 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from orch.core.constants import PRIORITIES, SIZES, TYPES
 from orch.core.ops import Ops
 from orch.dashboard.routes_actions import add_uploads
-from orch.dashboard.views import HUMAN, back, error_text, page
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, error_text, page
 from orch.errors import OrchError
 
 router = APIRouter()
@@ -41,7 +42,7 @@ def create(
     files: Annotated[Optional[list[UploadFile]], File()] = None,
 ):
     ws = request.app.state.ws
-    ops = Ops(ws, HUMAN)
+    ops = Ops(ws, request_actor(request))
     ask = ask.replace("\r\n", "\n").strip()
     values = {"title": title, "type": type_, "size": size, "priority": priority, "external": external, "ask": ask}
     try:

@@ -85,6 +85,20 @@ def test_cli_list(tmp_path, monkeypatch, capsys, ws):
                      "enabled": False, "error": None}]
 
 
+def test_cli_check_takes_the_name_of_a_known_addon(tmp_path, monkeypatch, capsys):
+    """list, trust and enable take a name; so does check (it used to fail with "is not a folder")."""
+    from orch import cli
+    from orch.addons import discovery
+    defaults = tmp_path / "defaults"
+    make_addon(defaults)
+    monkeypatch.setattr(discovery, "default_addons_dir", lambda: defaults)
+    monkeypatch.chdir(tmp_path)
+    assert cli.run(["addon", "check", "hello-status", "--static"]) == 0
+    assert "hello-status 0.1.0 passes orch addon check" in capsys.readouterr().out
+    assert cli.run(["addon", "check", "no-such-addon", "--static"]) == 5  # an unknown name is still "not a folder"
+    assert "is not a folder" in capsys.readouterr().err
+
+
 def test_cli_check_json_failure_is_one_document(tmp_path, capsys):
     """Ruling F4: --json on failure prints exactly one JSON document (the problem list) and exits 5."""
     from orch import cli

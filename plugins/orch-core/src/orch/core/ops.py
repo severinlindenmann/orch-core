@@ -158,6 +158,7 @@ class Ops(TaskOpsMixin):
                 raise ValidationError(f"{entry.id} changed since you reviewed it; nothing was applied",
                                       hint="look at it again and repeat the command")
             path, ticket = store.load(self.ws, entry.id)  # raises TicketParseError before any write
+            _record_owed_invalidations(self.ws, ticket)  # the audit trail first: reads never write this (#108)
             before = ticket.status
             data = fn(ticket) or {}
             if ticket.status != before:  # one uniform shape for every status change
@@ -181,6 +182,7 @@ class Ops(TaskOpsMixin):
             return ticket
         with lock(self.ws, entry.id):
             path, ticket = store.load(self.ws, entry.id)
+            _record_owed_invalidations(self.ws, ticket)
             before = ticket.status
             records = fn(ticket) or []
             if records and ticket.status != before:
@@ -1371,6 +1373,7 @@ class Ops(TaskOpsMixin):
         entry = store.resolve(self.ws, ref)
         with lock(self.ws, entry.id):
             path, current = store.load(self.ws, entry.id)
+            _record_owed_invalidations(self.ws, current)
             if expected_mtime_ns is not None and path.stat().st_mtime_ns != expected_mtime_ns:
                 raise ValidationError(f"{current.id} changed since you opened it", hint="reload, then apply your edit again")
             new = parse_ticket(text, path.name)
@@ -1518,3 +1521,8 @@ def _copy_capped(src: Path, stream, dest: Path, limit: int) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _record_owed_invalidations(ws, ticket) -> None:
+    from orch.core.check import record_ticket_invalidations  # check imports ops, so not at module level
+    record_ticket_invalidations(ws, ticket)

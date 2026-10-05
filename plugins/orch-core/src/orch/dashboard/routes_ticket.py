@@ -21,7 +21,8 @@ from orch.dashboard.data.agent_start import suggest as suggest_start
 from orch.dashboard.data.agents import agent_rows
 from orch.dashboard.data.cards import Cards
 from orch.dashboard.data.steps import can_approve, day, meta_line, plan_checklist, steps, when, your_move
-from orch.dashboard.views import HUMAN, as_dict, as_list, page
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import as_dict, as_list, page
 from orch.widgets.render import css_names
 from orch.errors import NotFoundError, TicketParseError, UsageError
 
@@ -156,7 +157,7 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = ""):
         "approve_plan": can["plan"],
         "verdict": t.status == "testing",
         "accept": t.status == "testing" and not invalidated_gates(t),  # a changed gate is re-approved first
-        "moves": allowed_targets(t, HUMAN, plan_skip_sizes=skip, open_blockers=blockers),
+        "moves": allowed_targets(t, request_actor(request), plan_skip_sizes=skip, open_blockers=blockers),
         "release": bool(claim.get("session")),
     }
     # F2: requirements and plan drafted together: one confirm approves both (each bound to its own hash)

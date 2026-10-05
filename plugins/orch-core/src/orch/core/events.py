@@ -221,7 +221,10 @@ def append_event(ws, ticket_id: str | None, kind: str, actor: Actor, data: dict 
             with path.open("a", encoding="utf-8", newline="\n") as f:
                 f.write("\n")
             scan = _scan(path)
-        event = Event(scan.last_seq + 1, stamp_s(), ticket_id, kind, actor.to_str(), actor.via, data or {}, evidence)
+        data = dict(data or {})
+        if actor.device and actor.via.startswith("device:"):  # a bridged post: name the device; not a signed phone decision
+            data["device"] = actor.device
+        event = Event(scan.last_seq + 1, stamp_s(), ticket_id, kind, actor.to_str(), actor.via, data, evidence)
         with path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(event.to_json() + "\n")
     return event

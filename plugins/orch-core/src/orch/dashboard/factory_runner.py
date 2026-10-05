@@ -21,6 +21,8 @@ from orch.errors import OrchError, UsageError
 
 log = logging.getLogger("orch.factory")
 ROUND_SECONDS = 15
+TYPE_POLLS, TYPE_POLL_SECONDS = 5, 0.2  # after typing a nudge, read the pane this often before giving up
+_sleep = __import__("time").sleep  # tests stand in for it
 _NO_SERVER = ("no server running", "No such file or directory", "no sessions")
 
 
@@ -115,15 +117,21 @@ class TmuxLauncher:
         return r.stdout if r.returncode == 0 else None
 
     def type(self, name: str, text: str) -> bool:
-        """Type one of the runner's built-in nudges into the pane, read the pane again, and press Enter only when the
-        text sits on Claude's input line and nothing Enter would answer instead is on screen (typed_ok); otherwise
-        clear the input line (C-u) and press nothing more. True when Enter was pressed. Nothing else is ever typed."""
+        """Type one of the runner's built-in nudges into the pane: only onto an empty input line (read first), then
+        read the pane again a few times over about a second (tmux redraws asynchronously) and press Enter only when
+        the text sits on the input line itself and nothing Enter would answer instead is on screen (typed_ok);
+        otherwise clear the input line (C-u) and press nothing more. True when Enter was pressed. Nothing else is
+        ever typed."""
         if text not in factory_runner.NUDGES.values():
             raise UsageError("the runner types only its built-in nudges")
+        if factory_runner.input_line(self.capture(name)) != "":
+            return False
         if self._tmux(["send-keys", "-t", f"={name}:", "-l", "--", text]).returncode != 0:
             raise UsageError(f"could not type into {name}")
-        if factory_runner.typed_ok(self.capture(name), text):
-            return self._tmux(["send-keys", "-t", f"={name}:", "Enter"]).returncode == 0
+        for _ in range(TYPE_POLLS):
+            _sleep(TYPE_POLL_SECONDS)
+            if factory_runner.typed_ok(self.capture(name), text):
+                return self._tmux(["send-keys", "-t", f"={name}:", "Enter"]).returncode == 0
         self._tmux(["send-keys", "-t", f"={name}:", "C-u"])
         return False
 

@@ -142,7 +142,7 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
-           "idle": ("neu", 2, "Idle"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
+           "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
 
 
@@ -247,6 +247,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
                                       "terminal)")
     elif blocker or any(c["level"] == "block" for c in checks or []):
         state, headline = "blocked", "The runner starts nothing"
+    elif running and _all_idle(running):
+        state, headline = "asleep", "Sessions are waiting at their prompt: nothing is running"
     elif any(not factory_sessions.is_planner(b) for b in running):
         state, headline = "working", "Sessions are running on its children"
     elif planner_on:
@@ -268,7 +270,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
-    here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "unarmed": "todo",
+    here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
@@ -311,6 +313,17 @@ def _epic_events(events, ids) -> list[dict]:
                else "You" if str(e.actor).startswith("human") else "An agent")
         rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {_LOG_PHRASE.get(e.kind) or action_phrase(e)}"})
     return rows[::-1][:200]
+
+
+def _all_idle(running) -> bool:
+    """Whether every live session of the run has shown Claude's empty prompt, unchanged, for IDLE_VIEW_SECONDS, as the
+    runner last read its pane. A session the runner has no reading of counts as working (unknown is never idle)."""
+    from orch.core import factory_runner, factory_sessions
+    try:
+        since = [factory_sessions.idle_since(b["session"]) for b in running]
+        return all(since) and (clock.now() - max(since)).total_seconds() >= factory_runner.IDLE_VIEW_SECONDS
+    except Exception:
+        return False
 
 
 def _early(ws, d, bound) -> list[dict]:

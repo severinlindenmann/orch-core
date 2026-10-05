@@ -189,13 +189,21 @@ into the session's pane and presses Enter: "The human answered your
 permission requests. Retry the blocked commands, then finish your ticket and move it to testing." (a denial alone gets
 a line saying to do without the command and record why; a planner one saying to finish splitting the epic). The text
 is a constant in orch, never taken from a ticket, the config or an agent, and the tmux launcher refuses any other.
-It types only when, read with tmux's `capture-pane`, the pane shows Claude Code's footer hint ("? for shortcuts" or
-"shift+tab to cycle") and an empty input line, nothing in its last lines looks like a running command ("esc to
+The runner reads every session's pane each round with tmux's `capture-pane`. It types only when the pane shows
+Claude Code's footer hint ("? for shortcuts" or "shift+tab to cycle") and an empty input line (the last `>` line,
+and only when the input box's border is right above it: a prompt echoed in the transcript never counts), nothing in its last lines looks like a running command ("esc to
 interrupt"), a permission, trust or other menu ("Do you want", "1.", "(y/n)"), and the screen stayed exactly the same
-for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. After typing it reads the pane
-again and presses Enter only when the line sits on Claude's input line and no menu, permission or trust prompt or
-running command is on screen (Enter would answer that instead); otherwise it clears the input line (Ctrl-U), presses
-nothing more, and counts the attempt. Anything else, or a record or pane
+for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. It reads the pane once more right
+before typing and types nothing unless the input line is still empty; after typing it reads the pane up to five times
+over about a second (tmux redraws asynchronously) and presses Enter only when the line sits on the input line itself
+and no menu, permission or trust prompt or running command is on screen (Enter would answer that instead); otherwise
+it clears the input line (Ctrl-U), presses nothing more, and counts the attempt.
+
+The same readings tell the run view whether anything runs: when every live session of a run has shown the empty
+prompt, unchanged, for 3 minutes and no card is open, the run view says "Sessions are waiting at their prompt: nothing
+is running" (chip "Idle at prompt") instead of "Sessions are running on its children" (in the live run's second round
+all three sessions sat idle for minutes under "Working"). A session the runner has no reading of (no record, a damaged
+one, a pane it cannot read) counts as working: the view never claims more than it read. Anything else, or a record or pane
 it cannot read, types nothing. The run view says how often it nudged. What it cannot tell: a session that waits at a
 prompt Claude Code draws differently from these markers (a future version) is never nudged, and an idle session that
 was not waiting for that answer still gets the line (it is idle anyway). The runner keeps a small record per session

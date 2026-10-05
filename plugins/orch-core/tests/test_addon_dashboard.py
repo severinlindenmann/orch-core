@@ -14,7 +14,8 @@ XSS = "<script>alert(1)</script>"
 OVER = {"capabilities": ["provider", "page", "settings", "panel", "decisions"],
         "slots": ["today.summary", "today.from_addons", "ticket.code", "board.external"],
         "menu": {"title": "Demo status", "icon": "status"},
-        "actions": [{"id": "rerun", "label": "Rerun failed", "confirm": "Rerun the failed checks?"}]}
+        "actions": [{"id": "rerun", "label": "Rerun failed", "confirm": "Rerun the failed checks?"},
+                    {"id": "mark", "label": "Mark seen", "idempotent": True}]}
 ORIGIN = {"origin": "http://testserver"}
 
 
@@ -35,7 +36,8 @@ class Demo:
         if self.mode == "qr":
             return [QR("hello", "cap")]
         if self.mode == "noconfirm":
-            return [Card("Quiet", (Action("rerun", "Rerun failed", "a/b#1", confirm=""),))]
+            return [Card("Quiet", (Action("mark", "Mark seen", "a/b#1", confirm=""),
+                                   Action("rerun", "Rerun failed", "a/b#1", confirm="")))]
         if self.mode == "params":
             if slot == "today.summary":
                 return []
@@ -173,9 +175,13 @@ def test_action_confirm_body_names_the_addon_and_empty_confirm_asks_nothing(clie
     assert "carries this out and may send data off this machine" in r.text and "outside orch" not in r.text
     demo.mode = "noconfirm"
     html = client.get("/addons/demo/").text
-    form = html[html.index('action="/addons/demo/actions/rerun"'):]
+    form = html[html.index('action="/addons/demo/actions/mark"'):]
     form = form[:form.index("</form>")]
     assert "data-dialog" not in form and 'name="ask"' not in form
+    # a destructive (not declared idempotent) action cannot lose its confirm: it falls back to the manifest's
+    form = html[html.index('action="/addons/demo/actions/rerun"'):]
+    form = form[:form.index("</form>")]
+    assert 'data-dialog="Rerun the failed checks?"' in form and 'name="ask"' in form
 
 
 def test_qr_widget_renders_as_an_inline_svg(client, demo):

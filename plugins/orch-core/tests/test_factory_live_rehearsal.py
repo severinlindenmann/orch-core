@@ -33,6 +33,18 @@ def live(fws, fa, fh, human, close_tasks, remote, bin_dir):
     shutil.rmtree(state, ignore_errors=True)
 
 
+def test_the_example_script_refuses_a_commit_already_on_the_base_and_its_check_is_not_vacuous(live, ws_root, remote):
+    import subprocess
+    _, state = live
+    script = shutil.which("release-step")
+    base = _g(ws_root, "rev-parse", "main")  # an empty child branch: its commit is the base's
+    merge = subprocess.run([script, "merge", str(remote), "main", "fx/l-0002", base], cwd=ws_root,
+                           capture_output=True, text=True)
+    assert merge.returncode == 3 and "nothing of its own to merge" in merge.stderr
+    check = subprocess.run([script, "merged", str(remote), "main", base], capture_output=True, text=True)
+    assert check.returncode == 4 and "merged" not in check.stdout  # on the base, but this step merged nothing
+
+
 def test_the_example_recipe_is_valid_and_needs_its_script(ws):
     rec = json.loads((DOCS / "examples" / "factory-release-live-test.json").read_text(encoding="utf-8"))
     checked = fr.check_recipe(rec, ws, check_programs=False)

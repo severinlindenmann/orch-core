@@ -405,6 +405,22 @@ def _committed_clone(fws, fa, fh, human, remote, release="merge"):
     return eid, d, cid, clone
 
 
+def test_a_child_without_commits_of_its_own_is_refused_and_never_closes(fws, fa, fh, human, close_tasks,
+                                                                         remote):  # noqa: F811
+    from orch.core import factory_close
+    fr.set_recipe(fws, human, _recipe(remote))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    clone, _ = fc.ensure(fws, human, cid)  # the worker never commits: its work stays uncommitted in the clone
+    (clone / "x.json").write_text("[]\n", encoding="utf-8")
+    _to_testing(fa, cid, close_tasks)
+    fake = RecipeFake()
+    lines = fr.tick(fws, human, fake)
+    assert any("the child's branch has no commits of its own" in x for x in lines), lines
+    assert not fake.calls and fr.status(fws, store.load(fws, eid)[1], d)["stages"][0]["state"] == "failed"
+    assert factory_close.tick(fws, human) == [] and store.load(fws, eid)[1].status == "open"
+
+
 @pytest.mark.parametrize("how", ["damaged", "removed", "cleaned"])
 def test_a_missing_clone_record_never_falls_back_to_the_ticket_branch(fws, fa, fh, human, close_tasks, remote, how):  # noqa: F811
     eid, d, cid, clone = _committed_clone(fws, fa, fh, human, remote)

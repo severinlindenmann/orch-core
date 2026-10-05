@@ -1138,13 +1138,16 @@ says: tickets change only through orch), stops the release with "Sensitive path 
 nothing is merged. Then the message of every commit the branch brings in is checked with orch's commit-msg logic and
 the workspace's commit format, each commit listed by its id and its message read on its own from the raw commit
 object (no separator a message could contain decides where it ends; more than 500 commits is refused); a message it
-refuses fails the merge stage of that child, naming the commit. Because every commit counts, a later commit that
-removes the change does not clear it: merge by hand, or
-rewrite the branch without it, then Retry release on the merge stage. For a child with a runner-made clone the runner
-takes the branch and clone of its own record (never a ticket field); otherwise the one branch a child names (`orch
-link --branch`), else the branch of its one worktree, from the workspace. The name must be a valid branch name that
-names the child (its id as a word) and is not the base. A child the runner cannot fetch or check fails its merge stage without a
-command run.
+refuses fails the merge stage of that child, naming the commit. A branch that brings in no commit of its own (its
+commit is the base or already on it: the worker never committed) fails its merge stage with "the child's branch has
+no commits of its own", and the merge record names the base it was classified against, so a close by itself also
+requires every child's merge to record a commit that is not that base. Because every commit counts, a later commit
+that removes the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release on the
+merge stage. For a child with a runner-made clone the runner takes the branch and clone of its own record (never a
+ticket field); otherwise, for a child with a worktree of its own, the one branch a child names (`orch link
+--branch`), else the branch of its one worktree, from the workspace. The name must be a valid branch name that names
+the child (its id as a word) and is not the base. A child the runner cannot fetch or check fails its merge stage
+without a command run.
 
 What this guarantees: the paths a branch changes are judged from objects the runner fetched, against the base on the
 remote, with no workspace config, hook, ref, replace object or rename detection in between; the merge stage runs on
@@ -1363,7 +1366,8 @@ harness) closes the epic only when all of this holds, read again under the works
 acts: the factory and Dark switched on, the ledger whole, the epic open, its charter live (not paused, not edited, the
 budget not used up), Dark, started from the dashboard and signed with `close`; the Ready report holds (every child in
 testing or done, every criterion of every child in testing cites evidence, every status backed by orch's records);
-every release stage the charter signs is proven by its check and not out of date, and no sensitive path stopped it;
+every release stage the charter signs is proven by its check and not out of date (each child's merge recording a
+commit of its own, not the base), and no sensitive path stopped it;
 no permission card of the epic is open; the epic has no Stopped reason; every criterion meets the close rules for
 evidence (below); and the coverage check holds. About coverage, plainly: it is `factory_report.coverage_ok`, the
 text check of the Ready report's coverage block (every file the epic names is named in a child's text, not checked as

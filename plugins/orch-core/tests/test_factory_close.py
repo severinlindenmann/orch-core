@@ -99,6 +99,24 @@ def test_it_closes_after_merge_dev_and_production_are_proven(fws, closing, human
     assert _epic(fws, eid).status == "done"
 
 
+@pytest.mark.parametrize("forge", ["the-base", "no-base"])
+def test_a_merge_that_records_no_commit_of_its_own_never_closes(fws, closing, human, recipe, forge):
+    import json
+    eid, (c,), _ = closing(release="dev", recipe=recipe)
+    fr.tick(fws, human, Fake())
+    us = fr.unit_state(fws, eid, "merge", c)
+    assert us["state"] == "proven" and fr.own_merge(us) and us["base_sha"] != us["sha"]
+    p = fr._dir(fws, eid) / fr._name("merge", c, us["attempt"], "outcome")
+    body = json.loads(p.read_text(encoding="utf-8"))
+    if forge == "the-base":  # a record whose commit is the base it was checked against: nothing of its own merged
+        body["base_sha"] = body["sha"]
+    else:  # a record without the base it was checked against cannot show it
+        del body["base_sha"]
+    p.write_text(json.dumps(body), encoding="utf-8")
+    assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"
+    assert any(f"the merge of {c} records no commit of its own" == b["text"] for b in _view(fws, eid)["blockers"])
+
+
 def test_it_waits_for_every_signed_release_stage(fws, closing, human, remote):
     eid, _, _ = closing(release="prod", recipe=_prod_recipe(remote))
     assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"

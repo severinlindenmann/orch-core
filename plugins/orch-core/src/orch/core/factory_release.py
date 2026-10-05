@@ -651,6 +651,14 @@ def _block(ws, actor, epic_id: str, stage: str, unit: str, why: str, code: str =
     return f"{epic_id}: {stage} of {unit} not started: {why}"
 
 
+def own_merge(us: dict) -> bool:
+    """Whether a proven merge record names a commit of its own: a full commit id, recorded with the base it was
+    classified against, and not that base."""
+    sha, base = us.get("sha"), us.get("base_sha")
+    return (isinstance(sha, str) and isinstance(base, str) and bool(_SHA.fullmatch(sha))
+            and bool(_SHA.fullmatch(base)) and sha != base)
+
+
 def _units(ws, epic, entries=None) -> list[str]:
     """The children a per-child stage runs for: those in testing (Ready's open children), and those done since with
     a proven merge (the verdict closed them after their release), by id."""
@@ -1455,8 +1463,9 @@ def message_refusal(ws, rec: dict, sha: str) -> str | None:
 
 
 def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
-    """({child: (branch, sha, source)}, {child: [sensitive paths]}, {child: why it could not be checked}) for every
-    child ticket in `kids`, in the runner's release repository against the base fetched from the recipe's remote."""
+    """({child: (branch, sha, source, base sha)}, {child: [sensitive paths]}, {child: why it could not be checked})
+    for every child ticket in `kids`, in the runner's release repository against the base fetched from the recipe's
+    remote. A branch that brings in no commit of its own (its commit is on the base already) is refused."""
     found, hits, errors = {}, {}, {}
     try:
         ensure_repo(ws, rec)
@@ -1477,6 +1486,10 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if sha is None:
             errors[t.id] = f"{t.id}'s branch could not be fetched from {src}"
             continue
+        own = _git(ws, rec, "rev-list", "--count", f"refs/remotes/release/{rec['base']}..{sha}")
+        if own.get("code") != 0 or (own.get("out") or "").strip() in ("", "0"):
+            errors[t.id] = f"{t.id}: the child's branch has no commits of its own"
+            continue
         paths = changed_paths(ws, rec, sha)
         if paths is None:
             errors[t.id] = f"the changes of {t.id}'s branch could not be listed"
@@ -1488,7 +1501,7 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if why:
             errors[t.id] = f"{t.id}'s branch: {why}"
             continue
-        found[t.id] = (branch, sha, src)
+        found[t.id] = (branch, sha, src, base_sha)
     return found, hits, errors
 
 
@@ -1756,8 +1769,9 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
         if child:
             if unit not in found:
                 return f"{epic.id}: {name} of {unit} not started: its branch was not checked this round", False
-            branch, sha, src = found[unit]
+            branch, sha, src, base_of = found[unit]
             ctx = _context(epic.id, wsid, rec, unit, branch, sha)
+            extra["base_sha"] = base_of  # what the child was classified against (factory_close: never the base)
         else:
             if name == "production":
                 dev = unit_state(ws, epic.id, "dev", epic.id)

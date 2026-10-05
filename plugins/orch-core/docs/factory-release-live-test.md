@@ -12,7 +12,8 @@ What you need: orch with the dashboard installed as a tool of your user, Claude 
 
 - [`examples/release-step`](examples/release-step): a POSIX sh script. Every call is appended to
   `state/release.log` beside the folder it lives in. `merge` merges the checked commit into the base and pushes it to
-  the bare remote; `merged` is the merge check; `deploy dev|production <sha>` writes the commit to
+  the bare remote (it refuses a commit that is on the base already) and notes it in `state/merged`; `merged` is the
+  merge check (the commit is noted there and is on the base); `deploy dev|production <sha>` writes the commit to
   `state/<env>.version`; `version` prints it (or `broken` while `state/fail-<env>-check` exists); `rollback` writes
   `rolled-back`; `health` prints `ok` (or `down` while `state/fail-rollback` exists).
 - [`examples/factory-release-live-test.json`](examples/factory-release-live-test.json): the recipe. Merge, dev and

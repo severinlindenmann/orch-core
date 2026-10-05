@@ -12,11 +12,16 @@ case "$step" in
   merge)  # merge <remote> <base> <branch> <sha>: merge the checked commit into the base and push it
     remote=$2 base=$3 sha=$5
     [ "$(git rev-parse HEAD)" = "$sha" ] || { echo "not at $sha" >&2; exit 2; }
+    if git --git-dir="$remote" merge-base --is-ancestor "$sha" "refs/heads/$base" 2>/dev/null; then
+      echo "$sha is on $base already: nothing of its own to merge" >&2; exit 3
+    fi
     git fetch -q "$remote" "refs/heads/$base"
     git -c user.name=orch-live-test -c user.email=live-test@example.invalid merge -q --no-edit FETCH_HEAD
     git push -q "$remote" "HEAD:refs/heads/$base"
+    echo "$sha" >> "$state/merged"  # what this step merged: the check needs it, not only ancestry
     ;;
-  merged)  # merged <remote> <base> <sha>: the check that the commit is on the base
+  merged)  # merged <remote> <base> <sha>: the check that this step merged the commit and it is on the base
+    grep -qx "$4" "$state/merged" 2>/dev/null || { echo "$4 was not merged by this step" >&2; exit 4; }
     git --git-dir="$2" merge-base --is-ancestor "$4" "refs/heads/$3" && echo "merged $4"
     ;;
   deploy)  # deploy <env> <sha>: "deploy" by writing the commit into state/<env>.version

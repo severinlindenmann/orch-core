@@ -648,8 +648,9 @@ launch), its copy of the workspace's orch folder (`<orch folder>/tickets`, `.sta
 file tools, because tickets change only through orch, which works on the workspace's own tickets from the clone too),
 and its harness settings (`.claude/settings.json`, `.claude/settings.local.json`, `.mcp.json`: refused to the file
 tools; a clone whose settings differ from the workspace's is not started in). The shell is not covered by these two
-rules (a text guard; best effort), so the release treats the workspace's orch folder (normally `orchestrator`) as a
-sensitive path whatever the recipe says: a child branch that changes it stops the release with "Sensitive path
+rules (a text guard; best effort), so the release treats the workspace's orch folder (normally `orchestrator`) and the
+harness files (`.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.github`; see "The diff classification") as
+sensitive paths whatever the recipe says: a child branch that changes one stops the release with "Sensitive path
 touched".
 
 Residual, stated plainly: other children's clones are as writable to a session as any folder of your user. A session
@@ -1133,9 +1134,11 @@ stops the round (fail closed): nothing runs.
 with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) and every commit the branch brings in
 (`git log -m <base>..<commit>`, merges against each parent), both with `--no-renames` (a rename is both paths),
 `--ignore-submodules=none` (a gitlink counts, whatever `.gitmodules` says), `--no-ext-diff` and `--no-textconv`. Any
-match of `sensitive_paths`, or of the workspace's orch folder (normally `orchestrator`, sensitive whatever the recipe
-says: tickets change only through orch), stops the release with "Sensitive path touched", naming the paths (escaped):
-nothing is merged. Then the message of every commit the branch brings in is checked with orch's commit-msg logic and
+match of `sensitive_paths`, of the workspace's orch folder (normally `orchestrator`: tickets change only through orch),
+or of the harness and instruction files (`.claude/` at any depth, its settings, hooks and skills included; `.mcp.json`,
+`CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any depth; `.github` at the top), all sensitive whatever the recipe
+says, stops the release with "Sensitive path touched", naming the paths (escaped): nothing is merged. A child that
+changes what runs agents or CI later is merged by hand. Then the message of every commit the branch brings in is checked with orch's commit-msg logic and
 the workspace's commit format, each commit listed by its id and its message read on its own from the raw commit
 object (no separator a message could contain decides where it ends; more than 500 commits is refused); a message it
 refuses fails the merge stage of that child, naming the commit. A branch that brings in no commit of its own (its

@@ -55,7 +55,7 @@ def test_a_subfolder_workspace_starts_in_the_clones_copy_of_that_folder(sub, age
     clone = fc.clone_dir(sub, cid)
     assert cwd == str((clone / "my workspace").resolve()), lines
     assert fc.workspace_rel(sub).as_posix() == "my workspace"
-    assert fr_sensitive(sub) == ["my workspace/orchestrator"]
+    assert fr_sensitive(sub)[0] == "my workspace/orchestrator"
     (b,) = fs.bindings(sub)
     guard, hook = _both(sub, b, COMMIT, clone / "my workspace")
     assert guard.allow and _behavior(hook) == "allow"

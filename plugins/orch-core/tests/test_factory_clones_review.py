@@ -133,7 +133,28 @@ def test_a_child_commit_to_the_orch_folder_stops_the_release_whatever_the_recipe
     fr.tick(fws, human, fake)
     from orch.core import factory_report
     assert [r["code"] for r in factory_report.stopped(fws, store.load(fws, eid)[1])] == ["sensitive"]
-    assert not fake.calls and fr.always_sensitive(fws) == ["orchestrator"]
+    assert not fake.calls and fr.always_sensitive(fws) == ["orchestrator", *fr.HARNESS_SENSITIVE]
+
+
+@pytest.mark.parametrize("rel", [".claude/settings.json", ".claude/settings.local.json", ".claude/hooks/pre.sh",
+                                 ".claude/skills/x/SKILL.md", ".mcp.json", "CLAUDE.md", "docs/AGENTS.md",
+                                 "sub/.claude/settings.json", ".github/workflows/ci.yml"])
+def test_a_child_commit_to_harness_files_stops_the_release_whatever_the_recipe(fws, fa, fh, human, close_tasks,
+                                                                                remote, rel):  # noqa: F811
+    fr.set_recipe(fws, human, _recipe(remote, sensitive_paths=[]))
+    eid, d = _epic(fa, fh, human, fws, release="merge")
+    cid = _child(fa, eid)
+    clone, _ = fc.ensure(fws, human, cid)
+    (clone / rel).parent.mkdir(parents=True, exist_ok=True)
+    (clone / rel).write_text("x\n", encoding="utf-8")
+    _g(clone, "add", "-f", rel)
+    _g(clone, "commit", "-q", *_msg(cid))
+    _to_testing(fa, cid, close_tasks)
+    fake = RecipeFake()
+    fr.tick(fws, human, fake)
+    from orch.core import factory_report
+    assert [r["code"] for r in factory_report.stopped(fws, store.load(fws, eid)[1])] == ["sensitive"]
+    assert not fake.calls
 
 
 @pytest.mark.parametrize("rel,why", [

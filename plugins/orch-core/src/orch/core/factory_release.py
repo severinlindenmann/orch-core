@@ -1423,16 +1423,23 @@ def changed_paths(ws, rec, sha: str) -> list[str] | None:
     return sorted(set(out))
 
 
+# What the release treats as sensitive in every repository, whatever the recipe says (patterns as in sensitive_paths):
+# the harness's settings, hooks, skills and MCP servers, the instructions agents read, and CI. A child that changes
+# any of them changes what runs agents or code later, so a human merges that by hand.
+HARNESS_SENSITIVE = ("**/.claude", "**/.mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", ".github")
+
+
 def always_sensitive(ws) -> list[str]:
-    """What the release treats as sensitive whatever the recipe says: the workspace's orch folder (its tickets,
-    state and config) as a path of the repository (normally `orchestrator`). A child's clone carries a copy of it that
-    the session's file tools can write; tickets change only through orch, never through a merge."""
+    """What the release treats as sensitive whatever the recipe says: first the workspace's orch folder (its tickets,
+    state and config) as a path of the repository (normally `orchestrator`; a child's clone carries a copy of it that
+    the session's file tools can write; tickets change only through orch, never through a merge), then
+    HARNESS_SENSITIVE."""
     top = workspace_repo(ws)
     try:
         rel = Path(ws.home).resolve().relative_to(top.resolve()).as_posix() if top else None
     except ValueError:
         rel = None
-    return [rel or Path(ws.home).name]
+    return [rel or Path(ws.home).name, *HARNESS_SENSITIVE]
 
 
 MAX_MESSAGES = 500  # commits a child branch may bring in for the message check; more is refused

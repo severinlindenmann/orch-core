@@ -334,3 +334,54 @@ def test_the_guard_protects_the_user_scope_claude_files_and_installed_plugins(ws
     for p in (ws.root / ".claude" / "notes.md", ws.root / "plugins" / "x" / "hooks" / "hooks.json"):
         assert allowed("Write", {"file_path": str(p), "content": "x"}), p  # nothing else
     assert allowed("Bash", {"command": "cat ~/.claude/settings.json"})  # reading stays open
+
+
+def _shell_allowed(ws, cmd):
+    from orch.hooks.guard import evaluate
+    return evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)}).allow
+
+
+@pytest.mark.parametrize("cmd", [
+    'echo x > "$HOME"/.claude/settings.json', "cd ~/.claude && echo x > settings.json",
+    "sed -i '' s/a/b/ ~/'.claude'/settings.json", "cd ~/.claude; rm -rf plugins", 'cp a "${HOME}/.claude.json"',
+    "echo x > ~/.claude/hooks/pre.sh", "rm -rf ~/.claude/skills", "touch ~/.claude/agents/x.md",
+    "echo x >> ~/.claude/CLAUDE.md", "pushd ~/.claude/plugins; touch x", "rm -rf ~/.claude",
+    "echo x > \\~/.claude/settings.json",
+])
+def test_the_guard_sees_through_spellings_of_the_users_claude_files(ws, cmd):
+    assert not _shell_allowed(ws, cmd), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo x > notes.md; cat ~/.claude/settings.json",  # the write is elsewhere; reading stays open
+    "echo '{}' > .claude/settings.json", "mkdir -p .claude && echo x > .claude/settings.local.json",
+    "cat ~/.claude/settings.json", "ls ~/.claude/skills", "cd ~/.claude && cat settings.json",
+])
+def test_the_guard_does_not_over_block(ws, cmd):
+    assert _shell_allowed(ws, cmd), cmd
+
+
+def test_the_users_hooks_skills_agents_and_claude_md_and_orchs_programs_are_protected(ws, tmp_path, monkeypatch):
+    from pathlib import Path
+    from orch.hooks import guard
+    from orch.hooks.guard import evaluate
+    d = Path(os.environ["CLAUDE_CONFIG_DIR"])
+    tool = tmp_path / "tools" / "orch-core"
+    (tool / "bin").mkdir(parents=True)
+    (tool / "pyvenv.cfg").write_text("x", encoding="utf-8")
+    _script(tool / "bin" / "orch", "exit 0\n")
+    link_dir = tmp_path / "localbin"
+    link_dir.mkdir()
+    (link_dir / "orch").symlink_to(tool / "bin" / "orch")
+    monkeypatch.setenv("PATH", f"{link_dir}:/usr/bin:/bin")
+    for p in (d / "hooks" / "x.sh", d / "skills" / "s" / "SKILL.md", d / "agents" / "a.md", d / "CLAUDE.md",
+              Path.home() / ".claude" / "CLAUDE.md", link_dir / "orch", tool / "bin" / "orch",
+              tool / "lib" / "orch" / "guard.py"):
+        assert not evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(p), "content": "x"},
+                                 "cwd": str(ws.root)}).allow, p
+    assert not _shell_allowed(ws, f"echo x > {tool}/lib/orch/hooks/guard.py")
+    inside = ws.root / ".venv" / "bin"  # an orch in the workspace is the workspace's (and readiness blocks it)
+    folders = guard._harness_targets(ws)[1]
+    assert str(inside).lower() not in folders
+    assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(ws.root / "src" / "a.py"), "content": "x"},
+                         "cwd": str(ws.root)}).allow

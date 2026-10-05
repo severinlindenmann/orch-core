@@ -303,17 +303,21 @@ def revoke_steps(registry, host, dev, ws_root) -> tuple[list[str], list[str]]:
     return done, problems
 
 
-def revoke_linked_devices(request: Request, phone_id: str) -> tuple[int, list[str]]:
+def revoke_linked_devices(request: Request, phone_id: str) -> tuple[int, list[str], list[str]]:
     """Revoking a phone pairing revokes the devices linked to it (either side revokes both). Called by the Phones
-    tab's revoke; returns (how many devices, what failed) and never raises. Without a running host it works on the
+    tab's revoke; returns (how many devices, what failed, neutral notes) and never raises. Without a running host it works on the
     registry file when one is known, and says so when it cannot look."""
     host, registry = _host(request), _registry(request)
     if registry is None:
-        return 0, ["linked remote devices were not checked: Remote is not running and no device registry is known"]
+        # A neutral note, and only where Remote has been used on this computer (a bridge directory exists): this
+        # workspace's own id is not known here. ponytail: per-workspace check once the loop provides the id.
+        from orch.dashboard import launch
+        used = (launch.config_dir() / "permits" / "bridge").is_dir()
+        return 0, [], (["No remote devices could be checked: Remote is not running."] if used else [])
     try:
         linked = [d for d in registry.devices().values() if d.phone_link == phone_id]
     except files.Damaged:
-        return 0, ["linked remote devices could not be revoked: the device registry cannot be read"]
+        return 0, ["linked remote devices could not be revoked: the device registry cannot be read"], []
     n, problems = 0, []
     for d in linked:
         if d.revoked:
@@ -321,7 +325,7 @@ def revoke_linked_devices(request: Request, phone_id: str) -> tuple[int, list[st
         done, bad = revoke_steps(registry, host, d, request.app.state.ws.root)
         n += bool(done)
         problems += [f"{safe_label(d.label) or 'a device'}: {m}" for m in bad]
-    return n, problems
+    return n, problems, []
 
 
 @router.post("/workspace/remote/devices/{did}/revoke")

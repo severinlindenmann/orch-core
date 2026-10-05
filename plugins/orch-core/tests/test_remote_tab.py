@@ -1,5 +1,6 @@
 """The Remote tab (Workspace & addons): every route and state, human-only, the Reject default, the one-time link,
 scope lowering, revoke (linked pair included), the kill switch, a damaged registry, hostile text, never-remote."""
+import json
 import os
 import re
 from pathlib import Path
@@ -506,18 +507,36 @@ def test_reverse_path_without_a_host_uses_the_registry_file(ws, monkeypatch, cfg
     app.state.bridge_registry = reg
     c = TestClient(app)
     c.get("/?token=tok")
+    # only the first step may do it here: with the other-workspaces step switched off the registry FILE must be revoked
+    from orch.remote.bridge_host import registry as registry_mod
+    monkeypatch.setattr(registry_mod, "revoke_everywhere", lambda *a, **k: ([], []))
     loc = post(c, f"/workspace/phones/{phone.id}/revoke").headers["location"]
     assert "1 linked remote device" in loc and reg.get(d.id).revoked
+    assert json.loads(reg.path.read_text())["devices"][d.id]["revoked"] is True
+    assert reg.audit_entries()[0]["event"] == "revoked"
 
 
-def test_reverse_path_with_no_registry_says_it_could_not_look(client, ws, monkeypatch):
+def _no_registry_app(ws, monkeypatch):
     monkeypatch.setattr(views, "_setup_count", lambda ws, checks=None: 0)
-    app = create_app(ws, "tok")
-    c = TestClient(app)
+    c = TestClient(create_app(ws, "tok"))
     c.get("/?token=tok")
-    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    return c, phone_store.pair(ws.root, label="iPhone", addon="x")[0]
+
+
+def test_phone_revoke_is_unchanged_for_a_computer_that_never_used_remote(ws, monkeypatch):
+    c, phone = _no_registry_app(ws, monkeypatch)
     loc = post(c, f"/workspace/phones/{phone.id}/revoke").headers["location"]
-    assert "Phone revoked" in loc and "not checked" in loc
+    assert loc.endswith("msg=Phone revoked") or loc.endswith("msg=Phone+revoked") or "Phone revoked" in loc
+    assert "err=" not in loc and "No remote devices" not in loc
+
+
+def test_phone_revoke_notes_it_could_not_check_where_remote_was_used(ws, monkeypatch):
+    from orch.dashboard import launch
+    c, phone = _no_registry_app(ws, monkeypatch)
+    (launch.config_dir() / "permits" / "bridge" / ("ab" * 16)).mkdir(parents=True)
+    loc = post(c, f"/workspace/phones/{phone.id}/revoke").headers["location"]
+    assert "Phone revoked" in loc and "No remote devices could be checked: Remote is not running." in loc
+    assert "err=" not in loc  # a note, not an error
 
 
 def test_the_gate_itself_refuses_a_remote_marker(app):

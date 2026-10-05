@@ -34,7 +34,16 @@
         return { href: u.href, path: u.pathname, search: u.search, hash: u.hash, internal: u.origin === window.location.origin };
       } catch (e) { return null; }
     },
-    navigate(href) { window.location.href = href; },
+    // Only a single-slash path or a same-origin address: "//host" and backslash forms never leave the dashboard.
+    navigate(href) {
+      const h = String(href);
+      if (!/^\/(?![\/\\])/.test(h)) {
+        let u = null;
+        try { u = new URL(h, window.location.href); } catch (e) { return; }
+        if (/^[\/\\]{2}/.test(h) || u.origin !== window.location.origin) return;
+      }
+      window.location.href = h;
+    },
     reload() { window.location.reload(); },
     pageHistory: {
       canPush() { return Boolean(window.history && window.history.pushState); },
@@ -1061,13 +1070,15 @@
   const hrefOf = (a) => (a.getAttribute ? a.getAttribute("href") : a.href);
   const swappable = (a) => Boolean(a && hrefOf(a) && !a.target && !a.hasAttribute("download") && !a.hasAttribute("data-no-swap") && swapTarget(hrefOf(a)));
   const cache = new Map();  // url -> {at, page}
+  let changes = 0;  // live "change" events seen; a page fetched before the latest one may be out of date
   const fetchPage = (url) => {
+    const seq = changes;
     const hit = cache.get(url);
     if (hit && Date.now() - hit.at < 10000) return hit.page;
     const page = fetch(url, { credentials: "same-origin" }).then((r) => {
       const final = host.resolve(r.url);
       if (!r.ok || !final || !SWAPPABLE.test(final.path) || !(r.headers.get("content-type") || "").includes("text/html")) throw new Error("not swappable");
-      return r.text().then((text) => ({ url: r.url, text }));
+      return r.text().then((text) => ({ url: r.url, text, seq }));
     });
     cache.set(url, { at: Date.now(), page });
     page.catch(() => cache.delete(url));
@@ -1090,7 +1101,9 @@
     renderedAt = Date.now();
     dirty = false;
     gen += 1;
-    clearTimeout(timer);  // a refresh queued by the page just replaced must not land on this one
+    // A refresh queued by the page just replaced must not land on this one; but a page fetched before the latest
+    // change may be stale, so then the queued refresh stays and corrects it.
+    if (page.seq === undefined || page.seq === changes) clearTimeout(timer);
     if (push) host.pageHistory.push(page.url);
     const hash = (host.resolve(page.url) || {}).hash || "";
     if (!hash) window.scrollTo(0, 0);
@@ -1176,6 +1189,8 @@
         if (seen && event.data && event.data !== seen) refresh();
       });
       source.addEventListener("change", () => {
+        changes += 1;
+        cache.clear();  // nothing fetched before this change may be shown as current
         clearTimeout(timer);
         timer = setTimeout(refresh, 1500);
       });

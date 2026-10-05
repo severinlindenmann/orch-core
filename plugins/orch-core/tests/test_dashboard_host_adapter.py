@@ -23,11 +23,70 @@ def _outside_adapter(text: str) -> str:
     return re.sub(r"// host-adapter:begin.*?// host-adapter:end", "", text, flags=re.S)
 
 
+_TOKEN = re.compile(r"/\*.*?\*/|//[^\n]*|\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`", re.S)
+
+
+def _template(text: str, i: int):
+    """From just after an opening backtick: (the code inside its ${...} parts, index after the closing backtick)."""
+    code = []
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+        elif c == "`":
+            return " ".join(code), i + 1
+        elif text.startswith("${", i):
+            depth, j = 1, i + 2
+            while j < len(text) and depth:
+                depth += {"{": 1, "}": -1}.get(text[j], 0)
+                j += 1
+            code.append(_code(text[i + 2:j - 1]))
+            i = j
+        else:
+            i += 1
+    return " ".join(code), i
+
+
 def _code(text: str) -> str:
-    """The script without comments and string contents, so a word in a message or a note is not a use."""
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
-    text = re.sub(r"(?m)(?<![:'\"\\])//.*$", "", text)
-    return re.sub(r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'", '""', text)
+    """The script in one pass, without comments and string contents (a word in a message or a note is not a use).
+    The parts of a template literal inside ${...} are code and stay."""
+    out, i = [], 0
+    while True:
+        m = _TOKEN.search(text, i)
+        if not m:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i:m.start()])
+        if m.group() == "`":
+            inner, i = _template(text, m.end())
+            out.append('"" ' + inner + " ")
+        else:
+            out.append("\n" * m.group().count("\n") if m.group().startswith(("/*", "//")) else '""')
+            i = m.end()
+
+
+@pytest.mark.parametrize("snippet", [
+    "const u = location.href;",
+    'const s = "a // b" + location.href;',
+    "const t = `x ${window.history.length} y`;",
+    "const u = `${`${document.cookie}`}`;",
+    "a = '\\'' + sessionStorage.getItem('k');",
+    "/* note */ navigator.clipboard.writeText(x);",
+])
+def test_scanner_catches_a_violation(snippet):
+    assert BROWSER_FEATURES.search(_code(snippet)), snippet
+
+
+@pytest.mark.parametrize("snippet", [
+    "// location.href is only a note",
+    "/* history.pushState */ x = 1;",
+    'const s = "location.href";',
+    "const s = 'localStorage';",
+    "const t = `the location is ${place}`;",
+    'const u = "http://x/y"; // document.cookie',
+])
+def test_scanner_ignores_comments_and_strings(snippet):
+    assert not BROWSER_FEATURES.search(_code(snippet)), snippet
 
 
 def test_browser_features_are_only_used_inside_the_adapter():
@@ -89,3 +148,11 @@ def test_host_adapter_local_default_and_fallbacks():
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "host adapter ok" in r.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_page_swap_and_live_refresh_ordering():
+    r = subprocess.run(["node", str(ROOT / "tests" / "js" / "page_swap.js"), str(STATIC / "app.js")],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "page swap ok" in r.stdout

@@ -8,6 +8,8 @@ own. It never depends on them:
 - **One adapter.** `static/app.js` opens with a small host adapter, published as `window.orchHost`. It is the only
   code in the dashboard's own scripts that touches the address, history, the theme cookie, web storage or the
   clipboard. A host sets `window.orchHost` before `app.js` runs; any method it provides replaces the local default.
+  Sub-objects (`pageHistory`, `session`, `local`) are replaced as wholes, so a host that provides one must provide
+  all of its methods.
   `static/terminal.js` uses the same object.
 - **Local defaults do what the page always did.** Storage falls back to memory when the browser refuses it, and
   the theme cookie is written inside a try block. A link that opens a new tab or downloads stays a plain link

@@ -35,6 +35,21 @@ const html = (path) => ({ dataset: path === undefined ? {} : { path } });
   assert.strictEqual(host.download({}), false);
 }
 
+// -- navigate stays inside the dashboard: a single-slash path or a same-origin address, never "//host" or a backslash form
+{
+  const win = { location: { href: "http://h/x", origin: "http://h" } };
+  const host = load(win, { documentElement: html("/x") });
+  for (const bad of ["//evil.example/x", "/\\evil.example", "\\\\evil.example", "\\/evil.example", "http://evil.example/", "javascript:void(0)"]) {
+    host.navigate(bad);
+    assert.strictEqual(win.location.href, "http://h/x", "navigated to " + bad);
+  }
+  for (const ok of ["/board?x=1", "http://h/y", "rel", "?q=1"]) {
+    host.navigate(ok);
+    assert.strictEqual(win.location.href, ok);
+    win.location.href = "http://h/x";
+  }
+}
+
 // -- no data-path (a page the dashboard did not render): the address is the only thing left
 {
   const host = load({ location: { pathname: "/a", search: "?b=1" } }, { documentElement: html() });

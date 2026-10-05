@@ -44,7 +44,8 @@ def env(tmp_path, monkeypatch, ws):
                                     encoding="utf-8")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
     bins = dict(BINS)
-    monkeypatch.setattr(fr, "resolve_bin", lambda name: bins.get(os.path.basename(name)))
+    monkeypatch.setattr(fr, "resolve_bin", lambda name: name if os.path.isabs(name) and os.path.isfile(name)
+                        else bins.get(os.path.basename(name)))
     monkeypatch.setattr(fr, "which", lambda name, path=None: bins.get(name) if path and bins.get(name) and
                         os.path.dirname(bins[name]) in path.split(os.pathsep) else None)
     probe = Probe()
@@ -71,7 +72,7 @@ def test_everything_passes_and_runs_under_the_sessions_own_environment(ws, env):
         assert "/bin/sh" not in argv  # hook commands are parsed into words, never run through a shell
         path = argv[2][5:].split(":")
         assert path[:3] == ["/opt/claude/bin", "/opt/orch/bin", "/opt/uv/bin"] and "/usr/bin" in path
-        assert cwd == str(ws.root.resolve())
+        assert "orch-probe-" in cwd and str(ws.root) not in cwd  # an empty folder of the runner's own
     assert json.loads(calls[1][1])["tool_name"] == "Bash"
     assert sorted(p.name for p in env["dir"].rglob("*")) == before  # nothing written
 
@@ -286,7 +287,7 @@ def test_a_failing_hook_through_the_real_probe(ws, tmp_path, monkeypatch):
         "PermissionRequest": [{"hooks": [{"type": "command", "command": f"{hook} permit hook"}]}]}}), encoding="utf-8")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
     bins = {"claude": claude, "env": "/usr/bin/env"}
-    monkeypatch.setattr(fr, "resolve_bin", lambda name: bins.get(os.path.basename(name)))
+    monkeypatch.setattr(fr, "resolve_bin", lambda name: name if name == hook else bins.get(os.path.basename(name)))
     f = _failing(ws)
     assert "claude" not in f  # the real `--version` of the stand-in claude passed
     assert "exit 127" in f["guard"]["why"] and "uv is not installed" in f["guard"]["tail"]
@@ -385,3 +386,46 @@ def test_the_users_hooks_skills_agents_and_claude_md_and_orchs_programs_are_prot
     assert str(inside).lower() not in folders
     assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(ws.root / "src" / "a.py"), "content": "x"},
                          "cwd": str(ws.root)}).allow
+
+
+def test_an_untrusted_hook_program_is_not_run(ws, env, monkeypatch):
+    _write(env, hooks={"PreToolUse": [{"hooks": [{"type": "command", "command": "/opt/odd/orch guard --hook-json"}]}],
+                       "PermissionRequest": [{"hooks": [{"type": "command", "command": "orch permit hook"}]}]})
+    f = _failing(ws)
+    assert "not a regular file owned by you or root" in f["guard"]["why"]
+    assert not any("/opt/odd/orch" in a for a, _, _ in env["probe"].calls)
+
+
+def test_a_relative_claude_config_dir_blocks(ws, env, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "claude-user")
+    f = _failing(ws)
+    assert "relative path" in f["config dir"]["why"] and env["probe"].calls == []
+
+
+def test_the_plugin_probe_writes_nothing_in_the_plugin_or_the_workspace(ws, tmp_path, monkeypatch):
+    from orch.core.ledger import base_dir
+    d = tmp_path / "claude-user"
+    root = tmp_path / "plugin"
+    _script(root / "bin" / "orch", 'cat >/dev/null\nhere=${0%/*}\necho x > "${CLAUDE_PLUGIN_DATA:-$here/..}/venv-made"\n'
+                                   "echo x > made-in-cwd\nexit 0\n")
+    (root / "hooks").mkdir()
+    (root / "hooks" / "hooks.json").write_text(json.dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" guard --hook-json"}]}],
+        "PermissionRequest": [{"hooks": [{"type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/orch\" permit hook"}]}]}}),
+        encoding="utf-8")
+    (d / "plugins").mkdir(parents=True)
+    (d / "plugins" / "installed_plugins.json").write_text(json.dumps(
+        {"plugins": {"orch-core@orch": [{"installPath": str(root)}]}}), encoding="utf-8")
+    (d / "settings.json").write_text(json.dumps({"enabledPlugins": {"orch-core@orch": True}}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
+    claude = _script(tmp_path / "tools" / "claude", "echo '2.1.0 (Claude Code)'\n")
+    bins = {"claude": claude, "env": "/usr/bin/env", "orch": str(root / "bin" / "orch")}
+    monkeypatch.setattr(fr, "resolve_bin", lambda name: name if name == str(root / "bin" / "orch")
+                        else bins.get(os.path.basename(name)) if os.path.basename(name) != "orch" else None)
+    before = sorted(str(p) for p in root.rglob("*"))
+    ws_before = sorted(str(p) for p in ws.root.rglob("*"))
+    f = _failing(ws)
+    assert "guard" not in f and "permission hook" not in f
+    assert sorted(str(p) for p in root.rglob("*")) == before  # the install folder is untouched
+    assert sorted(str(p) for p in ws.root.rglob("*")) == ws_before  # and so is the workspace
+    assert (base_dir() / "permits" / "plugin-data" / "venv-made").is_file()  # the runner's own data folder

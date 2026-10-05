@@ -373,18 +373,32 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                       "user) and start the dashboard from there"))
     if agent_writable(ws, claude) or agent_writable(ws, env_bin):
         return out  # nothing of it is run
+    base = environ.get("CLAUDE_CONFIG_DIR")
+    if base and not os.path.isabs(base):
+        out.append(_check("config dir", False, f"CLAUDE_CONFIG_DIR is the relative path {permits.shown(base)}: each "
+                                               "session would read another folder depending on where it starts. "
+                                               "Set it to an absolute path"))
+        return out
+    import tempfile
+    from orch.core.ledger import base_dir
     bins = [claude, *session_bins(ws)]
     prefix = env_prefix(env_bin, bins, environ)
     path, root = child_path(*bins), Path(ws.root).resolve()
     data = _user_settings(environ)
     deadline = time.monotonic() + PROBE_BUDGET
+    # the programs run in an empty folder of the runner's own, and a plugin's bin/orch keeps its venv in a data folder
+    # of the runner's (as Claude Code gives a plugin CLAUDE_PLUGIN_DATA): nothing is written in the workspace or the
+    # plugin's install folder
+    plugin_data = base_dir() / "permits" / "plugin-data"
+    plugin_data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    scratch = tempfile.TemporaryDirectory(prefix="orch-probe-")
 
     def run(argv, stdin=""):
         left = deadline - time.monotonic()
         if left <= 0:
             return 124, "", f"the readiness checks' time budget of {PROBE_BUDGET:.0f} seconds was used up"
         try:
-            return _probe(argv, stdin, str(root), left)
+            return _probe(argv, stdin, scratch.name, left)
         except (OSError, ValueError) as e:
             return 127, "", f"{type(e).__name__}: {e}"
         except Exception as e:  # a timeout among them
@@ -410,6 +424,12 @@ def readiness(ws, settings, environ=None) -> list[dict]:
             out.append(_check(label, False, f"orch's {label} runs {argv[0]}, inside the workspace, which agents "
                                             "write: point the hook at an orch outside the workspace"))
             continue
+        if argv[0].startswith("/") and resolve_bin(argv[0]) != argv[0]:
+            out.append(_check(label, False, f"orch's {label} runs {argv[0]}, which is not a regular file owned by you "
+                                            "or root in a folder only you or root can write: it is not run"))
+            continue
+        if extra:  # a plugin's hook: its data folder is the runner's
+            extra = [*extra, f"CLAUDE_PLUGIN_DATA={plugin_data}"]
         event = "PreToolUse" if label == "guard" else "PermissionRequest"
         payload = json.dumps({"session_id": str(uuid.uuid4()), "hook_event_name": event, "tool_name": "Bash",
                               "tool_input": {"command": "true"}, "cwd": str(root)})
@@ -438,6 +458,7 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                       f"your user-scope settings do not deny {', '.join(lacking)} (permissions.deny): tools that do "
                       "not prompt never reach orch's permission hook, so a session can use them unasked",
                       level="warn"))
+    scratch.cleanup()
     return out
 
 

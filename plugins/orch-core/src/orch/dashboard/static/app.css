@@ -1162,6 +1162,7 @@ dialog::backdrop { background: var(--scrim); }
   .dc-phone { display: inline-flex; width: 100%; justify-content: center; }
   .decision-card .opts, .decision-card .opt-row, .decision-card .btn.opt { width: 100%; }
   .dc-actions { flex-direction: column; align-items: stretch; }
+  .decision-card .dc-actions > .btn-quiet { border-color: var(--ctl); }  /* "Open ticket" is a button on a phone, not bare text */
 }
 .dc-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; background: var(--surface);
            border: 1px solid var(--line); border-radius: var(--r-lg); }
@@ -1281,8 +1282,22 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
   /* Board: the columns stack (each one full width) instead of scrolling sideways; Done stays a one-line link. */
   .board, .board.board-rail { display: flex; flex-direction: column; gap: var(--s-4); overflow: visible; mask-image: none; padding-bottom: 0; }
   .board .col { flex: none; width: 100%; }
-  .filter-field, .filter-search { flex: 1 1 100%; max-width: none; }
+  /* Board filters (V13): Search and Show take a row, Repository and Group by share one, and More filters sits
+     beside Filter, so the filters stay under about 190 px instead of 330 px. */
+  .filter-field { flex: 1 1 calc(50% - var(--s-2)); max-width: none; }
+  .filter-search, .filter-field.show-by { flex-basis: 100%; max-width: none; }
   .filter-field select, .filter-field input { width: 100%; }
+  .filters .more-filters-body > .filter-field { flex-basis: calc(50% - var(--s-2)); }
+  .filters .filter-apply { margin-left: auto; }
+  /* The proof row already says "No evidence yet."; the dashed tile beside it said it a second time (V10). */
+  .proof-tile.ev-tile-missing { display: none; }
+}
+/* Rows in a narrow page outside a .panel (the /design page, a phone) take two lines like the container rule does. */
+@media (max-width: 559px) {
+  .tc-row { grid-template-columns: var(--s-6) minmax(0, 1fr); row-gap: 2px; }
+  .tc-row > .key, .tc-row > .tc-title, .tc-row > .tc-move, .tc-row > .tc-progress { grid-column: 2; }
+  .tc-row > .tc-title { white-space: normal; }
+  .tc-progress { flex-wrap: wrap; min-width: 0; }
 }
 
 /* The widget library (/widgets): one card per core type or template, its live example inside. */

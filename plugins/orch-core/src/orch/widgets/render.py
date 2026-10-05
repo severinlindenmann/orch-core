@@ -162,25 +162,49 @@ def chrome(block: Block, ctx: Ctx, *, framed: bool = True, bare: bool = False) -
     return Markup("".join(parts))
 
 
-_RECEIPT_ID = re.compile(r"receipt-(t\d+)\Z", re.I)
+_RECEIPT_ID = re.compile(r"receipt-t([0-9]+)\Z")
+_RECEIPT_SRC = re.compile(r"artifact:(receipt-[^\s·]+) · sha256:([0-9a-f]{12})")
+
+
+def _norm(text) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFKC", str(text or "")).strip().casefold()
 
 
 def unverified_receipt(block: Block, ctx: Ctx) -> bool:
-    """A `gates` block with the id `receipt-t<n>` (the one `orch task done --run` draws) that no receipt artifact entry
-    of that task backs: widgets are agent-writable, so a pass-looking block could be typed by hand. It is backed when the
-    task's newest receipt entry (written by orch alone) names the same steps with the same statuses. Page widgets and
-    blocks with any other id are not judged."""
-    m = _RECEIPT_ID.match(str((block.data or {}).get("id") or ""))
+    """True for a `gates` block that presents itself as a receipt (its id, after Unicode NFKC, case and space
+    normalisation, starts with `receipt`, or its source names a receipt artifact) unless it is provably backed: the id
+    is exactly `receipt-t<n>`, the source names `artifact:<file> · sha256:<12 hex>` of a `receipt` entry of that task
+    on this ticket whose recorded digest is that one, the file on disk still has it, the entry is the task's newest,
+    and the block's steps and statuses are the entry's. Anything else is unverified. Page widgets are not judged.
+    The entry is orch's record (the guard refuses an agent edit of it); a block alone, however well matched, is not."""
+    data = block.data or {}
+    nid, source = _norm(data.get("id")), str(data.get("source") or "")
+    claims = nid.startswith("receipt") or "artifact:receipt-" in _norm(source)
     meta = getattr(ctx.ticket, "meta", None)
-    if not m or not isinstance(meta, dict) or getattr(ctx.ticket, "is_page", False):
+    if not claims or not isinstance(meta, dict) or getattr(ctx.ticket, "is_page", False):
         return False
-    task = m.group(1).upper()
+    m = _RECEIPT_ID.match(nid)
+    src = _RECEIPT_SRC.search(source)
+    if not m or nid != str(data.get("id")) or not src:
+        return True  # an id variant (case, spaces, look-alike characters) or no binding to a receipt file
+    task = f"T{m.group(1)}"
     runs = [e for e in (meta.get("artifacts") or []) if isinstance(e, dict) and e.get("kind") == "receipt"
-            and str(e.get("task") or "").upper() == task and isinstance(e.get("run"), dict)]
+            and str(e.get("task") or "") == task and isinstance(e.get("run"), dict)]
     if not runs:
         return True
-    shown = [(i.get("name"), i.get("status")) for i in (block.data.get("items") or []) if isinstance(i, dict)]
-    steps = [(s.get("name"), s.get("status")) for s in (runs[-1]["run"].get("steps") or []) if isinstance(s, dict)]
+    entry = runs[-1]
+    sha = entry.get("sha256")
+    if entry.get("name") != src.group(1) or not isinstance(sha, str) or not sha.startswith(src.group(2)):
+        return True
+    home = getattr(ctx.ws, "home", None)
+    tid = getattr(ctx.ticket, "id", None)
+    if ctx.ws is not None and tid and getattr(ctx.ws, "artifacts_dir", None) is not None:
+        from orch.core.artifacts import file_sha256
+        if file_sha256(ctx.ws.artifacts_dir / tid / str(entry["name"])) != sha:
+            return True  # the receipt file was replaced or removed
+    shown = [(i.get("name"), i.get("status")) for i in (data.get("items") or []) if isinstance(i, dict)]
+    steps = [(s.get("name"), s.get("status")) for s in (entry["run"].get("steps") or []) if isinstance(s, dict)]
     return shown != steps
 
 

@@ -341,7 +341,9 @@ class TaskOpsMixin:
         label = f"{task.id} {check or 'verify'}: {result}{at}" + (" (uncommitted changes)" if r.dirty else "")
         self.artifact_add(t.id, Path(name), name, stream=io.BytesIO(r.log), task=task.id, label=label[:200],
                           _run={**r.record(), "check": check})
-        block = receipts.gates_block(r, task.id, check, name, check_state=state)
+        entry = next((e for e in reversed(store.load(self.ws, t.id)[1].meta.get("artifacts") or [])
+                      if isinstance(e, dict) and e.get("name") == name), {})
+        block = receipts.gates_block(r, task.id, check, name, check_state=state, sha256=entry.get("sha256"))
         self._write_section(t.id, "Verification", lambda current: receipts.put_block(current, block))
         if not r.ok:
             raise ValidationError(f"{task.id} {check or 'verify'}: {result}; the receipt is {name}" + _unsigned(check, state),

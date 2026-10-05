@@ -197,3 +197,103 @@ def test_a_run_with_huge_output_keeps_a_bounded_file(tmp_path, monkeypatch):
     assert max(peaks) <= 2000 and len(r.log) <= 1000
     assert r.log.startswith(CUT) and b"END" in r.log
     assert r.ok
+
+
+# -- security review of the first commit ----------------------------------------------------------------------------
+
+def _forge(ws, aops, ticket, **over):
+    t, b = _gates(ws, ticket)
+    forged = {**b.data, **over}
+    aops.set_section(ticket, "Verification", "```orch\n" + json.dumps(forged) + "\n```")
+    t, b = _gates(ws, ticket)
+    html = str(render_html(b, Ctx.of(ws, t)))
+    return "Unverified" in html or "w-t-gates" not in html  # marked, or not drawn as a gates widget at all
+
+
+@pytest.mark.parametrize("rid", ["RECEIPT-T1", "receipt-t1 ", "receipt-ｔ1", "receipt-t01", "Receipt-t1", "receipt-t1​"])
+def test_id_variants_of_a_receipt_block_are_unverified(ws, aops, ticket, tmp_path, rid):
+    _done(aops, ticket, tmp_path, verify="cmd: true")
+    assert _forge(ws, aops, ticket, id=rid)
+
+
+def test_a_block_without_the_receipt_digest_is_unverified(ws, aops, ticket, tmp_path):
+    _done(aops, ticket, tmp_path, verify="cmd: true")
+    assert _forge(ws, aops, ticket, source="artifact:receipt-T1-x.log")
+
+
+def test_a_block_naming_another_file_is_unverified(ws, aops, ticket, tmp_path):
+    _done(aops, ticket, tmp_path, verify="cmd: true")
+    assert _forge(ws, aops, ticket, source="artifact:receipt-T1-other.log · sha256:" + "0" * 12)
+
+
+def test_a_replaced_receipt_file_makes_the_block_unverified(ws, aops, ticket, tmp_path):
+    _done(aops, ticket, tmp_path, verify="cmd: true")
+    t, b = _gates(ws, ticket)
+    assert "Unverified" not in render_html(b, Ctx.of(ws, t))
+    name = next(e["name"] for e in t.meta["artifacts"] if e["kind"] == "receipt")
+    (ws.artifacts_dir / ticket / name).write_text("$ npm test\nall green\n")
+    assert "Unverified" in render_html(b, Ctx.of(ws, t))
+
+
+def test_a_differently_named_receipt_id_is_judged_too(ws, aops, ticket):
+    block = {"type": "gates", "id": "receipt-latest", "items": [{"name": "t", "status": "pass"}]}
+    aops.set_section(ticket, "Verification", "```orch\n" + json.dumps(block) + "\n```")
+    t, b = _gates(ws, ticket)
+    assert "Unverified" in render_html(b, Ctx.of(ws, t))
+
+
+def test_the_sink_file_is_private_and_nameless(tmp_path):
+    import os
+    import stat
+    s = _Sink(keep=10)
+    st = os.fstat(s.file.fileno())
+    assert stat.S_IMODE(st.st_mode) == 0o600 and st.st_nlink == 0
+    s.close()
+
+
+def test_descriptors_are_closed_after_every_run_and_a_lingering_child_does_not_leak(tmp_path):
+    import os
+
+    def fds():
+        return len(os.listdir("/dev/fd"))
+    before = fds()
+    for _ in range(3):
+        run_steps(_one_cmd("echo hi"), tmp_path, timeout=30, max_bytes=1000)
+    r = run_steps(_one_cmd("(sleep 3 & ) ; echo done"), tmp_path, timeout=30, max_bytes=1000)  # child keeps the pipe
+    assert b"done" in r.log and fds() <= before
+    r2 = run_steps(_one_cmd("exit 1"), tmp_path, timeout=30, max_bytes=1000)
+    assert b"hi" not in r2.log and b"done" not in r2.log
+
+
+def test_a_run_interrupted_closes_the_sink(tmp_path, monkeypatch):
+    import os
+    before = len(os.listdir("/dev/fd"))
+    monkeypatch.setattr("orch.core.receipts._run_one", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        run_steps(_one_cmd("true"), tmp_path, timeout=30, max_bytes=100)
+    assert len(os.listdir("/dev/fd")) <= before
+
+
+def _one_cmd(c):
+    return [{"name": "v", "run": c}]
+
+
+# -- terminal escapes in what the human confirms ---------------------------------------------------------------------
+
+def test_signing_refuses_checks_with_control_characters(ws, monkeypatch, capsys):
+    from orch import actor
+    set_checks(ws, {"verify": {"steps": [{"name": "t", "run": "echo ok\x1b[2K\rrm -rf /"}]}})
+    monkeypatch.setattr(actor, "require_human_terminal", lambda *_a, **_k: None)
+    assert run(["checks", "sign"]) != 0
+    out = capsys.readouterr()
+    assert "\x1b" not in out.out + out.err and "control or invisible" in out.err
+    assert not ledger.entries(ws)
+
+
+def test_signing_shows_what_it_signs_without_raw_escapes(ws, monkeypatch, capsys):
+    from orch import actor
+    set_checks(ws, CHECKS)
+    monkeypatch.setattr(actor, "require_human_terminal", lambda *_a, **_k: None)
+    monkeypatch.setattr("builtins.input", lambda *_a: "CHECKS")
+    assert run(["checks", "sign"]) == 0
+    assert "true" in capsys.readouterr().out + ""  # status line or listing

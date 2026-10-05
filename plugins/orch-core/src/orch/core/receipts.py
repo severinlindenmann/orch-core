@@ -62,6 +62,8 @@ class _Sink:
     def __init__(self, keep: int, cap: int | None = None):
         self.keep = max(int(keep), 1)
         self.cap = max(int(cap or 0), 2 * self.keep)
+        # TemporaryFile: a random name made O_EXCL | O_NOFOLLOW with mode 0600 and unlinked at once (no path to
+        # guess, follow or reopen); one sink per run, so one run's output is never in another run's receipt
         self.file = tempfile.TemporaryFile()
         self.dropped = False
         self.lock = threading.Lock()
@@ -99,9 +101,19 @@ class _Sink:
         self.file.close()
 
 
+DRAIN_SECONDS = 1.0
+
+
 def _pump(fd: int, sink: _Sink, stop: threading.Event) -> None:
-    """Copy the command's output into the sink until the pipe closes, or `stop` is set and nothing is waiting."""
+    """Copy the command's output into the sink until the pipe closes. After `stop` it drains for at most DRAIN_SECONDS
+    (a child that kept the pipe open and keeps writing is let go), so the caller can always join this thread before
+    it closes `fd`: a read on a descriptor number that was closed and reused would take another file's bytes."""
+    drain_until = None
     while True:
+        if stop.is_set():
+            drain_until = drain_until or time.monotonic() + DRAIN_SECONDS
+            if time.monotonic() >= drain_until:
+                return
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
             data = os.read(fd, 65536)
@@ -130,7 +142,7 @@ def _run_one(cmd: str, cwd: Path, out: _Sink, timeout: float) -> tuple[int | Non
         raise
     finally:
         stop.set()
-        pump.join(timeout=5)  # what the command wrote is in the sink; a child that kept the pipe open is let go
+        pump.join()  # bounded (DRAIN_SECONDS): the descriptor is closed only once nothing reads it any more
         proc.stdout.close()
 
 
@@ -210,10 +222,10 @@ _UNSIGNED = {"unsigned": "check not signed by the human", "changed": "check chan
 
 
 def gates_block(receipt: Receipt, task_id: str, check: str | None, artifact: str,
-                check_state: str | None = None) -> dict:
+                check_state: str | None = None, sha256: str | None = None) -> dict:
     """A core `gates` widget (docs/widgets.md) of one run: a row per step, its status and time. The id is per task,
     so the next run of the same task replaces the block instead of adding one."""
-    source = f"artifact:{artifact}" + (f" · {receipt.commit[:7]}" if receipt.commit else "") \
+    source = f"artifact:{artifact}" + (f" · sha256:{sha256[:12]}" if sha256 else "") + (f" · {receipt.commit[:7]}" if receipt.commit else "") \
         + (" · uncommitted changes" if receipt.dirty else "") \
         + (f" · {_UNSIGNED[check_state]}" if check_state in _UNSIGNED else "")
     items = [{"name": s["name"], "status": _STATUS[s["status"]],

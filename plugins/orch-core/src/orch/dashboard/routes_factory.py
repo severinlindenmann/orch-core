@@ -47,8 +47,9 @@ PEEK_LINES = 12
 
 
 def _watch(request: Request, ws, eid: str) -> dict | None:
-    """The run view's sessions box: with Terminals on (and a local request), a link to watch and type into the epic's
-    sessions there; otherwise a read-only peek at each one's last lines (escaped), from the runner's own socket."""
+    """The run view's sessions box, only for a request from this machine (terminals.local_request: never over `orch
+    serve --lan`): with Terminals on, a link to watch and type into the epic's sessions there; otherwise a read-only
+    peek at each one's last lines (escaped), from the runner's own socket."""
     from orch.core import factory_runner as core_runner
     from orch.dashboard import factory_runner, terminals
     try:
@@ -57,6 +58,8 @@ def _watch(request: Request, ws, eid: str) -> dict | None:
         return None
     if not mine:
         return None
+    if not terminals.local_request(request):
+        return None  # a screen is shown only to a browser on this machine (as Terminals itself)
     on = terminals.enabled(ws, request)
     peek = [] if on else [{"name": w["name"], "child": "Planner" if w["planner"] else w["child"],
                            "tail": core_runner.escaped_tail(factory_runner.TmuxLauncher().capture(w["name"]) or "",

@@ -197,6 +197,7 @@
   // the visual viewport says so.
   const sizeTmux = () => {
     if (term.dataset.mode === "gone") return;
+    if (term.dataset.base && !typing()) return; // a factory session: watching never resizes the runner's pane
     const m = charBox(pre);
     const font = view === "readable" ? size : 13;
     const box = inner(pre);

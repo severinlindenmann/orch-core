@@ -47,7 +47,26 @@ def _folder_name(permits: Path) -> str:
     raise UsageError("the factory's tmux folder name cannot be read")
 
 
+_SOCKET: dict = {}  # orch config dir -> the socket path found there (its folder name read and made once)
+
+
 def socket_path() -> Path:
+    """The factory's tmux socket (_socket_path), found once per orch config dir; every call still checks that its two
+    folders are ours alone (two stats), so a screen capture per tile does not re-read the name file and re-make the
+    folders."""
+    key = str(launch.config_dir())
+    p = _SOCKET.get(key)
+    if p is None or not p.parent.is_dir():
+        p = _SOCKET[key] = _socket_path()
+        return p
+    for x in (p.parent.parent, p.parent):
+        st = x.stat()
+        if st.st_uid != os.getuid() or st.st_mode & 0o077:
+            os.chmod(x, 0o700)
+    return p
+
+
+def _socket_path() -> Path:
     """The factory's tmux socket: in a random-named folder (0700) of permits/tmux, so a listing of the folder above does
     not show where it is. Every folder on the way must be ours alone."""
     permits = launch.config_dir() / "permits"
@@ -168,9 +187,14 @@ class TmuxLauncher:
             raise UsageError(f"could not type into {name}")
         for _ in range(TYPE_POLLS):
             _sleep(TYPE_POLL_SECONDS)
+            if human_typed(name):
+                return False  # the human started typing meanwhile: neither Enter nor C-u touches their input
             if factory_runner.typed_ok(self.capture(name), text):
+                if human_typed(name):
+                    return False
                 return _tmux(["send-keys", "-t", f"={name}:", "Enter"]).returncode == 0
-        _tmux(["send-keys", "-t", f"={name}:", "C-u"])
+        if not human_typed(name):
+            _tmux(["send-keys", "-t", f"={name}:", "C-u"])
         return False
 
     def start(self, name: str, cwd: str, argv: list[str]) -> int:

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from orch.dashboard.launch import tmux_arg
-from orch.errors import UsageError, ValidationError
+from orch.errors import OrchError, UsageError, ValidationError
 
 SOCKET = "orch"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -181,7 +181,7 @@ def capture(name: str, run=None) -> dict | None:
     try:
         r = run(["capture-pane", "-p", "-e", "-t", _target(name), ";",
                   "display-message", "-p", "-t", _target(name), "#{pane_width} #{pane_height}"])
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, OrchError):  # OrchError: the factory's tmux is not trusted now
         return None
     if r.returncode != 0:
         return None
@@ -206,7 +206,7 @@ def capture_many(names: list[str], run=None) -> dict[str, dict | None]:
     try:
         r = (run or tmux)(args)
         out = r.stdout
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, OrchError):
         out = ""
     got: dict[str, dict | None] = {}
     parts = out.split(mark + " ")
@@ -255,13 +255,20 @@ def send(name: str, seq: list, run=None) -> None:
         else:
             raise ValidationError("each item is {\"text\": …} or {\"key\": …}")
     for args in calls:
-        if (run or tmux)(args).returncode != 0:
+        try:
+            ok = (run or tmux)(args).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ok = False
+        if not ok:
             raise UsageError(f"{name} did not take the keys (has it ended?)")
 
 
 def resize(name: str, cols: int, rows: int, run=None) -> None:
     cols, rows = max(20, min(int(cols), 400)), max(5, min(int(rows), 200))
-    (run or tmux)(["resize-window", "-t", _target(name), "-x", str(cols), "-y", str(rows)])
+    try:
+        (run or tmux)(["resize-window", "-t", _target(name), "-x", str(cols), "-y", str(rows)])
+    except (OSError, subprocess.TimeoutExpired, OrchError):
+        pass  # a session that ended, or a tmux not trusted now: nothing to resize
 
 
 def end(name: str) -> None:

@@ -93,6 +93,7 @@ def _rows(ws) -> list[dict]:
     return rows
 
 
+FACTORY_MIN = (80, 24)  # a factory pane is never made smaller than this from the browser (the agent draws for it)
 FACTORY_KEY = "factory:"  # a factory tile's screen key in the grid's stream (never an orch session's name)
 
 
@@ -279,7 +280,10 @@ async def factory_size(request: Request, name: str):
         cols, rows = int(data["cols"]), int(data["rows"])
     except (OrchError, KeyError, TypeError, ValueError):
         return PlainTextResponse("cols and rows must be numbers", status_code=400)
-    await asyncio.to_thread(terminals.resize, name, cols, rows, _factory_run())
+    from orch.dashboard import factory_runner
+    factory_runner.note_human_keys(name)  # a resize is the human at it too: no nudge meanwhile
+    await asyncio.to_thread(terminals.resize, name, max(cols, FACTORY_MIN[0]), max(rows, FACTORY_MIN[1]),
+                            _factory_run())
     _wake(FACTORY_KEY + name)
     return Response(status_code=204)
 

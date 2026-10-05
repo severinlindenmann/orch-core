@@ -136,3 +136,73 @@ def test_the_guard_keeps_agents_off_both_tmux_servers(ws, cmd):
     d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd.format(base=base_dir())},
                       "cwd": str(ws.root)})
     assert not d.allow, cmd
+
+
+# -- the review's gaps: resize, Enter after a human key, non-local peek, an untrusted tmux, a stale binding ------------
+
+def test_a_resize_from_the_browser_is_clamped_and_counts_as_the_human(ws, two):
+    orch, fact = two
+    r = _client(ws).post("/factory-sessions/fx-l-0002-a1/size", json={"cols": 30, "rows": 8},
+                         headers={"origin": LOCAL})
+    assert r.status_code == 204
+    (call,) = [x for x in fact.calls if x[0] == "resize-window"]
+    assert call[-4:] == ["-x", "80", "-y", "24"] and factory_runner.human_typed("fx-l-0002-a1")
+    from pathlib import Path
+    js = (Path(terminals.__file__).parent / "static" / "terminal.js").read_text(encoding="utf-8")
+    assert "if (term.dataset.base && !typing()) return;" in js  # watching a factory session never resizes it
+
+
+@pytest.mark.parametrize("when", ["before Enter", "before C-u"])
+def test_the_nudge_never_presses_enter_or_clears_after_a_human_key(monkeypatch, when):
+    from orch.core import factory_runner as core
+    factory_runner.HUMAN_KEYS.clear()
+    sent = []
+    nudge = core.NUDGES["answered"]
+    screens = {"n": 0}
+
+    def capture(self, name):
+        screens["n"] += 1
+        if screens["n"] == 1:
+            return IDLE_SCREEN
+        if when == "before Enter":  # the nudge sits on the input line, and the human types in that very moment
+            factory_runner.note_human_keys("fx-a")
+            return IDLE_SCREEN.replace("│ >" + " " * 38, "│ > " + nudge[:30])
+        if screens["n"] == 1 + factory_runner.TYPE_POLLS:  # the last poll: then the human types, before C-u
+            factory_runner.note_human_keys("fx-a")
+        return "busy"
+    monkeypatch.setattr(factory_runner.TmuxLauncher, "capture", capture)
+    monkeypatch.setattr(factory_runner, "_tmux", lambda args, timeout=10: sent.append(args) or
+                        __import__("subprocess").CompletedProcess(args, 0, "", ""))
+    monkeypatch.setattr(factory_runner, "_sleep", lambda s: None)
+    assert factory_runner.TmuxLauncher().type("fx-a", nudge) is False
+    assert [a for a in sent if a[-1] in ("Enter", "C-u")] == []  # only the nudge text itself went in
+
+
+IDLE_SCREEN = ("done.\n\n╭" + "─" * 40 + "╮\n│ >" + " " * 38 + "│\n╰" + "─" * 40 + "╯\n"
+               "  ⏵⏵ accept edits on (shift+tab to cycle)\n")
+
+
+def test_the_run_view_shows_no_screen_to_another_machine(ws, two, monkeypatch):
+    from types import SimpleNamespace
+    from orch.dashboard import routes_factory
+    monkeypatch.setattr(terminals, "addon_on", lambda ws: False)
+    monkeypatch.setattr(factory_runner.TmuxLauncher, "capture", lambda self, name: "secret on screen\n")
+    far = SimpleNamespace(client=SimpleNamespace(host="192.168.1.9"), headers={"host": "192.168.1.5:8765"})
+    assert routes_factory._watch(far, ws, "L-0001") is None
+
+
+def test_an_untrusted_tmux_or_a_stale_binding_never_breaks_the_pages(ws, two, monkeypatch):
+    from orch.errors import UsageError
+
+    def untrusted(args, timeout=10):
+        raise UsageError("tmux was not found at a trusted path")
+    monkeypatch.setattr(factory_runner, "_tmux", untrusted)
+    c = _client(ws)
+    assert c.get("/terminals").status_code == 200
+    assert c.get("/factory-sessions/fx-l-0002-a1").status_code == 200
+    r = c.post("/factory-sessions/fx-l-0002-a1/keys", json={"seq": [{"text": "1"}]}, headers={"origin": LOCAL})
+    assert r.status_code == 400
+    assert c.post("/factory-sessions/fx-l-0002-a1/size", json={"cols": 100, "rows": 30},
+                  headers={"origin": LOCAL}).status_code == 204
+    monkeypatch.setattr(factory_runner, "_tmux", FakeTmux(sessions=[]))  # the runner's session is gone, its binding not
+    assert c.get("/terminals").status_code == 200 and c.get("/factory-sessions/fx-l-0002-a1").status_code == 200

@@ -342,3 +342,5 @@ def test_orch_show_limits_its_output_without_a_pipe(dws, capsys):
         assert run(["show", t.id, "--json", *extra]) != 0
         io = capsys.readouterr()
         assert "--json gives the whole ticket" in io.out + io.err  # the JSON error with --json
+
+

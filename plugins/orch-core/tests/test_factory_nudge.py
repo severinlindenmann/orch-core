@@ -218,24 +218,40 @@ def _typed_screen(text):
     return IDLE.replace("\u2502 >" + " " * 38, "\u2502 > " + text[:60])
 
 
-@pytest.mark.parametrize("before,after,enter", [
-    (IDLE, ["typed"], True),  # the text sits on the input line: Enter
-    (IDLE, [IDLE, IDLE, "typed"], True),  # the redraw lags: read again, then Enter
-    (IDLE, [IDLE] * 6, False),  # it never lands
-    (IDLE, ["echo"] * 6, False),  # an earlier nudge echoed in the transcript is not the input line
-    (IDLE, ["menu"], False),  # a permission menu appeared meanwhile: Enter would pick its option
-    (IDLE, [UNKNOWN_MENU] * 6, False),  # a menu orch does not know: no input box, no Enter
-    (IDLE, [BUSY] * 6, False), (IDLE, [TRUST] * 6, False), (IDLE, [None] * 6, False),
-    (TYPED, ["typed"], False),  # the input line was not empty before: nothing is typed at all
-    (_echoed("old"), ["typed"], True),  # an echo above the box does not stop a nudge that lands in it
+UPDATE_BAR = "  Update available! Run: brew upgrade claude-code · 14:02\n"
+
+
+def _busy_typed(text):
+    return _typed_screen(text).replace("accept edits on (shift+tab to cycle)", "Running… (esc to interrupt)")
+
+
+@pytest.mark.parametrize("before,after,result,keys", [
+    (IDLE, ["typed"], True, ["Enter"]),  # the text sits in the input box: Enter
+    (IDLE, [IDLE, IDLE, "typed"], True, ["Enter"]),  # the redraw lags: read again, then Enter
+    (IDLE, [IDLE] * 6, False, []),  # it never lands: nothing of ours in the box, nothing to clean
+    (IDLE, ["echo"] * 6, False, []),  # an earlier nudge echoed in the transcript is not the input box
+    (IDLE, ["menu"], False, []),  # a permission menu appeared meanwhile: Enter would pick its option
+    (IDLE, [UNKNOWN_MENU] * 6, False, []),  # a menu orch does not know: no input box, no Enter
+    (IDLE, [BUSY] * 6, False, []), (IDLE, [TRUST] * 6, False, []), (IDLE, [None] * 6, False, []),
+    (TYPED, ["typed"], False, None),  # the input line held someone's text: nothing is typed at all
+    (_echoed("old"), ["typed"], True, ["Enter"]),  # an echo above the box does not stop a nudge that lands in it
+    # the fourth live run: a status bar that changes by itself under the box never stops the nudge
+    (IDLE + UPDATE_BAR, ["typed+bar"], True, ["Enter"]),
+    # the text landed, but a spinner appeared: never Enter; our text is cleared again, so nothing is left behind
+    (IDLE, ["busy+typed"] * 5 + [BUSY], "cleaned", ["C-u"]),
+    (IDLE, ["busy+typed"] * 6, False, ["C-u"]),  # C-u did not empty the box: not called cleaned, nothing more sent
+    # a nudge left in the box by an earlier attempt is cleared first, then the new one is typed and sent
+    ("leftover", [IDLE, "typed"], True, ["C-u", "TYPE", "Enter"]),
 ])
-def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, before, after, enter):
+def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, before, after, result, keys):
     from orch.dashboard import factory_runner as dash
     from orch.errors import UsageError
     from test_factory_runner import _Run
     nudge = fr.NUDGES["answered"]
-    named = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "echo": _echoed(nudge)}
-    screens = [before, *(named.get(x, x) if isinstance(x, str) else x for x in after)]
+    named = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "echo": _echoed(nudge),
+             "typed+bar": _typed_screen(nudge) + UPDATE_BAR.replace("14:02", "14:03"),
+             "busy+typed": _busy_typed(nudge), "leftover": _typed_screen(fr.NUDGES["denied"])}
+    screens = [named.get(before, before), *(named.get(x, x) if isinstance(x, str) else x for x in after)]
     seen, slept = [], []
 
     def tmux(args, timeout=10):
@@ -249,15 +265,25 @@ def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch,
     with pytest.raises(UsageError):
         dash.TmuxLauncher().type("fx-L-1-abc", "rm -rf ~")
     assert seen == []
-    assert dash.TmuxLauncher().type("fx-L-1-abc", nudge) is enter
-    keys = [a for a in seen if a[0] == "send-keys"]
-    if before is TYPED:
-        assert keys == []
+    assert dash.TmuxLauncher().type("fx-L-1-abc", nudge) == result
+    sent = [a for a in seen if a[0] == "send-keys"]
+    if keys is None:
+        assert sent == []
         return
-    assert keys[0] == ["send-keys", "-t", "=fx-L-1-abc:", "-l", "--", nudge]
-    assert keys[1:] == ([["send-keys", "-t", "=fx-L-1-abc:", "Enter"]] if enter
-                        else [["send-keys", "-t", "=fx-L-1-abc:", "C-u"]])
-    assert len(slept) <= dash.TYPE_POLLS and sum(slept) <= 1.5
+    typed = ["send-keys", "-t", "=fx-L-1-abc:", "-l", "--", nudge]
+    assert typed in sent and sent.count(typed) == 1
+    got = ["TYPE" if a == typed else a[-1] for a in sent]
+    assert got == (keys if "TYPE" in keys else ["TYPE", *keys])
+    assert "Enter" not in got or result is True  # Enter only when the nudge is what it submits
+    assert len(slept) <= dash.TYPE_POLLS + 2 and sum(slept) <= 1.5
+
+
+def test_the_input_box_is_read_across_its_wrapped_lines_and_ignores_the_status_bar():
+    box = ("╭" + "─" * 40 + "╮\n│ > A person answered your permission       │\n"
+           "│   request: P-0123ABCD granted. Retry a      │\n╰" + "─" * 40 + "╯\n" + UPDATE_BAR)
+    assert fr.input_line(box) == "A person answered your permission request: P-0123ABCD granted. Retry a"
+    assert fr.leftover(box) is not None and fr.leftover(IDLE) is None and fr.leftover(TYPED) is None
+    assert fr.typed_ok(box, fr.outcome_nudge([("P-0123ABCD", "granted")]))
 
 
 @pytest.mark.parametrize("text,line", [
@@ -618,3 +644,25 @@ def test_the_worker_prompt_says_not_to_wait_on_a_denial():
     p = fr.factory_work_prompt("L-0002")
     assert "If a command is denied, do not wait for approval" in p and "`orch log L-0002 -m" in p
     assert "`orch permit show P-n`" in p and "wait for the human" not in p
+
+
+def test_a_cleaned_up_nudge_is_tried_again_next_round(fws, fa, fh, human, pane, at):
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    results = ["cleaned", True]
+    pane.type = lambda name, text: pane.typed.append((name, text)) or results.pop(0)
+    _ask_and_answer(fws, human, b)
+    lines = _run_until_idle(fws, human, pane, at, 10)
+    assert any("nudge cleaned up" in x for x in lines) and fs.nudge_record(b["session"])["count"] == 1
+    at(10 + fr.IDLE_SECONDS * 3)
+    _tick(fws, human, pane)  # sees the idle pane again
+    at(10 + fr.IDLE_SECONDS * 5)
+    lines = _tick(fws, human, pane)  # the same answer, tried again without a new one and without waiting the gap
+    assert len(pane.typed) == 2 and any("nudged after your answer (2 of 3)" in x for x in lines), lines
+
+
+def test_a_nudge_left_in_the_box_counts_as_idle_so_it_gets_cleared():
+    left = _typed_screen(fr.NUDGES["answered"])
+    assert not fr.pane_idle(left) and fr.leftover(left)
+    assert fr.leftover(left.replace("accept edits on (shift+tab to cycle)", "Running… (esc to interrupt)"))

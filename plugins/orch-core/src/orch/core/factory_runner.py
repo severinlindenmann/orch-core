@@ -671,8 +671,9 @@ FACTORY_WORK_PROMPT = (
 # {commit}: a session in a worktree of its own commits there; one in the shared checkout never commits (its branch may
 # be the default branch, and the baseline cannot create one). The permission hook refuses `git commit` on the default
 # branch or a detached HEAD whatever the prompt says.
-COMMIT_HERE = ("Commit your work on this worktree's branch with `git add FILES` and `{form}` (each -m is one "
-               "paragraph: replace the dots with short plain sentences).")
+COMMIT_HERE = ("Commit your work on this worktree's branch with two separate plain commands, never chained with && "
+               "or ;: first `git add FILES`, then `{form}` (each -m is one paragraph: replace the dots with short "
+               "plain sentences).")
 NO_COMMIT = ("Do not commit: this session runs in the shared checkout, not in a worktree of its own. Leave your "
              "changes in the working tree and say so with `orch log {key} -m \"...\"`.")
 # A session in the child's runner-made clone (factory_clones): its working folder is a separate copy of the repository.
@@ -681,8 +682,9 @@ NO_COMMIT = ("Do not commit: this session runs in the shared checkout, not in a 
 _HERE = ("Run every orch command exactly as written from your current folder. Never cd, never chain with && or ;. "
          "orch already acts on the workspace's tickets (ORCH_HOME is set for you).")
 CLONE_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}, on its own "
-                "branch. Commit your work there with `git add FILES` and `{form}` (each -m is one paragraph: replace "
-                "the dots with short plain sentences). Never push: the runner takes the commits from this clone. "
+                "branch. Commit your work there with two separate plain commands, never chained with && or ;: first "
+                "`git add FILES`, then `{form}` (each -m is one paragraph: replace the dots with short plain "
+                "sentences). Never push: the runner takes the commits from this clone. "
                 + _HERE)
 CLONE_NO_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}. Do not "
                    "commit: the workspace's commit format is not plain words. Leave your changes in this clone's "
@@ -1156,26 +1158,50 @@ _PROMPT = re.compile(r"^[\s\u2502|]*[>\u276f](?=\s|$)")
 IDLE_VIEW_SECONDS = 180  # the run view says the sessions wait at their prompt after this long
 
 
+_MENU_LINE = re.compile(r"^[\s\u2502|]*(?:[\u276f\u203a>]|\d+\.\s)")  # a picker's or menu's option line
+MAX_WRAP = 10  # lines a typed input may wrap over inside the box
+
+
 def input_line(text) -> str | None:
-    """The text on Claude Code's input line: the last prompt line (`>` or `\u276f`) of the pane, only when the line
-    right above it is the input box's border (a line of \u2500), with the box's side bars stripped; None when there is
-    no such line (a prompt echoed in the transcript has no border above it, so it never counts)."""
+    """The text in Claude Code's input box: the last prompt line (`>` or `\u276f`) of the pane whose line above is the
+    box's top border (a line of \u2500), with the lines it wraps onto inside the box, up to the box's bottom border,
+    side bars stripped and joined by single spaces. None when there is no such box (a prompt echoed in the transcript
+    has no border above it), no bottom border, or a picker or menu drawn under the box (an option line). Anything
+    else under the box (Claude's footer, a status bar, "Update available!", a clock) is not the input and is ignored:
+    it changes by itself."""
     if not isinstance(text, str):
         return None
     lines = text.splitlines()
     for i in range(len(lines) - 1, -1, -1):
         m = _PROMPT.match(lines[i])
-        if m:
-            above = [ln for ln in lines[max(0, i - 2):i] if ln.strip()]
-            if not above or "\u2500" not in above[-1]:
-                return None
-            # below it only the box's lower border and Claude's footer: anything else (a menu drawn under the box,
-            # text orch does not know) means the screen is not the plain prompt
-            below = [ln for ln in lines[i + 1:] if ln.strip()]
-            if len(below) > 3 or not all("\u2500" in ln or any(m in ln.casefold() for m in _IDLE) for ln in below):
-                return None
-            return lines[i][m.end():].strip().strip("\u2502|").strip()
+        if not m:
+            continue
+        above = [ln for ln in lines[max(0, i - 2):i] if ln.strip()]
+        if not above or "\u2500" not in above[-1]:
+            return None
+        parts = [lines[i][m.end():]]
+        bottom = next((j for j in range(i + 1, min(len(lines), i + 2 + MAX_WRAP)) if "\u2500" in lines[j]), None)
+        if bottom is None:
+            return None
+        parts += lines[i + 1:bottom]
+        if any(_MENU_LINE.match(ln) for ln in lines[bottom + 1:] if ln.strip()):
+            return None
+        return " ".join(" ".join(p.strip().strip("\u2502|").split()) for p in parts if p.strip("\u2502| ")).strip()
     return None
+
+
+def _norm(s: str) -> str:
+    return " ".join(str(s).split())
+
+
+def leftover(text) -> str | None:
+    """The runner's own nudge left in the input box by an attempt that was not submitted (its text, or what of it the
+    box shows), or None: the input line starts with the first words of one of the runner's lines."""
+    line = input_line(text)
+    if not line:
+        return None
+    heads = [*NUDGES.values(), OUTCOME.split("{answers}")[0]]
+    return line if any(_norm(line)[:30] == _norm(h)[:30] for h in heads if len(_norm(line)) >= 30) else None
 
 
 # Claude Code's folder-trust question, as it draws it. The runner never answers it: trusting a folder is the human's.
@@ -1223,7 +1249,7 @@ def typed_ok(text, nudge: str) -> bool:
     if not isinstance(text, str) or _busy(text):
         return False
     line = input_line(text)
-    return bool(line) and line.startswith(nudge[:40])
+    return bool(line) and _norm(line).startswith(_norm(nudge)[:40])
 
 
 def pane_idle(text) -> bool:
@@ -1262,7 +1288,9 @@ def _observe(actor, capture, b: dict, rec: dict) -> tuple[dict, str | None]:
     if not isinstance(text, str):
         return rec, None
     pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
-    idle = "trust" if trust_question(text) else "1" if pane_idle(text) else ""  # "trust": waits at that question
+    # "trust": waits at that question; a nudge left in the box by an attempt that was not sent counts as idle (the
+    # next attempt clears it first), or the session would wait behind it forever (the fourth live run)
+    idle = "trust" if trust_question(text) else "1" if pane_idle(text) or (leftover(text) and not _busy(text)) else ""
     if pane != rec["pane"] or idle != rec["idle"]:
         rec = {**rec, "pane": pane, "pane_at": clock.stamp_s(), "idle": idle}
         fs.write_nudge_record(actor, rec)
@@ -1302,8 +1330,14 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         # counted before typing: a failure to type is not retried in a loop
         fs.write_nudge_record(actor, {**rec, "answers": now_answers, "count": rec["count"] + 1,
                                       "last": clock.stamp_s(), "pane": "", "pane_at": "", "idle": ""})
-        if type_(b["name"], text) is True:
+        sent = type_(b["name"], text)
+        if sent is True:
             lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
+        elif sent == "cleaned":  # typed, not sent, and cleared again: the same answer is tried in the next round
+            fs.write_nudge_record(actor, {**rec, "answers": old, "count": rec["count"] + 1, "last": "",
+                                          "pane": "", "pane_at": "", "idle": ""})
+            lines.append(f"{b['name']}: nudge cleaned up, the pane changed while typing; tried again next round "
+                         f"({rec['count'] + 1} of {MAX_NUDGES})")
         else:  # the launcher typed nothing, or cleared the input line again and pressed nothing: an attempt
             lines.append(f"{b['name']}: nudge not sent, the pane changed while typing ({rec['count'] + 1} of "
                          f"{MAX_NUDGES})")

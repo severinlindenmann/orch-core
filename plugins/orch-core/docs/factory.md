@@ -1128,6 +1128,15 @@ redirects); the nudge depends on Claude Code's current screen markers.
   back) and Retry"), also for a child that joins after the other was merged. A merge stage that fails with git's
   `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths: two
   children changed the same file, and Retry will not make that go away; send one child back.
+- *A nudge left in the input box, and chained git (the fourth run).* The runner typed its nudge, re-read the screen,
+  saw it "changed" (Claude's status bar and an "Update available!" line change by themselves) and gave up without
+  Enter, leaving its text in the box; the session then waited behind it. The runner now reads only the input box
+  (the prompt line and the lines it wraps onto, up to the box's bottom border; anything under the box but a picker
+  or menu is ignored) and the busy markers. When the text does not land as it should, it clears it with C-u only
+  while the box holds the runner's own text (never Enter), logs "nudge cleaned up", and tries the same answer again
+  in the next round; a nudge an earlier attempt left in the box is cleared before a new one. Workers also ran `git
+  add f && git commit ...`, a chain no rule matches: the prompt now says to run them as two separate plain commands,
+  and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands".
 
 ## Release recipe (phase 6)
 

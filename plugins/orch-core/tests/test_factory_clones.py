@@ -663,3 +663,32 @@ def test_a_swapped_clone_is_never_reused(fws, run, human):
     path, why = fc.ensure(fws, human, run["cid"])
     assert path is None and "not the folder the runner made" in why
     assert "inode" in fc.own_clone(fws, clone, run["cid"])
+
+
+
+def test_the_clone_prompts_git_steps_pass_the_profile_and_the_commit_gate_one_by_one(fws, run):  # noqa: F811
+    import re
+    cid, clone, b = run["cid"], run["clone"], run["b"]
+    prompt = factory_runner.factory_work_prompt(cid, factory_runner.commit_form(fws, cid),
+                                                clone_tmp=str(fws.temporary_dir))
+    assert "two separate plain commands, never chained" in prompt
+    git = [s for s in re.findall(r"`([^`]+)`", prompt) if s.startswith("git ")]
+    assert any(g.startswith("git add") for g in git) and any(g.startswith("git commit") for g in git)
+    for g in git:
+        cmd = g.replace("FILES", "x.json")
+        assert "&&" not in cmd and ";" not in cmd, cmd
+        assert dark_profile.match(fws, cmd) is not None, cmd  # git-basic runs each alone
+        p = {**_payload(b["session"], cmd), "cwd": str(clone)}
+        assert permits.bash_gate(fws, b, p) is None, cmd
+
+
+
+@pytest.mark.parametrize("cmd", ['git add elephants.json && git commit -m "{cid} data" -m "What: x"',
+                                 "git add a.json; git commit -m x", "git add . && git commit -q -m y"])
+def test_a_chained_git_add_and_commit_is_denied_with_how_to_run_them(fws, run, cmd):  # noqa: F811
+    cid, clone, b = run["cid"], run["clone"], run["b"]
+    cmd = cmd.replace("{cid}", cid)
+    assert dark_profile.match(fws, cmd) is None  # a chain never matches
+    guard, hook = _both(fws, b, cmd, clone)
+    msg = (hook or {}).get("hookSpecificOutput", {}).get("decision", {}).get("message", "")
+    assert _behavior(hook) == "deny" and "run git add and git commit as two separate commands" in msg, msg

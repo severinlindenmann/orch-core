@@ -173,29 +173,44 @@ class TmuxLauncher:
             return None
         return r.stdout if r.returncode == 0 else None
 
-    def type(self, name: str, text: str) -> bool:
-        """Type one of the runner's built-in nudges into the pane: only onto an empty input line (read first), then
-        read the pane again a few times over about a second (tmux redraws asynchronously) and press Enter only when
-        the text sits on the input line itself and nothing Enter would answer instead is on screen (typed_ok);
-        otherwise clear the input line (C-u) and press nothing more. True when Enter was pressed. Nothing else is
-        ever typed."""
+    def _clear_own(self, name: str, screen) -> bool:
+        """Clear the input box with C-u only while `screen` (the pane as just read) shows the runner's own nudge text
+        in it (never the human's or the agent's), then read it again: True when the box is empty now."""
+        if human_typed(name) or factory_runner.leftover(screen) is None:
+            return False
+        _tmux(["send-keys", "-t", f"={name}:", "C-u"])
+        _sleep(TYPE_POLL_SECONDS)
+        return factory_runner.input_line(self.capture(name)) == ""
+
+    def type(self, name: str, text: str):
+        """Type one of the runner's built-in nudges into the pane: only onto an empty input box (a nudge an earlier
+        attempt left there is cleared first), then read the pane again a few times over about a second (tmux redraws
+        asynchronously) and press Enter only when the text sits in the input box itself and nothing Enter would
+        answer instead is on screen (typed_ok; only the box and the busy markers count, not the status bar). True
+        when Enter was pressed; "cleaned" when it did not land as it should and the box held only the runner's text,
+        which was cleared again (C-u), so nothing is left behind; False otherwise. Never Enter on anything else, and
+        nothing else is ever typed."""
         if not factory_runner.nudge_ok(text):
             raise UsageError("the runner types only its built-in nudges")
-        if factory_runner.input_line(self.capture(name)) != "":
+        screen = self.capture(name)
+        line = factory_runner.input_line(screen)
+        if line and not self._clear_own(name, screen):
+            return False  # someone else's text, or our leftover that would not clear: touch nothing more
+        if line is None:
             return False
         if _tmux(["send-keys", "-t", f"={name}:", "-l", "--", text]).returncode != 0:
             raise UsageError(f"could not type into {name}")
+        screen = None
         for _ in range(TYPE_POLLS):
             _sleep(TYPE_POLL_SECONDS)
             if human_typed(name):
                 return False  # the human started typing meanwhile: neither Enter nor C-u touches their input
-            if factory_runner.typed_ok(self.capture(name), text):
+            screen = self.capture(name)
+            if factory_runner.typed_ok(screen, text):
                 if human_typed(name):
                     return False
                 return _tmux(["send-keys", "-t", f"={name}:", "Enter"]).returncode == 0
-        if not human_typed(name):
-            _tmux(["send-keys", "-t", f"={name}:", "C-u"])
-        return False
+        return "cleaned" if self._clear_own(name, screen) else False
 
     def start(self, name: str, cwd: str, argv: list[str]) -> int:
         # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment.

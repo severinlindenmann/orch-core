@@ -327,8 +327,13 @@ fails it starts nothing. A result is kept for at most 60 seconds, and only while
 commands it ran are still the ones the runner would use (checked again, without running anything, right before a
 launch); all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
 as failed), and at most 64 KB of each one's output is kept. An error inside the checks is a blocking failure with its
-reason, never a silent pass. None of them writes anything of orch's; the hook programs run with the words Claude
-Code would run them with, but never through a shell.
+reason, never a silent pass. The hook programs run with the words Claude Code would run them with, but never through a
+shell, in an empty folder of the runner's own, and a plugin's hook with `CLAUDE_PLUGIN_DATA` pointing at the runner's
+own data folder (`permits/plugin-data` in your orch config dir, where the plugin's `bin/orch` keeps its venv): nothing
+is written in the workspace or the plugin's install folder (the test suite checks both). An absolute hook program is
+run only when it passes the same ownership and permission rule as the other programs (a regular file owned by you or
+root, in a folder only you or root can write). A relative `CLAUDE_CONFIG_DIR` blocks: each session would read another
+folder depending on where it starts.
 
 - *programs* (blocks): `claude`, `env`, `orch` and `uv` must not lie inside the workspace (as found or after links):
   agents write there, so an editable or workspace-local install (`<workspace>/.venv/bin/orch`) would put

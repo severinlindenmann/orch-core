@@ -164,7 +164,9 @@ def simple_tokens(command) -> list[str] | None:
 
 def _is_orch(word) -> bool:
     """`orch` by name (found on the session's PATH), or exactly the path the runner resolves `orch` to: never another
-    path, which could name a script the agent wrote."""
+    path, which could name a script the agent wrote. Note: this runs in the hook's process, whose PATH is the session's
+    (the folders of the resolved claude, orch and uv, then the system's), while the runner resolved `orch` on the
+    dashboard's PATH; the bare word always means whatever `orch` that session PATH finds first."""
     if word == "orch":
         return True
     from orch.core.factory_runner import resolve_bin

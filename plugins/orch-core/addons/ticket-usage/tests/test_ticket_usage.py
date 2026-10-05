@@ -341,8 +341,10 @@ def test_limit_cards_pace_and_recorder_off():
     out = T.page(snap, True, {}, NOW)
     _valid(out)
     texts = [w.text for w in _walk(out) if w.kind == "text"]
-    assert any(t.startswith("Up 11 points in 40 min. At that pace it would reach 100 % around ") and t.endswith("after the reset.") for t in texts)
-    assert any("no weekly pace yet" in t for t in texts)
+    # TU-04: the window resets (in 1 h) before 100 % at that pace: no meaningless "around 09:38, after the reset"
+    assert any(t == "Up 11 points in 40 min. At that pace it will not fill before the reset." for t in texts)
+    assert not any("after the reset" in t for t in texts)
+    assert any(t == "Weekly pace needs a day of readings; there are 2 h so far." for t in texts)
     assert any(w.kind == "time" for w in _walk(out))
     assert T._pace_text({"n": 1, "first_ts": 0, "last_ts": 0, "first": 5, "last": 5}, "five", NOW + 1, NOW) is None
 
@@ -387,3 +389,45 @@ def test_hostile_limit_readings_never_break_the_pace(tmp_path):
     assert "too slow" in T._pace_text(p, "five", 1791146400, 1791120000)
     full = {"n": 2, "first_ts": 1, "last_ts": 61, "first": 90, "last": 100}
     assert T._pace_text(full, "five", 99999, 61) == "The limit is reached; it frees up at the reset."
+
+
+def test_tu01_a_missing_or_relative_limits_log_is_named_not_blamed_on_the_recorder(tmp_path):
+    missing = str(tmp_path / "nope" / "limits.jsonl")
+    items = T.build(tmp_path, [], missing, 1_790_000_000)
+    snap = _snap()
+    snap[0].items[0]["log"] = next(i for i in items if i["kind"] == "limits")["log"]
+    first = T.page(snap, True, {}, NOW)[0]
+    assert first.kind == "callout" and f"File not found: {missing}" in first.text and "statusLine" in first.text
+    snap[0].items[0]["log"] = {"path": "limits.jsonl", "state": "relative"}
+    assert "relative path" in T.page(snap, True, {}, NOW)[0].text
+    snap[0].items[0]["log"] = {"path": "/x", "state": "ok"}  # there, but nothing recorded: the old text
+    assert T.page(snap, True, {}, NOW)[0].title == "No limits recorded"
+
+
+def test_tu01_settings_check_refuses_relative_and_notes_a_missing_file(tmp_path):
+    assert T.check_settings({"limits_log": "limits.jsonl"})[0]
+    errors, notes = T.check_settings({"limits_log": str(tmp_path / "x.jsonl")})
+    assert errors == [] and "File not found" in notes[0]
+    (tmp_path / "ok.jsonl").write_text("")
+    assert T.check_settings({"limits_log": str(tmp_path / "ok.jsonl")}) == ([], [])
+    assert T.check_settings({"limits_log": "~/limits-does-not-exist.jsonl"})[1]  # ~ is expanded, then looked up
+
+
+def test_tu03_no_estimate_column_while_dollars_are_off():
+    from dataclasses import replace
+    snap = _snap()
+    snap = [replace(snap[0], items=tuple(snap[0].items) + ({"id": "ticket:B-1", "kind": "ticket", "label": "B-1", "role": "neu", "text": "",
+                                              "main": {"claude-opus-5-5": 9}, "sub": {}, "week": {"claude-opus-5-5": 9},
+                                              "first": None, "last": None, "cost": None, "running": False, "pct": None},))]
+    heads = lambda show: next(w.columns for w in _walk(T.page(snap, show, {}, NOW)) if w.kind == "table")  # noqa: E731
+    assert "Estimate" in heads(True) and "Estimate" not in heads(False)
+    rows = next(w.rows for w in _walk(T.page(snap, False, {}, NOW)) if w.kind == "table")
+    assert all(len(r) == 4 for r in rows)
+
+
+def test_tu04_limit_cards_do_not_repeat_their_title():
+    snap = _snap()
+    snap[0].items[0].update(last={"at": "2026-10-04T12:00:00Z", "five": 14, "five_reset": NOW + 3600, "week": 61,
+                                  "week_reset": NOW + 86400}, pace={})
+    kvs = [w for w in _walk(T.page(snap, True, {}, NOW)) if w.kind == "kv"]
+    assert kvs and all(label == "Used" for kv in kvs for label, _ in kv.rows if kv.layout == "stats")

@@ -111,6 +111,16 @@ def names(description: str, ticket_ids) -> str | None:
     return best[1] if best else None
 
 
+def limits_log_state(path: str) -> dict:
+    """{"path": what to show, "state": "ok" | "missing" | "relative"} for the configured Limits log: a relative path is
+    not usable (it would depend on where Mission Control was started), a path that is not a file is missing."""
+    raw = str(path or "")
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        return {"path": raw, "state": "relative"}
+    return {"path": str(p), "state": "ok" if p.is_file() else "missing"}
+
+
 def read_limits(path: str) -> list[dict]:
     """The recorder's log, oldest first, lines that do not parse skipped."""
     rows = []

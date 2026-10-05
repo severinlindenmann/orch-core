@@ -332,12 +332,24 @@ async def addon_settings(request: Request, name: str):
     if f is None or f.manifest is None or not f.manifest.settings_schema or userfiles.trust_state(f) != "trusted":
         return back(_BACK, err=f"{name} has no settings to save here")
     values, errors = parse_settings(f.manifest, await request.form())
+    loaded = request.app.state.addons.registry.get(name)
+    check = getattr(loaded.obj, "check_settings", None) if loaded is not None else None
+    notes: list[str] = []
+    if callable(check) and not errors:  # an addon may refuse a value it cannot use, or say what it could not find
+        try:
+            more, notes = await asyncio.to_thread(check, values)
+            errors += [str(e) for e in more]
+            notes = [str(n) for n in notes]
+        except Exception:  # a broken check never blocks saving
+            notes = []
     if errors:
         return back(_BACK, err="; ".join(errors))
     await asyncio.to_thread(userfiles.save_addon_config, ws.root, name, values)
     await asyncio.to_thread(request.app.state.addons.reload)
     invalidate_setup_count(ws)
-    return back(_BACK, msg=f"Saved settings for {f.manifest.title}")
+    # a changed setting should show on the addon's page now, not after the next manual Refresh
+    request.app.state.scheduler.request_refresh(name)
+    return back(_BACK, msg=f"Saved settings for {f.manifest.title}" + ("".join(f". {n}" for n in notes[:2]) if notes else ""))
 
 
 # -- Phones (remote humans): human-only dashboard POSTs, no CLI -----------------------------

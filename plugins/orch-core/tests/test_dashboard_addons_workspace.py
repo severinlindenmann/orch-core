@@ -173,3 +173,26 @@ def test_trust_review_warns_when_phones_may_act(ws, tmp_path, monkeypatch):
     review = t[t.index('id="trust-hello-status"'):]
     assert '<span class="chip chip-warn"><svg class="i" aria-hidden="true"><use href="#i-warn"/></svg> new permission: paired phones may answer ' \
            'and decide for you (remote_humans)</span>' in review
+
+
+def test_saving_settings_queues_a_refresh_of_that_addon(client, ws, monkeypatch):
+    """TU-02: a saved setting shows on the addon's page without a manual Refresh."""
+    client.post("/workspace/addons/alpha/enable", data={"enabled": "1"}, headers=ORIGIN)
+    asked = []
+    monkeypatch.setattr(client.app.state.scheduler, "request_refresh", lambda name=None: asked.append(name) or True)
+    ok = client.post("/workspace/addons/alpha/settings", data={"greeting": "Hi"}, headers=ORIGIN, follow_redirects=False)
+    assert "Saved+settings" in ok.headers["location"] and asked == ["alpha"]
+
+
+def test_an_addon_can_refuse_or_annotate_a_settings_save(client, ws, monkeypatch):
+    """TU-01: check_settings(values) -> (errors, notes) on the addon object: errors block the save, notes ride along."""
+    client.post("/workspace/addons/alpha/enable", data={"enabled": "1"}, headers=ORIGIN)
+    obj = client.app.state.addons.registry.get("alpha").obj
+    monkeypatch.setattr(obj, "check_settings", lambda v: ([f"{v['greeting']} is refused"], []), raising=False)
+    bad = client.post("/workspace/addons/alpha/settings", data={"greeting": "Hi"}, headers=ORIGIN, follow_redirects=False)
+    assert "err=Hi+is+refused" in bad.headers["location"]
+    assert userfiles.workspace_addons(ws.root)["alpha"].get("config", {}).get("greeting") != "Hi"
+    monkeypatch.setattr(obj, "check_settings", lambda v: ([], ["File not found: /x"]), raising=False)
+    ok = client.post("/workspace/addons/alpha/settings", data={"greeting": "Hi"}, headers=ORIGIN, follow_redirects=False)
+    assert "Saved+settings" in ok.headers["location"] and "File+not+found" in ok.headers["location"]
+    assert userfiles.workspace_addons(ws.root)["alpha"]["config"] == {"greeting": "Hi"}

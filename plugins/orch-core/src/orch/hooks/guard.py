@@ -61,7 +61,7 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
-_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
+_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
@@ -562,6 +562,8 @@ def _human_only_tokens(seg: str) -> bool:
         if rest and rest[0] in _HUMAN_VERBS:
             return True
         if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
+            return True
+        if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
             return True
         if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
             return True
@@ -1553,7 +1555,7 @@ _CHECKS_WORD = re.compile(r"\bchecks\b")
 _CONFIG_JSON = re.compile(r"(?<![\w-])config\.json\b")
 _CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
                   "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
-                  "orchestrator/config.json")
+                  "orchestrator/config.json and sign it with `orch checks sign` in their own terminal")
 _WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widgets) is the human's setting, signed into "
                    "the approval ledger; ask the user to run `orch widget html on` in their own terminal (anyone may "
                    "turn it off with `orch widget html off`)")

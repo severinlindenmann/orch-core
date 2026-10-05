@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import signal
+import select
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,11 +54,84 @@ def _git(cwd: Path, *args: str) -> str | None:
     return p.stdout.strip() if p.returncode == 0 else None
 
 
-def _run_one(cmd: str, cwd: Path, out, timeout: float) -> tuple[int | None, bool]:
+class _Sink:
+    """The run's output on disk, bounded: a temp file that never holds more than `cap` bytes. When it would, the
+    oldest output is dropped and only the newest `keep` bytes stay, so a command that prints for an hour cannot fill
+    the disk; `dropped` says output was cut (the receipt then starts with CUT)."""
+
+    def __init__(self, keep: int, cap: int | None = None):
+        self.keep = max(int(keep), 1)
+        self.cap = max(int(cap or 0), 2 * self.keep)
+        # TemporaryFile: a random name made O_EXCL | O_NOFOLLOW with mode 0600 and unlinked at once (no path to
+        # guess, follow or reopen); one sink per run, so one run's output is never in another run's receipt
+        self.file = tempfile.TemporaryFile()
+        self.dropped = False
+        self.lock = threading.Lock()
+
+    def write(self, data: bytes) -> None:
+        with self.lock:
+            self.file.seek(0, 2)
+            self.file.write(data)
+            if self.file.tell() > self.cap:
+                self._rotate()
+
+    def _rotate(self) -> None:
+        size = self.file.tell()
+        self.file.seek(size - self.keep)
+        tail = self.file.read()
+        self.file.seek(0)
+        self.file.truncate()
+        self.file.write(tail)
+        self.dropped = True
+
+    def tail(self) -> bytes:
+        with self.lock:
+            size = self.file.seek(0, 2)
+            self.file.seek(max(0, size - self.keep))
+            log = self.file.read()
+            if self.dropped or size > self.keep:
+                log = CUT + log[len(CUT):]
+            return log
+
+    def size(self) -> int:
+        with self.lock:
+            return self.file.seek(0, 2)
+
+    def close(self) -> None:
+        self.file.close()
+
+
+DRAIN_SECONDS = 1.0
+
+
+def _pump(fd: int, sink: _Sink, stop: threading.Event) -> None:
+    """Copy the command's output into the sink until the pipe closes. After `stop` it drains for at most DRAIN_SECONDS
+    (a child that kept the pipe open and keeps writing is let go), so the caller can always join this thread before
+    it closes `fd`: a read on a descriptor number that was closed and reused would take another file's bytes."""
+    drain_until = None
+    while True:
+        if stop.is_set():
+            drain_until = drain_until or time.monotonic() + DRAIN_SECONDS
+            if time.monotonic() >= drain_until:
+                return
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            data = os.read(fd, 65536)
+            if not data:
+                return
+            sink.write(data)
+        elif stop.is_set():
+            return
+
+
+def _run_one(cmd: str, cwd: Path, out: _Sink, timeout: float) -> tuple[int | None, bool]:
     # the verify line is the agent's own text, or the project's configured check: run through the shell, in the
     # caller's checkout, as the caller would run it
-    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            start_new_session=True)
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, start_new_session=True)
+    stop = threading.Event()
+    pump = threading.Thread(target=_pump, args=(proc.stdout.fileno(), out, stop), daemon=True)
+    pump.start()
     try:
         return proc.wait(timeout=max(timeout, 0.01)), False
     except subprocess.TimeoutExpired:
@@ -65,6 +140,10 @@ def _run_one(cmd: str, cwd: Path, out, timeout: float) -> tuple[int | None, bool
     except BaseException:  # Ctrl-C, or SIGTERM from the harness (see run_steps): never leave the command behind
         _kill(proc)
         raise
+    finally:
+        stop.set()
+        pump.join()  # bounded (DRAIN_SECONDS): the descriptor is closed only once nothing reads it any more
+        proc.stdout.close()
 
 
 def _kill(proc) -> None:
@@ -92,7 +171,6 @@ def run_steps(steps: list[dict], cwd: Path, *, timeout: int, max_bytes: int, kee
     repo = Path(top).name if top else None  # which checkout it ran in, by name: never a local path
     at, start = stamp_s(), time.monotonic()
     deadline = start + timeout
-    import threading
     previous = None
     if threading.current_thread() is threading.main_thread():
         previous = signal.signal(signal.SIGTERM, _on_term)
@@ -107,7 +185,8 @@ def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, s
     done: list[dict] = []
     exit_code: int | None = 0
     timed_out = stop = False
-    with tempfile.TemporaryFile() as out:
+    out = _Sink(max_bytes)
+    try:
         for step in steps:
             name, cmd = str(step["name"]), str(step["run"])
             if stop:
@@ -115,7 +194,6 @@ def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, s
                              "seconds": 0})
                 continue
             out.write(f"$ {cmd}\n".encode())
-            out.flush()
             t0 = time.monotonic()
             code, late = _run_one(cmd, cwd, out, deadline - t0)
             secs = int(time.monotonic() - t0)
@@ -129,11 +207,9 @@ def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, s
                 if exit_code == 0:
                     exit_code = code
                 stop = not keep_going
-        size = out.tell()
-        out.seek(max(0, size - max_bytes))
-        log = out.read()
-    if size > max_bytes:
-        log = CUT + log[len(CUT):]
+        log = out.tail()
+    finally:
+        out.close()
     return Receipt(exit_code, timed_out, commit, dirty, repo, at, int(time.monotonic() - start), done, log)
 
 
@@ -142,11 +218,16 @@ def _run(steps, cwd, deadline, keep_going, max_bytes, commit, dirty, repo, at, s
 _STATUS = {"pass": "pass", "fail": "fail", "skip": "skip"}
 
 
-def gates_block(receipt: Receipt, task_id: str, check: str | None, artifact: str) -> dict:
+_UNSIGNED = {"unsigned": "check not signed by the human", "changed": "check changed since the human signed it"}
+
+
+def gates_block(receipt: Receipt, task_id: str, check: str | None, artifact: str,
+                check_state: str | None = None, sha256: str | None = None) -> dict:
     """A core `gates` widget (docs/widgets.md) of one run: a row per step, its status and time. The id is per task,
     so the next run of the same task replaces the block instead of adding one."""
-    source = f"artifact:{artifact}" + (f" · {receipt.commit[:7]}" if receipt.commit else "") \
-        + (" · uncommitted changes" if receipt.dirty else "")
+    source = f"artifact:{artifact}" + (f" · sha256:{sha256[:12]}" if sha256 else "") + (f" · {receipt.commit[:7]}" if receipt.commit else "") \
+        + (" · uncommitted changes" if receipt.dirty else "") \
+        + (f" · {_UNSIGNED[check_state]}" if check_state in _UNSIGNED else "")
     items = [{"name": s["name"], "status": _STATUS[s["status"]],
               **({"seconds": s["seconds"]} if s["status"] != "skip" else {})} for s in receipt.steps]
     return {"type": "gates", "id": f"receipt-{task_id.lower()}", "title": f"{task_id} {check or 'verify'}",

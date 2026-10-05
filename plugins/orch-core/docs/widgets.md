@@ -66,7 +66,8 @@ line is "Other evidence". The approved text is never touched.
 row per step of the task's check, source the receipt artifact and commit) and replaces that block on the next run of
 the same task, so the widget always shows the latest run of what the project's check consists of
 (docs/tasks-format.md, "Receipts"). Like every Verification widget it is the agent's evidence, read by the human
-before the verdict.
+before the verdict. A `gates` block with an id `receipt-t<n>` that the ticket's newest receipt for that task does
+not back (same steps and statuses) is marked "Unverified" on the page: widgets are agent-writable, receipts are not.
 
 ## Files by digest
 

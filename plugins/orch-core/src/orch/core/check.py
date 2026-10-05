@@ -71,6 +71,15 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
         findings.append(Finding("warning", "stale-setting", None,
                                 "widgets.html is false in orchestrator/config.json, but the signed on is still in "
                                 "force: run `orch widget html off` so that only a new human decision turns it on"))
+    for cname in ledger.checks_digests(ws.config):
+        cstate = ledger.check_state(ws, cname)
+        if cstate in ("unsigned", "changed"):
+            findings.append(Finding("warning", "unsigned-check", None,
+                                    f"check {cname!r} in orchestrator/config.json is "
+                                    + ("not signed by the human" if cstate == "unsigned"
+                                       else "different from the version the human signed")
+                                    + ", so a receipt made with it is marked as such: the human reviews it and runs "
+                                      "`orch checks sign` in their own terminal"))
     findings += _check_orphan_artifacts(ws, entries)
     findings += _check_commits(ws, entries)
     return findings

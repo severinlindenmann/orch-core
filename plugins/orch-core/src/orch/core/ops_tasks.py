@@ -20,6 +20,15 @@ _STATUS_HINT = {
 }
 
 
+def _unsigned(check: str | None, state: str | None) -> str:
+    """The words that go with a run of a check the human has not signed (or that changed since)."""
+    if state == "unsigned":
+        return f" (warning: check {check!r} is not signed by the human: `orch checks sign`)"
+    if state == "changed":
+        return f" (warning: check {check!r} changed since the human signed it: `orch checks sign`)"
+    return ""
+
+
 def used_numbers(ws, ticket_id: str) -> set[int]:
     """Every task number a task.added event ever named for the ticket (so IDs are never reused)."""
     out: set[int] = set()
@@ -316,6 +325,8 @@ class TaskOpsMixin:
         steps, keep_going = (check_steps(self.ws.config, check) if check is not None
                              else ([{"name": "verify", "run": cmd}], False))
         timeout = timeout or check_timeout(self.ws.config, check) or DEFAULT_CHECK_TIMEOUT
+        from orch.core import ledger
+        state = ledger.check_state(self.ws, check) if check is not None else None  # signed | unsigned | changed
         r = receipts.run_steps(steps, Path(cwd), timeout=int(timeout), max_bytes=art.max_bytes(self.ws),
                                keep_going=keep_going)
         base, n = f"receipt-{task.id}-{r.at.replace('-', '').replace(':', '')}", 1
@@ -330,14 +341,16 @@ class TaskOpsMixin:
         label = f"{task.id} {check or 'verify'}: {result}{at}" + (" (uncommitted changes)" if r.dirty else "")
         self.artifact_add(t.id, Path(name), name, stream=io.BytesIO(r.log), task=task.id, label=label[:200],
                           _run={**r.record(), "check": check})
-        block = receipts.gates_block(r, task.id, check, name)
+        entry = next((e for e in reversed(store.load(self.ws, t.id)[1].meta.get("artifacts") or [])
+                      if isinstance(e, dict) and e.get("name") == name), {})
+        block = receipts.gates_block(r, task.id, check, name, check_state=state, sha256=entry.get("sha256"))
         self._write_section(t.id, "Verification", lambda current: receipts.put_block(current, block))
         if not r.ok:
-            raise ValidationError(f"{task.id} {check or 'verify'}: {result}; the receipt is {name}",
+            raise ValidationError(f"{task.id} {check or 'verify'}: {result}; the receipt is {name}" + _unsigned(check, state),
                                   hint="fix it and run again: the next run replaces the widget")
-        msg = f"receipt {name}: exit 0{at}"
+        msg = f"receipt {name}: exit 0{at}" + _unsigned(check, state)
         self.task_done(t.id, task.id, f"{msg} — {note}" if note else msg)
-        return {**r.record(), "check": check, "receipt": name}
+        return {**r.record(), "check": check, "receipt": name, "check_state": state}
 
     def task_skip(self, ref: str, task_id: str, reason: str):
         reason = tk.one_line(reason)

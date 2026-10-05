@@ -22,6 +22,9 @@ def bash(cmd):
     "orch move L-1 in-progress",
     "orch reopen L-1",
     "orch close L-1",
+    "orch checks sign",
+    "orch --json checks sign",
+    "uv run orch checks sign",
     "orch --json approve L-1 plan",
     '"${CLAUDE_PLUGIN_ROOT}/bin/orch" approve L-1 plan',
     "'/a b/bin/orch' verdict L-1 done",
@@ -223,3 +226,7 @@ def test_decoder_and_xargs_false_positives_allowed(ws, cmd):
 ])
 def test_decoder_runs_and_dynamic_xargs_denied(ws, cmd):
     assert not evaluate(ws, bash(cmd)).allow, cmd
+
+
+def test_reading_the_signed_state_of_checks_stays_open_to_agents(ws):
+    assert evaluate(ws, bash("orch checks")).allow and evaluate(ws, bash("orch checks status --json")).allow

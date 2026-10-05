@@ -465,8 +465,8 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                                             "write: point the hook at an orch outside the workspace"))
             continue
         if argv[0].startswith("/") and resolve_bin(argv[0]) != argv[0]:
-            out.append(_check(label, False, f"orch's {label} runs {argv[0]}, which is not a regular file owned by you "
-                                            "or root in a folder only you or root can write: it is not run"))
+            out.append(_check(label, False, f"orch's {label} runs {argv[0]}, which is not a trusted program "
+                                            f"({resolve_why(argv[0])[1] or 'it resolves elsewhere'}): it is not run"))
             continue
         if extra:  # a plugin's hook: its data folder is the runner's
             extra = [*extra, f"CLAUDE_PLUGIN_DATA={plugin_data}"]

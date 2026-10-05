@@ -393,7 +393,7 @@ def test_an_untrusted_hook_program_is_not_run(ws, env, monkeypatch):
     _write(env, hooks={"PreToolUse": [{"hooks": [{"type": "command", "command": "/opt/odd/orch guard --hook-json"}]}],
                        "PermissionRequest": [{"hooks": [{"type": "command", "command": "orch permit hook"}]}]})
     f = _failing(ws)
-    assert "not a regular file owned by you or root" in f["guard"]["why"]
+    assert "which is not a trusted program" in f["guard"]["why"]
     assert not any("/opt/odd/orch" in a for a, _, _ in env["probe"].calls)
 
 

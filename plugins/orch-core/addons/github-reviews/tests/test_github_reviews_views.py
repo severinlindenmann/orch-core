@@ -70,12 +70,12 @@ def test_repo_cards(demo):
     assert ingest.title == "ingest" and _chips(ingest)[0] == Text("sub-repo") and _kv(ingest)["open PRs"] == 2
 
 
-def test_unknown_is_not_zero_before_the_first_fetch(demo):
+def test_loading_before_the_first_fetch_is_not_an_empty_result(demo):
+    """GR-02: dashes, "0" counts and "Nothing in Needs your review" before the first fetch read as a real result."""
     addon = demo.load(ADDON, runner=demo_runner(demo))
-    card = addon.obj.widgets(PAGE, _view(demo, addon, PAGE))[0].body[0]
-    rows = _kv(card)
-    assert rows["open PRs"] is None and rows["need review"] is None
-    assert not any(isinstance(c, Badge) and c.text == "GitHub" for c in _chips(card))  # no provider claimed yet
+    out = addon.obj.widgets(PAGE, _view(demo, addon, PAGE))
+    assert [w.title for w in out] == ["Loading pull requests..."]
+    assert not any(isinstance(w, Text) and w.text.startswith("Nothing in") for w in _flat(out))
 
 
 def test_repo_cards_explain_a_missing_provider(demo):
@@ -147,20 +147,78 @@ def test_filters(demo, params, numbers):
 def test_rows_offer_the_right_action_and_ticket(demo):
     addon = _cached(demo)
     rows = {row[0].text: row for row in _pr_rows(addon.obj.widgets(PAGE, _view(demo, addon, PAGE, state="all")))}
-    ticket, action, agent = COLUMNS.index("Ticket"), COLUMNS.index("Action"), COLUMNS.index("Agent")
-    assert rows["#21"][ticket] == Link("DEMO-0003", "/t/DEMO-0003")
-    assert rows["#21"][action] == Action("rerun_failed", "Rerun failed", "acme/ticket-orch-demo#21")
-    assert rows["#21"][agent] == Link("Ask agent to fix", "/t/DEMO-0003#start-agent-DEMO-0003")
-    assert rows["#22"][action] == Action("mark_ready", "Mark ready", "acme/ticket-orch-demo#22")
-    assert rows["#91"][action] is None and rows["#91"][agent] is None and rows["#91"][ticket] is None
-    assert rows["#19"][ticket] == Link("DEMO-0001", "/t/DEMO-0001")
-    assert rows["#18"][COLUMNS.index("Merge")] == Badge("warn", "merge conflict")
+    nxt, title = COLUMNS.index("Next"), COLUMNS.index("Title")
+    rerun = rows["#21"][nxt]
+    assert isinstance(rerun, Action) and (rerun.action, rerun.target) == ("rerun_failed", "acme/ticket-orch-demo#21")
+    assert "acme/ticket-orch-demo#21" in rerun.confirm and "Guard suspect-rate" in rerun.confirm and rerun.detail
+    ready = rows["#22"][nxt]
+    assert (ready.action, ready.target) == ("mark_ready", "acme/ticket-orch-demo#22")
+    assert "acme/ticket-orch-demo#22" in ready.confirm and "outside orch" not in ready.detail
+    assert rows["#91"][nxt] is None  # failing, no run to rerun and no ticket: nothing to offer
+    assert rows["#19"][nxt] == Link("DEMO-0001", "/t/DEMO-0001")
+    assert rows["#18"][title].endswith("merge conflict")
     assert rows["#23"][0] == Link("#23", "https://github.com/acme/ticket-orch-demo/pull/23")
+
+
+def test_table_has_no_author_column_and_fits(demo):
+    """GR-01: every row is the same user, so the Author column only costs width (the table overflowed its card)."""
+    assert "Author" not in COLUMNS and len(COLUMNS) <= 5
+
+
+def test_landing_view_falls_back_when_nothing_needs_your_review(demo):
+    """GR-03: opening all your PRs yourself must not leave the default view empty."""
+    addon = _cached(demo)
+    for snap in addon.ctx.snapshots("github"):
+        demo.cache(addon.name, snap.replace(items=tuple({**i, "requested_reviewers": []} for i in snap.items)))
+    out = addon.obj.widgets(PAGE, _view(demo, addon, PAGE))
+    assert any(isinstance(w, Card) and w.title == "Showing: Yours" for w in out)
+    assert any(isinstance(w, Text) and "Nothing needs your review" in w.text for w in out)
+    assert _pr_rows(out)
+    explicit = addon.obj.widgets(PAGE, _view(demo, addon, PAGE, state="review"))
+    assert not _pr_rows(explicit)  # asked for explicitly: no silent switch
+
+
+def test_invalid_filters_are_announced(demo):
+    addon = _cached(demo)
+    out = addon.obj.widgets(PAGE, _view(demo, addon, PAGE, state="nonsense", repo="nope"))
+    texts = [w.text for w in out if isinstance(w, Text)]
+    assert any("Unknown filter" in t for t in texts) and any("Unknown repository" in t for t in texts)
+
+
+def test_repo_card_labels_are_screen_reader_only(demo):
+    addon = _cached(demo)
+    card = addon.obj.widgets(PAGE, _view(demo, addon, PAGE))[0].body[0]
+    chips = [w for w in card.body if isinstance(w, Chips)]
+    assert chips and all(c.show_label is False and c.label for c in chips)
+
+
+def test_one_wording_for_no_review():
+    from github_reviews.views import REVIEWS
+    assert REVIEWS["none"][1] == REVIEWS["required"][1]
+
+
+def test_acted_on_row_says_requested_until_a_newer_fetch(demo):
+    """GR-05: after Rerun failed the same button must not be offered again before the next fetch."""
+    from github_reviews.actions import act
+    addon = _cached(demo)
+    target = "acme/ticket-orch-demo#21"
+    runner = demo_runner(demo, {"argv": ["gh", "run", "rerun", "36979598989", "--failed", "--repo", "acme/ticket-orch-demo"]})
+    addon = demo.load(ADDON, runner=runner)
+    act("rerun_failed", target, addon.ctx.provider_context())
+    view = _view(demo, addon, PAGE, state="all")
+    rows = {row[0].text: row for row in _pr_rows(addon.obj.widgets(PAGE, view))}
+    assert rows["#21"][COLUMNS.index("Next")] == Text("Rerun requested")
+    for p in addon.obj.providers:  # a fetch after the action lands: the row is real data again
+        for scope in p.scopes(addon.ctx.provider_context()):
+            demo.cache(addon.name, p.fetch(addon.ctx.provider_context(), scope, None))
+    rows = {row[0].text: row for row in _pr_rows(addon.obj.widgets(PAGE, _view(demo, addon, PAGE, state="all")))}
+    assert isinstance(rows["#21"][COLUMNS.index("Next")], Action)
 
 
 def test_size_label():
     assert size_label({"additions": 56, "deletions": 0, "changed_files": 2}) == "M · +56 −0 · 2 files"
     assert size_label({"additions": 3, "deletions": 1}) == "XS · +3 −1"
+    assert size_label({"additions": 3, "deletions": 1, "changed_files": 1}) == "XS · +3 −1 · 1 file"
     assert size_label({"additions": 900, "deletions": 200, "changed_files": 30}) == "XL · +900 −200 · 30 files"
     assert size_label({}) == "size unknown"
 

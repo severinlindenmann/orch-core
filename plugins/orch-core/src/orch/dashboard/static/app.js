@@ -92,6 +92,7 @@
     const hash = host.hash();
     if (!hash || hash.length < 2 || !root.querySelector || !document.getElementById) return;
     const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (target && target.tagName === "DETAILS") target.open = true;  // a redirect back to an addon's Settings keeps it open
     const panel = target && target.closest && target.closest("[data-tab-panel][hidden]");
     if (!panel) return;
     document.querySelectorAll("[data-tab-panel]").forEach((p) => { p.hidden = p !== panel; });
@@ -999,6 +1000,20 @@
     if (!form) return;
     const harness = form.elements.harness && form.elements.harness.value;
     const mode = form.elements.mode && form.elements.mode.value;
+    // Open in Mission Control runs the Terminals addon's harness only: with another one picked it is disabled and the
+    // reason shown; the other launcher button takes over as the primary one, and gives it back on the way back.
+    if (form.dataset.mcHarness && harness) {
+      const bad = harness !== form.dataset.mcHarness;
+      const mc = [...form.querySelectorAll("button[data-mc]")];
+      const why = form.querySelector("[data-mc-why]");
+      if (!form.hasAttribute("data-state-off")) mc.forEach((b) => { b.disabled = bad; });
+      if (why) why.hidden = !bad;
+      if ("mcFirst" in form.dataset) {
+        const other = form.querySelector('button[name="where"]:not([data-mc])');
+        mc.forEach((b) => b.classList.toggle("btn-primary", !bad));
+        if (other) other.classList.toggle("btn-primary", bad);
+      }
+    }
     const option = [...form.querySelectorAll(".sa-options li")]
       .find((li) => li.dataset.harness === harness && li.dataset.mode === mode);
     if (!option) return;
@@ -1225,6 +1240,20 @@
     window.addEventListener("pagehide", close);
     if (!document.hidden) open();
   }
+
+  // A flash arrives as ?msg=/?err= on the address after a POST redirect; once it is shown, drop it from the address so a
+  // reload or a copied link does not show (or act on) the same message again. The page itself is not reloaded.
+  try {
+    const here = host.pageHistory.current();
+    const q = here.indexOf("?");
+    if (q >= 0 && /[?&](msg|err)=/.test(here)) {
+      const hash = here.indexOf("#");
+      const params = new URLSearchParams(here.slice(q, hash >= 0 ? hash : undefined));
+      params.delete("msg"); params.delete("err");
+      const rest = params.toString();
+      host.pageHistory.replace(here.slice(0, q) + (rest ? "?" + rest : "") + (hash >= 0 ? here.slice(hash) : ""));
+    }
+  } catch (e) { /* the address stays as it is */ }
 
   // Countdowns ([data-until], the server's text stays without JS): same format as the server, every 30 s.
   const tick = () => document.querySelectorAll("[data-until]").forEach((el) => {

@@ -110,8 +110,10 @@ def test_rows_link_local_tickets_or_offer_import(issues_ws):
     rows = {row[0].text: row for row in next(w for w in _card(out, "GitHub issues").body if isinstance(w, Table)).rows}
     local = COLUMNS.index("Local ticket")
     assert rows["GH-1"][local] == Link("DEMO-0001 · testing", "/t/DEMO-0001")
-    assert rows["GH-9"][local] == Action("import", "Import", "GH-9")
-    assert rows["GH-5"][COLUMNS.index("Status")] == Badge("neu", "to do") and rows["GH-5"][COLUMNS.index("Priority")] == "urgent"
+    imp = rows["GH-9"][local]
+    assert imp.action == "import" and imp.target == "GH-9"
+    assert "GH-9" in imp.confirm and "Handle late-arriving" in imp.confirm and imp.detail
+    assert rows["GH-5"][COLUMNS.index("GitHub status")] == Badge("neu", "to do") and rows["GH-5"][COLUMNS.index("Priority")] == "urgent"
     assert rows["GH-5"][COLUMNS.index("Sprint")] == "Sprint 42" and rows["GH-12"][COLUMNS.index("Assignee")] is None
 
 
@@ -122,14 +124,20 @@ def test_out_of_sync_card(issues_ws):
     table = next(w for w in card.body if isinstance(w, Table))
     assert card.role == "warn" and table.columns == SYNC_COLUMNS
     fixes = {row[0].text: (row[3], row[4]) for row in table.rows}
-    assert fixes["GH-13"] == (Action("close_local", "Close local", "DEMO-0002"),
-                              Action("ignore", "Ignore", "DEMO-0002|GH-13|done"))
-    assert fixes["GH-5"][0] == Action("reopen_local", "Reopen local", "DEMO-0003")
+    close, ignore = fixes["GH-13"]
+    assert (close.action, close.target, ignore.action, ignore.target) == ("close_local", "DEMO-0002", "ignore", "DEMO-0002|GH-13|done")
+    # GI-02: every dialog names both sides and the ticket's status; unproven work says so
+    assert "DEMO-0002" in close.confirm and "GH-13" in close.confirm and "in-progress" in close.confirm
+    assert "skips its verdict" in close.confirm
+    assert "DEMO-0002" in ignore.confirm and "GH-13" in ignore.confirm
+    reopen = fixes["GH-5"][0]
+    assert reopen.action == "reopen_local" and reopen.target == "DEMO-0003"
+    assert "DEMO-0003" in reopen.confirm and "GH-5" in reopen.confirm and "done" in reopen.confirm
 
 
 def test_sprint_progress(issues_ws):
     addon = _cached(issues_ws)
-    card = _card(addon.obj.widgets("board.external", _view(issues_ws, addon, "board.external")), "Sprint · Sprint 42")
+    card = _card(addon.obj.widgets("board.external", _view(issues_ws, addon, "board.external")), "Sprint 42")
     assert dict(card.body[0].rows) == {"Done": "1 of 8 (12%)", "Expected by today": "unknown (no start or due date)",
                                        "Ends": "no due date"}
 
@@ -155,7 +163,8 @@ def test_ticket_panel(issues_ws):
     [card] = addon.obj.widgets("ticket.external", _view(issues_ws, addon, "ticket.external", t))
     assert card.title == "GH-13 · GitHub issue"
     assert Callout("warn", "Out of sync", "Closed in GitHub, not done here.") in card.body
-    assert dict(card.body[-1].rows)["Fix"] == Action("close_local", "Close local", "DEMO-0002")
+    fix = dict(card.body[-1].rows)["Fix"]
+    assert (fix.action, fix.target) == ("close_local", "DEMO-0002") and "DEMO-0002" in fix.confirm and "GH-13" in fix.confirm
     in_sync = store.load(issues_ws.ws, "DEMO-0004")[1]
     [card] = addon.obj.widgets("ticket.external", _view(issues_ws, addon, "ticket.external", in_sync))
     assert not any(isinstance(w, Callout) for w in card.body)
@@ -166,13 +175,48 @@ def test_import_is_idempotent(issues_ws):
     ctx = addon.ctx.provider_context()
     assert addon.obj.act("import", "GH-9", ctx) == Intent("import", ref="GH-9", value="Handle late-arriving gateway exports",
                                                           reason="Imported from https://github.com/acme/ticket-orch-demo/issues/9",
-                                                          data={"ask": "Late exports are dropped.\n## Steps\nRe-run the job."})
+                                                          data={"ask": "Late exports are dropped.\n## Steps\nRe-run the job.", "type": "feature"})
     assert _click(issues_ws, addon, "import", "GH-9") == "Imported GH-9 as DEMO-0005"
     t = store.load(issues_ws.ws, "DEMO-0005")[1]
     assert t.status == "backlog" and t.title == "Handle late-arriving gateway exports"
     assert t.section("Ask") == "Late exports are dropped.\n\\## Steps\nRe-run the job."  # the issue text, neutralised
     assert t.meta["external"] == [{"key": "GH-9", "url": "https://github.com/acme/ticket-orch-demo/issues/9"}]
     assert addon.obj.act("import", "gh-9", ctx) == Intent("none", reason="GH-9 is already DEMO-0005")
+
+
+def test_import_keeps_the_issue_type_and_priority(issues_ws):
+    """GI-01: a type:chore issue became a feature with normal priority."""
+    from orch.testing.fakes import Recording
+    addon = _cached(issues_ws)
+    addon.ctx.runner.recordings.insert(0, Recording(("gh", "issue", "view", "8", "--repo", SCOPE, "--json", "body"), 1, "", "offline", None))
+    intent = addon.obj.act("import", "GH-8", addon.ctx.provider_context())
+    assert intent.data["type"] == "chore" and "priority" not in intent.data
+    assert _click(issues_ws, addon, "import", "GH-8") == "Imported GH-8 as DEMO-0005"
+    meta = store.load(issues_ws.ws, "DEMO-0005")[1].meta
+    assert meta["type"] == "chore" and meta["priority"] == "normal"
+
+
+def test_import_ignores_a_type_orch_does_not_know(issues_ws):
+    from orch.core import store as st
+    for bad in ("epic", "nonsense"):
+        intents.execute(issues_ws.ws, Intent("import", ref=f"GH-{bad[:1]}1", value="x", data={"type": bad, "priority": "urgent"}),
+                        allowed_ref=f"GH-{bad[:1]}1", tickets=True, actor=HUMAN, source="act")
+    types = {st.load(issues_ws.ws, t)[1].meta["type"] for t in ("DEMO-0005", "DEMO-0006")}
+    assert types == {"feature"}
+    assert st.load(issues_ws.ws, "DEMO-0005")[1].meta["priority"] == "urgent"
+
+
+def test_external_header_explains_the_two_kinds_of_sprint(issues_ws):
+    from orch.addons.widgets import Text
+    addon = _cached(issues_ws)
+    card = _card(addon.obj.widgets("board.external", _view(issues_ws, addon, "board.external")), "Show")
+    assert any(isinstance(w, Text) and "GitHub milestones" in w.text for w in card.body)
+
+
+def test_sprint_heading_does_not_repeat_the_word(issues_ws):
+    addon = _cached(issues_ws)
+    titles = [w.title for w in addon.obj.widgets("board.external", _view(issues_ws, addon, "board.external")) if isinstance(w, Card)]
+    assert "Sprint 42" in titles and "Sprint · Sprint 42" not in titles
 
 
 def test_import_without_the_issue_text_still_imports(issues_ws):

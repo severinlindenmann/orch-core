@@ -176,7 +176,7 @@ def test_qr_widget_renders_as_an_inline_svg(client, demo):
 
 def test_never_fetched_banner(client):
     html = client.get("/addons/demo/").text
-    assert "Not fetched yet" in _banner(html)
+    assert "Loading…" in _banner(html)
 
 
 def test_stale_page_keeps_rows_and_shows_banner(client, ws):
@@ -232,7 +232,7 @@ def test_today_tiles_and_from_addons_are_not_needs_you(client, ws, put):
     from orch.core import query
     put("backlog")  # the summary strip shows only when the workspace has tickets
     html = client.get("/").text
-    assert "Checks failing" in html and "unknown" in html  # None is unknown, not 0
+    assert "Checks failing" not in html and ">0<" not in html.split("summary-addons", 1)[-1][:400]  # unknown is hidden, never 0
     assert "From addons" in html and "Answer from phone" in html
     n = len(query.needs_you(ws))  # addon items never add to the needs-you count
     assert (f"<title>({n}) " in html) if n else ("<title>(" not in html)

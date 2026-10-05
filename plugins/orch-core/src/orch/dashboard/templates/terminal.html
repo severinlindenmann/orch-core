@@ -6,7 +6,7 @@
     the screen at a readable size, following its bottom; "Whole pane" scales the whole window into the box. The screen
     is server-rendered escaped HTML, refreshed over /terminals/<name>/stream by terminal.js; so is the summary line.
     The details panel is what agentinfo read when the page loaded. -#}
-{% set labels = {"waiting": "waiting for you", "busy": "busy", "idle": "idle"} %}
+{% set labels = {"waiting": "waiting for you", "busy": "busy", "idle": "idle: ready for your next prompt"} %}
 {% block main %}
 <p><a class="lnk" href="/terminals">← Terminals</a></p>
 {% if not s %}
@@ -14,20 +14,23 @@
 {% else %}
 <div class="page-head">
   <div>
-    <h1>{{ info.title or s.name }}</h1>
+    <h1>{{ s.name }}</h1>
+    {% if live.topic %}<p class="muted term-topic" data-f="topic">{{ live.topic }}</p>{% endif %}
     <p class="muted"><span class="term-state term-state-{{ live.status or 'none' }}" data-f="state">{{ labels.get(live.status, "running") }}</span>
       <span class="mono">{{ s.name }}</span> · <code>tmux -L orch attach -t {{ s.name }}</code></p>
   </div>
   <div class="row">
     <div class="term-mode" role="group" aria-label="Mode">
-      <button type="button" class="btn" data-mode="watch" aria-pressed="true">Watch</button>
-      <button type="button" class="btn" data-mode="type" aria-pressed="false">Type</button>
-      <button type="button" class="btn" data-mode="cli" aria-pressed="false" title="Every key goes straight to the session">CLI</button>
+      <button type="button" class="btn" data-mode="watch" aria-pressed="true" aria-describedby="term-mode-help">Watch</button>
+      <button type="button" class="btn" data-mode="type" aria-pressed="false" aria-describedby="term-mode-help">Type</button>
+      <button type="button" class="btn" data-mode="cli" aria-pressed="false" aria-describedby="term-mode-help" title="Every key goes straight to the session">CLI</button>
     </div>
     <button type="button" class="btn" data-details aria-expanded="true" aria-controls="term-details">Details</button>
     <form method="post" action="/terminals/{{ s.name }}/end" data-dialog="End {{ s.name }}?" data-dialog-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-dialog-confirm="End session" data-dialog-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>
   </div>
 </div>
+
+<p class="muted term-mode-help" id="term-mode-help"><b>Watch</b> only looks. <b>Type</b> gives you a reply field and keys. <b>CLI</b> sends every key you press on this page, like an attached terminal.</p>
 
 <p class="term-summary" data-summary data-sig="{{ live.sig }}" data-name="{{ s.name }}">
   <b data-f="now">{{ live.now or "No agent activity read yet" }}</b>
@@ -70,7 +73,8 @@
     {% for t in info.tickets %}
     <p class="term-row"><a class="lnk mono" href="/t/{{ t.id }}">{{ t.id }}</a><span>{{ t.status }}{% if t.tasks %} · {{ t.tasks }} tasks{% endif %}</span></p>
     <p class="term-sub">{{ t.title }}</p>
-    {% else %}<p class="muted">No ticket claimed by this session.</p>{% endfor %}
+    {% else %}{% if live.ticket %}<p class="term-row"><a class="lnk mono" href="/t/{{ live.ticket }}">{{ live.ticket }}</a><span>named for it</span></p>
+    <p class="term-sub">The agent has not claimed it yet.</p>{% else %}<p class="muted">No ticket claimed by this session.</p>{% endif %}{% endfor %}
   </section>
   <section>
     <h2>Subagents</h2>

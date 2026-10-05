@@ -309,7 +309,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
-        "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None: []),
+        "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None, always_banner=False: []),
         # the yes/no options enabled, trusted addons add to a ticket (the form, the approve card, the ticket page)
         "ticket_options": (lambda ticket_id=None: _ticket_options(ws, ticket_id)) if runtime else (lambda ticket_id=None: []),
         # spec §4.2: other running workspaces this one knows about, for the footer switcher line.

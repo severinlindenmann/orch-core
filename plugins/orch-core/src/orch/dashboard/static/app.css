@@ -292,6 +292,8 @@ main.content .tabs a:not(.on) { color: var(--text); }  /* the link colour rule a
 .checks .detail code {
   display: block; margin-top: 4px; font-size: 12px; color: var(--text); word-break: break-word;
 }
+.checks .fix-long { margin-top: var(--s-1); }
+.checks .fix-long > summary { cursor: pointer; color: var(--muted); font: var(--type-meta); }
 .repos .path { display: block; color: var(--muted); font-size: 12px; }
 .checks .mark {
   flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
@@ -885,6 +887,8 @@ details > summary { cursor: pointer; }
   .wtable.cols-l td.num { text-align: left; }
   .wtable.cols-l .chip { white-space: normal; }
 }
+/* Free text in a wide addon table wraps at a readable width instead of stretching the table past its card. */
+.wtable td.cell-text { min-width: 12em; max-width: 32em; }
 /* Narrow containers (< 400): KV rows stack, stats go 2-up, action rows and Copy go full width, cards pad 16. */
 @container (max-width: 399px) {
   .kv { grid-template-columns: minmax(0, 1fr); gap: 0; }
@@ -1162,6 +1166,7 @@ dialog::backdrop { background: var(--scrim); }
   .dc-phone { display: inline-flex; width: 100%; justify-content: center; }
   .decision-card .opts, .decision-card .opt-row, .decision-card .btn.opt { width: 100%; }
   .dc-actions { flex-direction: column; align-items: stretch; }
+  .decision-card .dc-actions > .btn-quiet { border-color: var(--ctl); }  /* "Open ticket" is a button on a phone, not bare text */
 }
 .dc-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; background: var(--surface);
            border: 1px solid var(--line); border-radius: var(--r-lg); }
@@ -1278,11 +1283,28 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 /* ---------- Phone width (<= 480 px): every page in one column ---------- */
 
 @media (max-width: 480px) {
+  /* Page heads: the title, then its action underneath, left aligned on every page (the action used to sit beside
+     the title on some pages and wrap on others). */
+  .page-head { flex-direction: column; align-items: flex-start; gap: var(--s-3); }
   /* Board: the columns stack (each one full width) instead of scrolling sideways; Done stays a one-line link. */
   .board, .board.board-rail { display: flex; flex-direction: column; gap: var(--s-4); overflow: visible; mask-image: none; padding-bottom: 0; }
   .board .col { flex: none; width: 100%; }
-  .filter-field, .filter-search { flex: 1 1 100%; max-width: none; }
+  /* Board filters (V13): Search and Show take a row, Repository and Group by share one, and More filters sits
+     beside Filter, so the filters stay under about 190 px instead of 330 px. */
+  .filter-field { flex: 1 1 calc(50% - var(--s-2)); max-width: none; }
+  .filter-search, .filter-field.show-by { flex-basis: 100%; max-width: none; }
   .filter-field select, .filter-field input { width: 100%; }
+  .filters .more-filters-body > .filter-field { flex-basis: calc(50% - var(--s-2)); }
+  .filters .filter-apply { margin-left: auto; }
+  /* The proof row already says "No evidence yet."; the dashed tile beside it said it a second time (V10). */
+  .proof-tile.ev-tile-missing { display: none; }
+}
+/* Rows in a narrow page outside a .panel (the /design page, a phone) take two lines like the container rule does. */
+@media (max-width: 559px) {
+  .tc-row { grid-template-columns: var(--s-6) minmax(0, 1fr); row-gap: 2px; }
+  .tc-row > .key, .tc-row > .tc-title, .tc-row > .tc-move, .tc-row > .tc-progress { grid-column: 2; }
+  .tc-row > .tc-title { white-space: normal; }
+  .tc-progress { flex-wrap: wrap; min-width: 0; }
 }
 
 /* The widget library (/widgets): one card per core type or template, its live example inside. */
@@ -1377,7 +1399,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
 .artifact-list { display: grid; gap: var(--s-2); }
 .artifact-item { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-2); }
 .artifact-thumb img { max-width: 160px; max-height: 120px; object-fit: cover; }
-.artifact-url { word-break: break-all; }
+.artifact-url { overflow-wrap: anywhere; }  /* break at a / or - first; mid-word only when nothing else fits */
 .artifact-proof { margin-top: var(--s-2); }
 
 /* ---------- M (v4): Your move strip, agent flow with rails, Backlog drawer ---------- */
@@ -1633,6 +1655,8 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
   font: var(--type-control); cursor: pointer; }
 .term-tool:hover, .term-tool:focus-visible { border-color: var(--term-dim); }
 /* Watch is read-only: no keys, no reply field, a note instead. Type shows them. */
+.term-tile .term-topic { display: block; padding: 0 var(--s-4); font-size: .85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.term-mode-help { margin: 0 0 var(--s-2); font-size: .9em; }
 .term-watch-note { margin: 0; padding: var(--s-2) var(--s-3); background: var(--term-bar); color: var(--term-dim); }
 .term-watch-note b { color: var(--term-hi); }
 .term[data-mode="type"] .term-watch-note, .term[data-mode="cli"] .term-watch-note, .term[data-mode="cli"] .term-foot, .term[data-mode="watch"] .term-foot, .term[data-mode="gone"] .term-foot { display: none; }

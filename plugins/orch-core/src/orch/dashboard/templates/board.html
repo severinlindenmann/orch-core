@@ -15,6 +15,7 @@
   <a href="{{ list_view_link }}" class="{{ 'on' if view == 'list' }}"{% if view == "list" %} aria-current="true"{% endif %}>List <span class="count">{{ active_count }}</span></a>
   {% if external_tab %}<a href="{{ external_link }}" class="{{ 'on' if view == 'external' }}"{% if view == "external" %} aria-current="true"{% endif %}>External</a>{% endif %}
 </nav>
+{% if unknown_status %}<p role="status">{{ ui.status("info", "Unknown status filter “" ~ unknown_status ~ "”, showing all tickets.") }}</p>{% endif %}
 {% if view != "external" %}
 {#- Search, repository and Group by stay visible; type, priority, external key and label sit behind "More filters"
     (open while one of them is set). With JS a changed select applies at once, so the Filter button goes away. -#}
@@ -95,8 +96,10 @@
 
 <div id="board-results">
 {% if view == "external" %}
-{% set external_groups = addon_slot("board.external", none, external_params) %}
-{% if external_groups %}{{ ui.slot(external_groups) }}{% else %}<section class="card"><p class="empty">Nothing from outside tools yet. Enabled addons show their items here after their first fetch.</p></section>{% endif %}
+{% set external_groups = addon_slot("board.external", none, external_params, true) %}
+{% if external_groups %}{#- each provider addon: how old its data is (the banner) and a Refresh, so stale cannot pass for live -#}
+<div class="actions">{% for g in external_groups if g.banner %}<form method="post" action="/addons/{{ g.addon }}/refresh" data-busy="Refreshing…"><button type="submit" class="btn"{% if g.banner.health == "rate_limited" %} disabled{% endif %}><span aria-hidden="true">⟳</span> Refresh {{ g.title }}</button></form>{% endfor %}</div>
+{{ ui.slot(external_groups) }}{% else %}<section class="card"><p class="empty">Nothing from outside tools yet. Enabled addons show their items here after their first fetch.</p></section>{% endif %}
 {% elif view == "list" %}
 {% macro list_table(rows) %}
 <div class="table-wrap">

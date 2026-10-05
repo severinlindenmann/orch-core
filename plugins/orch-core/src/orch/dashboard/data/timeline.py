@@ -10,8 +10,14 @@ from orch.core import events as events_mod
 from orch.dashboard.data.text import clean as _clean
 from orch.dashboard.data.text import md_escape
 
-CATEGORIES = ("decisions", "questions", "code", "agents", "checks")
-CATEGORY_LABELS = {"decisions": "Decisions", "questions": "Questions", "code": "Code", "agents": "Agents", "checks": "Checks"}
+CATEGORIES = ("decisions", "questions", "code", "agents", "checks", "ledger")
+CATEGORY_LABELS = {"decisions": "Decisions", "questions": "Questions", "code": "Code", "agents": "Agents", "checks": "Checks",
+                   "ledger": "Ledger"}
+HIDDEN_FROM_ALL = ("ledger",)  # bookkeeping: `orch ledger adopt` writes one event per ticket; only its own filter shows it
+
+# Addons whose actions are about code (PRs, issues): they file under Code; every other addon action stays uncategorised.
+_CODE_ADDONS = ("github-issues", "github-reviews")
+_TICKET_KEY = re.compile(r"[A-Za-z][A-Za-z0-9]*-\d{1,6}")
 
 _LINK_KEYS = ("branches", "prs", "worktrees", "branch", "pr", "worktree")
 
@@ -24,6 +30,12 @@ def category(event) -> str | None:
     if event.kind.startswith("question."):
         return "questions"
     if event.kind == "artifact.added":
+        return "code"
+    if event.kind == "ledger.adopted":
+        return "ledger"
+    if event.kind == "addon.decision":
+        return "decisions"
+    if event.kind == "addon.action" and (event.data or {}).get("addon") in _CODE_ADDONS:
         return "code"
     if event.kind in ("state.updated", "ticket.edited") and any(k in event.data for k in _LINK_KEYS):
         return "code"
@@ -58,6 +70,31 @@ def _describe_link(data: dict) -> str:
     if data.get("external"):
         parts.append(_shorten(data["external"], 60))
     return "linked " + ", ".join(parts) if parts else "edited the ticket"
+
+
+def _words(raw, fallback: str) -> str:
+    """An id like "mark_ready" or "github-reviews" as words ("mark ready", "github reviews")."""
+    text = _shorten(raw, 60).replace("_", " ").replace("-", " ").strip()
+    return text or fallback
+
+
+def _describe_addon_action(data: dict) -> str:
+    """An addon action as a sentence: `mark ready on DEMO-0010 (github reviews)`, not the addon's internal target
+    ("DEMO-0010|GH-14|done"). The addon's own ids are only turned into words."""
+    target = str(data.get("target") or "")
+    keys = list(dict.fromkeys(_TICKET_KEY.findall(target)))
+    on = f" on {', '.join(keys[:2])}" if keys else ""
+    return f"{_words(data.get('action'), 'ran an action')}{on} ({_words(data.get('addon'), 'an addon')})"
+
+
+def _ticket_of(event) -> str | None:
+    """The ticket an event is about: its own, else (an addon action has none) the first key in the action's target."""
+    if event.ticket:
+        return event.ticket
+    if event.kind == "addon.action":
+        m = _TICKET_KEY.search(str((event.data or {}).get("target") or ""))
+        return m.group(0) if m else None
+    return None
 
 
 def describe(event) -> str:
@@ -106,10 +143,12 @@ def describe(event) -> str:
         return "edited the ticket"
     if kind == "log.added":
         return f"logged: {_shorten(data.get('text', ''))}"
+    if kind == "ledger.adopted":
+        return "adopted an earlier decision into the ledger"
     if kind == "addon.action":
-        return f"ran {data.get('action', 'an action')} of {data.get('addon', 'an addon')} on {data.get('target') or 'its item'}"
+        return _describe_addon_action(data)
     if kind == "addon.decision":
-        return f"chose {data.get('choice', 'an option')} on an item of {data.get('addon', 'an addon')}"
+        return f"chose {_words(data.get('choice'), 'an option')} on an item of {_words(data.get('addon'), 'an addon')}"
     return kind.replace(".", " ")
 
 
@@ -220,6 +259,8 @@ def timeline(ws, *, category: str = "all", before: int | None = None, limit: int
         candidates = [ev for ev in candidates if ev.seq < before]
     if category != "all":
         candidates = [ev for ev in candidates if _category_of(ev) == category]
+    else:
+        candidates = [ev for ev in candidates if _category_of(ev) not in HIDDEN_FROM_ALL]
 
     shown = candidates[:limit]
     older = shown[-1].seq if len(candidates) > limit and shown else None
@@ -242,7 +283,7 @@ def timeline(ws, *, category: str = "all", before: int | None = None, limit: int
             "who": who(ev),
             "what": describe(ev),
             "kind": ev.kind,
-            "ticket": ev.ticket,
+            "ticket": _ticket_of(ev),
         })
     for g in groups:
         g["entries"] = _runs(g["items"])

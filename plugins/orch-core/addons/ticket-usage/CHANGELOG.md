@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A missing Limits log is named ("File not found: <path>") instead of blaming the recorder; a relative path is refused on save and a file that is not there yet is saved with a note. The Usage page refreshes after settings are saved. No empty Estimate column while dollar figures are off. A pace sentence no longer projects past the reset; limit cards no longer repeat their title; the weekly-pace hint says how much history there is; the limits history axis shows the date when it spans two calendar days.
+
 ## 0.4.0
 
 - The Usage page is charts: limit cards with reset time and a pace sentence, output tokens by model per day (last 7 / 30 days, or per calendar week), how much of this week's output is tied to a ticket, output per ticket, limits history with real time spacing, and the API-price equivalent per calendar week. The ticket table stays at the bottom. Days and calendar weeks are in the machine's local zone; limits history shows clock times; the menu line reads "5h 51% · 3h05" (Countdown now draws "3h05" / "12 min", no "in"). Needs orch API 2.6 (the Chart widget, with time axis).

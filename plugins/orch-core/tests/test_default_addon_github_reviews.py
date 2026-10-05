@@ -39,7 +39,8 @@ def test_page_lists_prs_and_escapes_titles(mc):
     assert "<h1>Code reviews</h1>" in html and "#23" in html and "#91" in html
     assert "<script>alert(1)</script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert 'action="/addons/github-reviews/actions/rerun_failed"' in html
-    assert 'data-dialog="Rerun the failed checks of this pull request?"' in html
+    assert 'data-dialog="Rerun the failed checks of acme/ticket-orch-demo#21 ' in html  # names the pull request (GR-04)
+    assert "outside orch" not in html and "Asks GitHub to run the failed checks again" in html
 
 
 def test_menu_today_and_ticket(mc):
@@ -99,3 +100,12 @@ def test_disabled_renders_nothing(tmp_path, monkeypatch):
     c = TestClient(create_app(fw.ws, "tok"))
     assert 'href="/addons/github-reviews/"' not in c.get("/?token=tok").text
     assert c.get("/addons/github-reviews/").status_code == 404
+
+
+def test_repo_card_labels_are_not_visible_text_and_nothing_overflows_with_author(mc):
+    """GR-07: "acme: repository" is a screen-reader name, not a visible line; GR-01: no Author column."""
+    _, client, _ = mc
+    html = client.get("/addons/github-reviews/?state=all").text
+    assert 'aria-label="acme-energy-data: repository"' in html
+    assert 'filter-label" aria-hidden="true">acme-energy-data: repository' not in html
+    assert ">Author<" not in html

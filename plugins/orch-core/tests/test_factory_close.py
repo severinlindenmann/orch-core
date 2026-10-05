@@ -353,7 +353,9 @@ def test_ready_card_says_it_closes_by_itself_instead_of_accept(fws, closing, hum
     card = html[html.index(f'data-ready="{eid}"'):]
     card = card[:card.index("</article>")]
     assert "data-auto-ready" in card and "Your charter closes it by itself, in place of your verdict, when:" in card
-    assert "the merge stage is proven by its check" in card and "Accept the epic" in card  # Accept stays yours
+    # the human can still close it now, but with the signed release not run that is "Close without releasing"
+    assert "the merge stage is proven by its check" in card and "Close without releasing" in card
+    assert "The release has not run; closing now skips it" in card and "Accept the epic" not in card
     assert "nothing is executed or verified by the factory" in card
     assert "coverage is checked as text mentions only" in card
     assert "the verdict stays yours" not in html and "in place of your verdict for this run" in html  # release box
@@ -450,7 +452,8 @@ def test_a_release_that_cannot_start_is_never_shown_as_pending_and_accept_stays(
     assert [r["code"] for r in factory_report.stopped(fws, _epic(fws, eid))] == ["release-blocked"]
     pytest.importorskip("fastapi")
     html = _client(fws).get(f"/factory/{eid}").text
-    assert "Not closed by itself: it is Stopped: Release could not start" in html and "Accept the epic" in html
+    assert "Not closed by itself: it is Stopped: Release could not start" in html
+    assert "Close without releasing" in html  # the human closes it, saying it skips the release that could not start
 
 
 # -- orch check after a close: what may turn an unsigned-decision warning into info, and what may not -----------------

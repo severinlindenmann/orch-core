@@ -255,7 +255,8 @@
     {% for ev in c.other %}<div class="proof-evidence">{{ ev|section_md("Verification", c.widgets, c.art)|safe }}</div>{% endfor %}
   </div>
   {% endfor %}
-  {% if e.verdict_ready %}
+  {% if e.verdict_ready and e.unreleased %}{{ pm.skip_release_form(t.id, e.verdict_seen, "", e.unreleased) }}
+  {% elif e.verdict_ready %}
   <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ t.id }} and {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}">
     <input type="hidden" name="verdict" value="done">
     <input type="hidden" name="seen" value="{{ e.verdict_seen }}"><button type="submit" class="btn btn-primary">Accept the epic and close {{ e.proof|length }} {{ "child" if e.proof|length == 1 else "children" }}</button>

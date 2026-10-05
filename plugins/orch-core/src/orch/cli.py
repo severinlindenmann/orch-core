@@ -730,18 +730,30 @@ def request_changes(ref: str, gate: Annotated[str, typer.Argument(help="requirem
 
 @app.command()
 def verdict(ref: str, result: Annotated[str, typer.Argument(metavar="done|follow-up")],
-            message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
+            message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False,
+            skip_release: Annotated[str | None, typer.Option(
+                "--skip-release", metavar="REASON",
+                help="Close an epic whose signed release has not run, without releasing; says why")] = None) -> None:
     """Close a testing ticket or send it back with a note. Human only. For an epic (done only): every open child's
-    criteria and evidence are printed first, and the verdict binds exactly what was printed."""
-    from orch.core import epics, store
+    criteria and evidence are printed first, and the verdict binds exactly what was printed. An epic whose charter
+    signs a release that has not run is closed only with --skip-release REASON (recorded as release_skipped)."""
+    from orch.core import epics, factory_release, store
     ws = _ws()
     target = store.resolve(ws, ref)
     if epics.is_epic(target.meta or {}) and result == "done":
         from orch.cli_epic import render_verdict
-        kids = epics.open_children(ws, store.load(ws, target.id)[1])
+        epic_t = store.load(ws, target.id)[1]
+        kids = epics.open_children(ws, epic_t)
         seen = epics.verdict_hash(kids, ws)
-        t = _human_op(ws, ref, lambda ops, kw: ops.verdict(ref, result, message, **kw),
-                      lambda p: "\n".join(render_verdict(kids) + [f"{p.id}: accept the epic ({_short(seen)})"]),
+        left = factory_release.unreleased(ws, epic_t)
+        if left and not (skip_release or "").strip():
+            raise UsageError(f"{factory_release.SKIP_TEXT} ({', '.join(left)} not proven yet)",
+                             hint=f"to close it without releasing: orch verdict {target.id} done --skip-release "
+                                  "REASON")
+        note = ([f"{factory_release.SKIP_TEXT}: closing without releasing ({', '.join(left)} not proven): "
+                 f"{skip_release}"] if left else [])
+        t = _human_op(ws, ref, lambda ops, kw: ops.verdict(ref, result, message, skip_release=skip_release, **kw),
+                      lambda p: "\n".join(render_verdict(kids) + note + [f"{p.id}: accept the epic ({_short(seen)})"]),
                       bound={"expected_hash": seen}, dry_run=dry_run, json_out=json_out)
     else:
         # The criteria and evidence the verdict accepts, read before the preview (the preview's status is the new one)

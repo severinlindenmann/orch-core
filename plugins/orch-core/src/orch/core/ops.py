@@ -1282,7 +1282,7 @@ class Ops(TaskOpsMixin):
         self._emit(None, "setting.changed", {"setting": DARK_SETTING, "value": on})
 
     def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None,
-                      charter: dict | None = None) -> Ticket:
+                      charter: dict | None = None, skip_release: str | None = None) -> Ticket:
         """One verdict for the epic: every open child must be in testing; each gets its own signed done verdict,
         then the epic is done."""
         from orch.core import epics
@@ -1297,6 +1297,17 @@ class Ops(TaskOpsMixin):
             raise ValidationError("the epic verdict is given when all its open children are in testing"
                                   + (f" (not yet: {', '.join(waiting)})" if waiting else " (it has none)"))
         tickets = [store.load(self.ws, e.id)[1] for e in kids]
+        skipped = {}
+        if charter is None:  # the human's verdict; the charter's own close runs only once every stage is proven
+            from orch.core import factory_release
+            left = factory_release.unreleased(self.ws, store.load(self.ws, eid)[1])
+            if left:
+                why = " ".join((skip_release or "").split())[:300]
+                if not why:
+                    raise ValidationError(f"{factory_release.SKIP_TEXT} ({', '.join(left)} not proven yet)",
+                                          hint="choose Close without releasing and say why (orch verdict <epic> done "
+                                               "--skip-release REASON)")
+                skipped = {"release_skipped": why, "skipped_stages": left}
         if expected_hash != epics.verdict_hash(tickets, self.ws):
             raise ValidationError(f"the children of {eid} or their evidence changed since you read them — review again")
         # every per-child check before any child is closed: no partial close
@@ -1319,9 +1330,10 @@ class Ops(TaskOpsMixin):
             t.meta["status"] = "done"
             t.meta.setdefault("gates", {})["verify"] = {"verdict": "done", "at": stamp(), "via": self.actor.via}
             self._ledger(t, "verdict", verdict="done", verify_at=t.meta["gates"]["verify"]["at"],
-                         children=[e.id for e in kids], **(charter or {}))
+                         children=[e.id for e in kids], **(charter or {}), **skipped)
             self._log(t, "verdict done for the epic and " + ", ".join(e.id for e in kids)
-                      + (f": {message}" if message else ""))
+                      + (f": {message}" if message else "")
+                      + (f" (closed without release: {skipped['release_skipped']})" if skipped else ""))
             return {"verdict": "done", "message": message, "children": [e.id for e in kids]}
 
         return self._mutate(eid, "verdict.given", fn)
@@ -1421,11 +1433,14 @@ class Ops(TaskOpsMixin):
             self._emit(tid, "verdict.given", data)
 
     def verdict(self, ref: str, verdict: str, message: str | None = None, *,
-                expected_hash: str | None = None, delegation: str | None = None) -> Ticket:
+                expected_hash: str | None = None, delegation: str | None = None,
+                skip_release: str | None = None) -> Ticket:
         """`expected_hash`: the hash of the criteria and evidence the human read (orch.core.epics.verdict_hash: for
         an epic over its open children, else over this ticket); refused when it no longer matches. `delegation`: only
         for the runner's close under a Dark charter (via "dark-charter", orch.core.factory_close): the charter's
-        delegation id, signed into each verdict entry so `orch check` judges it against that charter."""
+        delegation id, signed into each verdict entry so `orch check` judges it against that charter. `skip_release`:
+        the human's reason to close an epic whose charter signs a release that has not run (all of it proven) yet;
+        without it such a verdict is refused, with it the epic's verdict entry records `release_skipped`."""
         require_human(self.actor, "giving verdicts")
         if delegation is not None and self.actor.via != "dark-charter":
             raise UsageError("a verdict names a charter only when the charter gives it")
@@ -1437,7 +1452,7 @@ class Ops(TaskOpsMixin):
             raise UsageError("a follow-up verdict needs a message (-m) saying what is missing")
         target = store.resolve(self.ws, ref)
         if (target.meta or {}).get("type") == "epic":
-            return self._epic_verdict(target.id, verdict, message, expected_hash, charter)
+            return self._epic_verdict(target.id, verdict, message, expected_hash, charter, skip_release)
 
         if charter is not None:
             raise UsageError("a charter closes an epic, not a single ticket")

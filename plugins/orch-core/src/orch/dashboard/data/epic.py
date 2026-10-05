@@ -189,8 +189,18 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
     s.update(factory=factory.epic_status(ws, epic, s["delegation"], events), permits=factory.permit_view(ws, epic.id),
              rows=rows, approve=approve, proof=proof, unready=[c["blocker"] for c in approve if c["blocker"]], verdict_seen=epics.verdict_hash(kids.values(), ws),
              verdict_ready=bool(open_kids) and all(r["card"]["status"] == "testing" for r in open_kids)
-             and epic.status == "open" and not changed, verdict_changed=changed,
+             and epic.status == "open" and not changed, verdict_changed=changed, unreleased=_unreleased(ws, epic),
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
                                           or any(v != "unchanged" for v in changes.values())
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
     return s
+
+
+def _unreleased(ws, epic):
+    """The signed release stages not proven yet (factory_release.unreleased), or None; an error is None (Ops.verdict
+    decides again)."""
+    from orch.core import factory_release
+    try:
+        return factory_release.unreleased(ws, epic)
+    except Exception:
+        return None

@@ -61,14 +61,18 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
 def _with_auto(ws, rep: dict) -> dict:
     """A Ready report, with `auto` (orch.core.factory_close.view) when the epic's charter signs closing by itself: the
     card then says what it waits for instead of offering Accept, unless a condition needs you."""
-    from orch.core import factory_close
+    from orch.core import factory_close, factory_release
     try:
         epic = store.read_ticket(store.resolve(ws, rep["epic"]).path)
         d = permits.factory_delegation(ws, epic)
         auto = factory_close.view(ws, epic, d, rep=rep) if d and d.get("close") else None
     except Exception:
-        auto = None  # an error offers Accept, as for any epic: the human can always give the verdict
-    return {**rep, "auto": auto} if auto else rep
+        epic, auto = None, None  # an error offers Accept, as for any epic: the human can always give the verdict
+    try:  # a signed release that has not run: Accept becomes "Close without releasing", with a reason
+        unrun = factory_release.unreleased(ws, epic) if epic is not None else None
+    except Exception:
+        unrun = None  # Ops.verdict decides again and refuses a plain verdict then
+    return {**rep, **({"auto": auto} if auto else {}), **({"unreleased": unrun} if unrun else {})}
 
 
 _CAN = {  # what the human can do, per reason (rule text, never agent prose)
@@ -281,7 +285,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
     if lit[-1]:
         state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
-                                       else "You gave the verdict")
+                                       else "You gave the verdict: closed without release"
+                                       if _release_skipped(signed, eid) else "You gave the verdict")
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
@@ -386,6 +391,13 @@ def _epic_events(events, ids, charter_closed=frozenset()) -> list[dict]:
                   else _LOG_PHRASE.get(e.kind) or action_phrase(e))
         rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {phrase}"})
     return rows[::-1][:200]
+
+
+def _release_skipped(signed, eid: str) -> bool:
+    """Whether the epic's last signed verdict closed it without its signed release (release_skipped)."""
+    last = next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
+                 and e.get("kind") == "verdict"), None)
+    return bool(last and last.get("release_skipped"))
 
 
 def _all_idle(running) -> bool:

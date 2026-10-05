@@ -157,13 +157,15 @@ def answer(request: Request, ref: str, qid: Annotated[str, Form()],
 
 @router.post("/t/{ref}/verdict")
 def verdict(request: Request, ref: str, verdict: Annotated[str, Form()], message: Annotated[str, Form()] = "",
-            next_url: Next = "", seen: Annotated[str, Form()] = ""):
+            next_url: Next = "", seen: Annotated[str, Form()] = "", skip_release: Annotated[str, Form()] = ""):
     """`seen` (required): the hash of the criteria and evidence the page showed (orch.core.epics.verdict_hash; for
-    an epic over its open children). Ops.verdict refuses it once they changed."""
+    an epic over its open children). Ops.verdict refuses it once they changed. `skip_release`: the reason of "Close
+    without releasing" (an epic whose signed release has not run); Ops.verdict refuses such an epic without it."""
     if not seen:
         return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
-    return _run(request, ref, lambda: _ops(request).verdict(ref, verdict, message or None, expected_hash=seen),
-                f"verdict {verdict}", next_url)
+    return _run(request, ref, lambda: _ops(request).verdict(ref, verdict, message or None, expected_hash=seen,
+                                                             skip_release=skip_release or None),
+                "closed without releasing" if skip_release.strip() else f"verdict {verdict}", next_url)
 
 
 @router.post("/t/{ref}/move")

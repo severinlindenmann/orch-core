@@ -82,13 +82,27 @@
     <p class="muted">It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory, and coverage is checked as text mentions only, and an epic that names no file is not closed by itself. You can still accept it yourself now; Reopen stays yours afterwards.</p></div>
   {% elif r.auto %}<p data-auto-not>Not closed by itself: {{ (r.auto.blockers|rejectattr("pending")|first).text }}. You can accept it yourself.</p>{% endif %}
   <div class="actions">
+    {% if r.unreleased %}{{ skip_release_form(r.epic, r.seen, back, r.unreleased) }}{% else %}
     <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ r.epic }} and {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}">
       <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ r.seen }}"><input type="hidden" name="next" value="{{ back }}">
       <button type="submit" class="btn btn-primary">Accept the epic and close {{ r.open }} {{ "child" if r.open == 1 else "children" }}</button>
-    </form>
+    </form>{% endif %}
     {% if not here %}<a class="btn" href="/t/{{ r.epic }}#factory">Open the epic</a>{% endif %}
   </div>
 </article>
+{% endmacro %}
+
+{#- An epic whose charter signs a release that has not run: no plain Accept. The human closes it without releasing,
+    with a reason the verdict's ledger entry records (release_skipped). -#}
+{% macro skip_release_form(eid, seen, back, stages) %}
+<div class="stack" data-release-unrun="{{ eid }}">
+  <p>{{ ui.status("warn", "Not released") }} The release has not run; closing now skips it ({{ stages|join(", ") }} not proven yet). The runner releases it once the epic is Ready; or close it yourself without releasing.</p>
+  <form method="post" action="/t/{{ eid }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ eid }} without releasing">
+    <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ seen }}">{% if back %}<input type="hidden" name="next" value="{{ back }}">{% endif %}
+    <label>Why close it without releasing <input name="skip_release" required maxlength="300" autocomplete="off"></label>
+    <button type="submit" class="btn">Close without releasing</button>
+  </form>
+</div>
 {% endmacro %}
 
 {% macro suspect_note(s) %}

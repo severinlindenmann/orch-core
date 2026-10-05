@@ -1035,6 +1035,15 @@ before its release window opens; see "The production stage" below). Nothing is c
 stays yours, unless the charter also signs `close` ("Closing by itself", below), which gives it in your place for
 that run. The runner (the dashboard you started) runs the stages; an agent cannot start, change or skip one.
 
+**Closing before the release ran.** In the first live run the epic's Accept closed it while merge and dev were still
+waiting, and nothing was released. Now, while the charter signs a release and any of its stages is not proven, there
+is no plain Accept: the Ready card, the run view and the epic page say "The release has not run; closing now skips
+it" and offer "Close without releasing" with a reason you type, and `orch verdict <epic> done` needs
+`--skip-release REASON`. The epic's signed verdict entry records the reason (`release_skipped`) and the stages not
+proven (`skipped_stages`), and the run view's Finished summary says "You gave the verdict: closed without release".
+A verdict from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or
+in a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
+
 **The recipe is yours, on this machine.** It lives in `factory-release.json` in the permits folder of your orch config
 dir, next to `factory-command.json` and under the same guard: agents can neither read nor write it, it is never
 grantable, and orch's `factory release` commands are human-only. It is not workspace config, ticket text or charter

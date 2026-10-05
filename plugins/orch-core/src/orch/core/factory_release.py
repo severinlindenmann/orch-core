@@ -652,6 +652,26 @@ def _block(ws, actor, epic_id: str, stage: str, unit: str, why: str, code: str =
     return f"{epic_id}: {stage} of {unit} not started: {why}"
 
 
+SKIP_TEXT = "The release has not run; closing now skips it"
+
+
+def unreleased(ws, epic) -> list[str] | None:
+    """The release stages the epic's live factory charter signs that are not proven yet (as status() reads them;
+    unreadable records count as not proven), or None when no release is signed. A human verdict on such an epic must
+    say it closes without releasing (Ops.verdict skip_release)."""
+    from orch.core import permits
+    d = permits.factory_delegation(ws, epic)
+    if not d or not d.get("release"):
+        return None
+    try:
+        st = status(ws, epic, d)
+    except Exception:
+        st = None
+    if not st or not st.get("stages"):
+        return list(target_stages(d.get("release")))
+    return [s["name"] for s in st["stages"] if s["state"] != "proven"]
+
+
 def own_merge(us: dict) -> bool:
     """Whether a proven merge record names a commit of its own: a full commit id, recorded with the base it was
     classified against, and not that base."""

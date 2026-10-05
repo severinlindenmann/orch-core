@@ -762,7 +762,9 @@ same rules: the token cookie, a request from this machine with a loopback Host, 
 from that page: the runner owns their lifecycle, so you stop them with Stop in the run view. While you type, the
 runner types no nudge into that session for 60 seconds (it records the time of your last browser key, in memory).
 With Terminals off (or tmux missing), the run view shows a read-only look at each session's last 12 lines,
-escaped, and says how to turn Terminals on. Agents reach none of this: the dashboard needs your token, the guard
+escaped, and says how to turn Terminals on. Both the link and the look are shown only to a request from this machine
+with a loopback Host, as Terminals itself (never over the dashboard's LAN mode). Watching a factory session never
+resizes its pane; Type and CLI do, never below 80x24, and that counts as you at it (no nudge). Agents reach none of this: the dashboard needs your token, the guard
 refuses `tmux -L orch` and anything naming the permits folder (where the runner's socket is).
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto

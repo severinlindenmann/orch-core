@@ -61,7 +61,7 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
-_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
+_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
@@ -562,6 +562,8 @@ def _human_only_tokens(seg: str) -> bool:
         if rest and rest[0] in _HUMAN_VERBS:
             return True
         if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
+            return True
+        if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
             return True
         if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
             return True

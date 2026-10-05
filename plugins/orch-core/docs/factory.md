@@ -280,19 +280,34 @@ with a non-blocking error in every session (the plugin's `bin/orch` needs `uv`, 
 so the guard and the permission hook silently did nothing. Before it starts a session, the runner therefore runs
 these checks under the sessions' exact environment (`env -i`, the session PATH, the allowlisted variables) and shows
 the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
-fails it starts nothing; the results are kept for 5 minutes (1 minute after a failure). None of them writes anything
-of orch's; the hook programs run as Claude Code would run them.
+fails it starts nothing. A result is kept for at most 60 seconds, and only while the programs it probed and the hook
+commands it ran are still the ones the runner would use (checked again, without running anything, right before a
+launch); all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
+as failed), and at most 64 KB of each one's output is kept. An error inside the checks is a blocking failure with its
+reason, never a silent pass. None of them writes anything of orch's; the hook programs run with the words Claude
+Code would run them with, but never through a shell.
+
+- *programs* (blocks): `claude`, `env`, `orch` and `uv` must not lie inside the workspace (as found or after links):
+  agents write there, so an editable or workspace-local install (`<workspace>/.venv/bin/orch`) would put
+  agent-written code on every session's PATH. Fix: install them outside the workspace and start the dashboard from
+  there. Independently of this check, a program inside the workspace is never put on a session's PATH and the runner
+  refuses to launch a `claude` or `env` there, and any program whose folder is not owned by you or root, or is
+  writable by group or others, is not used at all.
 
 - *claude* (blocks): `claude --version` must exit 0 and print a version. A wrapper first on the dashboard's PATH that
   cannot find the real claude fails here. Fix: put the real claude first on the dashboard's PATH.
 - *orch on PATH* (blocks): `orch` must resolve on the sessions' PATH. Fix: install orch as a tool of your user (for
   example `uv tool install` of orch-core) so the dashboard's PATH finds it, then restart the dashboard.
-- *guard* and *permission hook* (block): the hook commands your user-scope settings name (or, with the plugin enabled,
-  the plugin's own `hooks.json` commands, from the folder Claude Code installed it to) run once with a harmless
-  payload (`true` from a session id nobody bound) and must exit 0 with empty or JSON output. Fix: what the output says;
-  usually `uv` (or `orch`) missing from the sessions' PATH.
+- *guard* and *permission hook* (block): the hook commands your user-scope settings name (program `orch` or an
+  absolute path ending in `/orch`, outside the workspace), or, with the plugin enabled, the plugin's own `hooks.json`
+  commands (program exactly `${CLAUDE_PLUGIN_ROOT}/bin/orch`, then `guard` or `permit hook`), taken only from the
+  folder Claude Code installed it to (an `installPath` in `plugins/installed_plugins.json` of the user config dir,
+  outside the workspace; never the folder this orch runs from), run once with a harmless payload (`true` from a session
+  id nobody bound) and must exit 0 with empty or JSON output. Fix: what the output says; usually `uv` (or `orch`)
+  missing from the sessions' PATH.
 - *trust* (blocks): Claude Code's record (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) must say the trust
-  dialog was accepted for the workspace or a folder above it; otherwise a new session waits at that dialog. Fix: open
+  dialog was accepted for the workspace or a folder above it (keys and the workspace compared as real paths);
+  otherwise a new session waits at that dialog. A file over 256 MB is not read, and the check says so. Fix: open
   Claude once in the folder and accept it.
 - *skills* (warns): the orch skills at user scope (the plugin, or `skills/orch-work-on-ticket` in the user config
   dir). Without them the built-in prompts still name every command a session needs.
@@ -301,7 +316,16 @@ of orch's; the hook programs run as Claude Code would run them.
   nothing else stops a session from using them: in the live run a child published a Claude artifact on its own.
 
 The session PATH is the folders of the resolved `claude`, `orch` and `uv` (each found on the dashboard's PATH and
-trusted as below), then the system's.
+trusted as below, none inside the workspace), then the system's. The guard keeps agents from writing the files these
+checks read: the user-scope `settings.json` and `settings.local.json` (of `$CLAUDE_CONFIG_DIR` and of `~/.claude`),
+`.claude.json`, Claude Code's `plugins` folder and every folder `installed_plugins.json` names, with the file tools and
+in shell writes (best effort for shell text, as for the other guarded files).
+
+**Claude Code formats assumed, not verified against Claude Code's own documentation:** `projects[<path>]
+.hasTrustDialogAccepted` in `.claude.json`; `{"plugins": {"<id>": [{"installPath": ...}]}}` in
+`plugins/installed_plugins.json`; the hook entries of `settings.json` and a plugin's `hooks/hooks.json`; and, for the
+idle nudge, the footer hints and empty input line of the pane. If Claude Code changes one, the matching check fails
+closed (it blocks, or the nudge types nothing) rather than passing.
 
 **Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child, and the checkout and folder it launches in)
 exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
@@ -317,7 +341,7 @@ the one the runner recorded, so a copied id gets no factory treatment (and the b
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
 private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
-path only when owned by you or root and not writable by group or others. The agent gets `env -i` with a fixed PATH (the
+path only when owned by you or root and not writable by group or others (nor their folders). The agent gets `env -i` with a fixed PATH (the
 folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
 session starts in the child's worktree only when the child names exactly one, below the workspace's
 `.claude/worktrees` folder or a git worktree in the workspace whose branch names the child; otherwise in the workspace

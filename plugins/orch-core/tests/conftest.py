@@ -33,13 +33,18 @@ def _factory_pane_pid(monkeypatch):
     monkeypatch.setattr(fs, "proc_start", lambda pid: "Mon Oct  4 10:00:00 2026")
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_readiness: run the AI Factory runner's real readiness checks")
+
+
 @pytest.fixture(autouse=True)
-def _factory_ready(monkeypatch):
+def _factory_ready(monkeypatch, request):
     """The runner's readiness checks run real programs (claude --version, the hooks) and read the user's Claude files:
-    tests pass them unless they test them (tests/test_factory_readiness.py)."""
+    tests pass them unless they test them (mark a test `real_readiness`, as tests/test_factory_readiness.py does)."""
     import orch.core.factory_runner as fr
-    monkeypatch.setattr(fr, "readiness", lambda ws, settings, environ=None: [])
     fr._READY.clear()
+    if request.node.get_closest_marker("real_readiness") is None:
+        monkeypatch.setattr(fr, "readiness", lambda ws, settings, environ=None: [])
 
 
 @pytest.fixture(autouse=True)

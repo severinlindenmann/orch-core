@@ -563,9 +563,14 @@ EVIDENCE_EXAMPLE = "- AC1: ran the export on the sample orders and saw 3 rows in
 # names only commands and options orch has (tests/test_factory_planner.py checks them against the CLI).
 PLANNER_PROMPT = (
     "You are the planner of the AI Factory epic {key}. Read it with `orch show {key}` and its limits with "
-    "`orch epic show {key}`. " + _PLAIN + "Split the work into children within those limits, each created with one "
+    "`orch epic show {key}`. " + _PLAIN + "Before you create any child, list every concrete deliverable the epic's "
+    "Requirements and Acceptance criteria name: each file by its exact name with its extension (such as elephants.html "
+    "or elephants.json), each format and each behaviour, and record that list with `orch log {key} -m \"...\"`. Then "
+    "create at least one child per deliverable and one deliverable per child, and write that deliverable's exact file "
+    "name into the child's Acceptance criteria. Create no design, spec, mockup or research child unless the epic asks "
+    "for a design, and no placeholder child. Split the work into children within those limits, each created with one "
     "`orch new --epic {key} --title \"...\" --size SIZE --requirements-file FILE --acceptance-file FILE` (SIZE is "
-    "xs, s or m unless the limits say otherwise), the Requirements and Acceptance criteria written into files under "
+    "xs, s or m, never larger), the Requirements and Acceptance criteria written into files under "
     "orchestrator/temporary first. Write the Acceptance criteria file as top-level checkbox lines, one concrete and "
     "checkable criterion per line and nothing else, like `" + CRITERION_EXAMPLE + "`: orch counts only such lines as "
     "criteria (AC1, AC2, ... from the top), and the workers prove each one. When a child's size needs a Plan (every "
@@ -873,6 +878,9 @@ def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple
     if not _gate(ws, epic.id, d["id"]):  # once more, right before the start
         return None
     command = settings["factory_command"]
+    if t.id == epic.id:  # the planner: the human's planner_model, when factory-command.json names one
+        from orch.dashboard.launch import with_model
+        command = with_model(command, settings.get("planner_model"))
     sid = fs.new_session_id()
     name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id
     argv = [*env_prefix(env_bin, bins), claude,

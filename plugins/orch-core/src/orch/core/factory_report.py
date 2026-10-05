@@ -23,6 +23,8 @@ Only while `factory.enabled` is on (as the permission cards), judged by the sign
 """
 from __future__ import annotations
 
+import re
+
 from orch.core import epics, evidence, permits, store
 
 FAILED_TRIES = 3  # signed send-backs of one child after which the factory counts as stuck on it
@@ -110,12 +112,75 @@ def _ready_state(ws, epic, entries, signed, events):
                      "where": [_text(r) for r in (t.meta.get("repos") or []) if isinstance(r, str)][:5]})
     return {"epic": epic.id, "title": _text(epic.title), "children": rows, "open": len(testing),
             "seen": epics.verdict_hash(testing, ws), "proven": sum(r["proven"] for r in rows),
-            "total": sum(r["total"] for r in rows)}, []
+            "total": sum(r["total"] for r in rows), "coverage": coverage(ws, epic, entries=entries)}, []
 
 
 def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
-    """The Ready report of factory epic `epic`, or None while it is not ready (or not verifiably so)."""
+    """The Ready report of factory epic `epic`, or None while it is not ready (or not verifiably so). It carries the
+    epic's `coverage` (what was asked against what the children's text mentions)."""
     return _ready_state(ws, epic, entries, signed, events)[0]
+
+
+# -- what the epic asked for against what its children mention ----------------------------------------------------------
+# Pure text, deterministic: the file names the epic's Requirements and Acceptance criteria name, and for each whether one
+# child's Requirements or Acceptance criteria mention it too. A mention is not a check that anything was built.
+_EXTS = ("html", "htm", "json", "csv", "tsv", "md", "txt", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "css", "scss",
+         "yaml", "yml", "toml", "xml", "svg", "png", "jpg", "jpeg", "gif", "webp", "pdf", "sh", "sql", "go", "rs", "rb",
+         "java", "kt", "swift", "c", "h", "cpp", "hpp", "php", "ini", "cfg", "ipynb", "vue", "svelte", "lua", "r")
+_BOUND = r"[\w./-]"
+_END = r"(?![\w/-]|\.\w)"  # a sentence's full stop may follow a name
+_FILE_RE = re.compile(rf"(?<!{_BOUND})(\w[\w./-]*\.(?:{'|'.join(_EXTS)})){_END}", re.I)
+_TICK_RE = re.compile(r"`([^`\s]{1,200})`")
+MAX_TOKENS = 50
+
+
+def named_files(text: str) -> list[str]:
+    """The concrete file names in `text`, in order and each once (casefolded): names with a known extension, and
+    anything in backticks that looks like a path (it holds a `/` or ends in a known extension)."""
+    out: list[str] = []
+    found = sorted([*_FILE_RE.finditer(text or ""), *_TICK_RE.finditer(text or "")], key=lambda m: m.start())
+    for m in found:
+        tok = m.group(1).rstrip(".,;:").casefold()
+        if (m.re is _TICK_RE and not ("/" in tok or _FILE_RE.fullmatch(tok))) or "://" in tok or tok.startswith("-"):
+            continue
+        if tok and tok not in out:
+            out.append(tok)
+    return out[:MAX_TOKENS]
+
+
+def _mentions(text: str, tok: str) -> bool:
+    return re.search(rf"(?<!{_BOUND}){re.escape(tok)}{_END}", (text or "").casefold()) is not None \
+        or f"`{tok}`" in (text or "").casefold()
+
+
+def coverage(ws, epic, *, entries=None) -> dict:
+    """{asked: [the epic's acceptance criteria lines], files: [named file names], covered: {name: [child ids that
+    mention it]}, uncovered: [names no child mentions], children: [{id, title, files}], readable: bool}. Text only,
+    never a claim that anything was built; a child that cannot be read leaves `readable` False."""
+    asked_text = f"{epic.section('Requirements')}\n{epic.section('Acceptance criteria')}"
+    files = named_files(asked_text)
+    asked = [_text(re.sub(r"^\s*[-*]\s*(\[[ xX]\]\s*)?", "", ln), 300)
+             for ln in epic.section("Acceptance criteria").splitlines() if ln.strip()][:30]
+    kids = _kids(ws, epic, entries)
+    rows, covered = [], {f: [] for f in files}
+    for _, t in kids or []:
+        text = f"{t.section('Requirements')}\n{t.section('Acceptance criteria')}"
+        mine = [f for f in files if _mentions(text, f)]
+        for f in mine:
+            covered[f].append(t.id)
+        rows.append({"id": t.id, "title": _text(t.title, 120), "files": mine})
+    return {"asked": asked, "files": files, "covered": covered, "uncovered": [f for f in files if not covered[f]],
+            "children": rows, "readable": kids is not None}
+
+
+def coverage_ok(ws, epic, *, entries=None) -> bool:
+    """True when every file name the epic names is mentioned in at least one child's Requirements or Acceptance
+    criteria (and every child could be read). Mentioned, not checked as built."""
+    try:
+        c = coverage(ws, epic, entries=entries)
+    except Exception:
+        return False
+    return c["readable"] and not c["uncovered"]
 
 
 def _ledger_cut_epic(kids) -> bool:

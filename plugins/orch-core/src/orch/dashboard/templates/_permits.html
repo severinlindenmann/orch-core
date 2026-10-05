@@ -47,6 +47,18 @@
   <div class="permit-head">{{ ui.status("ok", "Ready") }} <b id="fr-h-{{ r.epic }}">{{ r.title }}</b>
     {% if not here %}<a class="lnk key" href="/t/{{ r.epic }}#factory">{{ r.epic }}</a>{% endif %}</div>
   <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign. Nothing is closed until you give the verdict.</p>
+  {% set cv = r.coverage %}
+  {% if cv %}
+  <div class="factory-coverage" data-coverage="{{ 'ok' if cv.readable and not cv.uncovered else 'gap' }}">
+    <p class="muted">The epic asked for:</p>
+    <ul class="plain">{% for a in cv.asked %}<li>{{ a }}</li>{% endfor %}</ul>
+    {% if cv.files %}<p class="permit-meta">Named files: {{ cv.files|join(", ") }}</p>{% endif %}
+    <p class="muted">The children cover (mentioned in a child's text, not checked as built):</p>
+    <ul class="plain">{% for c in cv.children %}<li><span class="key">{{ c.id }}</span> {{ c.title }}{% if c.files %} · mentions {{ c.files|join(", ") }}{% endif %}</li>{% endfor %}</ul>
+    {% if cv.uncovered %}<p class="permit-meta" data-uncovered>{{ ui.status("warn", "Not covered") }} Not mentioned by any child: {{ cv.uncovered|join(", ") }}</p>{% endif %}
+    {% if not cv.readable %}<p class="permit-meta">{{ ui.status("warn", "Unreadable") }} A child could not be read, so what the children cover is not known.</p>{% endif %}
+  </div>
+  {% endif %}
   <ul class="plain factory-report">
     {% for c in r.children %}
     <li class="factory-child" data-child="{{ c.id }}">

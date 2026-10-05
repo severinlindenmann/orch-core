@@ -140,6 +140,18 @@ done`, or the epic page): it signs the epic's verdict hash, the hash of exactly 
 showed, and is refused if any of it changed since. The report never closes a child by itself, and an agent cannot
 give the verdict (D1: the verdict stays whole).
 
+**What was asked against what the children cover.** In a live run the epic asked for "one HTML file named
+elephants.html that reads a short data file elephants.json"; the planner made one child, "Design elephant chart
+component" (a schema and a mockup), and the Ready report still said every criterion cited evidence. So the report now
+opens with the epic's own acceptance criteria ("The epic asked for:"), the file names its Requirements and Acceptance
+criteria name, and per child the names its Requirements or Acceptance criteria mention ("The children cover"). A
+name no child mentions is a warning: "Not mentioned by any child: elephants.html, elephants.json". This is a text
+check and says so: a name counts when it appears in a child's text, which is not a check that anything was built.
+File names are words ending in a known extension (`.html`, `.json`, `.csv`, `.py`, ...) and anything in backticks that
+holds a `/` or such an extension, compared without case and as whole names (`out.csv` is not covered by `about.csv` or
+`out.csv.bak`). `factory_report.coverage_ok` (True when no named file is uncovered and every child could be read) is
+there for a later automatic close; nothing reads it yet.
+
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:
 
@@ -219,7 +231,12 @@ change the Dark profile, or approve the epic again.
 
 **The planner.** An armed, active factory epic that has no child at all (in any status) gets one planner session, under
 the same gates as a child's session (the factory on, the user-scope settings below, the budget not used up, not
-paused, edited or suspended, tmux and the programs found) and taking one of the concurrency slots. It is bound like a
+paused, edited or suspended, tmux and the programs found) and taking one of the concurrency slots. Before it creates a
+child its prompt has it list every concrete deliverable the epic names (each file by its exact name and extension,
+each format and behaviour) in the epic's log, then create at least one child per deliverable and one deliverable per
+child, with that file name in the child's Acceptance criteria; no design, spec, mockup or research child unless the
+epic asks for a design, no placeholder child, sizes xs, s or m. The planner can run a stronger model than the work
+sessions: `planner_model` in `factory-command.json` (see "The launch command"). It is bound like a
 child's session (a random session id, the binding written before the start, trusted only for the recorded process,
 the checkout and start folder recorded); its binding names the epic itself as its child, so the permission hook gives
 it that epic's grants, Dark profile and refusals. It starts in the workspace root. Its prompt is built in, like the
@@ -465,6 +482,12 @@ required), and optionally `--model`, `--verbose` and `--permission-mode` default
 refused and the default used (settings, MCP or plugin sources, extra folders, agents, tool allowances, permission modes
 that skip prompts): the hook stays the only gate. Run the agents in a permission mode that does not prompt for file
 edits by setting it in your user settings, not in this command.
+
+The file may also hold `"planner_model": "<model>"` (checked like `--model`'s value: a letter or digit, then letters,
+digits, `.`, `_`, `-`, `[`, `]`, at most 64 characters). The planner session then runs `--model <planner_model>` in
+place of the command's own `--model` (added before `{prompt}` when the command has none); children keep the command's
+model. Any other key, or a planner model that is not such a name, makes the whole file damaged: the default command and
+no planner model.
 
 **Worktrees are written by agents.** The launched session ignores the settings and MCP servers a worktree carries
 (user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a

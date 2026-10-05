@@ -77,21 +77,57 @@ def factory_path() -> Path:
 def load_factory_command() -> tuple[list[str], str | None]:
     """(argv, error): the runner's launch command from factory.json, or the default and a sentence when the file is
     damaged or names a self-granting command. A missing file is the default. Never raises."""
+    argv, _, why = _load_factory_file()
+    return argv, why
+
+
+def load_planner_model() -> str | None:
+    """The optional `planner_model` of factory-command.json (a plain model name, checked like --model's value), or
+    None: unset, or the file is damaged (then the default command and no planner model). Never raises."""
+    return _load_factory_file()[1]
+
+
+def _load_factory_file() -> tuple[list[str], str | None, str | None]:
+    """(argv, planner model, error) from {"command": [...], "planner_model": "..."} (planner_model optional)."""
     try:
         raw = factory_path().read_bytes()
     except FileNotFoundError:
-        return list(DEFAULT_FACTORY_COMMAND), None
+        return list(DEFAULT_FACTORY_COMMAND), None, None
     except OSError as e:
-        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} cannot be read ({e.strerror or e}); using the default"
+        return (list(DEFAULT_FACTORY_COMMAND), None,
+                f"{factory_path()} cannot be read ({e.strerror or e}); using the default")
     try:
         data = json.loads(raw.decode("utf-8"))
-        argv = data.get("command") if isinstance(data, dict) and set(data) == {"command"} else None
+        ok = isinstance(data, dict) and "command" in data and set(data) <= {"command", "planner_model"}
+        argv = data.get("command") if ok else None
     except (ValueError, UnicodeDecodeError):
-        argv = None
+        data, argv = None, None
     why = factory_command_error(argv)
+    model = data.get("planner_model") if argv is not None else None
+    if not why and model is not None and not (isinstance(model, str) and _FACTORY_MODEL.fullmatch(model)):
+        why = "planner_model is not a model name"
     if why:
-        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} is ignored: {why}; using the default"
-    return list(argv), None
+        return list(DEFAULT_FACTORY_COMMAND), None, f"{factory_path()} is ignored: {why}; using the default"
+    return list(argv), model, None
+
+
+def with_model(argv: list[str], model: str | None) -> list[str]:
+    """`argv` (a checked launch command) running `model` instead of its own --model (added before {prompt} when it has
+    none); `argv` unchanged for no model or one that is not a plain model name."""
+    if not (isinstance(model, str) and _FACTORY_MODEL.fullmatch(model)):
+        return list(argv)
+    out, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--model":
+            i += 2
+            continue
+        if a.startswith("--model="):
+            i += 1
+            continue
+        out.append(a)
+        i += 1
+    return [*out[:-1], "--model", model, out[-1]]
 
 
 def factory_command_error(argv) -> str | None:
@@ -161,7 +197,8 @@ def _argv_list(value) -> bool:
 
 
 def load_settings() -> dict:
-    return {**_load_launch_settings(), "factory_command": load_factory_command()[0]}
+    argv, model, _ = _load_factory_file()
+    return {**_load_launch_settings(), "factory_command": argv, "planner_model": model}
 
 
 def _load_launch_settings() -> dict:

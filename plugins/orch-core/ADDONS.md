@@ -142,7 +142,7 @@ Fields from `settings_schema` appear on Workspace & addons and are saved per wor
 
 ## Actions and pending decisions
 
-An action changes something outside orch (rerun failed checks, mark a PR ready). Declare it in the manifest and show it with `Action(id, label, target)`. orch renders a button that asks in an in-page dialog (a confirm page without JS; never a browser popup), calls `act(action_id, target, ctx)` only from a human POST (`target` at most 500 characters), and logs an `addon.action` event. A **PendingDecision** `(id, title, body, ticket, stale, choices, role, anchor=None)` appears under "From addons" on Today: title at most 200 characters, body at most 2000, at most 6 choices with labels of at most 80. When the human picks a choice, orch calls `resolve(id, choice, ctx)` and logs an `addon.decision` event. Mark stale items `stale=True`, and orch then refuses Apply.
+An action changes something outside orch (rerun failed checks, mark a PR ready). Declare it in the manifest and show it with `Action(id, label, target)`. orch renders a button that asks in an in-page dialog (a confirm page without JS; never a browser popup), calls `act(action_id, target, ctx)` only from a human POST (`target` at most 500 characters), and logs an `addon.action` event. A **PendingDecision** `(id, title, body, ticket, stale, choices, role, anchor=None, origin=None)` appears under "From addons" on Today: title at most 200 characters, body at most 2000, at most 6 choices with labels of at most 80. When the human picks a choice, orch calls `resolve(id, choice, ctx)` and logs an `addon.decision` event (with `origin`, a short text such as `phone`, when the item sets one). Mark stale items `stale=True`, and orch then refuses Apply.
 
 ### Decisions and intents
 

@@ -52,10 +52,10 @@ def test_no_open_textarea_no_popup_no_chart(dash, put, aops):
     assert "Request changes…</summary>" in html and "Send back…</summary>" in html
 
 
-def test_answer_card_numbers_options_and_folds_another_answer(dash, put):
+def test_answer_card_names_options_by_key_and_folds_another_answer(dash, put):
     tid = put("waiting", questions=[_q()])
     html = dash.get("/").text
-    assert '<span class="opt-n">1</span> · dev</button> <span class="chip chip-ok"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg> recommended</span>' in html
+    assert '<span class="opt-n">A</span> · dev</button> <span class="chip chip-ok"><svg class="i" aria-hidden="true"><use href="#i-ok"/></svg> recommended</span>' in html
     assert 'data-option="2"' in html and "Write another answer…</summary>" in html
     assert f'data-delayed-send="Sending your answer to {tid}"' in html
 

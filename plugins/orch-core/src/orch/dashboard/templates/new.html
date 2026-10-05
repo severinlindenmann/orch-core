@@ -9,12 +9,8 @@
 </div>
 {% if problem %}<p class="flash err" role="alert">{{ problem }}</p>{% endif %}
 <div class="grid-2">
-  {#- What you write comes first (title, then the ask and its screenshots); type, priority, size and an external key
-      have defaults and fold away under Details, which opens by itself after an error or when a value is not the
-      default. The summary names the current choices, so nothing is hidden. -#}
-  {% set defaults = {"type": "feature", "priority": "normal", "size": "m"} %}
-  {% set changed = problem or values.get("external") or values.get("type") != defaults.type
-                   or values.get("priority") != defaults.priority or values.get("size") != defaults.size %}
+  {#- What you write comes first (title, then the ask and its screenshots), then the triage details, always shown:
+      a human who files a ticket here is usually triaging it (agents file most tickets themselves). -#}
   <form class="card form-card new-ticket" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files">
     <label class="field-col" for="title">Title
       <input id="title" name="title" value="{{ values.get('title', '') }}" required placeholder="e.g. Nightly backup of the config tables">
@@ -29,9 +25,8 @@
       <input id="files" type="file" name="files" multiple>
       <p id="paste-count" class="field-hint" aria-live="polite"></p>
     </div>
-    <details class="new-details"{% if changed %} open{% endif %}>
-      <summary><span class="new-details-h">Details</span>
-        <span class="muted">{{ values.get('type', 'feature')|capitalize }} · {{ values.get('priority', 'normal')|capitalize }} priority · size {{ values.get('size', 'm')|upper }}{% if values.get('external') %} · {{ values.get('external') }}{% endif %}</span></summary>
+    <section class="new-details" aria-labelledby="new-details-h">
+      <h2 class="new-details-h" id="new-details-h">Details</h2>
       <div class="new-details-body">
         <fieldset class="seg">
           <legend>Type</legend>
@@ -58,7 +53,7 @@
         {% set opts = ticket_options() %}
         {% if opts %}<fieldset class="ticket-options"><legend>From your addons</legend>{{ ui.option_fields(opts) }}</fieldset>{% endif %}
       </div>
-    </details>
+    </section>
     <div class="new-submit">
       <button type="submit" class="btn btn-primary">Create ticket</button>
       <span class="muted">It goes to backlog.</span>

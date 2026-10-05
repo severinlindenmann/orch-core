@@ -128,12 +128,10 @@ def test_dashboard_close_dialog_opens_without_js_from_the_menu_link(dash, put):
     assert 'id="close-dialog" aria-labelledby="close-dialog-title" open>' in dash.get(f"/t/{tid}?act=close").text
 
 
-def test_new_ticket_puts_the_ask_first_and_folds_the_defaults(dash):
+def test_new_ticket_puts_the_ask_first_and_shows_the_triage_details(dash):
     html = dash.get("/new").text
     assert html.index('id="ask"') < html.index('id="files"') < html.index('class="new-details"') < html.index('name="type"')
-    assert '<details class="new-details">' in html and "Feature · Normal priority · size M" in html
-    r = dash.post("/new", data={"title": "  ", "type": "bug"})
-    assert '<details class="new-details" open>' in r.text  # an error, or a value that is not the default, shows them
+    assert '<details class="new-details"' not in html  # always shown: a human filing a ticket here is triaging it
 
 
 def test_dashboard_reopen_clears_the_resolution(dash, ws, put, hops):

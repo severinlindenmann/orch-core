@@ -15,6 +15,7 @@ dashboard = [
     "watchfiles>=0.21",
     "python-multipart>=0.0.9",
     "segno>=1.6",
+    "cryptography>=42",  # Orch Remote's bridge (orch.remote.bridge_host), imported only when the bridge is used
 ]
 dev = ["pytest>=8", "httpx>=0.27"]
 

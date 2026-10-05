@@ -13,6 +13,10 @@ def test_core_has_no_tix_code():
             if p.name == "permits.py" and p.parent.name == "core":
                 # git's push flag in the AI Factory's never-grantable list, not TIX code: only that exact token
                 text = re.sub(r"--mirror\b", "", text)
+            if p.parent.name == "bridge_host" and p.parent.parent.name == "remote":
+                # the bridge protocol's fixed key-derivation and signature labels, which must be these exact bytes;
+                # only the bytes literals themselves, so prose and names are still checked
+                text = re.sub(r'b"sharing/bridge/[a-z-]+/v1\|?"', "", text)
             hit = banned.search(text)
             assert hit is None, f"{hit.group(0)!r} in {p.relative_to(ROOT)}"
 

@@ -638,9 +638,10 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # The approval ledger and its signing key (orch.core.ledger), in the orch config dir: the human's record of approvals.
 # Agents never read or write them, by any tool; best effort for Bash, as for the pairing keys.
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
-# grant) are protected the same way: removing a marker would revive a used grant.
+# grant) are protected the same way: removing a marker would revive a used grant. So are the Orch Remote bridge's
+# records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
@@ -1119,7 +1120,37 @@ def _key_check_candidates(cmd: str) -> list[str]:
     resolved = _resolve_vars(cmd)
     resolved = _ECHO_SUB.sub(lambda m: m.group(1) if m.group(1) is not None else m.group(2), resolved)
     normalised = _strip_quotes_and_escapes(resolved)
-    return [cmd] + _expand_braces(normalised)
+    out = [cmd] + _expand_braces(normalised)
+    # what the shell itself turns the text into first: line continuations joined, $'...' strings decoded
+    shell = _ansi_c(re.sub(r"\\\r?\n", "", cmd))
+    if shell != cmd:
+        out += [shell] + _expand_braces(_strip_quotes_and_escapes(_resolve_vars(shell)))
+    return out
+
+
+_ANSI_C = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.S)
+
+
+def _ansi_c(cmd: str) -> str:
+    """`cmd` with every bash ANSI-C string ($'...') replaced by its decoded content (\\xHH, octal, \\u, \\n, ...)."""
+    import codecs
+
+    def dec(m):
+        try:
+            return codecs.decode(m.group(1).encode("latin-1", "backslashreplace"), "unicode_escape")
+        except (UnicodeError, ValueError):
+            return m.group(1)
+    return _ANSI_C.sub(dec, cmd)
+
+
+def _braces_over_budget(cmd: str, budget: int = 32) -> bool:
+    """More brace expansions than _expand_braces follows: the words it leaves out are unknown to the checks."""
+    total = 1
+    for m in re.finditer(r"\{([^{}]*,[^{}]*)\}", cmd):
+        total *= len(m.group(1).split(","))
+        if total > budget:
+            return True
+    return False
 
 
 def _config_paths() -> tuple[set[str], set[str]]:
@@ -1348,23 +1379,142 @@ def _ledger_path_closed(raw: str, cwd=None) -> bool:
         return True
 
 
-def _filter_could_reach_ledger(pattern: str) -> bool:
-    """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`)."""
+_HEX32 = "0123456789abcdef" * 2
+# Sample paths, below the config dir, of every record kind in the permits folder: a filter with several components
+# is judged against these whole paths, so `*/bridge/*/registry.json` from the config dir is seen to reach one.
+_PERMIT_SAMPLES = tuple("permits/" + s for s in (
+    "requests/P-0123ABCD.json", "used/0123456789abcdef", "sessions/x.json", "armed/x", "runs/x", "children/x",
+    "factory-command.json", "tmux/x", f"bridge/{_HEX32}/registry.json", f"bridge/{_HEX32}/host-key.pem",
+    f"bridge/{_HEX32}/audit.jsonl", f"bridge/{_HEX32}/requests/{_HEX32}.json", f"bridge/{_HEX32}/seq/{_HEX32}.json"))
+
+
+def _filter_could_reach_ledger_unsafe(pattern: str, root=None) -> bool:
+    """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`) or the
+    permit records beside them (the AI Factory's and the remote bridge's). `root` is where the filter is applied."""
     import fnmatch
     if (not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower()
             or "permits" in pattern.lower()):
         return True
-    name = pattern.rsplit("/", 1)[-1]
-    # the ledger files and the shapes of the permit records (a request body, a once-use marker)
-    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "P-0123ABCD.json", "0123456789abcdef"))
+    if "/" in pattern.strip("/"):
+        prefixes = {""}
+        if root:  # where the config dir sits below the root, compared as the file system does (case, links)
+            dirs, _ = _config_keys()
+            for r in {_path_key(str(root)), _path_key(os.path.realpath(root))}:
+                prefixes |= {d[len(r):].strip("/") + "/" for d in dirs if d.startswith(r.rstrip("/") + "/")}
+        if any(fnmatch.fnmatch((p.lstrip("/") + s).lower(), pattern.strip("/").lower())
+               for p in prefixes for s in _PERMIT_SAMPLES):
+            return True
+    name = pattern.rsplit("/", 1)[-1].lower()
+    # the ledger files and the shapes of the permit records (a request body, a once-use marker, the bridge's files)
+    return any(fnmatch.fnmatch(n, name) for n in ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "p-0123abcd.json", "0123456789abcdef",
+                                                   "registry.json", "host-key.pem", "audit.jsonl", f"{_HEX32}.json"))
 
 
 def _bash_reaches_ledger(cmd: str) -> bool:
     from orch.core import ledger
-    if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
+    candidates = _key_check_candidates(cmd)
+    if any(_LEDGER.search(c) for c in candidates):
         return True
+    if _braces_over_budget(cmd) and any(re.search(r"(?i)permits|ledger", c) for c in candidates):
+        return True  # past the expansion cap: refuse rather than judge only some of the words
     base = str(ledger.base_dir())
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
+
+
+def _path_key(p: str) -> str:
+    """A path as compared here: separators collapsed, `.` and `..` resolved as text, Unicode NFC and case folded
+    (the default macOS and Windows file systems ignore case, so the guard must too)."""
+    import unicodedata
+    p = re.sub(r"[/\\]+", "/", p)
+    return unicodedata.normalize("NFC", os.path.normpath(p)).casefold()
+
+
+def _config_keys() -> tuple[set[str], set[str]]:
+    """(the orch config dirs, every directory above them) as _path_key strings, raw and resolved spelling."""
+    from orch.core import ledger
+    dirs: set[str] = set()
+    for d in {ledger.base_dir(), *_user_config_dirs()}:
+        for spelled in (str(d), os.path.realpath(d)):
+            dirs.add(_path_key(spelled))
+    above = {_path_key(str(a)) for d in dirs for a in Path(d).parents}
+    return dirs, above
+
+
+def _key_reaches_config(key: str, dirs: set[str], above: set[str]) -> bool:
+    """`key` is a config dir, inside one, or a directory above one (from where a relative name reaches it)."""
+    return key in dirs or key in above or any(key.startswith(d.rstrip("/") + "/") for d in dirs)
+
+
+def _root_reaches_config_unsafe(root) -> bool:
+    """A Grep/Glob root that is the config dir, inside it or above it, in any spelling (case, separators, links)."""
+    if root is None:
+        return False
+    if _is_config_dir_or_ancestor(Path(root)):
+        return True
+    dirs, above = _config_keys()
+    return any(_key_reaches_config(_path_key(s), dirs, above) for s in (str(root), os.path.realpath(root)))
+
+
+_JOIN_WORDS_MAX = 512
+
+
+def _bash_joins_permits_unsafe(cmd: str, cwd=None) -> bool:
+    """The config dir (or a directory above it, or the cwd being one) named anywhere together with the permits
+    folder anywhere: an interpreter can join the two (a path built from separate words), which no pattern over a
+    written path sees. Every path-like word is judged as the system would resolve it: variables assigned in the
+    command, `~`, relative to the cwd, `.` and `..`, doubled separators, links and case. Best effort: text that
+    spells neither the folder nor a path to the config dir plainly is beyond any text guard."""
+    texts = [cmd, _ansi_c(re.sub(r"\\\r?\n", "", cmd))]  # as written, and as the shell reads it first
+    if not any(re.search(r"(?i)\bpermits\b", t) for t in texts):
+        return False
+    if any(re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", t) for t in texts):
+        return True
+    dirs, above = _config_keys()
+    start = str(cwd) if cwd else os.getcwd()
+    words = [w for t in texts for w in re.findall(r"[^\s'\"`;&|()<>,=+\[\]{}]+", _resolve_vars(t))
+             if os.path.expanduser(w).startswith(("/", ".", "\\"))]
+    if len(words) > _JOIN_WORDS_MAX:
+        return True  # too many paths to judge one by one: refuse, never judge only some of them
+    try:
+        if _key_reaches_config(_path_key(os.path.realpath(start)), dirs, above) or \
+                _key_reaches_config(_path_key(start), dirs, above):
+            return True
+        for word in words:
+            text = os.path.expanduser(word)
+            if not text.startswith(("/", ".", "\\")):
+                continue
+            full = text if os.path.isabs(text) else os.path.join(start, text)
+            for spelled in (re.sub(r"[/\\]+", "/", full), os.path.realpath(re.sub(r"[/\\]+", "/", full))):
+                if _key_reaches_config(_path_key(spelled), dirs, above):
+                    return True
+    except (OSError, RuntimeError, ValueError):
+        return True  # a path that cannot be resolved: fail closed
+    return False
+
+
+def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
+    """_filter_could_reach_ledger_unsafe; an error in it counts as reaching (fail closed)."""
+    try:
+        return _filter_could_reach_ledger_unsafe(pattern, root)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _root_reaches_config(root) -> bool:
+    """_root_reaches_config_unsafe; an error in it counts as reaching (fail closed)."""
+    try:
+        return _root_reaches_config_unsafe(root)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _bash_joins_permits(cmd: str, cwd=None) -> bool:
+    """_bash_joins_permits_unsafe; an error in it refuses a command that mentions the permits folder in any
+    spelling the shell may produce (fail closed)."""
+    try:
+        return _bash_joins_permits_unsafe(cmd, cwd)
+    except Exception:  # noqa: BLE001
+        return bool(re.search(r"(?i)permits", cmd + _ansi_c(re.sub(r"\\\r?\n", "", cmd))))
 
 
 def evaluate(ws, payload: dict) -> Decision:
@@ -1384,8 +1534,26 @@ def evaluate(ws, payload: dict) -> Decision:
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")
         type_ = str(tool_input.get("type") or "") if tool == "Grep" else ""
         safe_type = bool(type_) and type_ in _SAFE_RG_TYPES and not tool_input.get("glob")
-        if (root is not None and _is_config_dir_or_ancestor(root) and not safe_type
-                and _filter_could_reach_ledger(filt)):
+        if tool == "Glob" and filt:
+            # judged from the plain directory the pattern starts with (absolute, or relative to the root, `..`
+            # included), on the rest of the pattern; a `..` after the first wildcard can lead anywhere, and a start
+            # that cannot be resolved or an error here cannot be judged: refused
+            try:
+                full = os.path.expanduser(filt).replace("\\", "/")
+                head = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+                start = head if head.endswith("/") or head == full else head.rsplit("/", 1)[0] + "/" if "/" in head else ""
+                rest = full[len(start):]
+                if ".." in rest.split("/"):
+                    return Decision(False, _LEDGER_DENIED)
+                if start:
+                    root = _resolve_root(start if os.path.isabs(start) else os.path.join(str(root or cwd or "."), start))
+                    if root is None:
+                        return Decision(False, _LEDGER_DENIED)
+                    filt = rest or "*"
+            except Exception:  # noqa: BLE001
+                return Decision(False, _LEDGER_DENIED)
+        if (root is not None and _root_reaches_config(root) and not safe_type
+                and _filter_could_reach_ledger(filt, root)):
             return Decision(False, _LEDGER_DENIED)
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and _pairing_key_path(
             str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")):
@@ -1403,7 +1571,9 @@ def evaluate(ws, payload: dict) -> Decision:
     if tool == "Read" and _reaches_config_dir_recursively(tool_input.get("file_path"), None):
         return Decision(False, _CONFIG_SECRETS_DENIED)  # Read given a directory: some clients list it
     if tool == "Bash":
-        return _bash(ws, str(tool_input.get("command") or ""), cwd)
+        cmd = str(tool_input.get("command") or "")
+        d = _bash(ws, cmd, cwd)
+        return Decision(False, _LEDGER_DENIED) if d.allow and _bash_joins_permits(cmd, cwd) else d
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW

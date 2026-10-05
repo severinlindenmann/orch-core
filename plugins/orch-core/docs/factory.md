@@ -61,7 +61,8 @@ session:
   for permission P-n", so that child parks and the others go on;
 - an error, an unreadable ledger or anything unexpected never answers `allow`;
 - prompts for anything other than a shell command are denied, so run factory sessions in a permission mode that
-  does not prompt for file edits (accept edits, or auto mode).
+  does not prompt for file edits (accept edits; auto mode only for a model that has it, not Haiku);
+- tools that never prompt in that mode never reach the hook at all (see "outward tools" under "Readiness checks").
 
 A request's command text and reason are kept beside the ledger in your orch config dir, not in the repository; the
 event log only records that a request with that id and command hash was filed. A once grant's use is recorded there
@@ -660,9 +661,26 @@ verdict is yours, from the Ready report), and runner-side proof that tests ran o
 steps for those because no record of them exists. Merge and Dev steps appear only for a charter that signs a release
 (phase 6, below).
 
-What the test suite covers for the planner and the baseline, and what it does not: the runner, the binding, the hook
-and the dashboard states are tested with a stand-in launcher (no tmux, no agent), and the baseline against the CLI's
-real commands and the guard. No test runs a real Claude session through a planner or a child end to end.
+What the test suite covers for the planner and the baseline, and what it does not: the runner, the binding, the hook,
+the nudge, the readiness checks and the dashboard states are tested with a stand-in launcher and stand-in programs (no
+tmux, no agent), the baselines and the built-in prompts against the CLI's real commands, real git and the guard, and
+the prefix split against the real shells. No test runs a real Claude session through a planner or a child end to end.
+
+**What the live run showed (5 October), and what it did not.** One real run, with Claude Haiku sessions the runner
+started on a scratch workspace, went end to end: an epic from the New ticket page, a planner session that wrote two
+children and auto-approved them, a work session per child that wrote files and a commit, and a child that reached
+testing. It also showed the friction this round removes: the owner answered about 30 permission cards in 70 minutes,
+nearly all for harmless commands. Haiku chained commands (`a && b`), piped and redirected them (`| head`, `2>&1`),
+put parentheses in quoted `-m` text, used `--file`, needed `git add` and `git commit`, filed requests for commands the
+profile already allowed and then waited forever, and stopped at its prompt after each answer until someone typed into
+the pane. Its environment failed silently: no `uv` on the session PATH (so orch's hooks did nothing), a `claude`
+wrapper that exited at once, the trust dialog, auto mode that Haiku cannot use, no orch skills at user scope, and a
+child that published an artifact through a tool that never prompts. The fixes above (quote-aware matching, `--file`
+for orch, the git-basic baseline, the built-in worker prompt, no requests for allowed commands, the idle nudge, the
+readiness checks, the early-end notice, compound cards without the profile button, `prune`) are tested with stand-ins;
+no second live run has proved them yet. What remains likely: a model that ignores the prompt still chains or pipes
+commands, and each such command still stops for a card (by design: the matcher does not accept chains, pipes or
+redirects); the nudge depends on Claude Code's current screen markers.
 
 ## Release recipe (phase 6)
 
@@ -901,7 +919,7 @@ network) and a stand-in for the recipe's commands: no test runs a real `gh`, pus
 
 - A production stage; closing children under the charter (after a live test); release windows and rollback;
   runner-side proof of tests and review (and ring steps for them).
-- A live end-to-end test of a factory run, per child, with a real agent session.
+- A second live end-to-end run after this round's fixes, and a repeatable one per release.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).
 - Phone cards through the signed phone-decision flow.

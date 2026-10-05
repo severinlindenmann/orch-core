@@ -141,16 +141,17 @@
       {% if a.fields or a.settings_groups %}
       <details class="addon-settings" id="settings-{{ a.name }}-d">
         <summary class="btn btn-quiet">Settings</summary>
-        <form method="post" action="/workspace/addons/{{ a.name }}/settings" class="stack" aria-label="{{ a.title }} settings">
+        <form method="post" action="/workspace/addons/{{ a.name }}/settings" class="stack" aria-label="{{ a.title }} settings" id="settings-form-{{ a.name }}">
           {% for f in a.fields %}
             {% if f.type == "bool" %}<label class="check-row"><input type="checkbox" name="{{ f.key }}" value="1"{% if f.value %} checked{% endif %}> {{ f.label }}</label>
             {% elif f.type == "select" %}<label class="field-col">{{ f.label }} <select name="{{ f.key }}">{% for o in f.options %}<option value="{{ o }}"{% if o == f.value %} selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
             {% elif f.type == "map" %}<label class="field-col">{{ f.label }} <textarea name="{{ f.key }}" rows="4" placeholder="key = value">{{ f.value }}</textarea></label>
             {% else %}<label class="field-col">{{ f.label }} <input type="text" name="{{ f.key }}" value="{{ f.value }}"></label>{% endif %}
           {% endfor %}
-          {{ ui.slot(a.settings_groups) }}
-          {% if a.fields %}<button type="submit" class="btn btn-primary">Save settings</button>{% endif %}
         </form>
+        {# widgets may hold their own <form>s (Action buttons); forms cannot nest, so they live outside the settings form #}
+        {{ ui.slot(a.settings_groups) }}
+        {% if a.fields %}<button type="submit" form="settings-form-{{ a.name }}" class="btn btn-primary">Save settings</button>{% endif %}
       </details>
       {% endif %}
     </li>

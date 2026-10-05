@@ -73,7 +73,7 @@ def test_addon_row_has_a_switch_and_its_settings_in_a_disclosure(client, ws):
     settings = row[row.index('<details class="addon-settings"'):]
     assert '<summary class="btn btn-quiet">Settings</summary>' in settings
     assert '<label class="field-col">Repository to watch <input type="text" name="repo"' in settings
-    assert '<button type="submit" class="btn btn-primary">Save settings</button>' in settings
+    assert '<button type="submit" form="settings-form-alpha" class="btn btn-primary">Save settings</button>' in settings
     client.post("/workspace/addons/alpha/enable", data={"enabled": "1"}, headers=ORIGIN)
     assert 'role="switch" aria-checked="true"' in client.get("/workspace").text
 

@@ -487,3 +487,81 @@ def test_a_charter_verdict_without_its_close_record_is_a_warning(fws, closing, h
     fc._marker(fws, eid, d["id"], "outcome").unlink()
     assert ("warning", "charter-verdict-unbacked") in _findings(fws, eid)
     assert ("info", "charter-verdict") not in _findings(fws, eid)
+
+
+# -- round 2: the ledger, not agent-writable data, decides ---------------------------------------------------------
+
+def _closed_child(fws, closing, human):
+    eid, (c,), d = closing()
+    fc.tick(fws, human)
+    assert _epic(fws, c).status == "done"
+    assert ("info", "delegated-approval") in _findings(fws, c)  # the baseline these tests break
+    return eid, c, d
+
+
+def test_a_plan_edited_after_done_with_a_restamped_hash_and_a_forged_event_warns(fws, closing, human):
+    import json
+    from orch.core.gates import gate_hash
+    eid, c, _ = _closed_child(fws, closing, human)
+    path, t = store.load(fws, c)
+    t.set_section("Plan", "1. do something else entirely")
+    new = gate_hash(t, "plan")
+    t.meta["gates"]["plan"]["hash"] = new  # restamped by hand
+    store.save(fws, t, path)
+    old = next(e for e in read_events(fws) if e.kind == "gate.delegated" and e.ticket == c and e.data["gate"] == "plan")
+    line = {**json.loads(old.to_json()), "seq": old.seq + 10000, "data": {**old.data, "hash": new}}
+    with (fws.state_dir / "events.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(line) + "\n")  # a matching gate.delegated line appended
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_an_event_by_a_human_actor_does_not_count_as_a_delegated_approval(fws, closing, human):
+    eid, c, _ = _closed_child(fws, closing, human)
+
+    def humanize(ev):
+        for e in ev:
+            if e["kind"] == "gate.delegated" and e["ticket"] == c:
+                e["actor"] = "human:you"
+        return ev
+    _rewrite_events(fws, humanize)
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_hidden_characters_in_a_closed_child_keep_the_warning(fws, closing, human):
+    eid, c, _ = _closed_child(fws, closing, human)
+    path, t = store.load(fws, c)
+    t.meta["title"] = "child​ 0"
+    store.save(fws, t, path)
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_a_child_beyond_max_children_keeps_the_warning(fws, closing, human, monkeypatch):
+    eid, c, _ = _closed_child(fws, closing, human)
+    monkeypatch.setattr(epics, "delegated_children", lambda events, did: ["L-9998"] * 25 + [c])
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_an_old_verdict_without_signed_gate_hashes_keeps_the_warning(fws, closing, human, monkeypatch):
+    eid, c, _ = _closed_child(fws, closing, human)
+    real = ledger.entries
+    monkeypatch.setattr(ledger, "entries", lambda ws, *a, **k: [
+        {k2: v for k2, v in e.items() if not (e.get("kind") == "verdict" and k2 == "gates")}
+        for e in real(ws, *a, **k)])
+    assert ("warning", "unsigned-decision") in _findings(fws, c)
+
+
+def test_the_charter_verdict_comes_from_the_ledger_not_the_event_via(fws, closing, human):
+    eid, (c,), _ = closing()
+    fc.tick(fws, human)
+
+    def relabel(ev):
+        for e in ev:
+            if e["kind"] == "verdict.given" and e["ticket"] == eid:
+                e["via"] = "dashboard"
+        return ev
+    _rewrite_events(fws, relabel)
+    found = _findings(fws, eid)
+    assert ("info", "charter-verdict") in found and ("warning", "verdict-via-mismatch") in found
+    pytest.importorskip("fastapi")
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "The runner gave the done verdict by itself under your charter" in html  # from the ledger

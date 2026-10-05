@@ -54,17 +54,23 @@ def record(ws, epic_id: str, did: str) -> dict | None:
     return (fr._read(p) or {"closed": False, "why": "its record cannot be read"}) if os.path.lexists(p) else None
 
 
-def closed_by_charter(ws, epic, signed=None) -> bool:
-    """Whether the epic's newest signed status entry is a done verdict given under the charter (the ledger says so,
-    not an event or a ticket field)."""
+def charter_status(ws, ticket_id: str, signed=None) -> dict | None:
+    """The ticket's newest signed status entry when it is a done verdict given under a charter (via "dark-charter"),
+    else None. The one place that answers "was this done the charter's": from the signed ledger, never from an event
+    or a ticket field."""
     from orch.core import ledger
     try:
-        chain = ledger.status_chain(ws, epic.id, signed)
+        chain = ledger.status_chain(ws, str(ticket_id), signed)
     except Exception:
-        return False
+        return None
     last = chain[-1] if chain else {}
-    return epic.status == "done" and last.get("kind") == "verdict" and last.get("verdict") == "done" \
-        and last.get("via") == CHARTER_VIA
+    ok = last.get("kind") == "verdict" and last.get("verdict") == "done" and last.get("via") == CHARTER_VIA
+    return last if ok else None
+
+
+def closed_by_charter(ws, epic, signed=None) -> bool:
+    """Whether the epic is done by a verdict given under the charter (charter_status)."""
+    return epic.status == "done" and charter_status(ws, epic.id, signed) is not None
 
 
 def _b(code: str, text: str, pending: bool = False) -> dict:

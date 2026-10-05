@@ -393,15 +393,27 @@ def within_limits(child, d: dict) -> str | None:
     return None
 
 
-def _delegated_ok(ws, epic, child, gate: str, g: dict, signed, events, entries=None) -> bool:
+def _delegated_ok(ws, epic, child, gate: str, g: dict, signed, events, entries=None, *, ended: bool = False) -> bool:
     """A delegated approval the agent may proceed on: the signed delegation is current (the epic unchanged); it is
     active, or it was paused and the signed pause kept this child with this hash; the child is within the limits,
     was created by an agent, was never in a charter, holds no hidden characters, its `gate.delegated` event matches,
-    and it is among the first `max_children` the delegation approved (events and frontmatter both counted)."""
+    and it is among the first `max_children` the delegation approved (events and frontmatter both counted).
+    `ended` (orch check, for a child whose own done verdict is signed): the same audit with only "the delegation is
+    active and unpaused" relaxed; the epic's text must still hash as the charter signed it (its done status aside)."""
     d = delegation(ws, epic, signed)
-    if not d or d["epic_changed"] or g.get("delegation") != d["id"] or within_limits(child, d):
+    if not d or g.get("delegation") != d["id"] or within_limits(child, d):
         return False
-    if d["paused"]:
+    if ended:
+        entry = latest_charter(ws, epic.id, signed)
+        try:
+            v = int((entry or {}).get("hash_v") or 1)
+        except (TypeError, ValueError):
+            return False
+        if not entry or entry.get("epic_hash") != gate_hash(epic, "requirements", v):
+            return False
+    elif d["epic_changed"]:
+        return False
+    if d["paused"] and not ended:
         kept = next((k for k in d["kept"] if k.get("id") == child.id), None)
         if kept is None or kept.get(gate) != g.get("hash"):
             return False  # the pause stops every auto-approval it did not keep

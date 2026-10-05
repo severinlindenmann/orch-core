@@ -145,8 +145,6 @@ def action_phrase(event) -> str:
 
 def who(event) -> str:
     actor = event.actor
-    if getattr(event, "via", None) == "dark-charter":  # the runner, under a Dark charter that signs close
-        return "the runner under your charter"
     if actor.startswith("human:"):
         return "you"
     if actor.startswith("agent:"):
@@ -275,8 +273,6 @@ _PHONE_LABEL = re.compile(r"^phone:([A-Za-z0-9 ._-]{1,40})$")
 def via_label(via) -> str:
     """How a decision's `via` reads on the page: "from your phone (iPhone)" for a paired phone, else as stored."""
     m = _PHONE_LABEL.match(str(via or ""))
-    if str(via or "") == "dark-charter":
-        return "by itself under your Dark charter"
     return f"from your phone ({m.group(1)})" if m else str(via or "")
 
 

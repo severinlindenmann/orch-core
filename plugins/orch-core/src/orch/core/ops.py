@@ -1458,8 +1458,13 @@ class Ops(TaskOpsMixin):
             t.meta["status"] = to
             t.meta.setdefault("gates", {})["verify"] = {"verdict": verdict, "at": stamp(), "via": self.actor.via,
                                                            "hash": seen}
+            # the gate hashes the ticket holds at its verdict, signed with it: what `orch check` later trusts as the
+            # approvals this done was given on (ticket frontmatter alone is agent-writable)
+            sealed = {gt: (t.meta.get("gates") or {}).get(gt, {}).get("hash") for gt in GATE_SECTIONS
+                      if isinstance((t.meta.get("gates") or {}).get(gt), dict)
+                      and (t.meta.get("gates") or {}).get(gt, {}).get("hash")}
             self._ledger(t, "verdict", verdict=verdict, verify_at=t.meta["gates"]["verify"]["at"],
-                         verdict_hash=seen, **(charter or {}))
+                         verdict_hash=seen, gates=sealed, **(charter or {}))
             if to == "done":
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
             self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))

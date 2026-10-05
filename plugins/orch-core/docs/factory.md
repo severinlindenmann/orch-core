@@ -1141,9 +1141,15 @@ finding "charter-verdict": a decision you delegated in that charter, not one you
 itself under your charter", with the time, a summary of what was proven and a Reopen button) all show it was the
 charter's. The signed verdict entries and `verdict.auto` name the charter's delegation id, and `orch check` judges
 the close against that charter (not the epic's current one) and the runner's close record: a verdict marked so without
-a charter that signs `close`, or without the record, is a warning ("charter-verdict-unbacked"). The children's
-approvals an agent gave under that delegation stay info findings ("delegated-approval"), not unsigned decisions, after
-the delegation ended.
+a charter that signs `close`, or without the record, is a warning ("charter-verdict-unbacked"). Whether a done was the
+charter's is read from the signed ledger entry, never from the event log's `via`; when the two disagree `orch check`
+warns ("verdict-via-mismatch") and the ledger counts. Every done verdict (yours or the charter's) also signs the gate
+hashes the ticket holds at that moment. After the verdict, a child's approval an agent gave under the epic's delegation
+stays an info finding ("delegated-approval") only when that signed done verdict carries the same gate hash the ticket
+holds now and the approval passes the same audit as a live delegated approval (an agent's matching event, created by
+an agent, never in a charter, no hidden characters, within the limits and the first max children, the epic's text as
+signed), with only "the delegation is still active" relaxed. Anything less, and every verdict signed before gate
+hashes were signed, keeps the "unsigned-decision" warning.
 
 **Once.** Before it acts the runner creates an intent record for that charter exclusively (in the guarded release
 records, `close.<delegation>.intent`), then an outcome record. So it closes at most once per charter: never again after

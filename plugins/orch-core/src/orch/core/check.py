@@ -276,24 +276,32 @@ def _charter_verdict(ws, t, event, signed) -> Finding:
                    "signs closing by itself backs it (or the runner's close record is missing): review it")
 
 
-def _ended_delegation(ws, t, entry, event, g, signed, events) -> bool:
-    """Whether an unverified gate of `t` is the approval an agent gave under a delegation that has ended with the
-    child's own signed done verdict: the child is done and that done is verified in the ledger; the `gate.delegated`
-    event matches the gate (hash and delegation, _delegated_event); the event names the child's own epic (by ticket
-    id, as epics.parent_epic resolves it); and the ledger holds that epic's signed charter with exactly that
-    delegation. Event data is agent-writable, so every part of it is checked against the ledger and the ticket."""
+def _ended_delegation(ws, t, entry, event, gate, g, signed, events) -> bool:
+    """Whether an unverified gate of done child `t` is the approval an agent gave under a delegation that ended with
+    the child's own signed done verdict. The anchor is the ledger: the child's newest signed status entry is that done
+    verdict (verified, chained) and it signed the gate's hash at verdict time (`gates`), which must equal the hash the
+    ticket holds now. Then the same audit as a live delegated approval (epics._delegated_ok: an agent's matching
+    event, created by an agent, never in a charter, no hidden characters, within the limits and the first
+    max_children, the epic's text as signed), with only "the delegation is still active and unpaused" relaxed. A
+    verdict signed before gate hashes were signed has no anchor: the warning stays."""
     from orch.core import epics
-    if entry.status != "done" or event is None or not g.get("delegation"):
+    if entry.status != "done" or event is None or not g.get("delegation") or not g.get("hash"):
         return False
-    if event.data.get("delegation") != g.get("delegation"):
+    if not str(event.actor).startswith("agent:"):
+        return False
+    chain = ledger.status_chain(ws, t.id, signed)
+    last = chain[-1] if chain else {}
+    if last.get("kind") != "verdict" or last.get("verdict") != "done":
+        return False
+    if ledger.done_verification(ws, t, closed=False, signed=signed, events=events) != "verified":
+        return False
+    sealed = last.get("gates")
+    if not isinstance(sealed, dict) or sealed.get(gate) != g.get("hash"):
         return False
     epic = epics.parent_epic(ws, t)
     if epic is None or str(event.data.get("epic") or "").upper() != epic.id.upper():
         return False
-    if ledger.done_verification(ws, t, closed=False, signed=signed, events=events) != "verified":
-        return False
-    return any(e.get("kind") == "charter" and e.get("ticket") == epic.id and e.get("delegation") == g["delegation"]
-               and isinstance(e.get("delegate"), dict) for e in signed)
+    return epics._delegated_ok(ws, epic, t, gate, g, signed, events, ended=True)
 
 
 def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> list[Finding]:
@@ -315,8 +323,8 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
             out.append(Finding("info", "delegated-approval", tid,
                                f"the {gate} was auto-approved by {delegated.actor} under the delegation of epic "
                                f"{delegated.data.get('epic')} at {delegated.at} (not a human decision)"))
-        if verification == "unverified" and approval is delegated and _ended_delegation(ws, t, entry, delegated, g,
-                                                                                    signed, events):
+        if verification == "unverified" and approval is delegated and _ended_delegation(ws, t, entry, delegated, gate,
+                                                                                    g, signed, events):
             # a done child's approval an agent gave under a delegation the human signed for its own epic, which
             # ended with the verdict: still that delegated decision, not an unsigned one. Anything less (an open
             # child, no such event, another epic's event, an unsigned charter, an unsigned done) keeps the warning.
@@ -355,8 +363,18 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
         if not (last and last.kind == "verdict.given" and _is_human(last)
                 and last.data.get("verdict") == "done" and last.data.get("to") == "done"):
             out.append(Finding("error", "unverified-verdict", tid, "ticket is done but its last recorded status change is not a human done verdict"))
-        elif last.via == "dark-charter":  # orch.core.factory_close.CHARTER_VIA
-            out.append(_charter_verdict(ws, t, last, signed))
+        else:
+            # whether this done was the charter's is the signed ledger's to say, never the event's `via`
+            from orch.core import factory_close
+            sealed = factory_close.charter_status(ws, tid, signed)
+            if sealed is not None:
+                out.append(_charter_verdict(ws, t, last, signed))
+            if (sealed is not None) != (last.via == factory_close.CHARTER_VIA):
+                out.append(Finding("warning", "verdict-via-mismatch", tid,
+                                   f"the event log says the done verdict came via {last.via!r}, but the signed ledger "
+                                   + ("says it was given under a Dark charter" if sealed is not None
+                                      else "does not say it was given under a Dark charter")
+                                   + ": the event log was changed; the ledger counts"))
     for q in t.meta.get("questions") or []:
         if q.get("answer") in (None, ""):
             continue

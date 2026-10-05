@@ -358,17 +358,21 @@ _LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "
                "verdict.auto": "closed the epic by itself under your charter"}
 
 
-def _epic_events(events, ids) -> list[dict]:
+def _epic_events(events, ids, charter_closed=frozenset()) -> list[dict]:
     """The read-only log in plain words: time, ticket, who (you or an agent) and a fixed phrase per event kind
     (timeline.action_phrase). Event data (command text, hashes, grant ids, notes) and agent session ids never reach
     the page."""
     from orch.dashboard.data.timeline import action_phrase
     keep = {i.upper() for i in ids}
+    # whether a done was the charter's comes from the signed ledger (`charter_closed`: the tickets whose newest signed
+    # status entry is a charter verdict), never from an event's `via`: only their last verdict event is the runner's
+    last_verdict = {e.ticket: e.seq for e in events if e.kind == "verdict.given"}
     rows = []
     for e in events:
         if not e.ticket or str(e.ticket).upper() not in keep:
             continue
-        charter = e.via == "dark-charter"  # the runner's close under a charter that signs it (factory_close)
+        charter = e.ticket in charter_closed and (
+            e.kind == "verdict.auto" or (e.kind == "verdict.given" and last_verdict.get(e.ticket) == e.seq))
         who = ("The runner" if e.kind == "release.stage" or charter  # the dashboard's own round, on your behalf
                else "You" if str(e.actor).startswith("human") else "An agent")
         phrase = ("gave the done verdict by itself under your charter" if charter and e.kind == "verdict.given"
@@ -435,7 +439,9 @@ def run_view(ws, epic) -> dict | None:
     view = permit_view(ws)
     r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
                    blocker=_blocker(ws), bound=_bound(ws), checks=_checks(ws))
-    r["log"] = _epic_events(events, [epic.id] + [t.id for _, t in r["kids"]])
+    from orch.core import factory_close
+    ids = [epic.id] + [t.id for _, t in r["kids"]]
+    r["log"] = _epic_events(events, ids, frozenset(i for i in ids if factory_close.charter_status(ws, i, signed)))
     r["profile_empty"] = r["look_dark"] and r["state"] != "finished" and not dark_profile.rules(ws, signed)
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
     if r["state"] == "finished":

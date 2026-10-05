@@ -41,6 +41,15 @@ def _factory_pane_pid(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _factory_ready(monkeypatch):
+    """The runner's readiness checks run real programs (claude --version, the hooks) and read the user's Claude files:
+    tests pass them unless they test them (tests/test_factory_readiness.py)."""
+    import orch.core.factory_runner as fr
+    monkeypatch.setattr(fr, "readiness", lambda ws, settings, environ=None: [])
+    fr._READY.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_real_launch(monkeypatch, tmp_path_factory, _clean_env):
     """Start agent must never open a real terminal from a test: Popen in orch.dashboard.launch
     raises unless the test patches it itself (launch.subprocess is launch's own namespace, so

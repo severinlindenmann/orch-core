@@ -196,10 +196,11 @@ def _at(stamp):
         return None
 
 
-def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, bound=()) -> dict:
+def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, bound=(), checks=None) -> dict:
     """One factory epic as the run view and the list show it, from records only: {epic, title, dark, look_dark, state,
     role, rank, chip, headline, steps, current, step, hot, live, elapsed, ...}. `view` is permit_view(ws) (all epics),
-    `blocker` factory_runner.user_settings_blocker() read once (it counts only for an armed epic), `bound` the live runner bindings of this workspace."""
+    `blocker` factory_runner.user_settings_blocker() read once (it counts only for an armed epic), `bound` the live runner
+    bindings of this workspace, `checks` the failing readiness checks of the runner's last run (never run here)."""
     from orch.core import factory_release, factory_runner, factory_sessions
     kids = factory_report._kids(ws, epic, entries)
     n = _steps(ws, epic, d, kids, signed, events, entries)
@@ -244,7 +245,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     elif not factory_sessions.armed(ws, d["id"]):
         state, headline = "unarmed", ("The dashboard's start did not arm it (for example, it was approved in a "
                                       "terminal)")
-    elif blocker:
+    elif blocker or any(c["level"] == "block" for c in checks or []):
         state, headline = "blocked", "The runner starts nothing"
     elif any(not factory_sessions.is_planner(b) for b in running):
         state, headline = "working", "Sessions are running on its children"
@@ -285,7 +286,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "arc": _arc(current, len(names)), "release": rel,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
-            "edits_off": factory_runner.edits_blocked(),
+            "edits_off": factory_runner.edits_why(), "checks": checks or [],
             "cap": factory_runner.concurrency(ws),
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
 
@@ -332,6 +333,12 @@ def _bound(ws) -> list[dict]:
         return []
 
 
+def _checks(ws) -> list[dict]:
+    """The failing readiness checks the runner found last (it runs them; a page only reads the result)."""
+    from orch.core import factory_runner
+    return factory_runner.readiness_report(ws) or []
+
+
 def _blocker():
     from orch.core import factory_runner
     return factory_runner.user_settings_blocker()
@@ -349,7 +356,7 @@ def run_view(ws, epic) -> dict | None:
         return None
     view = permit_view(ws)
     r = run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
-                   blocker=_blocker(), bound=_bound(ws))
+                   blocker=_blocker(), bound=_bound(ws), checks=_checks(ws))
     r["log"] = _epic_events(events, [epic.id] + [t.id for _, t in r["kids"]])
     r["profile_empty"] = r["look_dark"] and r["state"] != "finished" and not dark_profile.rules(ws, signed)
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
@@ -379,7 +386,7 @@ def factory_list(ws) -> list[dict] | None:
     from orch.core.events import read_events
     signed, events, entries = ledger.entries(ws), read_events(ws), store.scan(ws)
     view, out, bound = permit_view(ws), [], _bound(ws)
-    blocker = _blocker()  # read once for the whole list
+    blocker, checks = _blocker(), _checks(ws)  # read once for the whole list
     for e in entries:
         if e.meta is None or not epics.is_epic(e.meta):
             continue
@@ -390,7 +397,7 @@ def factory_list(ws) -> list[dict] | None:
         d = permits.factory_delegation(ws, epic, signed)
         if d is not None:
             out.append(run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
-                                  blocker=blocker, bound=bound))
+                                  blocker=blocker, bound=bound, checks=checks))
     return sorted(out, key=lambda r: (r["rank"], r["epic"]))
 
 

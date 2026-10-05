@@ -120,7 +120,7 @@
         <li>The runner starts a session for each child that is approved or covered by your charter. No permission prompts in the session: a command outside the Dark profile is denied and becomes a card here, with a button to add it to the profile.</li>
         <li>You still answer cards, larger children and the verdict. With Release up to Merge or Dev, the runner merges each child (and deploys dev) with the recipe on this machine once the epic is Ready; nothing releases to production. Nothing is closed by itself: you read the Ready report and sign the verdict.</li>
       </ol>
-      {% if edits_off %}<p class="muted only-factory" data-edits-off>Sessions started by the runner cannot write files unless your Claude permission mode allows edits. Set permissions.defaultMode to acceptEdits in your user settings, or the planner cannot create children.</p>{% endif %}
+      {% if edits_off %}<p class="muted only-factory" data-edits-off>Sessions started by the runner cannot write files unless your Claude permission mode allows edits. Set permissions.defaultMode to acceptEdits in your user settings, or the planner cannot create children. <span data-edits-why>Now: {{ edits_off }}.</span></p>{% endif %}
       {% endif %}
     </section>
   </aside>

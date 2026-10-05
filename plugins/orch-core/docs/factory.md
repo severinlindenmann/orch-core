@@ -274,6 +274,34 @@ orch-core plugin there, or carry the orch guard and permission hooks (commands w
 path ending in `/orch`), and `disableAllHooks` must not be on. Until that holds, the runner starts nothing, stops
 what runs, and the epic page says why.
 
+**Readiness checks.** A settings file that names the hooks does not prove they run: in the live run orch's hooks failed
+with a non-blocking error in every session (the plugin's `bin/orch` needs `uv`, which was not on the session's PATH),
+so the guard and the permission hook silently did nothing. Before it starts a session, the runner therefore runs
+these checks under the sessions' exact environment (`env -i`, the session PATH, the allowlisted variables) and shows
+the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
+fails it starts nothing; the results are kept for 5 minutes (1 minute after a failure). None of them writes anything
+of orch's; the hook programs run as Claude Code would run them.
+
+- *claude* (blocks): `claude --version` must exit 0 and print a version. A wrapper first on the dashboard's PATH that
+  cannot find the real claude fails here. Fix: put the real claude first on the dashboard's PATH.
+- *orch on PATH* (blocks): `orch` must resolve on the sessions' PATH. Fix: install orch as a tool of your user (for
+  example `uv tool install` of orch-core) so the dashboard's PATH finds it, then restart the dashboard.
+- *guard* and *permission hook* (block): the hook commands your user-scope settings name (or, with the plugin enabled,
+  the plugin's own `hooks.json` commands, from the folder Claude Code installed it to) run once with a harmless
+  payload (`true` from a session id nobody bound) and must exit 0 with empty or JSON output. Fix: what the output says;
+  usually `uv` (or `orch`) missing from the sessions' PATH.
+- *trust* (blocks): Claude Code's record (`$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`) must say the trust
+  dialog was accepted for the workspace or a folder above it; otherwise a new session waits at that dialog. Fix: open
+  Claude once in the folder and accept it.
+- *skills* (warns): the orch skills at user scope (the plugin, or `skills/orch-work-on-ticket` in the user config
+  dir). Without them the built-in prompts still name every command a session needs.
+- *outward tools* (warns): `permissions.deny` in your user-scope settings should list `Artifact`, `WebFetch` and
+  `WebSearch`. Tools that do not prompt (under accept-edits, for example) never reach orch's permission hook, so
+  nothing else stops a session from using them: in the live run a child published a Claude artifact on its own.
+
+The session PATH is the folders of the resolved `claude`, `orch` and `uv` (each found on the dashboard's PATH and
+trusted as below), then the system's.
+
 **Session binding.** At launch the runner generates the session id, records session -> (epic, delegation, child, and the checkout and folder it launches in)
 exclusively in the guarded permits folder of your orch config dir, and only then starts the agent under that id. The
 permission hook trusts only this record to decide which epic's grants apply, and only for a process running under the
@@ -289,7 +317,7 @@ the one the runner recorded, so a copied id gets no factory treatment (and the b
 private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
 path only when owned by you or root and not writable by group or others. The agent gets `env -i` with a fixed PATH (the
-folders of those programs, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
+folders of `claude` and, when found the same way, of `orch` and `uv`, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
 session starts in the child's worktree only when the child names exactly one, below the workspace's
 `.claude/worktrees` folder (where `orch worktree add` puts it) or a git worktree in the workspace whose branch names
 the child; otherwise in the workspace root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
@@ -592,7 +620,9 @@ refusal of a process under an agent harness, as for every approval).
   without a card (only shell commands are answered), and the launch command may not set a permission mode that skips
   prompts. So unless your user-scope Claude settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
   `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits`, `auto` or `bypassPermissions`, no agent
-  of the run can write a file and the planner cannot create children. The run view and New ticket's factory modes say
+  of the run can write a file and the planner cannot create children. `auto` does not count for a Haiku model (the
+  launch command's `--model`, else the settings' `model`): Claude Code offers Haiku no auto mode, so its edits prompt
+  (in the live run Claude's first-run offer had switched the mode to `auto`). Use `acceptEdits`. The run view and New ticket's factory modes say
   so; orch only reads that file, it never writes it.
 - **Epic page**: a Start choice in the epic's approval: None, AI Factory, and Dark AI Factory while Dark is on (radios,
   as on New ticket). Dark shows the field for the word dark, which the server checks; the radio alone decides what is

@@ -1,6 +1,8 @@
 """The bridge's records (host key, registry, audit log, request store, sequence state) live in the orch config dir's
 permits folder, and orch's guard keeps agents' commands and file tools away from them. The operating-system user is
 shared, so the guard is the only barrier (orch-tix docs/bridge-protocol.md §2.7)."""
+from pathlib import Path
+
 import pytest
 
 from orch.remote.bridge_host import files
@@ -48,6 +50,8 @@ def test_the_bridge_dir_is_inside_the_guarded_permits_folder():
     "python3 -c \"import pathlib;print(pathlib.Path('{base}') / 'permits' / 'bridge')\"",
     "node -e \"require('path').join('{base}','permits','bridge')\"",
     "python3 -c \"import os;print(os.listdir(os.path.join(os.environ['ORCH_STATE_DIR'],'permits')))\"",
+    # the relative spelling (a cd elsewhere first): refused wherever it is written, as for the factory's folders
+    "cat permits/bridge*", "cat permits/bridge/", "cat permits//bridge", "ls PERMITS/bridge",
 ])
 def test_guard_keeps_agents_commands_away_from_the_bridge_records(ws, cmd):
     from orch.core.ledger import base_dir
@@ -111,3 +115,93 @@ def test_bridge_records_are_never_grantable(ws):
     from orch.core import permits
     assert permits.never_grantable(ws, f"cat permits/bridge/{WS}/registry.json")
     assert permits.never_grantable(ws, f"cp x $ORCH_STATE_DIR/permits/bridge/{WS}/registry.json")
+
+
+# -- the guard decides on the normalised path, not on how it is written (third review) --------------------------------
+
+def _forms(tmp_path):
+    """Spellings of the config dir for the current test: as is, case-changed, with dot and doubled segments, through
+    a symlink, from its parent, and a sibling whose name only starts the same way."""
+    import os
+    from orch.core.ledger import base_dir
+    base = base_dir()
+    (base / "permits" / "bridge" / WS).mkdir(parents=True, exist_ok=True)
+    link = tmp_path / "lnk"
+    if not link.exists():
+        link.symlink_to(base)
+    sibling = Path(str(base) + "1")
+    sibling.mkdir(exist_ok=True)
+    return {"base": str(base), "up": str(base).upper(), "dot": f"{base}/.", "dbl": str(base).replace("/", "//"),
+            "dotdot": f"{base}/x/..", "lnk": str(link), "parent": str(base.parent), "name": base.name,
+            "sibling": str(sibling), "rel": os.path.relpath(base, tmp_path / "ws")}
+
+
+@pytest.mark.parametrize("cmd", [
+    "python3 -c \"import pathlib;print(pathlib.Path('{up}','permits','bridge'))\"",
+    "python3 -c \"import pathlib;print(pathlib.Path('{dot}','permits','bridge'))\"",
+    "python3 -c \"import pathlib;print(pathlib.Path('{dbl}','permits','bridge'))\"",
+    "python3 -c \"import pathlib;print(pathlib.Path('{dotdot}','permits','bridge'))\"",
+    "python3 -c \"import pathlib;print(pathlib.Path('{lnk}','permits','bridge'))\"",
+    "D={base}; python3 -c \"import pathlib;print(pathlib.Path('$D','permits'))\"",
+    "cd {parent} && python3 -c \"open('{name}/'+'permits/bridge/x')\"",
+    "python3 -c \"import os;os.chdir('{parent}');open(os.path.join('{name}','permits'))\"",
+])
+def test_a_differently_written_config_dir_is_still_the_config_dir(ws, tmp_path, cmd):
+    from orch.hooks.guard import evaluate
+    c = cmd.format(**_forms(tmp_path))
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": str(ws.root)}).allow, c
+
+
+def test_a_command_run_from_above_the_config_dir_that_mentions_permits_is_refused(ws, tmp_path):
+    from orch.hooks.guard import evaluate
+    f = _forms(tmp_path)
+    c = "python3 -c \"open('" + f["name"] + "'+'/permits')\""
+    assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": f["parent"]}).allow
+
+
+@pytest.mark.parametrize("cmd", [
+    "python3 -c \"import pathlib;print(pathlib.Path('{sibling}','permits'))\"",  # a sibling that only shares a prefix
+    "echo permits > {ws_root}/notes.txt", "cat {ws_root}/permits/bridge.md", "cat docs/permits/bridges/x",
+    "cat {ws_root}/permitsx/bridge/x",
+])
+def test_neighbours_of_the_config_dir_are_not_it(ws, tmp_path, cmd):
+    from orch.hooks.guard import evaluate
+    c = cmd.format(ws_root=ws.root, **_forms(tmp_path))
+    d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": str(ws.root)})
+    assert d.allow, (c, d.reason)
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Glob", {"pattern": "*/bridge/*/registry.json", "path": "{up}"}),
+    ("Glob", {"pattern": "*/bridge/*/registry.json", "path": "{lnk}"}),
+    ("Glob", {"pattern": "*/bridge/*/registry.json", "path": "{dotdot}"}),
+    ("Grep", {"pattern": "pub", "path": "{up}", "glob": "registry.json"}),
+    ("Glob", {"pattern": "{rel}/*/bridge/*/registry.json", "path": "{ws_root}"}),  # a relative pattern escaping up
+    ("Glob", {"pattern": "../*/../" + "{name}/*/bridge/*", "path": "{base}/permits"}),
+    ("Glob", {"pattern": "*/../../*/*/bridge/*/registry.json", "path": "{ws_root}"}),  # `..` after a glob
+    ("Read", {"file_path": "{up}/permits/bridge/" + WS + "/registry.json"}),
+    ("Read", {"file_path": "{lnk}/permits/bridge/" + WS + "/registry.json"}),
+    ("Write", {"file_path": "{dbl}//permits//bridge//x", "content": ""}),
+    ("Edit", {"file_path": "{dotdot}/permits/bridge/x", "old_string": "a", "new_string": "b"}),
+])
+def test_file_tools_decide_on_the_normalised_path(ws, tmp_path, tool, inp):
+    from orch.hooks.guard import evaluate
+    f = {**_forms(tmp_path), "ws_root": str(ws.root)}
+    got = {k: v.format(**f) for k, v in inp.items()}
+    if "{rel}" in inp.get("pattern", ""):
+        import os
+        got["pattern"] = os.path.relpath(f["base"], ws.root) + "/*/bridge/*/registry.json"
+    assert not evaluate(ws, {"tool_name": tool, "tool_input": got, "cwd": str(ws.root)}).allow, got
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Glob", {"pattern": "*/bridge/*/registry.json", "path": "{sibling}"}),
+    ("Glob", {"pattern": "../{ws_name}/src/*.py", "path": "{ws_root}"}),
+    ("Read", {"file_path": "{sibling}/permits/notes.md"}),
+])
+def test_file_tools_still_allow_neighbours(ws, tmp_path, tool, inp):
+    from orch.hooks.guard import evaluate
+    f = {**_forms(tmp_path), "ws_root": str(ws.root), "ws_name": ws.root.name}
+    got = {k: v.format(**f) for k, v in inp.items()}
+    d = evaluate(ws, {"tool_name": tool, "tool_input": got, "cwd": str(ws.root)})
+    assert d.allow, (got, d.reason)

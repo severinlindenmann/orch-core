@@ -641,7 +641,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # grant) are protected the same way: removing a marker would revive a used grant. So are the Orch Remote bridge's
 # records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux|bridge)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")
@@ -1362,17 +1362,17 @@ def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
     """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`) or the
     permit records beside them (the AI Factory's and the remote bridge's). `root` is where the filter is applied."""
     import fnmatch
-    from orch.core import ledger
     if (not pattern or "**" in pattern or "{" in pattern or pattern.startswith("!") or "ledger" in pattern.lower()
             or "permits" in pattern.lower()):
         return True
     if "/" in pattern.strip("/"):
-        try:
-            rel = Path(ledger.base_dir()).resolve().relative_to(Path(root).resolve()).as_posix() if root else "."
-        except (OSError, RuntimeError, ValueError):
-            rel = "."
-        pfx = "" if rel == "." else rel + "/"
-        if any(fnmatch.fnmatch((pfx + s).lower(), pattern.strip("/").lower()) for s in _PERMIT_SAMPLES):
+        prefixes = {""}
+        if root:  # where the config dir sits below the root, compared as the file system does (case, links)
+            dirs, _ = _config_keys()
+            for r in {_path_key(str(root)), _path_key(os.path.realpath(root))}:
+                prefixes |= {d[len(r):].strip("/") + "/" for d in dirs if d.startswith(r.rstrip("/") + "/")}
+        if any(fnmatch.fnmatch((p.lstrip("/") + s).lower(), pattern.strip("/").lower())
+               for p in prefixes for s in _PERMIT_SAMPLES):
             return True
     name = pattern.rsplit("/", 1)[-1].lower()
     # the ledger files and the shapes of the permit records (a request body, a once-use marker, the bridge's files)
@@ -1388,13 +1388,67 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
 
-def _bash_joins_permits(cmd: str) -> bool:
-    """The config dir named anywhere together with the permits folder anywhere: an interpreter can join the two
-    (a path built from separate words), which no pattern over a written path sees. Best effort: text that spells
-    neither word plainly is beyond any text guard."""
+def _path_key(p: str) -> str:
+    """A path as compared here: separators collapsed, `.` and `..` resolved as text, Unicode NFC and case folded
+    (the default macOS and Windows file systems ignore case, so the guard must too)."""
+    import unicodedata
+    p = re.sub(r"[/\\]+", "/", p)
+    return unicodedata.normalize("NFC", os.path.normpath(p)).casefold()
+
+
+def _config_keys() -> tuple[set[str], set[str]]:
+    """(the orch config dirs, every directory above them) as _path_key strings, raw and resolved spelling."""
     from orch.core import ledger
-    return bool((str(ledger.base_dir()) in cmd or re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", cmd))
-                and re.search(r"(?i)\bpermits\b", cmd))
+    dirs: set[str] = set()
+    for d in {ledger.base_dir(), *_user_config_dirs()}:
+        for spelled in (str(d), os.path.realpath(d)):
+            dirs.add(_path_key(spelled))
+    above = {_path_key(str(a)) for d in dirs for a in Path(d).parents}
+    return dirs, above
+
+
+def _key_reaches_config(key: str, dirs: set[str], above: set[str]) -> bool:
+    """`key` is a config dir, inside one, or a directory above one (from where a relative name reaches it)."""
+    return key in dirs or key in above or any(key.startswith(d.rstrip("/") + "/") for d in dirs)
+
+
+def _root_reaches_config(root) -> bool:
+    """A Grep/Glob root that is the config dir, inside it or above it, in any spelling (case, separators, links)."""
+    if root is None:
+        return False
+    if _is_config_dir_or_ancestor(Path(root)):
+        return True
+    dirs, above = _config_keys()
+    return any(_key_reaches_config(_path_key(s), dirs, above) for s in (str(root), os.path.realpath(root)))
+
+
+def _bash_joins_permits(cmd: str, cwd=None) -> bool:
+    """The config dir (or a directory above it, or the cwd being one) named anywhere together with the permits
+    folder anywhere: an interpreter can join the two (a path built from separate words), which no pattern over a
+    written path sees. Every path-like word is judged as the system would resolve it: variables assigned in the
+    command, `~`, relative to the cwd, `.` and `..`, doubled separators, links and case. Best effort: text that
+    spells neither the folder nor a path to the config dir plainly is beyond any text guard."""
+    if not re.search(r"(?i)\bpermits\b", cmd):
+        return False
+    if re.search(_CONFIG_DIR_FORMS + r"|ORCH_STATE_DIR|XDG_CONFIG_HOME", cmd):
+        return True
+    dirs, above = _config_keys()
+    start = str(cwd) if cwd else os.getcwd()
+    try:
+        if _key_reaches_config(_path_key(os.path.realpath(start)), dirs, above) or \
+                _key_reaches_config(_path_key(start), dirs, above):
+            return True
+        for word in re.findall(r"[^\s'\"`;&|()<>,=+\[\]{}]+", _resolve_vars(cmd))[:512]:
+            text = os.path.expanduser(word)
+            if not text.startswith(("/", ".", "\\")):
+                continue
+            full = text if os.path.isabs(text) else os.path.join(start, text)
+            for spelled in (re.sub(r"[/\\]+", "/", full), os.path.realpath(re.sub(r"[/\\]+", "/", full))):
+                if _key_reaches_config(_path_key(spelled), dirs, above):
+                    return True
+    except (OSError, RuntimeError, ValueError):
+        return True  # a path that cannot be resolved: fail closed
+    return False
 
 
 def evaluate(ws, payload: dict) -> Decision:
@@ -1414,14 +1468,19 @@ def evaluate(ws, payload: dict) -> Decision:
         filt = str(tool_input.get("glob") or (tool_input.get("pattern") if tool == "Glob" else "") or "")
         type_ = str(tool_input.get("type") or "") if tool == "Grep" else ""
         safe_type = bool(type_) and type_ in _SAFE_RG_TYPES and not tool_input.get("glob")
-        if tool == "Glob" and os.path.isabs(os.path.expanduser(filt)):
-            # an absolute pattern: judged from the plain directory it starts with, on the rest of the pattern
-            full = os.path.expanduser(filt)
+        if tool == "Glob" and filt:
+            # judged from the plain directory the pattern starts with (absolute, or relative to the root, `..`
+            # included), on the rest of the pattern; a `..` after the first wildcard can lead anywhere: refused
+            full = os.path.expanduser(filt).replace("\\", "/")
             head = re.split(r"[*?\[{]", full, maxsplit=1)[0]
-            start = head if head.endswith("/") else head.rsplit("/", 1)[0] + "/"
-            root = _resolve_root(start) or root
-            filt = full[len(start):] or "*"
-        if (root is not None and _is_config_dir_or_ancestor(root) and not safe_type
+            start = head if head.endswith("/") or head == full else head.rsplit("/", 1)[0] + "/" if "/" in head else ""
+            rest = full[len(start):]
+            if ".." in rest.split("/"):
+                return Decision(False, _LEDGER_DENIED)
+            if start:
+                root = _resolve_root(start if os.path.isabs(start) else os.path.join(str(root or cwd or "."), start))
+                filt = rest or "*"
+        if (root is not None and _root_reaches_config(root) and not safe_type
                 and _filter_could_reach_ledger(filt, root)):
             return Decision(False, _LEDGER_DENIED)
     if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit") and _pairing_key_path(
@@ -1442,7 +1501,7 @@ def evaluate(ws, payload: dict) -> Decision:
     if tool == "Bash":
         cmd = str(tool_input.get("command") or "")
         d = _bash(ws, cmd, cwd)
-        return Decision(False, _LEDGER_DENIED) if d.allow and _bash_joins_permits(cmd) else d
+        return Decision(False, _LEDGER_DENIED) if d.allow and _bash_joins_permits(cmd, cwd) else d
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW

@@ -59,11 +59,15 @@ def parent_epic(ws, t, entries=None):
     pid = _parent_id(t.meta)
     if not pid:
         return None
-    try:
-        entry = store.resolve(ws, pid, entries)
-    except (NotFoundError, UsageError):
+    # by ticket id only, as children() matches: never an external key, which anyone may add to any ticket (a parent
+    # named PROJ-12 must not become the child of whichever epic carries that key)
+    from orch.core.ids import normalize_ref
+    want = normalize_ref(ws, pid).upper()
+    hits = [e for e in (store.scan(ws) if entries is None else entries) if e.id.upper() == want]
+    if len(hits) != 1:
         return None
-    if not is_epic(entry.meta):
+    entry = hits[0]
+    if entry.meta is None or not is_epic(entry.meta):
         return None
     try:
         return store.read_ticket(entry.path)

@@ -407,6 +407,15 @@ def request(ws, actor, ticket, command, *, reason: str = "", source: str = "agen
     if why:
         raise ValidationError(f"this command can never be granted: {why}",
                               hint="leave it out, record why in the ticket, and list it in the report as not done")
+    if not actor.is_human:  # a factory session asks only for its own epic, and nothing while its binding is in doubt
+        from orch.core import factory_sessions
+        state, b = factory_sessions.session_state(ws, actor.session)
+        if state == "unknown":
+            raise ValidationError("orch cannot tell whether this session is an AI Factory session (its binding does "
+                                  "not verify): nothing was filed", hint="stop and tell the human")
+        if b is not None and epic.id.upper() != b["epic"].upper():
+            raise ValidationError(f"this AI Factory session works on epic {b['epic']}: it asks for permissions there "
+                                  f"only, not for {epic.id}")
     with lock(ws, "permits"):
         for r in open_requests(ws):
             if r["epic"] == epic.id and r["command"] == command:

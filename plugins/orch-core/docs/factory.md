@@ -202,13 +202,24 @@ A session the runner bound works on its own epic only. orch refuses it, whatever
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,
 move, section set, state, log, link, tasks, artifacts, ask, auto-approve, a follow-up's link back to its source, and
 any other change: they all go through one check in orch's single write path) unless the ticket is its epic, one of
-that epic's children, or a ticket outside every epic (not an epic, no parent epic) created at or after the session
-started, such as a follow-up it filed (`orch new` without `--epic`, or `--from` one of its own tickets). Reading stays
-open (show, list, search, `orch permit list`). Best effort: a ticket's `created` stamp and the event log are written in
-the repository, which agents can edit, and the stamp has minute resolution, so a backlog ticket from the same minute
-as the start passes too. orch fails closed here: when it cannot tell whether a session is a factory session (a binding
-record that does not verify, or an error while looking), it changes nothing. An agent with no binding at all works as
+that epic's children (a parent named by ticket id; an external key never makes a ticket a child), or a ticket the
+session created itself, such as a follow-up (`orch new` without `--epic`, or `--from` one of its tickets). orch notes
+each ticket a factory session creates in that session's record beside its binding (`permits/sessions/<id>.created/`
+in your orch config dir); a ticket you or another session filed during the run is not the session's. `orch permit
+request` from a factory session names a ticket of its own epic. Reading stays open (show, list, search, `orch permit
+list`). orch fails closed here: when it cannot tell whether a session is a factory session (a binding record that
+does not verify, or an error while looking), it creates and changes nothing. An agent with no binding at all works as
 before.
+
+The limits of these checks, stated plainly. The created-tickets record is written by the session's own orch process
+(an agent's process): the guard keeps the agent's tools and commands away from the permits folder, and a Dark profile
+rule never matches a command naming it, which is the same best effort that protects the bindings. orch tells a
+factory session from others by the session id Claude Code exports to the agent's commands (`CLAUDE_CODE_SESSION_ID`;
+the runner starts the agent under `env -i` with an allowlist and does not set it itself); a command that drops or
+changes that variable needs a card in a Dark run, and elsewhere the harness asks you as usual. And all of this guards
+orch's own commands only: ticket files are plain files in the repository, so a profile rule that runs arbitrary code
+(`pytest`, `make`, `npm run ...`) can change any ticket file without orch. Prefer exact rules (see "A prefix rule
+trusts the repository").
 
 The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
@@ -367,9 +378,12 @@ What the baseline lets a session do, besides the scope limits above (residual ri
   files it is handed (`orch new --requirements-file|--acceptance-file|--body-file|--summary-file|--out-of-scope-file`,
   `--file` of `section set`, `state`, `task add`, `ask`, `widget`, `feedback`, and `orch artifact add <file>`) only
   when the file lies inside the workspace, is reached without a symbolic link, and is not in orch's config dir;
-  otherwise orch refuses ("an agent cannot hand orch the file ..."). This fails closed: any agent is refused a path
-  that cannot be resolved (missing, a broken link), and every file while orch cannot tell whether its session is a
-  factory session. A human, and an agent outside the factory (its
+  otherwise orch refuses ("an agent cannot hand orch the file ..."). orch opens such a file once, without following a
+  link, and reads only from that open file: it must be a regular file with a single hard link (a hard link could
+  make a file from anywhere on the volume look like a workspace file), and the same file the checked path named. This
+  fails closed: any agent is refused a path that cannot be resolved (missing, a broken link), and every file while orch
+  cannot tell whether its session is a factory session. A directory on the way swapped for a link between the check
+  and the open is not caught (the final name is opened without following a link). A human, and an agent outside the factory (its
   harness asks you about each command, and it attaches screenshots from /tmp), pass any file, as before. A file inside
   the workspace (a `.env` there, say) can still be copied into a ticket or an artifact: the agent could read it with
   its own tools anyway.

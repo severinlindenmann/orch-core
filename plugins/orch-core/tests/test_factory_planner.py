@@ -1,6 +1,7 @@
 """AI Factory: the planner session that splits a childless epic, and the Dark baseline (docs/factory.md, "The planner"
 and "The baseline"). A fake launcher stands in for tmux: no test starts a real agent or touches a real tmux server."""
 import json
+import os
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -688,7 +689,7 @@ def test_cli_agent_with_a_malformed_binding_is_refused_a_file(ws, human, capsys,
 
 # every Ops method that takes a ticket ref and is reachable by an agent changes it through one of these, and each of
 # them runs the scope check (_in_bound_epic) on the loaded ticket before it changes anything
-_ROUTES = re.compile(r"self\.(_mutate|_mutate_events|_edit_tasks|_task_move|_write_section|approve)\(")
+_ROUTES = re.compile(r"self\.(_mutate|_mutate_events|_edit_tasks|_task_move|_write_section|_artifact_add|approve)\(")
 _UNSCOPED = {"replace_raw": "human only: require_human refuses every agent before it reads the ticket"}
 
 
@@ -700,6 +701,7 @@ def test_every_ticket_mutator_goes_through_the_scope_check():
     assert "self._mutate(" in inspect.getsource(Ops._edit_tasks)
     assert "self._mutate(" in inspect.getsource(Ops._write_section)
     assert "self._edit_tasks(" in inspect.getsource(Ops._task_move)
+    assert "self._mutate(" in inspect.getsource(Ops._artifact_add)
     names = [n for n, f in inspect.getmembers(Ops, inspect.isfunction)
              if not n.startswith("_") and list(inspect.signature(f).parameters)[1:2] == ["ref"]]
     assert len(names) > 25
@@ -785,3 +787,121 @@ def test_a_ticket_in_another_epic_stays_refused_even_when_new(fws, fa, fh, human
         p1.set_section(fresh.id, "Requirements", "r")
     with pytest.raises(ValidationError, match="works on epic"):
         p1.log(e2, "x")  # another epic itself
+
+
+# -- review 6: regressions for the reviewer's probes ---------------------------------------------------------------------
+
+def test_an_external_key_on_its_own_epic_adopts_nothing(fws, fa, fh, human, fake):
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    c1 = _child(fa, e1)
+    victim = Ops(fws, human).new("someone else's old ticket")
+    path, t = store.load(fws, victim.id)
+    t.meta["parent"] = "PROJ-12"  # e.g. a tracker's epic key from an import; no ticket has that id
+    store.save(fws, t, path)
+    _tick(fws, human, fake)
+    w = _session_ops(fws, next(b for b in fs.bindings(fws) if b["child"] == c1))
+    w.link(e1, external="PROJ-12")  # its own epic may carry the key ...
+    assert epics.parent_epic(fws, store.load(fws, victim.id)[1]) is None  # ... parents resolve by ticket id only
+    assert [e.id for e in epics.children(fws, e1)] == [c1]
+    for call in (lambda: w.set_section(victim.id, "Requirements", "x"), lambda: w.log(victim.id, "x")):
+        with pytest.raises(ValidationError, match="works on epic"):
+            call()
+
+
+def test_tickets_others_file_during_the_run_stay_out_of_reach(fws, fa, fh, human, fake):
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    c1 = _child(fa, e1)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    c2 = _child(fa, e2)
+    _tick(fws, human, fake)
+    w1 = _session_ops(fws, next(b for b in fs.bindings(fws) if b["child"] == c1))
+    w2 = _session_ops(fws, next(b for b in fs.bindings(fws) if b["child"] == c2))
+    humans = Ops(fws, human).new("the human's own new backlog idea")
+    theirs = w2.new("E2's worker's follow-up", from_ref=c2)
+    for target in (humans.id, theirs.id):
+        with pytest.raises(ValidationError, match="works on epic"):
+            w1.set_section(target, "Requirements", "rewritten by E1's worker")
+    w2.set_section(theirs.id, "Requirements", "its own follow-up")  # the session that created it may refine it
+    mine = w1.new("E1's own note for later")
+    w1.set_section(mine.id, "Requirements", "r")
+    path, t = store.load(fws, humans.id)
+    t.meta["created"] = store.load(fws, mine.id)[1].meta["created"]  # a forged stamp no longer helps
+    store.save(fws, t, path)
+    with pytest.raises(ValidationError, match="works on epic"):
+        w1.log(humans.id, "x")
+
+
+def test_a_hard_link_into_the_workspace_is_refused(ws, human, tmp_path, capsys, monkeypatch):
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    secret = tmp_path / "home" / ".ssh" / "id_ed25519"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("PRIVATE KEY", encoding="utf-8")
+    hl = ws.root / "orchestrator" / "temporary" / "notes.txt"
+    hl.parent.mkdir(parents=True, exist_ok=True)
+    os.link(secret, hl)
+    agent = _bound_session(ws, human, monkeypatch)
+    t = Ops(ws, human).new("t")
+    with pytest.raises(ValidationError, match="more than one hard link"):
+        Ops(ws, agent).artifact_add(t.id, hl, name="n.txt")
+    code, out = _run(capsys, "section", "set", t.id, "Context", "--file", str(hl))
+    assert code != 0 and "more than one hard link" in out.err
+    assert "PRIVATE KEY" not in store.load(ws, t.id)[0].read_text(encoding="utf-8")
+    ok = ws.root / "orchestrator" / "temporary" / "ok.txt"
+    ok.write_text("fine", encoding="utf-8")
+    assert Ops(ws, agent).artifact_add(t.id, ok, name="ok.txt").read_text(encoding="utf-8") == "fine"
+    _ok(capsys, "section", "set", t.id, "Context", "--file", str(ok))
+    assert "fine" in store.load(ws, t.id)[1].section("Context")
+
+
+@pytest.mark.parametrize("swap", ["symlink", "other file"])
+def test_a_swap_between_the_check_and_the_open_is_refused(ws, human, tmp_path, monkeypatch, swap):
+    from orch.core import fsutil
+    from orch.errors import ValidationError
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE", encoding="utf-8")
+    f = ws.root / "notes.txt"
+    f.write_text("fine", encoding="utf-8")
+    agent = _bound_session(ws, human)
+    real_open = os.open
+
+    def swapping_open(path, flags, *a, **kw):
+        if str(path) == str(f.resolve()):
+            f.unlink()
+            if swap == "symlink":
+                f.symlink_to(secret)
+            else:
+                f.write_text("PRIVATE", encoding="utf-8")  # a new file under the same name: another inode
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", swapping_open)
+    with pytest.raises(ValidationError, match="cannot be opened without following a link|changed while orch checked"):
+        fsutil.agent_source(ws, agent, f)
+
+
+def test_new_fails_closed_for_an_unverifiable_binding(ws, human):
+    from orch.core.ops import Ops
+    from orch.errors import ValidationError
+    agent = _bound_session(ws, human)
+    (fs._root() / "sessions" / f"{UUID}.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValidationError, match="cannot tell"):
+        Ops(ws, agent).new("created although orch cannot tell whether this is a factory session")
+    assert store.scan(ws) == []
+
+
+def test_a_permission_request_names_its_own_epic_only(fws, fa, fh, human, fake):
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    c1 = _child(fa, e1)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    c2 = _child(fa, e2)
+    _tick(fws, human, fake)
+    w1 = _session_ops(fws, next(b for b in fs.bindings(fws) if b["child"] == c1))
+    with pytest.raises(ValidationError, match=f"works on epic {e1}"):
+        permits.request(fws, w1.actor, store.load(fws, c2)[1], "make deploy", reason="E2 needs it")
+    assert permits.request(fws, w1.actor, store.load(fws, c1)[1], "make deploy")["epic"] == e1
+    assert permits.request(fws, fa.actor, store.load(fws, c2)[1], "make deploy")["epic"] == e2  # unbound: as before

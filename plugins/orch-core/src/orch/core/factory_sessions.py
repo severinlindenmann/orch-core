@@ -301,3 +301,32 @@ def unmark_planner_run(ws, delegation: str) -> None:
             continue
         except OSError:
             return
+
+
+# -- tickets a bound session created ----------------------------------------------------------------------------------
+# One empty file per ticket in permits/sessions/<session>.created/, created exclusively by the session's own orch
+# process (`orch new`, Ops.new) once the ticket is saved. Unlike a binding, an agent's process writes it: the guard keeps
+# agents' tools and commands away from the permits folder (and a Dark profile rule never matches a command naming it),
+# which is the same best effort that keeps them from the bindings. A ticket listed here is one the session may go on
+# changing outside its epic (its follow-ups); nothing else outside the epic.
+
+def _created_dir(session: str) -> Path:
+    return _root() / "sessions" / f"{session}.created"
+
+
+def record_created(session: str, ticket_id: str) -> None:
+    """Note that `session` created `ticket_id` (exclusive create; an existing note is kept)."""
+    if not isinstance(session, str) or not SESSION_ID.match(session):
+        raise ValidationError("not a runner session id")
+    _create(_created_dir(session) / _safe(str(ticket_id)).upper())
+
+
+def created(session: str, ticket_id: str) -> bool:
+    """Whether `session` created `ticket_id` (a regular file only; any doubt is no)."""
+    import stat as st
+    if not isinstance(session, str) or not SESSION_ID.match(session):
+        return False
+    try:
+        return st.S_ISREG(os.lstat(_created_dir(session) / _safe(str(ticket_id)).upper()).st_mode)
+    except OSError:
+        return False

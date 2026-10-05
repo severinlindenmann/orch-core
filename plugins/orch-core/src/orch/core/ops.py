@@ -150,28 +150,24 @@ class Ops(TaskOpsMixin):
 
     def _in_bound_epic(self, t: Ticket, what: str) -> None:
         """The one scope check of a factory session, for every change to an existing ticket (`_mutate`): its own epic,
-        that epic's children, or a ticket outside every epic (not an epic, no parent epic) created at or after the
-        session's binding, such as its own follow-ups. The `created` stamp is agent-writable: best effort."""
+        that epic's children (their parent named by ticket id), or a ticket the session itself created (its
+        follow-ups: factory_sessions.created, noted by `new`). Nothing else: not a ticket the human or another session
+        filed during the run, not one whose parent does not resolve."""
         b = self._binding()
         if b is None:
             return
         bound = b["epic"].upper()
         if t.id.upper() == bound:
             return
-        from orch.core.epics import is_epic, parent_epic
+        from orch.core import factory_sessions
+        from orch.core.epics import parent_epic
         parent = parent_epic(self.ws, t)
         if parent is not None and parent.id.upper() == bound:
             return
-        if parent is None and not is_epic(t):
-            try:
-                # `created` has minute resolution: compare with the binding's minute (a ticket from up to a minute
-                # before the start passes too)
-                if parse_stamp(str(t.meta.get("created"))) >= parse_stamp(b["at"]).replace(second=0, microsecond=0):
-                    return
-            except (ValueError, TypeError):
-                pass
+        if factory_sessions.created(b["session"], t.id):
+            return
         raise ValidationError(f"{what} {t.id} refused: this AI Factory session works on epic {b['epic']}, its children "
-                              "and tickets it filed outside any epic during its run", hint=f"orch epic show {b['epic']}")
+                              "and the tickets it created itself", hint=f"orch epic show {b['epic']}")
 
     def _bound_target(self, epic_ref: str | None, what: str) -> None:
         """`--epic X` from a factory session names its own epic."""
@@ -270,6 +266,7 @@ class Ops(TaskOpsMixin):
         same rules as `orch section set`. `self.warnings` names a gated section left empty."""
         from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
         self.warnings = []
+        bound = self._binding()  # first: refuses while orch cannot tell whether this is a factory session
         title = " ".join(title.split())
         if not title:
             raise UsageError("title must not be empty")
@@ -312,6 +309,9 @@ class Ops(TaskOpsMixin):
         with lock(self.ws, tid):
             store.save(self.ws, ticket)
             ticket = store.load(self.ws, tid)[1]  # the ticket as saved: what is returned and warned about is on disk
+        if bound is not None and not self.dry_run:
+            from orch.core import factory_sessions
+            factory_sessions.record_created(bound["session"], tid)  # its own ticket: it may go on refining it
         self._emit(tid, "ticket.created", {"title": title, "from": source.id if source else None,
                                            **({"epic": parent_epic.id} if parent_epic else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
@@ -666,11 +666,26 @@ class Ops(TaskOpsMixin):
         src = Path(file)
         if stream is None and (src.is_symlink() or not src.is_file()):
             raise UsageError(f"not a file: {file}")
-        if stream is None:
-            from orch.core.fsutil import agent_source
-            agent_source(self.ws, self.actor, src)  # an agent copies only workspace files into an artifact
         base = self.ws.artifacts_dir / entry.id
         in_place = stream is None and name is None and _inside(src, base)
+        opened = None
+        if stream is None:
+            from orch.core.fsutil import agent_source
+            # an agent copies only workspace files into an artifact; a factory session's file is read from the one
+            # descriptor that was checked (never from the path again)
+            opened = agent_source(self.ws, self.actor, src)
+            if opened is not None and not in_place:
+                stream = opened
+        try:
+            return self._artifact_add(ref, entry, src, name, stream, base, in_place, context=context, kind=kind,
+                                      label=label, task=task, ac=ac, inline=inline, replace=replace)
+        finally:
+            if opened is not None:
+                opened.close()
+
+    def _artifact_add(self, ref, entry, src, name, stream, base, in_place, *, context, kind, label, task, ac, inline,
+                      replace) -> Path:
+        from orch.core import artifacts as art
         fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(name or src.name)
         if not art.safe_name(fname):
             raise UsageError(f"invalid artifact name {name or src.name!r}")

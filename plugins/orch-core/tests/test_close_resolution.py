@@ -77,3 +77,67 @@ def test_ticket_document_carries_the_resolution(ws, put, hops):
     assert ticket_document(ws, store.load(ws, new)[1])["resolution"] is None
     legacy = store.load(ws, put("done"))[1]  # closed before resolutions existed
     assert ticket_document(ws, legacy)["resolution"] == "completed"
+
+
+# -- dashboard ---------------------------------------------------------------------------------------------------------
+
+def test_dashboard_closes_as_superseded_and_shows_it(dash, ws, put):
+    new, old = put("open"), put("open")
+    page = dash.get(f"/t/{old}").text
+    assert f'action="/t/{old}/close"' in page and f'action="/t/{old}/reopen"' not in page
+    r = dash.post(f"/t/{old}/close", data={"as": "superseded", "by": "", "message": "replaced"})
+    assert "needs the ticket that replaces it" in r.text  # refused, nothing changed
+    assert store.load(ws, old)[1].status == "open"
+    dash.post(f"/t/{old}/close", data={"as": "superseded", "by": new, "message": "replaced"})
+    t = store.load(ws, old)[1]
+    assert (t.status, t.meta["resolution"], t.meta["superseded_by"]) == ("done", "superseded", new)
+    page = dash.get(f"/t/{old}").text
+    assert f"Superseded by {new}" in page and f'href="/t/{new}"' in page and f'action="/t/{old}/reopen"' in page
+    assert f"Superseded by {new}" in dash.get("/board?view=list&status=done").text
+
+
+def test_dashboard_journey_ticks_only_what_happened_for_a_dropped_ticket(dash, ws, put, hops):
+    from orch.core.events import read_events
+    from orch.dashboard.data import story
+    from orch.dashboard.data.cards import ticket_card
+    tid = hops.close(put("open"), "not needed", "wont-do").id
+    assert "Won&#39;t do" in dash.get(f"/t/{tid}").text
+    t = store.load(ws, tid)[1]
+    stages = {j["name"]: j["state"] for j in story.journey(t, ticket_card(ws, t), [], read_events(ws, tid), {})}
+    assert stages == {"Asked": "done", "Agreed": "todo", "Doing": "todo", "Proven": "todo", "Done": "done"}
+
+
+def test_dashboard_ignores_a_hidden_replacement_left_from_an_earlier_choice(dash, ws, put):
+    other, tid = put("open"), put("open")
+    dash.post(f"/t/{tid}/close", data={"as": "wont-do", "by": other, "message": "not needed"})
+    t = store.load(ws, tid)[1]
+    assert (t.status, t.meta["resolution"]) == ("done", "wont-do") and "superseded_by" not in t.meta
+
+
+def test_dashboard_offers_no_close_for_an_epic_and_no_done_elsewhere_in_testing(dash, ws, put):
+    epic = put("open", type="epic")
+    assert f'action="/t/{epic}/close"' not in dash.get(f"/t/{epic}").text
+    page = dash.get(f"/t/{put('testing', sections={'Verification': 'ran it'})}").text
+    assert 'value="wont-do"' in page and 'value="completed"' not in page and "give the verdict" in page
+
+
+def test_dashboard_close_dialog_opens_without_js_from_the_menu_link(dash, put):
+    tid = put("open")
+    page = dash.get(f"/t/{tid}").text
+    assert f'href="/t/{tid}?act=close#close-dialog"' in page and 'id="close-dialog" aria-labelledby="close-dialog-title">' in page
+    assert 'id="close-dialog" aria-labelledby="close-dialog-title" open>' in dash.get(f"/t/{tid}?act=close").text
+
+
+def test_new_ticket_puts_the_ask_first_and_folds_the_defaults(dash):
+    html = dash.get("/new").text
+    assert html.index('id="ask"') < html.index('id="files"') < html.index('class="new-details"') < html.index('name="type"')
+    assert '<details class="new-details">' in html and "Feature · Normal priority · size M" in html
+    r = dash.post("/new", data={"title": "  ", "type": "bug"})
+    assert '<details class="new-details" open>' in r.text  # an error, or a value that is not the default, shows them
+
+
+def test_dashboard_reopen_clears_the_resolution(dash, ws, put, hops):
+    tid = hops.close(put("open"), "not needed", "wont-do").id
+    dash.post(f"/t/{tid}/reopen", data={"message": "needed after all"})
+    t = store.load(ws, tid)[1]
+    assert t.status == "backlog" and "resolution" not in t.meta

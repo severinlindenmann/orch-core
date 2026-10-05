@@ -123,7 +123,7 @@ def _question_view(q: dict) -> dict:
 
 
 @router.get("/t/{ref}")
-def ticket_page(request: Request, ref: str, open: str = "", show: str = ""):
+def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act: str = ""):
     # One scan per request, shared by the load, needs_you, blockers, agent rows, the card and the menu badge.
     entries = store.scan(request.app.state.ws)
     ws, path, t, error = load_or_error(request, ref, entries)
@@ -159,6 +159,8 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = ""):
         "accept": t.status == "testing" and not invalidated_gates(t),  # a changed gate is re-approved first
         "moves": allowed_targets(t, request_actor(request), plan_skip_sizes=skip, open_blockers=blockers),
         "release": bool(claim.get("session")),
+        "close": t.status != "done" and t.meta.get("type") != "epic" and request_actor(request).is_human,
+        "reopen": t.status == "done" and request_actor(request).is_human,
     }
     # F2: requirements and plan drafted together: one confirm approves both (each bound to its own hash)
     together = next((i for i in needs if i.get("kind") == "approve-requirements" and i.get("together")), None) \
@@ -205,7 +207,7 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = ""):
     return page(request, "ticket.html", nav="board", title=f"{t.id} {t.title}", needs=all_needs,
                 widgets=widgets, ac_chips=ac_chips, widget_css=css_names(),
                 waiting=query.waiting(ws, entries=entries, needs=all_needs, now=at), t=t, meta=t.meta,
-                path=path.relative_to(ws.home).as_posix(), card=card, chapter=chapter, open_all=open == "all",
+                path=path.relative_to(ws.home).as_posix(), card=card, chapter=chapter, open_all=open == "all", act=act,
                 chapter_titles=story.CHAPTER_TITLES, chapters=story.CHAPTERS,
                 steps=step_list, journey=story.journey(t, card, step_list, ticket_events, ask_by,
                                                         story.gate_signers(ws, t),

@@ -271,7 +271,14 @@ def journey(t, card: dict, steps: list[dict], events, ask_by: dict, signers: dic
         ("Done", "done" if done else "todo", _day(_moved_to(events, "done")) if done else "",
          (done_by or "closed, not signed here") if done else "your verdict"),
     ]
-    if done:  # every stage before Done is behind it
+    dropped = done and card.get("resolution")  # won't do, superseded, duplicate (cards._resolution)
+    if dropped:  # only what really happened is ticked (an approval, a start, a testing round); Done says how it ended
+        how = card["resolution_label"].lower() + (f" {card['superseded_by']}" if card.get("superseded_by") else "")
+        reached = {"Asked": True, "Agreed": bool(approved), "Doing": _moved_to(events, "in-progress") is not None,
+                   "Proven": _moved_to(events, "testing") is not None, "Done": True}
+        stages = [(n, "done" if reached[n] else "todo", d,
+                   ", ".join(x for x in (how, done_by) if x) if n == "Done" else note) for n, _, d, note in stages]
+    elif done:  # every stage before Done is behind it
         stages = [(n, "done", d, note) for n, _, d, note in stages]
     turn = {"Agreed": ("Requirements", "Plan"), "Doing": ("Work",), "Proven": ("Testing",)}
     out = []

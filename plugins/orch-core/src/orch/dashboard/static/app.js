@@ -450,6 +450,32 @@
     if (openDialog(form, event.submitter)) event.preventDefault();
   });
 
+  // ---------- Dialogs written in the page (ticket close and reopen): a link with data-show-dialog opens one ----------
+  // Without JS the link reloads the page with ?act=…, which renders the dialog open. Cancel (data-close-dialog) and Esc
+  // close it; a radio with data-label renames the submit button (data-submit-label) after the chosen resolution.
+  document.addEventListener("click", (event) => {
+    const t = event.target.closest ? event.target : event.target.parentElement;
+    const opener = t && t.closest("[data-show-dialog]");
+    const d = opener && document.getElementById(opener.dataset.showDialog);
+    if (d && d.showModal) {
+      event.preventDefault();
+      const holder = opener.closest("details[open]");  // the ⋯ menu the link sits in
+      if (holder) holder.open = false;
+      if (!d.open) d.showModal();
+      const first = d.querySelector("textarea");
+      if (first) first.focus();
+      return;
+    }
+    const shut = t && t.closest("[data-close-dialog]");
+    const host = shut && shut.closest("dialog");
+    if (host) { event.preventDefault(); host.close(); }
+  });
+  document.addEventListener("change", (event) => {
+    const r = event.target;
+    const b = r.dataset && r.dataset.label && r.form && r.form.querySelector("[data-submit-label]");
+    if (b) b.textContent = r.dataset.label;
+  });
+
   // ---------- Inline two-step confirm (design system "Inline confirm") ----------
   // For forms with data-inline-confirm: the first press arms the button in place (its label names what it binds,
   // e.g. "Confirm · plan ab1e…7f", and a Cancel appears), a second, separate press within 6 s submits. Esc, Cancel or

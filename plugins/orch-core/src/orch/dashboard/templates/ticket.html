@@ -352,29 +352,51 @@
     <details class="more-menu" id="more">
       <summary class="btn btn-quiet"><span aria-hidden="true">⋯</span><span class="sr-only">More actions</span></summary>
       <div class="more-body">
-        <a class="lnk" href="/t/{{ t.id }}/raw">Raw file</a>
-        {% if actions.moves %}
-        <form method="post" action="/t/{{ t.id }}/move" class="row" id="move">
-          <label class="sr-only" for="move-to">Move to</label>
-          <select id="move-to" name="to">{% for s in actions.moves %}<option>{{ s }}</option>{% endfor %}</select>
-          <button type="submit" class="btn">Move</button>
-        </form>
+        {#- Grouped: what the ticket is (status, file), what you tell the agent, files, the agent's claim; the one
+            action that ends the ticket comes last, set apart, and opens its own dialog. -#}
+        <div class="more-group">
+          <p class="more-h">Ticket</p>
+          {% if actions.moves %}
+          <form method="post" action="/t/{{ t.id }}/move" class="more-row" id="move">
+            <label class="sr-only" for="move-to">Move to</label>
+            <select id="move-to" name="to">{% for s in actions.moves %}<option>{{ s }}</option>{% endfor %}</select>
+            <button type="submit" class="btn">Move</button>
+          </form>
+          {% endif %}
+          <a class="lnk" href="/t/{{ t.id }}/raw">Raw file</a>
+        </div>
+        <div class="more-group">
+          <form method="post" action="/t/{{ t.id }}/comment" class="stack" id="comment" data-delayed-send="Adding your comment to {{ t.id }}">
+            <label class="more-h" for="comment-text">Comment for the agent</label>
+            <textarea id="comment-text" name="text" rows="3" placeholder="Goes into the ticket's log" required></textarea>
+            <button type="submit" class="btn">Add comment</button>
+          </form>
+        </div>
+        <div class="more-group">
+          <form method="post" action="/t/{{ t.id }}/artifacts" enctype="multipart/form-data" class="stack" id="upload">
+            <label class="more-h" for="upload-files">Add files</label>
+            <div class="more-row"><input id="upload-files" type="file" name="files" multiple required><button type="submit" class="btn">Upload</button></div>
+          </form>
+        </div>
+        {% if (actions.release and not stale) or (start_box and start_box.disabled) %}
+        <div class="more-group">
+          <p class="more-h">Agent</p>
+          {% if actions.release and not stale %}
+          <form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
+          {% endif %}
+          {% if start_box and start_box.disabled %}
+          <details class="more-start"><summary class="lnk">Start another agent ▸</summary>{{ start_agent(start_box, t.id) }}</details>
+          {% endif %}
+        </div>
         {% endif %}
-        {% if actions.release and not stale %}
-        <form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
-        {% endif %}
-        <form method="post" action="/t/{{ t.id }}/comment" class="stack" id="comment" data-delayed-send="Adding your comment to {{ t.id }}">
-          <label for="comment-text">Comment for the agent</label>
-          <textarea id="comment-text" name="text" rows="3" placeholder="Add a comment to the log" required></textarea>
-          <button type="submit" class="btn">Add comment</button>
-        </form>
-        <form method="post" action="/t/{{ t.id }}/artifacts" enctype="multipart/form-data" class="stack" id="upload">
-          <label for="upload-files">Add files</label>
-          <input id="upload-files" type="file" name="files" multiple required>
-          <button type="submit" class="btn">Upload</button>
-        </form>
-        {% if start_box and start_box.disabled %}
-        <details class="more-start"><summary class="lnk">Start another agent ▸</summary>{{ start_agent(start_box, t.id) }}</details>
+        {% if actions.close %}
+        <div class="more-group more-end">
+          <a class="more-danger" href="/t/{{ t.id }}?act=close#close-dialog" data-show-dialog="close-dialog">Close without building…</a>
+        </div>
+        {% elif actions.reopen %}
+        <div class="more-group more-end">
+          <a class="lnk" href="/t/{{ t.id }}?act=reopen#reopen-dialog" data-show-dialog="reopen-dialog">Reopen…</a>
+        </div>
         {% endif %}
       </div>
     </details>
@@ -679,4 +701,51 @@
   {{ ui.slot(addon_slot("ticket.pages", t)) }}
 </aside>
 </div>
+  {#- The close and reopen forms are dialogs (bottom sheets on a phone), outside the ⋯ menu so its <details> never hides
+      them. Without JS the menu link reloads the page with ?act=close, which renders the dialog open in place. The
+      dialog is the confirmation: its button names what happens, Cancel or Esc backs out. -#}
+  {% if actions.close %}
+  <dialog class="overlay orch-dialog ticket-dialog" id="close-dialog" aria-labelledby="close-dialog-title"{% if act == "close" %} open{% endif %}>
+    <form method="post" action="/t/{{ t.id }}/close" class="dialog-form" id="close">
+      <h2 id="close-dialog-title">Close {{ t.id }} without building it</h2>
+      <fieldset class="reasons">
+        <legend>Resolution</legend>
+        <label><input type="radio" name="as" value="wont-do" checked data-label="Close as won't do"><span><b>Won't do</b> <span class="muted">Nobody builds it.</span></span></label>
+        <label><input type="radio" name="as" value="superseded" data-label="Close as superseded"><span><b>Superseded</b> <span class="muted">Another ticket replaces it.</span></span></label>
+        <label><input type="radio" name="as" value="duplicate" data-label="Close as duplicate"><span><b>Duplicate</b> <span class="muted">The same ask is already a ticket.</span></span></label>
+        {% if t.status != "testing" %}<label><input type="radio" name="as" value="completed" data-label="Close as done elsewhere"><span><b>Done elsewhere</b> <span class="muted">The work already happened outside this ticket.</span></span></label>{% endif %}
+      </fieldset>
+      <div class="stack close-by">
+        <label for="close-by">Replaced by</label>
+        <input id="close-by" name="by" placeholder="{{ t.id.rsplit('-', 1)[0] }}-…" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="stack">
+        <label for="close-why">Why <span class="muted">(required, goes into the log and your signed ledger)</span></label>
+        <textarea id="close-why" name="message" rows="3" required></textarea>
+      </div>
+      <p class="muted">Its status becomes done{% if claim.get("session") %}, {{ claim.get("harness") or "the agent" }}'s claim is released{% endif %}{% if card.tasks and card.tasks.total > card.tasks.closed %}, its open tasks are skipped{% endif %}. You can reopen it later.{% if t.status == "testing" %} To accept the work instead, give the verdict.{% endif %}</p>
+      <div class="cluster dialog-actions">
+        <a class="btn btn-quiet" href="/t/{{ t.id }}" data-close-dialog>Cancel</a>
+        <button type="submit" class="btn btn-danger" data-submit-label>Close as won't do</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
+  {% if actions.reopen %}
+  {% set back_to = "open" if card.gates and card.gates.requirements.state == "approved" else "backlog" %}
+  <dialog class="overlay orch-dialog ticket-dialog" id="reopen-dialog" aria-labelledby="reopen-dialog-title"{% if act == "reopen" %} open{% endif %}>
+    <form method="post" action="/t/{{ t.id }}/reopen" class="dialog-form" id="reopen">
+      <h2 id="reopen-dialog-title">Reopen {{ t.id }}</h2>
+      <p class="muted">It goes to {{ back_to }}{% if back_to == "backlog" %}, where its requirements and plan are approved again{% else %}: its requirements are still approved{% endif %}. Skipped tasks stay skipped.</p>
+      <div class="stack">
+        <label for="reopen-why">Why it is back <span class="muted">(required)</span></label>
+        <textarea id="reopen-why" name="message" rows="3" required></textarea>
+      </div>
+      <div class="cluster dialog-actions">
+        <a class="btn btn-quiet" href="/t/{{ t.id }}" data-close-dialog>Cancel</a>
+        <button type="submit" class="btn btn-primary">Reopen to {{ back_to }}</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
 {% endblock %}

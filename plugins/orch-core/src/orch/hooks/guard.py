@@ -1430,13 +1430,33 @@ def _bash_reaches_ledger(cmd: str) -> bool:
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
 
 
+_SHELL_EXPANSION = re.compile(r"\$\{[^}]*\}|\$\([^)]*\)|`[^`]*`|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
+
+
+def _bridge_word_could_expand(text: str) -> bool:
+    """A shell word that holds an expansion or a glob and could become `bridge-key` or `bridge-host` when the shell
+    runs it (`bri${x}dge-key`, `bridge-${A:-key}`, `bridge-*` beside a file of that name): each expansion is read as
+    a wildcard, and a word that then matches and still spells part of the name (`bridge`, `-key`, `-host`) counts."""
+    import fnmatch
+    for word in re.split(r"[\s;&|()<>]+", _SHELL_EXPANSION.sub("*", text)):
+        w = word.lower()
+        if not re.search(r"[*?\[]", w):
+            continue
+        literal = re.sub(r"\[[^\]]*\]|[*?]", "", w)
+        if ("bridge" in literal or "-key" in literal or "-host" in literal) and any(
+                fnmatch.fnmatchcase(t, w) for t in ("bridge-key", "bridge-host")):
+            return True
+    return False
+
+
 def _bash_runs_bridge_command(cmd: str) -> bool:
-    """`bridge-key` or `bridge-host` as a word in the command or in what the shell turns it into; an error here
-    refuses a command that has the words in any form (fail closed)."""
+    """`bridge-key` or `bridge-host` as a word in the command or in what the shell turns it into, or a word with an
+    expansion or a glob that could become one; an error here refuses a command that has the words in any form (fail
+    closed)."""
     try:
         if _braces_over_budget(cmd) and re.search(r"(?i)bridge", cmd + _ansi_c(cmd)):
             return True
-        return any(_BRIDGE_CMD.search(c) for c in _key_check_candidates(cmd))
+        return any(_BRIDGE_CMD.search(c) or _bridge_word_could_expand(c) for c in _key_check_candidates(cmd))
     except Exception:  # noqa: BLE001
         return bool(re.search(r"(?i)bridge-(?:key|host)", cmd + _ansi_c(re.sub(r"\\\r?\n", "", cmd))))
 

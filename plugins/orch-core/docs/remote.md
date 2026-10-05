@@ -87,8 +87,10 @@ Limits:
 
 The operating-system user is shared with every agent on this computer. File permissions therefore protect nothing
 against a local agent; orch's command guard refuses agents' commands and file-tool calls on the bridge's records and
-refuses agents running `sharing bridge-key` or `sharing bridge-host`. The guard reads command text, so it deters
-careless or accidental access; it is not a barrier against a program determined to get around it. The start-up
+refuses agents running `sharing bridge-key` or `sharing bridge-host`, also when the name is split by quotes,
+escapes, variables, substitutions or globs, or wrapped in another shell. The guard reads command text, so it deters
+careless or accidental access; it is a deterrent, not a wall: a command that assembles the name at run time, or a
+program outside the agent's tools, gets past it. The start-up
 listing and the audit log expose registry changes made that way, as long as the audit log itself was not rewritten
 too.
 

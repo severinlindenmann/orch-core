@@ -868,6 +868,11 @@ def test_remote_serve_refuses_a_bind_off_this_machine(served, configure):
     "sharing bri\"dge-k\"ey --workspace x", "sharing $'bridge\\x2dkey' --workspace x", "S=bridge-key; sharing $S",
     "bash -c 'sharing bridge-host'", "echo x | sharing BRIDGE-HOST", "sharing bridge-key\n",
     "sharing bridge-key --allow-terminal --workspace x",
+    # an expansion or a glob that the shell turns into the name (re-checked after a review)
+    "sharing bri${x}dge-key", "sharing bri$()dge-key", "sharing bridge-${A:-key}", "sharing bri`true`dge-host",
+    "sharing bridge-*", "sharing bridge-?ey", "sharing bridge-[k]ey", "sharing b*-key", "sharing *-host",
+    "uv run sharing bridge-key", "python3 .claude/skills/sharing/sharing.py bridge-key", "sharing bridge\\\n-key",
+    "echo `sharing bridge-key`", "x " * 50000 + "; sharing bridge-key",
 ])
 def test_the_guard_refuses_the_bridge_commands(ws, cmd):
     from orch.hooks.guard import evaluate

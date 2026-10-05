@@ -96,8 +96,8 @@ def checkout_id(ws) -> str:
     return _checkouts[key]
 
 
-def _settings(ws, name: str, signed: list[dict]) -> list[dict]:
-    cid = checkout_id(ws)
+def _settings(ws, name: str, signed: list[dict], checkout: str | None = None) -> list[dict]:
+    cid = checkout or checkout_id(ws)
     return [e for e in signed if e.get("kind") == "setting" and e.get("setting") == name and e.get("checkout") == cid]
 
 
@@ -109,10 +109,11 @@ def record_setting(ws, name: str, value, actor, evidence: dict | None) -> dict:
                   checkout=checkout_id(ws), prev=chain[-1]["mac"] if chain else "")
 
 
-def signed_setting(ws, name: str, signed: list[dict] | None = None):
-    """The value of this checkout's newest signed entry for `name`, or None when there is none or it does not chain
-    onto the entry before it (a replayed, reordered or out-of-place entry): that counts as no decision."""
-    chain = _settings(ws, name, entries(ws) if signed is None else signed)
+def signed_setting(ws, name: str, signed: list[dict] | None = None, checkout: str | None = None):
+    """The value of this checkout's (or the given checkout id's) newest signed entry for `name`, or None when there is
+    none or it does not chain onto the entry before it (a replayed, reordered or out-of-place entry): that counts as
+    no decision."""
+    chain = _settings(ws, name, entries(ws) if signed is None else signed, checkout)
     if not chain or not head_ok():
         return None
     last, prev = chain[-1], (chain[-2]["mac"] if len(chain) > 1 else "")

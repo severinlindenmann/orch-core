@@ -325,14 +325,29 @@ def test_add_and_remove_are_human_only(dws, human, agent, monkeypatch):
     ("prefix", "bunx x", "exact commands"), ("prefix", "nc localhost", "exact commands"),
     ("prefix", "open -a", "exact commands"), ("prefix", "vim x", "exact commands"),
     ("prefix", "xcrun simctl", "exact commands"), ("prefix", "tmux ls", "exact commands"),
-    ("prefix", "gh api", "other than api"), ("prefix", "gh --repo x", "other than api"),
+    ("prefix", "gh api", "never a prefix"), ("prefix", "gh --repo x", "subcommand first"),
+    # program families by name (round 2): shells, interpreters and versions, awk/sed/find, wrappers, debuggers, pagers
+    *[("prefix", f"{p} x", "exact commands") for p in (
+        "nodejs", "node-18", "gawk", "mawk", "nawk", "gsed", "gfind", "stdbuf", "ionice", "setsid", "flock", "unbuffer",
+        "parallel", "expect", "gdb", "lldb", "sqlite3", "less", "man", "pypy3", "ipython3", "irb", "julia", "Rscript",
+        "swift", "jshell", "python3.12-intel64", "py", "zsh5", "bash5", "tcsh", "kSh", "BASH.EXE", "python.exe")],
+    ("prefix", "git.exe push", "never a prefix"), ("prefix", "rm.exe x", "never a prefix"),
+    # subcommands that run, fetch or rewrite
+    *[("prefix", s, "never a prefix") for s in (
+        "npm x", "pnpm dlx", "pnpm exec", "yarn dlx", "yarn exec", "cargo run", "go run", "gh alias", "gh extension",
+        "gh secret", "git grep", "git difftool", "git mergetool", "git filter-branch", "git daemon", "git instaweb",
+        "git send-email", "git credential", "git p4", "git svn", "git update-ref", "git replace", "git gc",
+        "git branch", "git checkout")],
+    ("prefix", "make -f x", "run other code"), ("prefix", "make SHELL=x", "run other code"),
+    ("prefix", "make MAKEFLAGS=x", "run other code"), ("prefix", "make test -C x", "run other code"),
     ("prefix", "git fetch", "never a prefix"), ("prefix", "git pull origin", "never a prefix"),
     ("prefix", "git clone x", "never a prefix"), ("prefix", "git rebase -i", "never a prefix"),
     ("prefix", "git config user.name", "never a prefix"), ("prefix", "git worktree add", "never a prefix"),
     ("prefix", "git remote add", "never a prefix"), ("prefix", "git submodule update", "never a prefix"),
     ("prefix", "git ls-remote x", "never a prefix"), ("prefix", "git archive x", "never a prefix"),
     ("prefix", "git bisect run", "never a prefix"),
-    ("prefix", "npm --prefix x", "run other code"), ("prefix", "npm exec -c x", "run other code"),
+    ("prefix", "npm --prefix x", "run other code"), ("prefix", "npm exec -c x", "never a prefix"),
+    ("prefix", "npm test -c x", "run other code"),
     ("prefix", "npm test --script-shell=x", "run other code"),
 ])
 def test_broad_rules_are_refused(dws, human, kind, value, why):
@@ -406,6 +421,15 @@ def test_a_remove_counts_only_for_a_rule_in_force(dws, human):
     ("npm run verify --prefix x", False), ("npm run verify --userconfig x", False),
     ("npm run verify --node-options=--require=x", False), ("npm run verify --require x", False),
     ("npm run verify --config x", False),
+    # round 2: more shapes, combined short flags, abbreviations and spellings npm accepts
+    *[(f"npm run verify {a}", False) for a in (
+        "-C /tmp/evil", "-w ../evil", "--workspace ../evil", "--globalconfig=/x", "--open-files-in-pager=x", "-Ox",
+        "-O", "--ext-diff", "--textconv", "--output=/x", "-f x", "--file x", "--makefile=x", "SHELL=/x",
+        "MAKEFLAGS=x", "-p evil", "--rootdir /tmp", "--confcutdir=/x", "-o addopts=x", "--manifest-path /x",
+        "--to-command=x", "--use-compress-program=x", "-I x", "-Ix", "--checkpoint-action=exec=x", "-xc", "-ce x",
+        "-vx", "--script-sh=/x", "--scri=/x", "--SCRIPT-SHELL=/x", "--script_shell=/x", "--upload=x", "--exe x")],
+    ("npm run verify -v", True), ("npm run verify --quiet --silent", True), ("npm run verify --pretty", True),
+    ("npm run verify -1", True), ("npm run verify --ex", True),
 ])
 def test_prefix_matches_only_a_simple_command(dws, human, command, ok):
     dark_profile.add(dws, human, "prefix", "npm run verify")
@@ -426,6 +450,50 @@ def test_exact_matches_only_identical_text(dws, human):
 
 
 # -- the hook ---------------------------------------------------------------------------------------------------------
+
+def test_the_binding_records_the_runners_checkout(dws, da, dh):
+    from orch.core import factory_sessions
+    from test_factory import SESSION
+    _dark(da, dh)
+    b = factory_sessions.binding(dws, SESSION)
+    assert b["checkout"] == ledger.checkout_id(dws) and b["start"] == str(dws.root)
+
+
+def test_a_forged_git_file_does_not_move_the_session_to_another_checkout(dws, da, dh, human, tmp_path):
+    """The agent rewrites its checkout's `.git` file so checkout_id names another clone's common dir."""
+    from orch.core.workspace import Workspace
+    _dark(da, dh)
+    dark_profile.add(dws, human, "prefix", "make e2e")
+    assert _behavior(permits.hook_decision(dws, _payload("make e2e"))) == "allow"
+    before = ledger.checkout_id(dws)
+    other_git = tmp_path / "other clone" / ".git"
+    other_git.mkdir(parents=True)
+    fake = tmp_path / "fake gitdir"
+    fake.mkdir()
+    (fake / "commondir").write_text(str(other_git), encoding="utf-8")
+    (dws.root / ".git").write_text(f"gitdir: {fake}\n", encoding="utf-8")
+    ledger._checkouts.clear()
+    moved = Workspace.open(dws.root)
+    assert ledger.checkout_id(moved) != before  # the forged `.git` file now names the other clone
+    out = permits.hook_decision(moved, _payload("make e2e"))
+    assert _behavior(out) == "deny" and "not in the checkout the runner started it in" in _msg(out)
+
+
+def test_a_session_that_moves_into_another_clone_gets_nothing_from_it(dws, da, dh, human, tmp_path):
+    """A second clone with the same customer and prefix, its own Dark switch on and a rule the first lacks."""
+    import shutil
+    _dark(da, dh)
+    other = _second_root(tmp_path, factory=FACTORY)
+    shutil.copytree(dws.home / "tickets", other.home / "tickets", dirs_exist_ok=True)
+    shutil.copytree(dws.home / ".state", other.home / ".state", dirs_exist_ok=True)
+    _switch_on(other, human)
+    dark_profile.add(other, human, "prefix", "make deploy")
+    assert dark_profile.match(other, "make deploy") is not None and dark_profile.match(dws, "make deploy") is None
+    out = permits.hook_decision(other, _payload("make deploy"))  # the hook opened from the clone it moved into
+    assert _behavior(out) == "deny" and "not in the checkout the runner started it in" in _msg(out)
+    out = permits.hook_decision(dws, _payload("make deploy"))  # back home: its own profile, which lacks the rule
+    assert _behavior(out) == "deny" and "not in the Dark profile" in _msg(out)
+
 
 def test_hook_allows_listed_and_parks_unlisted_as_a_dark_card(dws, da, dh, human):
     eid, cid = _dark(da, dh)

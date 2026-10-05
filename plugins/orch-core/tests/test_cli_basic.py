@@ -139,3 +139,16 @@ def test_human_hints_name_no_agent_runnable_command():
     from orch.core.lifecycle import HUMAN_HINT
     for hint in (actor._HINT, HUMAN_HINT):
         assert "orch serve" not in hint and "ask the human" in hint
+
+
+def test_version_command_and_flag_match_the_package_metadata(capsys):
+    import tomllib
+    from pathlib import Path
+
+    from orch import __version__
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert __version__ == pyproject["project"]["version"]   # a release bumps both: it printed 0.1.0 on 0.3.0
+    assert run(["version"]) == 0
+    assert capsys.readouterr().out.strip() == __version__
+    assert run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == __version__

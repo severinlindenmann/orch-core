@@ -21,7 +21,7 @@ _TYPE = re.compile(r"\.[a-z0-9]{1,10}|[a-z]+/[a-z0-9.+-]+")  # an upload type: "
 MAX_UPLOAD_BYTES = 209_715_200  # 200 MiB, the hard cap for any accepts_file action
 CAPABILITIES = frozenset({"provider", "page", "panel", "decisions", "settings", "events"})
 SLOT_NAMES = frozenset({"today.summary", "today.from_addons", "ticket.code", "ticket.sync", "ticket.external",
-                        "ticket.pages", "board.external", "workspace.settings"})
+                        "ticket.pages", "board.external", "workspace.settings", "guide.section"})
 FIELD_TYPES = frozenset({"text", "select", "bool", "map"})
 MENU_ICONS = {
     "box": "M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5",

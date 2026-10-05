@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Problem, Role, Task, Ticket } from '../types'
-import { ICON, active, changes, loadTickets, ordered, serial, statusLine } from './tickets'
+import { ICON, active, byUrgency, changes, loadTickets, ordered, serial, statusLine } from './tickets'
 
 const PANE = 'orch-session'
 const TIMEOUT_MS = 15000
@@ -15,7 +15,19 @@ const PALETTE: Record<'dark' | 'light', Record<Role, string | undefined>> = {
 }
 let tone = PALETTE.dark
 
+// Polling: 20 s while things change, 60 s after three quiet polls, 5 min where there is no orch workspace (every
+// refresh runs 1 + N `orch` processes; ~1.8 CPU-s with 8 tickets). An orch command, `/orch` or a change speeds it up again.
+const FAST_MS = 20000
+let quiet = 0
+let gone = 0
+let sig = ''
+const delay = () => (gone >= 2 ? 300000 : quiet >= 3 ? 60000 : FAST_MS)
+const signature = (list: Ticket[]) => list.map(t => [t.id, t.status, t.move.what, t.move.ref, t.closed, t.total, t.doing].join('|')).join(';')
+
 const WHO: Record<string, string> = { you: 'YOUR MOVE', agent: 'AGENT WORKING', nobody: '' }
+// stale/blocked are the agent's move too, but the header must not say "working" over a stale claim
+const WHO_KIND: Record<string, string> = { stale: 'STALE CLAIM', blocked: 'BLOCKED' }
+const needsGate = (what: string) => /^(approve|re-approve)/.test(what)
 const PROBLEM: Record<Problem, string> = {
   'no-workspace': 'No orch workspace here.',
   missing: 'orch is not on the PATH.',
@@ -32,6 +44,7 @@ async function refreshOnce($: EngineInterface) {
   const env = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
   const got = await loadTickets(argv => $.process.run(argv, { env, timeoutMs: TIMEOUT_MS }))
   if ('problem' in got) {
+    gone = got.problem === 'no-workspace' ? gone + 1 : 0
     // Keep the last whole state; without a workspace there is nothing to keep.
     await update($, problem, () => got.problem)
     if (got.problem === 'no-workspace') {
@@ -40,6 +53,10 @@ async function refreshOnce($: EngineInterface) {
     }
     return
   }
+  gone = 0
+  const now = signature(got.tickets)
+  quiet = now === sig ? quiet + 1 : 0
+  sig = now
   const before = await read($, tickets)
   if (before) for (const text of changes(before, got.tickets)) $.ui.toast(text, { timeoutMs: 6000 })
   await update($, tickets, () => got.tickets)
@@ -51,9 +68,15 @@ async function refreshOnce($: EngineInterface) {
 
 // One refresh at a time (serial), set up per session start.
 let refresh: () => Promise<void> = () => Promise.resolve()
+// an event the human can see (an orch command, /orch) is a reason to look again soon
+const wake = () => {
+  quiet = 0
+  gone = 0
+  void refresh()
+}
 
 function count(t: Ticket): string {
-  return t.total > 0 ? `${t.closed}/${t.total}` : '—'
+  return t.total > 0 ? `${t.closed}/${t.total}` : ''
 }
 
 const TASK_ROLE: Record<string, Role> = { doing: 'info', blocked: 'warn', done: 'ok', skipped: 'neu', todo: 'neu' }
@@ -71,8 +94,9 @@ export const register: Register = on => {
       // the dark palette
     }
     void refresh()
-    // ponytail: polls every 20 s; watch orchestrator/.state/events.jsonl if that ever feels slow
-    $.clock.every(20000, () => void refresh())
+    // ponytail: polls (back-off above); watch orchestrator/.state/events.jsonl if that ever feels slow
+    const tick = () => $.clock.after(delay(), () => void refresh().finally(tick))
+    tick()
     return started
   })
 
@@ -80,13 +104,13 @@ export const register: Register = on => {
   // result never waits for it.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    if (/\borch\s/.test(e.command)) void refresh()
+    if (/\borch\s/.test(e.command)) wake()
     return ran
   })
 
   on('command.run', { command: 'orch' }, async $ => {
     await $.ui.open({ id: PANE, title: 'orch · this session' })
-    void refresh()
+    wake()
     return { text: 'orch pane opened.' }
   })
 
@@ -94,19 +118,22 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const list = await read($, tickets)
     const t = list && active(list)
-    if (e.props.hasSurvey || !list || !t) return next(e)
+    // The band is for what needs a look: the human's move, a stale claim, a blocked ticket. The agent working is
+    // already in the status line, so no row above the prompt is spent on it.
+    if (e.props.hasSurvey || !list || !t || (t.move.role !== 'you' && t.move.role !== 'warn' && t.move.role !== 'err')) return next(e)
     const { Text } = $.ui.resolve(e)
     const m = t.move
     const others = list.length - 1
     return (
       <Text wrap="truncate-end">
-        <Text color={tone[m.role]} dimColor={!tone[m.role]} bold>{ICON[m.role]} {t.id}</Text>{' '}
-        <Text dimColor>{count(t)}</Text>{' '}
+        <Text color={tone[m.role]} dimColor={!tone[m.role]} bold>{ICON[m.role]} {t.id}</Text>
+        {others > 0 ? <Text dimColor> (+{others})</Text> : ''}
+        {t.total > 0 ? <Text dimColor> {count(t)}</Text> : ''}{' '}
         <Text color={tone[m.role]} dimColor={!tone[m.role]}>
           {m.who === 'you' ? `Your move: ${m.label}` : m.label}
           {t.detail ? ` · ${t.detail}` : ''}
         </Text>
-        {others > 0 ? <Text dimColor> · +{others} more, /orch</Text> : ''}
+        {others > 0 ? <Text dimColor> · /orch</Text> : ''}
       </Text>
     )
   })
@@ -149,10 +176,21 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {banner}
-        {list.map(t => {
+        {byUrgency(list).map(t => {
           const m = t.move
           const color = tone[m.role]
-          const who = WHO[m.who] || m.label.toUpperCase()
+          // an agent at work with nothing to decide: one row, so the cards that need you stay in view
+          if (m.who === 'agent' && m.role === 'info') {
+            return (
+              <Text key={t.id} wrap="truncate-end">
+                <Text color={color} bold>{ICON[m.role]} {t.id}</Text>
+                <Text dimColor> {count(t) ? `${count(t)} ` : ''}</Text>
+                {t.title}
+                <Text dimColor> · {t.detail || m.label}</Text>
+              </Text>
+            )
+          }
+          const who = WHO_KIND[m.what] || WHO[m.who] || m.label.toUpperCase()
           return (
             <Box
               key={t.id}
@@ -186,6 +224,12 @@ export const register: Register = on => {
               {t.confirm.length > 0 && (
                 <Text dimColor wrap="truncate-end">
                   {ICON.neu} {t.confirm.join(', ')}: the agent went ahead on its recommendation; confirm when you can
+                </Text>
+              )}
+              {needsGate(m.what) && (
+                <Text dimColor wrap="truncate-end">
+                  gates: requirements {t.gates.requirements === 'approved' ? '✓' : '●'} {t.gates.requirements} · plan{' '}
+                  {t.gates.plan === 'approved' ? '✓' : '●'} {t.gates.plan}
                 </Text>
               )}
               {ordered(t.tasks).map(taskLine)}

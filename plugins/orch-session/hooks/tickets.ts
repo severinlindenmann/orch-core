@@ -136,14 +136,42 @@ function short(m: Move): string {
   return ['blocked', 'done', 'stale'].includes(m.what) ? m.what : 'working'
 }
 
-export function statusLine(tickets: Ticket[]): string | undefined {
-  if (tickets.length === 0) return undefined
-  return tickets.map(t => `${ICON[t.move.role]} ${t.id} ${short(t.move)}`).join('  ')
+// Most urgent first: the human's move, then what is stale or blocked, then the agent's work (stable inside a group).
+const RANK: Record<Role, number> = { you: 0, err: 1, warn: 1, info: 2, neu: 2, ok: 3 }
+export function byUrgency(tickets: Ticket[]): Ticket[] {
+  return tickets
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => RANK[a.t.move.role] - RANK[b.t.move.role] || a.i - b.i)
+    .map(x => x.t)
 }
 
-// The ticket the band leads with: the human's move first, then the agent's work, then the rest.
+const entry = (t: Ticket) => `${ICON[t.move.role]} ${t.id} ${short(t.move)}`
+
+// Up to 3 tickets are named. Beyond that the host cuts the line at the terminal width from the right, so the
+// human's moves are named first (two at most) and the rest is counted: `● DEMO-4 Approve plan  ● +2 your move  ◐ 4 working`.
+export function statusLine(tickets: Ticket[]): string | undefined {
+  if (tickets.length === 0) return undefined
+  const sorted = byUrgency(tickets)
+  if (sorted.length <= 3) return sorted.map(entry).join('  ')
+  const you = sorted.filter(t => t.move.who === 'you')
+  const warn = sorted.filter(t => t.move.who !== 'you' && (t.move.role === 'warn' || t.move.role === 'err'))
+  const rest = sorted.filter(t => !you.includes(t) && !warn.includes(t))
+  const parts = you.slice(0, 2).map(entry)
+  if (you.length > 2) parts.push(`${ICON.you} +${you.length - 2} your move`)
+  if (warn.length === 1) parts.push(entry(warn[0]))
+  else if (warn.length > 1) parts.push(`${ICON.warn} ${warn.length} ${warn.every(t => t.move.what === 'stale') ? 'stale' : 'blocked or stale'}`)
+  if (rest.length) parts.push(`${ICON.info} ${rest.length} ${rest.every(t => t.move.who === 'agent') ? 'working' : 'other'}`)
+  return parts.join('  ')
+}
+
+// The ticket the band leads with: the human's move first, then a stale claim, then the agent's work, then the rest.
 export function active(tickets: Ticket[]): Ticket | undefined {
-  return tickets.find(t => t.move.who === 'you') ?? tickets.find(t => t.move.who === 'agent') ?? tickets[0]
+  return (
+    tickets.find(t => t.move.who === 'you') ??
+    tickets.find(t => t.move.what === 'stale') ??
+    tickets.find(t => t.move.who === 'agent') ??
+    tickets[0]
+  )
 }
 
 // The exception first (doing, blocked), then what is left, then what is closed.

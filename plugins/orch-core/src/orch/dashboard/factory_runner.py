@@ -16,7 +16,7 @@ from pathlib import Path
 
 from orch.core import factory_runner
 from orch.dashboard import launch
-from orch.dashboard.views import HUMAN
+from orch.dashboard.reach import LOCAL_HUMAN
 from orch.errors import OrchError, UsageError
 
 log = logging.getLogger("orch.factory")
@@ -102,7 +102,7 @@ def run_once(ws, launcher=None) -> list[str]:
     from orch.core import factory_sessions, permits
     if not available() or not (permits.enabled(ws) or factory_sessions.bindings(ws)):
         return []
-    return factory_runner.tick(ws, HUMAN, launcher or TmuxLauncher(), settings=launch.load_settings())
+    return factory_runner.tick(ws, LOCAL_HUMAN, launcher or TmuxLauncher(), settings=launch.load_settings())
 
 
 def startup(ws, launcher=None) -> list[str]:
@@ -110,7 +110,7 @@ def startup(ws, launcher=None) -> list[str]:
     from orch.core import factory_sessions
     if not factory_sessions.bindings(ws) or not available():
         return []
-    return factory_runner.sweep(ws, HUMAN, launcher or TmuxLauncher())
+    return factory_runner.sweep(ws, LOCAL_HUMAN, launcher or TmuxLauncher())
 
 
 def shutdown(ws, launcher=None) -> list[str]:
@@ -118,7 +118,7 @@ def shutdown(ws, launcher=None) -> list[str]:
     from orch.core import factory_sessions
     if not factory_sessions.bindings(ws):
         return []
-    return factory_runner.sweep(ws, HUMAN, launcher or TmuxLauncher(), stop_all=True)
+    return factory_runner.sweep(ws, LOCAL_HUMAN, launcher or TmuxLauncher(), stop_all=True)
 
 
 async def loop(ws, seconds: float = ROUND_SECONDS) -> None:

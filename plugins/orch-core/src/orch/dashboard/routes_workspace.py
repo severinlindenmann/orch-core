@@ -396,8 +396,9 @@ def phone_revoke(request: Request, phone_id: str, ask: str = Form("")):
     if phone_store.find(ws.root, phone_id) is None:
         return back(_PHONES, err="no such phone in this workspace")
     phone_store.revoke(ws.root, phone_id)
-    linked = routes_remote.revoke_linked_devices(request, phone_id)  # a linked pair is revoked together
-    return back(_PHONES, msg="Phone revoked" + (f"; {linked} linked remote device(s) revoked too" if linked else ""))
+    linked, problems = routes_remote.revoke_linked_devices(request, phone_id)  # a linked pair is revoked together
+    return back(_PHONES, msg="Phone revoked" + (f"; {linked} linked remote device(s) revoked too" if linked else ""),
+                err="; ".join(problems) or None)
 
 
 @router.post("/workspace/phones/permissions")

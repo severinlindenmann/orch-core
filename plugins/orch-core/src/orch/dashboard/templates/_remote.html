@@ -55,7 +55,7 @@
     <form method="post" action="/workspace/remote/pending/{{ p.id }}/approve" class="filters">
       <label for="grp-{{ p.id }}">Last group of the fingerprint shown on the device <input type="text" id="grp-{{ p.id }}" name="last_group" maxlength="4" size="5" autocomplete="off" required></label>
       <label for="apv-{{ p.id }}">Scope {{ scope_select("scope", p.scope, p.scopes, "apv-" ~ p.id) }}</label>
-      {% if p.scope == "type" %}<label><input type="checkbox" name="allow_type" value="1"> Allow Type</label>{% endif %}
+      {% if p.scope == "type" %}<label><input type="checkbox" name="allow_type" value="1"> Allow Type (this device can run things on this Mac)</label>{% endif %}
       <button type="submit" class="btn">Approve</button>
     </form>
     <p class="muted">Approving can only lower the scope that was asked for.</p>
@@ -84,7 +84,7 @@
           </form>{% else %}{{ d.scope }}{% endif %}</td>
         <td data-label="Last seen">{{ d.last_seen }}</td>
         <td data-label="Fingerprint"><code>{{ d.fingerprint }}</code></td>
-        <td>{% if not d.revoked and remote.running %}<form method="post" action="/workspace/remote/devices/{{ d.id }}/revoke" data-dialog="Revoke {{ d.label }}?" data-dialog-body="It is refused from its next request and revoked in every workspace on this computer. Pair it again to use it." data-dialog-confirm="Revoke device" data-dialog-cancel="Keep device" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
+        <td>{% if d.revoked and remote.running %}<form method="post" action="/workspace/remote/devices/{{ d.id }}/revoke" data-dialog="Finish revoking {{ d.label }}?" data-dialog-body="Runs the remaining steps again: the other workspaces on this computer and a linked phone pairing." data-dialog-confirm="Finish revoking" data-dialog-cancel="Cancel" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Finish revoking</button></form>{% elif remote.running %}<form method="post" action="/workspace/remote/devices/{{ d.id }}/revoke" data-dialog="Revoke {{ d.label }}?" data-dialog-body="It is refused from its next request and revoked in every workspace on this computer. Pair it again to use it." data-dialog-confirm="Revoke device" data-dialog-cancel="Keep device" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>

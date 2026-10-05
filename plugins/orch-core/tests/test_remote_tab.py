@@ -241,8 +241,11 @@ def test_approval_only_lowers_the_scope(client, host):
 
 def test_approving_type_needs_its_switch(client, host):
     did, fp = pend(host, "Pixel 8", "type")
-    post(client, f"/workspace/remote/pending/{did}/approve", scope="type", last_group=fp[-4:])
-    assert host.registry.get(did).scope == "type"  # the offer itself was a Type offer the owner chose
+    r = post(client, f"/workspace/remote/pending/{did}/approve", scope="type", last_group=fp[-4:])
+    assert "Type also needs" in r.headers["location"] and host.registry.get(did) is None  # never implied by the offer
+    assert host.pairing.pending[did].state == "pending"
+    post(client, f"/workspace/remote/pending/{did}/approve", scope="type", last_group=fp[-4:], allow_type="1")
+    assert host.registry.get(did).scope == "type"
     did2, fp2 = pend(host, "Pixel 9", "decide")
     r = post(client, f"/workspace/remote/pending/{did2}/approve", scope="type", last_group=fp2[-4:])
     assert host.registry.get(did2) is None
@@ -297,8 +300,10 @@ def test_revoke_asks_first_then_revokes_everywhere(client, host, cfg):
     r = post(client, f"/workspace/remote/devices/{d.id}/revoke")
     assert "revoked" in r.headers["location"].lower()
     assert host.registry.get(d.id).revoked and other_reg.get(od.id).revoked
-    assert "no such active" in post(client, f"/workspace/remote/devices/{d.id}/revoke").headers["location"]
-    assert "Revoked: Pixel 8" in tab(client)
+    again = post(client, f"/workspace/remote/devices/{d.id}/revoke")  # idempotent: it only re-runs the other steps
+    assert "Device revoked" in again.headers["location"] and "err=" not in again.headers["location"]
+    assert "no such device" in post(client, "/workspace/remote/devices/" + "0" * 32 + "/revoke").headers["location"]
+    assert "Revoked: Pixel 8" in tab(client) and "Finish revoking" in tab(client)
 
 
 def test_revoking_a_device_revokes_its_linked_phone(client, host, ws):
@@ -422,6 +427,125 @@ def test_activity_lists_added_and_assertions(client, host):
     host.registry.audit(NOW, "assertion", device=d.id, ok=False, why="bad_signature", rid="a" * 32)
     html = tab(client)
     assert "Device added: Mac" in html and "Confirmation refused on Mac" in html and "bad_signature" in html
+
+
+def _fail_once(monkeypatch, module, name):
+    real, calls = getattr(module, name), []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("disk trouble")
+        return real(*a, **k)
+    monkeypatch.setattr(module, name, flaky)
+
+
+def test_a_half_finished_revoke_is_completed_by_a_retry(client, host, ws, cfg, monkeypatch):
+    from orch.dashboard import routes_remote
+    from orch.remote.bridge_host import registry as registry_mod
+    pub = new_pub()
+    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    d = host.registry.add(device(pub, "decide", "iPhone", phone_link=phone.id), NOW)
+    other = bytes(range(16, 32))
+    other_reg = Registry(files.bridge_dir(cfg, other.hex()), other)
+    od = other_reg.add(Device(keys.device_id(other, pub).hex(), pub, "look", "iPhone", NOW), NOW)
+    _fail_once(monkeypatch, registry_mod, "revoke_everywhere")  # step 2 fails the first time
+    r = post(client, f"/workspace/remote/devices/{d.id}/revoke")
+    loc = r.headers["location"]
+    assert "not fully revoked" in loc and "other workspaces" in loc and "Finish revoking" in loc
+    assert "revoked here" in loc  # what did work is reported too
+    assert host.registry.get(d.id).revoked and not other_reg.get(od.id).revoked
+    assert phone_store.find(ws.root, phone.id).revoked_at is not None  # step 3 still ran
+    assert "Finish revoking" in tab(client)
+    again = post(client, f"/workspace/remote/devices/{d.id}/revoke")
+    assert "err=" not in again.headers["location"] and other_reg.get(od.id).revoked
+    assert "Finish revoking" in post(client, f"/workspace/remote/devices/{d.id}/revoke", ask="1").text
+
+
+def test_a_failed_phone_step_is_shown_and_retried(client, host, ws, monkeypatch):
+    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    d = host.registry.add(device(new_pub(), "decide", "iPhone", phone_link=phone.id), NOW)
+    _fail_once(monkeypatch, phone_store, "revoke")
+    assert "linked phone pairing" in post(client, f"/workspace/remote/devices/{d.id}/revoke").headers["location"]
+    assert phone_store.find(ws.root, phone.id).revoked_at is None
+    post(client, f"/workspace/remote/devices/{d.id}/revoke")
+    assert phone_store.find(ws.root, phone.id).revoked_at is not None
+
+
+def test_damaged_other_workspaces_are_shown(client, host, cfg):
+    d = host.registry.add(device(new_pub(), "decide", "Pixel 8"), NOW)
+    bad = files.bridge_dir(cfg, bytes(range(32, 48)).hex())
+    files.ensure_dir(bad)
+    (bad / "registry.json").write_bytes(b"{broken")
+    loc = post(client, f"/workspace/remote/devices/{d.id}/revoke").headers["location"]
+    assert "cannot be read" in loc and "may still be live" in loc and host.registry.get(d.id).revoked
+
+
+def test_reverse_path_shows_a_partial_failure(client, host, ws, monkeypatch):
+    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    a = host.registry.add(device(new_pub(), "decide", "First", phone_link=phone.id), NOW)
+    b = host.registry.add(device(new_pub(), "decide", "Second", phone_link=phone.id), NOW)
+    real = host.revoke
+
+    def flaky(did):
+        if did == a.id:
+            raise OSError("disk trouble")
+        return real(did)
+    monkeypatch.setattr(host, "revoke", flaky)
+    loc = post(client, f"/workspace/phones/{phone.id}/revoke").headers["location"]
+    assert "Phone revoked" in loc and "First: could not revoke it here" in loc and "1 linked remote device" in loc
+    assert not host.registry.get(a.id).revoked and host.registry.get(b.id).revoked
+
+
+def test_reverse_path_without_a_host_uses_the_registry_file(ws, monkeypatch, cfg):
+    monkeypatch.setattr(views, "_setup_count", lambda ws, checks=None: 0)
+    app = create_app(ws, "tok")
+    reg = Registry(files.bridge_dir(cfg, WS.hex()), WS)
+    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    d = reg.add(device(new_pub(), "decide", "iPhone", phone_link=phone.id), NOW)
+    app.state.bridge_registry = reg
+    c = TestClient(app)
+    c.get("/?token=tok")
+    loc = post(c, f"/workspace/phones/{phone.id}/revoke").headers["location"]
+    assert "1 linked remote device" in loc and reg.get(d.id).revoked
+
+
+def test_reverse_path_with_no_registry_says_it_could_not_look(client, ws, monkeypatch):
+    monkeypatch.setattr(views, "_setup_count", lambda ws, checks=None: 0)
+    app = create_app(ws, "tok")
+    c = TestClient(app)
+    c.get("/?token=tok")
+    phone, _ = phone_store.pair(ws.root, label="iPhone", addon="x")
+    loc = post(c, f"/workspace/phones/{phone.id}/revoke").headers["location"]
+    assert "Phone revoked" in loc and "not checked" in loc
+
+
+def test_the_gate_itself_refuses_a_remote_marker(app):
+    """Directly, not through the remote gate's own refusal: the POST helper must refuse on its own."""
+    from types import SimpleNamespace
+    from orch.dashboard import reach, routes_remote
+    req = SimpleNamespace(headers={"origin": "http://h", "host": "h"}, scope={reach.SCOPE_KEY: origin(Scope.TYPE)})
+    assert routes_remote._gate(req).status_code == 403
+    req.scope = {}
+    assert routes_remote._gate(req) is None
+
+
+def test_a_damaged_registry_shows_no_device_controls(client, host):
+    d = host.registry.add(device(new_pub(), "type", "Pixel 8"), NOW)
+    assert f"/devices/{d.id}/scope" in tab(client)
+    host.registry.path.write_bytes(b"{not json")
+    html = tab(client)
+    assert "Pixel 8" not in html and "/devices/" not in html and "Save scope" not in html and "Revoke" not in html.replace(
+        "Revoke device", "")
+    assert "/workspace/remote/offer" not in html
+
+
+def test_revoking_goes_through_the_host(client, host):
+    """Host.revoke ends the device's lease and waiting work; the registry write alone would not."""
+    d = host.registry.add(device(new_pub(), "type", "Pixel 8"), NOW)
+    host.leases[d.id] = NOW + 60_000
+    post(client, f"/workspace/remote/devices/{d.id}/revoke")
+    assert d.id not in host.leases and host.registry.get(d.id).revoked
 
 
 def test_the_default_link_is_off_without_the_loop(ws, monkeypatch):

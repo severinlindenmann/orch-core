@@ -13,6 +13,7 @@ is shown as escaped text, the label reduced to letters, digits, space, dot, unde
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, Request
@@ -23,6 +24,7 @@ from orch import actor as actor_mod
 from orch.dashboard.auth import strict_same_origin
 from orch.dashboard.reach import remote_origin
 from orch.dashboard.views import back, confirm_page
+from orch.errors import OrchError
 from orch.remote import store as phone_store
 from orch.remote.bridge_host import files
 from orch.remote.bridge_link import NullLink
@@ -236,7 +238,7 @@ def remote_approve(request: Request, did: str, scope: str = Form(""), last_group
         return back(_REMOTE, err="no pending pairing for that device")
     if last_group.strip().upper() != _last_group(p.fingerprint):
         return back(_REMOTE, err="that is not the last group of the fingerprint: compare it on the device, or reject")
-    if (scope := _scope_form(scope or p.scope, allow_type or ("1" if p.scope == "type" else ""))) is None:
+    if (scope := _scope_form(scope or p.scope, allow_type)) is None:  # Type is ticked at approval, never implied
         return back(_REMOTE, err="choose a scope; Type also needs its own switch")
     try:
         dev = host.approve(did, scope)
@@ -268,38 +270,63 @@ def remote_scope(request: Request, did: str, scope: str = Form(...), allow_type:
     return back(_REMOTE, msg=f"Scope is now {scope}")
 
 
-def revoke_device(host, did: str) -> bool:
-    """Revoke `did` here, in every other workspace's registry on this computer (matched by key, D7), and the phone
-    pairing linked to it. True when it existed."""
-    dev = host.registry.get(did)
-    if dev is None:
-        return False
-    if not dev.revoked:
-        host.revoke(did)
+def revoke_steps(registry, host, dev, ws_root) -> tuple[list[str], list[str]]:
+    """Revoke `dev` here, in every other workspace's registry on this computer (matched by key, D7) and in the
+    phone pairing linked to it. Safe to run again on an already revoked device: it then does the remaining steps.
+    Returns (what was done, what failed); only a failure of the first step (revoking here) stops the others."""
     from orch.remote.bridge_host.registry import revoke_everywhere
-    config_dir = host.root.parents[2]  # <config>/permits/bridge/<workspace>
-    revoke_everywhere(config_dir, dev.pub, host.clock())
-    return True
-
-
-def revoke_linked_devices(request: Request, phone_id: str) -> int:
-    """Revoking a phone pairing revokes the devices linked to it (either side revokes both). Called by the Phones
-    tab's revoke; never raises."""
-    host = _host(request)
-    if host is None:
-        return 0
-    n = 0
+    done: list[str] = []
+    problems: list[str] = []
+    now = host.clock() if host is not None else int(time.time() * 1000)
+    if not dev.revoked:
+        try:
+            if host is not None:
+                host.revoke(dev.id)
+            else:
+                registry.revoke(dev.id, now)
+            done.append("revoked here")
+        except _FAILS as e:
+            return done, [f"could not revoke it here: {safe_text(e, 100)}"]
     try:
-        for d in host.registry.devices().values():
-            if d.phone_link == phone_id and not d.revoked:
-                n += bool(revoke_device(host, d.id))
-    except _FAILS:
-        return n
-    return n
+        hits, damaged = revoke_everywhere(registry.root.parents[2], dev.pub, now)  # <config>/permits/bridge/<ws>
+        done.append(f"revoked in {len(hits)} other workspace(s)")
+        problems += [f"the registry of workspace {safe_text(w, 8)} cannot be read, so the device may still be live there"
+                     for w in damaged]
+    except _FAILS as e:
+        problems.append(f"could not revoke it in the other workspaces: {safe_text(e, 100)}")
+    if dev.phone_link:
+        try:
+            phone_store.revoke(ws_root, dev.phone_link)
+            done.append("linked phone pairing revoked")
+        except _FAILS + (OrchError,) as e:
+            problems.append(f"could not revoke the linked phone pairing: {safe_text(e, 100)}")
+    return done, problems
+
+
+def revoke_linked_devices(request: Request, phone_id: str) -> tuple[int, list[str]]:
+    """Revoking a phone pairing revokes the devices linked to it (either side revokes both). Called by the Phones
+    tab's revoke; returns (how many devices, what failed) and never raises. Without a running host it works on the
+    registry file when one is known, and says so when it cannot look."""
+    host, registry = _host(request), _registry(request)
+    if registry is None:
+        return 0, ["linked remote devices were not checked: Remote is not running and no device registry is known"]
+    try:
+        linked = [d for d in registry.devices().values() if d.phone_link == phone_id]
+    except files.Damaged:
+        return 0, ["linked remote devices could not be revoked: the device registry cannot be read"]
+    n, problems = 0, []
+    for d in linked:
+        if d.revoked:
+            continue  # its other steps are finished with "Finish revoking" on the Remote tab
+        done, bad = revoke_steps(registry, host, d, request.app.state.ws.root)
+        n += bool(done)
+        problems += [f"{safe_label(d.label) or 'a device'}: {m}" for m in bad]
+    return n, problems
 
 
 @router.post("/workspace/remote/devices/{did}/revoke")
 def remote_revoke(request: Request, did: str, ask: str = Form("")):
+    """Also finishes a half-done revoke: on an already revoked device it runs the remaining steps again."""
     if (r := _gate(request)) is not None:
         return r
     host, none = _need_host(request)
@@ -309,24 +336,22 @@ def remote_revoke(request: Request, did: str, ask: str = Form("")):
         dev = host.registry.get(did)
     except files.Damaged:
         return back(_REMOTE, err="the device registry cannot be read")
-    if dev is None or dev.revoked:
-        return back(_REMOTE, err="no such active device")
+    if dev is None:
+        return back(_REMOTE, err="no such device")
     if ask:
         label = safe_label(dev.label) or "this device"
         extra = " Its linked phone pairing is revoked with it." if dev.phone_link else ""
         return confirm_page(request, action=f"/workspace/remote/devices/{did}/revoke", fields=[],
-                            title=f"Revoke {label}?",
+                            title=f"{'Finish revoking' if dev.revoked else 'Revoke'} {label}?",
                             body="It is refused from its next request, its open streams and waiting actions end, and it"
                                  " is revoked in every workspace on this computer. To use it again it must pair again."
-                                 + extra, confirm="Revoke device", cancel="Keep device", cancel_href=_REMOTE,
-                            danger=True, nav="workspace")
-    try:
-        revoke_device(host, did)
-        if dev.phone_link:
-            phone_store.revoke(request.app.state.ws.root, dev.phone_link)
-    except _FAILS as e:
-        return back(_REMOTE, err=f"not fully revoked: {safe_text(e, 100)}")
-    return back(_REMOTE, msg="Device revoked")
+                                 + extra, confirm="Finish revoking" if dev.revoked else "Revoke device",
+                            cancel="Keep device", cancel_href=_REMOTE, danger=True, nav="workspace")
+    done, problems = revoke_steps(host.registry, host, dev, request.app.state.ws.root)
+    if problems:
+        return back(_REMOTE, err="not fully revoked: " + "; ".join(problems) + ". Use Finish revoking to try again.",
+                    msg=("Done: " + ", ".join(done)) if done else None)
+    return back(_REMOTE, msg="Device revoked: " + ", ".join(done))
 
 
 @router.post("/workspace/remote/disconnect")

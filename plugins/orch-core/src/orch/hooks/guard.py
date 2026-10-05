@@ -638,9 +638,10 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # The approval ledger and its signing key (orch.core.ledger), in the orch config dir: the human's record of approvals.
 # Agents never read or write them, by any tool; best effort for Bash, as for the pairing keys.
 # The AI Factory's permit records beside it (orch.core.permits: request bodies and the markers that use up a once
-# grant) are protected the same way: removing a marker would revive a used grant.
+# grant) are protected the same way: removing a marker would revive a used grant. So are the Orch Remote bridge's
+# records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux|bridge)\b"
                      r"|\borch\.core\.(?:ledger|permits)\b|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits)\b")
 _LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
                   "decisions; agents do not read or write them")

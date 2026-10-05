@@ -134,6 +134,27 @@ def trusted(ws, session) -> dict | None:
     return b if hmac.compare_digest(proc_start(int(b["pid"])) or "", b["pid_start"]) else None
 
 
+def session_state(ws, session) -> tuple[str, dict | None]:
+    """What orch's own limits for factory sessions go by, failing closed: ("trusted", binding) for a session the
+    runner bound and this process runs under; ("none", None) only when that is certain: the id is not a session id the
+    runner could have made, or no binding record exists for it; ("unknown", None) for anything else: a record that
+    exists but does not verify (damaged, another workspace's, another process tree, no process recorded yet) or an
+    error while looking."""
+    if not isinstance(session, str) or not SESSION_ID.match(session):
+        return "none", None
+    try:
+        os.lstat(_root() / "sessions" / f"{session}.json")
+    except FileNotFoundError:
+        return "none", None
+    except Exception:
+        return "unknown", None
+    try:
+        b = trusted(ws, session)
+    except Exception:
+        return "unknown", None
+    return ("trusted", b) if b is not None else ("unknown", None)
+
+
 def _read(ws, path: Path) -> dict | None:
     from orch.core.artifacts import read_regular
     from orch.core.ledger import workspace_id

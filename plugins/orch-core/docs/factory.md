@@ -199,12 +199,15 @@ stopped does not count: it starts again with the next dashboard. Two dashboards 
 (the check, the count and the binding happen under the delegation's lock, as for children).
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
-`orch new --epic` and `orch link --epic` naming another epic, `orch epic auto-approve` on another epic's child, and
-`orch claim`, `orch release` and `orch move` on a ticket that is neither its epic nor one of that epic's children. It
-may still create a follow-up outside any epic (`orch new` without `--epic`, or `--from`). `orch section set` and
-`orch log` are not limited this way (orch cannot tell which backlog tickets the session made itself: the event log is
-not a record an agent cannot write), so a factory session can still edit or log on other tickets; editing a child of
-another epic takes it out of that epic's approval, which then waits for you. An agent without a binding works as
+`orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,
+move, section set, state, log, link, tasks, artifacts, ask, auto-approve, a follow-up's link back to its source, and
+any other change: they all go through one check in orch's single write path) unless the ticket is its epic, one of
+that epic's children, or a ticket outside every epic (not an epic, no parent epic) created at or after the session
+started, such as a follow-up it filed (`orch new` without `--epic`, or `--from` one of its own tickets). Reading stays
+open (show, list, search, `orch permit list`). Best effort: a ticket's `created` stamp and the event log are written in
+the repository, which agents can edit, and the stamp has minute resolution, so a backlog ticket from the same minute
+as the start passes too. orch fails closed here: when it cannot tell whether a session is a factory session (a binding
+record that does not verify, or an error while looking), it changes nothing. An agent with no binding at all works as
 before.
 
 The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
@@ -374,7 +377,9 @@ What the baseline lets a session do, besides the scope limits above (residual ri
   files it is handed (`orch new --requirements-file|--acceptance-file|--body-file|--summary-file|--out-of-scope-file`,
   `--file` of `section set`, `state`, `task add`, `ask`, `widget`, `feedback`, and `orch artifact add <file>`) only
   when the file lies inside the workspace, is reached without a symbolic link, and is not in orch's config dir;
-  otherwise orch refuses ("an agent cannot hand orch the file ..."). A human, and an agent outside the factory (its
+  otherwise orch refuses ("an agent cannot hand orch the file ..."). This fails closed: any agent is refused a path
+  that cannot be resolved (missing, a broken link), and every file while orch cannot tell whether its session is a
+  factory session. A human, and an agent outside the factory (its
   harness asks you about each command, and it attaches screenshots from /tmp), pass any file, as before. A file inside
   the workspace (a `.env` there, say) can still be copied into a ticket or an artifact: the agent could read it with
   its own tools anyway.

@@ -311,6 +311,8 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "page_title_prefix": f"({needs_count}) " if needs_count > 0 else "",
         "shortcuts": _shortcuts(ws),
         "density": _density(ws),
+        # The page's own address, for app.js: the dashboard never reads it back from the address bar.
+        "here": request.url.path + ("?" + request.url.query if request.url.query else ""),
         "msg": request.query_params.get("msg"),
         "err": request.query_params.get("err"),
     }

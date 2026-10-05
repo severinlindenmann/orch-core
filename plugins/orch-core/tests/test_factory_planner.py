@@ -461,12 +461,18 @@ def dws_both(configure, human):
 NAMED_AS_REFUSED = (("ask",), ("permit", "request"), ("instructions", "sync"), ("setup",))
 
 
-@pytest.mark.parametrize("which", ["planner", "worker in a worktree", "worker in the shared checkout"])
+@pytest.mark.parametrize("which", ["planner", "worker in a worktree", "worker in the shared checkout",
+                                   "worker in a clone", "worker in a clone without commits"])
 def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_both, which):
     import subprocess
+    commit = factory_runner.commit_form(dws_both, "L-0002") if which in ("worker in a worktree",
+                                                                          "worker in a clone") else None
     prompt = (factory_runner.planner_prompt("L-0001") if which == "planner" else factory_runner.factory_work_prompt(
-        "L-0002", factory_runner.commit_form(dws_both, "L-0002") if "worktree" in which else None))
-    assert ("git commit" in prompt) is (which == "worker in a worktree")
+        "L-0002", commit, clone_tmp="/abs/ws/orchestrator/temporary" if "clone" in which else None))
+    assert ("git commit" in prompt) is (commit is not None)
+    if "clone" in which:  # the live run: workers cd'd to the workspace and chained, which never matches a rule
+        assert "Run every orch command exactly as written from your current folder. Never cd, never chain" in prompt
+        assert "tickets live in the workspace" not in prompt and "never cd there" in prompt
     snippets = re.findall(r"`([^`]+)`", prompt)
     orch_cmds = [s for s in snippets if s.startswith("orch ")]
     assert len(orch_cmds) >= 6 and "\n" not in prompt
@@ -488,6 +494,45 @@ def test_every_command_in_a_built_in_prompt_exists_and_the_baselines_run_it(dws_
         r = subprocess.run(["git", real.split()[1], "-h"], capture_output=True, text=True, cwd=dws_both.root)
         assert r.returncode == 129 and "usage: git" in r.stdout, s
         assert dark_profile.match(dws_both, real) is not None, real
+
+
+def _skill_commands() -> list[tuple[str, str]]:
+    """(source, command) for every `orch ...` an orch skill or the session-start hook tells an agent to run, with
+    placeholders filled and optional [...] parts dropped: derived from the text, never listed by hand."""
+    from pathlib import Path
+    from orch.hooks import session_start
+    import inspect
+    root = Path(factory_runner.__file__).parents[3] / "skills"
+    texts = [(p.parent.name, p.read_text(encoding="utf-8")) for p in sorted(root.glob("*/SKILL.md"))]
+    texts.append(("session-start hook", inspect.getsource(session_start)))
+    out = []
+    for name, text in texts:
+        for s in re.findall(r"`([^`\n]+)`", text):
+            if not s.startswith("orch ") or len(s.split()) < 2:
+                continue
+            s = re.sub(r"\s*\[[^\]]*\]", "", s)
+            s = (s.replace("<id>", "L-0002").replace("<epic>", "L-0001").replace("<child>", "L-0002")
+                 .replace("T<n>", "T1").replace("L-0042", "L-0002"))
+            s = re.sub(r"<[^>]*>", "x", s).replace("…", "x").replace("...", "x")
+            out.append((name, s))
+    return out
+
+
+def test_every_orch_command_the_skills_and_hook_name_is_one_plain_command_the_baseline_runs(dws_both):
+    from orch.core.dark_profile import BASELINE
+    checked = 0
+    for name, cmd in _skill_commands():
+        assert not re.search(r"&&|;|\|\||(?<![\w-])cd\s", cmd.replace("|ticket|", "")), (name, cmd)
+        words = cmd.split()
+        if not any(words[:len(b.split())] == b.split() for b in BASELINE) or len(words) == len(
+                next(b.split() for b in BASELINE if words[:len(b.split())] == b.split())):
+            continue  # a human verb, or a bare verb named in prose
+        assert dark_profile.match(dws_both, cmd) is not None, (name, cmd)
+        checked += 1
+    assert checked >= 30
+    for want in ("orch claim L-0002", "orch show L-0002", "orch wait L-0002 --json", "orch move L-0002 testing",
+                 "orch state L-0002 -m \"x\"", "orch section set L-0002 Verification --file x"):
+        assert want in [c for _, c in _skill_commands()], want
 
 
 def test_the_worker_prompt_is_built_in_and_says_the_plain_rules(ws):

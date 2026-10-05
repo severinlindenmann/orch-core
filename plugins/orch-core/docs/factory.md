@@ -1094,6 +1094,14 @@ redirects); the nudge depends on Claude Code's current screen markers.
   was left out of the baseline on purpose: a second argument makes it write any file, which a prefix or exact rule
   cannot constrain. Each of those commands still stops for a card if a model ignores the prompt
   (`tests/test_dark_friction.py` lists them and checks that each replacement needs none).
+- *`cd` to the workspace, then orch (the third run).* The clone worker's prompt said its tickets "live in the
+  workspace", so workers ran `cd <workspace> && orch claim T-0002`: a chain, which never matches a rule. The prompt
+  now says to run every orch command as written from the current folder, never cd and never chain (orch already acts
+  on the workspace's tickets: ORCH_HOME is set), and names the workspace path only as the full path of the
+  Verification file. A denied `cd <folder> && orch ...` (or `;`) says "run the orch command from your current folder,
+  without cd", on the card too. A test reads every orch command the built-in prompts, the orch skills and the
+  session-start hook name, from their text, and checks that each agent one is a single plain command the baseline
+  runs.
 
 ## Release recipe (phase 6)
 

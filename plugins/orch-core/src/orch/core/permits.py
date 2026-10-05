@@ -973,6 +973,12 @@ MAX_COMMAND = 100_000  # characters of one bound session's command orch reads; a
 _ODD_TEXT = re.compile("[\x00\r\x0b\x0c\x85  ﻿]")
 
 
+# `cd <folder> && orch ...` (or `;`): a worker going to the workspace first. orch acts on the workspace from anywhere a
+# session runs, so the denial says to drop the cd instead of asking for a variant (the live run of 5 October).
+_CD_ORCH = re.compile(r"\s*(?:cd|pushd)\s+\S+(?:\s+\S+)*?\s*(?:&&|;)\s*(?:\S*/)?orch(?:\s|$)")
+CD_HINT = "run the orch command from your current folder, without cd"
+
+
 def bash_gate(ws, b: dict, payload) -> str | None:
     """Why a runner-bound session's shell tool call must be refused before anything else is judged, or None: the one
     entry point the guard (PreToolUse) and the permission hook share. Refused: a tool input that is not an object, a
@@ -1037,10 +1043,16 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
     g = find_live_grant(ws, epic.id, command)
     if g is not None and use(ws, actor, g, ticket.id):
         return _decision("allow")
+    hint = CD_HINT if _CD_ORCH.match(str(command)) else ""
     if dark:
-        r = request(ws, actor, ticket, command, reason="not in the Dark profile", source="dark")
+        r = request(ws, actor, ticket, command, reason="not in the Dark profile" + (f" ({CD_HINT})" if hint else ""),
+                    source="dark")
         if r.get("allowed"):  # a rule was added since the check above
             return _decision("allow")
+        if hint:  # the one variant that is the fix: the orch command alone, from the session's own folder
+            return _decision("deny", f"{hint}: orch already acts on the workspace's tickets (ORCH_HOME is set for "
+                                     f"you). Run just the orch command, as one plain command. Request {r['id']} "
+                                     "stays open for the human; do not file another one.")
         return _decision("deny", f"not in the Dark profile of this checkout, so it does not run in a Dark factory. "
                                  f"Request {r['id']} is open: the human can add it to the Dark profile. Do other work "
                                  f"or run `orch wait {ticket.id}`. Do not retry variants of this command and do not "
@@ -1048,5 +1060,6 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
     r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
     if r.get("allowed"):  # the Dark switch came on since the check above, and the profile lists it
         return _decision("allow")
-    return _decision("deny", f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
-                             f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")
+    return _decision("deny", (f"{hint}: orch already acts on the workspace's tickets. " if hint else "")
+                     + f"waiting for permission {r['id']}: the human answers it in their own terminal. Go on "
+                       f"with other work, or run `orch wait {ticket.id}` and try again after their answer.")

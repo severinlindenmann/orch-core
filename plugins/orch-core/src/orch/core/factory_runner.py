@@ -668,14 +668,17 @@ COMMIT_HERE = ("Commit your work on this worktree's branch with `git add FILES` 
 NO_COMMIT = ("Do not commit: this session runs in the shared checkout, not in a worktree of its own. Leave your "
              "changes in the working tree and say so with `orch log {key} -m \"...\"`.")
 # A session in the child's runner-made clone (factory_clones): its working folder is a separate copy of the repository.
+# The workspace's path is never given as a folder to go to: a worker that cds there chains (`cd X && orch ...`), and a
+# chain never matches a Dark profile rule (the live run of 5 October).
+_HERE = ("Run every orch command exactly as written from your current folder. Never cd, never chain with && or ;. "
+         "orch already acts on the workspace's tickets (ORCH_HOME is set for you).")
 CLONE_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}, on its own "
                 "branch. Commit your work there with `git add FILES` and `{form}` (each -m is one paragraph: replace "
-                "the dots with short plain sentences). Never push: the runner takes the commits from this clone. Your "
-                "tickets live in the workspace, not in this clone, and orch commands work on them as usual.")
+                "the dots with short plain sentences). Never push: the runner takes the commits from this clone. "
+                + _HERE)
 CLONE_NO_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}. Do not "
                    "commit: the workspace's commit format is not plain words. Leave your changes in this clone's "
-                   "working tree and say so with `orch log {key} -m \"...\"`. Your tickets live in the workspace, not "
-                   "in this clone, and orch commands work on them as usual.")
+                   "working tree and say so with `orch log {key} -m \"...\"`. " + _HERE)
 _TMP = "under orchestrator/temporary"  # the folder the worker writes its Verification file in (see the prompt)
 _SUBJECT_OK = re.compile(r"[A-Za-z0-9 \[\]()#:.,_/-]{1,100}")
 _LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
@@ -712,7 +715,9 @@ def factory_work_prompt(key: str, commit: str | None = None, clone_tmp: str | No
         if not isinstance(clone_tmp, str) or not os.path.isabs(clone_tmp) or not clone_tmp.isprintable():
             return None
         part = CLONE_COMMIT.replace("{form}", commit) if commit else CLONE_NO_COMMIT
-        text = FACTORY_WORK_PROMPT.replace(_TMP, f"in the workspace folder {clone_tmp} (that absolute path)")
+        # the one path a clone worker needs: where the file it hands orch goes, as a file path, never a folder to enter
+        text = FACTORY_WORK_PROMPT.replace(_TMP, f"in {clone_tmp} (give the Write tool and --file that full path; "
+                                                 "never cd there)")
         return text.replace("{commit}", part).replace("{key}", key)
     part = COMMIT_HERE.replace("{form}", commit) if commit else NO_COMMIT
     return FACTORY_WORK_PROMPT.replace("{commit}", part).replace("{key}", key)

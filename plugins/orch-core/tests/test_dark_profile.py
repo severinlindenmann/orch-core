@@ -509,6 +509,23 @@ def test_hook_allows_listed_and_parks_unlisted_as_a_dark_card(dws, da, dh, human
     assert _behavior(permits.hook_decision(dws, _payload("npm run verify; make deploy"))) == "deny"
 
 
+@pytest.mark.parametrize("cmd", ["cd /Users/x/ws && orch claim L-0002", "cd /Users/x/ws; orch show L-0002",
+                                 "cd '/Users/x/my ws' && /opt/bin/orch wait L-0002 --json"])
+def test_a_cd_before_orch_is_denied_with_how_to_run_it_instead(dws, da, dh, human, cmd):
+    _dark(da, dh)
+    dark_profile.add_baseline(dws, human)
+    assert dark_profile.match(dws, cmd) is None  # a chain never matches, whatever the baseline holds
+    out = permits.hook_decision(dws, _payload(cmd))
+    assert _behavior(out) == "deny" and "run the orch command from your current folder, without cd" in _msg(out)
+    assert "Do not retry variants" not in _msg(out)  # the plain command is the fix, not a variant to avoid
+    (r,) = permits.open_requests(dws)
+    assert "without cd" in permits.requests(dws)[r["id"]]["reason"]  # the card says it too
+    plain = "orch " + cmd.split("orch ", 1)[1]
+    assert dark_profile.match(dws, plain) is not None  # and that plain command runs without a card
+    other = permits.hook_decision(dws, _payload("make deploy"))
+    assert "without cd" not in _msg(other)
+
+
 @pytest.mark.parametrize("tool_input", [{}, {"command": 5}, {"command": None}, {"command": ""}, "npm run verify"])
 def test_hook_denies_a_missing_or_odd_command_in_a_dark_epic(dws, da, dh, human, tool_input):
     _dark(da, dh)

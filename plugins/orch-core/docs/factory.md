@@ -1104,8 +1104,14 @@ is no plain Accept: the Ready card, the run view and the epic page say "The rele
 it" and offer "Close without releasing" with a reason you type, and `orch verdict <epic> done` needs
 `--skip-release REASON`. The epic's signed verdict entry records the reason (`release_skipped`) and the stages not
 proven (`skipped_stages`), and the run view's Finished summary says "You gave the verdict: closed without release".
-A verdict from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or
-in a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
+The same holds for the run view's "Close the epic" (after a Reopen, with every child done): it asks for the skip
+reason too, and the signed close entry records it. While a release round holds the workspace's release lock, such a
+verdict or close is refused ("a release is running"); otherwise it holds the lock while it closes, so no stage starts
+meanwhile. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
+reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased"). A child's own
+verdict card says that accepting the child alone releases nothing while its epic's release has not run. A verdict
+or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in
+a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
 
 **The recipe is yours, on this machine.** It lives in `factory-release.json` in the permits folder of your orch config
 dir, next to `factory-command.json` and under the same guard: agents can neither read nor write it, it is never

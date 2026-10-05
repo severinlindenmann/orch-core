@@ -209,6 +209,7 @@ def ticket_page(request: Request, ref: str, open: str = ""):
                 meta_line=meta_line(t, needs, at, events=ticket_events), created_day=day(t.meta.get("created")),
                 gate_views=gate_views, pr_early=pr_early, questions=questions, card_qids=card_qids, actions=actions,
                 verdict_seen=verdict_hash([t], ws) if actions["verdict"] else "", invalidated=invalidated_gates(t),
+                epic_unreleased=_epic_unreleased(ws, t) if actions["verdict"] else None,
                 criteria=evidence.criteria(t), other_evidence=evidence.other_evidence(t),
                 evidence_by=story.evidence_author(ticket_events),
                 ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),
@@ -303,3 +304,15 @@ def artifact(request: Request, ticket: str, name: str, v: str = ""):
 
     headers["Content-Length"] = str(size)
     return StreamingResponse(chunks(), media_type=media, headers=headers, background=BackgroundTask(f.close))
+
+
+def _epic_unreleased(ws, t):
+    """(epic id, stages not proven) when child `t`'s epic signs a release that has not run, else None: the child's
+    verdict card says that accepting the child alone does not release it."""
+    from orch.core import epics, factory_release
+    try:
+        epic = epics.parent_epic(ws, t)
+        left = factory_release.unreleased(ws, epic) if epic is not None else None
+    except Exception:
+        return None
+    return (epic.id, left) if left else None

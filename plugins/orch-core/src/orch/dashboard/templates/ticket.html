@@ -68,6 +68,7 @@
 {% endmacro %}
 
 {% macro verdict_forms() %}
+{% if epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone releases nothing. The runner releases the epic's children together once the epic is Ready.</p>{% endif %}
 <div class="cluster story-actions">
   {% if actions.accept %}
   <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ t.id }} as done">

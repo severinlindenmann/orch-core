@@ -610,12 +610,23 @@ class Ops(TaskOpsMixin):
                        f"or `--branch <name>` so the human finds it")
         return out
 
-    def close(self, ref: str, reason: str) -> Ticket:
-        """Human only: any status but done → done, e.g. when the external issue was closed (spec v2 §13.2)."""
+    def close(self, ref: str, reason: str, *, skip_release: str | None = None) -> Ticket:
+        """Human only: any status but done → done, e.g. when the external issue was closed (spec v2 §13.2). An epic
+        whose charter signs a release that has not run is closed only with `skip_release` (its reason; recorded in
+        the close entry as release_skipped and skipped_stages), under the release lock."""
         require_human(self.actor, "closing a ticket")
         reason = " ".join((reason or "").split())
         if not reason:
             raise UsageError("closing a ticket needs a reason")
+        from orch.core import epics, factory_release
+        entry = store.resolve(self.ws, ref)
+        skipped = (factory_release.skip_fields(self.ws, store.load(self.ws, entry.id)[1], skip_release,
+                                               "Close without releasing, with a reason")
+                   if epics.is_epic(entry.meta or {}) else {})
+        with factory_release.quiet(self.ws, entry.id, bool(skipped)):
+            return self._close_now(ref, reason, skipped)
+
+    def _close_now(self, ref: str, reason: str, release: dict) -> Ticket:
 
         def fn(t: Ticket) -> dict:
             _refuse_hidden("ticket title", t.title)
@@ -623,8 +634,9 @@ class Ops(TaskOpsMixin):
             skipped = _skip_open_tasks(t, reason)
             t.meta["status"] = "done"
             t.meta["claim"] = dict(_EMPTY_CLAIM)
-            self._ledger(t, "close", reason=reason)
-            self._log(t, f"closed: {reason}" + (f" (skipped {', '.join(skipped)})" if skipped else ""))
+            self._ledger(t, "close", reason=reason, **release)
+            self._log(t, f"closed: {reason}" + (f" (skipped {', '.join(skipped)})" if skipped else "")
+                      + (f" (closed without release: {release['release_skipped']})" if release else ""))
             return {"reason": reason, "command": "close", **({"tasks_skipped": skipped} if skipped else {})}
 
         return self._mutate(ref, "ticket.moved", fn)
@@ -1297,17 +1309,15 @@ class Ops(TaskOpsMixin):
             raise ValidationError("the epic verdict is given when all its open children are in testing"
                                   + (f" (not yet: {', '.join(waiting)})" if waiting else " (it has none)"))
         tickets = [store.load(self.ws, e.id)[1] for e in kids]
-        skipped = {}
-        if charter is None:  # the human's verdict; the charter's own close runs only once every stage is proven
-            from orch.core import factory_release
-            left = factory_release.unreleased(self.ws, store.load(self.ws, eid)[1])
-            if left:
-                why = " ".join((skip_release or "").split())[:300]
-                if not why:
-                    raise ValidationError(f"{factory_release.SKIP_TEXT} ({', '.join(left)} not proven yet)",
-                                          hint="choose Close without releasing and say why (orch verdict <epic> done "
-                                               "--skip-release REASON)")
-                skipped = {"release_skipped": why, "skipped_stages": left}
+        from orch.core import factory_release
+        # the human's verdict; the charter's own close runs only once every stage is proven
+        skipped = {} if charter is not None else factory_release.skip_fields(
+            self.ws, store.load(self.ws, eid)[1], skip_release)
+        with factory_release.quiet(self.ws, eid, bool(skipped)):  # no stage runs while it closes without one
+            return self._epic_verdict_now(eid, kids, tickets, message, expected_hash, charter, skipped)
+
+    def _epic_verdict_now(self, eid, kids, tickets, message, expected_hash, charter, skipped) -> Ticket:
+        from orch.core import epics
         if expected_hash != epics.verdict_hash(tickets, self.ws):
             raise ValidationError(f"the children of {eid} or their evidence changed since you read them — review again")
         # every per-child check before any child is closed: no partial close

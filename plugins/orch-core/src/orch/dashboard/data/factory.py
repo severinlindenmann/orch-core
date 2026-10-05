@@ -356,6 +356,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
             "all_done": epic.status == "open" and bool(kids) and all(t.status == "done" for _, t in kids),
+            "unreleased": _unreleased(ws, epic) if epic.status == "open" else None,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],
@@ -394,10 +395,18 @@ def _epic_events(events, ids, charter_closed=frozenset()) -> list[dict]:
 
 
 def _release_skipped(signed, eid: str) -> bool:
-    """Whether the epic's last signed verdict closed it without its signed release (release_skipped)."""
+    """Whether the epic's last signed verdict or close closed it without its signed release (release_skipped)."""
     last = next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
-                 and e.get("kind") == "verdict"), None)
+                 and e.get("kind") in ("verdict", "close")), None)
     return bool(last and last.get("release_skipped"))
+
+
+def _unreleased(ws, epic):
+    from orch.core import factory_release
+    try:
+        return factory_release.unreleased(ws, epic)
+    except Exception:
+        return None  # Ops.close decides again
 
 
 def _all_idle(running) -> bool:

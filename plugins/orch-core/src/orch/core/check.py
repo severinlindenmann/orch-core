@@ -71,9 +71,44 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
         findings.append(Finding("warning", "stale-setting", None,
                                 "widgets.html is false in orchestrator/config.json, but the signed on is still in "
                                 "force: run `orch widget html off` so that only a new human decision turns it on"))
+    findings += _check_release_skips(ws, entries)
     findings += _check_orphan_artifacts(ws, entries)
     findings += _check_commits(ws, entries)
     return findings
+
+
+def _check_release_skips(ws, entries) -> list[Finding]:
+    """For each done epic whose charter signs a release: info when your signed verdict or close skipped it on
+    purpose (release_skipped), a warning when it was closed with stages not proven and no such reason."""
+    from orch.core import epics, factory_release
+    out = []
+    signed = None
+    for entry in entries:
+        if entry.status != "done" or entry.meta is None:
+            continue
+        try:
+            t = store.read_ticket(entry.path)
+        except (OrchError, OSError, UnicodeDecodeError):
+            continue
+        if not epics.is_epic(t):
+            continue
+        signed = ledger.entries(ws) if signed is None else signed
+        chain = ledger.status_chain(ws, entry.id, signed)
+        last = chain[-1] if chain else {}
+        if last.get("release_skipped"):
+            out.append(Finding("info", "closed-without-release", entry.id,
+                               f"closed without its signed release ({', '.join(last.get('skipped_stages') or [])} "
+                               f"not proven): {last['release_skipped']}"))
+            continue
+        try:
+            left = factory_release.unreleased(ws, t)
+        except Exception:
+            left = None
+        if left:
+            out.append(Finding("warning", "closed-unreleased", entry.id,
+                               f"done while its charter's signed release has stages not proven ({', '.join(left)}) "
+                               "and no signed reason to skip them: check whether the work was released"))
+    return out
 
 
 def _check_widgets(ws) -> list[Finding]:

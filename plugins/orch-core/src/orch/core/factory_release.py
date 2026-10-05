@@ -32,6 +32,7 @@ fails closed: a missing, unreadable, malformed or foreign record counts as "not 
 """
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import json
@@ -670,6 +671,36 @@ def unreleased(ws, epic) -> list[str] | None:
     if not st or not st.get("stages"):
         return list(target_stages(d.get("release")))
     return [s["name"] for s in st["stages"] if s["state"] != "proven"]
+
+
+def skip_fields(ws, epic, skip_release, how: str = "orch verdict <epic> done --skip-release REASON") -> dict:
+    """{release_skipped, skipped_stages} for a human verdict or close of `epic` whose signed release has not run all
+    its stages, {} when nothing is skipped. Refused without a reason (SKIP_TEXT)."""
+    from orch.errors import ValidationError
+    left = unreleased(ws, epic)
+    if not left:
+        return {}
+    why = " ".join((skip_release or "").split())[:300]
+    if not why:
+        raise ValidationError(f"{SKIP_TEXT} ({', '.join(left)} not proven yet)",
+                              hint=f"choose Close without releasing and say why ({how})")
+    return {"release_skipped": why, "skipped_stages": left}
+
+
+@contextlib.contextmanager
+def quiet(ws, epic_id: str, needed: bool):
+    """Hold the workspace's release lock while a human closes `epic_id` without its release (`needed`), so no stage
+    runs meanwhile; refused while a release holds it."""
+    from orch.errors import ValidationError
+    if not needed:
+        yield
+        return
+    if not acquire(ws, epic_id, 120):
+        raise ValidationError("a release is running in this workspace now: wait until it ends, then decide again")
+    try:
+        yield
+    finally:
+        release_lock(ws)
 
 
 def own_merge(us: dict) -> bool:

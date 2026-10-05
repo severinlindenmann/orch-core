@@ -8,6 +8,7 @@ It keeps the common, one-command paths closed and gives clear reasons; the human
 from __future__ import annotations
 
 import contextvars
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -1372,6 +1373,64 @@ _GLOBAL_GIT_CONFIG = re.compile(r"(?i)\.gitconfig\b|\.config/+git(?:/|\b)|XDG_CO
 _GLOBAL_GIT_DENIED = ("agents do not write the user's own git config (~/.gitconfig, ~/.config/git, "
                       "$XDG_CONFIG_HOME/git, /etc/gitconfig) or point git config at it: every git of this user reads "
                       "it; ask the user")
+# Claude Code's user-scope files decide which hooks guard every session (and the AI Factory runner tests the hook
+# commands they name): its settings, its .claude.json and the plugins it installed. Agents never write them.
+_HARNESS_TEXT = re.compile(r"(?i)(?:~|\$\{?HOME\}?)/+\.claude(?:/+(?:settings(?:\.local)?\.json|plugins)\b|\.json\b)"
+                           r"|CLAUDE_CONFIG_DIR")
+_HARNESS_DENIED = ("agents do not write Claude Code's user-scope settings, its .claude.json or the plugins it installed: "
+                   "they decide which hooks guard every session; ask the user")
+
+
+def _harness_targets() -> tuple[set[str], set[str]]:
+    """(files, folders), lower-cased: the user-scope settings, .claude.json, the plugins folder and every plugin
+    folder installed_plugins.json names. Errors leave out what cannot be read (the text check still applies)."""
+    base = os.environ.get("CLAUDE_CONFIG_DIR")
+    homes = [Path.home(), Path.home().resolve()]
+    configured = [Path(base), Path(base).resolve()] if base else []
+    dirs = [*configured, *(h / ".claude" for h in homes)]  # the configured dir and the default one
+    files = {str(d / n).lower() for d in dirs for n in ("settings.json", "settings.local.json")}
+    files |= {str(d / ".claude.json").lower() for d in [*configured, *homes]}
+    folders = {str(d / "plugins").lower() for d in dirs}
+    try:
+        listed = json.loads((dirs[0] / "plugins" / "installed_plugins.json").read_text(encoding="utf-8")).get("plugins")
+        for entries in (listed.values() if isinstance(listed, dict) else []):
+            for e in (entries if isinstance(entries, list) else [entries]):
+                if isinstance(e, dict) and isinstance(e.get("installPath"), str) and os.path.isabs(e["installPath"]):
+                    folders |= {e["installPath"].lower(), str(Path(e["installPath"]).resolve()).lower()}
+    except (OSError, ValueError, AttributeError, RuntimeError):
+        pass
+    return files, folders
+
+
+def _harness_file(raw: str, cwd, ws) -> bool:
+    """Whether a file tool's path is one of _harness_targets (as written or after symlinks). Any error is a yes."""
+    if not raw:
+        return False
+    try:
+        forms = _path_forms(raw, cwd, ws)
+        files, folders = _harness_targets()
+    except (OSError, RuntimeError, ValueError):
+        return True
+    for f in forms:
+        low = str(f).lower()
+        if low in files or any(low == d or low.startswith(d + os.sep) for d in folders):
+            return True
+    return False
+
+
+def _harness_in_text(code: str) -> bool:
+    """A shell text naming one of _harness_targets or their usual spellings (~/.claude/settings.json, ...)."""
+    t = _paths_text(code)
+    if _HARNESS_TEXT.search(t):
+        return True
+    try:
+        files, folders = _harness_targets()
+    except (OSError, RuntimeError, ValueError):
+        return True
+    low = t.lower()
+    return any(x in low for x in files | folders)
+
+
 _RAW_TOKEN = re.compile(r"""(?:[^\s'"]+|'[^']*'|"(?:\\.|[^"\\])*")+""")
 
 
@@ -2242,6 +2301,9 @@ def evaluate(ws, payload: dict) -> Decision:
     if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and _global_git_config(
             str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
         return Decision(False, _GLOBAL_GIT_DENIED)
+    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and _harness_file(
+            str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
+        return Decision(False, _HARNESS_DENIED)
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW
@@ -3049,6 +3111,8 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
         return Decision(False, _GIT_DIR_DENIED)
     if _GLOBAL_GIT_CONFIG.search(_paths_text(code)) and _is_git_write(cmd):
         return Decision(False, _GLOBAL_GIT_DENIED)
+    if _harness_in_text(code) and _is_git_write(cmd):
+        return Decision(False, _HARNESS_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
     # checks: only a command that itself writes and names the orch config and `checks` (not a grep next to an

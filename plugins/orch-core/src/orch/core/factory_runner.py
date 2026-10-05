@@ -78,6 +78,15 @@ def resolve_bin(name: str) -> str | None:
         return None
     if not stat.S_ISREG(st.st_mode) or st.st_uid not in (os.getuid(), 0) or st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         return None
+    # its folder goes on the sessions' PATH: owned by this user or root and not writable by group or others either (as
+    # found and after links)
+    for folder in {os.path.dirname(os.path.abspath(found)), os.path.dirname(os.path.realpath(found))}:
+        try:
+            ds = os.stat(folder)
+        except OSError:
+            return None
+        if ds.st_uid not in (os.getuid(), 0) or ds.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            return None
     return str(found)
 
 
@@ -194,32 +203,61 @@ def edits_blocked(environ=None, command=None) -> bool:
 # The live run of 5 Oct failed silently in ways no settings file shows: orch's hooks could not run (no uv on the
 # session's PATH), `claude` was a wrapper that exited at once, a new folder waited at the trust dialog. These checks run
 # the real programs under the session's own environment, write nothing of their own, and while one blocks the runner
-# starts nothing. Their result is kept for READY_TTL seconds (FAIL_TTL after a failure) and shown on the run view.
-READY_TTL, FAIL_TTL = 300, 60
-_READY: dict[str, tuple[float, list]] = {}
+# starts nothing. A result is kept for READY_TTL seconds, and only while the programs and hook commands it probed are
+# still the ones the runner would use (_fingerprint); it is shown on the run view.
+READY_TTL = 60
+PROBE_BUDGET = 20.0  # seconds for all the programs one readiness run starts together
+PROBE_CAP = 64 * 1024  # bytes of a program's output kept
+_READY: dict[str, tuple[float, list, object]] = {}
 OUTWARD_TOOLS = ("Artifact", "WebFetch", "WebSearch")
+CLAUDE_JSON_CAP = 1 << 28  # a .claude.json larger than this is not read: the trust check says so
 
 
-def _probe(argv: list[str], stdin: str, cwd: str, timeout: float = 60) -> tuple[int, str, str]:
-    """Run one check program (an argv, never a shell string of ours). Tests replace it."""
+def _probe(argv: list[str], stdin: str, cwd: str, timeout: float = PROBE_BUDGET) -> tuple[int, str, str]:
+    """Run one check program (an argv, never a shell string) in its own process group; on timeout the group is
+    killed. At most PROBE_CAP bytes of each stream are kept. Tests replace it."""
+    import signal
     import subprocess
-    r = subprocess.run(argv, input=stdin, capture_output=True, text=True, cwd=cwd, timeout=timeout)
-    return r.returncode, r.stdout, r.stderr
+    import tempfile
+    with tempfile.TemporaryFile() as o, tempfile.TemporaryFile() as e:
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=o, stderr=e, cwd=cwd, start_new_session=True)
+        try:
+            p.communicate(stdin.encode("utf-8"), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            p.wait()
+            raise
+        o.seek(0)
+        e.seek(0)
+        return p.returncode, o.read(PROBE_CAP).decode("utf-8", "replace"), e.read(PROBE_CAP).decode("utf-8", "replace")
 
 
-def session_bins() -> list[str]:
+def agent_writable(ws, path) -> bool:
+    """Whether `path` (as written or after links) lies in the workspace, which agents write: every session's start
+    folder (start_dir) is the workspace root or below it. Any error is a yes."""
+    try:
+        roots = {Path(os.path.abspath(ws.root)), Path(ws.root).resolve()}
+        forms = {Path(os.path.abspath(path)), Path(os.path.realpath(path))}
+    except (OSError, ValueError, TypeError):
+        return True
+    return any(f == r or r in f.parents for f in forms for r in roots)
+
+
+def session_bins(ws) -> list[str]:
     """Programs whose folders the sessions' PATH also gets, besides claude's: `orch` (an agent runs it) and `uv` (the
-    plugin's bin/orch runs through it), each resolved and trusted as resolve_bin says; those not found are left out."""
-    return [b for b in (resolve_bin("orch"), resolve_bin("uv")) if b]
+    plugin's bin/orch runs through it), each resolved and trusted as resolve_bin says; one not found, or one inside the
+    workspace (agent-writable: readiness blocks then), is left out."""
+    return [b for b in (resolve_bin("orch"), resolve_bin("uv")) if b and not agent_writable(ws, b)]
 
 
-def _plugin_root(environ) -> Path | None:
-    """The folder of the orch-core plugin Claude Code installed at user scope (plugins/installed_plugins.json), else
-    the plugin this orch runs from; only one holding bin/orch."""
+def _plugin_root(ws, environ) -> Path | None:
+    """The folder Claude Code installed the orch-core plugin to (an `installPath` of plugins/installed_plugins.json in
+    the user config dir), holding bin/orch and outside the workspace; nothing else."""
     from orch.core.fsutil import read_regular_file
     from orch.instructions.settings import is_plugin_id
-    from orch.onboarding import _package_plugin_root
-    found = []
     raw = read_regular_file(_user_dir(environ) / "plugins" / "installed_plugins.json", 1 << 22)
     try:
         listed = (json.loads(raw.decode("utf-8")) or {}).get("plugins") if raw else None
@@ -228,80 +266,129 @@ def _plugin_root(environ) -> Path | None:
     for pid, entries in (listed.items() if isinstance(listed, dict) else []):
         for e in (entries if isinstance(entries, list) else [entries]):
             if is_plugin_id(pid) and isinstance(e, dict) and isinstance(e.get("installPath"), str):
-                found.append(Path(e["installPath"]))
-    found.append(_package_plugin_root())
-    return next((p for p in found if p is not None and (p / "bin" / "orch").is_file()), None)
+                p = Path(e["installPath"])
+                if p.is_absolute() and (p / "bin" / "orch").is_file() and not agent_writable(ws, p):
+                    return p
+    return None
 
 
-def _hook_commands(environ, data) -> tuple[list[tuple[str, str, list[str]]], list[str]]:
-    """([(label, shell command, extra env pairs)], labels not found): the guard and permission hook a session runs,
-    from the user-scope hooks, else from the enabled plugin's hooks.json."""
+_HOOKS = {"guard": ("PreToolUse", ["guard"]), "permission hook": ("PermissionRequest", ["permit", "hook"])}
+_PLUGIN_ORCH = "${CLAUDE_PLUGIN_ROOT}/bin/orch"
+
+
+def _hook_commands(ws, environ, data) -> tuple[list[tuple[str, list[str], list[str]]], list[str]]:
+    """([(label, argv, extra env pairs)], labels not found): the guard and permission hook a session runs, parsed
+    into words (never run through a shell): from the user-scope hooks (program `orch` or an absolute path ending in
+    /orch), else from the installed plugin's hooks.json (program exactly ${CLAUDE_PLUGIN_ROOT}/bin/orch)."""
+    import shlex
     from orch.onboarding import _enabled_plugin_id
-    want = {"guard": ("PreToolUse", ["guard"]), "permission hook": ("PermissionRequest", ["permit", "hook"])}
-    hooks = data.get("hooks") if isinstance(data, dict) else None
-    out: dict[str, tuple] = {}
-    for label, (event, words) in want.items():
+
+    def entries(hooks, event):
         for entry in (hooks.get(event) or []) if isinstance(hooks, dict) else []:
             for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
                 cmd = h.get("command") if isinstance(h, dict) else None
-                if label not in out and _orch_words(cmd)[:len(words)] == words:
-                    out[label] = (label, cmd, [])
-    if len(out) < len(want) and _enabled_plugin_id(_user_dir(environ) / "settings.json"):
-        root = _plugin_root(environ)
+                if isinstance(cmd, str):
+                    yield cmd
+
+    out: dict[str, tuple] = {}
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    for label, (event, words) in _HOOKS.items():
+        for cmd in entries(hooks, event):
+            w = _orch_words(cmd)
+            if label not in out and w[:len(words)] == words:
+                out[label] = (label, [shlex.split(cmd)[0], *w], [])
+    if len(out) < len(_HOOKS) and _enabled_plugin_id(_user_dir(environ) / "settings.json"):
+        root = _plugin_root(ws, environ)
         try:
             plug = json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"] if root else {}
         except (OSError, ValueError, KeyError, TypeError):
             plug = {}
-        for label, (event, words) in want.items():
-            for entry in (plug.get(event) or []) if isinstance(plug, dict) else []:
-                for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
-                    cmd = h.get("command") if isinstance(h, dict) else None
-                    if label not in out and isinstance(cmd, str) and " ".join(words) in cmd:
-                        out[label] = (label, cmd, [f"CLAUDE_PLUGIN_ROOT={root}"])
-    return [out[k] for k in want if k in out], [k for k in want if k not in out]
+        for label, (event, words) in _HOOKS.items():
+            for cmd in entries(plug, event):
+                try:
+                    w = shlex.split(cmd)
+                except ValueError:
+                    continue
+                if label not in out and w[:1] == [_PLUGIN_ORCH] and w[1:1 + len(words)] == words:
+                    out[label] = (label, [str(root / "bin" / "orch"), *w[1:]], [f"CLAUDE_PLUGIN_ROOT={root}"])
+    return [out[k] for k in _HOOKS if k in out], [k for k in _HOOKS if k not in out]
 
 
-def _trusted_folder(environ, root: Path) -> bool:
-    """Whether Claude Code recorded the trust dialog as accepted for `root` or a folder above it (read only)."""
+def _trusted_folder(environ, root: Path) -> tuple[bool, str]:
+    """(trusted, why not): whether Claude Code recorded the trust dialog as accepted for `root` or a folder above it,
+    comparing real paths on both sides (a key may be written /var/... for /private/var/...). Read only."""
     from orch.core.fsutil import read_regular_file
     base = environ.get("CLAUDE_CONFIG_DIR")
-    raw = read_regular_file(Path(base) / ".claude.json" if base else Path.home() / ".claude.json", 1 << 26)
+    path = Path(base) / ".claude.json" if base else Path.home() / ".claude.json"
+    try:
+        size = os.stat(path).st_size
+    except OSError:
+        return False, f"{path} does not exist or cannot be read"
+    if size > CLAUDE_JSON_CAP:
+        return False, f"{path} is {size >> 20} MB, too big for orch to read (limit {CLAUDE_JSON_CAP >> 20} MB)"
+    raw = read_regular_file(path, CLAUDE_JSON_CAP)
     try:
         projects = json.loads(raw.decode("utf-8")).get("projects") if raw else None
     except (ValueError, UnicodeDecodeError, AttributeError):
         projects = None
     if not isinstance(projects, dict):
-        return False
-    return any(isinstance(projects.get(str(p)), dict) and projects[str(p)].get("hasTrustDialogAccepted") is True
-               for p in (root, *root.parents))
+        return False, f"{path} holds no readable `projects`"
+    want = {os.path.realpath(p) for p in (root, *root.parents)}
+    for key, v in projects.items():
+        if isinstance(v, dict) and v.get("hasTrustDialogAccepted") is True and isinstance(key, str) \
+                and os.path.realpath(key) in want:
+            return True, ""
+    return False, f"{path} records no accepted trust dialog for {root} or a folder above it"
 
 
 def _check(name, ok, why="", level="block", tail="") -> dict:
     return {"name": name, "ok": bool(ok), "level": level, "why": why, "tail": escaped_tail(tail, 5) if tail else ""}
 
 
+def _fingerprint(ws, settings, environ=None):
+    """What a readiness result was probed for, cheap to read again (no program is run): the programs the sessions get
+    and the hook commands. A cached result counts only while this is unchanged."""
+    environ = os.environ if environ is None else environ
+    progs = [resolve_bin(settings["factory_command"][0]), resolve_bin("env"), resolve_bin("orch"), resolve_bin("uv")]
+    return ([(p, os.path.realpath(p)) if p else None for p in progs],
+            _hook_commands(ws, environ, _user_settings(environ)))
+
+
 def readiness(ws, settings, environ=None) -> list[dict]:
     """Every readiness check: [{name, ok, level ("block" or "warn"), why, tail}]. Runs `claude --version` and the
-    hook commands under the session's exact environment (env -i, the session PATH); reads the user settings, the
-    trust record and the skills folder. Nothing is written by orch."""
+    hook programs under the session's exact environment (env -i, the session PATH), within PROBE_BUDGET seconds for
+    all; reads the user settings, the trust record and the skills folder. Nothing is written by orch."""
+    import time
     import uuid
     environ = os.environ if environ is None else environ
     claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
     if claude is None or env_bin is None:
         return []  # _ready says so for every launch
-    bins = [claude, *session_bins()]
+    out = []
+    inside = [f"{n} ({p})" for n, p in (("claude", claude), ("env", env_bin), ("orch", resolve_bin("orch")),
+                                        ("uv", resolve_bin("uv"))) if p and agent_writable(ws, p)]
+    out.append(_check("programs", not inside,
+                      f"{', '.join(inside)} lies inside the workspace, which agents write: the sessions would run "
+                      "agent-written code for it. Install it outside the workspace (for example as a tool of your "
+                      "user) and start the dashboard from there"))
+    if agent_writable(ws, claude) or agent_writable(ws, env_bin):
+        return out  # nothing of it is run
+    bins = [claude, *session_bins(ws)]
     prefix = env_prefix(env_bin, bins, environ)
     path, root = child_path(*bins), Path(ws.root).resolve()
     data = _user_settings(environ)
-    out = []
+    deadline = time.monotonic() + PROBE_BUDGET
 
     def run(argv, stdin=""):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return 124, "", f"the readiness checks' time budget of {PROBE_BUDGET:.0f} seconds was used up"
         try:
-            return _probe(argv, stdin, str(root))
+            return _probe(argv, stdin, str(root), left)
         except (OSError, ValueError) as e:
             return 127, "", f"{type(e).__name__}: {e}"
         except Exception as e:  # a timeout among them
-            return 124, "", f"{type(e).__name__}"
+            return 124, "", f"{type(e).__name__}: it did not finish within the time budget"
 
     code, so, se = run([*prefix, claude, "--version"])
     out.append(_check("claude", code == 0 and re.search(r"\d+\.\d+", so),
@@ -311,16 +398,22 @@ def readiness(ws, settings, environ=None) -> list[dict]:
     has_orch = which("orch", path=path) is not None
     out.append(_check("orch on PATH", has_orch,
                       f"`orch` is not on the sessions' PATH ({path}): install it as a tool of your user (for example "
-                      "`uv tool install` of orch-core) so the dashboard's PATH finds it, then restart the dashboard"))
-    cmds, missing = _hook_commands(environ, data)
+                      "`uv tool install` of orch-core), outside the workspace, so the dashboard's PATH finds it, then "
+                      "restart the dashboard"))
+    cmds, missing = _hook_commands(ws, environ, data)
     if missing and user_settings_blocker(environ) is None:
-        out.append(_check("hooks", False, f"cannot find the {' and '.join(missing)} command to test (the orch-core "
-                                          "plugin's folder was not found): enable the plugin at user scope again"))
-    for label, cmd, extra in cmds:
+        out.append(_check("hooks", False, f"cannot find the {' and '.join(missing)} command to test (no installed "
+                                          "orch-core plugin outside the workspace was found): install the plugin "
+                                          "at user scope again"))
+    for label, argv, extra in cmds:
+        if argv[0].startswith("/") and agent_writable(ws, argv[0]):
+            out.append(_check(label, False, f"orch's {label} runs {argv[0]}, inside the workspace, which agents "
+                                            "write: point the hook at an orch outside the workspace"))
+            continue
         event = "PreToolUse" if label == "guard" else "PermissionRequest"
         payload = json.dumps({"session_id": str(uuid.uuid4()), "hook_event_name": event, "tool_name": "Bash",
                               "tool_input": {"command": "true"}, "cwd": str(root)})
-        code, so, se = run([*prefix, *extra, f"CLAUDE_PROJECT_DIR={root}", "/bin/sh", "-c", cmd], payload)
+        code, so, se = run([*prefix, *extra, f"CLAUDE_PROJECT_DIR={root}", *argv], payload)
         try:
             sane = not so.strip() or isinstance(json.loads(so), dict)
         except ValueError:
@@ -334,9 +427,10 @@ def readiness(ws, settings, environ=None) -> list[dict]:
               or (_user_dir(environ) / "skills" / "orch-work-on-ticket" / "SKILL.md").is_file())
     out.append(_check("skills", skills, "the orch skills are not available at user scope: sessions follow the "
                                         "built-in prompts, which name the commands they need", level="warn"))
-    out.append(_check("trust", _trusted_folder(environ, root),
-                      f"Claude Code has not recorded the trust dialog for {root}: a new session would stop at it. "
-                      "Open Claude once in this folder and accept the trust dialog"))
+    trusted, why = _trusted_folder(environ, root)
+    out.append(_check("trust", trusted,
+                      f"Claude Code has not recorded the trust dialog for {root} ({why}): a new session would stop "
+                      "at it. Open Claude once in this folder and accept the trust dialog"))
     deny = ((data or {}).get("permissions") or {}).get("deny") if isinstance((data or {}).get("permissions"), dict) \
         else None
     lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
@@ -348,23 +442,28 @@ def readiness(ws, settings, environ=None) -> list[dict]:
 
 
 def readiness_blocker(ws, settings) -> str | None:
-    """The first blocking readiness failure (with its output tail), or None; computed at most every READY_TTL seconds
-    (FAIL_TTL while one fails)."""
+    """The first blocking readiness failure, or None. A result is reused for at most READY_TTL seconds and only while
+    _fingerprint is unchanged; any error is a failure with its reason (never a silent pass)."""
     import time
     key = str(Path(ws.root).resolve())
-    at, checks = _READY.get(key, (0.0, None))
-    failed = [c for c in (checks or []) if not c["ok"] and c["level"] == "block"]
-    if checks is None or time.monotonic() - at > (FAIL_TTL if failed else READY_TTL):
-        checks = readiness(ws, settings)
-        _READY[key] = (time.monotonic(), checks)
-        failed = [c for c in checks if not c["ok"] and c["level"] == "block"]
+    try:
+        fp = _fingerprint(ws, settings)
+        at, checks, seen = _READY.get(key, (0.0, None, None))
+        if checks is None or seen != fp or time.monotonic() - at > READY_TTL:
+            checks = readiness(ws, settings)
+            _READY[key] = (time.monotonic(), checks, fp)
+    except Exception as e:
+        checks = [_check("readiness", False, f"the readiness checks failed ({type(e).__name__}): nothing starts "
+                                             "until they run")]
+        _READY[key] = (time.monotonic(), checks, None)
+    failed = [c for c in checks if not c["ok"] and c["level"] == "block"]
     return failed[0]["why"] if failed else None
 
 
 def readiness_report(ws) -> list[dict] | None:
     """The failing checks of the last readiness run (blocking and warnings), without running anything; None when none
     ran yet in this process."""
-    checks = _READY.get(str(Path(ws.root).resolve()), (0.0, None))[1]
+    checks = _READY.get(str(Path(ws.root).resolve()), (0.0, None, None))[1]
     return None if checks is None else [c for c in checks if not c["ok"]]
 
 
@@ -588,9 +687,12 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | No
         lines.append(f"{t.id} not started: claude or env was not found at a trusted path (owned by you or root, not "
                      "writable by others)")
         return None
+    if agent_writable(ws, claude) or agent_writable(ws, env_bin):
+        lines.append(f"{t.id} not started: claude or env lies inside the workspace, which agents write")
+        return None
     if prompt is None or not _gate(ws, epic.id, d["id"]):
         return None
-    return prompt, cwd, claude, env_bin, [claude, *session_bins()]
+    return prompt, cwd, claude, env_bin, [claude, *session_bins(ws)]
 
 
 def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple,

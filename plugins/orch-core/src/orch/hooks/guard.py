@@ -1356,19 +1356,130 @@ def _git_config_reads(seg: str) -> bool:
 
 
 # `git config` (a write form) of a key that makes later git commands run a program or read other config
-_GIT_EXEC_KEY = re.compile(r"(?i)\b(?:core\.(?:fsmonitor|sshcommand|pager|editor|askpass|gitproxy)|alias\.|include\.|"
-                           r"includeif\.|filter\.|diff\.\S+\.(?:command|textconv)|merge\.\S+\.driver|"
-                           r"credential\.helper|sequence\.editor|gpg\.\S*program|uploadpack\.packobjectshook)")
-# A write into a repository's own files (redirect, tee, cp, mv, sed -i, ...): see _GIT_DIR_DENIED
-_GIT_INTERNAL_PATH = re.compile(r"(?i)(?:^|[\s'\"=/~])\.git[/\\]+(?:config|refs|packed-refs|info|objects|head|"
-                                r"worktrees|modules|hooks|commondir|gitdir)\b")
+_GIT_EXEC_KEY = re.compile(r"(?i)\b(?:core\.(?:fsmonitor|sshcommand|pager|editor|askpass|gitproxy|alternaterefscommand|"
+                           r"attributesfile|hookspath)|alias\.|include\.|includeif\.|filter\.|diff\.external|"
+                           r"diff\.\S+\.(?:command|textconv)|difftool\.\S+\.cmd|mergetool\.\S+\.cmd|"
+                           r"merge\.\S+\.driver|credential\.|sequence\.editor|gpg\.\S*program|"
+                           r"gpg\.ssh\.defaultkeycommand|uploadpack\.packobjectshook|remote\.\S+\.(?:uploadpack|"
+                           r"receivepack)|url\.\S*\.(?:insteadof|pushinsteadof)|protocol\.\S*allow)")
+# A write into a repository's own files (redirect, tee, cp, mv, ln, install, rsync, sed -i, ...), or onto a bare
+# `.git` target (`mv x .git`, `ln -s x .git`): see _GIT_DIR_DENIED. Matched after `//` and `/./` are collapsed.
+_GIT_INTERNAL_PATH = re.compile(r"(?i)(?:^|[\s'\"=/~])\.git(?:/+(?:config|refs|packed-refs|info|objects|head|"
+                                r"worktrees|modules|hooks|commondir|gitdir)\b|(?=$|[\s'\";&|)]))")
+# The user's own git config: what every git of this user reads (a url rewrite, a filter, an attributes file)
+_GLOBAL_GIT_CONFIG = re.compile(r"(?i)\.gitconfig\b|\.config/+git(?:/|\b)|XDG_CONFIG_HOME\}?/+git\b|/etc/gitconfig\b")
+_GLOBAL_GIT_DENIED = ("agents do not write the user's own git config (~/.gitconfig, ~/.config/git, "
+                      "$XDG_CONFIG_HOME/git, /etc/gitconfig) or point git config at it: every git of this user reads "
+                      "it; ask the user")
+_RAW_TOKEN = re.compile(r"""(?:[^\s'"]+|'[^']*'|"(?:\\.|[^"\\])*")+""")
+
+
+_LINK_WRITE = re.compile(r"(?:^|[\s;&|(`'\"])(?:ln|install|rsync)\b")
+
+
+def _is_git_write(cmd: str) -> bool:
+    """_is_write, plus ln, install and rsync: for the .git and git-config checks only (elsewhere a hard link out of
+    a guarded file stays as it was ruled)."""
+    return _is_write(cmd) or bool(_LINK_WRITE.search(cmd))
+
+
+def _paths_text(text: str) -> str:
+    """`text` with backslash separators, repeated separators and `/./` collapsed, for the path checks above."""
+    t = re.sub(r"[/\\]+", "/", text)
+    while "/./" in t:
+        t = t.replace("/./", "/")
+    return t
+
+
+def _word(tok: str) -> str | None:
+    """The literal value of one shell word, or None when it is not a plain literal: it holds `$`, a backtick or a
+    backslash, or a quote inside it (`g'i't`), so its value is only known when the shell runs it."""
+    import shlex
+    if re.search(r"[$`\\]", tok):
+        return None
+    if ("'" in tok or '"' in tok) and not re.fullmatch(r"'[^']*'|\"[^\"]*\"|[^'\"]+", tok):
+        return None
+    try:
+        w = shlex.split(tok)
+    except ValueError:
+        return None
+    return w[0] if len(w) == 1 else None
 
 
 def _sets_git_exec_config(seg: str, plain: str) -> bool:
-    if not _GIT_WORD.search(plain) or not _GIT_CONFIG.search(plain):
-        return False
-    bare = seg.replace("'", "").replace('"', "")
-    return bool(_GIT_EXEC_KEY.search(bare) and not _CONFIG_READ.search(bare))
+    """A `git config` write, a `git -c`, or `git --config-env` that sets a key which runs a program or redirects git
+    (`_GIT_EXEC_KEY`), writes the user's global or system config, or points `--file` into `.git` or the user's
+    config; and any such command whose `git` word, key or file is not a plain literal (`$'..'`, `${..}`, `$(..)`,
+    backslashes, quotes inside a word): its value is unknown here, so it is denied (fail closed)."""
+    if _GIT_WORD.search(plain) and _GIT_CONFIG.search(plain):  # the plain spelling, as before
+        bare = seg.replace("'", "").replace('"', "")
+        if _GIT_EXEC_KEY.search(bare) and not _CONFIG_READ.search(bare):
+            return True
+    toks = _RAW_TOKEN.findall(seg)
+    vals = [_word(t) for t in toks]
+    first = next((k for k, t in enumerate(toks) if not re.match(r"[A-Za-z_]\w*=", t)), len(toks))
+    for i, v in enumerate(vals):
+        # a command word whose value is unknown here (`$'\x67it'`, `${G}`, `g\it`, `g'i't`) may be git
+        hidden = i == first and v is None
+        if not (hidden or (v is not None and os.path.basename(v).lower() in ("git", "git.exe"))):
+            continue
+        rest, rv = toks[i + 1:], vals[i + 1:]
+        lits = [x or "" for x in rv]
+        # the options before git's subcommand (the first plain word that is not an option or an option's value)
+        takes = ("-C", "-c", "--git-dir", "--work-tree", "--namespace")
+        sub = next((j for j, x in enumerate(rv) if x is not None and not x.startswith("-")
+                    and not (j and lits[j - 1] in takes)), len(rv))
+        ci = sub if sub < len(rv) and lits[sub] == "config" else None
+        head = range(sub)
+        if any(lits[j].startswith("--config-env") for j in head):
+            return True
+        # -c, and any word in the options' place whose value is unknown (it may be -c, config or --config-env),
+        # except the value of an option that takes a path
+        cs = [j for j in head if lits[j] == "-c" or (lits[j].startswith("-c") and len(lits[j]) > 2)
+              or (rv[j] is None and not (j and lits[j - 1] in ("-C", "--git-dir", "--work-tree", "--namespace"))
+                  and (not hidden or rest[j].startswith("$'")))]
+        if ci is None and not cs:
+            continue
+        if hidden:
+            return True  # a git word whose value is unknown, with config, -c or an unknown word after it
+        for j in cs:
+            kv = rv[j + 1] if lits[j] == "-c" and j + 1 < len(rv) else (rv[j][2:] if rv[j] else None)
+            if kv is None or rv[j] is None or _GIT_EXEC_KEY.search(kv.split("=", 1)[0] + "="):
+                return True
+        if ci is None:
+            continue
+        args, key, skip = rv[ci + 1:], None, False
+        for k, a in enumerate(args):  # options and the key must be plain literals; the value may be anything
+            if skip:
+                skip = False
+                continue
+            if a is None:
+                return True
+            if a in ("-f", "--file", "--type", "--blob", "--default", "--comment"):
+                skip = a in ("--type", "--default", "--comment")
+                if a in ("-f", "--file"):
+                    target = args[k + 1] if k + 1 < len(args) else None
+                    if target is None:
+                        return True
+                continue
+            if not a.startswith("-"):
+                key = a
+                break
+        joined = " " + " ".join(["config", *[a for a in args if a is not None]])
+        if _CONFIG_READ.search(joined):
+            continue
+        for k, a in enumerate(args):
+            if a in ("--global", "--system"):
+                return True
+            target = args[k + 1] if a in ("-f", "--file") and k + 1 < len(args) else (
+                a.split("=", 1)[1] if isinstance(a, str) and a.startswith("--file=") else None)
+            if target is not None:
+                t = _paths_text(target)
+                if _GLOBAL_GIT_CONFIG.search(t) or any(part.lower() == ".git" for part in t.split("/")):
+                    return True
+        if key is not None and _GIT_EXEC_KEY.search(key + "="):
+            return True
+    return False
 
 
 def _cd_targets_state(cmd: str) -> bool:
@@ -2125,6 +2236,9 @@ def evaluate(ws, payload: dict) -> Decision:
             str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
         hooks = _STARTUP_FILE.search(str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""))
         return Decision(False, _STARTUP_DENIED if hooks else _GIT_DIR_DENIED)  # hooks keep their own message
+    if tool in ("Edit", "Write", "MultiEdit", "NotebookEdit") and _global_git_config(
+            str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws):
+        return Decision(False, _GLOBAL_GIT_DENIED)
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input)
     return ALLOW
@@ -2138,16 +2252,45 @@ _GIT_DIR_DENIED = ("agents do not write inside .git or a .git file with their fi
                    "there; use git commands that the guard allows instead")
 
 
+def _path_forms(raw: str, cwd, ws) -> set[Path]:
+    """A file tool's path as written (`~` expanded, relative to the hook's working directory, else the workspace
+    root) and after symlinks; raises on a path that cannot be worked out."""
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        p = Path(str(cwd)) / p if cwd else Path(ws.root) / p
+    return {Path(os.path.normpath(p)), p.resolve()}
+
+
+def _global_git_config(raw: str, cwd, ws) -> bool:
+    """Whether a file tool's path is the user's own git config (any case, as written or after symlinks):
+    ~/.gitconfig, anything in ~/.config/git or $XDG_CONFIG_HOME/git, /etc/gitconfig. Any error is a yes."""
+    if not raw:
+        return False
+    try:
+        forms = _path_forms(raw, cwd, ws)
+        home = [Path.home(), Path.home().resolve()]
+        bases = [h / ".config" / "git" for h in home]
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        if xdg:
+            bases += [Path(xdg) / "git", (Path(xdg) / "git").resolve()]
+        files = {str(h / ".gitconfig").lower() for h in home} | {"/etc/gitconfig", "/private/etc/gitconfig"}
+        dirs = {str(b).lower() for b in bases}
+    except (OSError, RuntimeError, ValueError):
+        return True
+    for f in forms:
+        low = str(f).lower()
+        if low in files or any(low == d or low.startswith(d + os.sep) for d in dirs):
+            return True
+    return False
+
+
 def _in_git_dir(raw: str, cwd, ws) -> bool:
     """Whether a file tool's path has a `.git` component (any case), as written (relative to the hook's working
     directory, else the workspace root) or after symlinks are resolved. Any error is a yes."""
     if not raw:
         return False
     try:
-        p = Path(raw)
-        if not p.is_absolute():
-            p = Path(str(cwd)) / p if cwd else Path(ws.root) / p
-        forms = {Path(os.path.normpath(p)), p.resolve()}
+        forms = _path_forms(raw, cwd, ws)
     except (OSError, RuntimeError, ValueError):
         return True
     return any(part.lower() == ".git" for f in forms for part in f.parts)
@@ -2899,8 +3042,10 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
         return Decision(False, _STARTUP_DENIED)
     if (_RECORDER_FILE.search(code) or (_SETTINGS_JSON.search(code) and _STATUS_LINE.search(code))) and _is_write(cmd):
         return Decision(False, _RECORDER_DENIED)
-    if _GIT_INTERNAL_PATH.search(code) and _is_write(cmd):
+    if _GIT_INTERNAL_PATH.search(_paths_text(code)) and _is_git_write(cmd):
         return Decision(False, _GIT_DIR_DENIED)
+    if _GLOBAL_GIT_CONFIG.search(_paths_text(code)) and _is_git_write(cmd):
+        return Decision(False, _GLOBAL_GIT_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
     # checks: only a command that itself writes and names the orch config and `checks` (not a grep next to an

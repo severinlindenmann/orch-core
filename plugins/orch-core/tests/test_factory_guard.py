@@ -156,3 +156,80 @@ def test_bash_writes_into_git_and_exec_config_are_denied_and_never_grantable(ws,
                                  "git config user.name 'A B'", "git add .gitignore", "echo x > .gitignore"])
 def test_ordinary_git_use_stays_open(ws, cmd):
     assert _bash(ws, cmd).allow, cmd
+
+
+# -- re-review: the user's own git config, more write forms, non-literal git config spellings --------------------
+
+@pytest.mark.parametrize("path", ["~/.gitconfig", "~/.GITCONFIG", "~/.config/git/config", "~/.config/git/attributes",
+                                  "~/.config/git/sub/x", "/etc/gitconfig", "{xdg}/git/config", "{home}/.gitconfig"])
+@pytest.mark.parametrize("tool", ["Write", "Edit", "MultiEdit", "NotebookEdit"])
+def test_file_tools_never_write_the_users_git_config(ws, tool, path, tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    p = path.format(xdg=tmp_path / "xdg", home=os.path.expanduser("~"))
+    d = _tool(ws, tool, **{key: p, "content": "x", "old_string": "a", "new_string": "b", "edits": []})
+    assert not d.allow and "git config" in d.reason, p
+
+
+def test_a_symlink_or_relative_path_to_the_users_git_config_is_refused(ws, tmp_path, monkeypatch):
+    import os
+    from orch.hooks.guard import evaluate
+    home = tmp_path / "h"
+    (home / ".config" / "git").mkdir(parents=True)
+    (home / ".gitconfig").write_text("", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    (ws.root / "harmless").symlink_to(home / ".gitconfig")
+    assert not _tool(ws, "Write", file_path=str(ws.root / "harmless"), content="[filter]").allow
+    d = evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": "config", "content": "x"},
+                      "cwd": str(home / ".config" / "git")})
+    assert not d.allow
+    assert _tool(ws, "Read", file_path=os.path.join(str(home), ".gitconfig")).allow  # reading stays open
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo '[filter \"x\"]' >> ~/.gitconfig", "tee -a $HOME/.gitconfig < x", "cp evil ~/.config/git/attributes",
+    "mv evil ${XDG_CONFIG_HOME}/git/config", "ln -sf /tmp/evil ~/.gitconfig", "install -m 644 x ~/.gitconfig",
+    "rsync x ~/.config/git/config", "sed -i s/a/b/ ~/.gitconfig", "perl -pi -e s/a/b/ ~/.gitconfig",
+    "dd if=x of=$HOME/.gitconfig", "python3 -c \"open('/Users/x/.gitconfig','a').write('x')\"",
+    "git config --global url.x.insteadOf y", "git config --system core.pager less",
+    "git config --global user.name x", "git config -f ~/.gitconfig user.name x",
+    "git config --file .git/config user.name x", "git config --file=sub/.git/config user.name x",
+])
+def test_shell_writes_to_the_users_git_config_are_denied(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd
+    assert permits.never_grantable(ws, cmd) is not None
+
+
+@pytest.mark.parametrize("cmd", [
+    "ln -s evil .git/config", "install x .git/hooks/pre-commit", "rsync -a x/ .git/refs/",
+    "cp -r evil .git", "mv evil .git", "ln -s /tmp/evil .git", "echo x > .git/./config", "echo x > .git//config",
+    "echo x > ./.git/./info/attributes", "cp x sub/.git/./HEAD",
+])
+def test_more_write_forms_into_git_are_denied(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git config core.alternateRefsCommand x", "git config gpg.ssh.defaultKeyCommand x", "git config diff.external x",
+    "git config difftool.x.cmd y", "git config mergetool.x.cmd y", "git config remote.o.uploadpack x",
+    "git config remote.o.receivepack x", "git config url.a.insteadOf b", "git config url.a.pushInsteadOf b",
+    "git config protocol.ext.allow always", "git config core.attributesFile /tmp/a", "git config filter.x.clean y",
+    "git config credential.https://h.helper x",
+    "git -c core.fsmonitor=x status", "git -c alias.st=!sh st", "git --config-env=core.pager=X log",
+    "git $'config' core.fsmonitor x", "git config $'core.fsmonitor' x", "$'\\x67it' config core.fsmonitor x",
+    "${G} config core.pager x", "g\\it config core.pager x", "g'i't config core.pager x", "git co'nfig' core.pager x",
+    "git config co're.fsmonitor' x", "git config \"${K}\" x", "git config $(echo core.pager) x",
+    "git -c \"$KV\" status", "git $'-c' core.pager=x log",
+])
+def test_every_spelling_of_exec_git_config_is_denied(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git status", "git add .gitignore .gitattributes", "git log -m --oneline -- .gitignore", "git -C \"$dir\" log",
+    "git log \"$file\"", "git config user.name 'A B'", "git config --get core.fsmonitor", "git config --list",
+    "\"$PY\" \"$script\"", "cat ~/.gitconfig", "git diff -- .gitattributes", "echo x > .gitattributes",
+])
+def test_legitimate_git_use_still_passes(ws, cmd):
+    assert _bash(ws, cmd).allow, cmd

@@ -371,3 +371,71 @@ def test_a_message_cannot_hide_behind_a_separator(fws, fa, fh, human, close_task
     _to_testing(fa, cid, close_tasks)
     lines = fr.tick(fws, human, RecipeFake())
     assert any("commit-msg check refuses" in x and "attribution" in x for x in lines), lines
+
+
+# -- allowlisted verbs with arguments that change their meaning, and one decision for both gates ------------------
+
+@pytest.mark.parametrize("cmd", [
+    "git checkout -- a.txt", "git checkout main", "git checkout fx/{c} -- a.txt", "git switch -c x",
+    "git add -A", "git add --all", "git add /etc/passwd", "git add ../../other", "git add ~/x",
+    "git commit --amend -m x", "git commit --no-verify -m x", "git commit -n -m x", "git commit -F /tmp/m",
+    "git commit --file=/tmp/m", "git commit -C abc123", "git commit -c abc123", "git commit --fixup=abc",
+    "git commit --author=x -m y", "git commit --template=/tmp/t", "git commit -m x /etc/hosts",
+    "git log --output=/tmp/x", "git log --output /tmp/x", "git diff --output=/tmp/x", "git show --output=/tmp/x",
+    "git diff --ext-diff", "git log --textconv", "git diff --no-index /etc/a /etc/b", "git log -- /etc",
+    "git restore --source=main a.txt", "git status --untracked-files=../x", "git blame -L 1,2 /etc/hosts",
+    "git branch -D other", "git branch --set-upstream-to=x", "git ls-files --with-tree=x",
+    "git log --pretty=%h --exec=x", "git diff --stat=10", "git rev-parse --git-path x",
+])
+def test_an_allowed_verb_with_an_argument_that_changes_it_is_refused(fws, run, cmd):
+    cmd = cmd.replace("{c}", run["cid"].lower())
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "git status --porcelain", "git status --porcelain=v2", "git status -uno", "git status -s",
+    "git log -5 --oneline", "git log -n 3", "git log -n3", "git log --format=%h", 'git log --format "%h %s"',
+    "git log main..HEAD", 'git show "HEAD^"', "git rev-parse --git-dir", "git rev-parse --show-toplevel",
+    "git diff --cached --stat", "git diff -U3", "git diff -- src/a.py", 'git commit -am "{C} x" -m "What: y"',
+    'git commit -m "{C} Fix the /api path" -m "What: y"', "git commit -mshort", "git add src/a.py docs/",
+    "git restore --staged a.txt", "git ls-tree -r HEAD", "git blame -L 1,2 a.txt", "git --no-pager log",
+])
+def test_an_allowed_verb_with_its_listed_options_passes(fws, run, cmd):
+    cmd = cmd.replace("{c}", run["cid"].lower()).replace("{C}", run["cid"])
+    assert permits.commit_refusal(fws, run["b"], run["clone"], cmd) is None, cmd
+
+
+CORPUS = [
+    "git status", "git push origin x", "git status;git push", "git status && git push origin x",
+    "git pu\\\nsh origin x", "g\\it push", '"g"it push', "'git' push", "GIT push", "Git status",
+    "/usr/bin/git status", "git.exe status", "env git status", "env GIT_DIR=x git status", "command git push",
+    "exec git status", "nice -n 5 git status", "nohup git push", "time git push", "sh -c 'git push origin x'",
+    'bash -lc "git status"', "eval 'git push'", "$'git' push", "git $'push'", "git $X", "$(which git) status",
+    "`which git` push", "git --git-dir=x status", "git --git-dir x status", "git --git-d=x status", "git -C x status",
+    "git -c alias.st=push st", "git --config-env=a=b status", "git log --output=/tmp/x", "git log --output /tmp/x",
+    "git log --outp=/tmp/x", "git commit --amen -m x", 'git commit -m "unterminated', "git", "git ''", "true | git push",
+    "echo hi > f; git status", 'orch log L-0002 -m "git push later"', "x=1 git status", "GIT_TRACE=1 git status",
+    "make test", "ls",
+]
+
+
+@pytest.mark.parametrize("cmd", CORPUS)
+def test_the_guard_and_the_hook_decide_every_spelling_the_same(fws, run, cmd):
+    why = permits.commit_refusal(fws, run["b"], run["clone"], cmd) if permits._git_commit(cmd) else None
+    guard, hook = _both(fws, run["b"], cmd, run["clone"])
+    hook_msg = (hook or {}).get("hookSpecificOutput", {}).get("decision", {}).get("message", "")
+    if why is not None:  # the gate refuses: both gates deny (the hook may name an earlier reason, never an allow)
+        assert not guard.allow and _behavior(hook) == "deny", (cmd, why)
+    else:  # the gate passes: neither gate says the git gate refused it
+        assert "git commit is refused here" not in (guard.reason or "") + hook_msg, cmd
+
+
+@pytest.mark.parametrize("broken", ["_invocations", "_arg_refusal", "_own_place", "_words"])
+def test_any_error_inside_the_gate_is_a_refusal(fws, run, monkeypatch, broken):
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(permits, broken, boom)
+    why = permits.commit_refusal(fws, run["b"], run["clone"], COMMIT)
+    assert why and ("could not check" in why or "cannot be read" in why)
+    guard, hook = _both(fws, run["b"], COMMIT, run["clone"])
+    assert not guard.allow and _behavior(hook) == "deny"

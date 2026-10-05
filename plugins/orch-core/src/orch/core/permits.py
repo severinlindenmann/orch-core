@@ -596,65 +596,175 @@ def hook_decision(ws, payload: dict) -> dict | None:
                                  f"File it with `orch permit request`, then `orch wait {ticket.id}`.")
 
 
-# The git commands a runner-bound session may run: an ALLOWLIST, decided by commit_refusal for the guard and the
-# permission hook alike. Anything not listed is refused, whatever it does (push, fetch, remote, config, update-ref,
-# symbolic-ref, tag, reset, worktree, submodule, filter-branch, gc, reflog, am, apply, aliases, ...).
-_GIT_OPTS = r"(?<![\w-])(?:-C|-c|--git-dir|--work-tree|--config-env|--exec-path|--namespace)(?![\w-])"
-_ELSEWHERE = re.compile(_GIT_OPTS + r"|(?<![\w])GIT_[A-Z0-9_]+\s*=|(?<![\w-])(?:cd|pushd)(?![\w-])")
+# The git commands a runner-bound session may run: an ALLOWLIST of verbs and, per verb, of options, decided by
+# commit_refusal for the guard and the permission hook alike. Anything not listed is refused, whatever it does (push,
+# fetch, remote, config, update-ref, tag, reset, worktree, submodule, gc, reflog, am, apply, an alias, an unknown
+# option, ...), and anything the parser cannot tell is refused too.
 _GIT_ASSIGN = re.compile(r"(?<![\w])GIT_[A-Z0-9_]+\s*=")
 _GIT_WORD = re.compile(r"(?i)(?<![\w-])git(?:\.exe)?(?![\w-])")
 _SPLIT = re.compile(r"[\s;&|()`<>]+")
-_OPS = {"&&", "||", ";", "|", "&"}
+_OPS = {"&&", "||", ";", "|", "&", ";;", "|&", "(", ")", "<", ">", ">>", "<<", ">&", "<&", "&>", "<>", ">|"}
+_UNCHECKABLE = re.compile(r"[$`]")  # a substitution, a variable or ANSI-C quoting: its value is known only when it runs
 _PRE_OPTS = {"--no-pager", "-P"}  # the only options allowed before the verb
-_READ_VERBS = {"status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "blame"}
 _READ_BRANCH = {"--show-current", "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose"}
-_TREE_VERBS = {"add", "restore"}  # write the work tree and index only
+
+
+def _spec(flags="", values="", operands="paths", value_paths=True) -> dict:
+    return {"flags": set(flags.split()), "values": set(values.split()), "operands": operands,
+            "value_paths": value_paths}
+
+
+# verb: allowed flags, options that take a value (`--opt=value`, `--opt value`, `-xvalue`, `-x value`), what the
+# operands are ("paths": paths inside the repository, "revs": revisions or such paths, "none", "own": exactly the
+# session's own branch), and whether option values are checked as paths (not for commit messages or formats).
+_VERBS = {
+    "status": _spec("-s --short -b --branch --long -v --verbose --ignored --porcelain -uno -unormal -uall",
+                    "--porcelain --untracked-files -u"),
+    "diff": _spec("--stat --numstat --shortstat --name-only --name-status --cached --staged --color --no-color -w "
+                  "--ignore-all-space -b --ignore-space-change --word-diff --check --summary --no-ext-diff "
+                  "--no-textconv --patch -p -R --minimal --raw --dirstat --",
+                  "-U --unified", "revs"),
+    "log": _spec("--oneline --stat -p --patch --name-only --name-status --graph --decorate --no-decorate "
+                 "--abbrev-commit --reverse --all --no-merges --merges --first-parent --follow --color --no-color "
+                 "--date-order --topo-order --shortstat --numstat --",
+                 "-n --max-count --format --pretty --since --until --after --before --author --grep --skip --date",
+                 "revs", value_paths=False),
+    "show": _spec("--stat --name-only --name-status --oneline -s --no-patch --color --no-color --patch -p --summary "
+                  "--numstat --shortstat --abbrev-commit --decorate --",
+                  "--format --pretty", "revs", value_paths=False),
+    "rev-parse": _spec("--verify --quiet -q --short --abbrev-ref --show-toplevel --git-dir --is-inside-work-tree "
+                       "--symbolic-full-name --show-prefix --show-cdup --absolute-git-dir", "", "revs"),
+    "ls-files": _spec("-c --cached -m --modified -o --others --exclude-standard -d --deleted -s --stage --full-name "
+                      "--"),
+    "ls-tree": _spec("-r -t -d --name-only --name-status -l --long --full-tree --full-name --", "", "revs"),
+    "blame": _spec("-w -s -e --", "-L", "revs"),
+    "branch": _spec(" ".join(_READ_BRANCH), "", "none"),
+    "add": _spec("-v --verbose -N --intent-to-add --"),
+    "restore": _spec("--staged -S --worktree -W --"),
+    "commit": _spec("-q --quiet -v --verbose -a --all --allow-empty -s --signoff", "-m --message", "paths",
+                    value_paths=False),
+    "checkout": _spec("-q --quiet", "", "own"),
+    "switch": _spec("-q --quiet", "", "own"),
+}
+_TREE_VERBS = {"add", "restore"}  # write the work tree and index only: from the start folder or below it
 _COMMIT_VERBS = {"commit", "checkout", "switch"}  # need the session's own work tree
 
 
 def _plain(command) -> str:
-    """The text every check reads: line continuations joined (the shell joins them; the guard judges the joined text
-    too), quotes and backslashes taken out. One reading for the guard and the permission hook."""
+    """The text with line continuations joined and quotes and backslashes taken out: what tells whether a command
+    could run git at all (the guard judges the joined text too)."""
     return re.sub(r"[\\'\"]", "", str(command).replace("\\\n", ""))
 
 
-def _readings(command) -> list[list[str]]:
-    """The command's words, read two ways: as the shell splits them (quotes resolved), and from _plain split on blanks
-    and shell operators (so `sh -c "git push ..."`, `env git ...`, a substitution or `;git` are seen as words too).
-    Every check runs on both: a command passes only when both readings pass."""
+def _words(command: str) -> list[str]:
+    """The command's words as the shell splits them, operators as words of their own. Raises ValueError when the
+    quoting cannot be read."""
     import shlex
-    out = []
-    try:
-        out.append(shlex.split(str(command).replace("\\\n", "")))
-    except ValueError:
-        pass
-    out.append([w for w in _SPLIT.split(_plain(command)) if w])
+    lx = shlex.shlex(str(command).replace("\\\n", ""), posix=True, punctuation_chars=True)
+    lx.whitespace_split = True
+    return list(lx)
+
+
+def _is_git(word: str) -> bool:
+    return bool(_GIT_WORD.fullmatch(os.path.basename(word)))
+
+
+def _invocations(command: str, depth: int = 0) -> list[tuple[list[str], str, list[str]]]:
+    """[(options before the verb, verb, arguments)] for every git word of `command` as the shell reads it, and of every
+    word that is itself a command line (a `sh -c` or `bash -lc` payload, an `eval` argument): those are read the same
+    way, recursively. Raises ValueError when the quoting cannot be read or it nests too deep."""
+    if depth > 4:
+        raise ValueError("nested too deep")
+    words, out = _words(command), []
+    for i, w in enumerate(words):
+        if " " in w or "\t" in w or "\n" in w:
+            if _GIT_WORD.search(_plain(w)):
+                out += _invocations(w, depth + 1)
+            continue
+        if not _is_git(w):
+            continue
+        j = i + 1
+        while j < len(words) and words[j].startswith("-") and words[j] not in _OPS:
+            j += 1
+        args = []
+        for a in words[j + 1:]:
+            if a in _OPS:
+                break
+            args.append(a)
+        out.append((words[i + 1:j], words[j] if j < len(words) and words[j] not in _OPS else "", args))
     return out
 
 
-def _invocations(command) -> list[tuple[list[str], str, list[str]]]:
-    """[(options before the verb, verb, arguments)] for every git word (any case, any path, `git.exe`) in every
-    reading of `command`."""
-    out = []
-    for words in _readings(command):
-        for i, w in enumerate(words):
-            if not _GIT_WORD.fullmatch(os.path.basename(w).rstrip(")")):
+def _outside(value: str) -> bool:
+    """Whether a path operand or value may name something outside the repository: absolute, `~`, or a `..`
+    component."""
+    return value.startswith(("/", "~")) or ".." in value.replace("\\", "/").split("/")
+
+
+def _arg_refusal(verb: str, args: list[str], own: str | None) -> str | None:
+    """Why `args` change what allowlisted `verb` does, or None: only the verb's listed options (exact names, `=value`
+    or a following value for those that take one, short clusters letter by letter), operands of the verb's kind, and
+    no path outside the repository."""
+    spec = _VERBS[verb]
+    flags, values = spec["flags"], spec["values"]
+    short_flags = {f[1] for f in flags if len(f) == 2 and f[0] == "-" and f[1] != "-"}
+    short_values = {v[1] for v in values if len(v) == 2 and v[0] == "-" and v[1] != "-"}
+    operands, i, after_dd = [], 0, False
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if after_dd or not a.startswith("-") or a == "-":
+            operands.append(a)
+            continue
+        if a == "--":
+            if "--" not in flags:
+                return f"git {verb} takes no -- here"
+            after_dd = True
+            continue
+        if verb == "log" and re.fullmatch(r"-n?\d+", a):
+            continue
+        if verb == "diff" and re.fullmatch(r"-U\d+", a):
+            continue
+        name, eq, val = a.partition("=")
+        if a.startswith("--"):
+            if name in values and (eq or name not in flags):
+                if not eq:
+                    if i >= len(args):
+                        return f"git {verb} {name} needs a value"
+                    val, i = args[i], i + 1
+                if spec["value_paths"] and _outside(val):
+                    return f"git {verb} {name} names a path outside the repository"
                 continue
-            j = i + 1
-            while j < len(words) and words[j].startswith("-") and words[j] not in _OPS:
-                j += 1
-            args = []
-            for a in words[j + 1:]:
-                if a in _OPS or _GIT_WORD.fullmatch(os.path.basename(a).rstrip(")")):
-                    break
-                args.append(a)
-            out.append((words[i + 1:j], words[j] if j < len(words) else "", args))
-    return out
+            if eq or name not in flags:
+                return f"git {verb} does not take {name} here"
+            continue
+        if a in flags:
+            continue
+        for k, c in enumerate(a[1:], 1):  # a short cluster: -am "msg", -mtext, -uno
+            if c in short_values:
+                val = a[k + 1:]
+                if not val:
+                    if i >= len(args):
+                        return f"git {verb} -{c} needs a value"
+                    val, i = args[i], i + 1
+                if spec["value_paths"] and _outside(val):
+                    return f"git {verb} -{c} names a path outside the repository"
+                break
+            if c not in short_flags:
+                return f"git {verb} does not take -{c} here"
+    kind = spec["operands"]
+    if kind == "none" and operands:
+        return f"git {verb} takes no arguments here"
+    if kind == "own" and operands != [own]:
+        return f"git {verb} may only switch to the session's own branch {own}"
+    if kind in ("paths", "revs") and any(_outside(o) for o in operands):
+        return f"git {verb} names a path outside the repository"
+    return None
 
 
 def _git_commit(command) -> bool:
-    """Whether `command` gets the git gate (commit_refusal) in a runner-bound session: the word git anywhere in either
-    reading, or any GIT_*= assignment. Cheap; the gate decides."""
+    """Whether `command` gets the git gate (commit_refusal) in a runner-bound session: the word git anywhere in its
+    plain text (quotes, backslashes and line continuations out), or any GIT_*= assignment. Cheap; the gate decides."""
     if not isinstance(command, str):
         return False
     t = _plain(command)
@@ -693,55 +803,63 @@ def _own_place(ws, b: dict, cwd) -> tuple[str | None, str | None]:
     return (None, own) if own else ("the session's own branch cannot be read", None)
 
 
-def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
-    """Why runner-bound session `b` must not run `command` (one that _git_commit selects) now, or None. The one
-    function the guard and the permission hook both call for every git command of a bound session. An allowlist:
+_ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add, restore, commit, "
+                 "and checkout or switch of its own branch, each with its listed options")
 
-    - no GIT_*= assignment, and no -C, -c, --git-dir, --work-tree, --config-env, --exec-path, --namespace or cd/pushd
-      in a line that runs git; no option before the verb but --no-pager;
-    - reads anywhere: status, diff, log, show, rev-parse, ls-files, ls-tree, blame, and branch that only lists;
-    - add and restore from the start folder or below it;
-    - commit, and checkout or switch of the session's own branch (nothing else), only in the session's own work tree
-      (_own_place: the runner-made clone or its own linked worktree);
-    - everything else is refused (push, fetch, remote, config, update-ref, tag, reset, worktree, submodule, gc, am,
-      apply, an alias, ...). Both readings of the command must pass. Anything that cannot be read is a refusal."""
+
+def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
+    """Why runner-bound session `b` must not run `command` (one _git_commit selects) now, or None. The one function
+    the guard and the permission hook both call for every git command of a bound session. Fails closed: anything it
+    cannot read or tell, and any error inside it, is a refusal.
+
+    - no GIT_*= assignment; no `$` or backtick in a line that runs git (a variable, a substitution or `$'...'`
+      quoting has a value only when it runs); quoting that cannot be read is refused;
+    - the command is read as the shell splits it, and every word that is itself a command line (`sh -c`, `bash -lc`,
+      `eval`) the same way; every place the word git appears in its plain text must be one of those invocations (a
+      git the parser does not account for, in a message, a note or a wrapper it cannot read, is refused);
+    - per invocation: no option before the verb but --no-pager; the verb in _VERBS, with only its listed options and
+      operands of its kind (_arg_refusal: no path outside the repository, `checkout`/`switch` only to the own branch);
+    - add and restore from the start folder or below it; commit, checkout and switch only in the session's own work
+      tree (_own_place: the runner-made clone or its own linked worktree)."""
     try:
         plain = _plain(command)
         if _GIT_ASSIGN.search(plain):
             return ("a GIT_* variable may not be set in a factory session's command: it points git at another "
                     "folder, config or refs")
-        calls = _invocations(command)
-        if calls and _ELSEWHERE.search(plain):
-            return ("a git command may not point git at another folder, config or refs (-C, -c, --git-dir, "
-                    "--work-tree, --config-env, --exec-path, --namespace, cd)")
+        if not _GIT_WORD.search(plain):
+            return None
+        if _UNCHECKABLE.search(str(command)):
+            return "a git command line with a variable, a substitution or $'...' quoting cannot be checked"
+        try:
+            calls = _invocations(command)
+        except ValueError:
+            return "the quoting of this git command cannot be read"
+        if len(calls) != len([w for w in _SPLIT.split(plain) if _is_git(w)]) or not calls:
+            return ("this command names git where orch cannot tell how it runs (inside a message, a note or a "
+                    "wrapper): run git as a plain command, and do not name git commands in -m texts")
+        if re.search(r"(?<![\w-])(?:cd|pushd|popd|chdir)(?![\w-])", plain):
+            return "a line that runs git may not change folder (cd, pushd): git would run in another folder"
         place = None
         for pre, verb, args in calls:
             if not set(pre) <= _PRE_OPTS:
-                return f"git options before the command ({' '.join(pre)}) are not allowed in a factory session"
-            if verb in _READ_VERBS:
-                continue
-            if verb == "branch":
-                if not set(args) <= _READ_BRANCH:
-                    return "git branch may only list or show branches here"
-                continue
-            if verb in _TREE_VERBS:
-                if not _in_start(b, cwd):
-                    return "the session's folder is not inside the folder the runner started it in"
-                continue
+                return (f"git options before the command ({' '.join(pre)}) are not allowed in a factory session: "
+                        "they point git at another folder, config or refs")
+            if verb not in _VERBS:
+                return f"git {verb or '(no command)'} is not one of the git commands a factory session may run ({_ALLOWED_TEXT})"
+            own = None
             if verb in _COMMIT_VERBS:
                 if place is None:
                     place = _own_place(ws, b, cwd)
                 why, own = place
                 if why:
                     return why
-                if verb in ("checkout", "switch") and [a for a in args if a not in ("-q", "--quiet")] != [own]:
-                    return f"git {verb} may only switch to the session's own branch {own}"
-                continue
-            return (f"git {verb or '(no command)'} is not one of the git commands a factory session may run "
-                    "(status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add, restore, "
-                    "commit, and checkout or switch of its own branch)")
+            elif verb in _TREE_VERBS and not _in_start(b, cwd):
+                return "the session's folder is not inside the folder the runner started it in"
+            why = _arg_refusal(verb, args, own)
+            if why:
+                return why
     except Exception as e:
-        return f"orch could not check this git command ({type(e).__name__})"
+        return f"orch could not check this git command ({type(e).__name__}); it is refused"
     return None
 
 

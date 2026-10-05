@@ -269,3 +269,60 @@ class TestFailuresContract(ProviderContract):
     @pytest.fixture
     def provider_ctx(self, orch_workspace):
         return orch_workspace.provider_context(MANIFEST, runner=FakeRunner(strict=False))
+
+
+# -- path and injection hardening ------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["../../secret.txt", "../x.log", "/etc/passwd", "sub/x.log", "..", ".hidden",
+                                  "rеceipt.log", "a b.log", "x.log\n", ""])
+def test_a_receipt_name_that_is_not_a_plain_name_is_never_read(fw, tmp_path, name):
+    from model_routing.routing import _tail
+    (fw.ws.artifacts_dir / "secret.txt").parent.mkdir(parents=True, exist_ok=True)
+    (fw.ws.artifacts_dir / "secret.txt").write_text("TOP SECRET")
+    (fw.ws.artifacts_dir.parent / "secret.txt").write_text("TOP SECRET")
+    assert _tail(fw.context(MANIFEST), fw.tickets[0], name) == ""
+
+
+def test_a_ticket_id_with_traversal_or_lookalikes_is_never_used(fw):
+    from model_routing.routing import _tail
+    (fw.ws.artifacts_dir / "x.log").parent.mkdir(parents=True, exist_ok=True)
+    (fw.ws.artifacts_dir / "x.log").write_text("TOP SECRET")
+    for t in ("..", "../DEMO-0001", "/tmp", "DEMO-٣", "DEMО-1", "demo-1"):
+        assert _tail(fw.context(MANIFEST), t, "x.log") == ""
+
+
+def test_a_symlinked_artifact_folder_does_not_leak(fw, tmp_path):
+    from model_routing.routing import _tail
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "r.log").write_text("TOP SECRET")
+    fw.ws.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (fw.ws.artifacts_dir / fw.tickets[0]).symlink_to(outside)
+    assert _tail(fw.context(MANIFEST), fw.tickets[0], "r.log") == ""
+
+
+def test_a_hostile_receipt_name_in_frontmatter_leaks_nothing_into_the_card(tmp_path):
+    fwx = fake_workspace(tmp_path / "w2", tickets=[ticket([
+        receipt("../../../outside.txt", "agent:claude:aaaaaaaa"), receipt("../../../outside.txt", "agent:claude:bbbbbbbb")])])
+    (tmp_path / "outside.txt").write_text("TOP SECRET")
+    (item,) = M.failures_items(fwx.context(MANIFEST))
+    assert item["tail"] == "" and item["receipt"] == ""
+
+
+def test_unicode_digit_decision_ids_are_not_accepted(card):
+    fw, ctx, obj = card
+    assert obj.resolve("escalate-DEMO-٠٠٠٢-T1", "escalate", ctx.provider_context()) is None
+
+
+@pytest.mark.parametrize("bad", ["opus\n--dangerously-skip-permissions", "opus --x", "opus;ls", "$(id)", "`id`",
+                                 "-x", "opus​", "орus", "a=b", "x" * 65, "op us", "opus\x00"])
+def test_no_model_string_can_add_an_argument_or_variable(bad):
+    from model_routing.routing import model_of
+    from orch.addons.api import LaunchPlan
+    with pytest.raises(ValueError):
+        model_of({"tier_strong": bad}, "strong")
+    with pytest.raises(ValueError):
+        LaunchPlan(model=bad)
+    if bad not in ("-x", "a=b") and len(bad) <= 64:  # env values may hold those: after NAME= they are inert
+        with pytest.raises(ValueError):
+            LaunchPlan(env={"ORCH_MODEL": bad})

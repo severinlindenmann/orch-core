@@ -23,7 +23,7 @@ from .routing import (CONTINUE, FORCE_VARS, MODES, TIERS, ModelNameError, State,
 
 ESCALATE = "escalate"
 IGNORE = "ignore"
-_ID = re.compile(r"escalate-([A-Z][A-Z0-9]*-\d+)-(T[1-9][0-9]*)")
+_ID = re.compile(r"escalate-([A-Z][A-Z0-9]*-[0-9]+)-(T[1-9][0-9]*)")  # ASCII digits only
 _MODE_LABELS = {"refine": "Refine", "work": "Work on ticket", "fix-checks": "Fix failing checks",
                 "continue": "Continue after feedback"}
 TIER_LABELS = {"light": "Light", "standard": "Standard", "strong": "Strong"}

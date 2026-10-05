@@ -15,6 +15,7 @@ FORCE_VARS = ("CLAUDE_CODE_SUBAGENT_MODEL_FORCE", "ANTHROPIC_DEFAULT_OPUS_MODEL"
               "ANTHROPIC_DEFAULT_HAIKU_MODEL")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]:/-]{0,63}")
 _TASK = re.compile(r"T[1-9][0-9]*")
+_TICKET = re.compile(r"[A-Z][A-Z0-9]*-[0-9]+")  # ASCII only: [0-9], never \d (which matches other scripts' digits)
 _RECEIPT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 LABELS = {"light": "Light", "standard": "Standard", "strong": "Strong"}
@@ -146,9 +147,16 @@ def _failed(run) -> bool:
 
 
 def _tail(addon_ctx, ticket: str, name: str) -> str:
+    """The last lines of a receipt log. `name` comes from the ticket's frontmatter, which an agent can write: it is
+    checked against a strict name pattern and the file must resolve inside the ticket's own artifact folder."""
+    if not (_TICKET.fullmatch(ticket) and _RECEIPT.fullmatch(name)):
+        return ""
     try:
-        path = Path(addon_ctx.ws.artifacts_dir) / ticket / name
-        if path.is_symlink() or not path.is_file():
+        root = Path(addon_ctx.ws.artifacts_dir)
+        folder = root / ticket
+        base = folder.resolve()
+        path = base / name
+        if folder.is_symlink() or not base.is_relative_to(root.resolve()) or path.is_symlink() or not path.resolve().is_relative_to(base) or not path.is_file():
             return ""
         with path.open("rb") as f:
             f.seek(0, 2)
@@ -164,7 +172,7 @@ def failures_items(addon_ctx) -> list[dict]:
     """One item per open task whose verify (a failing receipt) failed in two or more separate agent sessions."""
     out = []
     for entry in addon_ctx.tickets():
-        if entry.status == "done" or not isinstance(entry.meta, dict):
+        if entry.status == "done" or not isinstance(entry.meta, dict) or not _TICKET.fullmatch(str(entry.id)):
             continue
         failing: dict[str, list[dict]] = {}
         for a in entry.meta.get("artifacts") or []:

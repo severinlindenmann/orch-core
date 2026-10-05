@@ -103,6 +103,8 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
         if rep is None:
             out.append(_b("ready", "every child is in testing or done, with evidence cited for every criterion",
                           pending=True))
+        else:  # the stricter evidence rules an unattended close needs (orch.core.evidence.strict_missing)
+            out += _evidence_blockers(ws, rep)
         if d.get("release"):
             st = fr.status(ws, epic, d)
             if st is None or not st["recipe"]:
@@ -125,6 +127,20 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
         return out
     except Exception as e:  # fail closed, and say why
         return [_b("error", f"orch could not tell whether everything is proven ({type(e).__name__})")]
+
+
+def _evidence_blockers(ws, rep) -> list[dict]:
+    from orch.core import evidence, store
+    from orch.core.factory_report import _text
+    out = []
+    for row in rep["children"]:
+        if row["status"] != "testing":
+            continue
+        t = store.read_ticket(store.resolve(ws, row["id"]).path)
+        for n, why in evidence.strict_missing(t):
+            out.append(_b("evidence", f"the evidence of {row['id']} for AC{n} does not meet the close rules: "
+                                      + _text(why, 160)))
+    return out
 
 
 def view(ws, epic, d, *, signed=None, rep=None) -> dict | None:

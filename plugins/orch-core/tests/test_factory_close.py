@@ -62,7 +62,9 @@ def test_cli_close_needs_dark_and_says_it_replaces_the_verdict(fws, fa, capsys, 
     assert "--close goes with --dark" in capsys.readouterr().err
     assert cli_run(["approve", e.id, "requirements", "--dark", "--close"]) == 0
     out = capsys.readouterr().out
-    assert "closes the epic by itself when everything is proven: this replaces your verdict for this run" in out
+    assert "closes the epic by itself when everything is proven, on what the agents wrote under the close rules" in out
+    assert "nothing is executed or verified by the factory" in out and "nothing is deployed or run" in out
+    assert "this replaces your verdict for this run" in out
     assert "Reopen stays yours" in out and "verdict stays yours" not in out
     assert epics.delegation(fws, _epic(fws, e.id))["close"] is True
 

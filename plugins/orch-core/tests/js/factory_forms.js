@@ -114,8 +114,13 @@ let close = true;
 charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset
   : sel === "input[name=close]" ? { checked: close } : withProd(sel));
 fire("change", { target: charter });
-assert.ok(charter.dataset.inlineConfirm.endsWith(" · closes the epic by itself when everything is proven: this " +
-  "replaces your verdict for this run; Reopen stays yours"), charter.dataset.inlineConfirm);
+assert.ok(charter.dataset.inlineConfirm.endsWith(" · closes the epic by itself when everything is proven, on what the " +
+  "agents wrote under the close rules: nothing is executed or verified by the factory; this replaces your verdict for " +
+  "this run; Reopen stays yours"), charter.dataset.inlineConfirm);  // production is chosen above: no "nothing deployed"
+release = "none";
+fire("change", { target: charter });
+assert.ok(charter.dataset.inlineConfirm.includes("and with no release nothing is deployed or run"));
+release = "prod";
 close = false;
 fire("change", { target: charter });
 assert.ok(!charter.dataset.inlineConfirm.includes("closes the epic"));

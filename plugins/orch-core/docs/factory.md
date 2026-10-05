@@ -1111,6 +1111,24 @@ Ready card say which: "Not closed by itself: ..." for a condition only you can c
 any epic), or "It closes by itself, in place of your verdict, when: ..." with the conditions the runner still gets
 past by itself (a release stage to run), without an Accept button.
 
+**The close rules for evidence.** The Ready report counts a criterion as cited when a Verification line names it and
+says something; you read that before you Accept. A close nobody reads needs more, so closing by itself also requires,
+for every criterion of every child in testing, at least one top-level Verification line that:
+
+- cites exactly that criterion, in its prefix only: `- AC2: ...` (a line citing several, `- AC1, AC2: ...`, or a
+  criterion named only inside the text, counts for none);
+- says something (not a placeholder);
+- holds none of these words: could not, couldn't, can't, cannot, unable, unverified, untested, blocked, skip, skipped,
+  TODO, to do, TBD, FIXME, WIP, not verified/tested/checked/run/yet/done/possible/working/able/reproduced, didn't,
+  wasn't, no access, failed to, n/a, should work, probably, maybe, assume, assumed;
+- names something concrete: a file or path, a command in backticks, a test name, a URL or a number.
+
+It closes on what the agents wrote under these rules: **nothing is executed or verified by the factory** (and with no
+release signed, nothing is deployed or run either). The limits, stated plainly: the word list is fixed English, so
+other languages and other phrasing pass; "concrete" is only a pattern (a number anywhere counts); nothing checks that
+the text is true. A criterion that fails these rules keeps the epic open ("Not closed by itself: the evidence of ...")
+and you can still Accept it yourself.
+
 **How it closes.** Through the same verdict the Ready report's Accept gives (`orch verdict <epic> done`): it closes
 the children and the epic, bound to the hash of exactly the evidence the Ready report showed, and is refused if any of
 it changed. It is signed into the ledger as your dashboard's human actor with `via` "dark-charter", and the events say

@@ -32,8 +32,11 @@ def release_text(d: dict | None, long: bool = False) -> str:
     itself (`close`, which replaces the human verdict for this run) or the verdict stays the human's."""
     d = d or {}
     target = d.get("release")
-    closing = ("it closes the epic by itself when everything is proven: this replaces your verdict for this run, and "
-               "Reopen stays yours" if d.get("close") else "it closes nothing: the verdict is yours")
+    closing = ("it closes the epic by itself when everything is proven, on what the agents wrote under the close rules "
+               "(nothing is executed or verified by the factory"
+               + ("" if target else "; with no release signed, nothing is deployed or run either")
+               + "): this replaces your verdict for this run, and Reopen stays yours"
+               if d.get("close") else "it closes nothing: the verdict is yours")
     if target in ("merge", "dev"):
         stages = "merge" if target == "merge" else "merge and dev"
         text = (f"releases up to {target} by itself using the recipe on this machine ({stages}, once every child is "

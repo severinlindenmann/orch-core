@@ -403,9 +403,12 @@
   // the opt-in auto-close of a Dark start: the confirm says plainly that it replaces the human verdict
   const closeText = (form) => {
     const c = form.querySelector && form.querySelector("input[name=close]");
-    return c && c.checked
-      ? " · closes the epic by itself when everything is proven: this replaces your verdict for this run; Reopen stays yours"
-      : "";
+    if (!(c && c.checked)) return "";
+    const r = form.querySelector("input[name=release]:checked");
+    const none = !r || r.value === "none";
+    return " · closes the epic by itself when everything is proven, on what the agents wrote under the close rules:"
+      + " nothing is executed or verified by the factory" + (none ? ", and with no release nothing is deployed or run" : "")
+      + "; this replaces your verdict for this run; Reopen stays yours";
   };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
   // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.

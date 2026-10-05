@@ -166,7 +166,7 @@ def _ready_epic(fws, fa, fh, human, close_tasks, *, release="dev", recipe=None, 
         _branch(fws.root, f"feat/{c.id.lower()}-work", files or {f"src/{c.id}.py": "print(1)\n"})
         fa.claim(c.id)
         close_tasks(fa, c.id)
-        fa.set_section(c.id, "Verification", "- AC1: ran the suite, green")
+        fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")
         fa.move(c.id, "testing")
         ids.append(c.id)
     d = epics.delegation(fws, store.load(fws, e.id)[1])

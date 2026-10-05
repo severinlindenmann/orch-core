@@ -122,3 +122,57 @@ def ticked_without_evidence(ticket, *, before=None) -> list[int]:
     are new, so an old file whose ticks predate this rule can still be edited."""
     was = {text for text, ticked in _criteria_lines(before.section("Acceptance criteria")) if ticked} if before else set()
     return [c.n for c in criteria(ticket) if c.ticked and not c.proven and c.text not in was]
+
+
+# -- strict evidence: what an unattended close (orch.core.factory_close) relies on -------------------------------------
+# The rules above are for a human who reads the evidence before signing. A close nobody reads needs more, and still
+# proves nothing was run: it only refuses evidence that is plainly not evidence. Per criterion, at least one top-level
+# Verification line that
+# - cites exactly that criterion, in its prefix only: `- AC2: ...` (a line citing several, `- AC1, AC2: ...`, or a
+#   citation inside the text, counts for none);
+# - says something (as above: not a placeholder, MIN_EVIDENCE letters or digits);
+# - holds none of the doubt words below (negation, blocked, unable, not verified, could not, skipped, TODO ...);
+# - names something concrete: a file or path, a `command` in backticks, a test name, a URL or a number.
+# Limits, stated plainly: the doubt list is a fixed list of English words, so other languages and other phrasing pass;
+# a concrete reference is only a pattern ("ran it 3 times" has a number); nothing here checks that the text is true.
+_STRICT_PREFIX = re.compile(r"^AC\s?(\d+)\s*[:—–-]\s*", re.IGNORECASE)
+_DOUBT = re.compile(
+    r"\b(?:could\s*n[o']t|can't|cannot|unable|unverified|untested|blocked|skip(?:ped|s)?|todo|to do|tbd|fixme|wip|"
+    r"not\s+(?:verified|tested|checked|run|yet|done|possible|working|able|reproduced)|did\s*n[o']t|was\s*n[o']t|"
+    r"no\s+access|failed\s+to|n/a|should\s+work|probably|maybe|assumed?)\b", re.IGNORECASE)
+_CONCRETE = re.compile(r"`[^`\n]+`|https?://\S+|\b[\w.-]+/[\w./-]+|\b[\w-]+\.[A-Za-z][A-Za-z0-9]{0,7}\b|\btest_\w+|\d")
+
+
+def strict_why(text: str) -> str | None:
+    """Why an evidence text does not meet the strict rules, or None when it does."""
+    if not substantial(text):
+        return "it says too little"
+    m = _DOUBT.search(text)
+    if m:
+        return f"it says {m.group(0)!r}"
+    if not _CONCRETE.search(text):
+        return "it names nothing concrete (a file, a command in backticks, a test, a URL or a number)"
+    return None
+
+
+def strict_missing(ticket) -> list[tuple[int, str]]:
+    """[(criterion number, why)] for every criterion of `ticket` without strict evidence; [] when each has it."""
+    total = len(_criteria_lines(ticket.section("Acceptance criteria")))
+    seen: dict[int, str] = {}
+    ok: set[int] = set()
+    for block in _blocks(ticket.section("Verification")):
+        head, _, rest = block.partition("\n")
+        if head[:1].isspace():
+            continue
+        m = _STRICT_PREFIX.match(_BULLET.sub("", head.strip()))
+        if not m or _PREFIX.match(_BULLET.sub("", head.strip())).group(0) != m.group(0):
+            continue  # no prefix, or a prefix citing more than one criterion
+        n = int(m.group(1))
+        text = _BULLET.sub("", head.strip())[m.end():] + ("\n" + rest if rest else "")
+        why = strict_why(text)
+        if why is None:
+            ok.add(n)
+        else:
+            seen.setdefault(n, why)
+    return [(n, seen.get(n, "no line cites it alone as `- AC%d: ...`" % n)) for n in range(1, total + 1)
+            if n not in ok]

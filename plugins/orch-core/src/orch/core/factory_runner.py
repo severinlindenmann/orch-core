@@ -14,7 +14,8 @@ workspace config may only lower with `factory.max_concurrency`).
   trusts, and only then starts the agent.
 - Plan: an epic with no child at all gets one planner session instead (its binding's `child` is the epic itself), which
   splits it into children, refines them and auto-approves them; at most PLANNER_LAUNCHES per delegation, outside the
-  child count. Once a child exists the runner never starts a planner again (one already running goes on).
+  child count. Once a child exists the runner never starts a planner again; one running is stopped once every child
+  is approved, or PLANNER_MINUTES after its start (planner_stop).
 - Wake: a child whose session ended is started again when something it waits for changed (a grant, a denial, a
   revocation, its own text or status), never otherwise, within the launch cap.
 - Stop: when the epic is paused, edited, done, approved again, out of time, the ledger is cut, the factory is off, or
@@ -39,6 +40,7 @@ from orch.errors import OrchError
 
 DEFAULT_CONCURRENCY = 3
 RUNNABLE = ("open", "in-progress", "waiting")
+PLANNER_MINUTES = 30  # a planner session is stopped this long after its start
 # The only variables an agent session starts with, besides the fixed PATH below (no dashboard token, no key, nothing
 # else the server holds). The config-dir variables are not secret: without them the agent's own orch and Claude Code
 # would read other folders than the ones the runner checked.
@@ -317,24 +319,33 @@ def _launchable(ws, epic, d, t, signed) -> bool:
             and not epics.hidden_in(t) and epics.child_state(ws, epic, t, signed) in ("delegated", "covered"))
 
 
-def _launch(ws, actor, launcher, settings, epic, d, t, token, lines, planner: bool = False) -> dict | None:
-    """Start one session. The command is the user's launch setting with the generated id and the built-in prompt put
-    in as whole argv elements (never a shell, never ticket text), the program resolved to a trusted absolute path, under
-    `env -i` with a fixed PATH and the allowlisted variables. `planner`: `t` is the epic itself, the planner's prompt
-    is used and the session starts in the workspace root."""
+def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | None:
+    """Everything a launch needs, checked before a launch is counted (a missing program or a refused worktree must not
+    use up a child's or the planner's launches): (prompt, cwd, claude, env), or None. `planner`: `t` is the epic
+    itself, the planner's prompt is used and the session starts in the workspace root."""
     prompt = planner_prompt(t.id) if planner else work_prompt(t.id)
     cwd = str(Path(ws.root).resolve()) if planner else start_dir(ws, t)
     if cwd is None:
         lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")
         return None
-    command = settings["factory_command"]
-    claude, env_bin = resolve_bin(command[0]), resolve_bin("env")
+    claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
     if claude is None or env_bin is None:
         lines.append(f"{t.id} not started: claude or env was not found at a trusted path (owned by you or root, not "
                      "writable by others)")
         return None
     if prompt is None or not _gate(ws, epic.id, d["id"]):
         return None
+    return prompt, cwd, claude, env_bin
+
+
+def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple) -> dict | None:
+    """Start one session (`ready`: what _ready returned). The command is the user's launch setting with the generated
+    id and the built-in prompt put in as whole argv elements (never a shell, never ticket text), the program resolved
+    to a trusted absolute path, under `env -i` with a fixed PATH and the allowlisted variables."""
+    prompt, cwd, claude, env_bin = ready
+    if not _gate(ws, epic.id, d["id"]):  # once more, right before the start
+        return None
+    command = settings["factory_command"]
     sid = fs.new_session_id()
     name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id
     argv = [*env_prefix(env_bin, [claude]), claude,
@@ -354,6 +365,26 @@ def _launch(ws, actor, launcher, settings, epic, d, t, token, lines, planner: bo
         return None
     lines.append(f"started {name}")
     return b
+
+
+_APPROVED = ("covered", "delegated", "approved", "done")  # epics.child_state of a child that needs no planner
+
+
+def planner_stop(ws, b: dict, signed) -> str | None:
+    """Why a planner session must stop now although its epic goes on, or None: every child of the epic is approved
+    (its work is done), or PLANNER_MINUTES have passed since it was bound (children or not: an interactive session
+    does not end by itself, and it holds a concurrency slot)."""
+    from orch import clock
+    epic = _ticket(ws, b["epic"])
+    kids = [_ticket(ws, e.id) for e in epics.children(ws, b["epic"])]
+    if epic is not None and kids and all(
+            k is not None and epics.child_state(ws, epic, k, signed) in _APPROVED for k in kids):
+        return "every child of the epic is approved: the planner is done"
+    try:
+        late = (clock.now() - clock.parse_stamp(b["at"])).total_seconds() >= PLANNER_MINUTES * 60
+    except (ValueError, TypeError):
+        late = True  # no readable start: fail closed
+    return f"the planner's time limit of {PLANNER_MINUTES} minutes is used up" if late else None
 
 
 def sweep(ws, actor, launcher: Launcher, *, stop_all: bool = False) -> list[str]:
@@ -377,6 +408,8 @@ def sweep(ws, actor, launcher: Launcher, *, stop_all: bool = False) -> list[str]
             except (OrchError, OSError):
                 pass
         fs.end(ws, b["session"], wake="" if stop_all else None)
+        if stop_all and fs.is_planner(b):
+            fs.unmark_planner_run(ws, b["delegation"])  # the dashboard stopping is not one of its two launches
         lines.append(f"{b['name']}: " + ("the dashboard stopped" if stop_all else "its session is not running"))
     return lines
 
@@ -400,6 +433,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
         why = None if b["name"] in names else "its session ended"
         if why is None:
             why = stop_reason(ws, b, signed, cut, blocker)
+        if why is None and fs.is_planner(b):
+            why = planner_stop(ws, b, signed)
         if why is None:
             keep.append(b)
             continue
@@ -435,12 +470,16 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
             if any(fs.is_planner(g) and g["epic"] == epic.id and g["delegation"] == d["id"] and g["wake"] == token
                    for g in gone):
                 continue  # it ended without children and nothing it waits for changed since
-            if resolve_bin(settings["factory_command"][0]) is None or resolve_bin("env") is None:
-                lines.append(f"{epic.id} planner not started: claude or env was not found at a trusted path")
-                continue  # before its marker: a missing program must not use up its two launches
-            if not fs.mark_planner_run(ws, d["id"]):
-                continue
-            b = _launch(ws, actor, launcher, settings, epic, d, epic, token, lines, planner=True)
+            ready = _ready(ws, settings, epic, d, epic, lines, planner=True)
+            if ready is None:
+                continue  # checked before its marker: a missing program must not use up its two launches
+            # check, count and bind under the delegation's lock: two dashboards on one config dir start one planner
+            with epics.delegation_lock(d["id"]):
+                if any(fs.is_planner(x) and x["epic"] == epic.id for x in fs.bindings(ws)):
+                    continue
+                if not fs.mark_planner_run(ws, d["id"]):
+                    continue
+                b = _start(ws, actor, launcher, settings, epic, d, epic, token, lines, ready)
             if b is not None:
                 keep.append(b)
             continue
@@ -455,12 +494,17 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
             token = wake_token(epic, t, signed, dark_marks)
             if any(g["child"] == t.id and g["delegation"] == d["id"] and g["wake"] == token for g in gone):
                 continue  # parked: nothing it waits for changed since it last started
+            ready = _ready(ws, settings, epic, d, t, lines)
+            if ready is None:
+                continue  # checked before its marker: a refused launch uses up none of its launches
             with epics.delegation_lock(d["id"]):
+                if any(x["child"] == t.id for x in fs.bindings(ws)):
+                    continue  # another dashboard on this config dir started it meanwhile
                 if fs.runs(ws, d["id"], t.id) == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
                     continue
                 if not fs.mark_run(ws, d["id"], t.id):
                     continue
-            b = _launch(ws, actor, launcher, settings, epic, d, t, token, lines)
+                b = _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready)
             if b is not None:
                 keep.append(b)
     return lines

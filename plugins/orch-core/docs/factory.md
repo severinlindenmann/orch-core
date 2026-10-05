@@ -189,9 +189,23 @@ Plan with `orch section set <child> Plan -m "..."` when the size needs one, deci
 refused; reasons go to `orch log`), approve each child with `orch epic auto-approve <child>`, build nothing, leave
 the epic's text alone, and stop. A planner starts at most twice per start (its own markers, not counted against the
 charter's children), and again only when its session ended, the epic still has no child, and something it waits for
-changed (your grant, denial or revocation in that epic, or a Dark profile change), as for a parked child. It stops as
-a child's session does. The first child does not stop it (it is still working); the runner just never starts a
-planner for an epic that has a child.
+changed (your grant, denial or revocation in that epic, or a Dark profile change), as for a parked child; the runner
+never starts a planner for an epic that has a child. An interactive session does not end by itself, so besides every
+reason a child's session stops, the runner stops the planner once the epic has children and every one of them is
+approved (auto-approved, covered or approved by you: its work is done and its slot goes to the children), and at the
+latest 30 minutes after it started, children or not (a planner stopped there without a child counts as one of its
+two starts; one stopped with children leaves the unapproved ones to you). A planner the dashboard's own shutdown
+stopped does not count: it starts again with the next dashboard. Two dashboards on one config dir start one planner
+(the check, the count and the binding happen under the delegation's lock, as for children).
+
+A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
+`orch new --epic` and `orch link --epic` naming another epic, `orch epic auto-approve` on another epic's child, and
+`orch claim`, `orch release` and `orch move` on a ticket that is neither its epic nor one of that epic's children. It
+may still create a follow-up outside any epic (`orch new` without `--epic`, or `--from`). `orch section set` and
+`orch log` are not limited this way (orch cannot tell which backlog tickets the session made itself: the event log is
+not a record an agent cannot write), so a factory session can still edit or log on other tickets; editing a child of
+another epic takes it out of that epic's approval, which then waits for you. An agent without a binding works as
+before.
 
 The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
@@ -348,7 +362,25 @@ prints every rule it adds and needs BASELINE typed); agents are refused in orch 
 dashboard) and no `ask`. Each rule goes through the same checks as any `--prefix` rule; rules already in force are
 skipped, so running it again adds nothing. A human-only form of an allowed verb (`orch move X done`) still does not
 run: the guard denies it, so no rule matches it. Without the baseline (an empty profile), every command a Dark session
-runs stops for a card; the run view and the New ticket page say so.
+runs stops for a card; the run view and the New ticket page say so. If a rule cannot be signed, the command lists
+which rules it added and which failed (and why), and exits with an error; run it again once the cause is fixed.
+
+What the baseline lets a session do, besides the scope limits above (residual risks, stated plainly):
+
+- **Files.** In a session the runner bound (the same trusted binding the permission hook uses), orch reads the
+  files it is handed (`orch new --requirements-file|--acceptance-file|--body-file|--summary-file|--out-of-scope-file`,
+  `--file` of `section set`, `state`, `task add`, `ask`, `widget`, `feedback`, and `orch artifact add <file>`) only
+  when the file lies inside the workspace, is reached without a symbolic link, and is not in orch's config dir;
+  otherwise orch refuses ("an agent cannot hand orch the file ..."). A human, and an agent outside the factory (its
+  harness asks you about each command, and it attaches screenshots from /tmp), pass any file, as before. A file inside
+  the workspace (a `.env` there, say) can still be copied into a ticket or an artifact: the agent could read it with
+  its own tools anyway.
+- `orch new` is not capped: a session can create any number of tickets; only approvals count against the charter's
+  children.
+- The size of a child is the agent's own label: the size limit holds the label, not the amount of work.
+- `orch section set` on the epic's own Requirements or Acceptance criteria suspends the epic (its text changed
+  since you signed); a Plan on an epic is refused (an epic has no plan of its own).
+- `orch permit list` shows every open request's command and reason to the session.
 
 What a prefix rule matches is narrow on purpose, and that reaches orch's own commands too: a shell metacharacter
 anywhere in the command, even inside quotes (a title or `-m` text holding `(`, `$` or `;`), or a line break, and an
@@ -392,7 +424,9 @@ in factory sessions unless your permission mode lets file edits through (see "Pe
 
 **A prefix rule trusts the repository.** A prefix rule on a project runner (`npm run X`, `make X`, `pytest`, `python
 script.py` as an exact rule) lets the agent run any code it can write into the repository: `package.json`, the
-`Makefile`, `conftest.py` and the scripts they call are all agent-writable. Trailing arguments are passed through as
+`Makefile`, `conftest.py` and the scripts they call are all agent-writable. orch's own commands are the exception
+for files: whatever the rule, a factory session hands orch only files inside the workspace (see "The baseline"
+above). Trailing arguments are passed through as
 written, except the shapes above. Prefer exact rules, and for anything that matters, a wrapper script kept outside
 the repository the agent writes to, listed by its exact command.
 

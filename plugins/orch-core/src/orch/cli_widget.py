@@ -105,7 +105,8 @@ def list_(moment: Annotated[Optional[str], typer.Option("--for", help="Only temp
 def _data(data: str | None, file: Path | None) -> dict:
     if data is not None and file is not None:
         raise UsageError("pass --data or --file, not both")
-    raw = file.read_text(encoding="utf-8") if file is not None else (data or "{}")
+    from orch import cli
+    raw = cli._read(file) if file is not None else (data or "{}")
     from orch.widgets.blocks import load_strict
     obj, error = load_strict(raw)
     if error:

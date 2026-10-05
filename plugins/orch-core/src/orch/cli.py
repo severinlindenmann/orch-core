@@ -67,10 +67,19 @@ def _ops(ws, actor=None):
     return Ops(ws, actor or cli_actor())
 
 
+def _read(file: Path, ws=None) -> str:
+    """A file the command was handed, read as text. An agent may hand only a file inside the workspace (no symbolic
+    link on the way, not in orch's config dir): fsutil.agent_source."""
+    from orch.actor import cli_actor
+    from orch.core.fsutil import agent_source
+    agent_source(ws or _ws(), cli_actor(), file)
+    return file.read_text(encoding="utf-8")
+
+
 def _text(message: str | None, file: Path | None) -> str:
     if (message is None) == (file is None):
         raise UsageError("pass exactly one of -m/--message or --file")
-    return message if message is not None else file.read_text(encoding="utf-8")
+    return message if message is not None else _read(file)
 
 
 def _out(data, as_json: bool, text: str) -> None:
@@ -239,7 +248,7 @@ def new(
     The Ask is the request in the requester's words."""
     from orch.core.body import BODY_SECTIONS, split_body
     ws = _ws()
-    ask, sections = (split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+    ask, sections = (split_body(_read(body_file, ws), names=BODY_SECTIONS)
                      if body_file else ("", {}))
     for name, f in (("Requirements", requirements_file), ("Acceptance criteria", acceptance_file),
                     ("Out of scope", out_of_scope_file), ("Summary", summary_file)):
@@ -247,7 +256,7 @@ def new(
             continue
         if name in sections:
             raise UsageError(f"{name} is given twice: in --body-file and in its own file", hint="keep one")
-        sections[name] = f.read_text(encoding="utf-8")
+        sections[name] = _read(f, ws)
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
                 epic=epic, sprint=sprint, sections=sections, labels=label, due=due, no_epic=no_epic)
@@ -591,7 +600,7 @@ def ask(
     """Ask questions with options and a recommended default; blocking ones move in-progress → waiting."""
     from orch.core.questions import parse_ask_file
     ws = _ws()
-    t, added = _ops(ws).ask(ref, parse_ask_file(file.read_text(encoding="utf-8")))
+    t, added = _ops(ws).ask(ref, parse_ask_file(_read(file, ws)))
     _out({"ticket": t.id, "status": t.status, "questions": added}, json_out,
          f"{t.id}: asked {', '.join(q['id'] for q in added)} (status {t.status})")
 

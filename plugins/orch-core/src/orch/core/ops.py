@@ -166,6 +166,35 @@ class Ops(TaskOpsMixin):
     def _session(self) -> str:
         return self.actor.session or "local"
 
+    def _bound_epic(self) -> str | None:
+        """The epic the AI Factory runner bound this agent session to (the same trusted binding the permission hook
+        uses: runner-written, and only for a process under the one it started), or None: then nothing here changes."""
+        if self.actor.is_human or not self.actor.session:
+            return None
+        from orch.core import factory_sessions
+        b = factory_sessions.trusted(self.ws, self.actor.session)
+        return b["epic"] if b else None
+
+    def _in_bound_epic(self, t: Ticket, what: str) -> None:
+        """A factory session works only on its own epic and that epic's children."""
+        bound = self._bound_epic()
+        if bound is None:
+            return
+        from orch.core.epics import parent_epic
+        parent = parent_epic(self.ws, t) if t.id.upper() != bound.upper() else None
+        if t.id.upper() != bound.upper() and (parent is None or parent.id.upper() != bound.upper()):
+            raise ValidationError(f"{what} {t.id} refused: this AI Factory session works on epic {bound} and its "
+                                  "children only", hint=f"orch epic show {bound}")
+
+    def _bound_target(self, epic_ref: str | None, what: str) -> None:
+        """`--epic X` from a factory session names its own epic."""
+        bound = self._bound_epic()
+        if bound is None or epic_ref is None:
+            return
+        if store.resolve(self.ws, epic_ref).id.upper() != bound.upper():
+            raise ValidationError(f"{what} refused: this AI Factory session works on epic {bound} only",
+                                  hint=f"orch new --epic {bound} ...")
+
     def _emit(self, ticket_id: str | None, kind: str, data: dict | None = None) -> Event | None:
         if self.dry_run:
             return None
@@ -265,6 +294,7 @@ class Ops(TaskOpsMixin):
         _choice("size", size, SIZES)
         if epic and no_epic:
             raise UsageError("pass --epic or --no-epic, not both")
+        self._bound_target(epic, "creating a child")
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
         if source and not epic and not no_epic and type != "epic":
@@ -366,6 +396,7 @@ class Ops(TaskOpsMixin):
 
         def fn(t: Ticket) -> dict:
             from orch.core.query import claim_is_expired
+            self._in_bound_epic(t, "claiming")
             if t.meta.get("type") == "epic":
                 raise TransitionError(f"{t.id} is an epic: claim one of its children instead",
                                       hint=f"orch list, then orch claim <child of {t.id}>")
@@ -402,6 +433,7 @@ class Ops(TaskOpsMixin):
         session = self._session
 
         def fn(t: Ticket) -> dict:
+            self._in_bound_epic(t, "releasing")
             current = t.meta.get("claim") or {}
             if not current.get("session"):
                 raise ValidationError(f"{t.id} is not claimed")
@@ -533,6 +565,7 @@ class Ops(TaskOpsMixin):
         if (epic and no_epic) or (sprint and no_sprint):
             raise UsageError("pass --epic or --no-epic (--sprint or --no-sprint), not both")
         sprint_id = self._sprint(sprint) if sprint else None
+        self._bound_target(epic, "linking into an epic")
         if (branch or worktree) and not repo:
             from orch.core import prlink
             repo = prlink.repo_of(self.ws, None).name  # the only repo; several are refused with their names (#214)
@@ -686,6 +719,7 @@ class Ops(TaskOpsMixin):
         self.warnings = []
 
         def fn(t: Ticket) -> dict:
+            self._in_bound_epic(t, "moving")
             frm = t.status
             blockers = self._open_blockers(t) if (frm, to) == ("open", "in-progress") else ()
             if to == "testing" and not self.actor.is_human:
@@ -817,6 +851,9 @@ class Ops(TaskOpsMixin):
         src = Path(file)
         if stream is None and (src.is_symlink() or not src.is_file()):
             raise UsageError(f"not a file: {file}")
+        if stream is None:
+            from orch.core.fsutil import agent_source
+            agent_source(self.ws, self.actor, src)  # an agent copies only workspace files into an artifact
         base = self.ws.artifacts_dir / entry.id
         in_place = stream is None and name is None and _inside(src, base)
         fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(name or src.name)
@@ -1439,6 +1476,7 @@ class Ops(TaskOpsMixin):
             epic = epics.parent_epic(self.ws, t)
             if epic is None:
                 raise ValidationError(f"{t.id} is not a child of an epic")
+            self._in_bound_epic(t, "auto-approving")
             d = epics.delegation(self.ws, epic)
             if d is None:
                 return approve(t, epic)  # refuses

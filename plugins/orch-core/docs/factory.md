@@ -234,12 +234,24 @@ call (no `&&`, `;`, pipes, `2>&1`, `|| true`, other redirects or substitutions),
 messages as short plain sentences without line breaks, backticks, dollar signs or backslashes, `orch permit request`
 only for a command actually denied with a request id, no variants of a denied command, and never `orch instructions
 sync` or `orch setup`. The worker's: `orch claim`, `orch show`, one `orch task add <child> "TASK"` per task, `orch
-task start`, `orch task done <child> TN` (no `-m`; notes go to `orch log`), its work committed on its own branch or
-worktree with `git add FILES` and `git commit -m "<child> short text"`, Verification from a file with `orch section
+task start`, `orch task done <child> TN` (no `-m`; notes go to `orch log`), its work, Verification from a file with `orch section
 set <child> Verification --file FILE`, then `orch move <child> testing`. The test suite checks every orch command and
 option either prompt names against the CLI, every git verb against real git, and that the orch and git-basic
 baselines match each command it tells the agent to run. A prompt is advice: a model can still ignore it, and then
 its chained command stops for a card as before.
+
+**Commits.** Only a session that starts in a worktree of its own (see "Where and how a session runs") is told to
+commit, on that worktree's branch: `git add FILES` and a `git commit` in the workspace's own commit format, rendered
+at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when `commit.rollback`
+is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why: ..." -m "Risk:
+..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config whose subject or
+labels are not plain words gets no commit instruction. A session in the shared checkout (a child that names no
+worktree starts in the workspace root, and the baseline cannot create a branch) is told not to commit: it leaves its
+changes in the working tree and says so with `orch log`. Whatever the prompt says, the permission hook refuses `git
+commit` for a runner-bound session whose folder's HEAD is a default branch (`main`, `master`, the release recipe's
+base, or what `origin/HEAD` names), is detached, or cannot be read; the denial says to leave the changes in the
+working tree. Known limit: the hook only answers what Claude Code asks it about, so a `git commit` your own user-scope
+allow rules let through is not checked.
 
 A session the runner bound works on its own epic only. orch refuses it, whatever the profile or a grant allows:
 `orch new --epic` and `orch link --epic` naming another epic, and every change to an existing ticket (claim, release,

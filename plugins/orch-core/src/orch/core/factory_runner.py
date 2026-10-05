@@ -512,20 +512,49 @@ FACTORY_WORK_PROMPT = (
     "rules come first. " + _PLAIN + "Start with `orch claim {key}` and read it with `orch show {key}`. Add each task "
     "with `orch task add {key} \"TASK\"`, then for each one run `orch task start {key} TN`, do the work and run "
     "`orch task done {key} TN` with no -m; put notes in `orch log {key} -m \"...\"`. `orch ask` is refused in this "
-    "epic: decide within the ticket's text and record why with `orch log`. Commit your work on your own branch or "
-    "worktree with `git add FILES` and `git commit -m \"{key} short text\"`. Write one Verification line per "
+    "epic: decide within the ticket's text and record why with `orch log`. {commit} Write one Verification line per "
     "acceptance criterion into a file under orchestrator/temporary and set it with `orch section set {key} "
     "Verification --file FILE`. When every task is done, run `orch move {key} testing` and stop. If a command was "
     "denied with a request id, do other work or wait for the human with `orch wait {key}`."
 )
+# {commit}: a session in a worktree of its own commits there; one in the shared checkout never commits (its branch may
+# be the default branch, and the baseline cannot create one). The permission hook refuses `git commit` on the default
+# branch or a detached HEAD whatever the prompt says.
+COMMIT_HERE = ("Commit your work on this worktree's branch with `git add FILES` and `{form}` (each -m is one "
+               "paragraph: replace the dots with short plain sentences).")
+NO_COMMIT = ("Do not commit: this session runs in the shared checkout, not in a worktree of its own. Leave your "
+             "changes in the working tree and say so with `orch log {key} -m \"...\"`.")
+_SUBJECT_OK = re.compile(r"[A-Za-z0-9 \[\]()#:.,_/-]{1,100}")
+_LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
 
 
-def factory_work_prompt(key: str) -> str | None:
-    """The built-in prompt of a child's session (its key validated as a ticket key)."""
+def commit_form(ws, key: str) -> str | None:
+    """The `git commit` a worker runs, from the workspace's commit format (its subject with the key and a summary,
+    and one -m per required body line), or None when the config does not give plain words (then the prompt does not
+    tell the worker to commit)."""
+    from orch.instructions.render import body_names
+    try:
+        cfg = ws.config
+        subject = str(cfg["commit"]["subject"])
+        labels = [str(x) for x in body_names(cfg)]
+    except (KeyError, TypeError):
+        return None
+    if "{key}" not in subject or "{summary}" not in subject:
+        return None
+    subject = subject.replace("{key}", key).replace("{summary}", "short summary")
+    if not _SUBJECT_OK.fullmatch(subject) or not all(_LABEL_OK.fullmatch(x) for x in labels):
+        return None
+    return "git commit " + " ".join(f'-m "{p}"' for p in [subject, *(f"{x}: ..." for x in labels)])
+
+
+def factory_work_prompt(key: str, commit: str | None = None) -> str | None:
+    """The built-in prompt of a child's session (its key validated as a ticket key). `commit`: commit_form for a
+    session that starts in a worktree of its own, None for one in the shared checkout (it is told not to commit)."""
     from orch.dashboard.data.agent_start import KEY_RE
     if not isinstance(key, str) or not KEY_RE.fullmatch(key):
         return None
-    return FACTORY_WORK_PROMPT.replace("{key}", key)
+    part = COMMIT_HERE.replace("{form}", commit) if commit else NO_COMMIT
+    return FACTORY_WORK_PROMPT.replace("{commit}", part).replace("{key}", key)
 
 
 def planner_prompt(key: str) -> str | None:
@@ -677,11 +706,13 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | No
     """Everything a launch needs, checked before a launch is counted (a missing program or a refused worktree must not
     use up a child's or the planner's launches): (prompt, cwd, claude, env), or None. `planner`: `t` is the epic
     itself, the planner's prompt is used and the session starts in the workspace root."""
-    prompt = planner_prompt(t.id) if planner else factory_work_prompt(t.id)
-    cwd = str(Path(ws.root).resolve()) if planner else start_dir(ws, t)
+    root = str(Path(ws.root).resolve())
+    cwd = root if planner else start_dir(ws, t)
     if cwd is None:
         lines.append(f"{t.id} not started: its worktree carries harness settings the workspace does not")
         return None
+    prompt = planner_prompt(t.id) if planner else factory_work_prompt(
+        t.id, commit_form(ws, t.id) if str(Path(cwd).resolve()) != root else None)
     claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
     if claude is None or env_bin is None:
         lines.append(f"{t.id} not started: claude or env was not found at a trusted path (owned by you or root, not "

@@ -596,6 +596,76 @@ def hook_decision(ws, payload: dict) -> dict | None:
                                  f"File it with `orch permit request`, then `orch wait {ticket.id}`.")
 
 
+def _git_commit(command) -> bool:
+    """Whether `command` runs `git commit`: a simple command `git commit ...`, or, for any other text, both words
+    anywhere (fail closed: such a command gets the branch check too)."""
+    from orch.core import dark_profile
+    if not isinstance(command, str):
+        return False
+    words = dark_profile.simple_tokens(command)
+    if words is not None:
+        return dark_profile._prog(words[0]) == "git" and "commit" in words[1:]
+    return bool(re.search(r"(?<![\w-])git(?![\w-])", command) and re.search(r"(?<![\w-])commit(?![\w-])", command))
+
+
+def _git_dirs(start: Path) -> tuple[Path, Path] | None:
+    """(the git dir, the common git dir) of the checkout holding `start`, read from files only; None when not found."""
+    from orch.core.fsutil import read_regular_file
+    for d in (start, *start.parents):
+        dot = d / ".git"
+        if dot.is_dir():
+            return dot, dot
+        raw = read_regular_file(dot, 4096)
+        if raw is not None:
+            if not raw.startswith(b"gitdir:"):
+                return None
+            gitdir = (d / raw[7:].decode("utf-8", "replace").strip()).resolve()
+            common = read_regular_file(gitdir / "commondir", 4096)
+            return gitdir, ((gitdir / common.decode("utf-8", "replace").strip()).resolve() if common else gitdir)
+    return None
+
+
+def default_branches(ws, common: Path) -> set[str]:
+    """main, master, the release recipe's base when one is set, and what origin/HEAD names (read from files)."""
+    from orch.core.fsutil import read_regular_file
+    out = {"main", "master"}
+    try:
+        from orch.core import factory_release
+        rec, _ = factory_release.load(ws)
+        if rec and isinstance(rec.get("base"), str):
+            out.add(rec["base"])
+    except Exception:
+        pass
+    raw = read_regular_file(common / "refs" / "remotes" / "origin" / "HEAD", 4096)
+    if raw and raw.startswith(b"ref: refs/remotes/origin/"):
+        out.add(raw[25:].decode("utf-8", "replace").strip())
+    return out
+
+
+def commit_refusal(ws, cwd) -> str | None:
+    """Why a runner-bound session must not commit in `cwd`, or None: HEAD there is a default branch, detached, or
+    cannot be read (fail closed)."""
+    from orch.core.fsutil import read_regular_file
+    try:
+        if not cwd:
+            return "the session's folder is not known"
+        found = _git_dirs(Path(str(cwd)).resolve())
+        if found is None:
+            return "no git checkout was found for the session's folder"
+        gitdir, common = found
+        head = read_regular_file(gitdir / "HEAD", 4096)
+        if head is None:
+            return "HEAD cannot be read"
+        if not head.startswith(b"ref: refs/heads/"):
+            return "HEAD is detached"
+        branch = head[16:].decode("utf-8", "replace").strip()
+        if branch in default_branches(ws, common):
+            return f"HEAD is the default branch {shown(branch)}"
+    except Exception as e:
+        return f"HEAD cannot be read ({type(e).__name__})"
+    return None
+
+
 def _factory_answer(ws, payload: dict, ticket) -> dict:
     from orch.core.events import Actor
     epic = factory_epic(ws, ticket)
@@ -607,6 +677,13 @@ def _factory_answer(ws, payload: dict, ticket) -> dict:
     if why:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")
+    if _git_commit(command):
+        from orch.core import factory_sessions
+        b = factory_sessions.binding(ws, payload.get("session_id"))
+        why = commit_refusal(ws, payload.get("cwd") or (b or {}).get("start"))
+        if why:
+            return _decision("deny", f"git commit is refused here: {why}. Leave your changes in the working tree and "
+                                     f"say so with orch log {ticket.id}; do not retry it in another form.")
     actor = Actor("agent", "claude-code", "hook", str(payload.get("session_id") or "") or None)
     fd = factory_delegation(ws, epic)
     checkout = None

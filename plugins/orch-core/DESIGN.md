@@ -41,6 +41,7 @@ What fits in each slot:
 | `today.summary` | one tile (180–260 px) | Tile only | 1 tile |
 | `today.from_addons` | half-width card column | Card, Text, Badge, Link, Callout, Table ≤ 3 columns, Action | ≤ 1 card |
 | `ticket.code`, `ticket.sync`, `ticket.external`, `ticket.pages` | 320 px aside, or a phone column | Card, KV, Table ≤ 3 columns, Link, Badge, Action, Copy | ≤ 1 card, ≤ 3 actions |
+| `guide.section` | card in the How it works page (full width, up to ~900 px) | Card with Text, Chips, Link, Callout | 1 card, no tables or Actions; explanation, not status |
 | `workspace.settings` | text measure (720 px) | Text, KV, Callout, Link, Copy | no tables |
 
 ## How core draws your widgets

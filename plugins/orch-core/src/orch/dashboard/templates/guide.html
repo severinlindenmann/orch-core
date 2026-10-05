@@ -135,9 +135,14 @@
       <p>What a ticket cost: output tokens per model, an estimate at API list prices and your 5-hour and weekly limits with a pace sentence.</p></div>
     <div class="card"><h3>Wiki</h3>
       <p>Related pages on each ticket, and a hint when a page may need an update. From a GitHub wiki or a Markdown folder.</p></div>
+    {%- if not phone_covered %}
     <div class="card gd-wide"><h3>Answer an agent from your phone</h3>
       <p>A phone companion addon can pair a phone so you answer a blocked agent, approve or give a verdict from the train. The companion can be end-to-end encrypted, so the server in the middle holds only ciphertext. The decision still passes core's checks (pairing, signature, age, the hash of the exact text it was given for), is applied on your desktop and is signed into the same ledger, marked as made from your phone. The agent just keeps waiting on <code>orch wait</code>. Revoke a phone any time.</p></div>
+    {%- endif %}
   </div>
+  {%- if guide_groups %}
+  <div class="gd-addons" aria-label="From your enabled addons">{{ ui.slot(guide_groups) }}</div>
+  {%- endif %}
 </section>
 
 <section class="gd-section" aria-labelledby="mod-h">

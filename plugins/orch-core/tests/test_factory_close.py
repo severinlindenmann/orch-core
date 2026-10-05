@@ -573,3 +573,24 @@ def test_a_window_that_opens_after_the_budget_ends_is_not_pending():
     assert fc._after_budget({"open": False, "opens": "2026-10-07T23:59:00Z"}, d) is False
     assert fc._after_budget({"open": True, "opens": None}, d) is False
     assert fc._after_budget({"open": False, "opens": "nonsense"}, d) is True  # cannot tell: no promise
+
+
+def test_a_crash_after_the_children_closed_shows_their_charter_verdicts_as_unbacked(fws, closing, human, monkeypatch):
+    """The children's verdicts name the charter, but the runner's close record was never written: orch check warns on
+    each child (charter-verdict-unbacked), and says nothing is backed for the epic, which stays open."""
+    from orch.core.ops import Ops
+    eid, (c0, c1), _ = closing(kids=2)
+    real = Ops._close_children
+
+    def then_die(self, *a, **k):
+        real(self, *a, **k)
+        raise KeyboardInterrupt
+    with monkeypatch.context() as m:
+        m.setattr(Ops, "_close_children", then_die)
+        with pytest.raises(KeyboardInterrupt):
+            fc.tick(fws, human)
+    fr.release_lock(fws)
+    for c in (c0, c1):
+        found = _findings(fws, c)
+        assert ("warning", "charter-verdict-unbacked") in found and ("info", "charter-verdict") not in found
+    assert _epic(fws, eid).status == "open"

@@ -18,7 +18,7 @@
     <div role="status" id="run-status"><h2>{{ ui.status(run.role, run.chip) }} {{ run.headline }}</h2></div>
     {% if run.auto %}{% set au = run.auto %}
     {% if au.by_charter %}
-    <div data-auto-closed><p>Closed by itself under your charter{% if au.closed and au.closed.at %} at <time datetime="{{ au.closed.at }}">{{ au.closed.at|local }}</time>{% endif %}. You signed the charter with "close the epic by itself", so this replaced your verdict for this run. If it is not done, reopen it: that is yours.</p>
+    <div data-auto-closed><p>Closed by itself under your charter{% if au.closed and au.closed.at %} at <time datetime="{{ au.closed.at }}">{{ au.closed.at|local }}</time>{% endif %}. You signed the charter with "close the epic by itself", so this replaced your verdict for this run. It closed on what the agents wrote under the close rules: nothing is executed or verified by the factory. If it is not done, reopen it: that is yours.</p>
       <form method="post" action="/factory/{{ run.epic }}/reopen" class="inline-confirm-form" data-inline-confirm="Confirm · reopen {{ run.epic }} and stop its run (the delegation is paused): its children stay done">
         <label class="field-col" for="reopen-reason"><span>Why reopen it</span><input id="reopen-reason" name="reason" required autocomplete="off"></label>
         <button type="submit" class="btn btn-quiet">Reopen…</button>
@@ -26,7 +26,7 @@
     {% elif run.state != "finished" %}
     {% set needs = au.blockers|rejectattr("pending")|list %}
     {% if needs %}<div data-auto-not><p>Not closed by itself: {{ needs[0].text }}.</p>{% if needs|length > 1 %}<ul class="plain">{% for b in needs[1:] %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}<p class="muted">As for any epic, you can still accept it yourself from the Ready report.</p></div>
-    {% else %}<div data-auto-pending><p>It closes by itself, under your charter, {% if au.blockers %}when:{% else %}in the runner's next round: everything it needs is proven.{% endif %}</p>{% if au.blockers %}<ul class="plain">{% for b in au.blockers %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}<p class="muted">This replaces your verdict for this run, as you signed. You can still accept it yourself from the Ready report; Reopen stays yours.</p></div>{% endif %}
+    {% else %}<div data-auto-pending><p>It closes by itself, under your charter, {% if au.blockers %}when:{% else %}in the runner's next round: everything it needs is proven.{% endif %}</p>{% if au.blockers %}<ul class="plain">{% for b in au.blockers %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}<p class="muted">This replaces your verdict for this run, as you signed. It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory. You can still accept it yourself from the Ready report; Reopen stays yours.</p></div>{% endif %}
     {% endif %}{% endif %}
     {% if run.all_done %}<div data-all-done><p>Every child is done, so there is no Ready report and no epic verdict to give. To finish the epic, close it here with a reason (signed, yours), or send work back by starting a new child under this epic and approving the epic again.</p>
       <form method="post" action="/factory/{{ run.epic }}/close" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ run.epic }} as done">

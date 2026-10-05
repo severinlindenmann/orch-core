@@ -87,7 +87,8 @@ def test_rehearsal_rollback_that_fails_stops_and_holds_the_next_epic(fws, live, 
     st = fr.status(fws, store.load(fws, other)[1],
                    __import__("orch.core.permits", fromlist=["x"]).factory_delegation(fws, store.load(fws, other)[1]))
     prod = next(s for s in st["stages"] if s["name"] == "production")
-    assert prod["state"] == "waiting" and prod["held"] == [eid]  # and its window is shut by the first attempt
+    assert prod["state"] == "waiting" and prod["held"] == [eid]
+    assert prod["window"]["open"] is False and prod["window"]["last"] is not None  # the first attempt started it
     assert store.load(fws, other)[1].status == "open"
 
 
@@ -114,8 +115,39 @@ def test_rehearsal_window_shut_then_reopen_after_the_close(fws, live, human):
     release_once(fws)  # within the 1 hour window of the first release
     assert _states(fws, second) == {"merge": "proven", "dev": "proven", "production": "waiting"}
     assert store.load(fws, second)[1].status == "open"  # no close while production waits
-    Ops(fws, human).epic_pause(first)  # what the run view's Reopen does: stop the run, then reopen
-    Ops(fws, human).reopen(first, "not done")
-    assert store.load(fws, first)[1].status == "open"
+    del Ops
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orch.core import epics
+    from orch.dashboard.app import create_app
+    c = TestClient(create_app(fws, "tok"))
+    assert c.get("/?token=tok").status_code == 200
+    r = c.post(f"/factory/{first}/reopen", data={"reason": "not done"}, follow_redirects=False)  # the real route
+    assert "err=" not in r.headers["location"]
+    assert store.load(fws, first)[1].status == "open" and epics.delegation(fws, store.load(fws, first)[1])["paused"]
     release_once(fws)
     assert store.load(fws, first)[1].status == "open"  # never closed again by itself
+
+
+def test_rehearsal_reopen_whose_pause_fails_leaves_the_epic_done_and_says_so(fws, live, human, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orch.core import epics
+    from orch.core.ops import Ops
+    from orch.dashboard.app import create_app
+    from orch.dashboard.factory_runner import release_once
+    from orch.errors import ValidationError
+    make, _ = live
+    eid, _, _ = make()
+    release_once(fws)
+    assert store.load(fws, eid)[1].status == "done"
+
+    def no_pause(self, ref):
+        raise ValidationError("the ledger cannot be written")
+    monkeypatch.setattr(Ops, "epic_pause", no_pause)
+    c = TestClient(create_app(fws, "tok"))
+    assert c.get("/?token=tok").status_code == 200
+    r = c.post(f"/factory/{eid}/reopen", data={"reason": "not done"}, follow_redirects=False)
+    assert "err=" in r.headers["location"] and "ledger" in r.headers["location"].replace("+", " ")
+    epic = store.load(fws, eid)[1]
+    assert epic.status == "done" and not epics.delegation(fws, epic)["paused"]  # nothing half done

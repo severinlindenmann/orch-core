@@ -483,11 +483,17 @@ def test_the_window_counts_every_attempt_and_survives_a_deleted_record(fws, prod
     assert fr.window(fws, 20)["open"]
 
 
-@pytest.mark.parametrize("at", ["2999-01-01T00:00:00Z", "nonsense", None])
-def test_a_window_record_in_the_future_or_unreadable_keeps_the_window_shut(fws, at):
+def test_a_window_record_in_the_future_keeps_the_window_shut(fws):
+    fr._atomic(fr._window_path(fws), json.dumps({"at": "2999-01-01T00:00:00Z"}))
+    w = fr.window(fws, 20)
+    assert w["open"] is False and "lies in the future" in w["why"] and "cannot be read" not in w["why"]
+
+
+@pytest.mark.parametrize("at", ["nonsense", None, 12])
+def test_an_unreadable_window_record_keeps_the_window_shut(fws, at):
     fr._atomic(fr._window_path(fws), json.dumps({"at": at}))
     w = fr.window(fws, 20)
-    assert w["open"] is False and ("future" in w["why"] or "cannot be read" in w["why"])
+    assert w["open"] is False and "cannot be read" in w["why"] and "future" not in w["why"]
 
 
 def test_a_stage_that_cannot_start_is_a_stopped_reason_until_the_human_retries(fws, ready, human, bin_dir, recipe):
@@ -507,17 +513,14 @@ def test_a_stage_that_cannot_start_is_a_stopped_reason_until_the_human_retries(f
 
 
 def test_a_base_that_cannot_be_fetched_for_dev_is_a_stopped_reason(fws, ready, human, remote):
-    import unittest.mock
     eid, _, _ = ready()
     fake = Fake()
-    real = fr.fetch_base
-    calls = []
 
-    def flaky(ws, rec):
-        calls.append(1)
-        return real(ws, rec) if len(calls) == 1 else None  # the classification fetches; dev's fetch fails
-    with unittest.mock.patch.object(fr, "fetch_base", flaky):
-        fr.tick(fws, human, fake)
+    def remote_goes_away(argv):  # after the merge's check, the recipe's remote is gone: dev cannot fetch the base
+        if "view" in argv and remote.exists():
+            remote.rename(remote.with_name("gone.git"))
+    fake.on_call = remote_goes_away
+    fr.tick(fws, human, fake)
     assert _states(fws, eid)["merge"] == "proven" and _stopped(fws, eid) == ["release-blocked"]
     assert "could not be fetched" in fr.reasons(fws, store.load(fws, eid)[1],
                                                 permits.factory_delegation(fws, store.load(fws, eid)[1]))[0]["text"]

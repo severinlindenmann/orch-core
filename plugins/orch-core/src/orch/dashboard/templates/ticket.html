@@ -178,13 +178,11 @@
     budget), the children by status (epic_list), then details (no buttons there). -#}
 {% macro epic_slot(e, gate_shown, card_needed) %}
 {% set f, p = e.factory, e.permits or {} %}
-{% set stopped_note = f and f.factory and ((f.state == "suspended") or (f.state == "budget used up" and not p.budget)) %}
 <section class="epic-slot" id="epic-slot" aria-label="Waiting on you">
-  {% if stopped_note %}
-  <article class="card epic-stopped"><div class="permit-head">{{ ui.status("you", "Stopped") }}</div>
-    <p>{% if f.state == "suspended" %}The epic's own text changed since you approved it. Agents stop until you approve it again.{% else %}The budget is used up: {{ f.children }}/{{ f.max_children }} children or {{ f.max_hours }} hours. Agents stop until you decide how it goes on.{% endif %}</p>
-  </article>
-  {% endif %}
+  {% if f and f.factory and f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}. Enable the orch-core plugin in your user-scope Claude settings.</p>{% endif %}
+  {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
+  {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
+  {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#epic-slot", True) }}{% endfor %}
   {% if gate_shown %}{{ charter_form(e, gate_views.requirements.question) }}{% endif %}
   {% for c in p.budget %}{{ pm.budget_card(c) }}{% endfor %}
   {% for r in p.requests %}{{ pm.request_card(r, "/t/" ~ t.id ~ "#epic-slot") }}{% endfor %}

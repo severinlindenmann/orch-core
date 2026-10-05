@@ -1699,3 +1699,10 @@ a.ec-pill:hover { background: var(--hover); }
   .ec-budget .btn { width: 100%; }
   .epic-slot code, .epic-slot .permit-cmd { overflow-wrap: anywhere; }
 }
+
+/* ---------- AI Factory (#2, phase 3): the Ready report and the Stopped message ---------- */
+.factory-report, .factory-reasons { display: flex; flex-direction: column; gap: var(--s-3); margin: 0; padding: 0; min-width: 0; }
+.factory-child { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; padding-top: var(--s-2); border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.factory-child:first-child { border-top: 0; padding-top: 0; }
+.factory-reasons li { overflow-wrap: anywhere; }
+.factory-ready, .factory-stopped { max-width: 100%; }

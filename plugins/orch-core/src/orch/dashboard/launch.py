@@ -54,7 +54,89 @@ HARNESS_NAME = re.compile(r"[a-z][a-z0-9_-]*")
 DEFAULT_HARNESSES = {"claude": ["claude", "{prompt}"], "copilot": ["copilot", "-i", "{prompt}"],
                      "codex": ["codex", "{prompt}"]}
 SETTINGS_KEYS = ("terminal", "terminal_command", "harnesses", "default_harness")
+# What the AI Factory runner starts for one child (docs/factory.md): {session} is the id the runner generated and binds
+# (the harness must start its session under exactly that id), {prompt} the child's work prompt. It lives in its own
+# file, permits/factory-command.json in the orch config dir ({"command": [...]}), under the folder the guard keeps
+# agents from reading and writing: a command that starts agents unattended must not be one an agent can set. It must
+# turn off project and local settings and project MCP servers: a worktree is written by agents.
+DEFAULT_FACTORY_COMMAND = ["claude", "--setting-sources", "user", "--strict-mcp-config", "--session-id", "{session}",
+                           "{prompt}"]
+# The runner's command is an allowlist: the program is claude, the arguments are the ones below, each at most once, and
+# the permission hook stays the only gate. Anything else (skipping or pre-approving permissions, other settings or
+# MCP sources, extra folders, plugins, agents, a permission mode that skips prompts) is refused.
+_FACTORY_FLAGS = {"--setting-sources", "--strict-mcp-config", "--session-id", "--model", "--verbose",
+                  "--permission-mode"}
+_FACTORY_NOVALUE = {"--strict-mcp-config", "--verbose"}
+_FACTORY_MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,63}")
 
+
+def factory_path() -> Path:
+    return config_dir() / "permits" / "factory-command.json"
+
+
+def load_factory_command() -> tuple[list[str], str | None]:
+    """(argv, error): the runner's launch command from factory.json, or the default and a sentence when the file is
+    damaged or names a self-granting command. A missing file is the default. Never raises."""
+    try:
+        raw = factory_path().read_bytes()
+    except FileNotFoundError:
+        return list(DEFAULT_FACTORY_COMMAND), None
+    except OSError as e:
+        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} cannot be read ({e.strerror or e}); using the default"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        argv = data.get("command") if isinstance(data, dict) and set(data) == {"command"} else None
+    except (ValueError, UnicodeDecodeError):
+        argv = None
+    why = factory_command_error(argv)
+    if why:
+        return list(DEFAULT_FACTORY_COMMAND), f"{factory_path()} is ignored: {why}; using the default"
+    return list(argv), None
+
+
+def factory_command_error(argv) -> str | None:
+    """Why `argv` cannot be the runner's launch command, or None."""
+    if not _argv_list(argv):
+        return "the command must be a non-empty list of strings in a file that holds only {\"command\": [...]}"
+    if os.path.basename(argv[0]) != "claude":
+        return "the program must be claude"
+    seen, i = set(), 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "{prompt}":
+            if i != len(argv) - 1 or "{prompt}" in seen:
+                return "the command must end with {prompt}, once"
+            seen.add("{prompt}")
+            i += 1
+            continue
+        flag, eq, val = a.partition("=")
+        if flag not in _FACTORY_FLAGS:
+            return (f"{flag} is not an allowed argument (the command may not grant permissions or widen what the "
+                    "session reads)")
+        if flag in seen:
+            return f"{flag} is given more than once"
+        seen.add(flag)
+        if flag in _FACTORY_NOVALUE:
+            if eq:
+                return f"{flag} takes no value"
+        else:
+            if not eq:
+                i += 1
+                val = argv[i] if i < len(argv) else ""
+            if flag == "--setting-sources" and val != "user":
+                return "--setting-sources must be user: settings a worktree carries are written by agents"
+            if flag == "--session-id" and val != "{session}":
+                return "--session-id must be {session}"
+            if flag == "--permission-mode" and val not in ("default", "plan"):
+                return "--permission-mode may only be default or plan: a mode that skips prompts is the hook's to answer"
+            if flag == "--model" and not _FACTORY_MODEL.fullmatch(val):
+                return "--model is not a model name"
+        i += 1
+    for need, why in (("--setting-sources", "--setting-sources user"), ("--strict-mcp-config", "--strict-mcp-config"),
+                      ("--session-id", "--session-id {session}"), ("{prompt}", "{prompt}")):
+        if need not in seen:
+            return f"the command must pass {why}"
+    return None
 
 def config_dir() -> Path:
     base = os.environ.get("ORCH_STATE_DIR")
@@ -70,7 +152,8 @@ def config_path() -> Path:
 
 def _defaults() -> dict:
     return {"terminal": "auto", "terminal_command": [], "default_harness": "claude",
-            "harnesses": {k: list(v) for k, v in DEFAULT_HARNESSES.items()}, "error": None, "path": str(config_path())}
+            "harnesses": {k: list(v) for k, v in DEFAULT_HARNESSES.items()},
+            "error": None, "path": str(config_path())}
 
 
 def _argv_list(value) -> bool:
@@ -78,6 +161,10 @@ def _argv_list(value) -> bool:
 
 
 def load_settings() -> dict:
+    return {**_load_launch_settings(), "factory_command": load_factory_command()[0]}
+
+
+def _load_launch_settings() -> dict:
     """The user's launch settings: {terminal, terminal_command, harnesses, default_harness,
     error, path}. `error` is a sentence for the Workspace page when the file is broken; the rest
     are then the built-in defaults (nothing from a broken file is used). Never raises."""

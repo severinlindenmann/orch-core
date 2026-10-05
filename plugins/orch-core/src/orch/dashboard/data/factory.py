@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from orch import clock
-from orch.core import epics, permits, store
+from orch.core import epics, factory_report, permits, store
 
 
 def _raw(text) -> str:
@@ -30,9 +30,26 @@ def permit_view(ws, epic_id: str | None = None) -> dict | None:
     reqs = [_card(r) for r in permits.open_requests(ws) if keep(str(r["epic"]))]
     grants = [{"grant": g["grant"], "epic": g["epic"], "scope": g["scope"], "command": _raw(g["command"])}
               for g in permits.grants(ws) if g["live"] and keep(str(g["epic"]))]
-    cards = [c for c in permits.budget_cards(ws) if keep(str(c["epic"]))]
-    return {"requests": reqs, "grants": grants, "budget": cards,
-            "any": bool(reqs or grants or cards)}
+    report = factory_report.cards(ws)
+    ready = [r for r in report["ready"] if keep(r["epic"])]
+    stopped = [_stopped_card(s) for s in report["stopped"] if keep(s["epic"])]
+    # a Stopped card says the budget is used up itself: one card for it, not two
+    suspect = [x for x in report["suspect"] if keep(x["epic"])]
+    cards = [c for c in permits.budget_cards(ws) if keep(str(c["epic"])) and not any(s["epic"] == c["epic"] for s in stopped)]
+    return {"requests": reqs, "grants": grants, "budget": cards, "ready": ready, "stopped": stopped, "suspect": suspect,
+            "cards_n": len(reqs) + len(cards) + len(ready) + len(stopped) + len(suspect), "any": bool(reqs or grants or cards or ready or stopped or suspect)}
+
+
+_CAN = {  # what the human can do, per reason (rule text, never agent prose)
+    "budget": "Approve the epic again (Start as an AI Factory) for a new budget, or give verdicts on what is in testing.",
+    "sent-back": "Open the child and say what is missing in its requirements, or take it out of the epic.",
+    "denied": "Open the child: change its text so it does without that command, or take it out of the epic.",
+    "ledger-cut": "Run `orch check` on this machine: nothing the factory did counts until the ledger is whole again.",
+}
+
+
+def _stopped_card(s: dict) -> dict:
+    return {**s, "reasons": [{**r, "can": _CAN[r["code"]]} for r in s["reasons"]]}
 
 
 def epic_status(ws, epic, d: dict | None, events) -> dict | None:
@@ -59,7 +76,10 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
         state = "budget used up"
     else:
         state = "running"
-    return {"factory": True, "limits": limits, "state": state, "children": used, "max_children": d["max_children"],
+    from orch.core import factory_runner, factory_sessions
+    blocker = (factory_runner.user_settings_blocker() if factory_sessions.armed(ws, d["id"]) and state == "running"
+               else None)
+    return {"factory": True, "limits": limits, "state": state, "runner_blocker": blocker, "children": used, "max_children": d["max_children"],
             "hours_left": left, "max_hours": d["max_hours"]}
 
 

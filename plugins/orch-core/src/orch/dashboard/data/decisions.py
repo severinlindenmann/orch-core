@@ -199,6 +199,8 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
     repaired: set[str] = set()
     for item in needs:
         tid, kind = item["ticket"], item["kind"]
+        if kind in query.FACTORY_KINDS:
+            continue  # the factory's Ready and Stopped cards are drawn from orch.core.factory_report, not as a Decision
         if tid.upper() in repaired:
             continue  # one Repair card per id, however many items its files produced
         age = _age_minutes(by_ticket.get(tid, []), at_now)

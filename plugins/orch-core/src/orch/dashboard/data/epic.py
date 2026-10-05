@@ -201,8 +201,9 @@ def page_data(ws, epic, *, entries, needs, events, builder, show: str = "", gate
     n = epic_health.counts(r["bucket"] for r in rows)
     f, p = s["factory"], s["permits"] or {}
     n_permits = len(p.get("requests") or []) + len(p.get("budget") or [])
-    stopped = bool(f and f.get("factory") and f.get("state") in epic_health.STOPPED_STATES)
-    needs_n = n["you"] + n_permits + int(s["verdict_ready"]) + int(s["reapprove"]) + asks
+    stopped = bool(f and f.get("factory") and f.get("state") in epic_health.STOPPED_STATES) or bool(p.get("stopped") or p.get("suspect"))
+    ready_report = bool(p.get("ready"))
+    needs_n = n["you"] + n_permits + int(s["verdict_ready"]) + int(s["reapprove"]) + asks + len(p.get("ready") or [])
     state = f["state"] if f and f.get("factory") else None
     role, label = epic_health.state_chip(total=len(rows), n=n, approved=s["approved"] or epic.status == "done",
                                          factory_state=state, needs=needs_n)
@@ -212,6 +213,6 @@ def page_data(ws, epic, *, entries, needs, events, builder, show: str = "", gate
     s.update(buckets=n, progress=epic_health.progress(n), chip={"role": role, "label": label}, filter=flt,
              groups=epic_health.groups(rows, flt["show"]),
              nothing_waiting=epic_health.nothing_waiting(gate=gate or s["reapprove"] or (not s["approved"] and epic.status != "done"), asks=asks, permits=n_permits,
-                                                         stopped=stopped, ready=s["verdict_ready"], needs_you=n["you"],
+                                                         stopped=stopped, ready=s["verdict_ready"] or ready_report, needs_you=n["you"],
                                                          move_human=move_human))
     return s

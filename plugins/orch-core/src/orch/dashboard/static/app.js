@@ -29,6 +29,7 @@
     hash() { return (window.location && window.location.hash) || ""; },
     // An href against this page: {href, path, search, hash, internal}, or null when it is not a URL.
     resolve(href) {
+      if (/[\u0000-\u001f\u007f]/.test(String(href))) return null;
       try {
         const u = new URL(href, window.location.href);
         return { href: u.href, path: u.pathname, search: u.search, hash: u.hash, internal: u.origin === window.location.origin };
@@ -37,6 +38,7 @@
     // Only a single-slash path or a same-origin address: "//host" and backslash forms never leave the dashboard.
     navigate(href) {
       const h = String(href);
+      if (/[\u0000-\u001f\u007f]/.test(h)) return;  // browsers drop tabs and newlines inside an address
       if (!/^\/(?![\/\\])/.test(h)) {
         let u = null;
         try { u = new URL(h, window.location.href); } catch (e) { return; }
@@ -1086,6 +1088,7 @@
   };
   let gen = 0;  // which document is shown; every swap starts a new one
   let timer = null;
+  let rearm = () => {};  // set by the live stream: queue a fresh refresh
   const swapIn = (page, push) => {
     const next = new DOMParser().parseFromString(page.text, "text/html");
     const main = next.querySelector("main.content");
@@ -1102,8 +1105,9 @@
     dirty = false;
     gen += 1;
     // A refresh queued by the page just replaced must not land on this one; but a page fetched before the latest
-    // change may be stale, so then the queued refresh stays and corrects it.
+    // change may be stale, so then a fresh refresh is queued (the one queued or in flight is replaced) to correct it.
     if (page.seq === undefined || page.seq === changes) clearTimeout(timer);
+    else rearm();
     if (push) host.pageHistory.push(page.url);
     const hash = (host.resolve(page.url) || {}).hash || "";
     if (!hash) window.scrollTo(0, 0);
@@ -1178,6 +1182,10 @@
       } else host.reload();
     };
     // Debounced: an agent's burst of writes (and every open tab) refreshes once, 1.5 s after the last change.
+    rearm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(refresh, 1500);
+    };
     let source = null;
     const open = () => {
       if (source) return;

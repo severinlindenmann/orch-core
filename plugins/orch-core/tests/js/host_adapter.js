@@ -27,6 +27,8 @@ const html = (path) => ({ dataset: path === undefined ? {} : { path } });
   const r = host.resolve("/t/X-1?y=2#z");
   assert.strictEqual(JSON.stringify(r), JSON.stringify({ href: "http://h/t/X-1?y=2#z", path: "/t/X-1", search: "?y=2", hash: "#z", internal: true }));
   assert.strictEqual(host.resolve("http://other/board").internal, false);
+  assert.strictEqual(host.resolve("/\t/evil.example"), null);
+  assert.strictEqual(host.resolve("/a\nb"), null);
   host.navigate("/board");
   assert.strictEqual(win.location.href, "/board");
   host.reload();
@@ -39,11 +41,11 @@ const html = (path) => ({ dataset: path === undefined ? {} : { path } });
 {
   const win = { location: { href: "http://h/x", origin: "http://h" } };
   const host = load(win, { documentElement: html("/x") });
-  for (const bad of ["//evil.example/x", "/\\evil.example", "\\\\evil.example", "\\/evil.example", "http://evil.example/", "javascript:void(0)"]) {
+  for (const bad of ["//evil.example/x", "/\\evil.example", "\\\\evil.example", "\\/evil.example", "http://evil.example/", "javascript:void(0)", "/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "\t//evil.example", "/\u0000/evil.example", "/\u007f/evil.example"]) {
     host.navigate(bad);
     assert.strictEqual(win.location.href, "http://h/x", "navigated to " + bad);
   }
-  for (const ok of ["/board?x=1", "http://h/y", "rel", "?q=1"]) {
+  for (const ok of ["/board?x=1", "http://h/y", "rel", "?q=1", "#x", "/t/A%20B?x=%2F"]) {
     host.navigate(ok);
     assert.strictEqual(win.location.href, ok);
     win.location.href = "http://h/x";

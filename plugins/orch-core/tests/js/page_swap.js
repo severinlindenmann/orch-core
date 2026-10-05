@@ -111,5 +111,21 @@ const change = () => source.l.change();
   answer(r, "refresh before back"); await settle();
   answer(fetches.length - 1, "back"); await settle();
   assert.strictEqual(doc.title, "back", "Back was dropped");
+  // 6. a click in flight, then a change, the refresh starts, then the older click lands: the stale page must still be
+  // corrected (the refresh in flight is dropped by the newer document, so a fresh one is queued)
+  click("/reports");
+  const clickAt = fetches.length - 1;
+  change();
+  runTimers(1500);
+  const refreshStarted = fetches.length - 1;
+  assert.ok(refreshStarted > clickAt, "the refresh did not start");
+  answer(clickAt, "click from before the change"); await settle();
+  assert.strictEqual(doc.title, "click from before the change");
+  answer(refreshStarted, "dropped refresh"); await settle();
+  assert.strictEqual(doc.title, "click from before the change", "the refresh in flight landed on a newer document");
+  assert.ok(timers.some((t) => t.fn && t.ms === 1500), "no corrective refresh was queued");
+  runTimers(1500);
+  answer(fetches.length - 1, "corrected"); await settle();
+  assert.strictEqual(doc.title, "corrected", "the stale page stayed");
   console.log("page swap ok");
 })().catch((e) => { console.error(e); process.exit(1); });

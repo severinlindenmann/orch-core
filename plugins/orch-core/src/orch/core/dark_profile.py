@@ -313,6 +313,24 @@ def add_baseline(ws, actor, shown=None, name: str = "orch") -> dict:
     return {"added": added, "failed": failed}
 
 
+def compound(command) -> bool:
+    """Whether `command` is not one plain simple command (a chain, pipe, redirect, substitution or expansion): no
+    prefix rule ever matches it, and an exact rule only its identical text."""
+    return simple_tokens(command) is None
+
+
+def prunable(ws) -> list[dict]:
+    """Exact rules whose command is compound: junk from adding one chained card, which agents rarely repeat."""
+    return [r for r in rules(ws) if r["kind"] == "exact" and compound(r["rule"])]
+
+
+def prune(ws, actor, shown: list[str]) -> list[dict]:
+    """Human only: remove the prunable rules among the ids the human was shown; the entries signed."""
+    from orch.core.permits import _human_check
+    _human_check(actor, "changing the Dark profile")
+    return [remove(ws, actor, r["id"]) for r in prunable(ws) if r["id"] in shown]
+
+
 def remove(ws, actor, rid: str) -> dict:
     """Human only: take a rule out; the next Dark prompt for it is denied and becomes a card."""
     from orch.core.permits import _human_check

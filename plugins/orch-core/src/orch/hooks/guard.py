@@ -57,7 +57,7 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
                        "(setup changes the user-global Claude settings), and setting an addon ticket option (e.g. phone notifications), is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
-# grant|deny|revoke` (AI Factory), `dark profile add|remove`, `factory dark on` and `factory release ...` (Dark AI
+# grant|deny|revoke` (AI Factory), `dark profile add|remove|prune`, `factory dark on` and `factory release ...` (Dark AI
 # Factory), and moves to a
 # status only
 # the human moves to. Agents never run them, in any spelling: `uv run orch`, `python -m orch.cli`, a wrapper path,
@@ -68,7 +68,7 @@ _HUMAN_SCHEDULE = ("arm", "resume", "run-now", "file", "dismiss")  # `orch sched
 _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)|quick\s+(?:-\S+\s+)*(?:reopen|drop)"
                   r"|schedule\s+(?:-\S+\s+)*(?:arm|resume|run-now|file|dismiss)"
-                  r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove)"
+                  r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
                   r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
                   r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
@@ -602,12 +602,12 @@ _ORCH_MODULE = re.compile(r"(?<![\w-])orch\.(?:cli|core)\b")
 _Q = r"""['"]"""
 _APP_HUMAN = re.compile(
     _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
-    + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove)" + _Q
+    + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove|prune)" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
     + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
 _HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
-                         r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove)"
+                         r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
                          r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
                          r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry))(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
@@ -675,7 +675,7 @@ def _human_rest(rest: list[str]) -> bool:
         return True
     if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
         return True
-    if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove"):
+    if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove", "prune"):
         return True
     if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
         return True

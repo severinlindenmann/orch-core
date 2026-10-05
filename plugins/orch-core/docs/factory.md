@@ -405,11 +405,14 @@ orch dark profile add --from-request P-7         # an open Dark card: its comman
 orch dark profile add --baseline                 # the orch agent verbs a planner or worker needs
 orch dark profile add --baseline git-basic       # the git a worker needs to commit its own work
 orch dark profile remove <rule id>
+orch dark profile prune                          # remove exact rules for compound commands
 ```
 
 Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed (`--baseline`
-prints every rule it adds and needs BASELINE typed); agents are
-refused in orch itself and by the guard. The baselines are named: `orch` (the default) and `git-basic`; an unknown
+prints every rule it adds and needs BASELINE typed; `prune` lists the rules it removes and needs PRUNE typed);
+agents are refused in orch itself and by the guard. `prune` removes exact rules whose command is not one plain
+command (a chain, pipe, redirect, substitution or expansion): such a rule matches only that identical text, which
+agents rarely repeat, so it is clutter left by adding one chained card. The baselines are named: `orch` (the default) and `git-basic`; an unknown
 name is refused with the list.
 
 **The git-basic baseline** adds the git a worker needs to commit its work on its own branch: prefix rules `git
@@ -593,7 +596,10 @@ refusal of a process under an agent harness, as for every approval).
   budget used up) first, then working, the rest, finished.
 - **Add to the Dark profile** on a Dark card, while Dark is on and its epic is an active Dark epic: the card's exact
   command becomes an exact rule (`orch dark profile add --from-request`, the same checks), bound to the hash of the
-  command the card showed.
+  command the card showed. On a card whose command is not one plain command (it chains, pipes, redirects or
+  substitutes) the button is replaced by a note: no prefix rule ever matches such a command and an exact rule only
+  its identical text, so adding it would not help; Grant once (the primary button) or Deny. The terminal's
+  `--from-request` still accepts it, for the rare command an agent repeats word for word.
 
 The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: any automatic closing (the
 verdict is yours, from the Ready report), and runner-side proof that tests ran or a review happened; the ring has no

@@ -10,7 +10,7 @@
   <pre class="permit-cmd" aria-label="The exact command">{{ r.command }}</pre>
   {% if r.reason %}<p class="permit-reason"><span class="muted">Reason:</span> {{ r.reason }}</p>{% endif %}
   <p class="muted permit-meta">by {{ r.asked_by }} via {{ r.source }} · {{ r.short }}…</p>
-  {% if r.source == "dark" %}<p class="permit-dark">This command is not in the Dark profile, so the Dark factory did not run it.{% if r.profile %} Add it, and this exact command runs from now on in Dark epics of this checkout.{% endif %}</p>{% endif %}
+  {% if r.source == "dark" %}<p class="permit-dark">This command is not in the Dark profile, so the Dark factory did not run it.{% if r.profile and not r.compound %} Add it, and this exact command runs from now on in Dark epics of this checkout.{% endif %}</p>{% endif %}
   <div class="actions">
     {% for label, scope, action in (("Grant once", "once", "grant"), ("Grant for this epic", "epic", "grant"), ("Deny", "", "deny")) %}
     <form method="post" action="/permits/{{ r.id }}/{{ action }}" class="inline-confirm-form" data-inline-confirm="Confirm · {{ label|lower }} · {{ r.id }}">
@@ -19,7 +19,9 @@
       <button type="submit" class="btn{{ ' btn-primary' if scope == 'once' }}">{{ label }}</button>
     </form>
     {% endfor %}
-    {% if r.profile %}
+    {% if r.profile and r.compound %}
+    <p class="muted permit-compound" data-compound>This command is not one plain command (it chains, pipes, redirects or substitutes), so no prefix rule ever matches it and an exact rule matches only this identical text, which agents rarely repeat: adding it would not help. Grant once or Deny.</p>
+    {% elif r.profile %}
     <form method="post" action="/permits/{{ r.id }}/profile" class="inline-confirm-form" data-inline-confirm="Confirm · add to the Dark profile · {{ r.id }}">
       <input type="hidden" name="sha" value="{{ r.sha }}"><input type="hidden" name="next" value="{{ back }}">
       <button type="submit" class="btn">Add to the Dark profile</button>

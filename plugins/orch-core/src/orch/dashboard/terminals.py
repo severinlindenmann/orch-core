@@ -56,21 +56,12 @@ def addon_on(ws) -> bool:
         return False
 
 
-_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
 def local_request(request) -> bool:
-    """The request comes from this machine and its Host is loopback. Never over `orch serve --lan` (the network, a
-    phone), and never to a Host that only resolves to this machine (DNS rebinding)."""
-    from urllib.parse import urlsplit
-    client = getattr(request, "client", None)
-    if client is None or client.host not in _LOOPBACK:
-        return False
-    try:
-        host = urlsplit("//" + request.headers.get("host", "")).hostname
-    except ValueError:
-        return False
-    return host in _LOOPBACK
+    """The request comes from this machine and its Host is loopback, or from a paired device through the bridge
+    (the remote gate holds that device to the route's scope). Never over the LAN option (the network, a phone), and
+    never to a Host that only resolves to this machine (DNS rebinding). The answer is reach.reach."""
+    from orch.dashboard.reach import reach
+    return reach(request).kind != "refused"
 
 
 LOCAL_ONLY = "Terminals open only on this machine: use the 127.0.0.1 link, not the network address"

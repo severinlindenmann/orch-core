@@ -4,6 +4,8 @@
 {% import "_ui.html" as ui %}
 {% from "_tasks.html" import task_bar %}
 
+{#- An epic's name without its own "Epic: " lead-in, where the card already says it is an epic (CORE-06). -#}
+{% macro epic_name(e) %}{% set t = e.title or e.id %}{{ t[6:] if t.startswith("Epic: ") and t|length > 6 else t }}{% endmacro %}
 {% macro move_chip(m) %}{{ ui.status(m.role, m.label) }}{% endmacro %}
 
 {#- R✓ P● · T 1/4 · AC 0/3: gate glyphs in their role colour (the needs-you one stays neutral), counts in meta.
@@ -51,7 +53,7 @@
 <div class="tc-row">
   <span class="tc-icon tc-{{ c.move.role }}">{{ ui.icon(c.move.role) }}</span>
   <a class="key lnk" href="/t/{{ c.id }}">{{ c.id }}</a>
-  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ c.epic.title or c.epic.id }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
+  <span class="tc-title">{% if c.epic and show_epic %}<span class="tc-epic muted">{{ epic_name(c.epic) }} · </span>{% endif %}{{ c.title }}{% if c.idle_days %} <span class="tc-idle muted" title="Nobody touched this for {{ c.idle_days }} days: check it still holds before building it">· idle {{ c.idle_days }}d</span>{% endif %}</span>
   <span class="tc-move">{{ move_chip(c.move) }}</span>
   <span class="tc-progress">{{ strip(c) }}{% if c.code %} {{ code_token(c.code) }}{% endif %}</span>
 </div>
@@ -66,7 +68,7 @@
 {%- set m = c.move -%}
 <a class="card tcard" href="/t/{{ c.id }}" data-ticket="{{ c.id }}" draggable="true">
   <span class="tc-top"><span class="id">{{ c.id }}</span>
-    {%- if c.epic and not kid %}<span class="chip chip-neu tc-epic-chip"><span aria-hidden="true">◇</span> {{ c.epic.title or c.epic.id }}<span class="sr-only"> (epic {{ c.epic.id }})</span></span>
+    {%- if c.epic and not kid %}<span class="chip chip-neu tc-epic-chip"><span aria-hidden="true">◇</span> {{ epic_name(c.epic) }}<span class="sr-only"> (epic {{ c.epic.id }})</span></span>
     {%- elif c.rollup %}<span class="tc-meta">EPIC</span>{% elif c.size or c.external %}<span class="tc-meta">{{ c.size|upper }}{% if c.size and c.external %} · {% endif %}{% if c.external %}{{ c.external.key }}{% endif %}</span>{% endif %}
     {%- if c.agent %}<span class="tc-av tc-av-{{ c.agent.status }}" title="{{ c.agent.harness }}" aria-hidden="true">{{ c.agent.harness|initials }}</span>{% endif %}</span>
   <span class="title">{{ c.title }}</span>
@@ -134,7 +136,7 @@
 {#- L: the top of the ticket page, below the crumb. `summary` is the agent's Summary text (Markdown), or "". -#}
 {% macro header(c, created_day="", summary="", chip=none) -%}
 <div class="tc-header">
-  {%- if c.epic %}<p class="tc-epic"><a class="lnk" href="/t/{{ c.epic.id }}"><span aria-hidden="true">◇</span> Epic {{ c.epic.id }} · {{ c.epic.title }}</a></p>{% endif %}
+  {%- if c.epic %}<p class="tc-epic"><a class="lnk" href="/t/{{ c.epic.id }}"><span aria-hidden="true">◇</span> Epic {{ c.epic.id }} · {{ epic_name(c.epic) }}</a></p>{% endif %}
   <p class="tc-metaline muted"><b class="key">{{ c.id }}</b>{% if c.rollup %} · epic{% elif c.size %} · {{ c.size|upper }}{% endif %}{% if c.priority %} · {% if c.hot %}<span class="tc-hot">{{ ui.icon("warn") }} {{ c.priority }}</span>{% else %}{{ c.priority }}{% endif %}{% endif %}
     {%- if c.external %} · {% if c.external.url %}<a class="lnk" href="{{ c.external.url }}" target="_blank" rel="noopener">{{ c.external.key }} ↗</a>{% else %}{{ c.external.key }}{% endif %}{% endif %}
     {%- if created_day %} · created {{ created_day }}{% endif %}

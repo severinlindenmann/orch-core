@@ -10,14 +10,15 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from orch.core import store
 from orch.core.ops import Ops
 from orch.dashboard.routes_ticket import load_or_error
-from orch.dashboard.views import HUMAN, back, confirm_page, error_text, page, safe_next
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, confirm_page, error_text, page, safe_next
 from orch.errors import OrchError, UsageError
 
 router = APIRouter()
 
 
 def _ops(request: Request) -> Ops:
-    return Ops(request.app.state.ws, HUMAN)
+    return Ops(request.app.state.ws, request_actor(request))
 
 
 def _ticket_url(request: Request, ref: str) -> str:
@@ -63,16 +64,16 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
     def action():
         epic = _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
         if limits and limits.get("factory"):
-            _arm_runner(request.app.state.ws, epic)  # only this dashboard Start lets the runner work for it
+            _arm_runner(request.app.state.ws, epic, request_actor(request))  # only this dashboard Start lets the runner work for it
 
     return _run(request, ref, action, f"{gate} approved", next_url)
 
 
-def _arm_runner(ws, epic) -> None:
+def _arm_runner(ws, epic, actor) -> None:
     from orch.core import epics, factory_sessions
     d = epics.delegation(ws, epic)
     if d and d.get("factory"):
-        factory_sessions.arm(ws, HUMAN, d["id"])
+        factory_sessions.arm(ws, actor, d["id"])
 
 
 @router.post("/t/{ref}/approve-together")

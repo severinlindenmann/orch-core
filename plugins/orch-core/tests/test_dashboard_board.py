@@ -173,3 +173,15 @@ def test_board_card_shows_open_blockers(dash, put):
     assert badge.format(middle) in card(last)
     assert "Blocked by" not in card(free)  # a done blocker no longer blocks
     assert "Blocked by" not in card(first)
+
+
+def test_board_search_is_trimmed(dash, hops):
+    t = hops.new("Retry the load")
+    assert t.id in dash.get("/board?view=list&q=%20retry%20").text
+
+
+def test_unknown_status_filter_says_so(dash, hops):
+    hops.new("Some ticket")
+    html = dash.get("/board?view=list&status=nope").text
+    assert "Unknown status filter" in html and "showing all tickets" in html
+    assert "Unknown status filter" not in dash.get("/board?view=list&status=done").text

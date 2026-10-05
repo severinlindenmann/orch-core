@@ -73,12 +73,13 @@ def _view(ws, ticket) -> dict:
 
 
 def _row(e, ws=None) -> dict:
-    from orch.core.query import idle_days
+    from orch.core.query import idle_days, resolution
     m = e.meta or {}
     return {
         "idle_days": idle_days(ws, m, e.status) if ws is not None else None,
         "summary": e.summary,
-        "id": e.id, "status": e.status, "type": m.get("type"), "priority": m.get("priority"),
+        "id": e.id, "status": e.status, "resolution": resolution(m, e.status),
+        "superseded_by": m.get("superseded_by"), "type": m.get("type"), "priority": m.get("priority"),
         "size": m.get("size"), "title": m.get("title"),
         "external": [x.get("key") for x in m.get("external") or [] if isinstance(x, dict)],
         "error": e.error,
@@ -96,7 +97,9 @@ def _fmt(r: dict) -> str:
     title = r["title"] if r["title"] is not None else f"⚠ {r['error']}"
     ext = f"  [{', '.join(r['external'])}]" if r["external"] else ""
     idle = f"  ⚠ idle {r['idle_days']}d, revalidate" if r.get("idle_days") else ""
-    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{idle}"
+    res = r.get("resolution")
+    why = f"  ({res}" + (f" by {r['superseded_by']}" if r.get("superseded_by") else "") + ")" if res and res != "completed" else ""
+    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{idle}{why}"
 
 
 # -- entry point -----------------------------------------------------------------------
@@ -240,14 +243,21 @@ def list_(
     status: Annotated[Optional[str], typer.Option("--status")] = None,
     label: Annotated[Optional[str], typer.Option("--label")] = None,
     mine: Annotated[bool, typer.Option("--mine", help="Only tickets claimed by this session.")] = False,
+    resolution: Annotated[Optional[str], typer.Option(
+        "--resolution", help="Only done tickets closed this way: completed, wont-do, superseded or duplicate.")] = None,
     summary: SummaryOpt = False,
     json_out: JsonOpt = False,
 ) -> None:
     """List tickets."""
     from orch.actor import session_id
     from orch.core import query
+    from orch.core.constants import RESOLUTIONS
+    if resolution is not None and resolution not in RESOLUTIONS:
+        raise UsageError(f"unknown resolution {resolution!r}", hint="one of: " + ", ".join(RESOLUTIONS))
     ws = _ws()
     rows = [_row(e, ws) for e in query.list_tickets(ws, status=status, label=label, session=session_id() if mine else None)]
+    if resolution is not None:
+        rows = [r for r in rows if r["resolution"] == resolution]
     if json_out:  # whose move it is, by the dashboard's own rules (data.cards)
         from orch.dashboard.data.cards import ticket_moves
         moves = ticket_moves(ws)
@@ -734,6 +744,33 @@ def verdict(ref: str, result: Annotated[str, typer.Argument(metavar="done|follow
         what = "close it as done" if result == "done" else "send it back to in-progress"
         return _dry(ws, t, json_out, f"{t.id}: would {what}")
     _out(_view(ws, t), json_out, f"{t.id}: verdict {result} (status {t.status})")
+
+
+@app.command()
+def close(ref: str,
+          as_: Annotated[str, typer.Option("--as", metavar="completed|wont-do|superseded|duplicate",
+                                           help="Why it is closed.")] = "completed",
+          by: Annotated[Optional[str], typer.Option("--by", help="The ticket that replaces it (superseded, duplicate).")] = None,
+          message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
+    """Close a ticket from any status as done, saying why (-m). Human only."""
+    ws = _ws()
+    t = _human_op(ws, ref, lambda ops, kw: ops.close(ref, message or "", as_, by),
+                  lambda p: f"{p.id}: close as {as_}" + (f" by {p.meta.get('superseded_by')}" if by else ""),
+                  dry_run=dry_run, json_out=json_out, bind_file=True)
+    if dry_run:
+        return _dry(ws, t, json_out, f"{t.id}: would close as {as_}")
+    _out(_view(ws, t), json_out, f"{t.id}: closed as {as_}")
+
+
+@app.command()
+def reopen(ref: str, message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
+    """Reopen a done ticket (-m why): to open when its requirements are still approved, else backlog. Human only."""
+    ws = _ws()
+    t = _human_op(ws, ref, lambda ops, kw: ops.reopen(ref, message or ""), lambda p: f"{p.id}: reopen to {p.status}",
+                  dry_run=dry_run, json_out=json_out, bind_file=True)
+    if dry_run:
+        return _dry(ws, t, json_out, f"{t.id}: would reopen to {t.status}")
+    _out(_view(ws, t), json_out, f"{t.id}: reopened to {t.status}")
 
 
 @app.command()

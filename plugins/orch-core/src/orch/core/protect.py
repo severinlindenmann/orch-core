@@ -1,7 +1,7 @@
 """Frontmatter fields only `orch` operations may change (shared by the guard and raw edits)."""
 from __future__ import annotations
 
-PROTECTED_KEYS = ("id", "status", "gates", "claim")
+PROTECTED_KEYS = ("id", "status", "gates", "claim", "resolution", "superseded_by")
 # Frozen for agents once the requirements are approved: the v2 requirements hash binds them (a smaller size can skip
 # the plan gate), and a v1 approval does not, so the guard keeps agents from changing them either way.
 FROZEN_AFTER_APPROVAL = ("size", "type")

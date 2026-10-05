@@ -13,13 +13,14 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.8.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.9.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
 # 1.5: `artifact_items`: what the ticket links (orch.core.artifacts.doc_items), names, labels and kinds only
 # 1.6: `signed`: per approved gate and for a done verdict, whether this machine's signed ledger backs it, and who
 # 1.7: `gates.verify.hash`: the verdict hash the verdict was given on (null when none was stored)
+# 1.9: `resolution` and `superseded_by` (orch close --as)
 # 1.8: `artifact_items[].by` (who added it) and `.run` (a receipt's facts, orch task done --run); `revalidate`
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
@@ -48,7 +49,7 @@ def tasks_view_schema() -> dict:
 
 
 def ticket_schema() -> dict:
-    from orch.core.constants import PRIORITIES, SECTIONS, SIZES, STATUSES, TYPES
+    from orch.core.constants import PRIORITIES, RESOLUTIONS, SECTIONS, SIZES, STATUSES, TYPES
     from orch.core.query import NEEDS_ORDER
     from orch.core.questions import QTYPES
     from orch.core.tasks import FORMAT
@@ -80,6 +81,8 @@ def ticket_schema() -> dict:
             "priority": {"enum": list(PRIORITIES)}, "size": {"enum": list(SIZES)},
             "created": _NS, "updated": _NS, "labels": _SL, "parent": _NS, "blocked_by": _SL, "follow_ups": _SL,
             "sprint": _NS,  # 1.2: a sprint id from the workspace config (planning only)
+            # 1.9: why a done ticket is done (null while it is not), and the ticket that replaced it
+            "resolution": {"enum": [*RESOLUTIONS, None]}, "superseded_by": _NS,
             "external": {"type": "array", "items": {"type": "object", "required": ["key"], "properties": {"key": _S, "url": _NS}}},
             "repos": {"type": "array"}, "branches": {"type": "object"}, "prs": {"type": "array"},
             "claim": {"type": "object", "properties": {"session": _NS, "harness": _NS, "at": _NS}},
@@ -164,6 +167,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
         doc[key] = (copy.deepcopy(value) if value is not None
                     else [] if key in _LIST_KEYS else {} if key == "branches" else None)
     claim = m.get("claim") if isinstance(m.get("claim"), dict) else {}
+    doc["resolution"] = query.resolution(m, str(m.get("status") or ""))
+    doc["superseded_by"] = str(m["superseded_by"]) if doc["resolution"] in ("superseded", "duplicate") and m.get("superseded_by") else None
     doc["sprint"] = str(m["sprint"]) if isinstance(m.get("sprint"), (str, int)) and str(m["sprint"]) else None
     doc["claim"] = {"session": claim.get("session"), "harness": claim.get("harness"), "at": claim.get("at")}
     verify = (m.get("gates") or {}).get("verify") or {}

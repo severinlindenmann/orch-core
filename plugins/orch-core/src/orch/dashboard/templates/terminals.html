@@ -38,9 +38,9 @@
   <p>A terminal is a shell as you, so it never answers over the network. Open Mission Control on the computer that runs <code>orch serve</code>, at the <code>127.0.0.1</code> link it prints.</p>
 </section>
 {% elif not rows %}
-<section class="card">
+{% if not factory %}<section class="card">
   <p>No terminal runs in this workspace. Start one here, or with <b>Open in Mission Control</b> in a ticket’s Start agent box.</p>
-</section>
+</section>{% endif %}
 {% else %}
 <div class="tabs" role="group" aria-label="Show">
   <button type="button" data-filter="all" aria-pressed="true">All<span class="count">{{ rows|length }}</span></button>
@@ -70,6 +70,24 @@
   {% endfor %}
 </div>
 {% endif %}
+{% if addon_on and available and local %}{% for g in factory %}
+<section class="term-factory" id="factory-{{ g.epic }}" aria-labelledby="fg-{{ g.epic }}">
+  <h2 id="fg-{{ g.epic }}">Factory · <a class="lnk" href="/factory/{{ g.epic }}">{{ g.epic }}</a></h2>
+  <p class="muted">Sessions the AI Factory runner started for this epic, on its own tmux server. Watch them and type into them here; the runner owns them, so they end only from <a class="lnk" href="/factory/{{ g.epic }}">the run view</a>.</p>
+  <div class="term-grid" data-factory-grid>
+    {% for r in g.rows %}
+    <div class="term-tile" data-factory-tile="{{ r.w.name }}">
+      <span class="term-tile-head">
+        <a class="lnk term-title" href="/factory-sessions/{{ r.w.name }}">{{ "Planner" if r.w.planner else r.w.child }}</a>
+        <span class="term-state" data-runner-owned>runner-owned</span>
+      </span>
+      <pre class="term-screen term-tail" data-screen="factory:{{ r.w.name }}" data-tail>{{ r.screen.tail|safe }}</pre>
+      <span class="term-tile-foot"><a class="lnk" href="/factory/{{ g.epic }}">{{ g.epic }} run view</a><span class="mono">{{ r.w.name }}</span></span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}{% endif %}
 <p class="muted">From any terminal: <code>tmux -L orch attach -t &lt;name&gt;</code>. Sessions started elsewhere are not shown here.</p>
 <script src="{{ static_url('terminal.js') }}" defer></script>
 {% endblock %}

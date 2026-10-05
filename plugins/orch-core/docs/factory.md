@@ -501,7 +501,8 @@ agent with the first 8 characters of it. That grants nothing: the hook trusts th
 the one the runner recorded, so a copied id gets no factory treatment (and the binding is gone once the session ends).
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
-private folder), not on the Terminals' socket, so these sessions are not in Mission Control's Terminals page. The
+private folder), not on the Terminals' socket; Mission Control's Terminals page shows them in a group of their own
+("Watching the sessions", below). The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
 path only when trusted: the file owned by you or root and not writable by group or others, its folder owned by you
 or root and not writable by everyone (Homebrew's group-writable `/opt/homebrew/bin` is fine; `/tmp` is not). That keeps
@@ -740,6 +741,20 @@ state ("<child> waits at Claude's folder-trust question for <path>; accept it on
 cannot answer it"; never "Working"). Answer it in the session's pane, or run `orch factory clones trust` (yours, in a
 terminal): it lists the clone folders still untrusted and the `projects` entries to add to `.claude.json` with Claude
 closed.
+
+**Watching the sessions.** With the Terminals addon on (and tmux), the Terminals page shows the runner's sessions of
+this workspace in a group per epic, "Factory · <epic>", beside orch's own sessions: the same live tiles and full
+view (screens as escaped HTML over server-sent events), each tile marked "runner-owned" and linking to its epic's
+run view, and the run view links to that group ("Watch the sessions"). The sessions come only from the runner's own
+bindings of this workspace (never from listing a tmux server), each name checked by the Terminals' name rule, and
+every tmux call is an argv list on the runner's own socket, whose path comes from the runner, never from a request.
+You can type into them as into orch's own sessions (for example to answer Claude's folder-trust question), with the
+same rules: the token cookie, a request from this machine with a loopback Host, a same-origin POST. There is no end
+from that page: the runner owns their lifecycle, so you stop them with Stop in the run view. While you type, the
+runner types no nudge into that session for 60 seconds (it records the time of your last browser key, in memory).
+With Terminals off (or tmux missing), the run view shows a read-only look at each session's last 12 lines,
+escaped, and says how to turn Terminals on. Agents reach none of this: the dashboard needs your token, the guard
+refuses `tmux -L orch` and anything naming the permits folder (where the runner's socket is).
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto
 mode"); the runner does not change that (D2 B).

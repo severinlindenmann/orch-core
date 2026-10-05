@@ -173,11 +173,13 @@ def free_name(ws, base: str) -> str:
     return name
 
 
-def capture(name: str) -> dict | None:
+def capture(name: str, run=None) -> dict | None:
     """The visible screen as {"html", "cols", "rows"} (escaped HTML and the pane's size, so the browser can scale it
-    to fit), or None when the session is gone. One tmux call: capture-pane, then the size on a last line."""
+    to fit), or None when the session is gone. One tmux call: capture-pane, then the size on a last line. `run`: the
+    tmux of another server (the factory runner's own socket), else orch's."""
+    run = run or tmux
     try:
-        r = tmux(["capture-pane", "-p", "-e", "-t", _target(name), ";",
+        r = run(["capture-pane", "-p", "-e", "-t", _target(name), ";",
                   "display-message", "-p", "-t", _target(name), "#{pane_width} #{pane_height}"])
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -187,7 +189,7 @@ def capture(name: str) -> dict | None:
     return _screen(text, size)
 
 
-def capture_many(names: list[str]) -> dict[str, dict | None]:
+def capture_many(names: list[str], run=None) -> dict[str, dict | None]:
     """capture() for every session in `names` with ONE tmux call (the grid's tick): each screen comes after a header
     line that carries a fresh random marker, so text on a screen cannot pose as another session's header. A session
     the batch did not reach (it ended mid-way and tmux stopped there) is captured on its own, or None."""
@@ -202,7 +204,7 @@ def capture_many(names: list[str]) -> dict[str, dict | None]:
         args += ["display-message", "-p", "-t", _target(name), f"{mark} #{{session_name}} #{{pane_width}} #{{pane_height}}",
                  ";", "capture-pane", "-p", "-e", "-t", _target(name)]
     try:
-        r = tmux(args)
+        r = (run or tmux)(args)
         out = r.stdout
     except (OSError, subprocess.TimeoutExpired):
         out = ""
@@ -213,7 +215,7 @@ def capture_many(names: list[str]) -> dict[str, dict | None]:
         name, _, size = header.partition(" ")
         if name in names and name not in got:
             got[name] = _screen(text[:-1] if text.endswith("\n") else text, size)  # capture-pane's last newline
-    return {n: got[n] if got.get(n) is not None else capture(n) for n in names}
+    return {n: got[n] if got.get(n) is not None else capture(n, run) for n in names}
 
 
 def _screen(text: str, size: str) -> dict | None:
@@ -230,8 +232,8 @@ def _screen(text: str, size: str) -> dict | None:
             "cols": cols, "rows": rows}
 
 
-def send(name: str, seq: list) -> None:
-    """Send `seq`, a list of {"text": str} (typed literally) and {"key": name} items, in order."""
+def send(name: str, seq: list, run=None) -> None:
+    """Send `seq`, a list of {"text": str} (typed literally) and {"key": name} items, in order (`run`: as capture)."""
     if not isinstance(seq, list) or len(seq) > 256:
         raise ValidationError("keys must be a list of at most 256 items")
     calls = []
@@ -253,13 +255,13 @@ def send(name: str, seq: list) -> None:
         else:
             raise ValidationError("each item is {\"text\": …} or {\"key\": …}")
     for args in calls:
-        if tmux(args).returncode != 0:
+        if (run or tmux)(args).returncode != 0:
             raise UsageError(f"{name} did not take the keys (has it ended?)")
 
 
-def resize(name: str, cols: int, rows: int) -> None:
+def resize(name: str, cols: int, rows: int, run=None) -> None:
     cols, rows = max(20, min(int(cols), 400)), max(5, min(int(rows), 200))
-    tmux(["resize-window", "-t", _target(name), "-x", str(cols), "-y", str(rows)])
+    (run or tmux)(["resize-window", "-t", _target(name), "-x", str(cols), "-y", str(rows)])
 
 
 def end(name: str) -> None:

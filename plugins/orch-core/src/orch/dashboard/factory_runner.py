@@ -75,7 +75,51 @@ def _tmux(args: list[str], timeout: float = 10) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL, env=env)
 
 
+# -- the factory's sessions on the Terminals page ----------------------------------------------------------------------
+HUMAN_QUIET = 60  # seconds after the human's last key from the browser in which the runner types no nudge
+HUMAN_KEYS: dict[str, float] = {}  # session name -> time.monotonic() of the human's last key from the browser
+
+
+def note_human_keys(name: str) -> None:
+    """The human typed into factory session `name` from the browser (the Terminals page): no nudge for a while."""
+    import time
+    HUMAN_KEYS[name] = time.monotonic()
+
+
+def human_typed(name: str) -> bool:
+    import time
+    at = HUMAN_KEYS.get(name)
+    return at is not None and time.monotonic() - at < HUMAN_QUIET
+
+
+def watched(ws) -> list[dict]:
+    """The factory sessions of this workspace the Terminals page shows: from the runner's own bindings of this
+    workspace only (never a listing of the tmux server), each name checked by the Terminals' name rule:
+    [{name, epic, child, planner}], oldest first."""
+    from orch.core import factory_sessions
+    from orch.dashboard import terminals
+    return [{"name": b["name"], "epic": str(b["epic"]).upper(), "child": b["child"],
+             "planner": factory_sessions.is_planner(b)}
+            for b in factory_sessions.bindings(ws)
+            if isinstance(b.get("name"), str) and terminals.NAME.fullmatch(b["name"])]
+
+
+def find_watched(ws, name: str) -> dict | None:
+    """The factory session `name` of this workspace (watched), or None."""
+    return next((w for w in watched(ws) if w["name"] == name), None) if isinstance(name, str) else None
+
+
+def screens(names: list[str]) -> dict:
+    """terminals.capture_many on the factory's own tmux socket (escaped HTML screens)."""
+    from orch.dashboard import terminals
+    return terminals.capture_many(names, run=_tmux)
+
+
 class TmuxLauncher:
+    def human_typed(self, name: str) -> bool:
+        """Whether the human typed into this session from the browser within HUMAN_QUIET seconds."""
+        return human_typed(name)
+
     def alive(self) -> set[str] | None:
         """Sessions whose pane still runs. Panes stay after their process exits (remain-on-exit, set at start), so
         the runner can read how a session ended (reap) before it ends the session."""

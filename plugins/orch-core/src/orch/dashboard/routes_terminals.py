@@ -93,16 +93,35 @@ def _rows(ws) -> list[dict]:
     return rows
 
 
+FACTORY_KEY = "factory:"  # a factory tile's screen key in the grid's stream (never an orch session's name)
+
+
+def _factory_groups(ws) -> list[dict]:
+    """The AI Factory runner's sessions of this workspace, by epic: [{epic, rows: [{w, screen}]}]. Only from the
+    runner's own bindings (factory_runner.watched), screens from the runner's own tmux socket."""
+    from orch.dashboard import factory_runner
+    watched = factory_runner.watched(ws)
+    if not watched:
+        return []
+    screens = factory_runner.screens([w["name"] for w in watched])
+    groups: dict[str, list] = {}
+    for w in watched:
+        groups.setdefault(w["epic"], []).append({"w": w, "screen": screens.get(w["name"]) or NO_SCREEN})
+    return [{"epic": e, "rows": rows} for e, rows in groups.items()]
+
+
 @router.get("/terminals")
 def grid(request: Request):
     ws = request.app.state.ws
     addon_on, found, local = terminals.addon_on(ws), terminals.available(), terminals.local_request(request)
     on = addon_on and found and local
     rows = _rows(ws) if on else []
+    factory = _factory_groups(ws) if on else []
     harness = terminals.settings(ws.root)["harness"]
     counts = {k: sum(1 for r in rows if r["info"].get("status") == k) for k in ("waiting", "busy", "idle")}
     return page(request, "terminals.html", 200 if on else 404, nav="terminals", title="Terminals", addon_on=addon_on,
-                available=found, local=local, rows=rows, counts=counts, harness_label=agent_start.HARNESS_LABELS.get(harness, harness))
+                available=found, local=local, rows=rows, counts=counts, factory=factory,
+                harness_label=agent_start.HARNESS_LABELS.get(harness, harness))
 
 
 @router.get("/terminals/stream")
@@ -120,13 +139,18 @@ async def grid_stream(request: Request):
         quiet, wait, info_at = 0.0, TILE_SECONDS, None
         loop = asyncio.get_running_loop()
         yield ": connected\n\n"
+        from orch.dashboard import factory_runner
         while not await request.is_disconnected():
             found = await asyncio.to_thread(terminals.sessions, ws)
-            now = sorted(s.name for s in found)
+            fact = [w["name"] for w in await asyncio.to_thread(factory_runner.watched, ws)]
+            now = sorted(s.name for s in found) + sorted(FACTORY_KEY + n for n in fact)
             if names is not None and now != names:
                 yield _sse("sessions", now)  # one started or ended: the page reloads to redraw its tiles
             names = now
             screens = await asyncio.to_thread(terminals.capture_many, [s.name for s in found])
+            if fact:  # the factory's sessions, from the runner's own socket
+                more = await asyncio.to_thread(factory_runner.screens, fact)
+                screens.update({FACTORY_KEY + n: v for n, v in more.items()})
             changed = {}
             for name, screen in screens.items():
                 if screen is not None and screen != last.get(name):
@@ -163,6 +187,101 @@ def _found(request: Request, name: str):
         return terminals.find(request.app.state.ws, name)
     except ValidationError:
         return None
+
+
+# -- the factory runner's sessions: watched and typed into, never ended from here ------------------------------------
+# Only names the runner's own bindings of this workspace hold (factory_runner.find_watched), each tmux call an argv
+# list on the runner's own socket (factory_runner._tmux: the path comes from the runner, never from a request). There
+# is no end route: the runner owns their lifecycle (the run view's Stop). A key from here keeps the runner's nudge
+# away from that session for HUMAN_QUIET seconds.
+
+def _factory_found(request: Request, name: str):
+    from orch.dashboard import factory_runner
+    if _off(request) or not isinstance(name, str) or not terminals.NAME.fullmatch(name):
+        return None
+    return factory_runner.find_watched(request.app.state.ws, name)
+
+
+def _factory_run():
+    from orch.dashboard import factory_runner
+    return factory_runner._tmux
+
+
+@router.get("/factory-sessions/{name}")
+def factory_view(request: Request, name: str):
+    w = _factory_found(request, name)
+    if w is None:
+        return page(request, "terminal.html", 404, nav="terminals", title="Terminal", s=None, term_name=name,
+                    screen=NO_SCREEN)
+    screen = terminals.capture(name, run=_factory_run()) or NO_SCREEN
+    s = terminals.Session(name, "", 0, 0, screen["cols"], screen["rows"])
+    live = {"status": "", "now": f"{w['child']}: a session the AI Factory runner owns", "sig": "", "ticket": "",
+            "tasks": "", "more": 0, "subs": "", "context": "", "cache": ""}
+    return page(request, "terminal.html", nav="terminals", title=f"{w['child']} · factory", s=s, info={}, live=live,
+                compact=agentinfo.compact, screen=screen, factory=w)
+
+
+@router.get("/factory-sessions/{name}/stream")
+async def factory_view_stream(request: Request, name: str):
+    if _factory_found(request, name) is None:
+        return PlainTextResponse("no such terminal", status_code=404)
+    run = _factory_run()
+
+    async def gen():
+        last, quiet, wait = None, 0.0, VIEW_SECONDS
+        yield ": connected\n\n"
+        while not await request.is_disconnected():
+            screen = await asyncio.to_thread(terminals.capture, name, run)
+            if screen is None:
+                yield _sse("gone", name)
+                return
+            sent = screen != last
+            if sent:
+                last = screen
+                yield _sse("screen", screen)
+            wait = VIEW_SECONDS if sent else min(VIEW_IDLE_SECONDS, wait * 2)
+            quiet = 0.0 if sent else quiet + wait
+            if quiet >= HEARTBEAT_SECONDS:
+                yield ": ping\n\n"
+                quiet = 0.0
+            if await _nap(FACTORY_KEY + name, wait):
+                wait = VIEW_SECONDS
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/factory-sessions/{name}/keys")
+async def factory_keys(request: Request, name: str):
+    from orch.dashboard import factory_runner
+    if not strict_same_origin(request):
+        return PlainTextResponse("cross-origin request refused", status_code=403)
+    if _factory_found(request, name) is None:
+        return PlainTextResponse("no such terminal", status_code=404)
+    try:
+        data = await _json(request)
+        factory_runner.note_human_keys(name)  # before the keys land: the runner's nudge stays away meanwhile
+        await asyncio.to_thread(terminals.send, name, data.get("seq") if isinstance(data, dict) else None,
+                                _factory_run())
+    except OrchError as e:
+        return PlainTextResponse(error_text(e), status_code=400)
+    _wake(FACTORY_KEY + name)
+    return Response(status_code=204)
+
+
+@router.post("/factory-sessions/{name}/size")
+async def factory_size(request: Request, name: str):
+    if not strict_same_origin(request):
+        return PlainTextResponse("cross-origin request refused", status_code=403)
+    if _factory_found(request, name) is None:
+        return PlainTextResponse("no such terminal", status_code=404)
+    try:
+        data = await _json(request)
+        cols, rows = int(data["cols"]), int(data["rows"])
+    except (OrchError, KeyError, TypeError, ValueError):
+        return PlainTextResponse("cols and rows must be numbers", status_code=400)
+    await asyncio.to_thread(terminals.resize, name, cols, rows, _factory_run())
+    _wake(FACTORY_KEY + name)
+    return Response(status_code=204)
 
 
 @router.get("/terminals/{name}")

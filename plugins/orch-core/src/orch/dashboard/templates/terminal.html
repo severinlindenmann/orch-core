@@ -16,7 +16,7 @@
   <div>
     <h1>{{ info.title or s.name }}</h1>
     <p class="muted"><span class="term-state term-state-{{ live.status or 'none' }}" data-f="state">{{ labels.get(live.status, "running") }}</span>
-      <span class="mono">{{ s.name }}</span> · <code>tmux -L orch attach -t {{ s.name }}</code></p>
+      <span class="mono">{{ s.name }}</span> · {% if factory %}<span class="chip" data-runner-owned>runner-owned</span> {{ factory.child }} of <a class="lnk" href="/factory/{{ factory.epic }}">{{ factory.epic }}'s run</a>{% else %}<code>tmux -L orch attach -t {{ s.name }}</code>{% endif %}</p>
   </div>
   <div class="row">
     <div class="term-mode" role="group" aria-label="Mode">
@@ -25,7 +25,7 @@
       <button type="button" class="btn" data-mode="cli" aria-pressed="false" title="Every key goes straight to the session">CLI</button>
     </div>
     <button type="button" class="btn" data-details aria-expanded="true" aria-controls="term-details">Details</button>
-    <form method="post" action="/terminals/{{ s.name }}/end" data-dialog="End {{ s.name }}?" data-dialog-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-dialog-confirm="End session" data-dialog-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>
+    {% if not factory %}<form method="post" action="/terminals/{{ s.name }}/end" data-dialog="End {{ s.name }}?" data-dialog-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-dialog-confirm="End session" data-dialog-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>{% endif %}
   </div>
 </div>
 
@@ -35,7 +35,7 @@
 </p>
 
 <div class="term-layout">
-<section class="term" data-term="{{ s.name }}" data-mode="watch">
+<section class="term" data-term="{{ s.name }}" data-mode="watch"{% if factory %} data-base="/factory-sessions/{{ s.name }}"{% endif %}>
   <div class="term-bar"><span class="term-state-text" role="status">watching · read-only</span>
     <span class="term-view" role="group" aria-label="View">
       <button type="button" data-view="readable" aria-pressed="true">Readable</button>
@@ -64,6 +64,10 @@
   </div>
 </section>
 
+{% if factory %}<aside class="term-details card" id="term-details" aria-label="Details">
+  <section><h2>Runner-owned</h2>
+    <p>The AI Factory runner started this session for {{ factory.child }} in {{ factory.epic }} and owns it: you can watch it and type into it (for example to answer Claude's folder-trust question), but it is ended only by the runner. To stop it, use Stop in <a class="lnk" href="/factory/{{ factory.epic }}">the run view</a>. While you type, the runner types no nudge into it.</p></section>
+</aside>{% else %}
 <aside class="term-details card" id="term-details" aria-label="Details">
   <section>
     <h2>Tickets</h2>
@@ -102,7 +106,7 @@
     </details>
   </section>
   <p class="term-sub">As read when this page opened. The line above the screen stays live.</p>
-</aside>
+</aside>{% endif %}
 </div>
 {% endif %}
 <script src="{{ static_url('terminal.js') }}" defer></script>

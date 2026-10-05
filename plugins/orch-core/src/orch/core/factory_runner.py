@@ -1208,6 +1208,9 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         rec, text = _observe(actor, capture, b, rec)
         if rec["idle"] == "trust" and was != "trust":  # said once, when the session reaches the question
             lines.append(trust_line(b))
+        typed = getattr(launcher, "human_typed", None)
+        if typed is not None and typed(b["name"]):
+            return  # the human typed into it from the browser just now: never type over them
         if text is None or type_ is None or rec["count"] >= MAX_NUDGES or rec["answers"] == now_answers:
             return
         now = clock.now()

@@ -75,7 +75,7 @@
   };
 
   // ---- the overview ---------------------------------------------------------------------------------------------------
-  const grid = document.querySelector("[data-term-grid]");
+  const grid = document.querySelector("[data-term-grid]") || document.querySelector("[data-factory-grid]");
   if (grid) {
     const tiles = () => [...grid.querySelectorAll("[data-tile]")];
     let filter = "all";
@@ -110,7 +110,7 @@
     }
     live("/terminals/stream", { screens: (e) => {
       for (const [name, screen] of Object.entries(JSON.parse(e.data))) {
-        const pre = grid.querySelector('[data-screen="' + CSS.escape(name) + '"]');
+        const pre = document.querySelector('[data-screen="' + CSS.escape(name) + '"]'); // factory tiles too
         if (pre) pre.innerHTML = screen.tail; // escaped by the server (terminals.ansi_to_html)
       }
     }, infos: (e) => {
@@ -147,7 +147,7 @@
   const term = document.querySelector("[data-term]");
   if (!term) return;
   const name = term.dataset.term;
-  const base = "/terminals/" + encodeURIComponent(name);
+  const base = term.dataset.base || "/terminals/" + encodeURIComponent(name); // a factory session: /factory-sessions/
   const pre = term.querySelector(".term-screen");
   const stateText = term.querySelector(".term-state-text");
   const moreCols = term.querySelector("[data-more-cols]");

@@ -7,7 +7,8 @@ While it is enabled (and tmux is installed):
 - the Start agent box has **Open in Mission Control**: the agent runs detached in orch's own tmux server (`tmux -L orch`);
 - **Terminals** in the menu shows every such session started in this workspace as a live tile, plus **New scratch session**;
 - one session opens full size: **Watch** sends nothing, **Type** sends your keys; key buttons, a reply field and **End session…**;
-- Today shows a tile with how many run.
+- Today shows a tile with how many run;
+- the AI Factory runner's sessions of this workspace appear in a group per epic, "Factory · <epic>" (they run on the runner's own tmux server): watch them and type into them as above, marked runner-owned, with no End (stop them from the epic's run view); while you type, the runner sends no nudge into that session.
 
 The pages and the live screens are part of orch-core, because addons render widgets only; this addon is their switch and counts the sessions. When it is off, the menu item, the button and every `/terminals` page are gone.
 

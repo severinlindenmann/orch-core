@@ -479,3 +479,20 @@ def test_a_session_at_the_trust_question_is_said_once_and_never_answered(fws, fa
 def test_trust_question_text_matching():
     assert fr.trust_question(NEW_TRUST) and fr.trust_question(TRUST)
     assert not fr.trust_question(IDLE) and not fr.trust_question(None) and not fr.trust_question(ASKING)
+
+
+def test_no_nudge_while_the_human_typed_into_the_session_from_the_browser(fws, fa, fh, human, pane, at):
+    typed = {"now": True}
+    pane.human_typed = lambda name: typed["now"]  # the dashboard's record of the human's last browser key
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    _ask_and_answer(fws, human, b)
+    _run_until_idle(fws, human, pane, at, 10)
+    at(fr.IDLE_SECONDS * 4)
+    _tick(fws, human, pane)
+    assert pane.typed == [] and fs.nudges(d["id"]) == 0  # not even counted: the human is at the keyboard
+    typed["now"] = False  # a minute later
+    at(fr.IDLE_SECONDS * 6)
+    _tick(fws, human, pane)
+    assert pane.typed == [(b["name"], fr.NUDGES["answered"])]

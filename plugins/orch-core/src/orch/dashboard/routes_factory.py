@@ -40,7 +40,28 @@ def factory_run(request: Request, ref: str):
     if run is None:
         return _not_found(request, f"{epic.id} is not an AI Factory epic, or AI Factory is switched off")
     return page(request, "factory_run.html", nav="factory", title=f"{run['name']} {epic.id}", run=run,
-                steps=factory_data.STEPS)
+                steps=factory_data.STEPS, watch=_watch(request, ws, epic.id))
+
+
+PEEK_LINES = 12
+
+
+def _watch(request: Request, ws, eid: str) -> dict | None:
+    """The run view's sessions box: with Terminals on (and a local request), a link to watch and type into the epic's
+    sessions there; otherwise a read-only peek at each one's last lines (escaped), from the runner's own socket."""
+    from orch.core import factory_runner as core_runner
+    from orch.dashboard import factory_runner, terminals
+    try:
+        mine = [w for w in factory_runner.watched(ws) if w["epic"] == eid.upper()]
+    except Exception:
+        return None
+    if not mine:
+        return None
+    on = terminals.enabled(ws, request)
+    peek = [] if on else [{"name": w["name"], "child": "Planner" if w["planner"] else w["child"],
+                           "tail": core_runner.escaped_tail(factory_runner.TmuxLauncher().capture(w["name"]) or "",
+                                                            PEEK_LINES)} for w in mine]
+    return {"on": on, "n": len(mine), "peek": peek}
 
 
 @router.post("/factory/{ref}/release/retry")

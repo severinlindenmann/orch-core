@@ -331,6 +331,14 @@ def related(
     _out(data, json_out, rel.render(data))
 
 
+@app.command()
+def graph(json_out: JsonOpt = False) -> None:
+    """The workspace as a graph: tickets, the files their commits changed, links, and open tickets in the same file."""
+    from orch.core import graph as g
+    data = g.build(_ws())
+    _out(data, json_out, g.render(data))
+
+
 # -- work ------------------------------------------------------------------------------
 
 @app.command()

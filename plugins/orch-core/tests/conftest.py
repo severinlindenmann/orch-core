@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -269,3 +270,45 @@ def wurl(ws):
         block = next(b for b in blocks if b.key == key or str(b.index) == key)
         return frame_path(tid, block)
     return _url
+
+
+# -- a git repo whose commits name tickets (orch related, orch graph) ---------------------------------------------
+
+def git(root, *args):
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+
+def commit(root, subject, files, branch=None):
+    if branch:
+        git(root, "checkout", "-q", "-B", branch)
+    for name, text in files.items():
+        p = root / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+        git(root, "add", name)
+    git(root, "commit", "-q", "-m", subject)
+
+
+@pytest.fixture
+def ticket_repo(ws_root):
+    git(ws_root, "init", "-q", "-b", "main")
+    git(ws_root, "config", "user.email", "t@example.com")
+    git(ws_root, "config", "user.name", "t")
+    return ws_root
+
+
+@pytest.fixture
+def ticket_history(ws, ticket_repo, put):
+    login = put("done", title="Add login form", sections={"Summary": "Login with email", "Findings": "Keep sessions server side"})
+    sess = put("done", title="Session timeout")
+    mine = put("in-progress", title="Remember me", parent=None)
+    other = put("open", title="Rate limit login")
+    commit(ticket_repo, f"{login} add login form", {"src/auth/login.py": "1", "src/auth/session.py": "1", "tests/test_login.py": "1"})
+    commit(ticket_repo, f"{sess} expire sessions", {"src/auth/session.py": "2", "src/auth/login.py": "2"})
+    commit(ticket_repo, f"{login} fix login redirect", {"src/auth/login.py": "3", "src/auth/session.py": "3"})
+    commit(ticket_repo, "untracked chore", {"README.md": "x"})
+    commit(ticket_repo, f"{other} throttle", {"src/auth/login.py": "4"}, branch="feature/rate-limit")
+    git(ticket_repo, "checkout", "-q", "main")
+    commit(ticket_repo, f"{mine} remember me cookie", {"src/auth/login.py": "5"}, branch="feature/remember")
+    git(ticket_repo, "checkout", "-q", "main")
+    return {"login": login, "sess": sess, "mine": mine, "other": other}

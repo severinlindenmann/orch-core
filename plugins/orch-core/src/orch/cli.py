@@ -874,6 +874,31 @@ def ledger_adopt(
     typer.echo(f"signed {signed} of {len(items)}")
 
 
+@app.command("checks")
+def checks_(action: Annotated[str, typer.Argument(help="status | sign")] = "status", json_out: JsonOpt = False) -> None:
+    """The named checks (`checks` in config.json) that `orch task done --run` runs for a verify line `check:<name>`.
+    `sign` is the human's decision, recorded in the approval ledger (run it in your own terminal): what each check runs
+    is then the signed version, and an edited or unsigned check is reported on every run. `status` lists each check."""
+    from orch.core import ledger
+    if action not in ("status", "sign"):
+        raise UsageError("expected status or sign")
+    ws = _ws()
+    if action == "sign":
+        from orch.actor import confirm_typed, require_human_terminal
+        require_human_terminal("signing the workspace's checks")
+        names = ledger.checks_digests(ws.config)
+        if not names:
+            raise UsageError("this workspace has no `checks` in orchestrator/config.json")
+        for n, c in (ws.config.get("checks") or {}).items():
+            typer.echo(f"check {n}:", err=json_out)
+            for st in (c.get("steps") or []) if isinstance(c, dict) else []:
+                typer.echo(f"  {st.get('name')}: {st.get('run')}", err=json_out)
+        typer.echo("`orch task done --run` will run exactly these commands, in an agent's checkout.", err=json_out)
+        _ops(ws, confirm_typed("CHECKS")).sign_checks()
+    state = {n: ledger.check_state(ws, n) for n in ledger.checks_digests(ws.config)}
+    _out({"checks": state}, json_out, "\n".join(f"{n}: {s}" for n, s in state.items()) or "no checks configured")
+
+
 @ledger_app.command("repair")
 def ledger_repair() -> None:
     """Accept the one signed entry a crash left past the ledger's head record. Human only.

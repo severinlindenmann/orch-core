@@ -1206,6 +1206,21 @@ class Ops(TaskOpsMixin):
         self.ws.config.setdefault("widgets", {})["html"] = on
         self._emit(None, "setting.changed", {"setting": ledger.WIDGETS_HTML, "value": on})
 
+    def sign_checks(self) -> dict:
+        """Sign the workspace's named checks (`checks` in config.json) as they stand: what each check runs, as a digest,
+        in the ledger. Human only, like `widgets.html` on. The config stays the source; a check edited afterwards
+        counts as changed (orch.core.ledger.check_state) until the human signs again. Returns {name: digest}."""
+        from orch.actor import process_evidence
+        from orch.core import ledger
+        require_human(self.actor, "signing the workspace's checks")
+        digests = ledger.checks_digests(self.ws.config)
+        if self.dry_run:
+            return digests
+        with lock(self.ws, "config"):
+            ledger.record_setting(self.ws, ledger.CHECKS, digests, self.actor, process_evidence())
+        self._emit(None, "setting.changed", {"setting": ledger.CHECKS, "value": sorted(digests)})
+        return digests
+
     def _epic_verdict(self, eid: str, verdict: str, message: str | None, expected_hash: str | None = None) -> Ticket:
         """One verdict for the epic: every open child must be in testing; each gets its own signed done verdict,
         then the epic is done."""

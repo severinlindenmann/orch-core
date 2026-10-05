@@ -156,7 +156,9 @@ def done(ref: str, task: TaskArg, message: MessageOpt = None,
         from orch.core import store
         rec = cli._ops(ws).task_done_run(ref, task, cwd=Path.cwd(), timeout=timeout, note=message)
         t = store.load(ws, ref)[1]
-        _report(t, json_out, f"{t.id}: {task.upper()} done · receipt {rec['receipt']}")
+        warn = {"unsigned": "check is not signed by the human", "changed": "check changed since the human signed it"}
+        _report(t, json_out, f"{t.id}: {task.upper()} done · receipt {rec['receipt']}"
+                + (f" · WARNING {warn[rec['check_state']]} (orch checks sign)" if rec.get("check_state") in warn else ""))
         return
     t = cli._ops(ws).task_done(ref, task, message)
     _report(t, json_out, f"{t.id}: {task.upper()} done")

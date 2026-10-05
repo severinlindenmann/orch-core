@@ -1553,7 +1553,7 @@ _CHECKS_WORD = re.compile(r"\bchecks\b")
 _CONFIG_JSON = re.compile(r"(?<![\w-])config\.json\b")
 _CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
                   "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
-                  "orchestrator/config.json")
+                  "orchestrator/config.json and sign it with `orch checks sign` in their own terminal")
 _WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widgets) is the human's setting, signed into "
                    "the approval ledger; ask the user to run `orch widget html on` in their own terminal (anyone may "
                    "turn it off with `orch widget html off`)")

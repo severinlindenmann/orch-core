@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import functools
 import html
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -121,6 +122,9 @@ def chrome(block: Block, ctx: Ctx, *, framed: bool = True, bare: bool = False) -
     if getattr(ctx.ticket, "is_page", False) and data.get("type") == "checks":
         notes.append(note("neu", "Note", "A claim written on this page: not a gate, and not the ticket's verdict. "
                                         "What a ticket records is shown on the ticket"))
+    if data.get("type") == "gates" and unverified_receipt(block, ctx):
+        notes.append(note("warn", "Unverified", "no receipt recorded by orch backs this block (`orch task done --run` "
+                                                "writes it): it was written by hand"))
     missing = any(p.level == "error" for p in problems)
     alt_label = "Show text"
     if block.layer == "type":
@@ -156,6 +160,28 @@ def chrome(block: Block, ctx: Ctx, *, framed: bool = True, bare: bool = False) -
         parts.append(f'<p class="w-caption">{esc(data["caption"])}</p>')
     parts.append("</figure>")
     return Markup("".join(parts))
+
+
+_RECEIPT_ID = re.compile(r"receipt-(t\d+)\Z", re.I)
+
+
+def unverified_receipt(block: Block, ctx: Ctx) -> bool:
+    """A `gates` block with the id `receipt-t<n>` (the one `orch task done --run` draws) that no receipt artifact entry
+    of that task backs: widgets are agent-writable, so a pass-looking block could be typed by hand. It is backed when the
+    task's newest receipt entry (written by orch alone) names the same steps with the same statuses. Page widgets and
+    blocks with any other id are not judged."""
+    m = _RECEIPT_ID.match(str((block.data or {}).get("id") or ""))
+    meta = getattr(ctx.ticket, "meta", None)
+    if not m or not isinstance(meta, dict) or getattr(ctx.ticket, "is_page", False):
+        return False
+    task = m.group(1).upper()
+    runs = [e for e in (meta.get("artifacts") or []) if isinstance(e, dict) and e.get("kind") == "receipt"
+            and str(e.get("task") or "").upper() == task and isinstance(e.get("run"), dict)]
+    if not runs:
+        return True
+    shown = [(i.get("name"), i.get("status")) for i in (block.data.get("items") or []) if isinstance(i, dict)]
+    steps = [(s.get("name"), s.get("status")) for s in (runs[-1]["run"].get("steps") or []) if isinstance(s, dict)]
+    return shown != steps
 
 
 def frame_path(ticket_id: str, block: Block) -> str:

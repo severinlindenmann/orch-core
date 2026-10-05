@@ -118,7 +118,10 @@ line itself, in the directory the agent stands in, and keeps what happened:
 - A `verify` line `check:<name>` runs the workspace's named check: `checks.<name>.steps` in
   `orchestrator/config.json`, in order (`{"steps": [{"name": "build", "run": "npm run build"}, ...], "keep_going":
   false}`). What verification takes differs per project, so the project says it once; an agent picks the check by
-  name and cannot change what it runs (the guard refuses an agent edit of `checks`). A `verify` line
+  name and cannot change what it runs (the guard refuses an agent edit of `checks`). The human signs the checks
+  with `orch checks sign` in their own terminal (a digest per check, in the approval ledger, like `widgets.html`);
+  `orch checks` lists each as signed, changed (edited since) or unsigned, `orch check` warns about the last two, and
+  a run of such a check still happens but its output, note and `gates` source say it was not signed. A `verify` line
   `cmd: <command>` is one step named `verify`. Any other line is prose (`deploy and one green run per job`) and is
   never run: `--run` refuses it. After a failing step the rest are skipped unless `keep_going`. The timeout covers
   the whole run: `--timeout`, else the check's own `timeout` (seconds), else 540 s, under the 600 s an agent
@@ -132,6 +135,8 @@ line itself, in the directory the agent stands in, and keeps what happened:
   `seconds`).
 - Verification gets a core `gates` widget with the id `receipt-t<n>`: a row per step with its status and time,
   the receipt and the commit as its source. The next run of the same task replaces it.
+- The receipt's output is kept on disk while the command runs in a bounded temp file (twice the receipt's size cap
+  at most; older output is dropped, and the receipt then starts with a cut marker).
 - The task is ticked only when every step passed; its note names the receipt. A failing run keeps its receipt and
   widget, leaves the task open and exits with code 5.
 

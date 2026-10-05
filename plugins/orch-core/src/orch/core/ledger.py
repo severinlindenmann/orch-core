@@ -58,6 +58,7 @@ def workspace_id(ws) -> str:
 
 
 WIDGETS_HTML = "widgets.html"
+CHECKS = "checks"
 _checkouts: dict[str, str] = {}
 
 
@@ -139,6 +140,28 @@ def widgets_html_state(ws, signed: list[dict] | None = None) -> str:
         if ev.kind == "setting.changed" and (ev.data or {}).get("setting") == WIDGETS_HTML:
             return "on" if ev.data.get("value") is True else "unsigned"
     return "on"
+
+
+def checks_digests(cfg: dict | None) -> dict[str, str]:
+    """{check name: sha256 of the check's definition (canonical JSON)} for the config's `checks`: what the human signs."""
+    checks = (cfg or {}).get("checks")
+    if not isinstance(checks, dict):
+        return {}
+    return {str(n): hashlib.sha256(json.dumps(c, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                                   .encode("utf-8")).hexdigest() for n, c in checks.items()}
+
+
+def check_state(ws, name: str, signed: list[dict] | None = None) -> str:
+    """Whether the named check in the workspace config is the one the human signed (`orch checks sign`): "signed";
+    "changed" (a signed version of it exists, the config now says something else: a hand edit); "unsigned" (no signed
+    decision for this check on this machine, or the ledger does not hold up); "missing" (the config has no such check)."""
+    have = checks_digests(getattr(ws, "config", None)).get(name)
+    if have is None:
+        return "missing"
+    value = signed_setting(ws, CHECKS, signed)
+    if not isinstance(value, dict) or name not in value:
+        return "unsigned"
+    return "signed" if value[name] == have else "changed"
 
 
 def ledger_path(ws=None) -> Path:

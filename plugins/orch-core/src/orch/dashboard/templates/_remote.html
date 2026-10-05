@@ -1,0 +1,105 @@
+{% import "_ui.html" as ui %}
+{% import "_widgets.html" as w %}
+{#- The Remote tab. Everything a device supplied (label, subject) arrives already reduced and is escaped here; no
+    window.confirm: a revoke or a disconnect opens the dialog (data-dialog) or, without JS, the confirm page. -#}
+{% macro scope_select(name, current, options, id) %}<select name="{{ name }}" id="{{ id }}" aria-describedby="{{ id }}-w">{% for s in options %}<option value="{{ s }}"{{ " selected" if s == current }}>{{ s | capitalize }}</option>{% endfor %}</select>{% endmacro %}
+{% macro scope_note(id) %}<span class="muted" id="{{ id }}-w">Look reads. Decide answers and approves. Operate edits tickets: {{ remote.warnings.operate }} Type: {{ remote.warnings.type }}</span>{% endmacro %}
+<section class="card" aria-labelledby="remote-h" id="remote">
+  <h2 id="remote-h">Remote</h2>
+  <p>Use this workspace's dashboard from a phone or another computer through the relay, end to end encrypted. Everything on this tab is done here, on this computer: a remote device can never pair, rescope or revoke anything.</p>
+  {% if remote.damaged %}<div class="callout callout-err" role="alert"><p class="callout-title">Remote needs your attention</p><p>{{ remote.damaged }}</p></div>{% endif %}
+  {% if not remote.running %}
+  <div class="callout callout-info" role="status"><p>Remote is not running: start the dashboard with <code>--remote</code>.</p></div>
+  {% endif %}
+  <h3>Connection</h3>
+  <p>{{ ui.status("ok" if remote.link.ok else ("err" if remote.link.bad else "neu"), remote.link.label) }}</p>
+  {% if remote.link.sentence %}<p>{{ remote.link.sentence }}</p>{% endif %}
+  {% if remote.running and remote.link.can_disconnect %}
+  <form method="post" action="/workspace/remote/disconnect" data-dialog="Disconnect remote now?" data-dialog-body="Every remote request is refused and open remote streams end. This dashboard keeps running here." data-dialog-confirm="Disconnect remote" data-dialog-cancel="Stay connected" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn btn-danger">Disconnect remote now</button></form>
+  {% endif %}
+</section>
+
+{% if offer %}
+<section class="card" aria-labelledby="remote-offer-h">
+  <h2 id="remote-offer-h">Pairing link</h2>
+  <div class="callout callout-info pairing" role="status">
+    {{ w.widget(qr_widget(offer.url, "Scan with the phone"), none) }}
+    <p><button type="button" class="btn btn-primary copy-fix" data-copy="{{ offer.url }}">Copy pairing link</button></p>
+    <p class="muted">Scope offered: {{ offer.scope }}. Valid until {{ offer.expires }} (10 minutes), one use. Open it on the device, then compare its fingerprint below. Shown once; it is a secret until it expires.</p>
+  </div>
+</section>
+{% endif %}
+
+{% if remote.running and not remote.damaged %}
+<section class="card" aria-labelledby="remote-add-h">
+  <h2 id="remote-add-h">Add a device</h2>
+  <form method="post" action="/workspace/remote/offer" class="filters">
+    <label for="offer-scope">Scope {{ scope_select("scope", "look", remote.scopes, "offer-scope") }}</label>
+    <label><input type="checkbox" name="allow_type" value="1"> Allow Type (the device can run things on this Mac)</label>
+    <button type="submit" class="btn">Add a device</button>
+  </form>
+  <p>{{ scope_note("offer-scope") }}</p>
+</section>
+{% endif %}
+
+{% if remote.pending %}
+<section class="card" aria-labelledby="remote-pending-h" id="remote-pending">
+  <h2 id="remote-pending-h">Waiting for your decision</h2>
+  {% for p in remote.pending %}
+  <article class="stack" aria-label="Pairing request {{ p.label }}">
+    <p><b>{{ p.label }}</b> asks for scope <b>{{ p.scope }}</b>.</p>
+    <p>Fingerprint: <code>{{ p.fingerprint }}</code></p>
+    <p class="muted">{{ "Linked to an existing phone pairing." if p.linked else "Not linked to an existing phone pairing." }}{% if p.credential %} Registered: {{ p.credential }}.{% else %} No platform passkey registered yet.{% endif %}</p>
+    <p>Compare this fingerprint with the one the device shows. If the device says "this link was used by someone else", or the fingerprints differ, reject.</p>
+    <form method="post" action="/workspace/remote/pending/{{ p.id }}/reject"><button type="submit" class="btn btn-primary">Reject</button></form>
+    <form method="post" action="/workspace/remote/pending/{{ p.id }}/approve" class="filters">
+      <label for="grp-{{ p.id }}">Last group of the fingerprint shown on the device <input type="text" id="grp-{{ p.id }}" name="last_group" maxlength="4" size="5" autocomplete="off" required></label>
+      <label for="apv-{{ p.id }}">Scope {{ scope_select("scope", p.scope, p.scopes, "apv-" ~ p.id) }}</label>
+      {% if p.scope == "type" %}<label><input type="checkbox" name="allow_type" value="1"> Allow Type</label>{% endif %}
+      <button type="submit" class="btn">Approve</button>
+    </form>
+    <p class="muted">Approving can only lower the scope that was asked for.</p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="remote-devices-h" id="remote-devices">
+  <h2 id="remote-devices-h">Devices</h2>
+  {% if remote.devices %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th scope="col">Device</th><th scope="col">Scope</th><th scope="col">Last seen</th><th scope="col">Fingerprint</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+      {% for d in remote.devices %}
+      <tr>
+        <td class="cell-title"><b>{{ d.label }}</b><br><span class="muted">{{ d.kind }} · paired {{ d.paired }} · {{ "linked to a phone pairing" if d.linked else "no phone pairing" }}{% if d.credential %} · {{ d.credential }}{% endif %}</span></td>
+        <td data-label="Scope">{% if d.revoked %}{{ ui.status("neu", "revoked") }}{% elif remote.running %}
+          <form method="post" action="/workspace/remote/devices/{{ d.id }}/scope" class="stack">
+            <label for="sc-{{ d.id }}" class="sr-only">Scope of {{ d.label }}</label>
+            {{ scope_select("scope", d.scope, remote.scopes, "sc-" ~ d.id) }}
+            <label><input type="checkbox" name="allow_type" value="1"{{ " checked" if d.scope == "type" }}> Type switch</label>
+            <span class="muted" id="sc-{{ d.id }}-w">{% if d.scope == "operate" %}{{ remote.warnings.operate }}{% elif d.scope == "type" %}{{ remote.warnings.type }}{% else %}Operate: {{ remote.warnings.operate }} Type: {{ remote.warnings.type }}{% endif %}</span>
+            <button type="submit" class="btn">Save scope</button>
+          </form>{% else %}{{ d.scope }}{% endif %}</td>
+        <td data-label="Last seen">{{ d.last_seen }}</td>
+        <td data-label="Fingerprint"><code>{{ d.fingerprint }}</code></td>
+        <td>{% if not d.revoked and remote.running %}<form method="post" action="/workspace/remote/devices/{{ d.id }}/revoke" data-dialog="Revoke {{ d.label }}?" data-dialog-body="It is refused from its next request and revoked in every workspace on this computer. Pair it again to use it." data-dialog-confirm="Revoke device" data-dialog-cancel="Keep device" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif remote.damaged %}<p class="empty">The devices cannot be shown while the registry cannot be read.</p>
+  {% else %}<p class="empty">No remote device is paired yet.</p>{% endif %}
+</section>
+
+<section class="card" aria-labelledby="remote-activity-h" id="remote-activity">
+  <h2 id="remote-activity-h">Activity</h2>
+  {% if remote.activity %}
+  <ul class="checks">
+    {% for a in remote.activity %}<li><span class="detail"><b>{{ a.at }}</b> {{ a.text }}{% if a.detail %} <span class="muted">{{ a.detail }}</span>{% endif %}</span></li>{% endfor %}
+  </ul>
+  <p class="muted">Changes to devices and the actions a device confirmed on its own screen, newest first.</p>
+  {% else %}<p class="empty">Nothing yet.</p>{% endif %}
+</section>

@@ -18,7 +18,7 @@ from orch.addons.settings import form_value, parse_settings
 from orch.core.check import record_invalidations, run_checks
 from orch.core.maintenance import tidy
 from orch.dashboard.auth import strict_same_origin
-from orch.dashboard import routes_widgets, setup_state
+from orch.dashboard import routes_remote, routes_widgets, setup_state
 from orch.dashboard.reach import request_actor
 from orch.dashboard.views import _theme, back, confirm_page, error_text, invalidate_setup_count, page
 from orch.errors import OrchError
@@ -49,7 +49,7 @@ def _repos(ws) -> list[dict]:
     return out
 
 
-TABS = ("addons", "setup", "widgets", "phones", "advanced")
+TABS = ("addons", "setup", "widgets", "phones", "remote", "advanced")
 
 
 def _relative(path, root) -> str:
@@ -153,7 +153,12 @@ def workspace(request: Request):
     peeked = reveals.peek(pair_token)
     pairing = reveals.pop(pair_token) if isinstance(peeked, dict) and peeked.get("kind") == "pair" else None
     tab = request.query_params.get("tab", "")
-    tab = tab if tab in TABS else ("phones" if pairing is not None else "addons")
+    # the Remote tab's one-time offer link, taken the same way (peek the kind first, so no other token is burned)
+    offer_token = request.query_params.get("offer")
+    offer_peek = reveals.peek(offer_token)
+    offer = reveals.pop(offer_token) if isinstance(offer_peek, dict) and offer_peek.get("kind") == "remote_offer" else None
+    tab = tab if tab in TABS else ("phones" if pairing is not None else "remote" if offer is not None else "addons")
+    remote = routes_remote.context(request) if tab == "remote" else {}
     widgets = {}
     if tab == "widgets":
         from markupsafe import Markup
@@ -183,8 +188,8 @@ def workspace(request: Request):
                 addon_errors=runtime.registry.errors()[-4000:],
                 config_text=json.dumps(ws.config, indent=2, ensure_ascii=False),
                 phones=phone_store.phones(ws.root), phone_permissions=phone_store.permissions(ws.root),
-                pairing_targets=pairing_targets, pairing=pairing)
-    if pairing is not None:
+                pairing_targets=pairing_targets, pairing=pairing, remote=remote, offer=offer)
+    if pairing is not None or offer is not None:
         response.headers["Cache-Control"] = "no-store"
         if "etag" in response.headers:
             del response.headers["etag"]  # a one-time page is never revalidated
@@ -391,7 +396,8 @@ def phone_revoke(request: Request, phone_id: str, ask: str = Form("")):
     if phone_store.find(ws.root, phone_id) is None:
         return back(_PHONES, err="no such phone in this workspace")
     phone_store.revoke(ws.root, phone_id)
-    return back(_PHONES, msg="Phone revoked")
+    linked = routes_remote.revoke_linked_devices(request, phone_id)  # a linked pair is revoked together
+    return back(_PHONES, msg="Phone revoked" + (f"; {linked} linked remote device(s) revoked too" if linked else ""))
 
 
 @router.post("/workspace/phones/permissions")

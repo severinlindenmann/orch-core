@@ -17,6 +17,9 @@ def test_core_has_no_tix_code():
                 # the bridge protocol's fixed key-derivation and signature labels, which must be these exact bytes;
                 # only the bytes literals themselves, so prose and names are still checked
                 text = re.sub(r'b"sharing/bridge/[a-z-]+/v1\|?"', "", text)
+            if p.name == "bridge_link.py" and p.parent.name == "remote":
+                # the seam's agreed text names the relay once, in a comment on disconnect()
+                text = text.replace("stop talking to TIX;", "")
             hit = banned.search(text)
             assert hit is None, f"{hit.group(0)!r} in {p.relative_to(ROOT)}"
 

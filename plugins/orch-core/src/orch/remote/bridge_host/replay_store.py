@@ -198,6 +198,14 @@ class ReplayStore:
             raise ValueError("a device id is 32 lower-case hex characters")
         return self.seq_dir / f"{device}.json"
 
+    def last_seen_ms(self, device: str) -> int | None:
+        """When the device last had a request accepted (the host's file clock), or None if it never did. Unlike the
+        request records, which expire after 15 minutes, the sequence state stays."""
+        try:
+            return int(os.lstat(self._seq_path(device)).st_mtime * 1000)
+        except OSError:
+            return None
+
     def seq_state(self, device: str) -> tuple[int, int]:
         """(high, bitmap); (0, 0) for a device that never sent a request. Damaged for a state that cannot be trusted."""
         raw = files.read(self._seq_path(device), _SEQ_LIMIT)

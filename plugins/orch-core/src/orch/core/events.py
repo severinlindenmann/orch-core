@@ -20,6 +20,9 @@ EVENT_KINDS = frozenset({
     "setting.changed",  # a workspace setting changed through orch (`orch widget html`)
     # AI Factory (orch.core.permits): an agent's request and a grant's use; the human's answers (signed in the ledger)
     "permit.requested", "permit.used", "permit.granted", "permit.denied", "permit.revoked",
+    # the release step (orch.core.factory_release): a stage's outcome (stage, child, proven, exit code only) and the
+    # human's retry
+    "release.stage", "release.retry",
 })
 
 

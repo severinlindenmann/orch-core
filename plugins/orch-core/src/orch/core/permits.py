@@ -168,12 +168,13 @@ _ENV_VARS = r"(?:ORCH_STATE_DIR|XDG_CONFIG_HOME|CLAUDE_CODE_SESSION_ID|ORCH_SESS
 _NEVER = (
     (re.compile(_ORCH + r"permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)\b"), "granting, denying and revoking are the human's"),
     (re.compile(_ORCH + r"serve\b"), "the dashboard is started by the human"),
+    (re.compile(_ORCH + r"factory\s+(?:-\S+\s+)*release\b"), "the release recipe and its retries are the human's"),
     (re.compile(r"\.claude[/\\]+(?:settings|hooks|plugins)|\.claude\.json|managed-settings|hooks[/\\]+hooks\.json"
                 r"|CLAUDE_PLUGIN_ROOT|CLAUDE_CONFIG_DIR"),
      "the harness's settings, hooks and plugins are the human's"),
     (re.compile(r"--no-verify\b|core\.hookspath", re.I), "git hooks stay on"),
     (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"
-                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|tmux)\b"),
+                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release|release-records|tmux)\b"),
      "orch's config, state, ledger and permit records are changed by orch and the human only"),
     (re.compile(r"\b" + _ENV_VARS + r"\s*="), "the variables that decide where orch keeps its records are fixed"),
     (re.compile(r"(?<![\w-])(?:sudo|doas|su)(?![\w-])"), "no elevated rights"),

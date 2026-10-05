@@ -136,6 +136,77 @@ def factory_dark(state: Annotated[str, typer.Argument(help="on | off | status")]
              + ("" if permits.enabled(ws) else " (factory.enabled is off)"))
 
 
+release_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory's release recipe on this machine (human only).")
+factory_app.add_typer(release_app, name="release")
+
+
+def _recipe_text(rec: dict) -> str:
+    return json.dumps(rec, indent=1, ensure_ascii=True)  # validated printable ASCII; escaped as JSON besides
+
+
+@release_app.command("set")
+def release_set(file: Annotated[Path, typer.Option("--file", help="The recipe, a JSON file of yours.")],
+                json_out: JsonOpt = False) -> None:
+    """Store this workspace's release recipe in your orch config dir. Human only: prints the whole recipe and needs
+    RELEASE typed. Never read from the workspace config or anything an agent writes."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_release
+    from orch.errors import UsageError
+    cli, ws = _ctx()
+    require_human_terminal("setting the release recipe")
+    try:
+        data = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        raise UsageError(f"{file} is not a readable JSON file ({type(e).__name__})") from None
+    rec = factory_release.check_recipe(data, ws)  # refused before anything is shown or asked
+    typer.echo("Setting the release recipe of this workspace (Dark epics that sign a release run these commands "
+               "by themselves once Ready; nothing releases to production):", err=json_out)
+    typer.echo(_recipe_text(rec), err=json_out)
+    rec = factory_release.set_recipe(ws, confirm_typed("RELEASE"), data)
+    cli._out(rec, json_out, f"release recipe set: {', '.join(s['name'] for s in rec['stages'])}")
+
+
+@release_app.command("show")
+def release_show(json_out: JsonOpt = False) -> None:
+    """This workspace's release recipe, or why there is none. Human only."""
+    from orch.actor import require_human_terminal
+    from orch.core import factory_release
+    cli, ws = _ctx()
+    require_human_terminal("showing the release recipe")
+    rec, why = factory_release.load(ws)
+    cli._out({"recipe": rec, "why": why}, json_out, _recipe_text(rec) if rec else why)
+
+
+@release_app.command("clear")
+def release_clear(json_out: JsonOpt = False) -> None:
+    """Remove this workspace's release recipe: no Dark epic releases until you set one again. Human only."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_release
+    cli, ws = _ctx()
+    require_human_terminal("clearing the release recipe")
+    typer.echo("Clearing the release recipe of this workspace: no release runs until you set one again.", err=json_out)
+    had = factory_release.clear_recipe(ws, confirm_typed("CLEAR"))
+    cli._out({"cleared": had}, json_out, "release recipe cleared" if had else "there was no release recipe")
+
+
+@release_app.command("retry")
+def release_retry(epic: str,
+                  stage: Annotated[str, typer.Option("--stage", help="merge or dev")],
+                  child: Annotated[Optional[str], typer.Option(
+                      "--child", help="The child, for a stage that runs per child (default: the epic).")] = None,
+                  json_out: JsonOpt = False) -> None:
+    """Allow one more attempt at a failed (or unknown) release stage. Human only; the runner runs it."""
+    from orch.actor import confirm_typed, require_human_terminal
+    from orch.core import factory_release, store
+    cli, ws = _ctx()
+    require_human_terminal("retrying a release stage")
+    eid = store.resolve(ws, epic).id
+    unit = store.resolve(ws, child).id if child else eid
+    typer.echo(f"Retrying the {stage} stage of {unit} in epic {eid}: the runner runs it once more.", err=json_out)
+    text = factory_release.retry(ws, confirm_typed(eid), eid, stage, unit)
+    cli._out({"epic": eid, "stage": stage, "unit": unit}, json_out, text)
+
+
 dark_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory: this checkout's Dark profile.")
 profile_app = typer.Typer(no_args_is_help=True, help="The shell commands a Dark factory epic runs without asking you.")
 dark_app.add_typer(profile_app, name="profile")

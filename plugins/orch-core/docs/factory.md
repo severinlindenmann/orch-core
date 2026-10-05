@@ -1,12 +1,13 @@
-# AI Factory (phases 1 to 5)
+# AI Factory (phases 1 to 6)
 
 One epic in, finished work out: you write an epic and start it as a factory, and agents split, specify,
 auto-approve and build its children. You hear from them when they need a permission they do not hold, and at the
-end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 5 ship.
+end for the verdict. Issue #2 tracks the whole feature; this page describes what phases 1 to 6 ship.
 
 AI Factory is **off by default**. Phase 1 works from the terminal; phase 2 adds the dashboard surface, phase 3 the
 Ready report and the Stopped message, phase 4 the runner that keeps the agents going, and phase 5 the core of Dark AI
-Factory (no permission prompts while it runs) with its dashboard start, run view and factory list, all described below.
+Factory (no permission prompts while it runs) with its dashboard start, run view and factory list, and phase 6 the
+release recipe (merge and dev stages the runner runs by itself for a Dark epic that signs them), all described below.
 
 ## Switching it on
 
@@ -337,7 +338,8 @@ orch approve <epic> requirements --dark       # implies --factory
 The charter you sign carries `dark: true` (a charter signed without it hashes exactly as before). The text shown
 before the typed confirmation says it plainly: Dark runs without permission prompts in the session, only commands the
 profile lists run (anything else is denied and becomes a card for you), and it releases and closes only within what
-the charter signs, which today is nothing: the verdict stays yours. The
+the charter signs: nothing, unless you add `--release merge|dev` (phase 6, below); it closes nothing, the verdict stays
+yours. The
 command is refused while Dark is off, under an agent harness, and without a terminal, like every approval.
 
 **The Dark profile** is per checkout: signed ledger entries (add and remove) that name the checkout they were made in,
@@ -516,18 +518,155 @@ refusal of a process under an agent harness, as for every approval).
   command becomes an exact rule (`orch dark profile add --from-request`, the same checks), bound to the hash of the
   command the card showed.
 
-The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: release stages, any automatic
-closing (the verdict is yours, from the Ready report), and runner-side proof that tests ran, a review happened or a
-branch merged; the ring has no steps for those because no record of them exists.
+The Dark switch itself stays a terminal command (`orch factory dark on`). Not built: any automatic closing (the
+verdict is yours, from the Ready report), and runner-side proof that tests ran or a review happened; the ring has no
+steps for those because no record of them exists. Merge and Dev steps appear only for a charter that signs a release
+(phase 6, below).
 
 What the test suite covers for the planner and the baseline, and what it does not: the runner, the binding, the hook
 and the dashboard states are tested with a stand-in launcher (no tmux, no agent), and the baseline against the CLI's
 real commands and the guard. No test runs a real Claude session through a planner or a child end to end.
 
+## Release recipe (phase 6)
+
+A Dark epic can release its own work, up to a stage you sign at its start: **merge** (each child's branch) or **dev**
+(merge, then a deploy to your dev environment). Nothing releases to production, and nothing is closed: the verdict
+stays yours. The runner (the dashboard you started) runs the stages; an agent cannot start, change or skip one.
+
+**The recipe is yours, on this machine.** It lives in `factory-release.json` in the permits folder of your orch config
+dir, next to `factory-command.json` and under the same guard: agents can neither read nor write it, it is never
+grantable, and orch's `factory release` commands are human-only. It is not workspace config, ticket text or charter
+text, because an agent can edit all of those, and these commands merge and deploy. One file holds the recipes of
+several workspaces, keyed by workspace id (`{"workspaces": {"<id>": recipe}}`). A file that is damaged, not a regular
+file, not owned by you or writable by group or others counts as no recipe. In your own terminal (each refused to agents
+and under an agent harness):
+
+```bash
+orch factory release set --file recipe.json   # validates, prints the whole recipe, needs RELEASE typed
+orch factory release show
+orch factory release clear                    # needs CLEAR typed; no release runs until you set one again
+orch factory release retry <epic> --stage merge|dev [--child <child>]   # one more attempt, needs the epic id typed
+```
+
+**Schema.**
+
+```json
+{"stages": [{"name": "merge", "per": "child", "timeout": 600,
+             "commands": [["<program>", "<arg>", "{branch}"]],
+             "check": {"argv": ["<program>", "<arg>"], "expect": "<exact trimmed stdout>"}},
+            {"name": "dev", "per": "epic", "timeout": 900,
+             "commands": [["<program>", "<arg>"]], "check": {"argv": ["<program>", "<arg>"]}}],
+ "sensitive_paths": [".github/*", "*.lock"],
+ "base": "main"}
+```
+
+- `stages`: `merge`, then `dev`, each at most once and in that order. `production` or any other name is refused
+  ("not built yet"). `merge` runs per child (the default) or once per epic; `dev` runs once per epic.
+- `commands`: 1 to 10 argv lists of 1 to 64 printable ASCII words (at most 512 characters each). A shell string is
+  refused, and so is a shell or wrapper that runs one (`sh`, `bash`, `env`, `sudo`, `xargs`, ...) as the program. Each
+  program is looked up like the runner's own tools: an absolute PATH entry, owned by you or root, not writable by group
+  or others, and not inside the workspace (agents write there).
+- `check`: the stage is **proven** only when this command exits 0 and, with `expect`, its trimmed standard output is
+  exactly that text (at most 1024 characters). A stage without a check is refused.
+- `timeout`: seconds per command, 1 to 1800 (default 600).
+- Placeholders, in any word but the program: `{epic}`, `{workspace}`, and in a stage that runs per child `{child}`,
+  `{branch}` and `{sha}`. Each value is checked before it is put in: ticket ids by their form, the workspace id as hex,
+  the branch by a strict git branch form (a letter or digit first, so never an option; no `..`, `//`, `/.`, `@{`,
+  trailing `/`, `.` or `.lock`), the commit as hex. A word may hold text around a placeholder, since every value is
+  checked the same way. Any other brace is refused.
+- `sensitive_paths`: up to 100 glob patterns (`fnmatch`, where `*` also crosses `/`). `base`: the branch the children
+  are compared with (default `main`).
+
+**Signing it into the charter.** `orch approve <epic> requirements --dark --release merge|dev`, or the "Release up to"
+choice of the dashboard's Dark start. The text you confirm says it "releases up to <stage> by itself using the recipe
+on this machine". It is refused without `--dark`, while no valid recipe exists for this workspace, or when the recipe
+lacks a stage up to the target (dev needs merge and dev). The charter carries `release` only when you sign one, so
+every charter signed before hashes exactly as before. The recipe in force when a stage runs is the one used: change it
+with `orch factory release set`, and the next stage uses the new one.
+
+**When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
+every command: the factory and Dark switched on, the ledger whole, the charter active (not paused, not edited, the
+budget not used up), the epic Ready (every child in testing or done, every criterion cited, nothing unverifiable), no
+open permission request of the epic, and no Stopped reason other than the release's own. A process under an agent
+harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round,
+so a long command does not hold back pauses and stops. Known limit: an epic that used exactly its child budget counts
+as Stopped ("Budget used up", as since phase 3), so it does not release.
+
+**Branches and the diff classification.** A per-child stage works on the children in testing. The runner takes the one
+branch a child names (`orch link --branch`), else the branch of its one worktree; the name must be a valid branch name
+that names the child (its id as a word) and is not the base. It resolves the commit itself
+(`git rev-parse --verify refs/heads/<branch>^{commit}`). Before the first merge command of an epic it lists what every
+child branch not yet merged changes (`git diff --name-only --no-renames -z <base>...<commit>`, by argv, with
+`core.fsmonitor` off; a rename is listed as both of its paths) and matches the recipe's `sensitive_paths`. Any match
+stops the release with "Sensitive path touched", naming the paths (escaped): nothing is merged. Right before a child's
+merge the commit is resolved again; a branch that moved since it was checked is not merged that round. A child the
+runner cannot check (no branch, a branch that does not name it, a branch git does not know) fails its merge stage
+without a command run. The branches are those of the workspace's own repository.
+
+**The lock.** One release at a time per workspace: an exclusive file in the guarded folder names the holding process
+(its pid and start time) and an expiry (the command's timeout plus two minutes, renewed before each command). It is
+held across all stages of one epic. A holder whose process is gone or whose expiry passed holds nothing.
+
+**Records and crash safety.** Each attempt of a stage for one unit (a child, or the epic) writes, in the
+`release-records` folder of the permits folder, an intent record (stage, unit, attempt, a hash of the commands, start
+time) exclusively before the first command, and an outcome record (exit codes, the check's exit code, end time, proven
+or not, and the last 4 KB of output, escaped) after. The output is kept only there: never in events, tickets or logs.
+Each outcome adds an event `release.stage` with the stage, the unit, proven and the exit code only. A proven stage
+never runs again (records are kept per epic, so approving it again does not merge twice). An intent without an
+outcome, and no live lock holder, means the runner stopped while a command ran: the outcome is **unknown**, and that
+stage is never run again by itself. Each stage and unit gets one automatic attempt; a failure stops the release there
+(the stages after it do not run) and leaves the others as they are. A pause, an edit, a used-up budget, the factory or
+Dark switched off or a cut ledger stops the release before its next command (a running command finishes first, and
+the attempt is recorded as failed).
+
+**Stopped reasons** (the run view, Today and the Board, as for the earlier reasons):
+
+- *Sensitive path touched*: look at the named paths. Merge by hand, or change the branch, then Retry release on the
+  merge stage: the branches are checked again.
+- *Release stage failed* (with the stage and exit code): look at the output on the run view, fix the cause, then
+  Retry release for that stage: it runs once more.
+- *Release outcome unknown*: check by hand whether the stage's commands ran (did the branch merge, did dev deploy).
+  Retry release runs it once more, so retry only when running it again is safe; otherwise finish it by hand.
+
+**Retry release** is yours: the run view's button (inline confirm) or `orch factory release retry`. It allows exactly
+one more attempt of one failed or unknown stage (or, after a sensitive-path stop, a fresh check of the branches) and
+runs nothing itself; the runner's next round does.
+
+**Example** (an example only: the program names, the script paths and what they do are placeholders for your own; no
+secrets belong in the recipe). It merges each child's pull request at exactly the commit that was checked, then
+deploys dev through scripts of yours kept outside the repository:
+
+```json
+{"stages": [
+  {"name": "merge", "per": "child", "timeout": 600,
+   "commands": [["gh", "pr", "merge", "{branch}", "--squash", "--match-head-commit", "{sha}"]],
+   "check": {"argv": ["gh", "pr", "view", "{branch}", "--json", "state", "--jq", ".state"], "expect": "MERGED"}},
+  {"name": "dev", "per": "epic", "timeout": 1200,
+   "commands": [["/Users/you/bin/deploy-dev", "--epic", "{epic}"]],
+   "check": {"argv": ["/Users/you/bin/dev-health"], "expect": "ok"}}],
+ "sensitive_paths": [".github/*", "deploy/*", "*.lock", "*/migrations/*"],
+ "base": "main"}
+```
+
+The commands get only the runner's minimal environment (the allowlist of the agent sessions, `HOME` among it, and a
+PATH of the programs' folders and the system's), the workspace root as working directory, and no standard input. A
+program that needs a credential reads it from your own config (for example `gh` from its config under `HOME`), never
+from the recipe.
+
+**Residual risks, stated plainly.** The commands run in an agent-written checkout: git hooks, a `Makefile` or a
+`package.json` script the commands reach run what the agents wrote, as the Dark profile's prefix rules do; prefer
+programs and scripts kept outside the repository. The check proves what it checks: the runner trusts its exit code and
+output. The branch a child names is agent-written; the runner only accepts one that names the child and checks what it
+changes, but what the sensitive patterns do not name is not stopped.
+
+**Not built.** A production stage, any automatic closing (the verdict stays yours), release windows, rollback, and
+runner-side proof that tests ran or a review happened. The test suite covers the recipe, the CLI, the guard, the
+charter and the release step with a stand-in command runner: no test runs a real `gh`, `git push`, merge or deploy.
+
 ## Coming in later phases
 
-- Release stages and closing children under the charter; runner-side proof of tests, review and merge (and ring
-  steps for them).
+- A production stage; closing children under the charter (after a live test); release windows and rollback;
+  runner-side proof of tests and review (and ring steps for them).
 - A live end-to-end test of a factory run, per child, with a real agent session.
 - The Dark switch on the dashboard.
 - A signed `factory.enabled` switch (today a plain config value).

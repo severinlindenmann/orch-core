@@ -105,6 +105,29 @@ def run_once(ws, launcher=None) -> list[str]:
     return factory_runner.tick(ws, HUMAN, launcher or TmuxLauncher(), settings=launch.load_settings())
 
 
+def release_once(ws, run=None) -> list[str]:
+    """One release round (phase 6, orch.core.factory_release): Ready Dark epics whose charter signs a release go
+    through the human's recipe. Needs no tmux; nothing unless the factory is on."""
+    from orch.core import factory_release, permits
+    if not permits.enabled(ws):
+        return []
+    return factory_release.tick(ws, HUMAN, run)
+
+
+async def _release_loop(ws, seconds: float) -> None:
+    """Releases in a round of their own: a stage's command may run for minutes, and the session round (pauses,
+    stops, launches) must not wait for it."""
+    while True:
+        await asyncio.sleep(seconds)
+        try:
+            for line in await asyncio.to_thread(release_once, ws):
+                log.info("factory release: %s", line)
+        except (OrchError, OSError) as e:
+            log.warning("factory release: %s", e)
+        except Exception:  # a round must never take the dashboard down
+            log.exception("factory release round failed")
+
+
 def startup(ws, launcher=None) -> list[str]:
     """Dashboard start: a binding whose session is not running ends now."""
     from orch.core import factory_sessions
@@ -122,6 +145,7 @@ def shutdown(ws, launcher=None) -> list[str]:
 
 
 async def loop(ws, seconds: float = ROUND_SECONDS) -> None:
+    releases = asyncio.create_task(_release_loop(ws, seconds))
     try:
         for line in await asyncio.to_thread(startup, ws):
             log.info("factory runner: %s", line)
@@ -138,6 +162,7 @@ async def loop(ws, seconds: float = ROUND_SECONDS) -> None:
             except Exception:  # a round must never take the dashboard down
                 log.exception("factory runner round failed")
     finally:
+        releases.cancel()  # a command already running finishes in its thread; its outcome is recorded then
         try:
             for line in await asyncio.shield(asyncio.to_thread(shutdown, ws)):
                 log.info("factory runner: %s", line)

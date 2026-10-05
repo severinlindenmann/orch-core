@@ -526,6 +526,10 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             dark: Annotated[bool, typer.Option(
                 "--dark", help="Epics: start it as a Dark AI Factory (implies --factory): its shell commands run "
                                "from the Dark profile without asking you. Needs `orch factory dark on`.")] = False,
+            release: Annotated[Optional[str], typer.Option(
+                "--release", metavar="merge|dev",
+                help="With --dark: release up to this stage by itself, using the release recipe on this machine "
+                     "(`orch factory release set`). Nothing releases to production.")] = None,
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
@@ -541,6 +545,8 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             raise UsageError("Dark AI Factory is switched off in this checkout",
                              hint="set factory.enabled to true in orchestrator/config.json and run `orch factory dark "
                                   "on` in your own terminal (docs/factory.md)")
+    if release is not None and release != "none" and not dark:
+        raise UsageError("--release goes with --dark: only a Dark charter signs a release")
     factory = factory or dark
     delegate = delegate or factory
     if (max_children is not None or max_size is not None) and not delegate:
@@ -550,6 +556,8 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         limits["factory"] = True
     if dark:
         limits["dark"] = True
+        if release is not None:
+            limits["release"] = release
     target = store.resolve(ws, ref)
     if gate == "plans":
         if delegate:

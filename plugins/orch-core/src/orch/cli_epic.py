@@ -26,6 +26,19 @@ def _epic(ws, ref: str):
     return t
 
 
+def release_text(target, long: bool = False) -> str:
+    """What a Dark charter signs about releasing: nothing, or up to merge or dev with the recipe on this machine.
+    Never production, never closing: the verdict stays the human's."""
+    if target in ("merge", "dev"):
+        stages = "merge" if target == "merge" else "merge and dev"
+        text = (f"releases up to {target} by itself using the recipe on this machine ({stages}, once every child is "
+                "Ready; nothing releases to production) and closes nothing: the verdict is yours")
+        return ("Release: " + text + ".") if long else text
+    if long:
+        return "Release: none. Dark releases and closes nothing by itself: the verdict stays yours."
+    return "releases and closes nothing (the charter signs no release: the verdict is yours)"
+
+
 def charter_lines(s: dict) -> list[str]:
     from orch.textsafe import visible
     # the content hash: what the approve prompt and the dashboard show (the epic and its children); the hash that
@@ -46,8 +59,8 @@ def charter_lines(s: dict) -> list[str]:
                      f"children of size ≤ {d['max_size']}"
                      + (f" or {d['max_hours']} hours from {d['at']}" if d.get("max_hours") else ""))
         if d.get("dark"):
-            lines.append("  runs without asking you: only shell commands the Dark profile lists; releases and closes "
-                         "only within what the charter signs (it signs none: the verdict is yours)")
+            lines.append("  runs without asking you: only shell commands the Dark profile lists; "
+                         + release_text(d.get("release")))
     for a in s["auto_approvals"]:
         lines.append(f"  auto-approved {a['ticket']} {a['gate']} by {a['actor']} at {a['at']}"
                      + ("" if a["valid"] else " (no longer valid)"))
@@ -143,9 +156,8 @@ def render_charter(ws, epic, kids, delegate) -> list[str]:
                    "hours, then they stop and tell you. Questions are not asked; permissions and the verdict stay yours.")
         if delegate.get("dark"):
             out.append("Dark: on. Agents run without asking you: a shell command runs only if this checkout's Dark "
-                       "profile lists it (`orch dark profile list`); anything else is denied and becomes a card. Dark "
-                       "releases and closes only within what this charter signs, and it signs no release or close: "
-                       "the verdict stays yours.")
+                       "profile lists it (`orch dark profile list`); anything else is denied and becomes a card. "
+                       + release_text(delegate.get("release"), long=True))
     else:
         out.append(f"Delegation: on, up to {delegate['max_children']} children of size ≤ {delegate['max_size']}"
                    if delegate else "Delegation: off")

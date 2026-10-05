@@ -14,7 +14,8 @@ human's send-backs and denials), the budget markers beside the ledger and the ti
   The report itself accepts nothing and never closes a child.
 - Stopped: a dead end the agents cannot get out of by themselves, with the reasons: the budget is used up, a child
   was sent back by the human FAILED_TRIES times, a request the human denied still holds a child back, or the ledger on
-  this machine was cut. It is computed on its own, never suppressed by Ready (a forged Ready must not hide a real
+  this machine was cut, or (phase 6, a charter that signs a release) a sensitive path is touched, a release stage
+  failed or its outcome is unknown. It is computed on its own, never suppressed by Ready (a forged Ready must not hide a real
   stop), and it keeps its other reasons under a cut ledger (entries that still verify can only add a reason). It
   says what the human can do; it offers no action of its own.
 
@@ -181,6 +182,9 @@ def stopped(ws, epic, *, entries=None, signed=None, events=None) -> list[dict]:
                 for g in raw):
             out.append({"code": "denied", "label": "Permission denied",
                         "text": f"you denied {r['id']} and {r['ticket']} has not finished since"})
+    if d and d.get("release"):  # phase 6: a sensitive path, a failed stage, a stage whose outcome is unknown
+        from orch.core import factory_release
+        out += factory_release.reasons(ws, epic, d)
     return out
 
 

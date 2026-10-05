@@ -41,6 +41,47 @@
   </div>
 </section>
 
+{% if run.release %}{% set rel = run.release %}
+{% set WORDS = {"waiting": "waiting", "running": "running", "proven": "proven", "failed": "failed", "unknown": "outcome unknown"} %}
+<section class="card run-release" aria-labelledby="run-release-h" data-release>
+  <h2 id="run-release-h">Release up to {{ rel.target }}</h2>
+  <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order. A stage is proven only by its check. Nothing releases to production, and nothing is closed: the verdict stays yours.</p>
+  {% if not rel.recipe %}<p class="muted" data-release-off>{{ rel.why }}. Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
+  <div class="release-stages">
+    {% for s in rel.stages %}
+    <div data-release-stage="{{ s.name }}">
+      <h3>{{ s.name|capitalize }}: {{ WORDS[s.state] }}</h3>
+      {% for u in s.units %}
+      <div class="release-unit" data-release-unit="{{ s.name }} {{ u.unit }}" data-state="{{ u.state }}">
+        <span><a class="lnk key" href="/t/{{ u.unit }}">{{ u.unit }}</a> · {{ WORDS[u.state] }}{% if u.why %} · {{ u.why }}{% endif %}</span>
+        {% if u.state in ("failed", "unknown") %}
+        <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · run the {{ s.name }} stage of {{ u.unit }} once more">
+          <input type="hidden" name="stage" value="{{ s.name }}">
+          <input type="hidden" name="unit" value="{{ u.unit }}">
+          <button type="submit" class="btn btn-quiet">Retry release…</button>
+        </form>
+        {% endif %}
+      </div>
+      {% if u.tail %}<details><summary>Output of attempt {{ u.attempt }} (the last 4 KB)</summary><pre class="release-tail">{{ u.tail }}</pre></details>{% endif %}
+      {% else %}<p class="muted">No child in testing yet.</p>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if rel.sensitive %}
+  <div class="release-unit" data-release-sensitive>
+    <span>A child branch touches a sensitive path: nothing was merged.</span>
+    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · check the branches again before the merge">
+      <input type="hidden" name="stage" value="merge">
+      <input type="hidden" name="unit" value="{{ run.epic }}">
+      <button type="submit" class="btn btn-quiet">Retry release…</button>
+    </form>
+  </div>
+  {% endif %}
+  {% if rel.stages|selectattr("state", "in", ["failed", "unknown"])|list or rel.sensitive %}<p class="muted permit-meta">Retry release allows exactly one more attempt; the runner runs it in its next round. Retry an unknown outcome only when running it again is safe.</p>{% endif %}
+</section>
+{% endif %}
+
 {% set p = run.permits %}
 {% if p.requests or p.ready or p.stopped or p.budget or p.suspect %}
 <section class="run-waiting" aria-labelledby="run-waiting-h">

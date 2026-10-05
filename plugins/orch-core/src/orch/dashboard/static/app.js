@@ -386,6 +386,15 @@
   };
   const FACTORY_START = "start the AI Factory: ";
   const DARK_START = "start the Dark AI Factory, only commands in the Dark profile run: ";
+  // "Release up to" (phase 6), part of a Dark start: the confirm says what will run, and that nothing goes further
+  const releaseText = (form) => {
+    if (!form.querySelector || !form.querySelector("[data-release-choice]")) return "";  // no choice offered here
+    const r = form.querySelector("input[name=release]:checked");
+    const v = r ? r.value : "none";
+    if (v === "merge") return " · releases up to merge using the recipe on this machine; nothing releases to production";
+    if (v === "dev") return " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production";
+    return " · releases nothing";
+  };
   // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
   // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
   const charterLabel = (form) => {
@@ -396,7 +405,8 @@
     const box = form.querySelector && form.querySelector(".charter-factory");
     if (box) box.dataset.start = start;
     if (start === "dark") {
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm;
+      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm
+        + releaseText(form);
       return;
     }
     if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
@@ -456,11 +466,12 @@
     if (box) box.dataset.mode = mode;
     if (armed.has(form)) disarm(form, false);
     if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm;
+    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form);
     else delete form.dataset.inlineConfirm;
   };
   document.addEventListener("change", (event) => {
-    const form = event.target.name === "mode" && event.target.closest && event.target.closest("form[data-new-form]");
+    const form = (event.target.name === "mode" || event.target.name === "release") && event.target.closest
+      && event.target.closest("form[data-new-form]");
     if (form) newMode(form);
   });
   document.addEventListener("submit", (event) => {

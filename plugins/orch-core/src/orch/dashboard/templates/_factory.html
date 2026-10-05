@@ -1,3 +1,20 @@
+{#- "Release up to" (phase 6), in a Dark start: Nothing by default; Merge and Dev only while this workspace has a valid
+    recipe with those stages (the server checks it again before anything is signed). -#}
+{% macro release_choice(sfx, off, dev_off) %}
+<fieldset class="seg release-choice" data-release-choice>
+  <legend>Release up to</legend>
+  <div class="seg-options">
+    {% for v, label in (("none", "Nothing"), ("merge", "Merge"), ("dev", "Dev")) %}
+    <input class="sr-only" type="radio" id="release-{{ v }}-{{ sfx }}" name="release" value="{{ v }}" {{ 'checked' if v == 'none' }}{{ ' disabled' if v != 'none' and (off or (v == 'dev' and dev_off)) }}>
+    <label for="release-{{ v }}-{{ sfx }}">{{ label }}</label>
+    {% endfor %}
+  </div>
+  {% if off %}<p class="muted" data-release-off>Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>
+  {% elif dev_off %}<p class="muted" data-dev-off>Dev needs a dev stage in the recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
+  <p class="muted">Merge and dev use the recipe on this machine, once every child is Ready; nothing releases to production, and nothing is closed: the verdict stays yours.</p>
+</fieldset>
+{% endmacro %}
+
 {#- The factory ring and step marks (phase 5). Five steps, lit only from records (data/factory.py). Never colour only:
     done = solid thin, the current step thick, waiting for you = dashed, stopped = amber, and every mark has its words.
     Motion only while the run is working (the panel's is-live class). -#}
@@ -5,12 +22,14 @@
 {% macro ring(run, steps) %}
 {% set MARK_WORDS = {"done": "done", "now": "in progress", "wait": "waiting for you", "stop": "stopped", "todo": "not yet"} %}
 {% set n = run.current + 1 %}
+{% set steps = run.names or steps %}
+{#- each step is 20 units of the circle (18 drawn, 2 gap), whatever the number of steps: the release adds Merge and Dev -#}
 <div class="ring" role="progressbar" aria-valuemin="0" aria-valuemax="{{ steps|length }}" aria-valuenow="{{ run.steps }}"
      aria-valuetext="Step {{ n }} of {{ steps|length }}: {{ run.step }}, {{ MARK_WORDS[run.marks[run.current]] }}">
-  <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+  <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false" style="--ring-gap: {{ 20 * steps|length - 18 }}">
     {% if run.look_dark %}<circle class="ring-core" cx="60" cy="60" r="38"/>{% endif %}
     {% for m in run.marks %}
-    <circle class="ring-seg is-{{ m }}" cx="60" cy="60" r="52" pathLength="100" transform="rotate({{ -90 + 72 * loop.index0 }} 60 60)"/>
+    <circle class="ring-seg is-{{ m }}" cx="60" cy="60" r="52" pathLength="{{ 20 * steps|length }}" transform="rotate({{ (-90 + 360 / steps|length * loop.index0)|round(2) }} 60 60)"/>
     {% endfor %}
     {% if run.live and not run.look_dark %}<path class="ring-run" d="{{ run.arc }}" pathLength="12"/>{% endif %}
   </svg>
@@ -20,6 +39,7 @@
 
 {% macro marks(run, steps, compact=False) %}
 {% set MARK_WORDS = {"done": "done", "now": "in progress", "wait": "waiting for you", "stop": "stopped", "todo": "not yet"} %}
+{% set steps = run.names or steps %}
 <ol class="step-marks{{ ' is-compact' if compact }}" aria-label="Steps">
   {% for m in run.marks %}<li class="step-mark is-{{ m }}"><span class="step-line" aria-hidden="true"></span><span class="{{ 'sr-only' if compact }}">{{ steps[loop.index0] }}<span class="muted">: {{ MARK_WORDS[m] }}</span></span></li>{% endfor %}
 </ol>

@@ -1715,10 +1715,11 @@ form.form-card.inline-confirm { flex-direction: column; flex-wrap: nowrap; align
 .ring svg { display: block; width: 100%; height: 100%; }
 .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--s-1); padding: var(--s-8); }
 .ring-center b { font: var(--type-stat); overflow-wrap: anywhere; }
-.ring-seg { fill: none; stroke: var(--line2); stroke-width: 3; stroke-dasharray: 18 82; }
+/* each step is 20 units of its circle's pathLength: 18 drawn, the rest (--ring-gap, set by the ring) a gap */
+.ring-seg { fill: none; stroke: var(--line2); stroke-width: 3; stroke-dasharray: 18 var(--ring-gap, 82); }
 .ring-seg.is-done { stroke: var(--text); stroke-width: 4; }
 .ring-seg.is-now { stroke: var(--info-mark); stroke-width: 10; }
-.ring-seg.is-wait { stroke: var(--you-mark); stroke-width: 6; stroke-dasharray: 3 2 3 2 3 2 3 82; }
+.ring-seg.is-wait { stroke: var(--you-mark); stroke-width: 6; stroke-dasharray: 3 2 3 2 3 2 3 var(--ring-gap, 82); }
 .ring-seg.is-stop { stroke: var(--warn-mark); stroke-width: 10; }
 /* the moving dash runs along the current arc only, thin inside the thick stroke (so it never reads as the dashed
    "waiting for you"): a repeating pattern of period 2 moved by exactly one period, so the loop has no snap */
@@ -1761,3 +1762,9 @@ form.form-card.inline-confirm { flex-direction: column; flex-wrap: nowrap; align
 .factory-row-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2); overflow-wrap: anywhere; }
 .factory-row-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--s-2); }
 .chip-dark { box-shadow: inset 0 0 0 1px var(--ok-mark); }
+
+/* Release (phase 6): one row per stage and unit, its state in words, the output tail under a disclosure. */
+.release-stages { display: flex; flex-direction: column; gap: var(--s-3); }
+.release-unit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.release-unit form { margin: 0; }
+.release-tail { max-height: 20rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

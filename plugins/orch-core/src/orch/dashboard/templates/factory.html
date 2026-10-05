@@ -21,7 +21,7 @@
     <p class="factory-row-chips"><span class="chip chip-neu{{ ' chip-dark' if r.look_dark }}">{{ r.name }}{% if r.dark and not r.look_dark %} (Dark switch off){% endif %}</span> {{ ui.status(r.role, r.chip) }}</p>
     <p class="permit-meta">{{ r.headline }}</p>
     {{ fx.marks(r, steps, True) }}
-    <p class="muted permit-meta">Step {{ r.current + 1 }} of {{ steps|length }}: {{ r.step }}{% if r.elapsed %} · {{ r.elapsed }}{% endif %}</p>
+    <p class="muted permit-meta">Step {{ r.current + 1 }} of {{ r.names|length }}: {{ r.step }}{% if r.elapsed %} · {{ r.elapsed }}{% endif %}</p>
   </li>
   {% endfor %}
 </ul>

@@ -80,5 +80,22 @@ for (const [value, label] of [
   assert.strictEqual(charter.dataset.inlineConfirm, label);
   assert.strictEqual(fieldset.dataset.start, value);
 }
+// "Release up to" (phase 6): with the choice on the form, the Dark confirm says what will run, on both forms
+let release = "none";
+const withChoice = (sel) => (sel === "[data-release-choice]" ? {} : sel === "input[name=release]:checked"
+  ? { value: release } : null);
+charter.querySelector = (sel) => (sel === ".charter-factory" ? fieldset : withChoice(sel));
+start.value = "dark";
+for (const [value, tail] of [["none", " · releases nothing"],
+  ["merge", " · releases up to merge using the recipe on this machine; nothing releases to production"],
+  ["dev", " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production"]]) {
+  release = value;
+  fire("change", { target: charter });
+  assert.strictEqual(charter.dataset.inlineConfirm, "Confirm · epic ab12cd34 with 1 child · start the Dark AI Factory, " +
+    "only commands in the Dark profile run: up to 25 children or 72 hours, children of size m or smaller" + tail);
+  newForm.querySelector = (sel) => (sel === "input[name=mode]:checked" ? { value: "dark" } : withChoice(sel));
+  fire("change", { target: { name: "release", closest: (sel) => (sel === "form[data-new-form]" ? newForm : null) } });
+  assert.ok(newForm.dataset.inlineConfirm.endsWith(tail));
+}
 assert.ok(!/[A-Z]{4,}/.test(fs.readFileSync(process.argv[2], "utf8").match(/DARK_START = "([^"]*)"/)[1]));
 console.log("factory forms ok");

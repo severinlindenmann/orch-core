@@ -632,6 +632,15 @@ the attempt is recorded as failed).
 one more attempt of one failed or unknown stage (or, after a sensitive-path stop, a fresh check of the branches) and
 runs nothing itself; the runner's next round does.
 
+**On the dashboard.** A Dark start (New ticket's Dark mode and the epic page's Start) has a "Release up to" choice:
+Nothing (the default), Merge or Dev. Merge and Dev are disabled, with a line naming
+`orch factory release set --file recipe.json`, while this workspace has no valid recipe with those stages; the server
+checks it again before anything is created or signed, and the confirm says what will run. For a charter that signs a
+release, the run view's ring gets Merge (and Dev) after Evidence, lit only from proven stage records (a failed,
+unknown or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage and unit as
+waiting, running, proven, failed or outcome unknown, the escaped output tail under a disclosure, and Retry release on
+a failed or unknown one. While a stage runs the state reads "Releasing".
+
 **Example** (an example only: the program names, the script paths and what they do are placeholders for your own; no
 secrets belong in the recipe). It merges each child's pull request at exactly the commit that was checked, then
 deploys dev through scripts of yours kept outside the repository:

@@ -62,6 +62,13 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
     "sent-back": "Open the child and say what is missing in its requirements, or take it out of the epic.",
     "denied": "Open the child: change its text so it does without that command, or take it out of the epic.",
     "ledger-cut": "Run `orch check` on this machine: nothing the factory did counts until the ledger is whole again.",
+    # the release (phase 6): kept in step with orch.core.factory_release.RELEASE_CODES
+    "sensitive": "Look at the named paths. Merge by hand, or change the branch, then Retry release on the merge stage: "
+                 "the branches are checked again.",
+    "release-failed": "Read the stage's output on the run view, fix the cause, then Retry release: the stage runs once "
+                      "more.",
+    "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy). Retry "
+                       "release only when running it again is safe; otherwise finish it by hand.",
 }
 
 
@@ -77,8 +84,12 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
     limits = {"max_children": epics.FACTORY_DEFAULTS["max_children"], "max_size": epics.FACTORY_DEFAULTS["max_size"],
               "max_hours": epics.FACTORY_DEFAULTS["max_hours"]}
     dark_on = permits.dark_on(ws)  # the epic page offers a Dark start only then (Ops refuses it otherwise too)
+    from orch.core import factory_release
+    rel_off = factory_release.release_blocker(ws, "merge") if dark_on else None
+    rel = {"release_off": rel_off, "dev_off": factory_release.release_blocker(ws, "dev") if dark_on and not rel_off
+           else None}
     if not d or not d.get("factory"):
-        return {"factory": False, "limits": limits, "dark_on": dark_on}
+        return {"factory": False, "limits": limits, "dark_on": dark_on, **rel}
     used = epics.delegated_count(ws, epic.id, d["id"], events)
     left = None
     try:
@@ -97,22 +108,25 @@ def epic_status(ws, epic, d: dict | None, events) -> dict | None:
     from orch.core import factory_runner, factory_sessions
     blocker = (factory_runner.user_settings_blocker() if factory_sessions.armed(ws, d["id"]) and state == "running"
                else None)
-    return {"factory": True, "limits": limits, "dark_on": dark_on, "dark": bool(d.get("dark")), "state": state, "runner_blocker": blocker, "children": used, "max_children": d["max_children"],
+    return {"factory": True, "limits": limits, "dark_on": dark_on, **rel, "release": d.get("release"),
+            "dark": bool(d.get("dark")), "state": state, "runner_blocker": blocker, "children": used, "max_children": d["max_children"],
             "hours_left": left, "max_hours": d["max_hours"]}
 
 
 # -- the run view and the factory list (phase 5, dashboard) --------------------------------------------------------
-# Five steps, each lit only from records orch already keeps: no step claims a test, review, merge or release, because
-# no record of those exists yet.
+# Five steps, each lit only from records orch already keeps: no step claims a test or review, because no record of those
+# exists. A charter that signs a release (phase 6) adds Merge (and Dev) after Evidence, lit only from proven release
+# records; Done stays the verdict.
 
 STEPS = ("Understand", "Plan", "Build", "Evidence", "Done")
+RELEASE_STEPS = {"merge": "Merge", "dev": "Dev"}
 _PLANNED = ("covered", "delegated", "approved", "done")  # epics.child_state
 
 
-def _arc(i: int) -> str:
-    """The SVG path of ring segment `i` (the 18 of every 20 units its circle draws), for the moving dash."""
+def _arc(i: int, n: int = 5) -> str:
+    """The SVG path of ring segment `i` of `n` (the 18 of every 20 units its circle draws), for the moving dash."""
     import math
-    a0, a1 = math.radians(-90 + 72 * i), math.radians(-90 + 72 * i + 64.8)
+    a0, a1 = math.radians(-90 + 360 / n * i), math.radians(-90 + 360 / n * (i + 0.9))
     return (f"M {60 + 52 * math.cos(a0):.2f} {60 + 52 * math.sin(a0):.2f} "
             f"A 52 52 0 0 1 {60 + 52 * math.cos(a1):.2f} {60 + 52 * math.sin(a1):.2f}")
 
@@ -122,7 +136,7 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 # says the state in a word or two; the headline says it once, in a sentence.
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
-           "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "releasing": ("info", 1, "Releasing"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "finished": ("ok", 3, "Finished")}
 NEEDS_YOU = ("waiting", "stopped", "budget")
@@ -182,9 +196,22 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     """One factory epic as the run view and the list show it, from records only: {epic, title, dark, look_dark, state,
     role, rank, chip, headline, steps, current, step, hot, live, elapsed, ...}. `view` is permit_view(ws) (all epics),
     `blocker` factory_runner.user_settings_blocker() read once (it counts only for an armed epic), `bound` the live runner bindings of this workspace."""
-    from orch.core import factory_runner, factory_sessions
+    from orch.core import factory_release, factory_runner, factory_sessions
     kids = factory_report._kids(ws, epic, entries)
     n = _steps(ws, epic, d, kids, signed, events, entries)
+    # the release steps (phase 6): lit only from proven stage records, after Evidence and before Done
+    try:
+        rel = factory_release.status(ws, epic, d, entries) if d.get("release") else None
+    except Exception:
+        rel = None  # unreadable records light nothing (the Stopped card names the reason)
+    rel_stages = (rel or {}).get("stages") or ([{"name": s, "state": "waiting"} for s in
+                                                factory_release.STAGES[:factory_release.STAGES.index(d["release"]) + 1]]
+                                               if d.get("release") in factory_release.STAGES else [])
+    names = [*STEPS[:4], *(RELEASE_STEPS[s["name"]] for s in rel_stages), STEPS[4]]
+    lit = [n > i for i in range(4)] + [n >= 4 and s["state"] == "proven" for s in rel_stages] + [n == 5]
+    for i in range(1, len(lit) - 1):  # a release step counts only once those before it do (Done is the verdict alone)
+        lit[i] = lit[i] and lit[i - 1]
+    n = next((i for i, x in enumerate(lit) if not x), len(lit))
     kids = kids or []
     eid = epic.id.upper()
     mine = {k: [x for x in view[k] if str(x["epic"]).upper() == eid]
@@ -195,7 +222,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
     planner_on = any(factory_sessions.is_planner(b) for b in running)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
-    if n == 5:
+    if lit[-1]:
         state, headline = "finished", "You gave the verdict"
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
@@ -205,6 +232,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
                            else ("stopped", "The agents cannot go on by themselves"))
     elif d["epic_changed"]:
         state, headline = "changed", "The epic's text changed since you started it"
+    elif any(s["state"] == "running" for s in rel_stages):
+        state, headline = "releasing", "The runner is releasing the work with your recipe"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
         state, headline = "waiting", "Your answer is needed on the cards below"
     elif not factory_sessions.armed(ws, d["id"]):
@@ -231,11 +260,11 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
-    here = {"working": "now", "planning": "now", "waiting": "wait", "unarmed": "todo", "nokids": "todo",
-            "slot": "todo", "idle": "todo"}.get(state, "stop")
-    marks = ["done" if i < n else here if i == n else "todo" for i in range(len(STEPS))]
-    current = min(n, len(STEPS) - 1)
-    live = state in ("working", "planning")  # motion and glow only while it really works
+    here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "unarmed": "todo",
+            "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo"}.get(state, "stop")
+    marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
+    current = min(n, len(names) - 1)
+    live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
     built = any(_tasks(t)[0] for _, t in kids)  # real build evidence only: a task a child closed
     # why no child is there yet (the planner's own launch markers, never ticket text); a card would be "waiting"
     planner = None
@@ -244,7 +273,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
-            "steps": n, "current": current, "step": STEPS[current], "live": live, "arc": STEP_ARCS[current],
+            "steps": n, "current": current, "step": names[current], "live": live, "names": names,
+            "arc": _arc(current, len(names)), "release": rel,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_blocked(),
@@ -254,7 +284,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
 
 _LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "granted a permission",
                "permit.denied": "denied a permission", "permit.revoked": "revoked a grant",
-               "permit.used": "used a grant", "gate.delegated": "auto-approved it under your charter"}
+               "permit.used": "used a grant", "gate.delegated": "auto-approved it under your charter",
+               "release.stage": "ran a release stage", "release.retry": "allowed one more release attempt"}
 
 
 def _epic_events(events, ids) -> list[dict]:
@@ -267,7 +298,8 @@ def _epic_events(events, ids) -> list[dict]:
     for e in events:
         if not e.ticket or str(e.ticket).upper() not in keep:
             continue
-        who = "You" if str(e.actor).startswith("human") else "An agent"
+        who = ("The runner" if e.kind == "release.stage"  # the dashboard's own release round, on your behalf
+               else "You" if str(e.actor).startswith("human") else "An agent")
         rows.append({"at": e.at, "ticket": e.ticket, "text": f"{who} {_LOG_PHRASE.get(e.kind) or action_phrase(e)}"})
     return rows[::-1][:200]
 

@@ -67,11 +67,13 @@ def _prog(word: str) -> str:
     return p[:-4] if p.endswith(".exe") else p
 
 
-def _bad_arg(w: str) -> bool:
+def _bad_arg(w: str, orch: bool = False) -> bool:
     if w.startswith(_ASSIGN):
         return True
     if w.startswith("--") and len(w) > 2:
         name = "--" + w[2:].split("=", 1)[0].casefold().replace("_", "-")
+        if orch and name == "--file":
+            return False  # orch reads a bound session's files only inside the workspace (fsutil agent_source)
         # an option a program accepts abbreviated (npm does) counts as the refused one it abbreviates
         return name in _RUNS_CODE or (len(name) >= 5 and any(o.startswith(name) for o in _RUNS_CODE))
     return w.startswith("-") and len(w) > 1 and any(c in _SHORT_LETTERS for c in w[1:])
@@ -132,8 +134,15 @@ def simple_tokens(command) -> list[str] | None:
     return words or None
 
 
+def _is_orch(word) -> bool:
+    """`orch` by name (found on the session's PATH), or an absolute path ending in /orch: never a relative path, which
+    could name a script the agent wrote."""
+    return word == "orch" or (isinstance(word, str) and word.startswith("/") and word.rsplit("/", 1)[-1] == "orch")
+
+
 def _runs_code(words) -> str | None:
-    return next((w for w in words if _bad_arg(w)), None)
+    orch = bool(words) and _is_orch(words[0])
+    return next((w for w in words if _bad_arg(w, orch)), None)
 
 
 def refusal(kind, value) -> str | None:
@@ -257,27 +266,48 @@ BASELINE = ("orch show", "orch list", "orch search", "orch next", "orch state", 
             "orch task block", "orch task list", "orch claim", "orch release", "orch log", "orch link", "orch move",
             "orch wait", "orch permit request", "orch permit list", "orch artifact add", "orch epic show",
             "orch epic auto-approve")
+# The git a worker needs to commit its own work, read-only verbs and add/commit only: no push, fetch, reset, clean,
+# checkout, switch, rebase, config or `-c` (refusal() refuses those as prefixes anyway). `git branch` is never a
+# prefix rule, so its read-only form is an exact one.
+GIT_BASIC = ("git status", "git diff", "git log", "git show", "git add", "git commit")
+GIT_BASIC_EXACT = ("git branch --show-current",)
+BASELINES = {"orch": tuple(("prefix", r) for r in BASELINE),
+             "git-basic": (*(("prefix", r) for r in GIT_BASIC), *(("exact", r) for r in GIT_BASIC_EXACT))}
 
 
-def baseline_todo(ws) -> list[str]:
-    """The baseline rules not in force in this checkout yet, in order."""
+def _baseline(name: str):
+    if name not in BASELINES:
+        raise UsageError(f"no baseline {name!r}: the baselines are {', '.join(BASELINES)}")
+    return BASELINES[name]
+
+
+def _id_of(kind: str, r: str) -> str:
+    return rule_id(kind, r.split() if kind == "prefix" else r)
+
+
+def baseline_todo(ws, name: str = "orch") -> list[str]:
+    """The rules of baseline `name` not in force in this checkout yet, in order (their text)."""
     have = {r["id"] for r in rules(ws)}
-    return [r for r in BASELINE if rule_id("prefix", r.split()) not in have]
+    return [r for kind, r in _baseline(name) if _id_of(kind, r) not in have]
 
 
-def add_baseline(ws, actor, shown=None) -> dict:
-    """Human only: sign every baseline rule not in force yet (and, with `shown`, among the rules the human was
-    shown), each through `add` (the same checks). {added: the entries signed, failed: [{rule, error}]}: one rule that
-    fails does not hide which others were signed."""
+def baseline_kind(name: str, text_: str) -> str:
+    return next(kind for kind, r in _baseline(name) if r == text_)
+
+
+def add_baseline(ws, actor, shown=None, name: str = "orch") -> dict:
+    """Human only: sign every rule of baseline `name` not in force yet (and, with `shown`, among the rules the human
+    was shown), each through `add` (the same checks). {added: the entries signed, failed: [{rule, error}]}: one rule
+    that fails does not hide which others were signed."""
     from orch.core.permits import _human_check
     from orch.errors import OrchError
     _human_check(actor, "changing the Dark profile")
     added, failed = [], []
-    for r in baseline_todo(ws):
+    for r in baseline_todo(ws, name):
         if shown is not None and r not in shown:
             continue
         try:
-            added.append(add(ws, actor, "prefix", r))
+            added.append(add(ws, actor, baseline_kind(name, r), r))
         except (OrchError, OSError) as e:
             failed.append({"rule": r, "error": str(e)})
     return {"added": added, "failed": failed}

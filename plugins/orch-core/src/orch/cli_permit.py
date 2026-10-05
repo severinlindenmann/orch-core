@@ -241,7 +241,11 @@ def profile_add(prefix: Annotated[Optional[str], typer.Option(
                 from_request: Annotated[Optional[str], typer.Option(
                     "--from-request", help="An open Dark request (P-…): its command as an exact rule.")] = None,
                 baseline: Annotated[bool, typer.Option(
-                    "--baseline", help="The orch agent verbs a planner or worker session needs, as prefix rules.")] = False,
+                    "--baseline", help="A named set of rules: `orch` (default; the orch agent verbs a planner or "
+                                       "worker session needs) or `git-basic` (git status, diff, log, show, add, "
+                                       "commit, branch --show-current).")] = False,
+                name: Annotated[Optional[str], typer.Argument(
+                    help="With --baseline: which one (orch or git-basic).", show_default=False)] = None,
                 json_out: JsonOpt = False) -> None:
     """Add a rule to the Dark profile. Human only."""
     from orch.actor import confirm_typed, require_human_terminal
@@ -250,26 +254,32 @@ def profile_add(prefix: Annotated[Optional[str], typer.Option(
     cli, ws = _ctx()
     if sum(x is not None for x in (prefix, exact, from_request)) + baseline != 1:
         raise UsageError("give exactly one of --prefix, --exact, --from-request or --baseline")
+    if name is not None and not baseline:
+        raise UsageError("a name goes with --baseline only")
     require_human_terminal("changing the Dark profile")
     if baseline:
-        todo = dark_profile.baseline_todo(ws)
+        which = name or "orch"
+        todo = dark_profile.baseline_todo(ws, which)  # an unknown name lists the baselines
         if not todo:
-            cli._out({"added": [], "failed": []}, json_out, "every baseline rule is in the Dark profile already")
+            cli._out({"added": [], "failed": []}, json_out, f"every rule of the {which} baseline is in the Dark "
+                                                            "profile already")
             return
-        typer.echo("Adding to the Dark profile (every later Dark run in this workspace may run them without asking):",
-                   err=json_out)
+        typer.echo(f"Adding the {which} baseline to the Dark profile (every later Dark run in this workspace may run "
+                   "them without asking):", err=json_out)
         for r in todo:
-            typer.echo("  " + _rule_line({"id": dark_profile.rule_id("prefix", r.split()), "kind": "prefix",
-                                          "rule": r.split()}), err=json_out)
-        res = dark_profile.add_baseline(ws, confirm_typed("BASELINE"), shown=todo)
+            kind = dark_profile.baseline_kind(which, r)
+            value = r.split() if kind == "prefix" else r
+            typer.echo("  " + _rule_line({"id": dark_profile.rule_id(kind, value), "kind": kind, "rule": value}),
+                       err=json_out)
+        res = dark_profile.add_baseline(ws, confirm_typed("BASELINE"), shown=todo, name=which)
         lines = [f"added {len(res['added'])} baseline rules to the Dark profile"]
-        lines += [f"  added  {e['rule_id']}  {dark_profile.text('prefix', e['rule'])}" for e in res["added"]]
+        lines += [f"  added  {e['rule_id']}  {dark_profile.text(e['rule_kind'], e['rule'])}" for e in res["added"]]
         lines += [f"  FAILED {f['rule']}: {f['error']}" for f in res["failed"]]
         cli._out(res, json_out, "\n".join(lines))
         if res["failed"]:
             from orch.errors import ValidationError
             raise ValidationError(f"{len(res['failed'])} baseline rules were not added (listed above); the others were",
-                                  hint="run orch dark profile add --baseline again after fixing the cause")
+                                  hint=f"run orch dark profile add --baseline {which} again after fixing the cause")
         return
     if from_request is not None:
         r = _show_request(ws, from_request, "Adding to the Dark profile, as an exact rule, the command of")

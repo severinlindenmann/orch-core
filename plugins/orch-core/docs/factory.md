@@ -376,11 +376,22 @@ orch dark profile add --prefix "npm run verify"  # a single simple command start
 orch dark profile add --exact "make test > out.txt"
 orch dark profile add --from-request P-7         # an open Dark card: its command as an exact rule
 orch dark profile add --baseline                 # the orch agent verbs a planner or worker needs
+orch dark profile add --baseline git-basic       # the git a worker needs to commit its own work
 orch dark profile remove <rule id>
 ```
 
 Adding and removing are yours: each prints the rule (or the card's command) and needs its id typed (`--baseline`
-prints every rule it adds and needs BASELINE typed); agents are refused in orch itself and by the guard.
+prints every rule it adds and needs BASELINE typed); agents are
+refused in orch itself and by the guard. The baselines are named: `orch` (the default) and `git-basic`; an unknown
+name is refused with the list.
+
+**The git-basic baseline** adds the git a worker needs to commit its work on its own branch: prefix rules `git
+status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, and the exact rule `git branch --show-current`
+(`git branch` is never a prefix rule). Nothing that reaches out, rewrites or configures: `git push`, `fetch`,
+`reset`, `clean`, `checkout`, `switch`, `rebase`, `config`, `stash`, `git -c …` and `git -C …` stay out, and the
+argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). `git commit` passes only
+where the workspace lets agents commit (`git.agent_may.commit`); elsewhere the guard denies it, and `--baseline
+git-basic` adds the other rules and reports `git commit` as not added, with the reason.
 
 **The baseline** is a fixed list of prefix rules for the orch commands an unattended planner or worker session runs:
 `orch show`, `list`, `search`, `next`, `state`, `check`, `new`, `section set`, `task add|start|done|skip|block|list`,
@@ -390,7 +401,7 @@ prints every rule it adds and needs BASELINE typed); agents are refused in orch 
 dashboard) and no `ask`. Each rule goes through the same checks as any `--prefix` rule; rules already in force are
 skipped, so running it again adds nothing. A human-only form of an allowed verb (`orch move X done`) still does not
 run: the guard denies it, so no rule matches it. Without the baseline (an empty profile), every command a Dark session
-runs stops for a card; the run view and the New ticket page say so. If a rule cannot be signed, the command lists
+runs stops for a card; the run view and the New ticket page say so and name both baselines. If a rule cannot be signed, the command lists
 which rules it added and which failed (and why), and exits with an error; run it again once the cause is fixed.
 
 What the baseline lets a session do, besides the scope limits above (residual risks, stated plainly):
@@ -443,6 +454,11 @@ sessions unless your permission mode lets file edits through (see "Permissions" 
   `--flag=value`, in any case, with `_` for `-`, or abbreviated to three letters or more, as npm accepts); a word that
   starts with `SHELL=` or `MAKEFLAGS=`; and any single-dash word holding one of the letters `c e x C w f p o I O`
   (`-x`, `-xc`, `-Ofoo`, `-Ipath`, ...). Such a command can only match an exact rule (`pytest -x` needs one).
+  One exception: `--file` passes when the program is `orch` itself (by name, or an absolute path ending in `/orch`;
+  never a relative path, which could name a script the agent wrote), because orch reads a bound session's files only
+  inside the workspace (see "Files" above), so `orch task add X --file orchestrator/temporary/t.yaml` and `orch
+  section set X Plan --file plan.md` match their baseline rules. The test suite proves a bound session is still
+  refused a file outside the workspace through them.
 - **Broad rules are refused**: a prefix of fewer than two words; one whose program is not a plain name (a variable
   assignment such as `FOO=1`, an option); one whose program (by its last path part, any case) is a shell,
   interpreter, wrapper, editor, network or file-sweeping tool: `sh`, `bash`, `zsh`, `fish`, `dash`, `ksh`, `csh`,

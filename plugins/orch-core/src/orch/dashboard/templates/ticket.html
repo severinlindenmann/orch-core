@@ -382,6 +382,7 @@
 <header class="ticket-head">
   {{ tc.header(card, created_day, t.section("Summary"), epic.chip if epic else none) }}
   {% if meta_line or blockers %}<p class="meta-line muted">{{ meta_line }}{% if blockers %}{% if meta_line %} · {% endif %}<span class="meta-warn">{{ ui.icon("warn") }} blocked by {{ blockers|join(", ") }}</span>{% endif %}</p>{% endif %}
+  {% if start_box and start_box.running %}<p class="meta-line muted" data-running-here>Running in Terminals: {% for n in start_box.running %}<a class="lnk mono" href="/terminals/{{ n }}">{{ n }}</a>{{ ", " if not loop.last }}{% endfor %} · <a class="lnk" href="/terminals/{{ start_box.running[0] }}">Watch</a></p>{% endif %}
   {#- M: the journey, Asked → Agreed → Doing → Proven → Done, each with its date and who/what (data.story.journey);
       at phone width five segments with a one-line caption. -#}
   {% if not epic %}

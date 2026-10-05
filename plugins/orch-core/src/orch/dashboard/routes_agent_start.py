@@ -17,7 +17,7 @@ from orch.core.ops import Ops
 from orch.dashboard import launch, terminals
 from orch.dashboard.data import agent_start
 from orch.dashboard.data.agents import agent_rows
-from orch.dashboard.views import HUMAN, back, error_text, safe_next
+from orch.dashboard.views import HUMAN, back, confirm_page, error_text, safe_next
 from orch.errors import OrchError
 
 router = APIRouter()
@@ -25,7 +25,8 @@ router = APIRouter()
 
 @router.post("/t/{ref}/agent/start")
 def start_agent(request: Request, ref: str, mode: Annotated[str, Form()], harness: Annotated[str, Form()],
-                next_url: Annotated[str, Form(alias="next")] = "", where: Annotated[str, Form()] = ""):
+                next_url: Annotated[str, Form(alias="next")] = "", where: Annotated[str, Form()] = "",
+                another: Annotated[str, Form()] = ""):
     ws = request.app.state.ws
     try:
         _, t = store.load(ws, ref)
@@ -45,6 +46,18 @@ def start_agent(request: Request, ref: str, mode: Annotated[str, Form()], harnes
                                  f"pick it as Harness, or use Open in terminal")
         if terminal == "none":
             return back(url, err="Open in terminal is turned off")
+        running = terminals.for_ticket(ws, t.id) if terminal == "tmux" else []
+        if running and another != "1":  # a second agent on one ticket races the first: ask, never start silently
+            names = ", ".join(s.name for s in running)
+            return confirm_page(request, action=f"/t/{t.id}/agent/start",
+                                fields=[("mode", mode), ("harness", harness), ("where", where), ("next", next_url),
+                                        ("another", "1")],
+                                title=f"{t.id} already runs in Terminals",
+                                body=f"{names} is already running for {t.id}. A second agent works on the same ticket "
+                                     f"at the same time and they can overwrite each other. Open the running session "
+                                     f"instead, or start another anyway.",
+                                confirm="Start another agent", cancel="Open the running session",
+                                cancel_href=f"/terminals/{running[0].name}", nav="board")
         at = clock_now()
         needs = query.needs_you(ws)
         s = agent_start.suggest(ws, t, needs_items=needs, rows=agent_rows(ws, now=at, needs=needs), now=at,

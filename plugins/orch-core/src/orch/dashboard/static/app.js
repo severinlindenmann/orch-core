@@ -999,6 +999,20 @@
     if (!form) return;
     const harness = form.elements.harness && form.elements.harness.value;
     const mode = form.elements.mode && form.elements.mode.value;
+    // Open in Mission Control runs the Terminals addon's harness only: with another one picked it is disabled and the
+    // reason shown; the other launcher button takes over as the primary one, and gives it back on the way back.
+    if (form.dataset.mcHarness && harness) {
+      const bad = harness !== form.dataset.mcHarness;
+      const mc = [...form.querySelectorAll("button[data-mc]")];
+      const why = form.querySelector("[data-mc-why]");
+      if (!form.hasAttribute("data-state-off")) mc.forEach((b) => { b.disabled = bad; });
+      if (why) why.hidden = !bad;
+      if ("mcFirst" in form.dataset) {
+        const other = form.querySelector('button[name="where"]:not([data-mc])');
+        mc.forEach((b) => b.classList.toggle("btn-primary", !bad));
+        if (other) other.classList.toggle("btn-primary", bad);
+      }
+    }
     const option = [...form.querySelectorAll(".sa-options li")]
       .find((li) => li.dataset.harness === harness && li.dataset.mode === mode);
     if (!option) return;

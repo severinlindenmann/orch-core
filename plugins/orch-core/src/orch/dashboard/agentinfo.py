@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections import Counter
@@ -340,10 +341,45 @@ def _info(ws, session) -> dict:
     }
 
 
+_SCREEN_MODEL = re.compile(r"\b(Opus|Sonnet|Haiku)(?:[ -]?(\d+(?:[.-]\d+)?))?", re.I)
+_SCREEN_CONTEXT = re.compile(r"(?:\bcontext:?\s*(\d+(?:\.\d+)?[kKM]?)\b|\b(\d+(?:\.\d+)?[kKM]?)\s*(?:tokens|ctx|context)\b)", re.I)
+
+
+def from_screen(text: str, lines: int = 6) -> dict:
+    """The model and context size a Claude Code pane prints in its own status line (its last few rows), for a session
+    whose transcript could not be read (no `<claude dir>/sessions/<pid>.json` yet, another config dir). {} when the
+    screen says neither. Strings only: the screen is the agent's, never trusted for more."""
+    tail = "\n".join([ln for ln in str(text or "").splitlines() if ln.strip()][-lines:])
+    out = {}
+    m = _SCREEN_MODEL.search(tail)
+    if m:
+        out["model"] = f"{m.group(1).capitalize()} {m.group(2).replace('-', '.')}" if m.group(2) else m.group(1).capitalize()
+    c = _SCREEN_CONTEXT.search(tail)
+    if c:
+        out["context"] = c.group(1) or c.group(2)
+    return out
+
+
+def with_screen(i: dict, screen: dict | None) -> dict:
+    """`i` (info) with model and context filled from the pane's status line where the transcript gave none."""
+    if not screen or (i.get("model") and i.get("context") is not None):
+        return i
+    from orch.dashboard.terminals import plain
+    seen = from_screen(plain(screen.get("trim") or screen.get("html") or ""))
+    out = dict(i)
+    if not out.get("model") and seen.get("model"):
+        out["model"] = seen["model"]
+    if out.get("context") is None and seen.get("context"):
+        out["context"] = seen["context"]
+    return out
+
+
 def compact(n) -> str:
     """519680 → 520k, 188266056 → 188.3M."""
     if n is None:
         return "—"
+    if isinstance(n, str):  # read off the pane's status line, already as it prints: "54k"
+        return n
     n = int(n)
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}M"

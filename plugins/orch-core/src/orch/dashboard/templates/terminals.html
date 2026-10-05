@@ -9,14 +9,14 @@
 <div class="page-head">
   <div>
     <h1>Terminals</h1>
-    <p>What each agent is doing now. Waiting ones first.</p>
+    <p>What each agent is doing now. Waiting ones first. Each tile is named after the session you started; what the agent works on is the line under it.</p>
   </div>
   {% if addon_on and available and local %}
   <div class="row term-actions">
     {% if rows %}<a class="btn term-next" href="#" data-next hidden>Next needs attention <span data-next-n></span></a>{% endif %}
     <form method="post" action="/terminals/new" class="row term-new">
-      <span class="muted">Runs {{ harness_label }} · <a class="lnk" href="/workspace">settings</a></span>
-      <button type="submit" class="btn btn-primary">New scratch session</button>
+      <span class="muted" id="term-new-hint">Runs {{ harness_label }} with no prompt, in <code>{{ root }}</code>, in your Claude Code default permission mode (auto if that is what you set) · <a class="lnk" href="/workspace">settings</a></span>
+      <button type="submit" class="btn btn-primary" aria-describedby="term-new-hint">New scratch session</button>
     </form>
   </div>
   {% endif %}
@@ -54,9 +54,10 @@
   <a class="term-tile" href="/terminals/{{ r.s.name }}" data-tile="{{ r.s.name }}" data-status="{{ l.status }}" data-sig="{{ l.sig }}">
     <span class="term-tile-head">
       <span class="term-dot" data-unread hidden role="img" aria-label="changed since you looked"></span>
-      <b class="term-title" data-f="title">{{ l.title or r.s.name }}</b>
+      <b class="term-title" data-f="title">{{ l.title }}</b>
       <span class="term-state term-state-{{ l.status or 'none' }}" data-f="state">{{ labels.get(l.status, "running") }}</span>
     </span>
+    <span class="term-topic muted" data-f="topic"{% if not l.topic %} hidden{% endif %}>{{ l.topic }}</span>
     <span class="term-now term-now-{{ l.kind or 'none' }}" data-f="now">{{ l.now or "No agent activity read yet" }}</span>
     <span class="term-meta">
       <span class="term-ticket" data-f="ticket">{{ l.ticket or "no ticket" }}</span>

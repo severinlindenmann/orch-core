@@ -104,12 +104,15 @@ REFUSED = """<!doctype html><html lang="en"><meta charset="utf-8"><meta name="vi
 <title>Not for this device</title><style>body{font:16px system-ui,sans-serif;margin:3rem 1rem;max-width:32rem}</style>
 <h1>This device cannot do this</h1><p>%s</p></html>"""
 _RAW_BAD = re.compile(rb"%2f|%5c|%00", re.I)
+_ENCODED_LEFT = re.compile(r"%[0-9a-fA-F]{2}")  # a decoded path that still holds an escape was double-encoded
+NO_WAY = "Open the dashboard on the computer where it runs to do this."  # the one text of every refusal
 
 
 def _odd_path(path: str, raw: bytes) -> bool:
     """A path shape refused before any matching: an encoded slash or backslash, a null byte, an empty segment,
     a dot segment."""
-    if _RAW_BAD.search(raw) or "\\" in path or "\x00" in path or "//" in path:
+    if _RAW_BAD.search(raw) or "\\" in path or "\x00" in path or "//" in path \
+            or _ENCODED_LEFT.search(path):
         return True
     return any(seg in (".", "..") for seg in path.split("/"))
 
@@ -161,7 +164,7 @@ class RemoteGate:
         try:
             origin = remote_origin(scope)
         except BadOrigin:
-            return await self._deny(scope, send, "This request could not be identified.")
+            return await self._deny(scope, send, NO_WAY)
         if origin is None:
             return await self.app(scope, receive, send)
         if scope["type"] != "http":
@@ -170,16 +173,17 @@ class RemoteGate:
 
     async def _deny(self, scope, send, message, status=403):
         if scope["type"] == "http":
-            await _respond(send, status, message or "Not available from here.")
+            await _respond(send, status, message or NO_WAY)
         else:
             await send({"type": "websocket.close", "code": 1008})
 
     async def _remote(self, scope, receive, send, origin: RemoteOrigin):
         from orch.remote import bridge
 
-        no = "Open the dashboard on the computer where it runs to do this."
-        path, raw = scope.get("path", ""), scope.get("raw_path") or scope.get("path", "").encode()
-        if scope["method"] not in ALLOWED_METHODS or _odd_path(path, raw):
+        no = NO_WAY  # every refusal says the same, so a refusal never tells a route that exists from one that does not
+        path, raw = scope.get("path", ""), scope.get("raw_path")
+        if (not raw or scope.get("root_path") or scope["method"] not in ALLOWED_METHODS
+                or _odd_path(path, raw)):
             return await _respond(send, 403, no)
         query = scope.get("query_string", b"")
         pairs = parse_qsl(query.decode("latin-1").replace(";", "&"), keep_blank_values=True)
@@ -197,14 +201,14 @@ class RemoteGate:
                              if _is_form(scope) else {}).items():
                     params.setdefault(k, []).extend(v)
             elif body is None:
-                return await _respond(send, 413, "That request is too large.")
+                return await _respond(send, 403, no)
         tag = tag_for(self.routes, scope, params)
         if tag is None or tag.scope is None:
             return await _respond(send, 403, no)
-        if tag.fresh and not origin.fresh:
-            return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
         if not bridge.allows(self.root, tag.kind, origin, tag.scope):
-            return await _respond(send, 403, "This device is not allowed to do this here.")
+            return await _respond(send, 403, no)
+        if tag.fresh and not origin.fresh:  # only a device that may do this at all hears that it needs a confirmation
+            return await _respond(send, 403, "This needs a fresh confirmation on this device first.")
         await self.app(scope, replay, send)
 
 

@@ -30,7 +30,10 @@ def app(ws):
     return create_app(ws, "tok")
 
 
-def call(app, method, path, *, remote=None, query=b"", body=b"", headers=(), raw=None):
+DROP = object()
+
+
+def call(app, method, path, *, remote=None, query=b"", body=b"", headers=(), raw=None, extra=None):
     """One ASGI request straight into the app (no client library normalising the path); (status, headers, body)."""
     hdrs = [(b"host", b"127.0.0.1:8765"), (b"cookie", b"orch_token=tok"), (b"origin", b"http://127.0.0.1:8765"),
             *[(k.lower().encode(), v.encode()) for k, v in headers]]
@@ -39,6 +42,8 @@ def call(app, method, path, *, remote=None, query=b"", body=b"", headers=(), raw
              "client": ("127.0.0.1", 50000), "server": ("127.0.0.1", 8765)}
     if remote is not None:
         scope[reach.SCOPE_KEY] = remote
+    scope.update(extra or {})
+    scope = {k: v for k, v in scope.items() if v is not DROP}
     sent = []
 
     async def receive():
@@ -225,7 +230,7 @@ def test_approve_is_decide_unless_it_arms_the_runner(app, put):
     assert run(Scope.DECIDE, plain, headers=(("content-type", "multipart/form-data; boundary=x"),))[0] == 403
     assert run(Scope.DECIDE, plain, headers=())[0] == 403
     assert run(Scope.TYPE, plain, headers=(), fresh=True)[0] == 303
-    assert run(Scope.TYPE, b"x=" + b"a" * 70000, fresh=True)[0] == 413
+    assert run(Scope.TYPE, b"x=" + b"a" * 70000, fresh=True)[0] == 403  # too large to read: refused like the rest
 
 
 def test_fresh_assertion_routes_need_the_marker(app):
@@ -381,3 +386,53 @@ def test_the_signed_phone_path_keeps_its_own_windows():
     from orch.remote import verify
     assert (verify.MAX_AGE_DAYS, verify.MAX_SKEW_S) == (14, 300)
     assert "move" not in verify.DIRECT_KINDS
+
+
+# -- what a refusal reveals, and the shapes that could dodge the tag lookup -----------------------------------------
+
+def test_every_refusal_looks_the_same(app, ws, put):
+    tid = put("backlog")
+    phones.set_permissions(ws.root, {"answer": False, "approve": True, "request_changes": True, "verdict": True})
+    refused = [
+        call(app, "GET", "/no/such/route", remote=origin(Scope.TYPE, fresh=True)),  # no route
+        call(app, "GET", "/workspace", remote=origin(Scope.TYPE, fresh=True)),  # never remote
+        call(app, "POST", f"/t/{tid}/comment", remote=origin(Scope.LOOK), body=b"text=x", headers=FORM),  # scope
+        call(app, "POST", f"/t/{tid}/answer", remote=origin(Scope.TYPE), body=b"qid=q1&qhash=x", headers=FORM),  # switch
+        call(app, "POST", f"/t/{tid}/approve", remote=origin(Scope.LOOK), body=b"gate=requirements&seen=a&factory=1",
+             headers=FORM),  # arming, scope too low: no hint that a fresh confirmation would help
+        call(app, "POST", f"/t/{tid}/approve", remote=origin(Scope.DECIDE), body=b"x=" + b"a" * 70000,
+                           headers=FORM),  # too large to read
+        call(app, "GET", "/board", remote=origin(Scope.TYPE), query=b"token=x"),
+        call(app, "GET", "/t/a/b", raw="/t/a%2fb", remote=origin(Scope.TYPE)),
+        call(app, "TRACE", "/board", remote=origin(Scope.TYPE)),
+        call(app, "GET", "/board", remote="forged"),
+    ]
+    assert {(status, body) for status, _, body in refused} == {(403, refused[0][2])}
+    assert b"fresh" not in refused[0][2] and b"switch" not in refused[0][2]
+
+
+def test_only_a_device_that_may_do_it_hears_about_the_fresh_confirmation(app, put):
+    tid = put("backlog")
+    body = b"gate=requirements&seen=a&factory=1"
+    status, _, text = call(app, "POST", f"/t/{tid}/approve", remote=origin(Scope.TYPE), body=body, headers=FORM)
+    assert status == 403 and b"fresh confirmation" in text
+
+
+@pytest.mark.parametrize("path", ["/t/x%252fedit", "/board%2e", "/t/%41", "/static/%2e%2e/workspace"])
+def test_a_path_that_still_holds_an_escape_is_refused(app, path):
+    assert call(app, "GET", path, raw=path, remote=origin(Scope.TYPE, fresh=True))[0] == 403
+
+
+def test_no_raw_path_or_a_root_path_is_refused(app):
+    assert call(app, "GET", "/board", remote=origin(Scope.LOOK), extra={"raw_path": DROP})[0] == 403
+    assert call(app, "GET", "/board", remote=origin(Scope.LOOK), extra={"raw_path": b""})[0] == 403
+    assert call(app, "GET", "/static/app.css", remote=origin(Scope.LOOK), extra={"root_path": "/x"})[0] == 403
+    assert call(app, "GET", "/board", remote=origin(Scope.LOOK))[0] == 200
+
+
+def test_head_and_trailing_slashes_reach_no_untagged_handler(app):
+    assert call(app, "HEAD", "/workspace", remote=origin(Scope.TYPE, fresh=True))[0] == 403
+    assert call(app, "HEAD", "/board", remote=origin(Scope.TYPE, fresh=True))[0] == 403  # no HEAD route, no tag
+    for path in ("/workspace/", "/board/", "/terminals/", "/t/x/approve/", "/static"):
+        assert call(app, "GET", path, remote=origin(Scope.TYPE, fresh=True))[0] == 403, path
+    assert call(app, "POST", "/t/x/approve/", remote=origin(Scope.TYPE, fresh=True), body=b"factory=1", headers=FORM)[0] == 403

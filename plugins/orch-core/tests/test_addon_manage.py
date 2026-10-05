@@ -142,7 +142,7 @@ def test_review_lists_new_permissions_and_changed_files(tmp_path):
     r = manage.review("hello-status")
     assert "## 0.2.0" in r.changelog
     assert r.old_version == "0.1.0" and r.version == "0.2.0"
-    assert r.added == {"capabilities": [], "binaries": ["gh"], "env": ["GH_HOST"], "actions": [], "uploads": []}
+    assert r.added == {"capabilities": [], "binaries": ["gh"], "env": ["GH_HOST"], "actions": [], "uploads": [], "remote_actions": []}
     assert "+ hello_status/new.py" in r.changed and "~ orch-addon.json" in r.changed
 
 

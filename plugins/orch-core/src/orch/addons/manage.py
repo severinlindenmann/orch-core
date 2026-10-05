@@ -336,7 +336,7 @@ def review(name: str) -> TrustReview:
     e = _entry(name)
     old = e.get("trusted_permissions") if isinstance(e.get("trusted_permissions"), dict) else None
     new = f.manifest.permissions()
-    added = {k: sorted(set(new[k]) - set((old or {}).get(k, []))) for k in ("capabilities", "binaries", "env", "actions", "uploads")}
+    added = {k: sorted(set(new[k]) - set((old or {}).get(k, []))) for k in ("capabilities", "binaries", "env", "actions", "uploads", "remote_actions")}
     api = (old["requires_api"], new["requires_api"]) if old and old.get("requires_api") != new["requires_api"] else None
     remote = new.get("remote_humans") is True and (old or {}).get("remote_humans") is not True
     files = userfiles.tree_files(f.folder)

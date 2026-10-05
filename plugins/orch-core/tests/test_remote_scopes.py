@@ -688,7 +688,8 @@ def acting(factory):
     fws, epic, child, other = factory
     obj = _Acts()
     acts = [{"id": k, "label": k.title(), "tickets": True} for k in ("close", "reopen", "import", "plain")]
-    fws._addons = AddonRegistry(fws, {"demo": loaded(fws, obj, name="demo", actions=acts)})
+    fws._addons = AddonRegistry(fws, {"demo": loaded(fws, obj, name="demo", actions=acts,
+                                                    remote_actions=[a["id"] for a in acts])})
     return create_app(fws, "tok"), obj, child, other
 
 

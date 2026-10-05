@@ -12,5 +12,6 @@
   "entry": "hello_status:create",
   "menu": {"title": "Hello status", "icon": "status"},
   "settings_schema": [{"key": "greeting", "label": "Greeting", "type": "text", "default": "Hello"}],
-  "actions": []
+  "actions": [],
+  "remote_actions": []
 }

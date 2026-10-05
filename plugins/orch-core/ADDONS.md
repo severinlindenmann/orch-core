@@ -42,6 +42,7 @@ No `requirements.txt`, `pyproject.toml` or other dependency files: API 2 allows 
 | `settings_schema` | with `settings` | list of `{key, label, type: text|select|bool|map, options?, default?}`; `secret` fields are not allowed |
 | `actions` | no | `[{id, label, confirm?, tickets?, idempotent?, accepts_file?}]`: buttons that change something outside orch; `tickets: true` lets `act` return `import`, `close` and `reopen` intents; `accepts_file: {max_bytes, types?}` lets the human attach a file (see Actions with files) |
 | `ticket_options` | no | up to 3 yes/no choices on every ticket: `[{id, label, help?, default?}]` (see Ticket options) |
+| `remote_actions` | no | action ids (each one declared in `actions`, no duplicates, at most 32) this addon allows from a paired remote device; default none, so a remote device cannot run any of your actions (see Actions from a remote device) |
 | `remote_humans` | no | `true` only with the `decisions` capability: this addon may hand a paired phone's signed decision to core (see Remote human decisions) |
 
 ## The addon object
@@ -200,6 +201,14 @@ Declare `"accepts_file": {"max_bytes": N, "types": [".pdf", "image/png"]}` (`typ
 - a `TicketIntent` — run as the human, same as any other `act` result;
 - a **`FileResult(path, name, mime="application/octet-stream")`** — `path` must be a file inside your own `state_dir`; core moves it to `state_dir/addons/<name>/out/` and serves it once, as an attachment, with a single-use token good for 5 minutes (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`, `Cache-Control: no-store`);
 - a **`Reveal(label, text)`** — a secret (a link with a key in it) shown to the human once on the same page, never logged, never cached, and never printed by a traceback (`repr(Reveal(...))` hides `text`).
+
+### Actions from a remote device
+
+A paired phone or other device that reaches the dashboard through the remote bridge may run an addon action only when the action id is listed in `remote_actions` and the device holds the Type scope; local use is unchanged. An unlisted action, and an action or addon that does not exist, are refused the same way before any of your code runs, so a refusal never says whether an action exists. Keep the list to actions that are safe for whoever holds a paired device. A file sent from a remote device to an action is limited to 25 MB (the local limit for `accepts_file` stays 200 MiB); a larger one is refused as too large for remote use and may be sent as a TIX file instead. Any other POST from a remote device is limited to 25 MB in total, and a ticket artifact upload to 10 MB. Downloads an action returns are not changed.
+
+`remote_actions` makes only your *actions* opt-in. Your code still runs for a remote device through other routes, each held to its own scope: the decisions route (`/addons/<name>/decisions`, Operate; the intent your `resolve` returns is checked afterwards against the same scope, phone switch and factory rules), the addon page (a read, Look; it renders your widgets), refresh (Operate; it only queues a refresh for the scheduler) and the one-time file download of a `FileResult` (Operate, unchanged). The ticket-options route (`/t/<ref>/option`) was not examined for this change.
+
+These checks guard an honest addon. Addon code is trusted and is unsandboxed (it runs in the dashboard process), so they do not contain a hostile addon: only trust addons you have read.
 
 ## Events and the outbox
 

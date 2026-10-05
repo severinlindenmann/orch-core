@@ -17,6 +17,8 @@ from orch.dashboard import factory_runner
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
 from orch.dashboard.auth import auth_middleware
+from orch.dashboard import remote_gate
+from orch.dashboard.reach import SCOPE_KEY
 from orch.dashboard.remote_gate import RemoteGate
 
 log = logging.getLogger("orch.dashboard")
@@ -31,6 +33,7 @@ PAGE_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inl
 
 _ADDON_FILE = re.compile(r"^/addons/[a-z][a-z0-9-]*/files/[A-Za-z0-9_-]+$")
 _ADDON_ACTION = re.compile(r"^/addons/(?P<name>[a-z][a-z0-9-]*)/actions/(?P<action>[a-z][a-z0-9_]*)$")
+_ARTIFACT_UPLOAD = re.compile(r"^/t/[^/]+/artifacts$")
 _MULTIPART_SLACK = 65536  # form fields and part headers around the file itself
 SMALL_ACTION_BODY = 65536  # the whole body of an addon action POST that takes no file (64 KiB)
 STORE_SWEEP_SECONDS = 30.0  # downloads/reveals expire lazily on their own next put/pop; this clears unclaimed ones
@@ -41,7 +44,7 @@ class _UploadTooLarge(Exception):
     around call_next so the downstream app (still mid-parse) never gets to finish or respond itself."""
 
 
-def _action_cap(request) -> tuple[int, bool]:
+def _action_cap(request, remote=False) -> tuple[int, bool]:
     """(body cap, takes a file) for the addon action this POST targets. An action whose manifest has
     accepts_file gets its own max_bytes (never above the hard cap) plus room for the multipart framing; every
     other action, an unknown one included, gets SMALL_ACTION_BODY for the whole body. Never trust the URL alone."""
@@ -50,7 +53,8 @@ def _action_cap(request) -> tuple[int, bool]:
         la = request.app.state.addons.registry.get(m.group("name"))
         spec = la.manifest.action(m.group("action")) if la else None
         if spec is not None and spec.accepts_file:
-            return min(int(spec.accepts_file[0]), MAX_UPLOAD) + _MULTIPART_SLACK, True
+            cap = min(int(spec.accepts_file[0]), MAX_UPLOAD, remote_gate.REMOTE_ADDON_UPLOAD if remote else MAX_UPLOAD)
+            return cap + _MULTIPART_SLACK, True
     return SMALL_ACTION_BODY, False
 
 
@@ -71,8 +75,22 @@ async def upload_limit_middleware(request, call_next):
     the bytes actually delivered to any addon action (a file one or not) are counted as they arrive and capped
     the same way — so a lying Content-Length (for instance alongside a Transfer-Encoding header, or any other
     framing mismatch) can never let an unbounded body reach Starlette's form parser, whatever a header claimed."""
-    if request.method == "POST" and _ADDON_ACTION.match(request.url.path):
-        cap, takes_file = _action_cap(request)
+    remote = SCOPE_KEY in request.scope  # a malformed marker counts as remote; the gate refuses it anyway
+    post = request.method == "POST"
+    art = post and remote and _ARTIFACT_UPLOAD.match(request.url.path)
+    act = post and _ADDON_ACTION.match(request.url.path)
+    if post and (art or act or remote):  # every remote POST is capped; local only the addon actions
+        if art:
+            cap, takes_file = remote_gate.REMOTE_ARTIFACT_UPLOAD, False
+        elif not act:
+            cap, takes_file = remote_gate.REMOTE_POST_LIMIT, False
+        else:
+            m = _ADDON_ACTION.match(request.url.path)
+            if remote and remote_gate.action_unlisted(request, m.group("name"), m.group("action")):
+                return remote_gate.refusal_response()  # before a byte of the body is read
+            cap, takes_file = _action_cap(request, remote)
+        too_big = (PlainTextResponse(remote_gate.TOO_BIG_REMOTE, status_code=413) if remote and (takes_file or art or not act) else
+                   PlainTextResponse("upload too large" if takes_file else "request body too large", status_code=413))
         length = request.headers.get("content-length")
         if takes_file and request.headers.get("content-type", "").lower().startswith("multipart/"):
             if "transfer-encoding" in request.headers:
@@ -80,7 +98,7 @@ async def upload_limit_middleware(request, call_next):
             if length is None or not length.isdigit():
                 return PlainTextResponse("a file upload needs a Content-Length", status_code=411)
         if length is not None and length.isdigit() and int(length) > cap:
-            return PlainTextResponse("upload too large" if takes_file else "request body too large", status_code=413)
+            return too_big
         total = 0
         aborted = False
         # This relies on a Starlette internal: `request._receive` is the private attribute behind `request.receive`,
@@ -109,7 +127,7 @@ async def upload_limit_middleware(request, call_next):
         # The route's own body parsing (FastAPI) may catch _UploadTooLarge itself and turn it into some other
         # response; `aborted` is set synchronously before it is ever raised, so it is trusted either way.
         if aborted:
-            return PlainTextResponse("upload too large" if takes_file else "request body too large", status_code=413)
+            return too_big
         return response
     return await call_next(request)
 

@@ -14,7 +14,7 @@ def test_good_manifest_parses():
     assert m.defaults() == {"greeting": "Hello"}
     assert m.permissions() == {"capabilities": ["page", "provider", "settings"], "binaries": ["git"],
                                "env": [], "requires_api": "2", "actions": [], "uploads": [],
-                               "remote_humans": False}
+                               "remote_humans": False, "remote_actions": []}
 
 
 def test_setting_binary_and_actions():

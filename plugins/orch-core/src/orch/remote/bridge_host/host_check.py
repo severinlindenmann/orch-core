@@ -35,7 +35,8 @@ What the dispatcher (R3b) must do, beyond calling these functions:
 
 - call Host.still_authorized(run) immediately before running, AND again before sealing every frame of a stream; on
   False it ends the stream with a final chunk carrying the record's stored refusal;
-- when finish() returns False, send the record's stored refusal instead of the result;
+- when finish() returns False, send the record's stored refusal instead of the result (end_run() returns it, and
+  stores one first when none was stored yet);
 - registry.revoke_everywhere() changes the other workspaces' registries only: their hosts' in-memory streams, leases
   and parked requests stay open until that process checks again (its next still_authorized() or check() sees the
   revocation), so their frames stop at the next frame check, not at once;
@@ -60,7 +61,7 @@ from orch.remote.bridge_host.envelope import (F_LAST, F_REFUSAL, F_STREAM, MAGIC
                                               TO_DEVICE, TO_HOST, VERSION, ZERO_ID, Header, KEY_VERSION, Malformed,
                                               digest, frame, split, unb64u, unframe, unhex)
 from orch.remote.bridge_host.keys import InvalidTag, open_sealed, seal
-from orch.remote.bridge_host.outcome import Verdict, drop, refuse
+from orch.remote.bridge_host.outcome import CODES, REFUSAL_FIELDS, Verdict, drop, refuse
 from orch.remote.bridge_host.pairing import Pairing
 from orch.remote.bridge_host.registry import SCOPES, Device, Registry
 from orch.remote.bridge_host.replay_store import MAX_REPLAY_BODY, DeviceFull, ReplayStore, StoreFull
@@ -467,13 +468,54 @@ class Host:
                 self.store.set_outcome(rid, dict(head), now, body)
             return True
 
+    def end_run(self, run: Verdict, code: str | None = None) -> Verdict:
+        """The refusal that ends `run` when it may not go on (still_authorized() answered False, finish() returned
+        False, or the caller refuses it itself with `code`, such as `busy`), carrying the request's header, ready for
+        seal_refusal(). A refusal already stored for the record (revoke, set_scope, finish) always wins; otherwise
+        `code`, else `stopped` after the kill switch, else `revoked` when the registry no longer holds the device
+        (a change made elsewhere), else `scope_changed` (the entry or the grant the run was decided on no longer
+        holds), is stored first for every rid of the run that has not finished. Never replaces a finished
+        outcome."""
+        with self._lock:
+            now = self.clock()
+            stored = None
+            try:
+                rec = self.store.get(run.rid, now)
+                stored = rec.outcome if rec is not None else None
+            except files.Damaged:
+                pass
+            if isinstance(stored, dict) and stored.get("refusal") in CODES:
+                c = stored["refusal"]
+                return dataclasses.replace(refuse(c, **{k: v for k, v in stored.items()
+                                                        if k in REFUSAL_FIELDS.get(c, ())}),
+                                           header=run.header, device=run.device)
+            c = code or ("stopped" if self.stopped else None)
+            if c is None:
+                try:
+                    cur = self.registry.devices().get(run.device)
+                    c = "revoked" if cur is None or cur.revoked else "scope_changed"
+                except files.Damaged:
+                    c = "scope_changed"
+            for rid in run.answer_rids or (run.rid,):
+                try:
+                    r = self.store.get(rid, now)
+                    if r is not None and (r.outcome is None or RUNNING in r.outcome):
+                        self.store.set_outcome(rid, {"refusal": c}, now)
+                except (files.Damaged, LookupError, OSError, ValueError):
+                    pass  # unrecordable: the record stays unfinished, so a retry is answered already_done/unknown
+            return dataclasses.replace(refuse(c), header=run.header, device=run.device)
+
     # -- streams, leases, revocation, the kill switch ------------------------------------------------------------------
 
     def close_stream(self, rid: str) -> None:
-        self.streams.pop(rid, None)
+        """Under the host lock, like every other change to the streams: the Remote tab revokes from a worker thread
+        while the host loop closes streams on its own. Takes no other lock."""
+        with self._lock:
+            self.streams.pop(rid, None)
 
     def end_lease(self, did: str) -> None:
-        self.leases.pop(did, None)
+        with self._lock:
+            self.leases.pop(did, None)
 
     def _end_device(self, did: str, code: str) -> list[str]:
         now = self.clock()

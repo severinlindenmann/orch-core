@@ -2,7 +2,8 @@
 
 `orch.dashboard.bridge_dispatch` runs one request against the dashboard's ASGI app inside the host process and
 returns the response as events while the app produces them. It has no crypto, no mailbox, no network client and no
-thread. It is a building block of the remote bridge; nothing calls it yet.
+thread. It is a building block of the remote bridge; the host loop (`orch.dashboard.bridge_loop`, see
+[remote.md](remote.md)) calls it for every request a paired device sends.
 
 ```python
 async for event in dispatch(app, BridgeRequest(method, "/path?query", headers, body), origin,

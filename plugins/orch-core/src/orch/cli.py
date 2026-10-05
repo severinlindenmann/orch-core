@@ -1384,6 +1384,10 @@ def serve(
     lan: Annotated[bool, typer.Option("--lan", help="Listen on all interfaces, e.g. for your phone.")] = False,
     no_open: Annotated[bool, typer.Option("--no-open", help="Do not open a browser.")] = False,
     no_update: Annotated[bool, typer.Option("--no-update", help="Do not offer to update orch and its addons.")] = False,
+    remote: Annotated[bool, typer.Option("--remote", help="Also reach this dashboard from your paired devices through "
+                                                          "the relay, end-to-end encrypted (see docs/remote.md).")] = False,
+    take_over: Annotated[bool, typer.Option("--take-over", help="With --remote: take this workspace over from "
+                                                                "another host serving it.")] = False,
 ) -> None:
     """Start the local dashboard. Every write goes through the same rules as the CLI."""
     import secrets
@@ -1391,7 +1395,14 @@ def serve(
 
     from orch.actor import require_human_terminal
     require_human_terminal("starting the dashboard", hint="the dashboard is for the human: run it in your own terminal")
-    if not no_update:
+    if remote and lan:
+        raise UsageError("--remote and --lan cannot be combined",
+                         hint="--remote keeps the dashboard on this machine and reaches your devices through the "
+                              "relay; drop --lan")
+    if take_over and not remote:
+        raise UsageError("--take-over goes with --remote")
+    # nothing is ever updated over the bridge: with --remote the update prompt needs a terminal attached
+    if not no_update and (not remote or sys.stdin.isatty()):
         try:
             _run_updates(check_only=False, force=False)
         except OrchError as e:  # an update problem never keeps the dashboard from starting
@@ -1405,6 +1416,13 @@ def serve(
     ws = _ws()
     cfg = ws.config["dashboard"]
     bind = host or ("0.0.0.0" if lan else cfg["host"])
+    bridge = None
+    if remote:
+        if bind not in ("127.0.0.1", "::1", "localhost"):
+            raise UsageError(f"--remote keeps the dashboard on this machine, but it would listen on {bind}",
+                             hint="drop --host, or set dashboard.host to 127.0.0.1")
+        from orch.remote import remote_start
+        bridge = remote_start.prepare(ws, take_over=take_over, out=typer.echo)  # refuses before anything binds
     from orch.dashboard import switcher
     if port is not None and not 1 <= port <= 65535:
         raise UsageError(f"--port {port} is not a port", hint="use a number from 1 to 65535")
@@ -1430,7 +1448,12 @@ def serve(
             webbrowser.open(url)
         except Exception:
             pass  # headless machine: the printed link is enough
-    server = uvicorn.Server(uvicorn.Config(create_app(ws, token, port=bind_port), host=bind, port=bind_port, log_level="warning"))
+    if bridge is not None:
+        typer.echo("remote: reachable from your paired devices through the relay; Ctrl-C stops the dashboard and "
+                   "the link")
+    dash = create_app(ws, token, port=bind_port, remote=bridge.loop) if bridge is not None \
+        else create_app(ws, token, port=bind_port)
+    server = uvicorn.Server(uvicorn.Config(dash, host=bind, port=bind_port, log_level="warning"))
     server.run(sockets=[sock])
 
 

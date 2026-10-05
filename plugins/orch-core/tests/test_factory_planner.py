@@ -636,3 +636,152 @@ def test_a_claim_records_the_bound_session_id_in_the_ticket_and_that_grants_noth
     assert permits.hook_decision(fws, _payload(b["session"])) is not None  # inside the session's process tree
     monkeypatch.setattr(fs, "chain_pids", lambda: {1})  # the id copied into another process
     assert permits.hook_decision(fws, _payload(b["session"])) is None
+
+
+# -- fail closed, and one scope for every change a factory session makes ----------------------------------------------
+
+def _old(ws, tid):
+    """Make ticket `tid` older than any binding (its `created` stamp in 2000)."""
+    path, t = store.load(ws, tid)
+    t.meta["created"] = "2000" + str(t.meta["created"])[4:]
+    store.save(ws, t, path)
+
+
+def test_agent_source_fails_closed(ws, human, tmp_path, monkeypatch):
+    from orch.core import fsutil
+    from orch.core.events import Actor
+    from orch.errors import ValidationError
+    inside = ws.root / "inside.md"
+    inside.write_text("x", encoding="utf-8")
+    unbound = Actor("agent", "claude-code", "cli", "7f3c9a21-0000")
+    fsutil.agent_source(ws, unbound, inside)  # a conclusive "no binding": as before
+    for bad in (ws.root / "missing.md", ws.root / "broken-link"):
+        if bad.name == "broken-link":
+            bad.symlink_to(ws.root / "nowhere")
+        with pytest.raises(ValidationError, match="cannot be resolved"):
+            fsutil.agent_source(ws, unbound, bad)
+        fsutil.agent_source(ws, human, inside)  # humans: unchanged
+    agent = _bound_session(ws, human)
+    fsutil.agent_source(ws, agent, inside)
+    with monkeypatch.context() as m:  # never monkeypatch.undo(): it would drop conftest's isolated config dirs
+        m.setattr(fs, "trusted", lambda *a: (_ for _ in ()).throw(OSError("ps failed")))
+        with pytest.raises(ValidationError, match="cannot tell whether this session"):
+            fsutil.agent_source(ws, agent, inside)  # the lookup raised
+    (fs._root() / "sessions" / f"{UUID}.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValidationError, match="cannot tell whether this session"):
+        fsutil.agent_source(ws, agent, inside)  # a malformed binding record
+    from orch.core.ops import Ops
+    t = Ops(ws, human).new("t")
+    with pytest.raises(ValidationError, match="cannot tell whether this session"):
+        Ops(ws, agent).log(t.id, "x")  # and no change goes through either
+    Ops(ws, human).log(t.id, "x")
+
+
+def test_cli_agent_with_a_malformed_binding_is_refused_a_file(ws, human, capsys, monkeypatch):
+    inside = ws.root / "r.md"
+    inside.write_text("r", encoding="utf-8")
+    _bound_session(ws, human, monkeypatch)
+    (fs._root() / "sessions" / f"{UUID}.json").write_text("[]", encoding="utf-8")
+    code, out = _run(capsys, "new", "-t", "x", "--requirements-file", str(inside))
+    assert code != 0 and "cannot tell whether this session" in out.err
+
+
+# every Ops method that takes a ticket ref and is reachable by an agent changes it through one of these, and each of
+# them runs the scope check (_in_bound_epic) on the loaded ticket before it changes anything
+_ROUTES = re.compile(r"self\.(_mutate|_mutate_events|_edit_tasks|_task_move|_write_section|approve)\(")
+_UNSCOPED = {"replace_raw": "human only: require_human refuses every agent before it reads the ticket"}
+
+
+def test_every_ticket_mutator_goes_through_the_scope_check():
+    import inspect
+    from orch.core.ops import Ops
+    for helper in ("_mutate", "_mutate_events"):
+        assert "self._in_bound_epic(ticket" in inspect.getsource(getattr(Ops, helper)), helper
+    assert "self._mutate(" in inspect.getsource(Ops._edit_tasks)
+    assert "self._mutate(" in inspect.getsource(Ops._write_section)
+    assert "self._edit_tasks(" in inspect.getsource(Ops._task_move)
+    names = [n for n, f in inspect.getmembers(Ops, inspect.isfunction)
+             if not n.startswith("_") and list(inspect.signature(f).parameters)[1:2] == ["ref"]]
+    assert len(names) > 25
+    for n in names:
+        src = inspect.getsource(getattr(Ops, n))
+        assert n in _UNSCOPED or _ROUTES.search(src), f"{n} changes a ticket without the factory scope check"
+    for n, why in _UNSCOPED.items():
+        assert "require_human(" in inspect.getsource(getattr(Ops, n)), (n, why)
+
+
+def _loose(ws, tid):
+    d = ws.artifacts_dir / tid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "loose.txt").write_text("x", encoding="utf-8")
+
+
+def _calls(ws):
+    inside = ws.root / "proof.txt"
+    inside.write_text("proof", encoding="utf-8")
+    return {
+        "log": lambda o, t: o.log(t, "x"), "set_section": lambda o, t: o.set_section(t, "Context", "x"),
+        "append_section": lambda o, t: o.append_section(t, "Context", "x"), "set_state": lambda o, t: o.set_state(t, "x"),
+        "set_extra": lambda o, t: o.set_extra(t, "x-k", "v"), "link": lambda o, t: o.link(t, external="ABC-1"),
+        "claim": lambda o, t: o.claim(t), "release": lambda o, t: o.release(t), "move": lambda o, t: o.move(t, "waiting"),
+        "task_add": lambda o, t: o.task_add(t, [{"text": "x"}]), "task_start": lambda o, t: o.task_start(t, "T1"),
+        "task_done": lambda o, t: o.task_done(t, "T1", "x"), "task_skip": lambda o, t: o.task_skip(t, "T1", "x"),
+        "task_block": lambda o, t: o.task_block(t, "T1", "x"), "task_reopen": lambda o, t: o.task_reopen(t, "T1", "x"),
+        "task_edit": lambda o, t: o.task_edit(t, "T1", text="y"),
+        "artifact_add": lambda o, t: o.artifact_add(t, inside, name="p.txt"),
+        "artifact_link": lambda o, t: o.artifact_link(t, "https://example.com/run"),
+        "artifact_scan": lambda o, t: (_loose(ws, t), o.artifact_scan(t)),  # a loose file: something to link
+        "ask": lambda o, t: o.ask(t, [{"text": "Which?", "why": "w", "options": [{"label": "A"}, {"label": "B"}],
+                                       "recommended": "A"}]),
+        "epic_auto_approve": lambda o, t: o.epic_auto_approve(t),
+        "follow-up": lambda o, t: o.new("follow-up", from_ref=t),
+    }
+
+
+def test_a_factory_session_changes_only_its_epic_its_children_and_what_it_filed(fws, fa, fh, human, fake):
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    c1 = _child(fa, e1)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    other_child = _child(fa, e2)
+    old = fa.new("an old backlog ticket")
+    _old(fws, old.id)
+    _tick(fws, human, fake)
+    w = _session_ops(fws, next(b for b in fs.bindings(fws) if b["child"] == c1))
+    for name, call in _calls(fws).items():
+        for target in (other_child, old.id):
+            try:
+                call(w, target)
+            except ValidationError as e:
+                assert "works on epic" in str(e), (name, target, e)
+            else:
+                raise AssertionError(f"{name} on {target} was not refused")
+    # its own flow: its child, and a follow-up it files and then refines
+    w.claim(c1)
+    w.log(c1, "working")
+    w.task_add(c1, [{"text": "build it"}])
+    w.task_start(c1, "T1")
+    fu = w.new("follow-up for later", from_ref=c1)
+    w.set_section(fu.id, "Requirements", "r")
+    w.set_section(fu.id, "Acceptance criteria", "- [ ] a")
+    w.log(fu.id, "filed while working on the child")
+    w.set_state(fu.id, "waits for the human's review")
+    w.log(e1, "a note on the epic")
+    # unbound agents and humans: as before
+    fa.log(old.id, "x")
+    fa.log(other_child, "x")
+    from orch.core.ops import Ops
+    Ops(fws, human).log(old.id, "x")
+
+
+def test_a_ticket_in_another_epic_stays_refused_even_when_new(fws, fa, fh, human, fake):
+    from orch.errors import ValidationError
+    e1, _ = _epic(fws, fa, fh)
+    e2, _ = _epic(fws, fa, fh, title="Second")
+    _tick(fws, human, fake)
+    p1 = _session_ops(fws, next(b for b in fs.bindings(fws) if b["epic"] == e1))
+    fresh = fa.new("new child of the other epic", epic=e2)  # created after the binding, but in another epic
+    with pytest.raises(ValidationError, match="works on epic"):
+        p1.set_section(fresh.id, "Requirements", "r")
+    with pytest.raises(ValidationError, match="works on epic"):
+        p1.log(e2, "x")  # another epic itself

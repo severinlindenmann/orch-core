@@ -29,23 +29,38 @@ def agent_source(ws, actor, path) -> None:
     copies what it reads into tickets and artifacts, and in a Dark factory such a command runs without a prompt, so it
     must not carry other files out. A factory session is one with the runner's trusted binding (the one the permission
     hook trusts). A human, and an agent outside the factory (whose commands the harness asks about as usual, and who
-    attaches screenshots from /tmp), pass any file, as before."""
-    if actor is None or getattr(actor, "is_human", False) or not getattr(actor, "session", None):
+    attaches screenshots from /tmp), pass any file, as before.
+
+    Fails closed for agents: a path that cannot be resolved (missing, a broken link, a loop) is refused for any agent,
+    and so is every file while orch cannot tell whether the session is a factory session (a binding record that does
+    not verify, or an error while looking: factory_sessions.session_state)."""
+    if actor is None or getattr(actor, "is_human", False):
         return
-    from orch.core import factory_sessions
-    if factory_sessions.trusted(ws, actor.session) is None:
-        return
-    from orch.core.ledger import base_dir
     from orch.errors import ValidationError
-    a = Path(os.path.abspath(os.path.expanduser(str(path))))
+
+    def refuse(why: str):
+        raise ValidationError(f"an agent cannot hand orch the file {path}: {why}",
+                              hint="write the text into a file inside the workspace (for example under "
+                                   "orchestrator/temporary) and pass that path")
+
     try:
+        a = Path(os.path.abspath(os.path.expanduser(str(path))))
         r = a.resolve(strict=True)
+        os.stat(r)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        refuse("it cannot be resolved or read")
+    from orch.core import factory_sessions
+    state, _ = factory_sessions.session_state(ws, getattr(actor, "session", None))
+    if state == "none":
+        return
+    if state != "trusted":
+        refuse("orch cannot tell whether this session is an AI Factory session (its binding does not verify)")
+    from orch.core.ledger import base_dir
+    try:
         root, cfg = Path(ws.root).resolve(), base_dir().resolve()
     except (OSError, RuntimeError):
-        r = root = cfg = None
-    if r is None:
-        why = "it cannot be read"
-    elif r != a:
+        refuse("the workspace or orch's config dir cannot be resolved")
+    if r != a:
         why = "its path goes through a symbolic link"
     elif root not in r.parents:
         why = "it lies outside the workspace"
@@ -53,9 +68,7 @@ def agent_source(ws, actor, path) -> None:
         why = "it lies in orch's config dir"
     else:
         return
-    raise ValidationError(f"an agent cannot hand orch the file {path}: {why}",
-                          hint="write the text into a file inside the workspace (for example under "
-                               "orchestrator/temporary) and pass that path")
+    refuse(why)
 
 
 def read_regular_file(path, max_bytes: int) -> bytes | None:

@@ -131,32 +131,54 @@ class Ops(TaskOpsMixin):
     def _session(self) -> str:
         return self.actor.session or "local"
 
-    def _bound_epic(self) -> str | None:
-        """The epic the AI Factory runner bound this agent session to (the same trusted binding the permission hook
-        uses: runner-written, and only for a process under the one it started), or None: then nothing here changes."""
-        if self.actor.is_human or not self.actor.session:
+    def _binding(self) -> dict | None:
+        """The runner's binding of this agent session (the same trusted binding the permission hook uses: runner-written,
+        and only for a process under the one it started), or None when the session certainly has none: then nothing
+        here changes. Fails closed: a binding record that does not verify, or an error while looking, refuses."""
+        if self.actor.is_human:
             return None
         from orch.core import factory_sessions
-        b = factory_sessions.trusted(self.ws, self.actor.session)
+        state, b = factory_sessions.session_state(self.ws, self.actor.session)
+        if state == "unknown":
+            raise ValidationError("orch cannot tell whether this session is an AI Factory session (its binding does not "
+                                  "verify): nothing was changed", hint="stop and tell the human")
+        return b
+
+    def _bound_epic(self) -> str | None:
+        b = self._binding()
         return b["epic"] if b else None
 
     def _in_bound_epic(self, t: Ticket, what: str) -> None:
-        """A factory session works only on its own epic and that epic's children."""
-        bound = self._bound_epic()
-        if bound is None:
+        """The one scope check of a factory session, for every change to an existing ticket (`_mutate`): its own epic,
+        that epic's children, or a ticket outside every epic (not an epic, no parent epic) created at or after the
+        session's binding, such as its own follow-ups. The `created` stamp is agent-writable: best effort."""
+        b = self._binding()
+        if b is None:
             return
-        from orch.core.epics import parent_epic
-        parent = parent_epic(self.ws, t) if t.id.upper() != bound.upper() else None
-        if t.id.upper() != bound.upper() and (parent is None or parent.id.upper() != bound.upper()):
-            raise ValidationError(f"{what} {t.id} refused: this AI Factory session works on epic {bound} and its "
-                                  "children only", hint=f"orch epic show {bound}")
+        bound = b["epic"].upper()
+        if t.id.upper() == bound:
+            return
+        from orch.core.epics import is_epic, parent_epic
+        parent = parent_epic(self.ws, t)
+        if parent is not None and parent.id.upper() == bound:
+            return
+        if parent is None and not is_epic(t):
+            try:
+                # `created` has minute resolution: compare with the binding's minute (a ticket from up to a minute
+                # before the start passes too)
+                if parse_stamp(str(t.meta.get("created"))) >= parse_stamp(b["at"]).replace(second=0, microsecond=0):
+                    return
+            except (ValueError, TypeError):
+                pass
+        raise ValidationError(f"{what} {t.id} refused: this AI Factory session works on epic {b['epic']}, its children "
+                              "and tickets it filed outside any epic during its run", hint=f"orch epic show {b['epic']}")
 
     def _bound_target(self, epic_ref: str | None, what: str) -> None:
         """`--epic X` from a factory session names its own epic."""
-        bound = self._bound_epic()
-        if bound is None or epic_ref is None:
+        if epic_ref is None:
             return
-        if store.resolve(self.ws, epic_ref).id.upper() != bound.upper():
+        bound = self._bound_epic()
+        if bound is not None and store.resolve(self.ws, epic_ref).id.upper() != bound.upper():
             raise ValidationError(f"{what} refused: this AI Factory session works on epic {bound} only",
                                   hint=f"orch new --epic {bound} ...")
 
@@ -178,6 +200,7 @@ class Ops(TaskOpsMixin):
             token = PREVIEW.set(True)
             try:
                 _, ticket = store.load(self.ws, entry.id)
+                self._in_bound_epic(ticket, "changing")
                 fn(ticket)
             finally:
                 PREVIEW.reset(token)
@@ -187,6 +210,7 @@ class Ops(TaskOpsMixin):
                 raise ValidationError(f"{entry.id} changed since you reviewed it; nothing was applied",
                                       hint="look at it again and repeat the command")
             path, ticket = store.load(self.ws, entry.id)  # raises TicketParseError before any write
+            self._in_bound_epic(ticket, "changing")  # every change to an existing ticket: one scope check
             before = ticket.status
             data = fn(ticket) or {}
             if ticket.status != before:  # one uniform shape for every status change
@@ -204,12 +228,14 @@ class Ops(TaskOpsMixin):
             token = PREVIEW.set(True)
             try:
                 _, ticket = store.load(self.ws, entry.id)
+                self._in_bound_epic(ticket, "changing")
                 fn(ticket)
             finally:
                 PREVIEW.reset(token)
             return ticket
         with lock(self.ws, entry.id):
             path, ticket = store.load(self.ws, entry.id)
+            self._in_bound_epic(ticket, "changing")
             before = ticket.status
             records = fn(ticket) or []
             if records and ticket.status != before:
@@ -254,6 +280,8 @@ class Ops(TaskOpsMixin):
             raise UsageError("pass --epic or --from, not both")
         self._bound_target(epic, "creating a child")
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
+        if source is not None:
+            self._in_bound_epic(store.load(self.ws, source.id)[1], "following up")
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
         sprint_id = self._sprint(sprint) if sprint else None
         sections = sections or {}
@@ -319,7 +347,6 @@ class Ops(TaskOpsMixin):
         ttl = float(self.ws.config["claims"]["ttl_hours"])
 
         def fn(t: Ticket) -> dict:
-            self._in_bound_epic(t, "claiming")
             if t.meta.get("type") == "epic":
                 raise TransitionError(f"{t.id} is an epic: claim one of its children instead",
                                       hint=f"orch list, then orch claim <child of {t.id}>")
@@ -355,7 +382,6 @@ class Ops(TaskOpsMixin):
         session = self._session
 
         def fn(t: Ticket) -> dict:
-            self._in_bound_epic(t, "releasing")
             current = t.meta.get("claim") or {}
             if not current.get("session"):
                 raise ValidationError(f"{t.id} is not claimed")
@@ -532,7 +558,6 @@ class Ops(TaskOpsMixin):
         self.warnings = []
 
         def fn(t: Ticket) -> dict:
-            self._in_bound_epic(t, "moving")
             frm = t.status
             blockers = self._open_blockers(t) if (frm, to) == ("open", "in-progress") else ()
             if to == "testing" and not self.actor.is_human:
@@ -1107,7 +1132,6 @@ class Ops(TaskOpsMixin):
             epic = epics.parent_epic(self.ws, t)
             if epic is None:
                 raise ValidationError(f"{t.id} is not a child of an epic")
-            self._in_bound_epic(t, "auto-approving")
             d = epics.delegation(self.ws, epic)
             if d is None:
                 return approve(t, epic)  # refuses

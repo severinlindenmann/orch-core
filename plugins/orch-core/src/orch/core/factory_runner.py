@@ -137,21 +137,235 @@ def user_settings_blocker(environ=None) -> str | None:
 EDIT_MODES = ("acceptEdits", "auto", "bypassPermissions")  # permission modes that let file edits through
 
 
-def edits_blocked(environ=None) -> bool:
-    """Whether the user-scope Claude settings (the file user_settings_blocker reads: CLAUDE_CONFIG_DIR, else
-    ~/.claude, settings.json) leave file edits to a prompt: permissions.defaultMode is not one of EDIT_MODES. A
-    runner session's file-edit prompt is denied without a card (only shell commands are answered), so then its agent
-    cannot write a file, and the planner cannot write the files its children's text comes from. Read only."""
-    from orch.core.fsutil import read_regular_file
-    environ = os.environ if environ is None else environ
+def _user_dir(environ) -> Path:
     base = environ.get("CLAUDE_CONFIG_DIR")
-    raw = read_regular_file((Path(base) if base else Path.home() / ".claude") / "settings.json", 1 << 20)
+    return Path(base) if base else Path.home() / ".claude"
+
+
+def _user_settings(environ) -> dict | None:
+    """The user-scope Claude settings (CLAUDE_CONFIG_DIR, else ~/.claude, settings.json), read only; None when
+    missing or not a JSON object."""
+    from orch.core.fsutil import read_regular_file
+    raw = read_regular_file(_user_dir(environ) / "settings.json", 1 << 20)
     try:
         data = json.loads(raw.decode("utf-8")) if raw is not None else None
     except (ValueError, UnicodeDecodeError):
         data = None
+    return data if isinstance(data, dict) else None
+
+
+def _model(command, data) -> str:
+    """The model the sessions run: the launch command's --model, else the user settings' `model`; "" when unset."""
+    words = list(command or [])
+    if "--model" in words[:-1]:
+        return str(words[words.index("--model") + 1])
+    return str((data or {}).get("model") or "")
+
+
+def edits_why(environ=None, command=None) -> str | None:
+    """Why runner sessions cannot write files, or None. The user-scope settings (the file user_settings_blocker reads)
+    must set permissions.defaultMode to one of EDIT_MODES; `auto` does not count for a model that cannot use auto mode
+    (Haiku: Claude Code then offers no auto mode, and file edits prompt). A runner session's file-edit prompt is denied
+    without a card (only shell commands are answered), so its agent cannot write a file, and the planner cannot write
+    the files its children's text comes from. Read only. `command`: the launch command (default: the user's)."""
+    environ = os.environ if environ is None else environ
+    data = _user_settings(environ)
     perms = data.get("permissions") if isinstance(data, dict) else None
-    return not (isinstance(perms, dict) and perms.get("defaultMode") in EDIT_MODES)
+    mode = perms.get("defaultMode") if isinstance(perms, dict) else None
+    if mode not in EDIT_MODES:
+        return "permissions.defaultMode in your user-scope Claude settings is not acceptEdits"
+    if mode == "auto":
+        if command is None:
+            from orch.dashboard.launch import load_settings
+            command = load_settings()["factory_command"]
+        model = _model(command, data)
+        if "haiku" in model.casefold():
+            return (f"permissions.defaultMode is auto, which the model {permits.shown(model)} cannot use, so file "
+                    "edits prompt: set it to acceptEdits")
+    return None
+
+
+def edits_blocked(environ=None, command=None) -> bool:
+    """Whether runner sessions cannot write files (edits_why says why)."""
+    return edits_why(environ, command) is not None
+
+
+# -- readiness: checks that run the session's environment before anything starts ---------------------------------------
+# The live run of 5 Oct failed silently in ways no settings file shows: orch's hooks could not run (no uv on the
+# session's PATH), `claude` was a wrapper that exited at once, a new folder waited at the trust dialog. These checks run
+# the real programs under the session's own environment, write nothing of their own, and while one blocks the runner
+# starts nothing. Their result is kept for READY_TTL seconds (FAIL_TTL after a failure) and shown on the run view.
+READY_TTL, FAIL_TTL = 300, 60
+_READY: dict[str, tuple[float, list]] = {}
+OUTWARD_TOOLS = ("Artifact", "WebFetch", "WebSearch")
+
+
+def _probe(argv: list[str], stdin: str, cwd: str, timeout: float = 60) -> tuple[int, str, str]:
+    """Run one check program (an argv, never a shell string of ours). Tests replace it."""
+    import subprocess
+    r = subprocess.run(argv, input=stdin, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+    return r.returncode, r.stdout, r.stderr
+
+
+def session_bins() -> list[str]:
+    """Programs whose folders the sessions' PATH also gets, besides claude's: `orch` (an agent runs it) and `uv` (the
+    plugin's bin/orch runs through it), each resolved and trusted as resolve_bin says; those not found are left out."""
+    return [b for b in (resolve_bin("orch"), resolve_bin("uv")) if b]
+
+
+def _plugin_root(environ) -> Path | None:
+    """The folder of the orch-core plugin Claude Code installed at user scope (plugins/installed_plugins.json), else
+    the plugin this orch runs from; only one holding bin/orch."""
+    from orch.core.fsutil import read_regular_file
+    from orch.instructions.settings import is_plugin_id
+    from orch.onboarding import _package_plugin_root
+    found = []
+    raw = read_regular_file(_user_dir(environ) / "plugins" / "installed_plugins.json", 1 << 22)
+    try:
+        listed = (json.loads(raw.decode("utf-8")) or {}).get("plugins") if raw else None
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        listed = None
+    for pid, entries in (listed.items() if isinstance(listed, dict) else []):
+        for e in (entries if isinstance(entries, list) else [entries]):
+            if is_plugin_id(pid) and isinstance(e, dict) and isinstance(e.get("installPath"), str):
+                found.append(Path(e["installPath"]))
+    found.append(_package_plugin_root())
+    return next((p for p in found if p is not None and (p / "bin" / "orch").is_file()), None)
+
+
+def _hook_commands(environ, data) -> tuple[list[tuple[str, str, list[str]]], list[str]]:
+    """([(label, shell command, extra env pairs)], labels not found): the guard and permission hook a session runs,
+    from the user-scope hooks, else from the enabled plugin's hooks.json."""
+    from orch.onboarding import _enabled_plugin_id
+    want = {"guard": ("PreToolUse", ["guard"]), "permission hook": ("PermissionRequest", ["permit", "hook"])}
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    out: dict[str, tuple] = {}
+    for label, (event, words) in want.items():
+        for entry in (hooks.get(event) or []) if isinstance(hooks, dict) else []:
+            for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                if label not in out and _orch_words(cmd)[:len(words)] == words:
+                    out[label] = (label, cmd, [])
+    if len(out) < len(want) and _enabled_plugin_id(_user_dir(environ) / "settings.json"):
+        root = _plugin_root(environ)
+        try:
+            plug = json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"] if root else {}
+        except (OSError, ValueError, KeyError, TypeError):
+            plug = {}
+        for label, (event, words) in want.items():
+            for entry in (plug.get(event) or []) if isinstance(plug, dict) else []:
+                for h in (entry.get("hooks") or []) if isinstance(entry, dict) else []:
+                    cmd = h.get("command") if isinstance(h, dict) else None
+                    if label not in out and isinstance(cmd, str) and " ".join(words) in cmd:
+                        out[label] = (label, cmd, [f"CLAUDE_PLUGIN_ROOT={root}"])
+    return [out[k] for k in want if k in out], [k for k in want if k not in out]
+
+
+def _trusted_folder(environ, root: Path) -> bool:
+    """Whether Claude Code recorded the trust dialog as accepted for `root` or a folder above it (read only)."""
+    from orch.core.fsutil import read_regular_file
+    base = environ.get("CLAUDE_CONFIG_DIR")
+    raw = read_regular_file(Path(base) / ".claude.json" if base else Path.home() / ".claude.json", 1 << 26)
+    try:
+        projects = json.loads(raw.decode("utf-8")).get("projects") if raw else None
+    except (ValueError, UnicodeDecodeError, AttributeError):
+        projects = None
+    if not isinstance(projects, dict):
+        return False
+    return any(isinstance(projects.get(str(p)), dict) and projects[str(p)].get("hasTrustDialogAccepted") is True
+               for p in (root, *root.parents))
+
+
+def _check(name, ok, why="", level="block", tail="") -> dict:
+    return {"name": name, "ok": bool(ok), "level": level, "why": why, "tail": escaped_tail(tail, 5) if tail else ""}
+
+
+def readiness(ws, settings, environ=None) -> list[dict]:
+    """Every readiness check: [{name, ok, level ("block" or "warn"), why, tail}]. Runs `claude --version` and the
+    hook commands under the session's exact environment (env -i, the session PATH); reads the user settings, the
+    trust record and the skills folder. Nothing is written by orch."""
+    import uuid
+    environ = os.environ if environ is None else environ
+    claude, env_bin = resolve_bin(settings["factory_command"][0]), resolve_bin("env")
+    if claude is None or env_bin is None:
+        return []  # _ready says so for every launch
+    bins = [claude, *session_bins()]
+    prefix = env_prefix(env_bin, bins, environ)
+    path, root = child_path(*bins), Path(ws.root).resolve()
+    data = _user_settings(environ)
+    out = []
+
+    def run(argv, stdin=""):
+        try:
+            return _probe(argv, stdin, str(root))
+        except (OSError, ValueError) as e:
+            return 127, "", f"{type(e).__name__}: {e}"
+        except Exception as e:  # a timeout among them
+            return 124, "", f"{type(e).__name__}"
+
+    code, so, se = run([*prefix, claude, "--version"])
+    out.append(_check("claude", code == 0 and re.search(r"\d+\.\d+", so),
+                      f"`{claude} --version` failed under the sessions' environment (exit {code}): the program the "
+                      "runner found may be a wrapper that cannot find the real claude. Put the real claude first on "
+                      "the dashboard's PATH", tail=se or so))
+    has_orch = which("orch", path=path) is not None
+    out.append(_check("orch on PATH", has_orch,
+                      f"`orch` is not on the sessions' PATH ({path}): install it as a tool of your user (for example "
+                      "`uv tool install` of orch-core) so the dashboard's PATH finds it, then restart the dashboard"))
+    cmds, missing = _hook_commands(environ, data)
+    if missing and user_settings_blocker(environ) is None:
+        out.append(_check("hooks", False, f"cannot find the {' and '.join(missing)} command to test (the orch-core "
+                                          "plugin's folder was not found): enable the plugin at user scope again"))
+    for label, cmd, extra in cmds:
+        event = "PreToolUse" if label == "guard" else "PermissionRequest"
+        payload = json.dumps({"session_id": str(uuid.uuid4()), "hook_event_name": event, "tool_name": "Bash",
+                              "tool_input": {"command": "true"}, "cwd": str(root)})
+        code, so, se = run([*prefix, *extra, f"CLAUDE_PROJECT_DIR={root}", "/bin/sh", "-c", cmd], payload)
+        try:
+            sane = not so.strip() or isinstance(json.loads(so), dict)
+        except ValueError:
+            sane = False
+        out.append(_check(label, code == 0 and sane,
+                          f"orch's {label} does not run under the sessions' environment (exit {code}): sessions would "
+                          "run without it. A plugin's bin/orch needs uv on the sessions' PATH (the folders of claude, "
+                          "orch and uv, and the system's)", tail=se or so))
+    from orch.onboarding import _enabled_plugin_id
+    skills = (_enabled_plugin_id(_user_dir(environ) / "settings.json") is not None
+              or (_user_dir(environ) / "skills" / "orch-work-on-ticket" / "SKILL.md").is_file())
+    out.append(_check("skills", skills, "the orch skills are not available at user scope: sessions follow the "
+                                        "built-in prompts, which name the commands they need", level="warn"))
+    out.append(_check("trust", _trusted_folder(environ, root),
+                      f"Claude Code has not recorded the trust dialog for {root}: a new session would stop at it. "
+                      "Open Claude once in this folder and accept the trust dialog"))
+    deny = ((data or {}).get("permissions") or {}).get("deny") if isinstance((data or {}).get("permissions"), dict) \
+        else None
+    lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
+    out.append(_check("outward tools", not lacking,
+                      f"your user-scope settings do not deny {', '.join(lacking)} (permissions.deny): tools that do "
+                      "not prompt never reach orch's permission hook, so a session can use them unasked",
+                      level="warn"))
+    return out
+
+
+def readiness_blocker(ws, settings) -> str | None:
+    """The first blocking readiness failure (with its output tail), or None; computed at most every READY_TTL seconds
+    (FAIL_TTL while one fails)."""
+    import time
+    key = str(Path(ws.root).resolve())
+    at, checks = _READY.get(key, (0.0, None))
+    failed = [c for c in (checks or []) if not c["ok"] and c["level"] == "block"]
+    if checks is None or time.monotonic() - at > (FAIL_TTL if failed else READY_TTL):
+        checks = readiness(ws, settings)
+        _READY[key] = (time.monotonic(), checks)
+        failed = [c for c in checks if not c["ok"] and c["level"] == "block"]
+    return failed[0]["why"] if failed else None
+
+
+def readiness_report(ws) -> list[dict] | None:
+    """The failing checks of the last readiness run (blocking and warnings), without running anything; None when none
+    ran yet in this process."""
+    checks = _READY.get(str(Path(ws.root).resolve()), (0.0, None))[1]
+    return None if checks is None else [c for c in checks if not c["ok"]]
 
 
 def _orch_words(cmd) -> list[str]:
@@ -371,7 +585,7 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | No
         return None
     if prompt is None or not _gate(ws, epic.id, d["id"]):
         return None
-    return prompt, cwd, claude, env_bin
+    return prompt, cwd, claude, env_bin, [claude, *session_bins()]
 
 
 def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple,
@@ -379,13 +593,13 @@ def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple
     """Start one session (`ready`: what _ready returned). The command is the user's launch setting with the generated
     id and the built-in prompt put in as whole argv elements (never a shell, never ticket text), the program resolved
     to a trusted absolute path, under `env -i` with a fixed PATH and the allowlisted variables."""
-    prompt, cwd, claude, env_bin = ready
+    prompt, cwd, claude, env_bin, bins = ready
     if not _gate(ws, epic.id, d["id"]):  # once more, right before the start
         return None
     command = settings["factory_command"]
     sid = fs.new_session_id()
     name = f"fx-{t.id}-{secrets.token_hex(3)}"  # unrelated to the session id
-    argv = [*env_prefix(env_bin, [claude]), claude,
+    argv = [*env_prefix(env_bin, bins), claude,
             *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in command[1:])]
     b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token,
                 start=str(cwd))
@@ -622,6 +836,15 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     gone = fs.ended(ws)
     cid = ledger.checkout_id(ws)
     dark_marks = [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+    checked: list = []
+
+    def not_ready() -> bool:  # the readiness checks, once per round and only when something would start
+        if not checked:
+            checked.append(readiness_blocker(ws, settings))
+            if checked[0]:
+                lines.append(f"not starting anything: {checked[0]}")
+        return bool(checked[0])
+
     for b in keep:  # a session that waits at its prompt after the human answered: one built-in line wakes it
         epic = _ticket(ws, b["epic"])
         if epic is not None:
@@ -643,6 +866,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
             if any(fs.is_planner(g) and g["epic"] == epic.id and g["delegation"] == d["id"] and g["wake"] == token
                    for g in gone):
                 continue  # it ended without children and nothing it waits for changed since
+            if not_ready():
+                return lines
             ready = _ready(ws, settings, epic, d, epic, lines, planner=True)
             if ready is None:
                 continue  # checked before its marker: a missing program must not use up its two launches
@@ -668,6 +893,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
             token = wake_token(epic, t, signed, dark_marks)
             if any(g["child"] == t.id and g["delegation"] == d["id"] and g["wake"] == token for g in gone):
                 continue  # parked: nothing it waits for changed since it last started
+            if not_ready():
+                return lines
             ready = _ready(ws, settings, epic, d, t, lines)
             if ready is None:
                 continue  # checked before its marker: a refused launch uses up none of its launches

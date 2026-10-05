@@ -374,7 +374,8 @@ def _ready(ws, settings, epic, d, t, lines, planner: bool = False) -> tuple | No
     return prompt, cwd, claude, env_bin
 
 
-def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple) -> dict | None:
+def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple,
+           start_answers: dict | None = None) -> dict | None:
     """Start one session (`ready`: what _ready returned). The command is the user's launch setting with the generated
     id and the built-in prompt put in as whole argv elements (never a shell, never ticket text), the program resolved
     to a trusted absolute path, under `env -i` with a fixed PATH and the allowlisted variables."""
@@ -388,6 +389,11 @@ def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple
             *(a.replace("{session}", sid).replace("{prompt}", prompt) for a in command[1:])]
     b = fs.bind(ws, actor, session=sid, epic=epic.id, delegation=d["id"], child=t.id, name=name, wake=token,
                 start=str(cwd))
+    if start_answers is not None:  # what the human had answered at the start: a later answer may nudge it
+        try:
+            fs.write_nudge_record(actor, _nudge_base(b, start_answers))
+        except (OrchError, OSError):
+            pass  # no record: the session is never nudged (fail closed)
     try:
         pid = launcher.start(name, cwd, argv)
         fs.set_pid(ws, actor, sid, pid)
@@ -423,6 +429,129 @@ def planner_stop(ws, b: dict, signed) -> str | None:
     return f"the planner's time limit of {PLANNER_MINUTES} minutes is used up" if late else None
 
 
+# -- the idle nudge -----------------------------------------------------------------------------------------------------
+# An interactive session that waits does not end, so the wake above never reaches it. After the human answers something
+# in its epic, the runner types ONE of these built-in lines into its pane, when the pane shows Claude's empty input
+# prompt and nothing else changed on it for IDLE_SECONDS. Never text from a ticket, the config or an agent.
+NUDGES = {
+    "answered": "The human answered your permission requests. Retry the blocked commands, then finish your ticket "
+                "and move it to testing.",
+    "denied": "The human denied a permission you asked for. Do the work without that command and record why with "
+              "orch log, then finish your ticket and move it to testing.",
+    "planner": "The human answered your permission requests. Retry the blocked commands, then finish splitting the "
+               "epic and approving its children.",
+}
+MAX_NUDGES = 3  # per session
+NUDGE_GAP = 300  # seconds between two nudges of one session
+IDLE_SECONDS = 45  # the pane must show the same idle prompt this long
+_BUSY = ("esc to interrupt", "do you want", "don't ask again", "❯ 1.", "> 1.", "(y/n)", "yes, proceed",
+         "trust the files", "press enter", "interrupted")
+_IDLE = ("? for shortcuts", "shift+tab to cycle")
+_EMPTY_INPUT = re.compile(r"[│|\s]*[>❯]\s*[│|\s]*")
+
+
+def pane_idle(text) -> bool:
+    """Whether a pane's text shows Claude Code idle at an empty input prompt, conservatively: its footer hint, an empty
+    input line, and no sign of a running command, a permission or trust prompt or a menu in its last lines. Anything
+    else (including text it does not recognise) is not idle."""
+    if not isinstance(text, str):
+        return False
+    tail = [ln for ln in text.splitlines() if ln.strip()][-12:]
+    low = "\n".join(tail).casefold()
+    if not tail or any(m in low for m in _BUSY) or not any(m in low for m in _IDLE):
+        return False
+    return any(_EMPTY_INPUT.fullmatch(ln) for ln in tail)
+
+
+def answers(epic, signed, dark_marks) -> dict:
+    """What the human answered in this epic so far, as counts: grants, denials, revocations, and for a Dark charter
+    the changes to this checkout's Dark profile."""
+    mine = [e for e in signed if e.get("ticket") == epic.id]
+    charter = next((e for e in reversed(mine) if e.get("kind") == "charter"), None)
+    dark = bool(charter and isinstance(charter.get("delegate"), dict) and charter["delegate"].get("dark"))
+    return {"grant": sum(1 for e in mine if e.get("kind") == "grant"),
+            "deny": sum(1 for e in mine if e.get("kind") == "permit_deny"),
+            "revoke": sum(1 for e in mine if e.get("kind") == "permit_revoke"),
+            "profile": len(dark_marks) if dark else 0}
+
+
+def _nudge_base(b: dict, now_answers: dict) -> dict:
+    return {"session": b["session"], "epic": b["epic"], "delegation": b["delegation"], "answers": now_answers,
+            "count": 0, "last": "", "pane": "", "pane_at": ""}
+
+
+def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None:
+    """Type one built-in nudge into the idle pane of session `b` after an answer in its epic: at most MAX_NUDGES, at
+    least NUDGE_GAP apart, only while pane_idle holds for IDLE_SECONDS. Fails closed: a missing or damaged record, a
+    pane that cannot be read or anything unexpected types nothing."""
+    import hashlib as _h
+    from orch import clock
+    capture, type_ = getattr(launcher, "capture", None), getattr(launcher, "type", None)
+    rec = fs.nudge_record(b["session"])
+    if capture is None or type_ is None or rec is None or rec["count"] >= MAX_NUDGES or rec["answers"] == now_answers:
+        return
+    now = clock.now()
+    try:
+        if rec["last"] and (now - clock.parse_stamp(rec["last"])).total_seconds() < NUDGE_GAP:
+            return
+        text = capture(b["name"])
+        if not isinstance(text, str):
+            return
+        pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
+        if pane != rec["pane"]:
+            fs.write_nudge_record(actor, {**rec, "pane": pane, "pane_at": clock.stamp_s()})
+            return
+        if (now - clock.parse_stamp(rec["pane_at"])).total_seconds() < IDLE_SECONDS or not pane_idle(text):
+            return
+        old = rec["answers"]
+        only_denied = (now_answers.get("deny", 0) > old.get("deny", 0)
+                       and all(now_answers.get(k, 0) == old.get(k, 0) for k in ("grant", "revoke", "profile")))
+        kind = "planner" if fs.is_planner(b) else "denied" if only_denied else "answered"
+        # counted before typing: a failure to type is not retried in a loop
+        fs.write_nudge_record(actor, {**rec, "answers": now_answers, "count": rec["count"] + 1,
+                                      "last": clock.stamp_s(), "pane": "", "pane_at": ""})
+        type_(b["name"], NUDGES[kind])
+        lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
+    except (OrchError, OSError, ValueError, TypeError, KeyError):
+        return
+
+
+EARLY_SECONDS = 90  # a session that ends this soon after its start most likely never got going
+TAIL_LINES = 15
+
+
+def escaped_tail(text: str, n: int = TAIL_LINES) -> str:
+    """The last `n` non-empty lines of pane text, each cut to 200 characters, everything outside printable ASCII
+    escaped: what a record may keep of a screen."""
+    lines = [ln.rstrip() for ln in str(text).splitlines() if ln.strip()][-n:]
+    return "\n".join(permits.shown(ln[:200]) for ln in lines)
+
+
+def _ended(ws, actor, launcher, b: dict) -> str | None:
+    """A session that is no longer running: read how it ended (when the launcher can, and the pane stayed), end the
+    tmux session, and record it when it ended within EARLY_SECONDS of its start. The reason line, or None."""
+    from orch import clock
+    reap = getattr(launcher, "reap", None)
+    try:
+        info = reap(b["name"]) if reap else None
+    except (OrchError, OSError, ValueError):
+        info = None
+    if info is None:
+        return None
+    status, text = info
+    try:
+        early = (clock.now() - clock.parse_stamp(b["at"])).total_seconds() < EARLY_SECONDS
+    except (ValueError, TypeError):
+        early = False
+    if not early:
+        return f"its session ended (exit {status or 'unknown'})"
+    try:
+        fs.record_early_end(ws, actor, b, status or "unknown", escaped_tail(text))
+    except (OrchError, OSError):
+        pass
+    return f"its session ended right after it started (exit {status or 'unknown'})"
+
+
 def sweep(ws, actor, launcher: Launcher, *, stop_all: bool = False) -> list[str]:
     """End the bindings of sessions that are not alive (the dashboard just started), or, with `stop_all`, stop every
     session and end every binding (the dashboard is shutting down; each child may start again next time)."""
@@ -438,11 +567,13 @@ def sweep(ws, actor, launcher: Launcher, *, stop_all: bool = False) -> list[str]
     for b in live:
         if not stop_all and b["name"] in names:
             continue
-        if b["name"] in names:
-            try:
+        try:
+            if b["name"] in names:
                 launcher.stop(b["name"])
-            except (OrchError, OSError):
-                pass
+            elif getattr(launcher, "reap", None):
+                launcher.reap(b["name"])  # a pane left after its process ended: end that session too
+        except (OrchError, OSError):
+            pass
         fs.end(ws, b["session"], wake="" if stop_all else None)
         if stop_all and fs.is_planner(b):
             fs.unmark_planner_run(ws, b["delegation"])  # the dashboard stopping is not one of its two launches
@@ -467,6 +598,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     keep = []
     for b in live:
         why = None if b["name"] in names else "its session ended"
+        if why is not None:
+            why = _ended(ws, actor, launcher, b) or why
         if why is None:
             why = stop_reason(ws, b, signed, cut, blocker)
         if why is None and fs.is_planner(b):
@@ -489,6 +622,10 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     gone = fs.ended(ws)
     cid = ledger.checkout_id(ws)
     dark_marks = [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+    for b in keep:  # a session that waits at its prompt after the human answered: one built-in line wakes it
+        epic = _ticket(ws, b["epic"])
+        if epic is not None:
+            _nudge(ws, actor, launcher, b, answers(epic, signed, dark_marks), lines)
     for entry in store.scan(ws):
         if entry.meta is None or not epics.is_epic(entry.meta) or entry.status == "done":
             continue
@@ -515,7 +652,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                     continue
                 if not fs.mark_planner_run(ws, d["id"]):
                     continue
-                b = _start(ws, actor, launcher, settings, epic, d, epic, token, lines, ready)
+                b = _start(ws, actor, launcher, settings, epic, d, epic, token, lines, ready,
+                           answers(epic, signed, dark_marks))
             if b is not None:
                 keep.append(b)
             continue
@@ -540,7 +678,8 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                     continue
                 if not fs.mark_run(ws, d["id"], t.id):
                     continue
-                b = _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready)
+                b = _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready,
+                           answers(epic, signed, dark_marks))
             if b is not None:
                 keep.append(b)
     return lines

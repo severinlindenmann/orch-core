@@ -75,18 +75,53 @@ def _tmux(args: list[str], timeout: float = 10) -> subprocess.CompletedProcess:
 
 class TmuxLauncher:
     def alive(self) -> set[str] | None:
+        """Sessions whose pane still runs. Panes stay after their process exits (remain-on-exit, set at start), so
+        the runner can read how a session ended (reap) before it ends the session."""
         try:
-            r = _tmux(["list-sessions", "-F", "#{session_name}"])
+            r = _tmux(["list-panes", "-a", "-F", "#{session_name} #{pane_dead}"])
         except (OSError, subprocess.TimeoutExpired, UsageError):
             return None
         if r.returncode == 0:
-            return set(r.stdout.split())
+            return {ln.rsplit(" ", 1)[0] for ln in r.stdout.splitlines() if ln.endswith(" 0")}
         # only "there is no server" is an answer; any other failure leaves what we knew as it was
         return set() if any(m in r.stderr for m in _NO_SERVER) else None
 
+    def reap(self, name: str) -> tuple[str, str] | None:
+        """(exit status, the pane's text) of a session whose process ended, and the session is ended; None when it is
+        not there or still runs (then nothing is ended)."""
+        try:
+            r = _tmux(["display-message", "-p", "-t", f"={name}:", "#{pane_dead} #{pane_dead_status}"])
+            dead, _, status = r.stdout.strip().partition(" ")
+            if r.returncode != 0 or dead != "1":
+                return None
+            text = _tmux(["capture-pane", "-p", "-J", "-t", f"={name}:", "-S", "-200"]).stdout
+            _tmux(["kill-session", "-t", f"={name}"])
+        except (OSError, subprocess.TimeoutExpired, UsageError):
+            return None
+        return status, "\n".join(ln for ln in text.splitlines() if not ln.startswith("Pane is dead"))
+
+    def capture(self, name: str) -> str | None:
+        """The visible text of the session's pane (plain, no escapes), or None."""
+        try:
+            r = _tmux(["capture-pane", "-p", "-t", f"={name}:"])
+        except (OSError, subprocess.TimeoutExpired, UsageError):
+            return None
+        return r.stdout if r.returncode == 0 else None
+
+    def type(self, name: str, text: str) -> None:
+        """Type one of the runner's built-in nudges into the pane, then Enter. Nothing else is ever typed."""
+        if text not in factory_runner.NUDGES.values():
+            raise UsageError("the runner types only its built-in nudges")
+        for args in (["send-keys", "-t", f"={name}:", "-l", "--", text], ["send-keys", "-t", f"={name}:", "Enter"]):
+            if _tmux(args).returncode != 0:
+                raise UsageError(f"could not type into {name}")
+
     def start(self, name: str, cwd: str, argv: list[str]) -> int:
-        # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment
-        r = _tmux(["new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
+        # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment.
+        # remain-on-exit is set (server-wide, in the same tmux call, before the session exists) so a session that ends
+        # right away leaves its last screen and exit status for reap().
+        r = _tmux(["start-server", ";", "set-option", "-g", "-w", "remain-on-exit", "on", ";",
+                   "new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
                    launch.tmux_arg(shlex.join(argv))])
         if r.returncode != 0:
             raise UsageError(f"tmux could not start a session named {name}")

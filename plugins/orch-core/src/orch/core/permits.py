@@ -174,7 +174,7 @@ _NEVER = (
      "the harness's settings, hooks and plugins are the human's"),
     (re.compile(r"--no-verify\b|core\.hookspath", re.I), "git hooks stay on"),
     (re.compile(r"orchestrator[/\\]+(?:\.state\b|config\.json)|ledger\.(?:key|jsonl)\b"
-                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release|release-records|release-repos|tmux)\b"),
+                r"|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release|release-records|release-repos|nudges|early-ends|tmux)\b"),
      "orch's config, state, ledger and permit records are changed by orch and the human only"),
     (re.compile(r"\b" + _ENV_VARS + r"\s*="), "the variables that decide where orch keeps its records are fixed"),
     (re.compile(r"(?<![\w-])(?:sudo|doas|su)(?![\w-])"), "no elevated rights"),

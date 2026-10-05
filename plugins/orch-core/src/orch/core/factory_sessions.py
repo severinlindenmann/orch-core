@@ -303,6 +303,92 @@ def unmark_planner_run(ws, delegation: str) -> None:
             return
 
 
+# -- runner records: nudges and sessions that ended right after their start -------------------------------------------
+# Written only by the runner (a human process), read by the runner and the run view. A record that does not read back
+# exactly is treated as spent (no nudge) or absent (nothing shown): fail closed.
+
+_NUDGE_KEYS = {"session", "epic", "delegation", "answers", "count", "last", "pane", "pane_at"}
+
+
+def _write_json(path: Path, body: dict) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=True)
+    os.replace(tmp, path)
+
+
+def _read_json(path: Path, limit: int = _MAX_BYTES) -> dict | None:
+    from orch.core.artifacts import read_regular
+    raw = read_regular(path, limit=limit, root=_root())
+    try:
+        body = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def nudge_record(session: str) -> dict | None:
+    """The runner's nudge record of a session, or None (none, or one that does not read back exactly)."""
+    if not isinstance(session, str) or not SESSION_ID.match(session):
+        return None
+    b = _read_json(_root() / "nudges" / f"{session}.json")
+    if b is None or set(b) != _NUDGE_KEYS or b["session"] != session or not isinstance(b["count"], int) \
+            or not isinstance(b["answers"], dict) or not all(isinstance(b[k], str) for k in ("epic", "delegation",
+                                                                                           "last", "pane", "pane_at")):
+        return None
+    return b
+
+
+def write_nudge_record(actor, body: dict) -> None:
+    """Human only (the runner)."""
+    human_check(actor, "recording a factory nudge")
+    if set(body) != _NUDGE_KEYS or not SESSION_ID.match(str(body["session"])):
+        raise ValidationError("not a nudge record")
+    _write_json(_root() / "nudges" / f"{body['session']}.json", body)
+
+
+def nudges(delegation: str) -> int:
+    """How many times the runner typed into sessions of this delegation (the run view's "nudged N times")."""
+    try:
+        names = os.listdir(_root() / "nudges")
+    except OSError:
+        return 0
+    total = 0
+    for n in names:
+        b = nudge_record(n[:-5]) if n.endswith(".json") else None
+        if b is not None and b["delegation"] == delegation:
+            total += max(0, b["count"])
+    return total
+
+
+def record_early_end(ws, actor, b: dict, status: str, tail: str) -> None:
+    """Human only (the runner): the session of binding `b` ended right after it started. One record per delegation
+    and child (the latest wins); `tail` is already escaped and capped by the caller."""
+    from orch.clock import stamp_s
+    human_check(actor, "recording a factory session's end")
+    body = {"epic": b["epic"], "delegation": b["delegation"], "child": b["child"], "status": str(status)[:40],
+            "tail": str(tail)[:4000], "at": stamp_s()}
+    _write_json(_root() / "early-ends" / f"{_key(ws, b['delegation'], b['child'])}.json", body)
+
+
+def early_ends(ws, delegation: str) -> list[dict]:
+    """The early-end records of a delegation, newest first."""
+    try:
+        names = os.listdir(_root() / "early-ends")
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        body = _read_json(_root() / "early-ends" / n, limit=8192) if n.endswith(".json") else None
+        if (body is not None and set(body) == {"epic", "delegation", "child", "status", "tail", "at"}
+                and all(isinstance(v, str) for v in body.values()) and body["delegation"] == delegation
+                and n == f"{_key(ws, delegation, body['child'])}.json"):
+            out.append(body)
+    return sorted(out, key=lambda x: x["at"], reverse=True)
+
+
 # -- tickets a bound session created ----------------------------------------------------------------------------------
 # One empty file per ticket in permits/sessions/<session>.created/, created exclusively by the session's own orch
 # process (`orch new`, Ops.new) once the ticket is saved. Unlike a binding, an agent's process writes it: the guard keeps

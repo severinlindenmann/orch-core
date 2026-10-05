@@ -1116,17 +1116,31 @@ def input_line(text) -> str | None:
     return None
 
 
-# Claude Code's folder-trust question, as it draws it (fixed text, matched without case in the pane's last lines). The
-# runner never answers it: trusting a folder is the human's.
-_TRUST_QUESTION = ("is this a project you trust", "yes, i trust this folder", "do you trust the files in this folder")
+# Claude Code's folder-trust question, as it draws it. The runner never answers it: trusting a folder is the human's.
+_TRUST_QUESTION = ("is this a project you trust", "do you trust the files in this folder")
+_TRUST_YES = re.compile(r"^[\s\u2502|]*(?:[>\u276f]\s*)?1\.\s+yes\b.*\btrust\b", re.I)
+_TRUST_NO = re.compile(r"^[\s\u2502|]*(?:[>\u276f]\s*)?2\.\s+no\b", re.I)
 
 
 def trust_question(text) -> bool:
-    """Whether the pane shows Claude Code's folder-trust question."""
+    """Whether the pane shows Claude Code's folder-trust dialog itself, by its structure in the screen's last lines:
+    the question, then its numbered options (1. Yes, I trust this folder; 2. No ...), then "Enter to confirm", and
+    no Claude input box or footer under it. The words alone (in a transcript, in docs a session prints) never count."""
     if not isinstance(text, str):
         return False
-    low = "\n".join([ln for ln in text.splitlines() if ln.strip()][-30:]).casefold()
-    return any(m in low for m in _TRUST_QUESTION)
+    lines = [ln for ln in text.splitlines() if ln.strip()][-30:]
+    low = [ln.casefold() for ln in lines]
+    q = next((i for i, ln in enumerate(low) if any(m in ln for m in _TRUST_QUESTION)), None)
+    if q is None:
+        return False
+    yes = next((i for i in range(q + 1, len(low)) if _TRUST_YES.match(low[i])), None)
+    no = next((i for i in range((yes or q) + 1, len(low)) if _TRUST_NO.match(low[i])), None)
+    enter = next((i for i in range((no or q) + 1, len(low)) if "enter to confirm" in low[i]), None)
+    if yes is None or no is None or enter is None:
+        return False
+    rest = lines[enter + 1:]
+    return input_line(text) is None and not any("\u2500" in ln or any(m in ln.casefold() for m in _IDLE)
+                                                for ln in rest)
 
 
 def trust_line(b: dict) -> str:

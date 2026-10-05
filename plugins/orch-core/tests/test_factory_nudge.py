@@ -453,7 +453,7 @@ NEW_TRUST = ("Accessing workspace:\n\n /Users/x/.config/orch-clones/w/L-0002/rep
              " ❯ 1. Yes, I trust this folder\n   2. No, exit\n\n Enter to confirm · Esc to cancel\n")
 
 
-@pytest.mark.parametrize("screen", [TRUST, NEW_TRUST])
+@pytest.mark.parametrize("screen", [NEW_TRUST, "Some output above\n" + NEW_TRUST])
 def test_a_session_at_the_trust_question_is_said_once_and_never_answered(fws, fa, fh, human, pane, at, screen):
     from test_dark_dashboard import _client
     eid, (cid,), d = _started(fws, fa, fh)
@@ -476,9 +476,18 @@ def test_a_session_at_the_trust_question_is_said_once_and_never_answered(fws, fa
     assert _state(fws, eid)["state"] == "working"
 
 
-def test_trust_question_text_matching():
-    assert fr.trust_question(NEW_TRUST) and fr.trust_question(TRUST)
+def test_trust_question_needs_the_dialogs_structure_not_its_words():
+    assert fr.trust_question(NEW_TRUST)
     assert not fr.trust_question(IDLE) and not fr.trust_question(None) and not fr.trust_question(ASKING)
+    # the phrases in ordinary output, above Claude's input box: a transcript, not the dialog
+    said = "● Claude asks \"Is this a project you trust?\" and you pick 1. Yes, I trust this folder.\n\n" + IDLE
+    assert not fr.trust_question(said)
+    # docs text a session printed, with the options but no "Enter to confirm" and the input box below
+    docs = ("Is this a project you trust?\n 1. Yes, I trust this folder\n 2. No, exit\n\n" + IDLE)
+    assert not fr.trust_question(docs)
+    # the dialog's words without its options
+    assert not fr.trust_question("Is this a project you trust?\nEnter to confirm\n")
+    assert not fr.trust_question(TRUST)  # an older dialog without "Enter to confirm" is not claimed either
 
 
 def test_no_nudge_while_the_human_typed_into_the_session_from_the_browser(fws, fa, fh, human, pane, at):
@@ -494,5 +503,22 @@ def test_no_nudge_while_the_human_typed_into_the_session_from_the_browser(fws, f
     assert pane.typed == [] and fs.nudges(d["id"]) == 0  # not even counted: the human is at the keyboard
     typed["now"] = False  # a minute later
     at(fr.IDLE_SECONDS * 6)
+    _tick(fws, human, pane)
+    assert pane.typed == [(b["name"], fr.NUDGES["answered"])]
+
+
+def test_a_real_tick_reads_the_dashboards_record_of_the_humans_keys(fws, fa, fh, human, pane, at):
+    from orch.dashboard import factory_runner as dash
+    dash.HUMAN_KEYS.clear()
+    pane.human_typed = dash.human_typed  # what TmuxLauncher.human_typed reads
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    _ask_and_answer(fws, human, b)
+    dash.note_human_keys(b["name"])  # the human typed into it on the Terminals page
+    _run_until_idle(fws, human, pane, at, 10)
+    assert pane.typed == []
+    dash.HUMAN_KEYS.clear()  # a minute later
+    at(fr.IDLE_SECONDS * 4)
     _tick(fws, human, pane)
     assert pane.typed == [(b["name"], fr.NUDGES["answered"])]

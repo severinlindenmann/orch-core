@@ -742,7 +742,10 @@ recorded, and in the live run of 5 October it asked it for each child's clone al
 of a folder above it. So orch counts only an entry for the clone's own start folder (or a folder above it inside
 that clone) in Claude's `.claude.json`, and the *clones trust* check warns until every clone made so far has one
 ("no clone has been made yet" before the first). orch never writes Claude's settings and the runner never answers the
-question: it reads each session's pane, and a session at the question is said once in the log and as the run view's
+question: it reads each session's pane and recognises the dialog by its structure (the question, its numbered
+options "1. Yes, I trust this folder" and "2. No", then "Enter to confirm", with no input box or footer under it;
+the words in a transcript or in printed docs do not count), and a session at the question is said once in the log
+and as the run view's
 state ("<child> waits at Claude's folder-trust question for <path>; accept it once or trust the folder; the runner
 cannot answer it"; never "Working"). Answer it in the session's pane, or run `orch factory clones trust` (yours, in a
 terminal): it lists the clone folders still untrusted and the `projects` entries to add to `.claude.json` with Claude

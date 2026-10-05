@@ -63,12 +63,15 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
     "denied": "Open the child: change its text so it does without that command, or take it out of the epic.",
     "ledger-cut": "Run `orch check` on this machine: nothing the factory did counts until the ledger is whole again.",
     # the release (phase 6): kept in step with orch.core.factory_release.RELEASE_CODES
-    "sensitive": "Look at the named paths. Merge by hand, or change the branch, then Retry release on the merge stage: "
-                 "the branches are checked again.",
+    "sensitive": "Look at the named paths. Every commit the branch brings in counts, so a later commit that removes "
+                 "the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release "
+                 "on the merge stage to check the branches again.",
     "release-failed": "Read the stage's output on the run view, fix the cause, then Retry release: the stage runs once "
                       "more.",
     "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy). Retry "
                        "release only when running it again is safe; otherwise finish it by hand.",
+    "release-stale": "Look at what changed since the stage was proven. Retry release on the out-of-date stage to run it "
+                     "for the children as they are now (the merge, then dev), or release the change by hand.",
 }
 
 

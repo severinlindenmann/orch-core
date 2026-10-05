@@ -42,10 +42,10 @@
 </section>
 
 {% if run.release %}{% set rel = run.release %}
-{% set WORDS = {"waiting": "waiting", "running": "running", "proven": "proven", "failed": "failed", "unknown": "outcome unknown"} %}
+{% set WORDS = {"waiting": "waiting", "running": "running", "proven": "proven", "failed": "failed", "unknown": "outcome unknown", "stale": "out of date"} %}
 <section class="card run-release" aria-labelledby="run-release-h" data-release>
   <h2 id="run-release-h">Release up to {{ rel.target }}</h2>
-  <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order. A stage is proven only by its check. Nothing releases to production, and nothing is closed: the verdict stays yours.</p>
+  <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order, in its own repository: each child's branch at the commit it checked, dev at the base fetched from the recipe's remote. A stage is proven only by its check. Nothing releases to production, and nothing is closed: the verdict stays yours.</p>
   {% if not rel.recipe %}<p class="muted" data-release-off>{{ rel.why }}. Release needs a recipe: run <code>orch factory release set --file recipe.json</code> in a terminal.</p>{% endif %}
   <div class="release-stages">
     {% for s in rel.stages %}
@@ -54,7 +54,7 @@
       {% for u in s.units %}
       <div class="release-unit" data-release-unit="{{ s.name }} {{ u.unit }}" data-state="{{ u.state }}">
         <span><a class="lnk key" href="/t/{{ u.unit }}">{{ u.unit }}</a> · {{ WORDS[u.state] }}{% if u.why %} · {{ u.why }}{% endif %}</span>
-        {% if u.state in ("failed", "unknown") %}
+        {% if u.state in ("failed", "unknown", "stale") %}
         <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · run the {{ s.name }} stage of {{ u.unit }} once more">
           <input type="hidden" name="stage" value="{{ s.name }}">
           <input type="hidden" name="unit" value="{{ u.unit }}">
@@ -78,7 +78,7 @@
     </form>
   </div>
   {% endif %}
-  {% if rel.stages|selectattr("state", "in", ["failed", "unknown"])|list or rel.sensitive %}<p class="muted permit-meta">Retry release allows exactly one more attempt; the runner runs it in its next round. Retry an unknown outcome only when running it again is safe.</p>{% endif %}
+  {% if rel.stages|selectattr("state", "in", ["failed", "unknown", "stale"])|list or rel.sensitive %}<p class="muted permit-meta">Retry release allows exactly one more attempt; the runner runs it in its next round. Retry an unknown outcome only when running it again is safe.</p>{% endif %}
 </section>
 {% endif %}
 

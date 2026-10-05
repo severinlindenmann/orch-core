@@ -960,6 +960,15 @@ attempt; a failure stops the release there and leaves the others as they are. A 
 factory or Dark switched off or a cut ledger stops the release before its next command (a running command finishes
 first, and the attempt is recorded as failed).
 
+**When records drift, it holds.** Every release decision that reads state which could go missing defaults to held or
+blocked: the journal missing while release records exist, or holding a line that cannot be read, blocks every release
+of the workspace ("Release could not start": check the records, then Retry release to acknowledge it, which appends
+an acknowledgement and lets the records decide again) and keeps the window shut; a block whose file was removed still
+holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; a window
+record that was deleted is replaced by the attempts' own records; a retry never runs out of slots. The one case left
+open on purpose: a child branch deleted after its merge was proven does not make the merge out of date (cleaning up a
+merged branch is normal; the merged commit is recorded).
+
 These records, the outcomes and the lock rest on same-user trust, stated plainly: the guard keeps agents' tools and
 commands away from the permits folder, and a Dark profile rule never matches a command naming it, but code an agent
 can get run as you (a project runner allowed by a prefix rule, such as `npm run …` or `pytest`) can write there
@@ -982,10 +991,10 @@ latest main" deploys whatever main is then).
 - *One unresolved production holds every other.* While any epic of the workspace has a production attempt that
   failed, whose outcome is unknown, or that is rolling back (a failed or unknown rollback included), no other epic's
   production starts: its run view says "Production is held: another epic's production is unresolved" and names that
-  epic. The runner finds those epics in its own append-only index of every epic that had a production attempt
-  (`permits/release-records/production-index-<key>.jsonl`, written with each production intent), not only from ticket
-  files: deleting, retyping or breaking the unresolved epic's ticket does not lift the hold (an indexed epic whose
-  ticket is gone or unreadable counts as held), and a damaged index holds everything. Two ways out, both yours: Retry
+  epic. The runner finds those epics in its own append-only release journal
+  (`permits/release-records/production-index-<key>.jsonl`: a line with every attempt's intent, every block and every
+  cleared block) and in the production records themselves, not only from ticket files: deleting, retyping or breaking
+  the unresolved epic's ticket does not lift the hold (such an epic counts as held). Two ways out, both yours: Retry
   release on that epic's production (it may run again, after its window and its gate), or **Resolve** (the run view's
   button next to Retry, or `orch factory release resolve <epic> --reason "..."` with the epic id typed), which lifts the
   hold on the other epics WITHOUT letting that production run again: it records when, who and why beside the attempt,

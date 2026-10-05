@@ -689,3 +689,55 @@ def test_the_new_human_verbs_and_records_are_guarded(ws):
                 f"rm {base}/permits/release-records/window-reset-x.json"):
         assert not evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)}).allow, cmd
         assert permits.never_grantable(ws, cmd) is not None, cmd
+
+
+# -- fail closed on drifting state: every place a release decision reads state that could go missing ---------------
+
+def test_a_deleted_journal_blocks_every_release_until_the_human_acknowledges_it(fws, prod, human, monkeypatch):
+    a, fake = _broken_production(fws, prod)
+    b, _, _ = prod()
+    fr._index_path(fws).unlink()  # the runner's journal is gone; the records are still there
+    _later(monkeypatch, 21)
+    fake.live, fake.healthy = True, True
+    assert fr.tick(fws, human, fake) == [] and _stopped(fws, b) == ["release-blocked"]
+    assert "journal is missing or damaged" in fr.reasons(fws, store.load(fws, b)[1],
+                                                         permits.factory_delegation(fws, store.load(fws, b)[1]))[0]["text"]
+    assert "acknowledged" in fr.retry(fws, human, b, fr.JOURNAL_STAGE, b)
+    fr.tick(fws, human, fake)
+    assert _prod(fws, b)["held"] == [a]  # A's production records still hold B, found from the records themselves
+
+
+def test_a_journal_with_a_line_that_cannot_be_read_holds_and_shuts(fws, prod, human):
+    a, _ = _broken_production(fws, prod)
+    with fr._index_path(fws).open("a", encoding="utf-8") as f:
+        f.write("{not json\n")
+    assert fr.window(fws, 1)["open"] is False and "journal" in fr.window(fws, 1)["why"]
+    assert "the runner's release journal (missing or damaged)" in fr.unresolved_production(fws, "L-9999")
+
+
+def test_removing_a_blocks_file_does_not_lift_the_block(fws, ready, human, bin_dir):
+    eid, (c,), _ = ready()
+    (bin_dir / "gh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+    fr.tick(fws, human, Fake())
+    (fr._dir(fws, eid) / "blocked.json").unlink()
+    assert _stopped(fws, eid) == ["release-blocked"] and fr.tick(fws, human, Fake()) == []
+    assert "the runner's journal still holds it" in fr._blocked_record(fws, eid)["why"]
+    fr.retry(fws, human, eid, "merge", c)
+    assert fr._blocked_record(fws, eid) is None
+
+
+def test_a_gap_in_the_attempt_records_is_an_unknown_outcome(fws, prod, human):
+    eid, _, _ = prod()
+    d = fr._dir(fws, eid)
+    fr._write(d / fr._name("production", eid, 2, "intent"), {"stage": "production", "unit": eid})
+    us = fr.unit_state(fws, eid, "production", eid)
+    assert us["state"] == "unknown" and "gap" in us["why"]
+    assert "release-unknown" in _stopped(fws, eid)
+
+
+def test_a_deleted_window_record_and_a_removed_epic_ticket_still_shut_the_window(fws, prod, human):
+    eid, _, _ = prod()
+    fr.tick(fws, human, ProdFake())
+    fr._window_path(fws).unlink()
+    store.resolve(fws, eid).path.unlink()
+    assert fr.window(fws, 20)["open"] is False  # the journal and the records still say when production ran

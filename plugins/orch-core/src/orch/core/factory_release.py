@@ -568,6 +568,9 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     n = 0
     while n < MAX_ATTEMPTS and os.path.lexists(d / _name(stage, unit, n + 1, "intent")):
         n += 1
+    if any(os.path.lexists(d / _name(stage, unit, k, "intent")) for k in range(n + 2, MAX_ATTEMPTS + 1)):
+        # an attempt's intent was removed while a later one remains: the records cannot be trusted (fail closed)
+        return {"state": "unknown", "attempt": n, "why": "its attempt records have a gap"}
     if n == 0:
         return {"state": "waiting", "attempt": 0}
     out = _read(d / _name(stage, unit, n, "outcome"))
@@ -612,19 +615,38 @@ def _sensitive_record(ws, epic_id: str) -> dict | None:
     return _read(p) or {"hits": {}, "damaged": True}
 
 
+JOURNAL_STAGE = "journal"  # the pseudo stage of a block on a missing or damaged journal (retry acknowledges it)
+
+
 def _blocked_record(ws, epic_id: str) -> dict | None:
     """The runner's record that a stage could not start (a program not the one pinned, the recipe lacking a stage,
-    the base not fetchable, a signed rollback missing ...): a Stopped reason until the human's Retry clears it."""
-    p = _dir(ws, epic_id) / "blocked.json"
-    if not os.path.lexists(p):
-        return None
-    return _read(p) or {"code": "release-blocked", "stage": "?", "unit": str(epic_id), "why": "its record cannot be read"}
+    the base not fetchable, a signed rollback missing ...): a Stopped reason until the human's Retry clears it. The
+    block is in two places, the epic's `blocked.json` and the runner's append-only journal; removing the file does not
+    lift it, and a journal that is missing (while release records exist) or damaged blocks every epic (fail closed)."""
+    eid = str(epic_id).upper()
+    p = _dir(ws, eid) / "blocked.json"
+    if os.path.lexists(p):
+        return _read(p) or {"code": "release-blocked", "stage": "?", "unit": eid, "why": "its record cannot be read"}
+    lines, damaged = _journal(ws)
+    if damaged:
+        return {"code": "release-blocked", "stage": JOURNAL_STAGE, "unit": eid,
+                "why": "the runner's release journal is missing or damaged while release records exist; check the "
+                       "release records, then Retry release to acknowledge it"}
+    last = next((x for x in reversed(lines) if x.get("epic") == eid and x.get("kind") in ("block", "clear")), None)
+    if last is not None and last["kind"] == "block":
+        return {"code": str(last.get("code") or "release-blocked"), "stage": str(last.get("stage") or "?"),
+                "unit": str(last.get("unit") or eid),
+                "why": str(last.get("why") or "") + " (its record was removed; the runner's journal still holds it)"}
+    return None
 
 
 def _block(ws, actor, epic_id: str, stage: str, unit: str, why: str, code: str = "release-blocked") -> str:
-    """Record that `stage` of `unit` could not start, and why (once; the first reason is kept). Nothing ran."""
-    if _write(_dir(ws, epic_id) / "blocked.json", {"code": code, "stage": stage, "unit": unit, "why": why[:400],
-                                                   "at": _now()}):
+    """Record that `stage` of `unit` could not start, and why (once; the first reason is kept). Nothing ran. The
+    journal line comes first: if writing the file fails afterwards, the block still holds."""
+    body = {"code": code, "stage": stage, "unit": unit, "why": why[:400], "at": _now(), "epic": str(epic_id).upper()}
+    if _blocked_record(ws, epic_id) is None:
+        _journal_add(ws, {"kind": "block", **body})
+    if _write(_dir(ws, epic_id) / "blocked.json", body):
         _event(ws, actor, epic_id, "release.stage", {"stage": stage, "child": unit, "proven": False, "exit": None})
     return f"{epic_id}: {stage} of {unit} not started: {why}"
 
@@ -648,47 +670,82 @@ def _epic_ids(ws) -> list[str]:
 
 
 def _index_path(ws) -> Path:
-    """The runner's append-only index of the epics that ever had a production attempt in this workspace (guarded,
-    written by the runner with each production intent): the hold and the window read it, so deleting, retyping or
-    breaking an epic's ticket does not hide its production."""
+    """The runner's append-only release journal of this workspace (guarded, written only by the runner): one line per
+    production intent ({kind: production, epic}), per block and per clear of a block, and the human's acknowledgement
+    of a damaged journal ({kind: reset}). The hold, the window and blocks read it, so deleting, retyping or breaking an
+    epic's ticket, or removing a block's file, changes nothing."""
     return fs._root() / "release-records" / f"production-index-{fs._key(ws, 'production-index')}.jsonl"
 
 
-def _index_add(ws, epic_id: str) -> None:
+def _journal_add(ws, line: dict) -> None:
+    """Append one line (raises when it cannot: then nothing that depends on it happens)."""
     p = _index_path(ws)
     p.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"epic": str(epic_id).upper(), "at": _now()}) + "\n")
+        f.write(json.dumps({**line, "at": line.get("at") or _now()}) + "\n")
+
+
+def _record_epics(ws, production: bool = True) -> set[str]:
+    """The epics of this workspace that have production records (or, with production=False, any release records),
+    found from the records themselves, whatever the journal says: each intent names its epic (`epic`, or the unit of
+    an epic stage), and its folder must be that epic's folder of this workspace."""
+    root = fs._root() / "release-records"
+    out = set()
+    try:
+        folders = [x for x in root.iterdir() if x.is_dir() and not x.is_symlink()]
+    except OSError:
+        return out
+    for d in folders:
+        try:
+            names = [x.name for x in d.iterdir() if x.name.endswith(".intent")
+                     and (x.name.startswith("production.") or not production)]
+        except OSError:
+            continue
+        for name in names[:MAX_ATTEMPTS * 64]:
+            body = _read(d / name) or {}
+            for eid in (body.get("epic"), body.get("unit")):
+                if isinstance(eid, str) and KEY.fullmatch(eid) and _dir(ws, eid) == d:
+                    out.add(eid)
+                    break
+    return out
+
+
+def _journal(ws) -> tuple[list[dict], bool]:
+    """(the journal's lines, whether it is missing while production records exist, or holds a line that cannot be read
+    after the human's last acknowledgement)."""
+    from orch.core.artifacts import read_regular
+    p = _index_path(ws)
+    if not os.path.lexists(p):
+        return [], bool(_record_epics(ws, production=False))
+    raw = read_regular(p, 4 << 20, root=fs._root())
+    if raw is None:
+        return [], True
+    lines, bad_after = [], False
+    for text in raw.decode("utf-8", "replace").splitlines():
+        try:
+            line = json.loads(text)
+        except ValueError:
+            line = None
+        ok = isinstance(line, dict) and (line.get("kind") == "reset" or (
+            isinstance(line.get("epic"), str) and KEY.fullmatch(line["epic"])))
+        if not ok:
+            bad_after = True
+            continue
+        if line.get("kind") == "reset":
+            bad_after = False  # the human acknowledged everything before it
+        lines.append(line)
+    return lines, bad_after
 
 
 def production_epics(ws) -> tuple[list[str], bool]:
-    """(the epics whose production records count for the hold and the window, whether the runner's index could not
-    be read whole). The index, plus every epic ticket that parses (records from before the index existed). Every id
-    is checked against the ticket id form before it names a path."""
-    from orch.core.artifacts import read_regular
-    ids, damaged = [], False
-    p = _index_path(ws)
-    if os.path.lexists(p):
-        raw = read_regular(p, 4 << 20, root=fs._root())
-        try:
-            lines = raw.decode("utf-8").splitlines() if raw is not None else None
-        except UnicodeDecodeError:
-            lines = None
-        if lines is None:
-            damaged = True
-        for line in lines or []:
-            try:
-                eid = json.loads(line).get("epic")
-            except (ValueError, AttributeError):
-                eid = None
-            if isinstance(eid, str) and KEY.fullmatch(eid):
-                ids.append(eid)
-            else:
-                damaged = True
-    for eid in _epic_ids(ws):
-        if KEY.fullmatch(eid.upper()):
-            ids.append(eid.upper())
+    """(the epics whose production records count for the hold and the window, whether the runner's journal is missing
+    or damaged). The journal, the production records themselves, and every epic ticket that parses. Every id is
+    checked against the ticket id form before it names a path."""
+    lines, damaged = _journal(ws)
+    ids = [x["epic"] for x in lines if x.get("kind", "production") == "production" and x.get("epic")]
+    ids += sorted(_record_epics(ws))
+    ids += [e.upper() for e in _epic_ids(ws) if KEY.fullmatch(e.upper())]
     return list(dict.fromkeys(ids)), damaged
 
 
@@ -734,7 +791,7 @@ def _production_times(ws) -> tuple[list, str]:
         add((_read(p, 1024) or {}).get("at"), f"the runner's window record ({p.name})")
     ids, damaged = production_epics(ws)
     if damaged:
-        bad = "the runner's production index"
+        bad = "the runner's release journal"
     for eid in ids:
         d = _dir(ws, eid)
         for n in range(1, MAX_ATTEMPTS + 1):
@@ -794,7 +851,7 @@ def unresolved_production(ws, epic_id: str) -> list[str]:
     from orch.core import epics
     holder = lock_holder(ws)
     ids, damaged = production_epics(ws)
-    out = ["the runner's production index (damaged)"] if damaged else []
+    out = ["the runner's release journal (missing or damaged)"] if damaged else []
     for eid in ids:
         if eid.upper() == str(epic_id).upper():
             continue
@@ -1499,7 +1556,9 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
         if errors:
             k = sorted(errors)[0]
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1
-            body = {"stage": "merge", "unit": k, "attempt": n, "started": _now()}
+            body = {"stage": "merge", "unit": k, "epic": epic.id, "attempt": n, "started": _now()}
+            if n <= MAX_ATTEMPTS:
+                _journal_add(ws, {"kind": "intent", "epic": epic.id, "stage": "merge"})
             if n <= MAX_ATTEMPTS and _write(ddir / _name("merge", k, n, "intent"), body):
                 _write(ddir / _name("merge", k, n, "outcome"),
                        {**body, "codes": [], "check": None, "proven": False, "ended": _now(), "tail": "",
@@ -1661,9 +1720,11 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
         return block("the commit to release cannot be checked out")
     ddir = _dir(ws, epic.id)
     digest = "sha256:" + hashlib.sha256(json.dumps([a for _, a, _ in steps]).encode("utf-8")).hexdigest()
-    intent = {"stage": name, "unit": unit, "attempt": n, "argv_sha": digest, "started": _now(), **extra}
-    if name == "production":
-        _index_add(ws, epic.id)  # with the intent: the hold and the window never depend on ticket files
+    intent = {"stage": name, "unit": unit, "epic": epic.id, "attempt": n, "argv_sha": digest, "started": _now(),
+              **extra}
+    # with the intent, in the runner's journal: the hold, the window and the blocks never depend on ticket files, and a
+    # journal that goes missing while records exist blocks every release
+    _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name})
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
@@ -1710,15 +1771,21 @@ def retry(ws, actor, epic_id: str, stage: str, unit: str) -> str:
     from orch.core import permits
     fs.human_check(actor, "retrying a release stage")
     epic_id, unit = str(epic_id).upper(), str(unit).upper()
-    if stage not in STAGES or not KEY.fullmatch(epic_id) or not KEY.fullmatch(unit):
+    if stage not in (*STAGES, JOURNAL_STAGE) or not KEY.fullmatch(epic_id) or not KEY.fullmatch(unit):
         raise UsageError("give a stage (merge, dev or production), an epic and a child or the epic itself")
     ddir = _dir(ws, epic_id)
     blocked = _blocked_record(ws, epic_id)
+    if blocked is not None and blocked.get("stage") == JOURNAL_STAGE:  # the human acknowledges a damaged journal
+        _journal_add(ws, {"kind": "reset", "by": actor.to_str()})
+        _event(ws, actor, epic_id, "release.retry", {"stage": stage, "child": unit})
+        return "the runner's journal is acknowledged; the release records decide again from the next round"
     if blocked is not None:  # a stage that could not start: only a retry of that stage and unit clears it
         if (blocked.get("stage"), str(blocked.get("unit") or "").upper()) != (stage, unit):
             raise ValidationError(f"the release is blocked on the {blocked.get('stage')} stage of "
                                   f"{blocked.get('unit')}: retry that (fix what kept it from starting first)")
-        os.replace(ddir / "blocked.json", ddir / f"blocked.{_now()}.{secrets.token_hex(4)}.cleared")
+        _journal_add(ws, {"kind": "clear", "epic": epic_id, "by": actor.to_str()})
+        if os.path.lexists(ddir / "blocked.json"):
+            os.replace(ddir / "blocked.json", ddir / f"blocked.{_now()}.{secrets.token_hex(4)}.cleared")
         _event(ws, actor, epic_id, "release.retry", {"stage": stage, "child": unit})
         return "the release starts again in the runner's next round (fix what kept it from starting first)"
     if stage == "merge" and _sensitive_record(ws, epic_id) is not None:

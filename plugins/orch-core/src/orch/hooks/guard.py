@@ -1388,7 +1388,7 @@ _PERMIT_SAMPLES = tuple("permits/" + s for s in (
     f"bridge/{_HEX32}/audit.jsonl", f"bridge/{_HEX32}/requests/{_HEX32}.json", f"bridge/{_HEX32}/seq/{_HEX32}.json"))
 
 
-def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
+def _filter_could_reach_ledger_unsafe(pattern: str, root=None) -> bool:
     """True unless a Grep/Glob filter plainly cannot match the ledger files (`ledger.jsonl`, `ledger.key`) or the
     permit records beside them (the AI Factory's and the remote bridge's). `root` is where the filter is applied."""
     import fnmatch
@@ -1445,7 +1445,7 @@ def _key_reaches_config(key: str, dirs: set[str], above: set[str]) -> bool:
     return key in dirs or key in above or any(key.startswith(d.rstrip("/") + "/") for d in dirs)
 
 
-def _root_reaches_config(root) -> bool:
+def _root_reaches_config_unsafe(root) -> bool:
     """A Grep/Glob root that is the config dir, inside it or above it, in any spelling (case, separators, links)."""
     if root is None:
         return False
@@ -1458,7 +1458,7 @@ def _root_reaches_config(root) -> bool:
 _JOIN_WORDS_MAX = 512
 
 
-def _bash_joins_permits(cmd: str, cwd=None) -> bool:
+def _bash_joins_permits_unsafe(cmd: str, cwd=None) -> bool:
     """The config dir (or a directory above it, or the cwd being one) named anywhere together with the permits
     folder anywhere: an interpreter can join the two (a path built from separate words), which no pattern over a
     written path sees. Every path-like word is judged as the system would resolve it: variables assigned in the
@@ -1492,6 +1492,31 @@ def _bash_joins_permits(cmd: str, cwd=None) -> bool:
     return False
 
 
+def _filter_could_reach_ledger(pattern: str, root=None) -> bool:
+    """_filter_could_reach_ledger_unsafe; an error in it counts as reaching (fail closed)."""
+    try:
+        return _filter_could_reach_ledger_unsafe(pattern, root)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _root_reaches_config(root) -> bool:
+    """_root_reaches_config_unsafe; an error in it counts as reaching (fail closed)."""
+    try:
+        return _root_reaches_config_unsafe(root)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _bash_joins_permits(cmd: str, cwd=None) -> bool:
+    """_bash_joins_permits_unsafe; an error in it refuses a command that mentions the permits folder in any
+    spelling the shell may produce (fail closed)."""
+    try:
+        return _bash_joins_permits_unsafe(cmd, cwd)
+    except Exception:  # noqa: BLE001
+        return bool(re.search(r"(?i)permits", cmd + _ansi_c(re.sub(r"\\\r?\n", "", cmd))))
+
+
 def evaluate(ws, payload: dict) -> Decision:
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
@@ -1511,16 +1536,22 @@ def evaluate(ws, payload: dict) -> Decision:
         safe_type = bool(type_) and type_ in _SAFE_RG_TYPES and not tool_input.get("glob")
         if tool == "Glob" and filt:
             # judged from the plain directory the pattern starts with (absolute, or relative to the root, `..`
-            # included), on the rest of the pattern; a `..` after the first wildcard can lead anywhere: refused
-            full = os.path.expanduser(filt).replace("\\", "/")
-            head = re.split(r"[*?\[{]", full, maxsplit=1)[0]
-            start = head if head.endswith("/") or head == full else head.rsplit("/", 1)[0] + "/" if "/" in head else ""
-            rest = full[len(start):]
-            if ".." in rest.split("/"):
+            # included), on the rest of the pattern; a `..` after the first wildcard can lead anywhere, and a start
+            # that cannot be resolved or an error here cannot be judged: refused
+            try:
+                full = os.path.expanduser(filt).replace("\\", "/")
+                head = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+                start = head if head.endswith("/") or head == full else head.rsplit("/", 1)[0] + "/" if "/" in head else ""
+                rest = full[len(start):]
+                if ".." in rest.split("/"):
+                    return Decision(False, _LEDGER_DENIED)
+                if start:
+                    root = _resolve_root(start if os.path.isabs(start) else os.path.join(str(root or cwd or "."), start))
+                    if root is None:
+                        return Decision(False, _LEDGER_DENIED)
+                    filt = rest or "*"
+            except Exception:  # noqa: BLE001
                 return Decision(False, _LEDGER_DENIED)
-            if start:
-                root = _resolve_root(start if os.path.isabs(start) else os.path.join(str(root or cwd or "."), start))
-                filt = rest or "*"
         if (root is not None and _root_reaches_config(root) and not safe_type
                 and _filter_could_reach_ledger(filt, root)):
             return Decision(False, _LEDGER_DENIED)

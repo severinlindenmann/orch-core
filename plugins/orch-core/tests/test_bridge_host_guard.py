@@ -271,3 +271,37 @@ def test_long_or_unusual_commands_away_from_the_records_still_pass(ws, cmd):
     from orch.hooks.guard import evaluate
     d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(ws.root)})
     assert d.allow, (cmd[:80], d.reason)
+
+
+# -- an error or an unresolvable path in the new checks refuses (fail closed) --------------------------------------
+
+def _boom(*a, **k):
+    raise RuntimeError("injected")
+
+
+@pytest.mark.parametrize("helper", ["_config_keys", "_path_key", "_resolve_vars"])
+def test_an_error_in_the_joined_path_check_refuses_a_command_naming_permits(ws, monkeypatch, helper):
+    from orch.hooks import guard
+    monkeypatch.setattr(guard, helper, _boom)
+    d = guard._bash_joins_permits("python3 -c \"import pathlib;pathlib.Path('/somewhere','permits')\"", str(ws.root))
+    assert d is True
+    assert guard._bash_joins_permits("ls src", str(ws.root)) is False  # no mention: nothing to refuse
+
+
+@pytest.mark.parametrize("helper", ["_config_keys", "_path_key", "_is_config_dir_or_ancestor"])
+def test_an_error_in_the_listing_checks_refuses(ws, monkeypatch, helper):
+    from orch.core.ledger import base_dir
+    from orch.hooks import guard
+    monkeypatch.setattr(guard, helper, _boom)
+    inp = {"pattern": "*/bridge/*/registry.json", "path": str(base_dir())}
+    assert not guard.evaluate(ws, {"tool_name": "Glob", "tool_input": inp, "cwd": str(ws.root)}).allow
+
+
+def test_a_glob_whose_start_cannot_be_resolved_is_refused(ws, monkeypatch):
+    from orch.hooks import guard
+    real = guard._resolve_root
+    monkeypatch.setattr(guard, "_resolve_root", lambda raw: None if "unresolvable" in str(raw) else real(raw))
+    inp = {"pattern": "/unresolvable/x/*/bridge/*", "path": str(ws.root)}
+    assert not guard.evaluate(ws, {"tool_name": "Glob", "tool_input": inp, "cwd": str(ws.root)}).allow
+    ok = {"pattern": "src/*.py", "path": str(ws.root)}
+    assert guard.evaluate(ws, {"tool_name": "Glob", "tool_input": ok, "cwd": str(ws.root)}).allow

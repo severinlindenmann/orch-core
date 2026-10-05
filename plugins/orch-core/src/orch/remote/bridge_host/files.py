@@ -7,7 +7,9 @@ nothing here decides it.
 
 The operating-system user is shared with every agent on the computer, so file modes protect nothing against a local
 agent: orch's command guard, which refuses agents' commands and file-tool calls on the permits folder, is the only
-barrier (spec §2.7). Modes are still owner-only (0700 directories, 0600 files) against other users.
+barrier (spec §2.7). The guard reads command text, so it deters careless or accidental access and does not stop a
+program that assembles the path at run time, or a process outside the agent's tools. Modes are still owner-only
+(0700 directories, 0600 files) against other users.
 
 Writes are whole-file and atomic: a new record is created exclusively (O_EXCL, so two writers never both succeed),
 a change replaces the file through a temporary file and a rename, and both are flushed to disk with their directory

@@ -1,8 +1,11 @@
-"""Quick tasks in Mission Control (orch.core.quick): the list with its add box, one task's page, and the human's
-actions on them. Every write goes through QuickOps, so the dashboard keeps the CLI's rules; the switch is the
-human's own (never from a paired device)."""
+"""Quick tasks in Mission Control (orch.core.quick): the list with its add box, one task's page, the human's actions on
+them, and Start agent into Mission Control's Terminals or the human's own terminal. Every write goes through
+QuickOps, so the dashboard keeps the CLI's rules. All of it answers 404 until the human enables the `quick-tasks`
+default addon in this workspace, as Graph does with `graph`."""
 from __future__ import annotations
 
+import os
+import sys
 from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
@@ -15,6 +18,11 @@ from orch.dashboard.views import back, error_text, page, safe_next
 from orch.errors import OrchError
 
 router = APIRouter()
+OFF = "Quick tasks is an addon: enable it in Workspace & addons"
+# What a started agent is told: the same steps the orch-tickets skill gives, with the task's key only (never its text)
+PROMPT = ("Work on quick task {key} (orch-tickets skill, Quick tasks): claim it with `orch quick claim {key}`, do it, "
+          "commit as `{key} <summary>` and close it with `orch quick done {key} -m \"<what you did>\"`. If it outgrows "
+          "the size limit, stop and tell me.")
 FILTERS = (("open", "Open"), ("outgrew", "Outgrew"), ("done", "Done and moved"), ("all", "All"))
 Next = Annotated[str, Form(alias="next")]
 
@@ -30,6 +38,13 @@ def _run(request: Request, url: str, action, success) -> object:
     except OrchError as e:
         return back(url, err=error_text(e))
     return back(url, msg=success(result) if callable(success) else success)
+
+
+def _off(request: Request):
+    """The 404 page while the `quick-tasks` addon is off, else None."""
+    if quick.enabled(request.app.state.ws):
+        return None
+    return page(request, "error.html", 404, nav="quick", title="Quick tasks", heading="Quick tasks are off", message=OFF)
 
 
 def _today(stamp: str | None) -> bool:
@@ -75,6 +90,8 @@ def _row(ws, t: dict, cfg: dict) -> dict:
 
 @router.get("/quick")
 def quick_page(request: Request, f: str = "open"):
+    if (off := _off(request)) is not None:
+        return off
     ws = request.app.state.ws
     cfg = quick.settings(ws)
     f = f if f in dict(FILTERS) else "open"
@@ -88,11 +105,13 @@ def quick_page(request: Request, f: str = "open"):
     rows = [_row(ws, t, cfg) for t in views[f]]
     filters = [(key, label, len(views[key])) for key, label in FILTERS]
     return page(request, "quick.html", nav="quick", title="Quick tasks", cfg=cfg, rows=rows, f=f, filters=filters,
-                s=summary(ws), prefix_q=cfg["prefix"])
+                s=summary(ws), prefix_q=cfg["prefix"], start=start_options(ws, request))
 
 
 @router.get("/quick/{qid}")
 def quick_task_page(request: Request, qid: str):
+    if (off := _off(request)) is not None:
+        return off
     ws = request.app.state.ws
     cfg = quick.settings(ws)
     try:
@@ -105,7 +124,7 @@ def quick_task_page(request: Request, qid: str):
     files = [{**a, "image": bool(a.get("name")) and art.is_image(a["name"]),
               "href": f"/a/{t['id']}/{a['name']}" if a.get("name") else a.get("url")} for a in t.get("artifacts") or []]
     return page(request, "quick_task.html", nav="quick", title=t["id"], t=_row(ws, t, cfg), cfg=cfg, files=files,
-                timeline=timeline, who=_who)
+                timeline=timeline, who=_who, start=start_options(ws, request), prompt=PROMPT.format(key=t["id"]))
 
 
 @router.post("/quick/add")
@@ -139,16 +158,52 @@ def drop(request: Request, qid: str, next_url: Next = ""):
     return _run(request, next_url, lambda: _ops(request).drop(qid), lambda t: f"{t['id']} dropped")
 
 
-@router.post("/workspace/quick")
-def settings(request: Request, enabled: Annotated[str, Form()] = "", agents_add: Annotated[str, Form()] = "",
-             max_commits: Annotated[str, Form()] = "", max_files: Annotated[str, Form()] = "", next_url: Next = ""):
-    def _int(v: str) -> int | None:
-        try:
-            return int(v) if v.strip() else None
-        except ValueError:
-            return -1  # refused by set_settings with the range it allows
-    return _run(request, next_url,
-                lambda: quick.set_settings(request.app.state.ws, request_actor(request), enabled=enabled == "1",
-                                           agents_add=agents_add == "1", max_commits=_int(max_commits),
-                                           max_files=_int(max_files)),
-                lambda cfg: "quick tasks are on" if cfg["enabled"] else "quick tasks are off")
+def start_options(ws, request) -> dict:
+    """What Start agent can do here: open in Mission Control (the `terminals` addon on, tmux installed, a local
+    request) and/or in the human's own terminal (launch.json does not turn it off)."""
+    from orch.dashboard import launch, terminals
+    try:
+        own = launch.load_settings().get("terminal") != "none"
+    except OrchError:
+        own = False
+    return {"tmux": terminals.enabled(ws, request), "terminal": own}
+
+
+@router.post("/quick/{qid}/agent/start")
+def start_agent(request: Request, qid: str, where: Annotated[str, Form()] = "", next_url: Next = ""):
+    """Open an agent on the quick task: in Mission Control's Terminals (`where=tmux`) or the default terminal. Only an
+    open task nobody holds; the agent claims it itself with `orch quick claim`."""
+    from orch.dashboard import launch, terminals
+    from orch.dashboard.data import agent_start
+    ws = request.app.state.ws
+    url = safe_next(next_url) or f"/quick/{qid}"
+    try:
+        cfg = quick.settings(ws)
+        if not cfg["enabled"]:
+            return back(url, err=OFF)
+        t = quick.load(ws, qid)
+        if t["status"] != "open" or t.get("outgrew"):
+            return back(url, err=f"{t['id']} is {'outgrown' if t.get('outgrew') else t['status']}; nothing to start")
+        held = quick.active_claim(t, cfg["claim_minutes"])
+        if held:
+            return back(url, err=f"{t['id']} is already claimed by {held.get('harness')}")
+        settings = launch.load_settings()  # per user only, never the agent-writable workspace config
+        terminal = "tmux" if where == "tmux" else launch.choose(os.environ, settings["terminal"], sys.platform)
+        if terminal == "none":
+            return back(url, err="Open in terminal is turned off")
+        if terminal == "tmux" and not terminals.enabled(ws, request):
+            return back(url, err=terminals.why_off(ws))
+        harness = terminals.settings(ws.root)["harness"] if terminal == "tmux" else agent_start.default_harness(ws, settings)
+        known = agent_start.harnesses(ws, settings)
+        if harness not in known:
+            return back(url, err="no agent CLI is configured for Start agent")
+        prompt = PROMPT.format(key=t["id"])
+        argv = [part.replace("{prompt}", prompt) for part in known[harness]]
+        launch.preflight(terminal, settings)
+        name = terminals.free_name(ws, t["id"]) if terminal == "tmux" else t["id"]
+        msg = launch.start(ws, t["id"], argv, terminal=terminal, name=name, harness=harness, settings=settings)
+    except OrchError as e:
+        return back(url, err=error_text(e))
+    if terminal == "tmux":
+        return back(f"/terminals/{name}", msg=msg)
+    return back(url, msg=msg)

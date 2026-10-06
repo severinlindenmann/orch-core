@@ -31,18 +31,18 @@ def clean_message(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def _key_pattern(cfg: dict) -> str:
+def _key_pattern(cfg: dict, quick_on: bool = False) -> str:
     from orch.core.trackers import plain
     parts = [rf"{re.escape(cfg['id']['prefix'])}-\d+"] + [f"(?:{plain(t['pattern'])})" for t in cfg["external_trackers"]]
-    if (cfg.get("quick") or {}).get("enabled") is True:  # quick-task keys (orch.core.quick), checked in check_message
+    if quick_on:  # quick-task keys (orch.core.quick) while the quick-tasks addon is on
         from orch.core.quick import key_pattern_of
         parts.append(key_pattern_of(cfg))
     return "|".join(parts)
 
 
-def subject_regex(cfg: dict) -> re.Pattern:
+def subject_regex(cfg: dict, quick_on: bool = False) -> re.Pattern:
     pattern = re.escape(cfg["commit"]["subject"])
-    pattern = pattern.replace(re.escape("{key}"), f"(?P<key>{_key_pattern(cfg)})")
+    pattern = pattern.replace(re.escape("{key}"), f"(?P<key>{_key_pattern(cfg, quick_on)})")
     pattern = pattern.replace(re.escape("{summary}"), r"(?P<summary>\S.*)")
     return re.compile(pattern)
 
@@ -68,14 +68,15 @@ def check_message(ws, text: str, cwd: Path | None = None) -> list[str]:
             problems.append("an 'orch: records' commit may stage only orch records (tickets, gates, events, synced "
                             "instructions); commit code under a ticket key, or run `orch records commit`")
         return problems
-    m = subject_regex(cfg).fullmatch(subject)
+    from orch.core import quick
+    quick_on = quick.enabled(ws)
+    m = subject_regex(cfg, quick_on).fullmatch(subject)
     if not m:
         example = commit_example(cfg).splitlines()[0]
         problems.append(f"subject must match '{cfg['commit']['subject']}', e.g. '{example}'")
         return problems
     key = m.group("key")
-    from orch.core import quick
-    if quick.is_key(ws, key) and (cfg.get("quick") or {}).get("enabled") is True:
+    if quick_on and quick.is_key(ws, key):
         problem = quick.commit_problem(ws, key)
         if problem:
             problems.append(problem)

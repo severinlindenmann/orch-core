@@ -54,9 +54,8 @@ def _state_line(cfg: dict) -> str:
     if cfg["enabled"]:
         return (f"quick tasks are on · limit {cfg['max_commits']} commit(s), {cfg['max_files']} file(s) · "
                 f"agents {'may' if cfg['agents_add'] else 'may not'} add them")
-    if cfg["state"] == "unsigned":
-        return "quick tasks are off: config.json asks for them, but no signed decision backs it (`orch quick enable`)"
-    return "quick tasks are off (`orch quick enable` in your own terminal)"
+    return ("quick tasks are off: the human enables the quick-tasks addon in Workspace & addons "
+            "(or `orch addon enable quick-tasks` in their own terminal)")
 
 
 @quick_app.callback(invoke_without_command=True)
@@ -178,32 +177,6 @@ def drop(ref: RefArg, json_out: JsonOpt = False) -> None:
     cli, ws = _ctx()
     t = _qops(ws, _human()).drop(ref)
     cli._out(t, json_out, f"{t['id']} dropped")
-
-
-@quick_app.command()
-def enable(
-    agents_add: Annotated[Optional[bool], typer.Option("--agents-add/--no-agents-add",
-                                                       help="Whether agents may add quick tasks themselves.")] = None,
-    max_commits: Annotated[Optional[int], typer.Option("--max-commits", help="Most commits a quick task may take.")] = None,
-    max_files: Annotated[Optional[int], typer.Option("--max-files", help="Most files a quick task may change.")] = None,
-    json_out: JsonOpt = False,
-) -> None:
-    """Human only: turn quick tasks on, signed into the approval ledger."""
-    from orch.core import quick
-    cli, ws = _ctx()
-    cfg = quick.set_settings(ws, _human(), enabled=True, agents_add=agents_add, max_commits=max_commits,
-                             max_files=max_files)
-    cli._out(cfg, json_out, _state_line(cfg))
-
-
-@quick_app.command()
-def disable(json_out: JsonOpt = False) -> None:
-    """Turn quick tasks off (anyone may)."""
-    from orch.actor import cli_actor
-    from orch.core import quick
-    cli, ws = _ctx()
-    cfg = quick.set_settings(ws, cli_actor(), enabled=False)
-    cli._out(cfg, json_out, _state_line(cfg))
 
 
 @quick_artifact_app.command("add")

@@ -123,6 +123,7 @@ Addons add pages and panels to Mission Control. Five ship with the plugin, all o
 | `databricks` | Workspaces, failed job runs, pipelines and compute, read-only through the `databricks` CLI |
 | `wiki` | Related wiki pages on each ticket and "may need an update" hints, from a GitHub wiki or a local Markdown folder |
 | `terminals` | Run, watch and type into agent sessions from Mission Control (needs tmux) |
+| `quick-tasks` | Quick tasks: one-line jobs too small for a ticket, a list in Mission Control, `orch quick` for agents, a size limit |
 | `model-routing` | Start each agent session on a model chosen by its Start agent mode, a subagent model, one tier up after a task failed its verify twice |
 
 Custom addons are installed with `orch addon install <folder | git URL>` and run only after you trust that exact version; any change disables them until you review it again. Agents can never install, trust or enable an addon. To write one, read [ADDONS.md](plugins/orch-core/ADDONS.md) and start from [addon-template/](plugins/orch-core/addon-template/). Widget and copy rules are in [DESIGN.md](plugins/orch-core/DESIGN.md).

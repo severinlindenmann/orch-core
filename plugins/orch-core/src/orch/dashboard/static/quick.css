@@ -1,0 +1,45 @@
+/* Quick tasks (/quick, /quick/<id>): a list with an add box, one task's page. Tokens only (tokens.css). */
+.quick-layout { display: flex; flex-wrap: wrap; gap: var(--s-6); align-items: flex-start; }
+.quick-main { flex: 999 1 520px; min-width: 0; }
+.quick-aside { flex: 1 1 280px; max-width: 100%; min-width: 0; }
+.quick-main > *, .quick-aside > * { align-self: stretch; } /* full-width cards, not shrunk to their text */
+.quick-toggle { display: flex; gap: var(--s-2); align-items: center; }
+
+.quick-add { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.quick-add input[name=title] { flex: 3 1 260px; min-width: 0; }
+.quick-add .quick-area { flex: 1 1 160px; min-width: 0; }
+.quick-hint { flex: 1 1 100%; margin: 0; font: var(--type-meta); }
+
+.quick-list { padding: 0; overflow: hidden; }
+.quick-list .empty { padding: var(--s-6) var(--s-5); margin: 0; }
+.quick-row { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-3) var(--s-4); border-top: 1px solid var(--line); }
+.quick-row:first-child { border-top: 0; }
+.quick-check { flex: none; margin: 0; }
+.quick-box { width: var(--control-h); min-width: var(--control-h); height: var(--control-h); padding: 0; margin: calc(-1 * var(--s-2));
+  border: 0; background: transparent; box-shadow: none;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.quick-box span { display: block; flex: none; width: var(--s-5); height: var(--s-5); box-sizing: border-box; border: 2px solid var(--ctl); border-radius: var(--r-sm); }
+.quick-box:hover span { border-color: var(--text); }
+.quick-box-done { color: var(--ok-mark); }
+.quick-box-none { width: var(--s-6); }
+.quick-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--s-1); }
+.quick-title { font: var(--type-item); color: var(--text); text-decoration: none; }
+.quick-title:hover { text-decoration: underline; }
+.quick-done .quick-title { color: var(--muted); text-decoration: line-through; }
+.quick-moved .quick-title, .quick-dropped .quick-title { color: var(--muted); }
+.quick-meta { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); align-items: center; font: var(--type-meta); margin: 0; }
+.quick-note { margin: var(--s-1) 0 0; padding: var(--s-2) var(--s-3); background: var(--surface2); border-radius: var(--r-sm); }
+.quick-outgrew { box-shadow: inset var(--s-1) 0 0 var(--warn-mark); }
+.quick-act { flex: none; margin: 0; }
+
+.quick-kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2) var(--s-3); margin: var(--s-3) 0; }
+.quick-kv dt { color: var(--muted); font-weight: 600; }
+.quick-kv dd { margin: 0; }
+.quick-ways { margin: var(--s-3) 0; padding-left: var(--s-5); }
+.quick-ways li { margin-bottom: var(--s-2); }
+.quick-off { margin-top: var(--s-3); }
+.quick-head { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin: 0 0 var(--s-1); font: var(--type-meta); }
+.quick-files { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-3); margin: var(--s-2) 0 var(--s-3); }
+.quick-timeline { gap: var(--s-1); }
+.quick-timeline .muted { display: inline-block; min-width: var(--s-12); }
+.quick-prompt { white-space: pre-wrap; margin: 0; padding: var(--s-3); background: var(--surface2); border-radius: var(--r-sm); font: var(--type-meta); font-family: var(--font-mono); }

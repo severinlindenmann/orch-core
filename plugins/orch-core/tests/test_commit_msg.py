@@ -512,6 +512,7 @@ def test_cli_hooks_install_json(configure, ws_root, capsys):
 @needs_sh
 def test_stage_records_under_hooks_path_delegates_and_keeps_a_foreign_hook(configure, ws_root):
     """#38: --stage-records under a repo-owned core.hooksPath writes a tracked pre-commit that runs the local one."""
+    _git(ws_root, "init", "-q")  # records in a repo: a plain folder skips --stage-records (#161)
     repo = _new_repo(ws_root, "hub")
     _git(repo, "config", "core.hooksPath", "scripts/git-hooks")
     ws = configure(git={"repos": {"hub": {}}})
@@ -538,6 +539,7 @@ def test_stage_records_under_hooks_path_delegates_and_keeps_a_foreign_hook(confi
 
 @needs_git
 def test_stage_records_is_reported_when_hooks_path_is_not_the_repos(configure, ws_root):
+    _git(ws_root, "init", "-q")
     repo = _new_repo(ws_root, "hub")
     shared = ws_root / "shared-hooks"
     shared.mkdir()

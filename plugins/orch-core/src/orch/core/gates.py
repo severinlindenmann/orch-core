@@ -148,3 +148,18 @@ def plan_required(ws, ticket) -> bool:
     if ticket.meta.get("type") == "epic":
         return False  # an epic has no plan of its own; its children do
     return ticket.meta.get("size") not in ws.config["gates"]["plan_skip_sizes"]
+
+
+def requirements_skipped(size, requirements_skip_sizes, ticket_type=None) -> bool:
+    """#172: a ticket of a size in `gates.requirements_skip_sizes` may leave the backlog without an approved
+    requirements gate (and without Requirements or Acceptance criteria). Never an epic: its approval is its charter."""
+    return ticket_type != "epic" and size is not None and size in tuple(requirements_skip_sizes or ())
+
+
+def requirements_skip_sizes(ws) -> tuple:
+    return tuple(ws.config["gates"].get("requirements_skip_sizes") or ())
+
+
+def requirements_required(ws, ticket) -> bool:
+    """False when the ticket's size skips the requirements gate (`gates.requirements_skip_sizes`, default none)."""
+    return not requirements_skipped(ticket.meta.get("size"), requirements_skip_sizes(ws), ticket.meta.get("type"))

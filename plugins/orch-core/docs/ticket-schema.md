@@ -31,7 +31,7 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `status` | `backlog`, `open`, `in-progress`, `waiting`, `testing` or `done`. |
 | `created` | Creation stamp (`YYYY-MM-DDTHH:MMZ`). |
 | `updated` | Last change stamp. |
-| `labels` | Free labels. |
+| `labels` | Free labels for grouping, e.g. `customer:acme` or `admin`: each one word of up to 64 characters, no whitespace, commas or hidden characters. Set with `orch new --label` (repeatable) and `orch label add/remove <id> NAME...`; `orch list --label NAME` filters on them. |
 | `parent` | Parent ticket ID, or null: the epic of a child, or the source of a follow-up. |
 | `sprint` | A sprint id from the workspace config, or null (1.2; planning only). |
 | `blocked_by` | Ticket IDs this ticket waits for. |

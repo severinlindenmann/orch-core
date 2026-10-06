@@ -30,7 +30,7 @@ from orch.clock import now as clock_now
 from orch.core import evidence, query, store
 from orch.core.artifacts import entries as artifact_entries
 from orch.core import tasks as tk
-from orch.core.gates import changes_pending, gate_state
+from orch.core.gates import changes_pending, gate_state, requirements_skip_sizes, requirements_skipped
 from orch.core.lifecycle import unanswered_blocking
 from orch.dashboard.data import tasks as tasks_data
 from orch.dashboard.data.metrics import RESOLUTION_LABELS, STATUS_LABELS
@@ -130,7 +130,7 @@ def _human_move(t, item: dict) -> dict:
     return _move("repair", "Repair", who="you", role="you", since=since)
 
 
-def _gates(t, own: list[dict], plan_skip_sizes) -> dict:
+def _gates(t, own: list[dict], plan_skip_sizes, requirements_skip_sizes=()) -> dict:
     awaited = {need_gate(i) for i in own} - {None}
     out = {}
     for gate in ("requirements", "plan"):
@@ -147,6 +147,9 @@ def _gates(t, own: list[dict], plan_skip_sizes) -> dict:
             shown = "none"
         elif gate == "plan" and t.meta.get("size") in tuple(plan_skip_sizes):
             shown = "skipped"
+        elif gate == "requirements" and requirements_skipped(t.meta.get("size"), requirements_skip_sizes,
+                                                             t.meta.get("type")):
+            shown = "skipped"  # #172
         else:
             shown = "pending"
         glyph, role, word = GATE_GLYPH[shown]
@@ -180,7 +183,7 @@ def _code(t, reviews: list[dict]) -> dict | None:
         main = linked[0]
         number, checks, draft = pr_number(main["url"]), "unknown", False
         state = str(main.get("state") or "")
-        state = "" if state == "draft" else state  # `orch link` writes "draft" as a placeholder nobody refreshes
+        state = "" if state in ("draft", "unknown") else state  # `orch link` placeholders nobody refreshes
         urls = {p["url"] for p in linked}
     else:
         return None
@@ -264,6 +267,7 @@ class Cards:
         self._reviews = reviews  # {ticket id: [review items]} or a callable(ticket id) -> items
         self._mentions = mentions or {}  # {ticket id: [review items that only name it in their description]}
         self.skip = tuple(ws.config["gates"]["plan_skip_sizes"])
+        self.req_skip = requirements_skip_sizes(ws)
         self._by_ticket_events: dict | None = None
         self._rows_by: dict | None = None
         self._needs_by: dict | None = None
@@ -447,7 +451,7 @@ class Cards:
             except OSError:
                 st = None
             if st is not None and time.time_ns() - max(st.st_mtime_ns, st.st_ctime_ns) >= store.UNSTABLE_NS:
-                key = (str(entry.path), st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns, self.skip,
+                key = (str(entry.path), st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns, self.skip, self.req_skip,
                        tuple((str(i.get("kind")), str(i.get("detail") or "")) for i in own))
                 hit = _STATIC.get(key)
                 if hit is not None:
@@ -465,7 +469,7 @@ class Cards:
             "parent": str(meta["parent"]) if isinstance(meta.get("parent"), (str, int)) and str(meta.get("parent")) else None,
             "labels": [x for x in _list(meta.get("labels")) if isinstance(x, str)],
             "updated": str(meta.get("updated") or ""), "updated_at": when(meta.get("updated")),
-            "gates": _gates(t, own, self.skip), "tasks": _tasks(tasks) if status != "done" else None,
+            "gates": _gates(t, own, self.skip, self.req_skip), "tasks": _tasks(tasks) if status != "done" else None,
             "ac": {"proven": proven, "total": total}, "broken": False,
             "artifacts": len(artifact_entries(t)),
         }

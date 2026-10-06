@@ -142,7 +142,7 @@ def test_provider_reads_tickets_and_the_page_renders(tmp_path):
     assert ticket["main"] == {"claude-opus-5-5": 2000} and ticket["cost"]["total"] == 4.2
     ws.cache(MANIFEST.name, snap)
     page = addon.obj.widgets(PAGE, SlotView(ws.ws, addon, PAGE))
-    assert page[0].kind == "callout"  # no limits log: one callout at the top
+    assert page[0].kind == "card" and page[0].role == "info"  # no log at the default path: the setup card at the top
     panel = addon.obj.widgets("ticket.code", SlotView(ws.ws, addon, "ticket.code", ticket=ws.ws and _ticket(ws)))
     assert panel[0].title == "Usage" and "$4.20" in repr(panel)
 
@@ -421,7 +421,7 @@ def test_zero_total_and_one_day_and_not_ready_states():
 
 def test_limit_cards_pace_and_recorder_off():
     off = T.page(_snap(), True, {}, NOW)
-    assert off[0].kind == "callout" and "statusLine" in off[0].text
+    assert off[0].kind == "callout" and T.SETUP_CMD in off[0].text
     snap = _snap()
     reading = {"first_ts": NOW - 2400, "last_ts": NOW, "first": 25.0, "last": 36.0, "n": 5, "reset": NOW + 3600}
     snap[0].items[0].update(last={"at": "2026-10-04T12:00:00Z", "five": 36, "five_reset": NOW + 3600, "week": 41,
@@ -486,11 +486,46 @@ def test_tu01_a_missing_or_relative_limits_log_is_named_not_blamed_on_the_record
     snap = _snap()
     snap[0].items[0]["log"] = next(i for i in items if i["kind"] == "limits")["log"]
     first = T.page(snap, True, {}, NOW)[0]
-    assert first.kind == "callout" and f"File not found: {missing}" in first.text and "statusLine" in first.text
+    assert first.kind == "callout" and first.role == "warn" and f"File not found: {missing}" in first.text
+    assert T.SETUP_CMD in first.text
     snap[0].items[0]["log"] = {"path": "limits.jsonl", "state": "relative"}
     assert "relative path" in T.page(snap, True, {}, NOW)[0].text
     snap[0].items[0]["log"] = {"path": "/x", "state": "ok"}  # there, but nothing recorded: the old text
     assert T.page(snap, True, {}, NOW)[0].title == "No limits recorded"
+
+
+def test_166_no_log_at_the_default_path_is_an_info_card_with_the_setup_command(tmp_path):
+    claude = tmp_path / "home" / ".claude"
+    items = T.build(claude, [], data.DEFAULT_LOG, 1_790_000_000)
+    limits = next(i for i in items if i["kind"] == "limits")
+    assert limits["log"]["state"] == "missing" and limits["recorder"] is False
+    snap = _snap()
+    snap[0].items[0].update(log=limits["log"], recorder=False)
+    out = T.page(snap, True, {}, NOW)
+    _valid(out)
+    card = out[0]
+    assert card.kind == "card" and card.role == "info" and card.title == "Recorder not installed"
+    assert any(w.kind == "copy" and w.text == "orch addon setup ticket-usage" for w in _walk([card]))
+    assert not any(w.kind == "callout" and w.role == "warn" for w in out)
+    snap[0].items[0]["recorder"] = True  # set up, nothing written yet
+    first = T.page(snap, True, {}, NOW)[0]
+    assert first.kind == "callout" and first.role == "info" and "next reply" in first.text
+
+
+def test_166_recorder_wired_reads_the_status_line(tmp_path):
+    claude = tmp_path / "home" / ".claude"
+    claude.mkdir(parents=True)
+    assert data.recorder_wired(claude) is False  # no settings
+    (claude / "settings.json").write_text("{not json")
+    assert data.recorder_wired(claude) is False
+    (claude / "settings.json").write_text('{"statusLine": {"type": "command", "command": "~/.claude/orch-usage/statusline.sh"}}')
+    assert data.recorder_wired(claude) is True
+    script = tmp_path / "mine.sh"
+    script.write_text("#!/bin/sh\ninput=$(cat)\nprintf '%s' \"$input\" | ~/.claude/orch-usage/statusline.sh >/dev/null\n")
+    (claude / "settings.json").write_text(json.dumps({"statusLine": {"type": "command", "command": f"{script} --x"}}))
+    assert data.recorder_wired(claude) is True
+    script.write_text("#!/bin/sh\necho hi\n")
+    assert data.recorder_wired(claude) is False
 
 
 def test_tu01_settings_check_refuses_relative_and_notes_a_missing_file(tmp_path):

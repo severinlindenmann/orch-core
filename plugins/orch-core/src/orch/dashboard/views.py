@@ -330,6 +330,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
+        "quick_nav": _quick_nav(ws),  # quick tasks (orch.core.quick): the menu item and its open count
         "graph_nav": addon_on(ws, GRAPH_ADDON),  # #167: the Graph page is the `graph` default addon's
         "schedules_nav": addon_on(ws, "schedules"),  # docs/schedules.md: the Schedules page is the addon's
         "dedupe_prs": lambda prs, groups=(): __import__("orch.dashboard.routes_ticket", fromlist=["dedupe_prs"]).dedupe_prs(prs, groups),
@@ -372,6 +373,14 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
             return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
         response.headers["ETag"] = etag
     return response
+
+
+def _quick_nav(ws) -> dict:
+    try:
+        from orch.dashboard.routes_quick import summary
+        return summary(ws)
+    except Exception:  # noqa: BLE001  a broken quick-task file never breaks a page
+        return {"enabled": False, "open": 0, "outgrew": 0, "done_today": 0}
 
 
 def as_list(v) -> list:

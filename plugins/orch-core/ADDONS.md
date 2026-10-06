@@ -64,7 +64,7 @@ No `requirements.txt`, `pyproject.toml` or other dependency files: API 2 allows 
 
 ### Workspace data
 
-- `ctx.repos()` (also `view.repos()`): `RepoRef(name, role, path, default_branch)` for the harness root (role `harness`) and each `git.repos` entry (role `sub-repo`), from config only. Use the names as provider scopes. Run git yourself with `ctx.run(["git", "-C", str(repo.path), ...])`.
+- `ctx.repos()` (also `view.repos()`): `RepoRef(name, role, path, default_branch, git_type, base_url)` (the last two API 2.8: `git.repos.<name>.type` / `base_url`, else the workspace's `git.type` / `git.base_url`) for the harness root (role `harness`) and each `git.repos` entry (role `sub-repo`), from config only. Use the names as provider scopes. Run git yourself with `ctx.run(["git", "-C", str(repo.path), ...])`.
 - `ctx.trackers()` (also `view.trackers()`): `TrackerRef(prefix, pattern, url)` with `matches(key)`, `key_for(native_id)` (`GH-12` for `GH-(?P<id>\d+)`) and `url_for(key)`.
 - `ctx.document(ref)` (also `view.document(ref)`): the ticket as its versioned schema document (`orch schema ticket --json`): sections, gates with their hashes, questions with their `hash` (the question hash), the task list, and the needs-you items with gate hash and verdict `round`. Read-only; use it instead of importing `orch.core`.
 - `ctx.ticket_widgets(ref)` (also on the provider context): the ticket's ```` ```orch ```` widget blocks, each with its section, index, key, layer, name, title, source, text alternative and standalone `document` (`render_document`, None for a block with an error), `raw_sha256` and problems (docs/widgets.md). Read-only; for a companion that shows widgets elsewhere, such as orch-tix.
@@ -248,7 +248,7 @@ The document's `signed` object (schema 1.6, a required key; readers of 1.5 may i
 
 ## ctx.run
 
-`ctx.run(argv, timeout=20) -> RunResult(argv, returncode, stdout, stderr)`. argv is a list (no shell). `argv[0]` must be in `binaries`. The environment is scrubbed except for `env`. A missing binary or a timeout raises `AddonRunError`. Never import `subprocess`, `socket`, `urllib.request` or `http.client`, and never call `os.system`, `eval` or `exec`: `orch addon check` refuses them.
+`ctx.run(argv, timeout=20, *, env=None) -> RunResult(argv, returncode, stdout, stderr)`. argv is a list (no shell). `argv[0]` must be in `binaries`. The environment is scrubbed except for `env`. `env` (API 2.8) sets variables for that one call, e.g. `{"GH_TOKEN": token}`; only names the manifest's `env` declares, never `ORCH_*`, string values only, else `AddonRunError`. A test runner gets it as the keyword `env` only when a call passes one; `FakeRunner.envs` records it per call. A missing binary or a timeout raises `AddonRunError`. Never import `subprocess`, `socket`, `urllib.request` or `http.client`, and never call `os.system`, `eval` or `exec`: `orch addon check` refuses them.
 
 ## Security rules
 
@@ -285,7 +285,7 @@ Bump `version` for every change you ship and add a `CHANGELOG.md` section. Insta
 
 ## Install, trust, enable, update
 
-`orch addon install <folder | git URL> [--ref] [--path <folder in the repo>]` (`--path` installs an addon that lives in a subfolder of a larger repository, such as `addons/orch-tix`; `update` keeps using that folder), `orch addon trust <name>`, `orch addon enable|disable <name>` (current workspace), `orch addon update <name> | --all [--check]`, `orch addon rollback <name>`, `orch addon remove <name>`. All are human-only: they refuse inside an agent harness or without a terminal, and the guard denies them to agents. Trust, enable, settings and Check for updates are also on Mission Control → Workspace & addons. `orch addon list` and `orch addon check` are open to everyone.
+`orch addon install <folder | git URL> [--ref] [--path <folder in the repo>]` (`--path` installs an addon that lives in a subfolder of a larger repository, such as `addons/orch-tix`; `update` keeps using that folder), `orch addon trust <name>`, `orch addon enable|disable <name>` (current workspace), `orch addon update <name> | --all [--check]`, `orch addon rollback <name>`, `orch addon remove <name>`, `orch addon setup ticket-usage` (installs the Usage page's status line recorder into the user-global Claude settings after a typed confirmation; no other addon has a setup step). All are human-only: they refuse inside an agent harness or without a terminal, and the guard denies them to agents. Trust, enable, settings and Check for updates are also on Mission Control → Workspace & addons. `orch addon list` and `orch addon check` are open to everyone.
 
 ## Done checklist
 

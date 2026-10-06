@@ -33,7 +33,7 @@ _ADDON_LINES = ("/.state/addons/*", "!/.state/addons/*/", "/.state/addons/*/*", 
 _ADDON_LOCAL = r"\.state/addons/(?:[^/]+|[^/]+/(?!records/).*)"
 _DURABLE = (r"config\.json", r"AGENTS\.orch\.md", r"\.gitignore", r"tickets/.*", r"artifacts/.*", r"static/.*",
             r"\.state/counter\.json", r"\.state/events\.jsonl", r"\.state/gates/.*", r"\.state/remote/ledger\.jsonl",
-            r"\.state/addons/[^/]+/records/.*")
+            r"\.state/addons/[^/]+/records/.*", r"\.state/quick-counter\.json", r"\.state/quick/[^/]+\.json")
 _LOCAL_RE = re.compile("|".join(f"(?:{rx})" for _, rx in _LOCAL) + f"|(?:{_ADDON_LOCAL})")
 _DURABLE_RE = re.compile("|".join(f"(?:{rx})" for rx in _DURABLE))
 # Files outside orchestrator/ that `orch instructions sync` writes: shared, so they belong in git too.
@@ -58,16 +58,17 @@ def ignore_block() -> str:
     return "\n".join(lines)
 
 
-def apply_ignore_block(text: str | None) -> str:
+def apply_ignore_block(text: str | None, block: str | None = None, begin: str = BEGIN, end: str = END) -> str:
     """The .gitignore text with the managed block replaced, or inserted first (lines after it can override it)."""
-    block = ignore_block()
+    block = ignore_block() if block is None else block
     if text is None or not text.strip():
         return block + "\n"
     crlf = "\r\n" in text
     lf = text.replace("\r\n", "\n")
-    start, stop = lf.find(BEGIN), lf.find(END)
+    start = lf.find(begin)
+    stop = lf.find(end, start) if start != -1 else -1
     if start != -1 and stop > start:
-        out = lf[:start] + block + lf[stop + len(END):]
+        out = lf[:start] + block + lf[stop + len(end):]
     else:
         out = block + "\n\n" + lf
     if not out.endswith("\n"):

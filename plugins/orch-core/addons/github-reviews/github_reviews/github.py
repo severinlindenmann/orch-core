@@ -6,7 +6,7 @@ import re
 from orch.addons.api import Snapshot
 from orch.addons.runner import AddonRunError
 
-from .gh import GhFailure, Whoami, run_json
+from .gh import GhFailure, Whoami, gh_user, run_json, token_env
 from .localgit import remote_of
 
 PR_FIELDS = ("number,title,author,headRefName,baseRefName,headRepository,headRefOid,isDraft,reviewDecision,"
@@ -14,6 +14,7 @@ PR_FIELDS = ("number,title,author,headRefName,baseRefName,headRepository,headRef
              "body")
 _KEY = re.compile(r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*-\d+(?![0-9])")
 MAX_BODY_REFS = 20
+NO_ACCESS = "no access:"  # message prefix of a repo gh's account cannot see; the page shows it on that repo only
 LIMIT = 100
 _RUN_ID = re.compile(r"/actions/runs/(\d+)(?:/|$)")
 _PASSED = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
@@ -136,13 +137,22 @@ class GitHubProvider:
         if remote is None:
             return Snapshot(self.id, scope, at, message="no remote named origin")
         host, full_name = remote
+        kind = getattr(repo, "git_type", "github") or "github"
+        if kind != "github":  # git.repos.<name>.type (#165)
+            return Snapshot(self.id, scope, at, message=f"no provider for this host: {host} ({kind})")
         if host != "github.com":
             return Snapshot(self.id, scope, at, message=f"no provider for this host: {host}")
+        listing = False
         try:
-            me = self.whoami(ctx)
+            env = token_env(ctx)
+            me = self.whoami(ctx, env)
+            listing = True
             data = run_json(ctx, ["gh", "pr", "list", "--repo", full_name, "--state", "open", "--limit", str(LIMIT),
-                                  "--json", PR_FIELDS], timeout=30)
+                                  "--json", PR_FIELDS], timeout=30, env=env)
         except GhFailure as f:
+            if listing and f.no_access:  # one repo the account cannot see is that repo's row, not a failed panel
+                return Snapshot(self.id, scope, at, me=me, complete=False,
+                                message=no_access_message(full_name, me, gh_user(ctx)))
             return Snapshot(self.id, scope, at, health=f.health, message=f.message, retry_after=f.retry_after)
         if not isinstance(data, list):
             return Snapshot(self.id, scope, at, health="error", message="gh pr list did not return a list")
@@ -150,3 +160,10 @@ class GitHubProvider:
         full = len(data) >= LIMIT
         return Snapshot(self.id, scope, at, items=items, me=me, complete=not full,
                         message=f"showing the first {LIMIT} open pull requests" if full else "")
+
+
+def no_access_message(full_name: str, me: str | None, user: str) -> str:
+    who = f"the gh account {me or user}" if user else f"the active gh account {me}" if me else "the active gh account"
+    fix = ("check that account's access, or change the GitHub account in this addon's settings" if user else
+           "run gh auth switch -u <account> with an account that can, or set the GitHub account in this addon's settings")
+    return f"{NO_ACCESS} {full_name} is not visible to {who}; {fix}"

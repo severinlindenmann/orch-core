@@ -56,6 +56,7 @@ class FakeRunner:
         self.strict = strict
         self.calls: list[tuple] = []
         self.timeouts: list[float] = []  # the timeout of each call, in the same order as .calls
+        self.envs: list[dict] = []  # the env each call set ({} for none), in the same order as .calls
 
     @classmethod
     def from_dir(cls, folder, *, strict: bool = True) -> "FakeRunner":
@@ -71,9 +72,10 @@ class FakeRunner:
         self.recordings.append(Recording(tuple(argv), returncode, stdout, stderr, raises))
         return self
 
-    def __call__(self, argv, timeout: float) -> RunResult:
+    def __call__(self, argv, timeout: float, env: dict | None = None) -> RunResult:
         self.calls.append(tuple(argv))
         self.timeouts.append(float(timeout))
+        self.envs.append(dict(env or {}))
         for r in self.recordings:
             if r.matches(argv):
                 if r.raises == "timeout":

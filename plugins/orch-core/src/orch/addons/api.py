@@ -493,6 +493,8 @@ class RepoRef:
     role: str  # "harness" | "sub-repo"
     path: Path
     default_branch: str | None = None
+    git_type: str = "github"  # git.repos.<name>.type, else git.type (#165)
+    base_url: str = ""
 
     @property
     def label(self) -> str:
@@ -532,21 +534,23 @@ def _text(value) -> str | None:
 def workspace_repos(ws) -> list[RepoRef]:
     """The harness root first (named after the git.repos entry whose path is the root, else "harness"), then each
     other git.repos entry once by resolved path."""
+    from orch.config.load import repo_git
     root = Path(ws.root).resolve()
     git = ws.config.get("git") if isinstance(ws.config.get("git"), dict) else {}
     configured = git.get("repos") if isinstance(git.get("repos"), dict) else {}
-    harness = RepoRef("harness", "harness", root)
+    harness = RepoRef("harness", "harness", root, None, *repo_git(ws.config, None))
     named = False
     subs: list[RepoRef] = []
     for name, rc in configured.items():
         rc = rc if isinstance(rc, dict) else {}
         path = (root / (_text(rc.get("path")) or str(name))).resolve()
         branch = _text(rc.get("default_branch"))
+        host = repo_git(ws.config, name)
         if path == root:
             if not named:
-                harness, named = RepoRef(str(name), "harness", root, branch), True
+                harness, named = RepoRef(str(name), "harness", root, branch, *host), True
         elif not any(s.path == path for s in subs):
-            subs.append(RepoRef(str(name), "sub-repo", path, branch))
+            subs.append(RepoRef(str(name), "sub-repo", path, branch, *host))
     return [harness, *subs]
 
 
@@ -762,14 +766,24 @@ class ProviderContext:
                 allowed.add(value)
         return allowed
 
-    def run(self, argv, timeout: float = 20.0) -> RunResult:
+    def run(self, argv, timeout: float = 20.0, *, env: dict | None = None) -> RunResult:
+        """`env` sets variables for this one call; only names the manifest's `env` declares (never ORCH_*)."""
         if is_rendering():
             raise AddonRunError("ctx.run is not allowed while a page renders; fetch in a provider instead")
         if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) for a in argv):
             raise AddonRunError("ctx.run takes an argv list of strings (no shell)")
         if argv[0] not in self._allowed():
             raise AddonRunError(f"{argv[0]!r} is not in this addon's binaries allowlist")
+        if env is not None:
+            declared = set(self.addon.manifest.env) if self.addon.manifest else set()
+            if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+                raise AddonRunError("ctx.run env must map names to strings")
+            bad = sorted(k for k in env if k not in declared or k.startswith("ORCH_"))
+            if bad:
+                raise AddonRunError(f"ctx.run env names not declared in the manifest's env: {', '.join(bad)}")
         timeout = float(timeout)
         if self.max_timeout is not None:
             timeout = min(timeout, self.max_timeout)
+        if env:  # runners written before env existed keep their (argv, timeout) signature
+            return self._runner(list(argv), timeout, env=dict(env))
         return self._runner(list(argv), timeout)

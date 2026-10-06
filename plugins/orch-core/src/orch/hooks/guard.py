@@ -45,14 +45,15 @@ _SERVE = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*serve\b")
 # `'/a b/bin/orch' serve`): the path may contain spaces, and a closing quote may follow `orch`.
 _QUOTED_SERVE = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch['"]?\s+(?:-\S+\s+)*serve\b""")
 _SERVE_DENIED = "the dashboard is the human's; ask the user to open it"
-# `orch addon install|update|trust|enable|disable|remove|rollback` in any form (`uv run orch`, `python -m orch.cli`,
+# `orch addon install|update|trust|enable|disable|remove|rollback|setup` in any form (`uv run orch`, `python -m orch.cli`,
 # `orch --quiet addon ...`); `list` and `check` stay open to agents.
-_ADMIN_VERBS = r"(?:install|update|trust|enable|disable|remove|rollback|ticket-option\s+set)\b"
+_ADMIN_VERBS = r"(?:install|update|trust|enable|disable|remove|rollback|setup|ticket-option\s+set)\b"
 _ADDON_ADMIN = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*" + _ADMIN_VERBS)
 # A quoted wrapper path ("${CLAUDE_PLUGIN_ROOT}/bin/orch" addon trust x): the quote must close right after `orch`,
 # so a quoted sentence such as a commit message 'orch addon trust is human-only' is not mistaken for the command.
 _QUOTED_ADDON_ADMIN = re.compile(r"""['"]\s*(?:[^'"\n]*/)?orch['"]\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*""" + _ADMIN_VERBS)
-_ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons, and setting an addon ticket option (e.g. phone notifications), is the "
+_ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back, removing or setting up addons "
+                       "(setup changes the user-global Claude settings), and setting an addon ticket option (e.g. phone notifications), is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
 # grant|deny|revoke` (AI Factory), and moves to a status only
@@ -62,7 +63,7 @@ _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "cl
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
 _HUMAN_SCHEDULE = ("arm", "resume", "run-now", "file", "dismiss")  # `orch schedule …` (docs/schedules.md)
 _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
-                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
+                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)|quick\s+(?:-\S+\s+)*(?:reopen|drop|enable)"
                   r"|schedule\s+(?:-\S+\s+)*(?:arm|resume|run-now|file|dismiss))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
@@ -530,7 +531,8 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
-                      "permissions, arming schedules and filing their findings, and moving a "
+                      "permissions, reopening, dropping or turning on quick tasks, arming schedules and filing their "
+                      "findings, and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
                       "terminal or the dashboard")
 # The harness markers orch reads to tell an agent from a human (orch.actor): an agent does not strip or blank them.
@@ -569,6 +571,8 @@ def _human_only_tokens(seg: str) -> bool:
         if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
             return True
         if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
+            return True
+        if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop", "enable"):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -624,8 +628,8 @@ _USER_ADDON_FORMS = re.compile(r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]" + _U
 # a heredoc script): manage refuses inside a harness anyway; this keeps an agent from scripting around that check.
 _INTERPRETER = re.compile(r"\bpython[0-9.]*\b|<<")
 _ADMIN_PY = re.compile(
-    r"\borch\.addons\.(?:manage|userfiles)\b"
-    r"|\bfrom\s+orch\.addons\s+import\b[^;\n]*\b(?:manage|userfiles)\b"
+    r"\borch\.addons\.(?:manage|userfiles|usage_recorder)\b"
+    r"|\bfrom\s+orch\.addons\s+import\b[^;\n]*\b(?:manage|userfiles|usage_recorder)\b"
     r"|\b(?:record_trust|set_enabled)\b")
 # The orch config dir reached through `cd` or a variable (`cd ~/.config/orch && echo {} > addons.json`,
 # `D=~/.config/orch; ... > "$D/addons.json"`): a config-dir spelling plus an addon file name, in a writing command.
@@ -1974,17 +1978,25 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _USE_ORCH)
     if _writes_startup_file(cmd, code):
         return Decision(False, _STARTUP_DENIED)
+    if (_RECORDER_FILE.search(code) or (_SETTINGS_JSON.search(code) and _STATUS_LINE.search(code))) and _is_write(cmd):
+        return Decision(False, _RECORDER_DENIED)
     if "config.json" in code and _WIDGETS_WORD.search(code) and _is_write(cmd):
         return Decision(False, _WIDGETS_DENIED)
     # checks: only a command that itself writes and names the orch config and `checks` (not a grep next to an
     # unrelated write, not tsconfig.json)
     if any(_CONFIG_JSON.search(seg) and _CHECKS_WORD.search(seg) and _is_write(seg) for seg in _command_segments(code)):
         return Decision(False, _CHECKS_DENIED)
+    if any(_CONFIG_JSON.search(seg) and _QUICK_WORD.search(seg) and _is_write(seg) for seg in _command_segments(code)):
+        return Decision(False, _QUICK_DENIED)
     return ALLOW
 
 
 _WIDGETS_WORD = re.compile(r"\bwidgets\b")
 _CHECKS_WORD = re.compile(r"\bchecks\b")
+_QUICK_WORD = re.compile(r"\bquick\b")
+_QUICK_DENIED = ("the quick-task settings (on or off, whether agents add quick tasks, the size limits) are the human's, "
+                 "signed into the approval ledger; ask the user to run `orch quick enable` in their own terminal or to "
+                 "change them in Mission Control")
 _CONFIG_JSON = re.compile(r"(?<![\w-])config\.json\b")
 _CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
                   "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
@@ -1997,6 +2009,12 @@ _STARTUP_FILE = re.compile(r"(?:^|[\s'\"=/~<>])\.(?:zshrc|zshenv|zprofile|zlogin
                            r"envrc)\b|\.git[/\\]hooks(?:[/\\]|\b)")
 _STARTUP_DENIED = ("agents do not change shell startup files, .envrc or git hooks: they run code in the human's own "
                    "sessions")
+# The ticket-usage recorder and a status line in Claude's settings run in every one of the human's Claude sessions.
+_RECORDER_FILE = re.compile(r"orch-usage[/\\]statusline\.sh\b")
+_SETTINGS_JSON = re.compile(r"(?<![\w.-])settings(?:\.local)?\.json\b")
+_STATUS_LINE = re.compile(r"\bstatusLine\b")
+_RECORDER_DENIED = ("the ticket-usage recorder and the status line in Claude's settings run in every one of the human's "
+                    "Claude Code sessions; ask the user to run `orch addon setup ticket-usage` in their own terminal")
 # Commands that only print what they read: no write option, no way to run another command.
 _STARTUP_READERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "diff", "cmp", "ls", "stat", "test",
                               "["})
@@ -2071,6 +2089,10 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _STARTUP_FILE.search(str(path)) or _STARTUP_FILE.search(raw):
         return Decision(False, _STARTUP_DENIED)
+    if _RECORDER_FILE.search(path.as_posix()) or _RECORDER_FILE.search(raw):
+        return Decision(False, _RECORDER_DENIED)
+    if _SETTINGS_JSON.fullmatch(path.name) and _status_line_changes(tool, tool_input, path):
+        return Decision(False, _RECORDER_DENIED)
     if _under(path, ws.state_dir.resolve()):
         return Decision(False, _USE_ORCH)
     if path == (ws.home / "config.json").resolve():
@@ -2156,10 +2178,32 @@ def _config_edit(tool: str, tool_input: dict, path: Path, ws=None) -> Decision:
             return Decision(False, _CHECKS_DENIED + " (and keep orchestrator/config.json valid JSON)")
     elif before is not _NO_JSON and before != after:
         return Decision(False, _CHECKS_DENIED)
+    q_before, q_after = _config_key(old_text, "quick"), _config_key(new_text, "quick")
+    if q_after is not _NO_JSON and q_after != (q_before if q_before is not _NO_JSON else {}):
+        return Decision(False, _QUICK_DENIED)
     return ALLOW
 
 
 _NO_JSON = object()
+
+
+def _status_line_changes(tool: str, tool_input: dict, path: Path) -> bool:
+    """The edit adds, changes or removes `statusLine` in a Claude settings file; a file that does not parse is judged
+    by whether the edit's own text names statusLine."""
+    try:
+        old_text = path.read_text(encoding="utf-8")
+    except OSError:
+        old_text = ""
+    new_text = _proposed(tool, tool_input, old_text)
+    if new_text is None:
+        return False
+    before = _config_key(old_text, "statusLine") if old_text.strip() else {}
+    after = _config_key(new_text, "statusLine")
+    if before is _NO_JSON or after is _NO_JSON:
+        edits = tool_input.get("edits") if tool == "MultiEdit" else [tool_input]
+        return any(_STATUS_LINE.search(str(e.get(k, ""))) for e in edits or [] if isinstance(e, dict)
+                   for k in ("old_string", "new_string", "content"))
+    return before != after
 
 
 def _config_key(text: str, key: str):

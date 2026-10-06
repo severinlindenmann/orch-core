@@ -23,7 +23,7 @@ def test_a_pr_number_resolves_against_the_workspace_repo(ws, aops, repo):
     t = aops.new("x")
     aops.link(t.id, pr="22")
     prs = store.load(ws, t.id)[1].meta["prs"]
-    assert prs == [{"repo": "harness", "url": "https://github.com/acme/energy-data/pull/22", "state": "draft"}]
+    assert prs == [{"repo": "harness", "url": "https://github.com/acme/energy-data/pull/22", "state": "unknown"}]
 
 
 def test_a_hash_number_and_a_named_repo(ws_root, configure, aops, repo):

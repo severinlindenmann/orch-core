@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from orch.config.load import validate_schema
 from orch.core import evidence, ledger, store
 from orch.core.events import Actor, append_event, read_events, scan_events
-from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required
+from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required, requirements_required
 from orch.core.ids import normalize_ref
 from orch.core.lifecycle import unanswered_blocking
 from orch.core.ops import claim_expired
@@ -300,7 +300,8 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
             out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval"))
             if emit:
                 _record_invalidation(ws, t, gate, events)
-    if not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending":
+    if (not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending"
+            and requirements_required(ws, t)):  # #172: a size in gates.requirements_skip_sizes needs none
         out.append(Finding("error", "status-without-gate", tid, f"ticket is {entry.status} but its requirements were never approved"))
     if not closed and entry.status in ("testing", "done") and plan_required(ws, t) and gate_state(t, "plan") != "approved":
         out.append(Finding("error", "status-without-plan", tid, f"ticket is {entry.status} but its plan is {gate_state(t, 'plan')}"))
@@ -456,12 +457,25 @@ def _check_artifacts(ws, t) -> list[Finding]:
 def _check_orphan_artifacts(ws, entries) -> list[Finding]:
     if not ws.artifacts_dir.is_dir():
         return []
-    ids = {e.id.upper() for e in entries}
+    from orch.core.quick import all_tasks
+    ids = {e.id.upper() for e in entries} | {t["id"].upper() for t in all_tasks(ws)}  # quick tasks keep artifacts too
     return [
         Finding("warning", "orphan-artifacts", d.name, f"artifacts/{d.name} has no matching ticket")
         for d in sorted(ws.artifacts_dir.iterdir())
         if d.is_dir() and d.name.upper() not in ids
     ]
+
+
+_SINCE = re.compile(r"\d{4}-\d{2}-\d{2}|[0-9a-fA-F]{7,40}")
+
+
+def commits_since(cfg: dict, repo: str) -> str | None:
+    """The baseline of repo's commit checks (#165): `check.since`, one date (YYYY-MM-DD) or commit for every repo,
+    or a map of repo name to one. `orch init` sets today; without it every recent commit is checked, as before."""
+    since = (cfg.get("check") or {}).get("since") if isinstance(cfg.get("check"), dict) else None
+    if isinstance(since, dict):
+        since = since.get(repo)
+    return since if isinstance(since, str) and _SINCE.fullmatch(since) else None
 
 
 def _check_commits(ws, entries, limit: int = 200) -> list[Finding]:
@@ -487,13 +501,18 @@ def _check_commits(ws, entries, limit: int = 200) -> list[Finding]:
         path = (ws.root / ((repo or {}).get("path") or name)).resolve()
         if not (path / ".git").exists():
             continue
+        since = commits_since(ws.config, name)
+        span = [f"--since={since} 00:00:00"] if since and "-" in since else [f"{since}..HEAD"] if since else []
         try:
-            res = subprocess.run(["git", "-C", str(path), "log", f"-n{limit}", "--format=%h %s"],
+            res = subprocess.run(["git", "-C", str(path), "log", f"-n{limit}", "--format=%h %s", *span, "--"],
                                  capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
         except (OSError, subprocess.TimeoutExpired) as e:
             out.append(Finding("warning", "git-unavailable", None, f"{name}: could not read git log ({e})"))
             continue
         if res.returncode != 0:
+            if since and "-" not in since:
+                out.append(Finding("warning", "check-since", None, f"{name}: check.since commit {since} is not in "
+                                   "this repo, so its commits were not checked; set a commit of this repo or a date"))
             continue
         for line in res.stdout.splitlines():
             sha, _, subject = line.partition(" ")

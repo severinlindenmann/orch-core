@@ -102,7 +102,7 @@ def test_link(ws, aops, put):
     aops.link(tid, external="TIX-17")
     aops.link(tid, external="tix-17")
     m = store.load(ws, tid)[1].meta
-    assert m["prs"] == [{"repo": "hub", "url": "https://x/pr/1", "state": "draft"}]
+    assert m["prs"] == [{"repo": "hub", "url": "https://x/pr/1", "state": "unknown"}]
     assert m["branches"] == {"hub": "feature/L-1"} and m["repos"] == ["hub"]
     assert [x["key"] for x in m["external"]] == ["TIX-17"]
 

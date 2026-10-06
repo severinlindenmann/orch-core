@@ -67,15 +67,32 @@ class Countdown:
     the text is `done`. Core renders the first text and a small script keeps it current."""
     until: str
     done: str = "reset"
+    prefix: str = ""  # API 2.8: drawn before the countdown ("resets in 3h05"), dropped once it is `done`
     kind: ClassVar[str] = "countdown"
+
+
+@dataclass(frozen=True)
+class MenuRow:
+    """API 2.8: one labelled value under a menu entry ("5h  [meter]  1 %  resets in 4h49"). `meter` is 0-100 or None
+    (then "label — value"); `role` colours the value and meter; `note` holds Text and Countdown parts."""
+    label: str
+    value: str
+    meter: float | None = None
+    role: str = "neu"
+    note: tuple = ()
+    muted: bool = False
+    kind: ClassVar[str] = "menu_row"
 
 
 @dataclass(frozen=True)
 class MenuStatus:
     """API 2.5: what menu_badge may return instead of a Badge: a chip (`badge`) on the menu entry and a short muted
-    `line` under its label made of Badge (small coloured text), Text and Countdown parts."""
+    `line` under its label made of Badge (small coloured text), Text and Countdown parts. API 2.8: `rows` of MenuRow
+    under the line; where they fit the chip is hidden, so make it name its value ("Week 59 %"); `stale` dims them."""
     badge: Badge | None = None
     line: tuple = ()
+    rows: tuple = ()
+    stale: bool = False
     kind: ClassVar[str] = "menu_status"
 
 

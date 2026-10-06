@@ -1,7 +1,7 @@
 {
   "name": "orch-core",
   "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "skills": [
     "./skills/orch-refine-ticket",
     "./skills/orch-setup",

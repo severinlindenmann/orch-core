@@ -97,6 +97,7 @@ def menu_icon(m: Manifest | None) -> str:
 # the tab shows the commands to copy, never an install button. `adds` uses the manifest's own words (capabilities,
 # slots, menu, remote_humans) so the card draws the same map as an installed one.
 EXTERNAL_FILE = "external.json"
+GUIDE_URL = "https://github.com/severinlindenmann/orch-core/blob/main/plugins/orch-core/ADDONS.md"
 _URL = re.compile(r"https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+")
 _PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
 
@@ -117,6 +118,7 @@ def _entry(e) -> dict | None:
     install = f"orch addon install {e['repo']}" + (f" --path {e['path']}" if e.get("path") else "")
     needs = [str(n)[:200] for n in e.get("needs", ()) if isinstance(n, str)] if isinstance(e.get("needs"), list) else []
     return {"name": e["name"], "title": m.title, "description": e["description"][:400], "repo": e["repo"],
+            "repo_label": e["repo"].split("://", 1)[1].removeprefix("github.com/"),
             "icon_path": menu_icon(m), "surfaces": found, "areas": sorted({s["area"] for s in found}), "needs": needs,
             "steps": [("Install it", install), ("Read the review, then trust it", f"orch addon trust {e['name']}"),
                       ("Switch it on here, or run", f"orch addon enable {e['name']}")]}

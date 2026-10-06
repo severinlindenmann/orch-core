@@ -178,7 +178,7 @@
         <span class="addon-glyph">{{ glyph(e.icon_path) }}</span>
         <div class="addon-who">
           <h3>{{ e.title }}</h3>
-          <p class="addon-meta"><code>{{ e.name }}</code> · not installed · <a class="lnk" href="{{ e.repo }}" target="_blank" rel="noopener noreferrer">{{ e.repo.removeprefix("https://github.com/") }} ↗</a></p>
+          <p class="addon-meta"><code>{{ e.name }}</code> · not installed · <a class="lnk" href="{{ e.repo }}" target="_blank" rel="noopener noreferrer">{{ e.repo_label }} ↗</a></p>
         </div>
       </div>
       <p class="addon-desc">{{ e.description }}</p>
@@ -211,7 +211,7 @@
     <h3>Any other addon</h3>
     <p>From a folder or a git repository; <code>--path</code> picks the addon's folder inside a larger repository.</p>
     <p class="addon-cmd"><code>orch addon install &lt;folder | git URL&gt; [--path &lt;folder&gt;]</code><button type="button" class="btn btn-quiet copy-fix" data-copy="orch addon install ">Copy</button></p>
-    <p class="muted">Writing your own: start from addon-template in orch-core, see <a class="lnk" href="https://github.com/severinlindenmann/orch-core/blob/main/plugins/orch-core/ADDONS.md" target="_blank" rel="noopener noreferrer">the addon guide ↗</a>.</p>
+    <p class="muted">Writing your own: start from addon-template in orch-core, see <a class="lnk" href="{{ addon_guide }}" target="_blank" rel="noopener noreferrer">the addon guide ↗</a>.</p>
   </div>
 </section>
 {% if addon_errors %}<details class="card"><summary>Recent addon errors</summary><pre>{{ addon_errors }}</pre></details>{% endif %}

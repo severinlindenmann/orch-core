@@ -191,7 +191,7 @@ def workspace(request: Request):
                 temp_kb=round(sum(p.stat().st_size for p in temp_files) / 1024, 1),
                 max_age=ws.config["temporary"]["max_age_days"],
                 static_files=static_files[:500], static_hidden=max(0, len(static_files) - 500),
-                addon_rows=rows, suggested=_suggested(ws, rows), external=addon_catalog.external({r["name"] for r in rows}), has_custom=any(r["kind"] == "custom" for r in rows),
+                addon_rows=rows, suggested=_suggested(ws, rows), external=addon_catalog.external({r["name"] for r in rows}), addon_guide=addon_catalog.GUIDE_URL, has_custom=any(r["kind"] == "custom" for r in rows),
                 kind_label=_KIND_LABEL,
                 terminal=launch_settings["terminal"], launch_path=launch_settings["path"],
                 default_harness=agent_start.default_harness(ws, launch_settings) or "none",

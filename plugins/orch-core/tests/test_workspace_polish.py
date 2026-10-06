@@ -159,6 +159,14 @@ def test_density_is_a_workspace_setting_on_the_page_root(client, ws):
     assert userfiles.density(ws.root) == "compact"
 
 
+def test_the_version_is_in_the_menu_and_the_setup_tab_has_an_about_card(client):
+    import orch
+    html = client.get("/workspace?tab=setup").text
+    assert f"orch {orch.__version__}</a>" in html  # the menu and the page head link to the card
+    card = html.split('id="about"', 1)[1].split("</section>", 1)[0]
+    assert f"<b>{orch.__version__}</b>" in card and "Installed as" in card and "<code>orch update</code>" in card
+
+
 def test_density_and_motion_tokens_are_honoured():
     from pathlib import Path
     static = Path(__file__).resolve().parents[1] / "src/orch/dashboard/static"

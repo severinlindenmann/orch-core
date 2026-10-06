@@ -74,7 +74,7 @@
         {{ item("workspace", "Workspace & addons", "/workspace?tab=setup" if setup_count else "/workspace", "workspace", setup_count, "warn") }}
         <div class="menu-ws">
           <p class="menu-ws-name"><b>{{ customer }} · {{ prefix }}</b>
-            <span>{{ repo_count }} repo{{ "" if repo_count == 1 else "s" }}</span></p>
+            <span>{{ repo_count }} repo{{ "" if repo_count == 1 else "s" }} · <a href="/workspace?tab=setup#about" title="About this orch">orch {{ orch_version }}</a></span></p>
           {% if other_workspaces %}
           <p class="menu-switcher">
             {% for other in other_workspaces %}

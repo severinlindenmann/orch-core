@@ -196,6 +196,7 @@ def workspace(request: Request):
                 terminal=launch_settings["terminal"], launch_path=launch_settings["path"],
                 default_harness=agent_start.default_harness(ws, launch_settings) or "none",
                 launch_warnings=agent_start.launch_warnings(ws, launch_settings),
+                about=update.about(),
                 addon_errors=runtime.registry.errors()[-4000:],
                 config_text=json.dumps(ws.config, indent=2, ensure_ascii=False),
                 phones=phone_store.phones(ws.root), phone_permissions=phone_store.permissions(ws.root),

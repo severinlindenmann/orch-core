@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
 
+from orch import __version__
 from orch.clock import now as clock_now
 from orch.clock import parse_stamp
 from orch.core import query
@@ -321,6 +322,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "customer": ws.config.get("customer") or ws.root.name,
         "prefix": ws.config.get("id", {}).get("prefix", ""),
         "repo_count": len(ws.config.get("git", {}).get("repos") or {}),
+        "orch_version": __version__,
         "theme": _theme(request, ws),
         "live_version": _live_version(ws),
         "brand": brand if brand in BRANDS else "none",

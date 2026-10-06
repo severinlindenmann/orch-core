@@ -11,7 +11,7 @@
 <div class="page-head">
   <div>
     <h1>Workspace &amp; addons</h1>
-    <p>{{ customer }} · {{ prefix }} · {{ repo_count }} repositories</p>
+    <p>{{ customer }} · {{ prefix }} · {{ repo_count }} repositories · <a href="/workspace?tab=setup#about">orch {{ orch_version }}</a></p>
   </div>
 </div>
 <nav class="tabs ws-tabs" aria-label="Workspace sections">
@@ -55,6 +55,15 @@
         {% endfor %}
       </ul>
       {% else %}<p class="empty">No repositories configured.</p>{% endif %}
+    </section>
+
+    <section class="card" id="about" aria-labelledby="about-h">
+      <h2 id="about-h">About</h2>
+      <p>orch-core <b>{{ about.version }}</b></p>
+      <p>Installed as <b>{{ about.kind }}</b>: <span class="path">{{ about.where }}</span></p>
+      <p>Python <b>{{ about.python }}</b> · <span class="path">{{ about.executable }}</span></p>
+      <p class="muted">{% if about.kind == "git release" %}<code>orch update</code> installs the newest release tag of that repository.{% elif about.kind == "git clone" %}<code>orch update</code> pulls that clone.{% else %}<code>orch update</code> cannot update this install; the reason is above.{% endif %}
+        {% if about.next_check %} Next automatic check {{ about.next_check }}.{% endif %}</p>
     </section>
 
     <section class="card" aria-labelledby="agent-start-h">

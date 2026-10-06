@@ -141,6 +141,24 @@ def _remote_status(r: GitRemote) -> CoreStatus:
     return CoreStatus(c, c.summary, True)
 
 
+def about() -> dict:
+    """What this running orch is, for the dashboard's About card. Reads local files only: no fetch, no network."""
+    import platform
+
+    import orch
+    src = core_source()
+    if isinstance(src, GitRemote):
+        kind, where = "git release", f"{_public_url(src.url)} @ {src.built}"
+    elif isinstance(src, str):
+        kind, where = "not updatable", src
+    else:
+        kind, where = "git clone", str(src[0])
+    due = _state().get("next_check")
+    return {"version": orch.__version__, "kind": kind, "where": where,
+            "python": platform.python_version(), "executable": sys.argv[0],
+            "next_check": time.strftime("%a %d %b %H:%M", time.localtime(float(due))) if due else None}
+
+
 def core_where(repo: Path | GitRemote) -> str:
     if isinstance(repo, GitRemote):
         return f"{_public_url(repo.url)} (release tags)"

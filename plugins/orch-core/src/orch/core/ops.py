@@ -405,8 +405,9 @@ class Ops(TaskOpsMixin):
     def link(self, ref: str, *, repo: str | None = None, pr: str | None = None, branch: str | None = None,
              worktree: str | None = None, external: str | None = None, epic: str | None = None,
              no_epic: bool = False, sprint: str | None = None, no_sprint: bool = False) -> Ticket:
-        if not any((pr, branch, worktree, external, epic, no_epic, sprint, no_sprint)):
-            raise UsageError("nothing to link", hint="pass --pr, --branch, --worktree, --external, --epic or --sprint")
+        if not any((repo, pr, branch, worktree, external, epic, no_epic, sprint, no_sprint)):
+            raise UsageError("nothing to link",
+                             hint="pass --repo, --pr, --branch, --worktree, --external, --epic or --sprint")
         if (epic and no_epic) or (sprint and no_sprint):
             raise UsageError("pass --epic or --no-epic (--sprint or --no-sprint), not both")
         sprint_id = self._sprint(sprint) if sprint else None
@@ -422,7 +423,8 @@ class Ops(TaskOpsMixin):
 
         def fn(t: Ticket) -> dict:
             changed: dict = {}
-            if repo and repo not in t.meta.setdefault("repos", []):
+            new_repo = bool(repo) and repo not in t.meta.setdefault("repos", [])
+            if new_repo:
                 t.meta["repos"].append(repo)
             if branch:
                 t.meta.setdefault("branches", {})[repo] = branch
@@ -448,8 +450,23 @@ class Ops(TaskOpsMixin):
             if no_sprint:
                 t.meta.pop("sprint", None)
                 changed["sprint"] = "none"
-            self._log(t, "linked " + ", ".join(f"{k} {v}" for k, v in changed.items()))
+            if new_repo and not changed:  # a repo-only link (#164)
+                changed["repo"] = repo
+            if changed:
+                self._log(t, "linked " + ", ".join(f"{k} {v}" for k, v in changed.items()))
             return changed
+
+        return self._mutate(ref, "ticket.edited", fn)
+
+    def unlink_worktree(self, ref: str, repo: str) -> Ticket:
+        """Drop the ticket's worktree link in `repo` (`orch worktree remove`); repo and branch links stay."""
+        def fn(t: Ticket) -> dict:
+            wts = t.meta.get("worktrees")
+            if not isinstance(wts, dict) or repo not in wts:
+                raise UsageError(f"{t.id} has no worktree in {repo}")
+            path = wts.pop(repo)
+            self._log(t, f"removed worktree {path}")
+            return {"worktree_removed": path, "repo": repo}
 
         return self._mutate(ref, "ticket.edited", fn)
 

@@ -1,7 +1,7 @@
 {
   "name": "ticket-usage",
   "title": "Ticket usage",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "requires_api": "2",
   "kind": "in-process",
   "description": "Claude Code usage per ticket: estimated cost, output tokens per model and an estimated share of the weekly limit.",
@@ -13,7 +13,8 @@
   "menu": {"title": "Usage", "icon": "status"},
   "settings_schema": [
     {"key": "limits_log", "label": "Limits log written by the status line recorder", "type": "text", "default": "~/.claude/orch-usage/limits.jsonl"},
-    {"key": "show_cost", "label": "Show the estimated cost at API list prices", "type": "bool", "default": true}
+    {"key": "show_cost", "label": "Show the estimated cost at API list prices", "type": "bool", "default": true},
+    {"key": "stale_after", "label": "Dim the menu limits after this many minutes without a reading", "type": "select", "options": ["15", "30", "60", "120"], "default": "30"}
   ],
   "actions": []
 }

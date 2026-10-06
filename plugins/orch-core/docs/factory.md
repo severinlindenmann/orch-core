@@ -200,8 +200,8 @@ programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's ab
 path only when owned by you or root and not writable by group or others. The agent gets `env -i` with a fixed PATH (the
 folders of those programs, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
 session starts in the child's worktree only when the child names exactly one, below the workspace's
-`.claude/worktrees` folder or a git worktree in the workspace whose branch names the child; otherwise in the workspace
-root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
+`.claude/worktrees` folder (where `orch worktree add` puts it) or a git worktree in the workspace whose branch names
+the child; otherwise in the workspace root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
 so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
 
 The guard's part is a text check, not a shell. It refuses a command run from inside the orch config dir, a `cd` or
@@ -249,6 +249,8 @@ edits by setting it in your user settings, not in this command.
 **Worktrees are written by agents.** The launched session ignores the settings and MCP servers a worktree carries
 (user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a
 `.claude/settings.json`, `.claude/settings.local.json` or `.mcp.json` that is not identical to the workspace's own.
+Identical means a copy with the same bytes, or a symlink to the workspace's own file itself (what `orch worktree add`
+makes); a symlink to any other file is refused, even one with the same bytes.
 Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text.
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto

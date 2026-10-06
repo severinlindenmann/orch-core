@@ -63,7 +63,7 @@ _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "cl
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
 _HUMAN_SCHEDULE = ("arm", "resume", "run-now", "file", "dismiss")  # `orch schedule …` (docs/schedules.md)
 _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
-                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)|quick\s+(?:-\S+\s+)*(?:reopen|drop|enable)"
+                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)|quick\s+(?:-\S+\s+)*(?:reopen|drop)"
                   r"|schedule\s+(?:-\S+\s+)*(?:arm|resume|run-now|file|dismiss))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
@@ -531,7 +531,7 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
-                      "permissions, reopening, dropping or turning on quick tasks, arming schedules and filing their "
+                      "permissions, reopening or dropping quick tasks, arming schedules and filing their "
                       "findings, and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
                       "terminal or the dashboard")
@@ -572,7 +572,7 @@ def _human_only_tokens(seg: str) -> bool:
             return True
         if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
             return True
-        if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop", "enable"):
+        if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -1986,17 +1986,11 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     # unrelated write, not tsconfig.json)
     if any(_CONFIG_JSON.search(seg) and _CHECKS_WORD.search(seg) and _is_write(seg) for seg in _command_segments(code)):
         return Decision(False, _CHECKS_DENIED)
-    if any(_CONFIG_JSON.search(seg) and _QUICK_WORD.search(seg) and _is_write(seg) for seg in _command_segments(code)):
-        return Decision(False, _QUICK_DENIED)
     return ALLOW
 
 
 _WIDGETS_WORD = re.compile(r"\bwidgets\b")
 _CHECKS_WORD = re.compile(r"\bchecks\b")
-_QUICK_WORD = re.compile(r"\bquick\b")
-_QUICK_DENIED = ("the quick-task settings (on or off, whether agents add quick tasks, the size limits) are the human's, "
-                 "signed into the approval ledger; ask the user to run `orch quick enable` in their own terminal or to "
-                 "change them in Mission Control")
 _CONFIG_JSON = re.compile(r"(?<![\w-])config\.json\b")
 _CHECKS_DENIED = ("checks (what `orch task done --run` runs for a verify line check:<name>) is the human's setting: an "
                   "agent picks a check by name but does not change what it runs; ask the user to edit `checks` in "
@@ -2178,9 +2172,6 @@ def _config_edit(tool: str, tool_input: dict, path: Path, ws=None) -> Decision:
             return Decision(False, _CHECKS_DENIED + " (and keep orchestrator/config.json valid JSON)")
     elif before is not _NO_JSON and before != after:
         return Decision(False, _CHECKS_DENIED)
-    q_before, q_after = _config_key(old_text, "quick"), _config_key(new_text, "quick")
-    if q_after is not _NO_JSON and q_after != (q_before if q_before is not _NO_JSON else {}):
-        return Decision(False, _QUICK_DENIED)
     return ALLOW
 
 

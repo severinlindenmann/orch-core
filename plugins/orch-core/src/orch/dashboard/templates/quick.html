@@ -13,22 +13,6 @@
 
 <div class="quick-layout">
 <div class="quick-main stack">
-{% if not cfg.enabled %}
-<section class="card card-warn" aria-labelledby="quick-off-h">
-  <h2 id="quick-off-h">Quick tasks are off</h2>
-  {% if cfg.state == "unsigned" %}
-  <p>config.json asks for quick tasks, but no signed decision of yours backs it on this machine. Turn them on here or with <code>orch quick enable</code> in your own terminal.</p>
-  {% else %}
-  <p>Turn them on to let agents do one-line jobs without a ticket. You decide whether agents may add tasks and how big a quick task may get; agents cannot change either.</p>
-  {% endif %}
-  <form method="post" action="/workspace/quick" class="row">
-    <input type="hidden" name="enabled" value="1"><input type="hidden" name="next" value="/quick">
-    <input type="hidden" name="max_commits" value="{{ cfg.max_commits }}"><input type="hidden" name="max_files" value="{{ cfg.max_files }}">
-    <button class="btn btn-primary" type="submit">Turn on quick tasks</button>
-    <span class="muted">Limit {{ cfg.max_commits }} commit, {{ cfg.max_files }} files. Agents may not add tasks.</span>
-  </form>
-</section>
-{% else %}
 <form method="post" action="/quick/add" class="card quick-add">
   <input type="hidden" name="next" value="/quick">
   <label class="sr-only" for="quick-title">New quick task</label>
@@ -80,17 +64,22 @@
         {% if t.outgrew %}<p class="quick-note">Stopped at {{ t.outgrew.commits }} commit(s), {{ t.outgrew.files_n }} file(s). The limit is {{ cfg.max_commits }} commit(s), {{ cfg.max_files }} file(s).</p>
         {% elif t.status == "done" and t.done and t.done.note %}<p class="quick-note">{{ t.done.note }}</p>{% endif %}
       </div>
-      {% if t.status == "open" %}
+      {% if t.status == "open" and t.outgrew %}
       <form method="post" action="/quick/{{ t.id }}/promote" class="quick-act">
         <input type="hidden" name="next" value="/quick?f={{ f }}">
-        <button type="submit" class="btn{{ '' if t.outgrew else ' btn-quiet' }}">Make it a ticket</button>
+        <button type="submit" class="btn">Make it a ticket</button>
+      </form>
+      {% elif t.status == "open" and not t.claimed_by and (start.tmux or start.terminal) %}
+      <form method="post" action="/quick/{{ t.id }}/agent/start" class="quick-act quick-start" aria-label="Start an agent on {{ t.id }}">
+        <input type="hidden" name="next" value="/quick?f={{ f }}">
+        {% if start.tmux %}<button type="submit" class="btn" name="where" value="tmux">Open in Mission Control</button>{% endif %}
+        {% if start.terminal %}<button type="submit" class="btn{{ '' if not start.tmux else ' btn-quiet' }}" name="where" value="">Open in terminal</button>{% endif %}
       </form>
       {% endif %}
     </li>
   {% endfor %}
   </ul>
 </section>
-{% endif %}
 </div>
 
 <aside class="quick-aside stack">
@@ -108,28 +97,17 @@
   <section class="card" aria-labelledby="quick-pick-h">
     <h2 id="quick-pick-h" class="card-title">How agents pick them up</h2>
     <ul class="quick-ways">
-      <li>You start them on one: <code>Work on quick task {{ prefix_q }}-12</code>.</li>
+      <li>You start one: Open in Mission Control{% if not start.tmux %} (needs the Terminals addon){% endif %} or Open in terminal on its row.</li>
       <li>No ticket is ready: <code>orch next</code> {% if cfg.next == "first" %}lists quick tasks first{% elif cfg.next == "never" %}leaves them out{% else %}falls through to them{% endif %}.</li>
       <li>Their ticket is in testing: <code>orch quick near &lt;ticket&gt;</code> lists the ones in the same files.</li>
     </ul>
     <p class="muted">One at a time, never while their own ticket is still in progress, never one they filed themselves.</p>
   </section>
-  {% if cfg.enabled %}
   <section class="card" aria-labelledby="quick-set-h">
     <h2 id="quick-set-h" class="card-title">Settings</h2>
-    <form method="post" action="/workspace/quick" class="stack">
-      <input type="hidden" name="enabled" value="1"><input type="hidden" name="next" value="/quick">
-      <label class="quick-toggle"><input type="checkbox" name="agents_add" value="1"{{ ' checked' if cfg.agents_add }}> Agents may add quick tasks</label>
-      <label class="field-col">Most commits <input type="number" name="max_commits" min="0" max="50" value="{{ cfg.max_commits }}"></label>
-      <label class="field-col">Most files <input type="number" name="max_files" min="0" max="50" value="{{ cfg.max_files }}"></label>
-      <button class="btn" type="submit">Save settings</button>
-    </form>
-    <form method="post" action="/workspace/quick" class="row quick-off">
-      <input type="hidden" name="enabled" value="0"><input type="hidden" name="next" value="/quick">
-      <button class="btn btn-quiet" type="submit">Turn quick tasks off</button>
-    </form>
+    <p class="muted">Agents {{ "may" if cfg.agents_add else "may not" }} add quick tasks. The limit is {{ cfg.max_commits }} commit(s), {{ cfg.max_files }} file(s).</p>
+    <a class="btn" href="/workspace#addon-quick-tasks">Change in Workspace &amp; addons</a>
   </section>
-  {% endif %}
 </aside>
 </div>
 {% endblock %}

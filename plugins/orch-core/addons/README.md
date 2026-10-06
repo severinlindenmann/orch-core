@@ -9,6 +9,7 @@ Addons shipped with orch-core. Each folder holds one addon with an `orch-addon.j
 | `databricks` | Databricks page: prod/int/dev workspaces and login state, failed and running job runs (Create ticket), pipelines, compute for local development; read-only CLI, profiles mapped by you, simulated environments for demos |
 | `wiki` | Related wiki pages on tickets, "may need an update" hints on Today, a Wiki page with search; GitHub wiki or local Markdown folder provider, page from a ticket, Confluence later |
 | `model-routing` | A model per Start agent mode (Light, Standard, Strong tiers), a subagent model, "next start on Strong" per ticket and an escalation card after a task failed its verify twice; off by default, a launch is unchanged while it is off |
+| `quick-tasks` | The switch and settings for quick tasks (`orch quick`, the Quick tasks page): whether agents may add them, the size limit; the feature itself is core's |
 | `ticket-usage` | Claude Code usage per ticket: estimate at list prices, output tokens per model, an estimated share of the weekly limit, a Usage page; status line recorder script included |
 | `schedules` | The switch for Schedules: workspace skills on a clock or an orch event, recurring tickets, findings on Today, a Today tile; the runner and the page are core's (docs/schedules.md) |
 

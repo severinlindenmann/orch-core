@@ -104,6 +104,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/quick/add"): OPERATE, ("POST", "/quick/{qid}/done"): OPERATE, ("POST", "/quick/{qid}/release"): OPERATE,
     ("POST", "/quick/{qid}/promote"): OPERATE,
     ("POST", "/quick/{qid}/reopen"): DECIDE, ("POST", "/quick/{qid}/drop"): DECIDE,
+    ("POST", "/quick/{qid}/agent/start"): TYPE,  # starts an agent on the host, like a ticket's Start agent
     # -- never remote: the whole Workspace family (phones, permissions, addon install/update/trust/enable/disable,
     # settings, the agent-HTML switch, update-all), and anything that serves or starts the dashboard
     ("GET", "/workspace"): NO,
@@ -116,7 +117,6 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,
     ("POST", "/workspace/phones/pair"): NO, ("POST", "/workspace/phones/{phone_id}/revoke"): NO,
     ("POST", "/workspace/phones/permissions"): NO,
-    ("POST", "/workspace/quick"): NO,  # the quick-task switch: signed into the ledger, like the agent-HTML switch
     # the Remote tab: pairing, approving, rescoping, revoking and cutting off devices is only ever done here
     ("POST", "/workspace/remote/offer"): NO, ("POST", "/workspace/remote/disconnect"): NO,
     ("POST", "/workspace/remote/pending/{did}/approve"): NO, ("POST", "/workspace/remote/pending/{did}/reject"): NO,

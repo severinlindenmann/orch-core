@@ -9,33 +9,30 @@ Quick tasks are off until you turn them on.
 
 ## Turning them on
 
-```bash
-orch quick enable                     # in your own terminal; signed into the approval ledger
-orch quick enable --agents-add        # agents may also add quick tasks themselves
-orch quick enable --max-files 5       # change the size limit (default: 1 commit, 3 files)
-orch quick disable                    # anyone may turn them off
-```
+Quick tasks are switched by the `quick-tasks` default addon, like Terminals and Graph: enable it per workspace in
+Mission Control → **Workspace & addons**, or run `orch addon enable quick-tasks` in your own terminal (agents can
+never enable an addon). Once on, **Quick tasks** appears in the menu under **Addons**; while it is off the menu has no
+entry, `/quick` answers 404, `orch quick` refuses changes, `orch next` offers none and the commit-msg hook does not
+accept `Q-…` keys.
 
-Or use **Quick tasks** in Mission Control's menu: the page has a Turn on button and, once they are on, a Settings
-card. A paired phone or remote device cannot change these settings.
+The addon's settings (Workspace & addons) are yours, kept in your orch config dir outside the repository:
 
-The switch, whether agents may add tasks and the two limits are signed into the approval ledger, as `widgets.html`
-is. A config edit alone never turns quick tasks on, never lets agents add them and never raises a limit above what
-you signed: `orch quick` then says "config.json asks for them, but no signed decision backs it". The guard also
-refuses an agent's edit of the `quick` block in `orchestrator/config.json`.
+| Setting | Default | Meaning |
+|---|---|---|
+| Agents may add quick tasks | off | Whether agents may run `orch quick add` themselves |
+| Most commits | 1 | Commits naming the task before it outgrows the limit |
+| Most files | 3 | Files those commits and the working tree change, orch's own records left out |
 
-`orchestrator/config.json`:
+The rest is in `orchestrator/config.json`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `quick.enabled` | `false` | On or off (signed) |
-| `quick.agents_add` | `false` | Agents may add quick tasks (signed) |
-| `quick.max_commits` | `1` | Most commits naming the task (signed: the lower of config and signature counts) |
-| `quick.max_files` | `3` | Most files those commits and the working tree change, orch's own records left out (signed, as above) |
 | `quick.next` | `"idle"` | `orch next`: `idle` lists quick tasks only when no ticket is ready, `first` before the tickets, `never` not at all |
 | `quick.prefix` | `"Q"` | Keys are `Q-12`; never the ticket prefix (then `QT`) |
 | `quick.max_artifacts` | `5` | Artifacts per quick task |
 | `quick.claim_minutes` | `30` | A claim with no new claim this long is stale |
+
+`quick.enabled`, `quick.agents_add`, `quick.max_commits` and `quick.max_files` from the first version are ignored.
 
 ## The commands
 
@@ -48,14 +45,18 @@ refuses an agent's edit of the `quick` block in `orchestrator/config.json`.
 | the agent holding it (or you) | `orch quick artifact add Q-12 after.png --label "After"`, `--url <link>` |
 | anyone | `orch quick promote Q-12`: a backlog chore with the line as its title |
 | anyone | `orch quick near L-0042 [--path src/x]` |
-| you only | `orch quick reopen Q-12 [-m "why"]`, `orch quick drop Q-12`, `orch quick enable` |
+| you only | `orch quick reopen Q-12 [-m "why"]`, `orch quick drop Q-12` |
 
 Commits name the task like a ticket: `Q-12 fix the typo`, with the body lines the workspace asks for. The commit-msg
 hook accepts the key only while the task is open and has not outgrown its limit.
 
 ## How agents pick them up
 
-1. **You start them on one.** The task's page in Mission Control has a prompt to paste into a new agent session.
+1. **You start them on one.** Each open task in Mission Control has **Open in Mission Control** (a session in
+   Terminals; needs the `terminals` addon and tmux) and **Open in terminal** (your own terminal, as Start agent on a
+   ticket opens it, set in `~/.config/orch/launch.json`). The agent gets the task's key and the steps, never its text,
+   and claims it itself. A task someone already holds, or one that outgrew its limit, offers no start; an outgrown
+   one offers **Make it a ticket** instead. The task's page also shows the prompt to paste yourself.
 2. **No ticket is ready.** `orch next` falls through to quick tasks (`quick.next`), each row marked `"quick": true`.
 3. **Already nearby.** Once the agent's own ticket is in testing, `orch quick near <ticket>` lists the open quick
    tasks whose area lies in the files that ticket's commits changed. The agent takes them one at a time, in their

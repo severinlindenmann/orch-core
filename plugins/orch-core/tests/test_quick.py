@@ -31,10 +31,18 @@ def repo(ws_root):
     return ws_root
 
 
-@pytest.fixture
-def on(ws, human):
-    quick.set_settings(ws, human, enabled=True)
+def turn_on(ws, **settings):
+    """The human enables the quick-tasks default addon (Workspace & addons), with these addon settings."""
+    from orch.addons import userfiles
+    userfiles.set_enabled(ws.root, quick.ADDON, True)
+    if settings:
+        userfiles.save_addon_config(ws.root, quick.ADDON, settings)
     return ws
+
+
+@pytest.fixture
+def on(ws):
+    return turn_on(ws)
 
 
 @pytest.fixture
@@ -56,31 +64,28 @@ def test_off_by_default(ws, hq):
 
 
 def test_config_alone_does_not_turn_it_on(configure, human):
-    ws = configure(quick={"enabled": True, "agents_add": True})
+    ws = configure(quick={"enabled": True, "agents_add": True})  # keys from before the addon: ignored
     s = quick.settings(ws)
-    assert s["state"] == "unsigned" and not s["enabled"] and not s["agents_add"]
-    with pytest.raises(TransitionError, match="no signed decision"):
+    assert s["state"] == "off" and not s["enabled"] and not s["agents_add"]
+    with pytest.raises(TransitionError, match="off") as e:
         QuickOps(ws, human).add("Fix a typo")
+    assert "quick-tasks" in e.value.hint
 
 
-def test_agent_cannot_turn_it_on_but_may_turn_it_off(ws, agent, human):
-    with pytest.raises(HumanOnlyError):
-        quick.set_settings(ws, agent, enabled=True)
-    quick.set_settings(ws, human, enabled=True)
-    assert quick.enabled(ws)
-    quick.set_settings(ws, agent, enabled=False)
-    assert not quick.enabled(ws)
-    assert json.loads((ws.home / "config.json").read_text())["quick"]["enabled"] is False
-
-
-def test_limits_never_rise_above_the_signed_ones(on, human):
-    raw = json.loads((on.home / "config.json").read_text())
-    raw["quick"].update(max_files=40, agents_add=True)
-    (on.home / "config.json").write_text(json.dumps(raw))
-    from orch.core.workspace import Workspace
-    ws = Workspace.open(on.root)
+def test_the_addon_is_the_switch_and_holds_the_settings(ws):
+    from orch.addons import userfiles
+    turn_on(ws, agents_add=True, max_commits="2", max_files="8")
     s = quick.settings(ws)
-    assert s["max_files"] == 3 and s["agents_add"] is False
+    assert s["enabled"] and s["agents_add"] and (s["max_commits"], s["max_files"]) == (2, 8)
+    userfiles.set_enabled(ws.root, quick.ADDON, False)
+    s = quick.settings(ws)
+    assert not s["enabled"] and not s["agents_add"]
+
+
+def test_bad_addon_settings_fall_back_to_the_defaults(ws):
+    turn_on(ws, max_commits="lots", max_files="99")
+    s = quick.settings(ws)
+    assert (s["max_commits"], s["max_files"]) == (1, 3)
 
 
 def test_prefix_never_equals_the_ticket_prefix(configure):
@@ -95,7 +100,7 @@ def test_human_adds_agent_does_not_unless_allowed(on, hq, aq, human):
     assert t["id"] == "Q-1" and t["title"] == "Fix the typo in README" and t["area"] == "README.md"
     with pytest.raises(HumanOnlyError):
         aq.add("Something")
-    quick.set_settings(on, human, enabled=True, agents_add=True)
+    turn_on(on, agents_add=True)
     assert aq.add("Something")["id"] == "Q-2"
 
 
@@ -149,7 +154,7 @@ def test_no_quick_task_while_the_ticket_is_in_progress(on, hq, aq, working):
 
 
 def test_agent_does_not_pick_up_its_own(on, human, hq, aq, other_agent):
-    quick.set_settings(on, human, enabled=True, agents_add=True)
+    turn_on(on, agents_add=True)
     qid = aq.add("Found a dead import")["id"]
     with pytest.raises(ClaimError, match="filed by this session"):
         aq.claim(qid)
@@ -243,7 +248,7 @@ def test_uncommitted_work_counts(repo, on, hq, aq):
 # -- picking: orch next and near -------------------------------------------------------------------------------------
 
 def test_pickable_order_human_first_then_oldest(on, human, hq, aq, other_agent):
-    quick.set_settings(on, human, enabled=True, agents_add=True)
+    turn_on(on, agents_add=True)
     a = QuickOps(on, other_agent).add("agent idea")["id"]
     b = hq.add("human one")["id"]
     c = hq.add("human two")["id"]
@@ -309,12 +314,11 @@ def test_cli_list_and_human_only_commands_refuse_agents(on, hq, monkeypatch, cap
     assert "Q-1" in capsys.readouterr().out
     monkeypatch.setenv("ORCH_HARNESS", "claude-code")
     assert cli.run(["quick", "drop", "Q-1"]) != 0
-    assert cli.run(["quick", "enable"]) != 0
 
 
 # -- the guard -------------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cmd", ["orch quick reopen Q-1", "uv run orch quick drop 3", "orch quick enable --agents-add",
+@pytest.mark.parametrize("cmd", ["orch quick reopen Q-1", "uv run orch quick drop 3", "orch addon enable quick-tasks",
                                  "sh -c 'orch quick reopen Q-2'"])
 def test_guard_refuses_human_only_quick_commands(ws, cmd):
     from orch.hooks.guard import evaluate
@@ -323,25 +327,10 @@ def test_guard_refuses_human_only_quick_commands(ws, cmd):
 
 
 @pytest.mark.parametrize("cmd", ["orch quick", "orch quick claim Q-1", "orch quick done Q-1 -m 'fixed'",
-                                 "orch quick disable", "orch quick near L-0001"])
+                                 "orch quick near L-0001"])
 def test_guard_lets_agent_quick_commands_through(ws, cmd):
     from orch.hooks.guard import evaluate
     assert evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": cmd}}).allow
-
-
-def test_guard_refuses_an_agent_edit_of_the_quick_settings(ws):
-    from orch.hooks.guard import evaluate
-    path = ws.home / "config.json"
-    old = path.read_text(encoding="utf-8")
-    raw = json.loads(old)
-    raw["quick"] = {"enabled": True}
-    d = evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": json.dumps(raw)}})
-    assert not d.allow and "quick" in d.reason
-    raw = json.loads(old)
-    raw["customer"] = "other"
-    assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": json.dumps(raw)}}).allow
-    d = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": "jq '.quick.enabled=true' orchestrator/config.json > t && mv t orchestrator/config.json"}})
-    assert not d.allow
 
 
 def test_guard_refuses_hand_edits_of_quick_task_files(on, hq):

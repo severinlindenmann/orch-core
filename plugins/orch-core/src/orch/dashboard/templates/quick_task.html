@@ -86,8 +86,17 @@
   </form>
   <section class="card stack" aria-labelledby="quick-agent-h">
     <h2 id="quick-agent-h" class="card-title">Start an agent on it</h2>
-    <p class="muted">Paste this into a new agent session:</p>
-    <pre class="quick-prompt">Work on quick task {{ t.id }}: claim it with `orch quick claim {{ t.id }}`, do it, commit as `{{ t.id }} &lt;summary&gt;` and close it with `orch quick done {{ t.id }} -m "&lt;what you did&gt;"`.</pre>
+    {% if t.claimed_by and not t.stale %}
+    <p class="muted">{{ t.claimed_by }} is on it.</p>
+    {% elif start.tmux or start.terminal %}
+    <form method="post" action="/quick/{{ t.id }}/agent/start" class="row">
+      <input type="hidden" name="next" value="/quick/{{ t.id }}">
+      {% if start.tmux %}<button type="submit" class="btn btn-primary" name="where" value="tmux">Open in Mission Control</button>{% endif %}
+      {% if start.terminal %}<button type="submit" class="btn" name="where" value="">Open in terminal</button>{% endif %}
+    </form>
+    {% endif %}
+    <p class="muted">The agent is told, or paste it yourself:</p>
+    <pre class="quick-prompt">{{ prompt }}</pre>
     {% if t.claimed_by %}<form method="post" action="/quick/{{ t.id }}/release"><input type="hidden" name="next" value="/quick/{{ t.id }}"><button class="btn btn-quiet" type="submit">Release the claim</button></form>{% endif %}
   </section>
   {% endif %}

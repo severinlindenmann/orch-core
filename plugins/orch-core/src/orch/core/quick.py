@@ -9,10 +9,10 @@ Storage: one JSON file per task under `orchestrator/.state/quick/` (`Q-12.json`)
 same file and the guard already keeps agents from writing there by hand. Artifacts go to `orchestrator/artifacts/Q-12/`
 like a ticket's. The counter is `.state/quick-counter.json`.
 
-Who decides: the switch (`quick.enabled`), whether agents may add tasks (`quick.agents_add`) and the size limits are
-the human's, signed into the approval ledger like `widgets.html` (`orch quick enable` in the human's own terminal or
-Mission Control). A config edit alone never turns quick tasks on, never lets agents add them and never raises a limit
-above what the human signed. Reopening, letting an outgrown task finish and dropping are human-only too.
+Who decides: quick tasks are on while the `quick-tasks` default addon is enabled in the workspace (Workspace &
+addons, or `orch addon enable quick-tasks` in the human's own terminal), like Terminals and Graph. Its settings
+(whether agents may add tasks, the size limit) live with it in the user's orch config dir, outside the repository,
+where agents cannot write. Reopening, letting an outgrown task finish and dropping are human-only too.
 
 How agents get one (in order of preference): the human starts them on it; `orch next` falls through to quick tasks
 when no ticket is ready (`quick.next`: idle, first or never); or, once the agent's own ticket is in testing,
@@ -33,23 +33,25 @@ from orch.core.fsutil import atomic_write_text
 from orch.core.locks import lock
 from orch.errors import ClaimError, HumanOnlyError, NotFoundError, TransitionError, UsageError, ValidationError
 
-SETTING = "quick"  # the ledger setting name
+ADDON = "quick-tasks"  # the default addon that switches quick tasks on (Workspace & addons), like `terminals`
 STATUSES = ("open", "done", "moved", "dropped")
 NEXT_MODES = ("idle", "first", "never")
-DEFAULTS = {"enabled": False, "prefix": "Q", "next": "idle", "agents_add": False, "max_commits": 1, "max_files": 3,
-            "max_artifacts": 5, "claim_minutes": 30}
-SIGNED_KEYS = ("enabled", "agents_add", "max_commits", "max_files")
+DEFAULTS = {"prefix": "Q", "next": "idle", "max_artifacts": 5, "claim_minutes": 30}
+# The addon's settings (its manifest's settings_schema; stored per user in the orch config dir, outside the repo
+# and out of an agent's reach): what gives agents room is the human's.
+ADDON_DEFAULTS = {"agents_add": False, "max_commits": "1", "max_files": "3"}
 MAX_TITLE = 200
 MAX_NOTE = 500
 MAX_AREA = 200
 _SEP_COMMIT, _SEP_FIELD = "\x1e", "\x1f"
-_HINT_ON = "the human turns quick tasks on with `orch quick enable` in their own terminal, or in Mission Control"
+_HINT_ON = "quick tasks are an addon: the human enables `quick-tasks` in Workspace & addons (or runs " \
+           "`orch addon enable quick-tasks` in their own terminal)"
 
 
 # -- settings ---------------------------------------------------------------------------------------------------------
 
 def config(ws) -> dict:
-    """The `quick` block of the workspace config with defaults, as written (not yet checked against the ledger)."""
+    """The `quick` block of the workspace config with defaults: the key prefix, `orch next`, artifacts, claims."""
     return config_of(getattr(ws, "config", None) or {})
 
 
@@ -60,7 +62,7 @@ def config_of(cfg: dict) -> dict:
         out.update({k: v for k, v in raw.items() if k in DEFAULTS})
     if out["next"] not in NEXT_MODES:
         out["next"] = "idle"
-    for k in ("max_commits", "max_files", "max_artifacts", "claim_minutes"):
+    for k in ("max_artifacts", "claim_minutes"):
         v = out[k]
         out[k] = v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else DEFAULTS[k]
     p = out["prefix"]
@@ -71,68 +73,38 @@ def config_of(cfg: dict) -> dict:
     return out
 
 
-def signed(ws) -> dict | None:
-    """The human's newest signed quick-task setting for this checkout, or None."""
-    from orch.core import ledger
-    value = ledger.signed_setting(ws, SETTING)
-    return value if isinstance(value, dict) else None
+def addon_state(root) -> tuple[bool, dict]:
+    """(enabled, settings) of the `quick-tasks` addon for the workspace at `root`, read from the user's own files
+    without importing addon code (the CLI and the hooks may not); never raises."""
+    try:
+        from orch.addons.userfiles import workspace_addons
+        item = workspace_addons(root).get(ADDON) or {}
+    except Exception:  # an unreadable user file counts as off
+        return False, dict(ADDON_DEFAULTS)
+    saved = item.get("config") or {}
+    return item.get("enabled") is True, {**ADDON_DEFAULTS, **{k: v for k, v in saved.items() if k in ADDON_DEFAULTS}}
+
+
+def _limit(value, default: int) -> int:
+    try:
+        n = int(str(value).strip())
+    except ValueError:
+        return default
+    return n if 0 <= n <= 50 else default
 
 
 def settings(ws) -> dict:
-    """The settings in force: the config, held to what the human signed. `state` is "on", "off" or "unsigned" (the
-    config asks for quick tasks without a signed decision that backs it). Agents may add tasks only when both the
-    config and the signature say so; each limit is the lower of the two."""
-    cfg = config(ws)
-    sig = signed(ws) or {}
-    on = cfg["enabled"] is True and sig.get("enabled") is True
-    out = dict(cfg)
-    out["state"] = "on" if on else ("unsigned" if cfg["enabled"] is True else "off")
-    out["enabled"] = on
-    out["agents_add"] = on and cfg["agents_add"] is True and sig.get("agents_add") is True
-    for k in ("max_commits", "max_files"):
-        s = sig.get(k)
-        out[k] = min(cfg[k], s) if isinstance(s, int) and not isinstance(s, bool) else cfg[k]
+    """The settings in force: on while the `quick-tasks` addon is enabled in this workspace, with its settings (agents
+    may add, the size limit) over the workspace config. `state` is "on" or "off"."""
+    on, addon = addon_state(ws.root)
+    out = dict(config(ws))
+    out.update(state="on" if on else "off", enabled=on, agents_add=on and addon["agents_add"] is True,
+               max_commits=_limit(addon["max_commits"], 1), max_files=_limit(addon["max_files"], 3))
     return out
 
 
 def enabled(ws) -> bool:
     return settings(ws)["enabled"]
-
-
-def set_settings(ws, actor, *, enabled: bool, agents_add: bool | None = None, max_commits: int | None = None,
-                 max_files: int | None = None) -> dict:
-    """Write and sign the switch. Anything that gives agents more room (on, agents may add, a higher limit) is the
-    human's; turning quick tasks off anyone may do, and that off is signed too, so it outranks an earlier on."""
-    from orch.actor import process_evidence
-    from orch.config.load import CONFIG_NAME
-    from orch.core import ledger
-    from orch.core.lifecycle import require_human
-    cur = config(ws)
-    sig = signed(ws) or {}
-    new = {"enabled": bool(enabled),
-           "agents_add": cur["agents_add"] if agents_add is None else bool(agents_add),
-           "max_commits": cur["max_commits"] if max_commits is None else max_commits,
-           "max_files": cur["max_files"] if max_files is None else max_files}
-    for k in ("max_commits", "max_files"):
-        if not isinstance(new[k], int) or isinstance(new[k], bool) or not 0 <= new[k] <= 50:
-            raise UsageError(f"{k.replace('_', ' ')} must be a whole number from 0 to 50")
-    wider = new["enabled"] and (sig.get("enabled") is not True or (new["agents_add"] and sig.get("agents_add") is not True)
-                                or any(new[k] > (sig.get(k) if isinstance(sig.get(k), int) else -1)
-                                       for k in ("max_commits", "max_files")))
-    if new["enabled"] or wider:
-        require_human(actor, "turning on quick tasks or widening them")
-    path = ws.home / CONFIG_NAME
-    with lock(ws, "config"):
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        # an off is signed as plain False (any process may sign that); everything else is the human's signed dict
-        ledger.record_setting(ws, SETTING, new if new["enabled"] else False, actor,
-                              process_evidence() if actor.is_human else None)
-        block = raw.get("quick") if isinstance(raw.get("quick"), dict) else {}
-        raw["quick"] = {**block, **new}
-        atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
-    ws.config["quick"] = {**(ws.config.get("quick") if isinstance(ws.config.get("quick"), dict) else {}), **new}
-    append_event(ws, None, "setting.changed", actor, {"setting": SETTING, "value": new})
-    return settings(ws)
 
 
 # -- ids and files ----------------------------------------------------------------------------------------------------
@@ -396,9 +368,7 @@ class QuickOps:
 
     def _require_on(self, cfg: dict) -> None:
         if not cfg["enabled"]:
-            why = ("config.json asks for quick tasks, but no signed decision of the human backs it"
-                   if cfg["state"] == "unsigned" else "quick tasks are off in this workspace")
-            raise TransitionError(why, hint=_HINT_ON)
+            raise TransitionError("quick tasks are off in this workspace", hint=_HINT_ON)
 
     def _human(self, what: str) -> None:
         from orch.core.lifecycle import require_human

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- `gh_user` accepts Enterprise Managed User logins (`name_shortcode`), which were refused as "not a GitHub login".
+
 ## 0.2.0
 
 - A repo the gh account cannot see is one error row naming the account, not a failed panel.

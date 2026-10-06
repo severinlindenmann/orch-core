@@ -1838,3 +1838,32 @@ a.ec-pill:hover { background: var(--hover); }
 .origin-decision { border-left: var(--rail-w) solid var(--info-mark); display: flex; flex-direction: column; gap: var(--s-2); }
 .origin-decision h3, .origin-decision p { margin: 0; }
 .origin-label { display: flex; align-items: center; gap: var(--s-2); color: var(--info-fg); font: var(--type-meta); }
+
+/* Schedules (docs/schedules.md): the page's list and detail side by side from 1100 px, the run strip, findings. */
+.sched-stats { margin-bottom: var(--s-5); }
+.sched-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); margin-bottom: var(--s-4); align-items: start; }
+@media (min-width: 1100px) { .sched-split { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); } }
+.sched-list { padding: 0; min-width: 0; }
+.sched-list .table { display: table; width: 100%; }
+.sched-list .table td, .sched-list .table th { white-space: normal; }
+.sched-list .table td:first-child { min-width: 11em; }
+.sched-current td { background: var(--nav-active); }
+.sched-detail { display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; }
+.sched-detail > * { margin: 0; }
+.sched-detail-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.sched-detail-head h2 { margin: 0; }
+.sched-strip { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; list-style: none; margin: var(--s-1) 0; padding: 0; }
+.sched-strip .sched-dot { height: var(--chip-h); width: auto; border-radius: 2px; }
+.sched-dot { display: inline-block; width: var(--icon-status); height: var(--icon-status); border-radius: 2px; background: var(--neu-bg); vertical-align: middle; }
+.sched-quiet { background: var(--line2); }
+.sched-finding { background: var(--you-mark); }
+.sched-failed { background: var(--err-mark); }
+.sched-skipped { background: transparent; box-shadow: inset 0 0 0 1px var(--warn-mark); }
+.sched-running, .sched-starting { background: var(--info-mark); }
+.sched-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-2); font: var(--type-meta); margin: 0; }
+.sched-detail .charter { border: 1px solid var(--line2); border-radius: var(--r-md); padding: var(--s-3); background: var(--surface2); display: flex; flex-direction: column; gap: var(--s-2); }
+.sched-detail .charter p { margin: 0; }
+.sched-sha { font: var(--type-meta); overflow-wrap: anywhere; }
+.sched-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sched-ticket summary { cursor: pointer; }
+.sched-ticket .permit-cmd { margin-top: var(--s-2); }

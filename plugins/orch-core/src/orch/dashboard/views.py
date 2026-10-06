@@ -332,6 +332,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
         "quick_nav": _quick_nav(ws),  # quick tasks (orch.core.quick): the menu item and its open count
         "graph_nav": addon_on(ws, GRAPH_ADDON),  # #167: the Graph page is the `graph` default addon's
+        "schedules_nav": addon_on(ws, "schedules"),  # docs/schedules.md: the Schedules page is the addon's
         "dedupe_prs": lambda prs, groups=(): __import__("orch.dashboard.routes_ticket", fromlist=["dedupe_prs"]).dedupe_prs(prs, groups),
         "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None, always_banner=False: []),
         # the yes/no options enabled, trusted addons add to a ticket (the form, the approve card, the ticket page)

@@ -16,7 +16,7 @@ def isolated(tmp_path, monkeypatch):
     from orch.addons import discovery
     monkeypatch.setattr(discovery, "default_addons_dir", lambda: tmp_path / "no-defaults")
     monkeypatch.setattr(actor, "is_interactive", lambda: True)
-    monkeypatch.setattr(update, "core_source", lambda: None)  # tests opt in to a core clone explicitly
+    monkeypatch.setattr(update, "core_source", lambda: "no clone in tests")  # tests opt in to a core clone explicitly
     monkeypatch.delenv(update.CONTINUE_ENV, raising=False)
     monkeypatch.setattr(update, "refresh_plugin", lambda: "plugin stub")  # never run the real claude CLI
 
@@ -58,7 +58,8 @@ def test_addon_update_with_nothing_new_is_trusted_again_and_stays_enabled(tmp_pa
     assert t.asked == 1 and t.reviews == 0
     assert userfiles.trust_state(find("hello-status")) == "trusted"
     assert userfiles.workspace_addons(root)["hello-status"]["enabled"] is True
-    assert t.said == ["updated hello-status 0.1.0 → 0.2.0"]
+    assert t.said[-1] == "updated hello-status 0.1.0 → 0.2.0"
+    assert "orch-core: not checked: no clone in tests" in t.said and "addons: 1 checked, 1 with updates" in t.said
 
 
 def test_addon_update_with_a_new_permission_asks_before_trusting(tmp_path):
@@ -82,7 +83,7 @@ def test_saying_no_snoozes_for_a_day_but_orch_update_ignores_it(tmp_path):
     t.run(check_only=False, force=False)
     assert t.asked == 1 and userfiles.registry_entries()["hello-status"]["version"] == "0.1.0"  # nothing applied
     t.run(check_only=False, force=False)
-    assert t.asked == 1  # snoozed: serve stays quiet
+    assert t.asked == 1 and t.said[-1].startswith("update check: next one ")  # snoozed: serve only says when
     t.answer = "y"
     t.run(check_only=False, force=True)
     assert t.asked == 2 and userfiles.trust_state(find("hello-status")) == "trusted"
@@ -93,7 +94,7 @@ def test_check_only_changes_nothing(tmp_path):
     _bump(src)
     t = Talk("y")
     t.run(check_only=True, force=True)
-    assert t.asked == 0 and t.said[0].startswith("updates available: hello-status")
+    assert t.asked == 0 and t.said[-1].startswith("updates available: hello-status")
     assert userfiles.registry_entries()["hello-status"]["version"] == "0.1.0"
 
 
@@ -147,7 +148,73 @@ def test_after_a_core_update_the_restart_does_not_ask_again(tmp_path, monkeypatc
     assert t.asked == 0 and userfiles.trust_state(find("hello-status")) == "trusted"
 
 
-def test_offline_core_check_is_silent(tmp_path, monkeypatch, clone):
+def test_offline_core_check_says_why(tmp_path, monkeypatch, clone):
     upstream, repo = clone
     _git("remote", "set-url", "origin", str(tmp_path / "gone"), cwd=repo)
     assert update.core_check() is None
+    s = update.core_status()
+    assert not s.checked and s.line.startswith("not checked: could not fetch")
+
+
+def test_core_without_upstream_says_why(clone):
+    upstream, repo = clone
+    _git("branch", "--unset-upstream", cwd=repo)
+    s = update.core_status()
+    assert not s.checked and "no upstream branch" in s.line
+
+
+def test_orch_update_always_says_what_it_checked_and_found(clone):
+    upstream, repo = clone
+    t = Talk("")
+    t.run(check_only=False, force=True)
+    assert t.said[0] == f"checking for updates: orch-core at {upstream} (main) and the custom addons …"
+    assert t.said[1].startswith("orch-core: up to date (commit ")
+    assert t.said[2:] == ["addons: no custom addons installed", "nothing to update"]
+    t.run(check_only=True, force=True)
+    assert t.said[-1] == "nothing to update"
+    (upstream / "f").write_text("2")
+    _git("commit", "-qam", "two", cwd=upstream)
+    t.run(check_only=True, force=True)
+    assert "orch-core: 1 new commit (" in t.said[-3] and t.said[-1] == "updates available: orch-core (1 new commit)"
+
+
+def test_a_core_that_cannot_be_checked_is_named_not_called_up_to_date(monkeypatch):
+    monkeypatch.setattr(update, "core_source", lambda: "orch-core was installed from /x, which is not a git clone")
+    t = Talk("")
+    t.run(check_only=True, force=True)
+    assert "orch-core: not checked: orch-core was installed from /x, which is not a git clone" in t.said
+    assert "up to date" not in " ".join(t.said)
+
+
+def test_serve_says_the_check_is_clean_and_when_the_next_one_is(tmp_path):
+    t = Talk("")
+    t.run(check_only=False, force=False)
+    assert t.said[-1] == "nothing to update; next check in a day (orch update checks now)"
+    t.run(check_only=False, force=False)
+    assert t.said[-1].startswith("update check: next one ") and len(t.said) == 5
+
+
+def test_a_plugin_cache_install_points_at_the_marketplace_clone(tmp_path, monkeypatch):
+    from importlib import metadata
+    plugins = tmp_path / ".claude" / "plugins"
+    cache = plugins / "cache" / "orch-core" / "orch-core" / "0.4.1"
+    cache.mkdir(parents=True)
+    clone = plugins / "marketplaces" / "orch-core"
+    (clone / "plugins" / "orch-core").mkdir(parents=True)
+    (clone / "plugins" / "orch-core" / "pyproject.toml").write_text("")
+    _git("init", "-q", cwd=clone)
+
+    class Dist:
+        def read_text(self, name):
+            return json.dumps({"url": cache.as_uri(), "dir_info": {}})
+    monkeypatch.undo()  # the real core_source, with the fake distribution below
+    monkeypatch.setattr(metadata, "distribution", lambda name: Dist())
+    said = update.core_source()
+    assert f"installed from {cache}, which is not a git clone" in said
+    assert f'uv tool install --force "{clone / "plugins" / "orch-core"}[dashboard]"' in said
+    assert update.marketplace_clone(clone / "plugins" / "orch-core") is None  # only cache folders map to a clone
+
+
+def test_remote_urls_lose_their_credentials():
+    assert update._public_url("https://user:tok@github.com/o/r.git") == "https://github.com/o/r.git"
+    assert update._public_url("git@github.com:o/r.git") == "git@github.com:o/r.git"

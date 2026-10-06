@@ -43,6 +43,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Evidence (links) | `orch artifact add <id> --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"` (http/https only; never fetched) |
 | Loose files | `orch artifact list <id>` shows what is linked and what is not · `orch artifact scan <id>` links files written straight into `orchestrator/artifacts/<id>/` |
 | Hand over | `orch move <id> testing` (warns when a criterion has no evidence or no branch/PR is linked) |
+| Schedules | Recurring work (a skill on a clock or an orch event, a recurring ticket): write `orchestrator/schedules/<id>.yaml`, run `orch schedule check`, then ask the human to arm it; never arm, resume or run one yourself (`orch schedule list`, docs/schedules.md) |
 | Health | `orch check` · `orch rules` · `orch feedback add --file …` (orch itself confusing or broken: once, then carry on; the human reviews it) |
 
 Put scratch files in `orchestrator/temporary/`; files that must stay go in `orchestrator/static/`.

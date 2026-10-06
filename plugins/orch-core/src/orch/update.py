@@ -42,38 +42,108 @@ def _set_state(**fields) -> None:
     userfiles.update_json(_state_path(), lambda d: d.update(fields))
 
 
-def core_source() -> tuple[Path, Path] | None:
-    """(clone, package folder) the installed tool was built from, or None (a wheel, an editable dev checkout, no git)."""
+@dataclass(frozen=True)
+class CoreStatus:
+    update: CoreUpdate | None  # set when the installed build is behind its upstream branch
+    line: str                  # what was found, after "orch-core: ", for the human to read
+    checked: bool              # False when the check could not run; `line` then says why
+
+
+def marketplace_clone(folder: Path) -> Path | None:
+    """The orch-core folder in the Claude marketplace clone that a plugin-cache folder
+    (.../plugins/cache/<marketplace>/orch-core/<version>) was copied from, when that clone is a git repository."""
+    parts = folder.parts
+    for i in range(len(parts) - 3):
+        if parts[i:i + 2] == ("plugins", "cache") and parts[i + 3] == "orch-core":
+            package = Path(*parts[:i + 1]) / "marketplaces" / parts[i + 2] / "plugins" / "orch-core"
+            try:
+                manage._git("rev-parse", "--show-toplevel", cwd=package, timeout=10)
+            except OrchError:
+                return None
+            return package if (package / "pyproject.toml").is_file() else None
+    return None
+
+
+def _reinstall_hint(package: Path | None) -> str:
+    clone = marketplace_clone(package) if package else None
+    return f'uv tool install --force "{clone or "<clone of orch-core>/plugins/orch-core"}[dashboard]"'
+
+
+def core_source() -> tuple[Path, Path] | str:
+    """(clone, package folder) the installed tool was built from, or why there is none to update from."""
     from importlib import metadata
     try:
         raw = metadata.distribution("orch-core").read_text("direct_url.json")
+    except metadata.PackageNotFoundError:
+        return "orch-core is not installed as a package"
+    try:
         url = json.loads(raw or "{}")
-        if (url.get("dir_info") or {}).get("editable"):
-            return None
-        package = Path(unquote(urlparse(url["url"]).path))
+    except ValueError:
+        url = {}
+    if not isinstance(url, dict) or not url.get("url"):
+        return f"orch-core was not installed from a folder; reinstall it from a clone to get updates: {_reinstall_hint(None)}"
+    package = Path(unquote(urlparse(url["url"]).path))
+    if (url.get("dir_info") or {}).get("editable"):
+        return f"orch-core is an editable install from {package}; update that checkout with git pull"
+    try:
         repo = Path(manage._git("rev-parse", "--show-toplevel", cwd=package, timeout=10).strip())
-    except (metadata.PackageNotFoundError, KeyError, ValueError, OSError, OrchError):
-        return None
+    except OrchError:
+        return (f"orch-core was installed from {package}, which is not a git clone; reinstall it from a clone to get "
+                f"updates: {_reinstall_hint(package)}")
     return repo, package
 
 
-def core_check() -> CoreUpdate | None:
-    src = core_source()
-    if src is None:
-        return None
+def _public_url(url: str) -> str:
+    """A remote URL without any user or token in it."""
+    p = urlparse(url)
+    return p._replace(netloc=p.hostname + (f":{p.port}" if p.port else "")).geturl() if p.hostname else url
+
+
+def core_where(repo: Path) -> str:
+    """'<origin> (<branch>)' of the clone, for the line that says what is being checked."""
+    try:
+        origin = _public_url(manage._git("remote", "get-url", "origin", cwd=repo, timeout=10).strip())
+    except OrchError:
+        origin = str(repo)
+    try:
+        branch = manage._git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo, timeout=10).strip()
+    except OrchError:
+        return origin
+    return f"{origin} ({branch})"
+
+
+def core_status(src: tuple[Path, Path] | str | None = None) -> CoreStatus:
+    src = core_source() if src is None else src
+    if isinstance(src, str):
+        return CoreStatus(None, f"not checked: {src}", False)
     repo, package = src
     try:
         manage._git("fetch", "--quiet", cwd=repo, timeout=20)
+    except OrchError as e:
+        return CoreStatus(None, f"not checked: could not fetch {repo} (offline?): {e.message}", False)
+    try:
+        upstream = manage._git("rev-parse", "@{u}", cwd=repo, timeout=10).strip()
+    except OrchError:
+        return CoreStatus(None, f"not checked: the clone at {repo} has no upstream branch", False)
+    try:
         head = manage._git("rev-parse", "HEAD", cwd=repo, timeout=10).strip()
         # The build is the commit recorded when we last installed it; before the first update, assume the clone's HEAD.
         built = _state().get("core_commit") or head
         try:
             behind = int(manage._git("rev-list", "--count", f"{built}..@{{u}}", cwd=repo, timeout=10).strip())
         except ValidationError:  # the recorded commit is gone: fall back to the clone's own position
+            built = head
             behind = int(manage._git("rev-list", "--count", "HEAD..@{u}", cwd=repo, timeout=10).strip())
-    except (OrchError, ValueError):
-        return None  # offline, no upstream: say nothing rather than nag
-    return CoreUpdate(repo, package, behind) if behind else None
+    except (OrchError, ValueError) as e:
+        return CoreStatus(None, f"not checked: {getattr(e, 'message', e)}", False)
+    if not behind:
+        return CoreStatus(None, f"up to date (commit {built[:7]})", True)
+    return CoreStatus(CoreUpdate(repo, package, behind),
+                      f"{behind} new commit{'s' if behind != 1 else ''} ({built[:7]} → {upstream[:7]})", True)
+
+
+def core_check() -> CoreUpdate | None:
+    return core_status().update
 
 
 def core_apply(c: CoreUpdate) -> str:
@@ -146,16 +216,36 @@ def addon_apply(name: str, review_text: Callable[[manage.TrustReview], str], con
 
 def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[manage.TrustReview], str],
         confirm: Callable[[str], bool], out: Callable[[str], None], force: bool = False) -> None:
-    """Check, ask once, apply. `force` (orch update) ignores the one-day snooze; serve passes False."""
+    """Check, ask once, apply, saying what was checked and what was found. `force` (orch update) ignores the one-day
+    snooze; serve passes False."""
     continuing = os.environ.pop(CONTINUE_ENV, None) == "1"
-    if not (force or continuing or check_only) and time.time() < float(_state().get("next_check", 0)):
-        return
-    core = None if continuing else core_check()
-    addons = [i for i in manage.update_check(None) if i.has_update]
+    if not (force or continuing or check_only):
+        due = float(_state().get("next_check", 0))
+        if time.time() < due:
+            out(f"update check: next one {time.strftime('%a %H:%M', time.localtime(due))} (orch update checks now)")
+            return
+    core = None
+    if continuing:  # orch-core was just updated and this is the restarted process: only the addons are left
+        out("checking the custom addons for updates …")
+    else:
+        src = core_source()
+        out(f"checking for updates: orch-core{' at ' + core_where(src[0]) if not isinstance(src, str) else ''} "
+            "and the custom addons …")
+        status = core_status(src)
+        out(f"orch-core: {status.line}")
+        core = status.update
+    infos = manage.update_check(None)
+    addons = [i for i in infos if i.has_update]
+    if not infos:
+        out("addons: no custom addons installed")
+    else:
+        out(f"addons: {len(infos)} checked, " + (f"{len(addons)} with updates" if addons else "up to date"))
+    for i in infos:
+        if not i.has_update and i.message != "up to date":
+            out(f"  {i.name}: {i.message}")
     if not core and not addons:
         _set_state(next_check=time.time() + CHECK_EVERY)
-        if check_only:
-            out("orch-core and the custom addons are up to date")
+        out("nothing to update" if force or check_only else "nothing to update; next check in a day (orch update checks now)")
         return
     names = ([f"orch-core ({core.behind} new commit{'s' if core.behind != 1 else ''})"] if core else []) + \
             [f"{i.name} ({i.message})" for i in addons]

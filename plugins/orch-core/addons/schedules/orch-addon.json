@@ -1,0 +1,14 @@
+{
+  "name": "schedules",
+  "title": "Schedules",
+  "version": "0.1.0",
+  "requires_api": "2",
+  "kind": "in-process",
+  "description": "Run workspace skills on a clock or an orch event, and recurring tickets (needs tmux).",
+  "capabilities": ["panel"],
+  "slots": ["today.summary"],
+  "binaries": [],
+  "env": [],
+  "entry": "orch_schedules:create",
+  "actions": []
+}

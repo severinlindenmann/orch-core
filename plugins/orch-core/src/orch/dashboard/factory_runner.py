@@ -63,20 +63,26 @@ def available() -> bool:
     return factory_runner.resolve_bin("tmux") is not None
 
 
-def _tmux(args: list[str], timeout: float = 10) -> subprocess.CompletedProcess:
-    """One tmux command on the factory socket, by the resolved program, with the fixed environment. Tests replace it."""
+def _tmux(args: list[str], timeout: float = 10, socket: Path | None = None) -> subprocess.CompletedProcess:
+    """One tmux command on the factory socket (or `socket`, another one in the same private folder, such as the
+    schedules'), by the resolved program, with the fixed environment. Tests replace it."""
     tmux = factory_runner.resolve_bin("tmux")
     if tmux is None:
         raise UsageError("tmux was not found at a trusted path")
     env = {"PATH": factory_runner.child_path(tmux), "LC_ALL": "C"}
-    return subprocess.run([tmux, "-S", str(socket_path()), *args], capture_output=True, text=True, timeout=timeout,
-                          stdin=subprocess.DEVNULL, env=env)
+    return subprocess.run([tmux, "-S", str(socket or socket_path()), *args], capture_output=True, text=True,
+                          timeout=timeout, stdin=subprocess.DEVNULL, env=env)
 
 
 class TmuxLauncher:
+    socket: Path | None = None  # None: the factory's own socket
+
+    def _tmux(self, args: list[str]) -> subprocess.CompletedProcess:
+        return _tmux(args, socket=self.socket) if self.socket is not None else _tmux(args)
+
     def alive(self) -> set[str] | None:
         try:
-            r = _tmux(["list-sessions", "-F", "#{session_name}"])
+            r = self._tmux(["list-sessions", "-F", "#{session_name}"])
         except (OSError, subprocess.TimeoutExpired, UsageError):
             return None
         if r.returncode == 0:
@@ -86,15 +92,15 @@ class TmuxLauncher:
 
     def start(self, name: str, cwd: str, argv: list[str]) -> int:
         # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment
-        r = _tmux(["new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
-                   launch.tmux_arg(shlex.join(argv))])
+        r = self._tmux(["new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
+                        launch.tmux_arg(shlex.join(argv))])
         if r.returncode != 0:
             raise UsageError(f"tmux could not start a session named {name}")
-        r = _tmux(["display-message", "-p", "-t", f"={name}:", "#{pane_pid}"])
+        r = self._tmux(["display-message", "-p", "-t", f"={name}:", "#{pane_pid}"])
         return int(r.stdout.strip())  # ValueError (no pid) ends the session in the caller: nothing runs unbound
 
     def stop(self, name: str) -> None:
-        if _tmux(["kill-session", "-t", f"={name}"]).returncode != 0:
+        if self._tmux(["kill-session", "-t", f"={name}"]).returncode != 0:
             raise UsageError(f"{name} could not be ended (has it ended already?)")
 
 

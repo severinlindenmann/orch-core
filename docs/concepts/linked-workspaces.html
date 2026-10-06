@@ -207,17 +207,17 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
   <div class="brand">
     <svg viewBox="0 0 64 64" aria-hidden="true"><rect x=".5" y=".5" width="63" height="63" rx="14" fill="#15171a"/><path d="M18.41 28.66A15 15 0 0 1 45.59 28.66" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round"/><path d="M12.97 26.13A21 21 0 0 1 51.03 26.13" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round" opacity=".7"/><path d="M7.53 23.59A27 27 0 0 1 56.47 23.59" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round" opacity=".4"/><circle cx="52.68" cy="17.64" r="4" fill="#F84A9B"/></svg>
     <span class="eyebrow">orch-core · concept draft</span>
-    <span class="tag">Draft 1 · 6 Oct 2026</span>
+    <span class="tag">Draft 2 · 6 Oct 2026</span>
   </div>
   <h1>Linked Workspaces</h1>
-  <p class="lede">Several orch workspaces on one machine, or on another PC reachable over a VPN, hand tickets to each other. Your Internal workspace asks two customer workspaces for their part of the weekly report. Each one picks the request up, works it on its own data, and sends the result back. The Internal agent waits, then carries on.</p>
+  <p class="lede">Orch workspaces hand tickets to each other, wherever each one runs: the same machine, another PC, behind a VPN or across a relay. Your Internal workspace asks two customer workspaces for their part of the weekly report. Each one picks the request up, works it on its own data, and sends the result back. The Internal agent waits, then carries on.</p>
 </header>
 
 <section aria-labelledby="topo">
   <div class="sec-head">
     <span class="eyebrow">The setup</span>
-    <h2 id="topo">Three workspaces, two machines, one person</h2>
-    <p>Each workspace stays a normal orch workspace: its own repository, tickets, ledger and agents. A small listener next to <code>orch serve</code> watches for incoming handoffs. Workspaces only ever talk to peers you paired.</p>
+    <h2 id="topo">Three workspaces, one listener each</h2>
+    <p>Each workspace stays a normal orch workspace: its own repository, tickets, ledger and agents. Every workspace runs its own listener next to <code>orch serve</code>. A workspace knows its peers only by name and address, never by where they run, so the placement below is just one example. Workspaces only ever talk to peers you paired.</p>
   </div>
   <div class="map">
     <svg viewBox="0 0 900 390" role="img" aria-label="Internal and ACME run on your laptop, Globex on a second PC over VPN. Internal sends handoffs to both and receives results back.">
@@ -226,9 +226,9 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
         <marker id="hg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ah-glx"/></marker>
       </defs>
       <rect class="m-box" x="14" y="18" width="566" height="356" rx="16"/>
-      <text class="m-label" x="34" y="44">Your laptop</text>
+      <text class="m-label" x="34" y="44">Example: your laptop</text>
       <rect class="m-box" x="604" y="168" width="284" height="206" rx="16"/>
-      <text class="m-label" x="624" y="194">Second PC · same VPN</text>
+      <text class="m-label" x="624" y="194">Example: another PC</text>
 
       <!-- Internal -->
       <rect class="node n-int" x="40" y="150" width="215" height="124" rx="12"/>
@@ -244,7 +244,7 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
       <circle class="dot-acme" cx="372" cy="84" r="6"/>
       <text class="n-title" x="386" y="90">Customer ACME</text>
       <text class="n-sub" x="368" y="114">ACME · same machine</text>
-      <text class="n-mono" x="368" y="138">spool ~/.orch/peers/acme</text>
+      <text class="n-mono" x="368" y="138">own listener · local</text>
       <text class="n-mono" x="368" y="158">listens, auto-starts</text>
       <circle class="dot-you" cx="541" cy="78" r="5"/>
 
@@ -252,8 +252,8 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
       <rect class="node n-glx" x="638" y="222" width="220" height="124" rx="12"/>
       <circle class="dot-glx" cx="660" cy="250" r="6"/>
       <text class="n-title" x="674" y="256">Customer Globex</text>
-      <text class="n-sub" x="656" y="280">GLX · 10.8.0.12</text>
-      <text class="n-mono" x="656" y="304">https listener :7710</text>
+      <text class="n-sub" x="656" y="280">GLX · reached over network</text>
+      <text class="n-mono" x="656" y="304">own listener · remote</text>
       <text class="n-mono" x="656" y="324">listens, auto-starts</text>
       <circle class="dot-you" cx="839" cy="244" r="5"/>
 
@@ -270,18 +270,18 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
       <text class="e-label l-glx" x="440" y="334">result</text>
 
       <rect class="vpn" x="560" y="281" width="66" height="22" rx="11"/>
-      <text class="vpn-t" x="593" y="296" text-anchor="middle">VPN</text>
+      <text class="vpn-t" x="593" y="296" text-anchor="middle">any</text>
     </svg>
     <div class="legend">
       <span><span class="sw"></span>handoff: a request becomes a ticket over there</span>
-      <span><span class="sw d"></span>result: released artifacts come back</span>
+      <span><span class="sw d"></span>result: artifacts released under a charter come back</span>
       <span><span class="pip"></span>you, the human, with a separate ledger per workspace</span>
     </div>
   </div>
   <div class="three">
     <div class="pr"><h3>A request is a ticket</h3><p>A handoff lands as an ordinary backlog ticket in the receiving workspace, with requirements, acceptance criteria and its origin. The receiving agents work it like any other ticket.</p></div>
     <div class="pr"><h3>The sender waits, it does not poll</h3><p>The Internal ticket moves to <b>waiting</b>, blocked by the remote tickets. <code>orch wait</code> returns when every result is in, and the agent continues where it stopped.</p></div>
-    <div class="pr"><h3>Gates stay local</h3><p>A peer never approves anything for another workspace. Auto-start and auto-release happen only under a charter you signed in the receiving workspace.</p></div>
+    <div class="pr"><h3>Gates stay local</h3><p>A peer never approves anything for another workspace. Nothing starts on its own and nothing leaves a workspace without a charter you signed in that workspace.</p></div>
   </div>
 </section>
 
@@ -312,7 +312,7 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
   <div class="sec-head">
     <span class="eyebrow">Lifecycle</span>
     <h2 id="life">How the three tickets line up</h2>
-    <p>The parent ticket sits in <b>waiting</b> exactly as long as a handoff is open. A question a customer agent cannot answer travels up to the requester instead of stopping the work silently.</p>
+    <p>The parent ticket sits in <b>waiting</b> exactly as long as a handoff is open. A question a customer agent cannot answer goes back to the agent that sent the request, instead of stopping the work silently.</p>
   </div>
   <div class="life">
     <svg viewBox="0 0 900 250" role="img" aria-label="Timeline: INT-0142 open, then waiting while ACME-0311 and GLX-0088 run, then in progress and testing after results arrive.">
@@ -339,14 +339,14 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
       <rect class="lf-st st-wait" x="422" y="180" width="72" height="32" rx="7"/><text class="lf-t" x="430" y="201">asks</text>
       <rect class="lf-st st-int" x="498" y="180" width="110" height="32" rx="7"/><text class="lf-t" x="508" y="201">in progress</text>
       <rect class="lf-st st-test" x="612" y="180" width="66" height="32" rx="7"/><text class="lf-t" x="620" y="201">release</text>
-      <circle class="lf-gate" cx="298" cy="180" r="5"/><circle class="lf-gate" cx="678" cy="180" r="5"/>
+      <circle class="lf-gate" cx="298" cy="180" r="5"/>
 
       <path class="lf-link" d="M204 76 L214 112"/><path class="lf-link" d="M204 76 L214 180"/>
       <path class="lf-link" d="M458 180 C458 120 440 90 440 76"/>
       <path class="lf-link" d="M632 128 L684 76"/><path class="lf-link" d="M678 196 L684 76"/>
-      <text class="lf-ax" x="470" y="94">question goes up to INT</text>
-      <circle class="lf-gate" cx="30" cy="241" r="5"/><text class="lf-ax" x="42" y="245">your decision (approve, release, verdict)</text>
-      <rect class="st-back" x="330" y="235" width="14" height="12" rx="3"/><text class="lf-ax" x="350" y="245">auto-approved by a signed charter</text>
+      <text class="lf-ax" x="470" y="94">question goes to the requesting agent</text>
+      <circle class="lf-gate" cx="30" cy="241" r="5"/><text class="lf-ax" x="42" y="245">your decision (approve, sign a charter, verdict)</text>
+      <rect class="st-back" x="330" y="235" width="14" height="12" rx="3"/><text class="lf-ax" x="350" y="245">approved and released by a signed charter</text>
     </svg>
   </div>
 </section>
@@ -369,7 +369,7 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
         </div>
         <h3>Weekly report KW41 for ACME and Globex</h3>
         <div class="sub"><i style="background:var(--acme)"></i><span>ACME-0311 · agent working, 4 of 6 tasks</span><span class="ok">auto-started</span></div>
-        <div class="sub"><i style="background:var(--glx)"></i><span>GLX-0088 · waits for you to approve in Globex</span><span class="pend">your move</span></div>
+        <div class="sub"><i style="background:var(--glx)"></i><span>GLX-0088 · no charter yet, waits for you in Globex</span><span class="pend">your move</span></div>
         <div class="note">Reply by Thu 16:00. If a peer misses it, this card asks you whether to wait longer, resend or drop that part.</div>
         <span class="btn">Open Globex Mission Control</span>
       </div>
@@ -387,16 +387,16 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
 <section aria-labelledby="transport">
   <div class="sec-head">
     <span class="eyebrow">Transport</span>
-    <h2 id="transport">One message format, three ways to carry it</h2>
-    <p>A handoff is a signed JSON envelope. How it travels depends only on where the peer is. The receiving side runs the same checks in every case.</p>
+    <h2 id="transport">One listener per workspace, any way to reach it</h2>
+    <p>We cannot know where a peer runs: the same laptop, another office PC, a VM, behind a VPN. So each workspace runs exactly one listener of its own and publishes an address when you pair it. The sender picks the carrier from that address; the envelope and the checks on arrival are the same for all of them.</p>
   </div>
   <div class="tbl">
     <table>
-      <thead><tr><th>Where the peer is</th><th>Carrier</th><th>How it listens</th><th>Notes</th></tr></thead>
+      <thead><tr><th>Peer address</th><th>Carrier</th><th>How it listens</th><th>Notes</th></tr></thead>
       <tbody>
-        <tr><td>Same machine</td><td>Spool folder <span class="mono">~/.orch/peers/&lt;name&gt;/inbox</span></td><td>File watch, no network port</td><td>Simplest case and the first to build. Outside every repository, so nothing reaches git.</td></tr>
-        <tr><td>Same network or VPN</td><td>HTTPS with pinned peer keys</td><td>Listener bound to the VPN address, for example <span class="mono">10.8.0.12:7710</span></td><td>Works with Tailscale or WireGuard. Refuses any key you did not pair. Never binds to 0.0.0.0 by default.</td></tr>
-        <tr><td>Anywhere</td><td>TIX mailbox, sealed end to end</td><td>Dials out, as <span class="mono">orch serve --remote</span> already does</td><td>Reuses the existing bridge, replay store and pairing. No open port on either side.</td></tr>
+        <tr><td><span class="mono">spool:</span></td><td>Spool folder <span class="mono">~/.orch/peers/&lt;name&gt;/inbox</span></td><td>File watch, no network port</td><td>Simplest case and the first to build. Outside every repository, so nothing reaches git.</td></tr>
+        <tr><td><span class="mono">https://</span></td><td>HTTPS with pinned peer keys</td><td>Listener bound to the VPN address, for example <span class="mono">10.8.0.12:7710</span></td><td>Works with Tailscale or WireGuard. Refuses any key you did not pair. Never binds to 0.0.0.0 by default.</td></tr>
+        <tr><td><span class="mono">tix:</span></td><td>TIX mailbox, sealed end to end</td><td>Dials out, as <span class="mono">orch serve --remote</span> already does</td><td>Reuses the existing bridge, replay store and pairing. No open port on either side.</td></tr>
       </tbody>
     </table>
   </div>
@@ -457,15 +457,19 @@ footer{padding-top:48px;color:var(--muted);font-size:13px}
 }</pre>
     </div>
     <div class="card">
-      <h3>Charter (ACME, signed by you)</h3>
-      <p>Lets one peer's requests of one template start and release without asking. Anything outside it lands on Today.</p>
+      <h3>Charters (signed by you)</h3>
+      <p>A charter is the only way a result can leave. No charter, no release: the request waits on Today until you sign one or decline. Upward requests need one too, on the receiving side.</p>
 <pre class="code"><span class="c"># in the ACME workspace, your own terminal</span>
 orch peer charter internal \
   --template weekly-report \
   --max-size s --read-only \
-  --auto-start --auto-release \
+  --auto-start \
   --release-paths "reports/**" \
-  --expires 2026-12-31</pre>
+  --expires 2026-12-31
+
+<span class="c"># in Internal: ACME may ask for reviews</span>
+orch peer charter acme \
+  --template pr-review --max-size s</pre>
     </div>
   </div>
 </section>
@@ -480,11 +484,11 @@ orch peer charter internal \
       <thead><tr><th>Command</th><th>Who</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><span class="mono">orch peer pair &lt;name&gt;</span></td><td>You</td><td>Exchange keys with another workspace (a code shown on one side, typed on the other).</td></tr>
-        <tr><td><span class="mono">orch peer listen</span></td><td>You</td><td>Run the listener. Also part of <span class="mono">orch serve --peers</span>.</td></tr>
-        <tr><td><span class="mono">orch peer charter</span></td><td>You</td><td>Sign which requests from a peer may auto-start and auto-release.</td></tr>
+        <tr><td><span class="mono">orch peer listen</span></td><td>You</td><td>Run this workspace's own listener. Also part of <span class="mono">orch serve --peers</span>.</td></tr>
+        <tr><td><span class="mono">orch peer charter</span></td><td>You</td><td>Sign which requests a peer may send here, whether they start on their own, and what may be released back.</td></tr>
         <tr><td><span class="mono">orch handoff send &lt;id&gt; --to …</span></td><td>Agent</td><td>Send a request, add the remote tickets to <span class="mono">blocked_by</span>, move the ticket to waiting.</td></tr>
         <tr><td><span class="mono">orch handoff list</span></td><td>Agent</td><td>Open handoffs in both directions, with remote status.</td></tr>
-        <tr><td><span class="mono">orch handoff release &lt;id&gt;</span></td><td>You</td><td>Review and send the result package back when no charter covers it.</td></tr>
+        <tr><td><span class="mono">orch handoff answer &lt;id&gt;</span></td><td>Agent</td><td>The requesting agent answers a question a peer sent back up.</td></tr>
         <tr><td><span class="mono">orch wait &lt;id&gt;</span></td><td>Agent</td><td>Exists today. Also returns when the last handoff result arrives.</td></tr>
       </tbody>
     </table>
@@ -499,7 +503,8 @@ orch peer charter internal \
   <ul class="guard">
     <li><span><b>No remote decisions.</b> <span>A peer can file a ticket and send a result. It cannot approve, answer, release or give a verdict in another workspace. Each workspace keeps its own ledger.</span></span></li>
     <li><span><b>Customers never see each other.</b> <span>Fan-out happens in Internal. ACME gets only its envelope and has no idea Globex exists; peers do not relay to third peers.</span></span></li>
-    <li><span><b>Only released bytes leave.</b> <span>The release shows every file and hash going out. A charter can limit release to paths such as <code>reports/**</code> and runs a secret scan first.</span></span></li>
+    <li><span><b>Both directions, only when allowed.</b> <span>A customer workspace can send requests to Internal too, but only for templates a charter in Internal allows from that peer. Without one, the request is refused on arrival.</span></span></li>
+    <li><span><b>Nothing leaves without a charter.</b> <span>A result is released only under a charter you signed in that workspace, limited to paths such as <code>reports/**</code>, after a secret scan. Every file and hash going out is logged.</span></span></li>
     <li><span><b>Requests are data.</b> <span>Text from a peer is treated like an external issue: the receiving agent reads it, it does not follow it as instructions. The guard hook and a read-only charter still apply.</span></span></li>
     <li><span><b>No loops.</b> <span>A ticket that came in as a handoff cannot send handoffs of its own, unless you allow a depth of 2.</span></span></li>
     <li><span><b>Nothing gets lost.</b> <span>The outbox retries while a peer is offline, the handoff id makes delivery idempotent, and a missed <code>reply_by</code> becomes a card on your Today.</span></span></li>
@@ -512,23 +517,34 @@ orch peer charter internal \
     <h2 id="road">Build it in four phases</h2>
   </div>
   <div class="road">
-    <div class="ph"><span class="eyebrow">Phase 1</span><h3>Same machine, manual start</h3><ul><li>Spool transport and pairing</li><li><span class="mono">handoff send</span>, inbox tickets, results as artifacts</li><li><span class="mono">orch wait</span> covers handoffs</li></ul></div>
-    <div class="ph"><span class="eyebrow">Phase 2</span><h3>Charters and auto-start</h3><ul><li>Signed charters per peer and template</li><li>Runner starts agents in Terminals (tmux)</li><li>Release gate with path limits</li></ul></div>
-    <div class="ph"><span class="eyebrow">Phase 3</span><h3>VPN and the Peers page</h3><ul><li>HTTPS listener with pinned keys</li><li>Peers page, handoff chips on cards</li><li>Questions travel up to the requester</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 1</span><h3>Listener and handoffs</h3><ul><li>One listener per workspace, pairing, spool carrier</li><li><span class="mono">handoff send</span>, inbox tickets, results as artifacts</li><li><span class="mono">orch wait</span> covers handoffs</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 2</span><h3>Charters and auto-start</h3><ul><li>Signed charters per peer and template</li><li>Runner starts agents in Terminals (tmux)</li><li>Charter-only release with path limits</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 3</span><h3>Network peers and the Peers page</h3><ul><li>HTTPS listener with pinned keys</li><li>Peers page, handoff chips on cards</li><li>Questions go to the requesting agent</li><li>Upward requests under a charter</li></ul></div>
     <div class="ph"><span class="eyebrow">Phase 4</span><h3>Relay and recurring work</h3><ul><li>TIX relay for peers off the network</li><li>Recurring handoffs: every Monday 08:00</li><li>Reports on peer lead times</li></ul></div>
   </div>
 </section>
 
 <section aria-labelledby="open">
   <div class="sec-head">
-    <span class="eyebrow">Open questions</span>
-    <h2 id="open">To decide before building</h2>
+    <span class="eyebrow">Decisions</span>
+    <h2 id="open">Settled</h2>
   </div>
   <ul class="qs">
-    <li><b>Who answers a question a customer agent cannot settle?</b><span>Proposal: it goes up to the requesting ticket; the Internal agent answers when its own approved requirements cover it, otherwise you do.</span></li>
-    <li><b>Release by default, or charter only?</b><span>Proposal: every result needs your release until you sign a charter for that peer and template.</span></li>
-    <li><b>One listener per workspace, or one per machine?</b><span>One daemon serving all workspaces on a laptop is lighter; one per workspace keeps the isolation simpler to reason about.</span></li>
-    <li><b>Can a customer workspace send requests upward?</b><span>For example "Internal, please review this PR". Same mechanism in reverse, off until you allow it per peer.</span></li>
+    <li><b>Who answers a question a customer agent cannot settle?</b><span>The agent that sent the request. It is blocked in <code>orch wait</code> on the parent ticket, wakes, answers from its approved requirements and goes back to waiting. It asks you only when its requirements do not cover the question.</span></li>
+    <li><b>When can a result leave a workspace?</b><span>Only under a charter signed in that workspace. Without one the request waits on Today until you sign a charter or decline it.</span></li>
+    <li><b>One listener per workspace, or one per machine?</b><span>One per workspace. We cannot know whether peers share a machine, sit on a VPN or somewhere else, so each workspace is reachable on its own.</span></li>
+    <li><b>Can a customer workspace send requests to Internal?</b><span>Yes, when a charter in Internal allows that peer and template. Otherwise the request is refused on arrival.</span></li>
+  </ul>
+</section>
+
+<section aria-labelledby="still">
+  <div class="sec-head">
+    <span class="eyebrow">Open questions</span>
+    <h2 id="still">Still to decide</h2>
+  </div>
+  <ul class="qs">
+    <li><b>What if the requesting agent's session has ended?</b><span>Proposal: the question or result restarts an agent on the parent ticket through Start agent, the same way the Terminals addon starts one today.</span></li>
+    <li><b>What happens to a request that waits for a charter too long?</b><span>Proposal: the sender sees it on its card after <code>reply_by</code> and can resend, wait or drop that part.</span></li>
   </ul>
 </section>
 
@@ -554,25 +570,25 @@ const STEPS = [
     cmd:"# ACME event log\nhandoff.received  h_01JA7Q3M9V  from internal:INT-0142  ->  ACME-0311",
     s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"backlog",note:"from internal · weekly-report"}, glx:{id:"GLX-0088",st:"backlog",note:"from internal · weekly-report"} } },
   { who:"sys", title:"Charter decides: start now or ask you", lane:"both",
-    body:"ACME has your signed charter for weekly reports from Internal, so its requirements are approved by the charter. Globex has no charter yet, so the ticket lands on Globex's Today for you.",
+    body:"ACME has your signed charter for weekly reports from Internal, so its requirements are approved by the charter. Globex has no charter yet, so nothing may start and nothing could be released. The request lands on Globex's Today: sign a charter or decline.",
     cmd:"# ACME\ngate.approved  ACME-0311 requirements  via charter internal/weekly-report",
-    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"open",note:"Approved by charter"}, glx:{id:"GLX-0088",st:"backlog",need:"Approve in Globex"} } },
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"open",note:"Approved by charter"}, glx:{id:"GLX-0088",st:"backlog",need:"Sign charter or decline"} } },
   { who:"agent", title:"Agents start on their own", lane:"both",
-    body:"The ACME runner claims the ticket and starts an agent in a Terminals session. You approve Globex from its Mission Control or your phone, and its runner does the same. Each agent works only on its own customer's repository and data.",
+    body:"The ACME runner claims the ticket and starts an agent in a Terminals session. In Globex you sign a charter for weekly reports from Internal, and its runner does the same. Each agent works only on its own customer's repository and data.",
     cmd:"orch claim ACME-0311\norch task start ACME-0311 T1   # collect deploys",
     s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"in-progress",note:"Agent · task 2 of 6"}, glx:{id:"GLX-0088",st:"in-progress",note:"Agent · task 1 of 5"} } },
   { who:"agent", title:"A question travels up", lane:"glx",
-    body:"The Globex agent is unsure whether staging incidents count. It asks on GLX-0088; the question goes up to INT-0142. The Internal agent answers from its approved requirements (production only), or the question waits for you.",
-    cmd:'orch ask GLX-0088 --file q.yaml   # "Count staging incidents?"\n# answered upstream: production only',
-    s:{ int:{id:"INT-0142",st:"waiting",note:"Answered GLX question"}, acme:{id:"ACME-0311",st:"in-progress",note:"Agent · task 5 of 6"}, glx:{id:"GLX-0088",st:"waiting",note:"Asked INT, answer back",flight:"answer in flight"} } },
-  { who:"you", title:"Release what leaves the customer", lane:"both",
-    body:"Both agents finish and attach report.md and kpis.json with evidence. ACME releases under its charter (path limit, secret scan). For Globex you see every file and hash before it goes out.",
-    cmd:"orch handoff release GLX-0088   # shows report.md, kpis.json with their sha256",
-    s:{ int:{id:"INT-0142",st:"waiting",note:"1 of 2 results in"}, acme:{id:"ACME-0311",st:"done",note:"Released by charter",flight:"result in flight"}, glx:{id:"GLX-0088",st:"testing",need:"Release in Globex"} } },
+    body:"The Globex agent is unsure whether staging incidents count. It asks on GLX-0088; the question goes to the agent that sent the request, the one blocked in orch wait on INT-0142. That agent wakes, answers from its approved requirements (production only) and goes back to waiting. Only if its requirements do not cover it does it ask you.",
+    cmd:'orch ask GLX-0088 --file q.yaml   # "Count staging incidents?"\n# INT agent: orch handoff answer GLX-0088 Q1 production-only',
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Requesting agent answered GLX"}, acme:{id:"ACME-0311",st:"in-progress",note:"Agent · task 5 of 6"}, glx:{id:"GLX-0088",st:"waiting",note:"Asked the requesting agent",flight:"answer in flight"} } },
+  { who:"sys", title:"Charters release the results", lane:"both",
+    body:"Both agents finish and attach report.md and kpis.json with evidence. Each workspace releases them under its charter: only allowed paths, after a secret scan, every file and hash logged. No charter would mean nothing leaves.",
+    cmd:"# GLX event log\nhandoff.released  GLX-0088  via charter internal/weekly-report  report.md kpis.json",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"2 results on the way"}, acme:{id:"ACME-0311",st:"done",note:"Released by charter",flight:"result in flight"}, glx:{id:"GLX-0088",st:"done",note:"Released by charter",flight:"result in flight"} } },
   { who:"agent", title:"Internal continues with both results", lane:"int",
-    body:"The results arrive as artifacts on INT-0142 and orch wait returns. The agent merges both parts into one weekly report and hands it to testing.",
+    body:"The results arrive as artifacts on INT-0142 and orch wait returns in the agent that sent the request. It merges both parts into one weekly report and hands it to testing.",
     cmd:"orch wait INT-0142   # returns: 2 of 2 results\norch move INT-0142 testing",
-    s:{ int:{id:"INT-0142",st:"testing",need:"Your verdict"}, acme:{id:"ACME-0311",st:"done",note:"Released"}, glx:{id:"GLX-0088",st:"done",note:"Released by you"} } },
+    s:{ int:{id:"INT-0142",st:"testing",need:"Your verdict"}, acme:{id:"ACME-0311",st:"done",note:"Released"}, glx:{id:"GLX-0088",st:"done",note:"Released"} } },
 ];
 const WS = { int:["Internal","INT"], acme:["ACME","same machine"], glx:["Globex","VPN"] };
 const WHO = { you:["you","You decide"], agent:["agent","Agent"], sys:["sys","orch"] };

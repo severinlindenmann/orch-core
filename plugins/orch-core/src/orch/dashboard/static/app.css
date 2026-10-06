@@ -1054,20 +1054,74 @@ aside .table:not(.wtable) td:not(:first-child)[data-label]:has(> .chip)::before 
 
 .trust-review { margin-top: 12px; }
 .trust-review summary { font-weight: 700; }
-/* Workspace (F): tabs over four panels; addons as rows with a switch and their settings under them. */
+/* Workspace (F): tabs over the panels; the Addons tab is a catalog of cards (below). */
 .ws-tabs .badge { margin-left: var(--s-1); }
 .ws-panel { display: flex; flex-direction: column; gap: var(--card-gap); }
 .ws-panel > .grid-2 { margin: 0; }
-.addon-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.addon-row { display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-4) 0; border-top: 1px solid var(--line); }
-.addon-row:first-child { border-top: 0; padding-top: 0; }
-.addon-row > p { margin: 0; }
-.addon-row-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s-2) var(--s-4); }
-.addon-who { flex: 1 1 240px; min-width: 0; }
+/* The Addons tab as a catalog of cards: what it does, where it shows up (a small map of Mission Control) and what it
+   needs, the switch in the corner. Two cards a row from 760 px, one below. */
+.addons-head > p { margin: 0 0 var(--s-2); max-width: 72ch; }
+.addons-how { margin-bottom: var(--s-3); }
+.addons-how > summary { min-height: var(--target-min); display: flex; align-items: center; font-weight: 600; cursor: pointer; }
+.addons-how ul { margin: 0; padding-left: var(--s-5); display: flex; flex-direction: column; gap: var(--s-1); color: var(--muted); }
+.addons-filter { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-2) var(--s-4); margin: 0; }
+.addons-filter[hidden] { display: none; }
+.addons-filter .filter-search { display: flex; flex-direction: column; gap: var(--s-1); font-weight: 600; }
+.addon-group { display: flex; flex-direction: column; gap: var(--s-3); }
+.addon-group > h2 { margin: var(--s-2) 0 0; }
+.addon-group[hidden] { display: none; }
+.addon-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
+              gap: var(--card-gap); align-items: start; }
+.addon-item { container-type: inline-size; display: flex; flex-direction: column; gap: var(--s-3); min-width: 0; padding: var(--card-pad);
+              background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.addon-item[data-attention="1"] { box-shadow: inset var(--rail-w) 0 0 var(--warn-mark); }
+.addon-item[hidden] { display: none; }
+.addon-item > p { margin: 0; }
+.addon-item-head { display: flex; align-items: flex-start; gap: var(--s-3); }
+.addon-glyph { flex: none; display: inline-flex; align-items: center; justify-content: center; width: var(--s-10); height: var(--s-10);
+               border-radius: var(--r-md); background: var(--chip); color: var(--muted); }
+.addon-glyph .i-ui { width: var(--s-5); height: var(--s-5); }
+.addon-glyph.is-on { background: var(--info-bg); color: var(--info-fg); }
+.addon-who { flex: 1 1 auto; min-width: 0; }
+.addon-who h3 { margin: 0; overflow-wrap: break-word; }
 .addon-who code { font-size: 12px; }
-.addon-meta { margin: var(--s-1) 0 0; font: var(--type-meta); overflow-wrap: anywhere; }
-.addon-state { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-1); flex: 0 1 220px; min-width: 0; }
-.addon-state .addon-banner { margin: 0; }
+.addon-meta { margin: var(--s-1) 0 0; font: var(--type-meta); color: var(--muted); overflow-wrap: anywhere; }
+.addon-item-head .switch-form { flex: none; justify-content: flex-end; }
+.addon-desc { line-height: 1.55; }
+.addon-health-line .addon-banner { margin: 0; }
+.addon-facts { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--s-3) var(--s-4);
+               padding: var(--s-3) var(--s-4); border-radius: var(--r-md); background: var(--surface2); }
+.addon-facts h4 { margin: 0 0 var(--s-2); font: var(--type-meta); font-weight: 700; color: var(--muted); }
+.addon-facts p { margin: 0; font: var(--type-meta); }
+.addon-where-body { display: flex; align-items: flex-start; gap: var(--s-3); }
+.addon-map { flex: none; width: calc(2 * var(--s-8)); height: auto; }
+.am-frame { fill: var(--surface); stroke: var(--line2); }
+.am-zone { fill: var(--chip); }
+.am-zone.is-on { fill: var(--info-mark); }
+.am-line { fill: var(--line2); }
+.addon-surfaces, .addon-reqs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s-1); font: var(--type-meta); min-width: 0; }
+.addon-surfaces li, .addon-reqs li { display: flex; align-items: flex-start; gap: var(--s-2); min-width: 0; overflow-wrap: anywhere; }
+.addon-surfaces .i-ui, .addon-reqs .i { flex: none; width: var(--s-4); height: var(--s-4); margin-top: 1px; }
+.addon-surfaces .i-ui { color: var(--muted); }
+.addon-reqs .req-ok .i { color: var(--ok-fg); } .addon-reqs .req-warn .i { color: var(--warn-fg); } .addon-reqs .req-neu .i { color: var(--neu-fg); }
+.addon-reqs .req-warn .req-text { font-weight: 700; color: var(--warn-fg); }
+.req-hint { display: block; color: var(--muted); }
+.addon-item .trust-review { margin-top: 0; }
+.addon-group > p { margin: 0; max-width: 72ch; }
+.addon-install h4, .addon-own h3 { margin: 0 0 var(--s-2); }
+.addon-install h4 { font: var(--type-meta); font-weight: 700; color: var(--muted); }
+.addon-install ol { margin: 0; padding-left: var(--s-5); display: flex; flex-direction: column; gap: var(--s-2); }
+.addon-install li > span:first-child { display: block; font: var(--type-meta); color: var(--muted); }
+.addon-cmd { display: flex; align-items: center; gap: var(--s-2); min-width: 0; margin: 0; }
+.addon-cmd code { flex: 1 1 auto; min-width: 0; padding: var(--s-1) var(--s-2); border-radius: var(--r-sm); background: var(--surface2);
+                  overflow-wrap: anywhere; }
+.addon-cmd .btn { flex: none; }
+.addon-own { padding: var(--card-pad); border: 1px dashed var(--line2); border-radius: var(--r-lg); display: flex; flex-direction: column; gap: var(--s-2); }
+.addon-own > p { margin: 0; }
+@container (max-width: 459px) {
+  .addon-facts { grid-template-columns: minmax(0, 1fr); }
+  .addon-map { display: none; }
+}
 .addon-settings { max-width: 560px; }
 .addon-settings > summary { list-style: none; }
 .addon-settings > summary::-webkit-details-marker { display: none; }

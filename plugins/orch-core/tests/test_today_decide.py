@@ -203,7 +203,7 @@ def test_tidy_without_js_asks_first(dash):
 def test_revoke_and_trust_forms_use_the_dialog_tier():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1] / "src" / "orch" / "dashboard"
-    workspace = (root / "templates" / "workspace.html").read_text(encoding="utf-8")
+    workspace = "".join((root / "templates" / n).read_text(encoding="utf-8") for n in ("workspace.html", "_addons_tab.html"))
     assert "data-confirm" not in workspace and workspace.count("data-dialog=") >= 3
     for path in (root / "templates").glob("*.html"):
         assert "data-confirm=" not in path.read_text(encoding="utf-8"), path

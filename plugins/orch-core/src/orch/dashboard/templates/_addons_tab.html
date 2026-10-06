@@ -1,0 +1,217 @@
+{% import "_ui.html" as ui %}
+{% import "_widgets.html" as w %}
+{#- The Addons tab as a catalog: one card per addon that says what it does, where it shows up (a small map of
+    Mission Control plus the list in words) and what it needs, with its switch in the corner. Cards that are on come
+    first; anything that broke or waits for the human is listed at the top. Settings, background sync and the trust
+    review open inside the card. Search and the On / Off filter are JS-only (the toolbar stays hidden without JS). -#}
+{% set on_rows = addon_rows|selectattr("enabled")|list %}
+{% set off_rows = addon_rows|rejectattr("enabled")|list %}
+{% set attention = addon_rows|selectattr("attention")|list %}
+
+{% macro glyph(path) %}<svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ path }}"/></svg>{% endmacro %}
+
+{#- A sketch of Mission Control: the menu on the left, the top of the page, the main column and the ticket aside. The
+    regions the addon adds to are filled; the list beside it says the same in words, so the sketch is decoration. -#}
+{% macro preview_map(areas) %}<svg class="addon-map" viewBox="0 0 64 42" aria-hidden="true" focusable="false">
+  <rect class="am-frame" x="0.5" y="0.5" width="63" height="41" rx="4"/>
+  <rect class="am-zone{{ ' is-on' if 'menu' in areas }}" x="3" y="3" width="13" height="36" rx="2"/>
+  <rect class="am-line" x="5" y="7" width="9" height="2" rx="1"/><rect class="am-line" x="5" y="12" width="7" height="2" rx="1"/><rect class="am-line" x="5" y="17" width="8" height="2" rx="1"/>
+  <rect class="am-zone{{ ' is-on' if 'top' in areas }}" x="19" y="3" width="42" height="9" rx="2"/>
+  <rect class="am-zone{{ ' is-on' if 'main' in areas }}" x="19" y="15" width="27" height="24" rx="2"/>
+  <rect class="am-zone{{ ' is-on' if 'aside' in areas }}" x="49" y="15" width="12" height="24" rx="2"/>
+</svg>{% endmacro %}
+
+{% macro card(a) %}
+<li class="addon-item" id="addon-{{ a.name }}" data-addon-item data-on="{{ '1' if a.enabled else '0' }}" data-attention="{{ '1' if a.attention else '0' }}"
+    data-search="{{ (a.title ~ ' ' ~ a.name ~ ' ' ~ a.description ~ ' ' ~ (a.surfaces|map(attribute='label')|join(' ')))|lower }}">
+  <div class="addon-item-head">
+    <span class="addon-glyph{{ ' is-on' if a.enabled }}">{{ glyph(a.icon_path) }}</span>
+    <div class="addon-who">
+      <h3>{{ a.title }}</h3>
+      <p class="addon-meta"><code>{{ a.name }}</code> · {{ "built in" if a.kind == "default" else "custom" }}{% if a.version %} · {{ a.version }}{% endif %}{% if a.kind != "default" %} · {{ a.source }}{% endif %}</p>
+    </div>
+    <form method="post" action="/workspace/addons/{{ a.name }}/enable" class="switch-form"><input type="hidden" name="enabled" value="{{ '0' if a.enabled else '1' }}">
+      <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.enabled else 'false' }}"{% if not a.enabled and not a.can_enable %} disabled aria-describedby="why-{{ a.name }}"{% endif %}><span class="switch-track" aria-hidden="true"></span><span class="sr-only">{{ a.title }} enabled here</span><span aria-hidden="true">{{ "On" if a.enabled else "Off" }}</span></button>
+      {% if not a.enabled and not a.can_enable %}<span class="muted switch-why" id="why-{{ a.name }}">Trust it first</span>{% endif %}
+    </form>
+  </div>
+
+  <p class="addon-desc">{{ a.description or "Its manifest has no description yet." }}</p>
+
+  {% if a.error %}<p>{{ ui.status("err", a.error) }}</p>{% endif %}
+  {% if a.problem %}<p>{{ ui.status("warn", a.problem) }}</p>{% endif %}
+  {% if a.trust != "trusted" %}<p>{{ ui.status(a.trust_role, a.trust_label) }}</p>{% endif %}
+  {% if a.enabled and a.health %}<div class="addon-health-line">{{ w.banner(a.health, compact=true) }}</div>{% endif %}
+  {% if a["update"] %}<p class="cluster">{{ ui.status("info", a["update"].message) }} <button type="button" class="btn copy-fix" data-copy="orch addon update {{ a.name }}">Copy update command</button></p>{% endif %}
+
+  <div class="addon-facts">
+    <div class="addon-where">
+      <h4>Shows up in</h4>
+      {% if a.surfaces %}
+      <div class="addon-where-body">
+        {{ preview_map(a.areas) }}
+        <ul class="addon-surfaces">
+          {% for s in a.surfaces %}<li>{% if s.icon and s.icon.startswith("path:") %}{{ glyph(s.icon[5:]) }}{% elif s.icon %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ s.icon }}"/></svg>{% else %}{{ glyph(a.icon_path) }}{% endif %}<span>{{ s.label }}</span></li>{% endfor %}
+        </ul>
+      </div>
+      {% else %}<p class="muted">Works in the background; it adds nothing you can see.</p>{% endif %}
+    </div>
+    <div class="addon-needs">
+      <h4>Needs</h4>
+      <ul class="addon-reqs">
+        {% for n in a.needs %}<li class="req-{{ n.role }}">{{ ui.icon(n.role) }}<span><span class="req-text">{{ n.text }}</span>{% if n.hint %}<span class="req-hint">{{ n.hint }}</span>{% endif %}</span></li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  {% if a.enabled and a.background_capable %}
+  <form method="post" action="/workspace/addons/{{ a.name }}/background" class="switch-form addon-background"><input type="hidden" name="on" value="{{ '0' if a.background else '1' }}">
+    <button type="submit" class="switch" role="switch" aria-checked="{{ 'true' if a.background else 'false' }}"><span class="switch-track" aria-hidden="true"></span>Keep syncing while Mission Control runs</button>
+    <span class="muted">Off: it syncs only while a Mission Control tab is open.</span></form>
+  {% endif %}
+
+  {% if a.fields or a.settings_groups %}
+  <details class="addon-settings" id="settings-{{ a.name }}-d">
+    <summary class="btn btn-quiet">Settings{% if a.fields %} <span class="muted">({{ a.fields|length }})</span>{% endif %}</summary>
+    <form method="post" action="/workspace/addons/{{ a.name }}/settings" class="stack" aria-label="{{ a.title }} settings" id="settings-form-{{ a.name }}">
+      {% for f in a.fields %}
+        {% if f.type == "bool" %}<label class="check-row"><input type="checkbox" name="{{ f.key }}" value="1"{% if f.value %} checked{% endif %}> {{ f.label }}</label>
+        {% elif f.type == "select" %}<label class="field-col">{{ f.label }} <select name="{{ f.key }}">{% for o in f.options %}<option value="{{ o }}"{% if o == f.value %} selected{% endif %}>{{ o }}</option>{% endfor %}</select></label>
+        {% elif f.type == "map" %}<label class="field-col">{{ f.label }} <textarea name="{{ f.key }}" rows="4" placeholder="key = value">{{ f.value }}</textarea></label>
+        {% else %}<label class="field-col">{{ f.label }} <input type="text" name="{{ f.key }}" value="{{ f.value }}"></label>{% endif %}
+      {% endfor %}
+    </form>
+    {# widgets may hold their own <form>s (Action buttons); forms cannot nest, so they live outside the settings form #}
+    {{ ui.slot(a.settings_groups) }}
+    {% if a.fields %}<button type="submit" form="settings-form-{{ a.name }}" class="btn btn-primary">Save settings</button>{% endif %}
+  </details>
+  {% endif %}
+
+  {% if a.review %}
+  <details class="trust-review" id="trust-{{ a.name }}"{% if a.trust == "changed" %} open{% endif %}>
+    <summary>{{ "Re-trust" if a.trust == "changed" else "Trust" }} {{ a.title }} {{ a.version }}</summary>
+    <p>From <code>{{ a.review.source }}</code>{% if a.review.old_version %} · trusted before: {{ a.review.old_version }}{% endif %}</p>
+    <ul class="plain">
+      {% for kind, values in a.review.added.items() %}{% for v in values %}<li>{{ ui.status("warn", "new " ~ kind_label[kind] ~ ": " ~ v) }}</li>{% endfor %}{% endfor %}
+      {% if a.review.remote_humans_added %}<li>{{ ui.status("warn", "new permission: paired phones may answer and decide for you (remote_humans)") }}</li>{% endif %}
+      {% if a.review.api_change %}<li>{{ ui.status("warn", "requires_api " ~ a.review.api_change[0] ~ " → " ~ a.review.api_change[1]) }}</li>{% endif %}
+    </ul>
+    <p>Changed files ({{ a.review.changed|length }})</p>
+    <ul class="plain">{% for c in a.review.changed[:50] %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
+    {% if a.review.changelog %}<details><summary>Changelog</summary><pre>{{ a.review.changelog }}</pre></details>{% endif %}
+    <p class="muted">Trusting runs this code inside orch serve with your permissions. Only trust code you have read.</p>
+    <form method="post" action="/workspace/addons/{{ a.name }}/trust" data-dialog="Trust {{ a.name }} {{ a.version }}?" data-dialog-body="It runs inside Mission Control with your permissions. Read what changed above before you trust it." data-dialog-confirm="Trust this version"><input type="hidden" name="ask" value="1"><input type="hidden" name="seen" value="{{ a.review.digest }}"><button type="submit" class="btn btn-primary">Trust this version</button></form>
+  </details>
+  {% endif %}
+</li>
+{% endmacro %}
+
+<section class="card addons-head" aria-labelledby="addons-h" id="addons">
+  <div class="section-head">
+    <h2 id="addons-h">Addons</h2>
+    <span class="muted">{{ on_rows|length }} on · {{ off_rows|length }} available</span>
+    {% if has_custom %}<form method="post" action="/workspace/addons/check-updates"><button type="submit" class="btn">Check for updates</button></form>{% endif %}
+    <form method="post" action="/workspace/addons/update-all"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Update all</button></form>
+  </div>
+  <p>Addons add pages, tiles and ticket panels to Mission Control. Each card says what it adds and what it needs; switch one on to try it, and off again at any time.</p>
+  <details class="addons-how">
+    <summary>How switching on works</summary>
+    <ul>
+      <li>The switch is per workspace and only for you: nobody else's Mission Control changes.</li>
+      <li>Built-in addons come with orch. A custom addon runs only after you trust its exact version, and asks again when its code changes.</li>
+      <li>Addons are never loaded from orchestrator/, so a repository cannot switch one on for you.</li>
+    </ul>
+  </details>
+  {% if addon_rows %}
+  <form class="addons-filter" data-addon-filter role="search" aria-label="Filter addons" hidden>
+    <label class="filter-search">Search <input type="search" name="q" placeholder="Name, page or tool" autocomplete="off"></label>
+    <div class="seg-options" role="radiogroup" aria-label="Show">
+      {% for value, text in (("all", "All"), ("on", "On"), ("off", "Off"), ("attention", "Needs attention")) %}
+      <input type="radio" class="sr-only" name="show" value="{{ value }}" id="addons-show-{{ value }}"{% if value == "all" %} checked{% endif %}><label for="addons-show-{{ value }}">{{ text }}</label>
+      {% endfor %}
+    </div>
+  </form>
+  {% endif %}
+</section>
+
+{% if attention %}
+<div class="callout callout-warn" role="status">
+  <p class="callout-title">{{ ui.icon("warn") }} {{ attention|length }} addon{{ "s" if attention|length != 1 }} need{{ "s" if attention|length == 1 }} a look</p>
+  <p>{% for a in attention %}<a class="lnk" href="#addon-{{ a.name }}">{{ a.title }}</a>{{ ", " if not loop.last }}{% endfor %}</p>
+</div>
+{% endif %}
+
+{% if suggested %}
+<section class="card" aria-labelledby="suggested-h">
+  <h2 id="suggested-h">Suggested by this repo</h2>
+  <ul class="plain">
+    {% for s in suggested %}
+    <li><a class="lnk" href="#addon-{{ s.name }}"><b>{{ s.title }}</b></a> <code>{{ s.name }}</code> ·
+      {% if s.can_enable %}<form method="post" action="/workspace/addons/{{ s.name }}/enable" class="inline"><input type="hidden" name="enabled" value="1"><button type="submit" class="btn">Enable?</button></form>
+      {% elif s.found %}{{ ui.status("neu", "trust it first") }}{% else %}{{ ui.status("neu", "not installed") }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <p class="muted">orchestrator/config.json can only suggest addons. Nothing is enabled until you click.</p>
+</section>
+{% endif %}
+
+{% if addon_rows %}
+{% for key, heading, rows in (("on", "On in this workspace", on_rows), ("off", "Available", off_rows)) if rows %}
+<section class="addon-group" aria-labelledby="addons-{{ key }}-h" data-addon-group>
+  <h2 id="addons-{{ key }}-h">{{ heading }} <span class="count">{{ rows|length }}</span></h2>
+  <ul class="addon-grid">{% for a in rows %}{{ card(a) }}{% endfor %}</ul>
+</section>
+{% endfor %}
+<p class="empty" data-addon-none hidden>No addon matches. Clear the search or pick All.</p>
+{% else %}<p class="empty">No addons found. Built-in addons ship with orch-core; install a custom one with orch addon install.</p>{% endif %}
+
+{#- External addons: listed until installed. Installing is a human terminal step, so the card shows the commands. -#}
+<section class="addon-group" aria-labelledby="addons-more-h" id="addons-more" data-addon-group>
+  <h2 id="addons-more-h">More addons <span class="count">{{ external|length }}</span></h2>
+  <p class="muted">Addons from other repositories. Install one from a terminal (agents cannot install addons); it then shows up above, untrusted until you read its review and trust it.</p>
+  {% if external %}
+  <ul class="addon-grid">
+    {% for e in external %}
+    <li class="addon-item addon-external" id="more-{{ e.name }}" data-addon-item data-on="more" data-attention="0"
+        data-search="{{ (e.title ~ ' ' ~ e.name ~ ' ' ~ e.description ~ ' ' ~ (e.surfaces|map(attribute='label')|join(' ')))|lower }}">
+      <div class="addon-item-head">
+        <span class="addon-glyph">{{ glyph(e.icon_path) }}</span>
+        <div class="addon-who">
+          <h3>{{ e.title }}</h3>
+          <p class="addon-meta"><code>{{ e.name }}</code> · not installed · <a class="lnk" href="{{ e.repo }}" target="_blank" rel="noopener noreferrer">{{ e.repo.removeprefix("https://github.com/") }} ↗</a></p>
+        </div>
+      </div>
+      <p class="addon-desc">{{ e.description }}</p>
+      <div class="addon-facts">
+        <div class="addon-where">
+          <h4>Shows up in</h4>
+          <div class="addon-where-body">
+            {{ preview_map(e.areas) }}
+            <ul class="addon-surfaces">
+              {% for s in e.surfaces %}<li>{% if s.icon and s.icon.startswith("path:") %}{{ glyph(s.icon[5:]) }}{% elif s.icon %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ s.icon }}"/></svg>{% else %}{{ glyph(e.icon_path) }}{% endif %}<span>{{ s.label }}</span></li>{% endfor %}
+            </ul>
+          </div>
+        </div>
+        <div class="addon-needs">
+          <h4>Needs</h4>
+          <ul class="addon-reqs">{% for n in e.needs %}<li class="req-neu">{{ ui.icon("neu") }}<span><span class="req-text">{{ n }}</span></span></li>{% endfor %}</ul>
+        </div>
+      </div>
+      <div class="addon-install">
+        <h4>Install</h4>
+        <ol>
+          {% for label, cmd in e.steps %}<li><span>{{ label }}</span><span class="addon-cmd"><code>{{ cmd }}</code><button type="button" class="btn btn-quiet copy-fix" data-copy="{{ cmd }}">Copy</button></span></li>{% endfor %}
+        </ol>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="addon-own">
+    <h3>Any other addon</h3>
+    <p>From a folder or a git repository; <code>--path</code> picks the addon's folder inside a larger repository.</p>
+    <p class="addon-cmd"><code>orch addon install &lt;folder | git URL&gt; [--path &lt;folder&gt;]</code><button type="button" class="btn btn-quiet copy-fix" data-copy="orch addon install ">Copy</button></p>
+    <p class="muted">Writing your own: start from addon-template in orch-core, see <a class="lnk" href="https://github.com/severinlindenmann/orch-core/blob/main/plugins/orch-core/ADDONS.md" target="_blank" rel="noopener noreferrer">the addon guide ↗</a>.</p>
+  </div>
+</section>
+{% if addon_errors %}<details class="card"><summary>Recent addon errors</summary><pre>{{ addon_errors }}</pre></details>{% endif %}

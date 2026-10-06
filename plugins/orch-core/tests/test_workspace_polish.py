@@ -1,5 +1,5 @@
 """F: Workspace polish (visual review top-10 #8) and the density switch: tabs (Addons default / Setup / Phones /
-Advanced), addon rows with a real switch and their settings in a disclosure (labels above fields), the raw config
+Advanced), addon cards with a real switch, where they show up, what they need and their settings in a disclosure (labels above fields), the raw config
 in <details>, relative repository paths, orch check levels as statuses, and comfortable/compact on the page root."""
 import re
 
@@ -63,19 +63,65 @@ def test_redirects_land_on_their_tab(client, ws):
     assert 'closest("[data-tab-panel][hidden]")' in js  # a #fragment in a hidden panel opens it
 
 
-def test_addon_row_has_a_switch_and_its_settings_in_a_disclosure(client, ws):
-    html = client.get("/workspace").text
-    row = html[html.index('<li class="addon-row" id="addon-alpha">'):]
-    row = row[:row.index("</li>")]
+def _card(html, name):
+    card = html[html.index(f'<li class="addon-item" id="addon-{name}"'):]
+    return card[:card.index("</section>")]
+
+
+def test_addon_card_has_a_switch_and_its_settings_in_a_disclosure(client, ws):
+    card = _card(client.get("/workspace").text, "alpha")
     assert re.search(r'<button type="submit" class="switch" role="switch" aria-checked="false"><span class="switch-track" '
-                     r'aria-hidden="true"></span>Enabled here: off</button>', row)
-    assert "turn on" not in row and "turn off" not in row
-    settings = row[row.index('<details class="addon-settings"'):]
-    assert '<summary class="btn btn-quiet">Settings</summary>' in settings
+                     r'aria-hidden="true"></span><span class="sr-only">Alpha enabled here</span><span aria-hidden="true">Off</span></button>', card)
+    assert "turn on" not in card and "turn off" not in card
+    settings = card[card.index('<details class="addon-settings"'):]
+    assert '<summary class="btn btn-quiet">Settings <span class="muted">(1)</span></summary>' in settings
     assert '<label class="field-col">Repository to watch <input type="text" name="repo"' in settings
     assert '<button type="submit" form="settings-form-alpha" class="btn btn-primary">Save settings</button>' in settings
     client.post("/workspace/addons/alpha/enable", data={"enabled": "1"}, headers=ORIGIN)
-    assert 'role="switch" aria-checked="true"' in client.get("/workspace").text
+    html = client.get("/workspace").text
+    assert 'role="switch" aria-checked="true"' in html
+    assert html.index('id="addons-on-h"') < html.index('id="addon-alpha"')  # an addon that is on moves to "On"
+
+
+def test_addon_card_says_what_it_does_where_it_shows_up_and_what_it_needs(client, ws, monkeypatch):
+    from orch.dashboard import launch
+    monkeypatch.setattr(launch, "which", lambda b: None)  # git missing
+    card = _card(client.get("/workspace").text, "alpha")
+    assert '<p class="addon-desc">Example</p>' in card
+    assert "Its own page in the menu: Hello status" in card
+    assert '<rect class="am-zone is-on" x="3"' in card  # the preview map fills the menu
+    assert '<span class="req-text">git not found</span><span class="req-hint">install git' in card
+    html = client.get("/workspace").text
+    assert "1 addon needs a look" not in html  # missing tools matter only once it is on
+    client.post("/workspace/addons/alpha/enable", data={"enabled": "1"}, headers=ORIGIN)
+    html = client.get("/workspace").text
+    assert '1 addon needs a look' in html and '<a class="lnk" href="#addon-alpha">Alpha</a>' in html
+    assert 'data-attention="1"' in _card(html, "alpha")
+    monkeypatch.setattr(launch, "which", lambda b: "/usr/bin/" + b)
+    assert '<span class="req-text">git installed</span>' in _card(client.get("/workspace").text, "alpha")
+
+
+def test_addon_filter_is_hidden_until_js_runs(client, ws):
+    html = client.get("/workspace").text
+    assert '<form class="addons-filter" data-addon-filter role="search" aria-label="Filter addons" hidden>' in html
+    js = (__import__("pathlib").Path(__file__).resolve().parents[1] / "src/orch/dashboard/static/app.js").read_text()
+    assert 'form[data-addon-filter]' in js and "form.hidden = false" in js
+
+
+def test_surfaces_and_requirements_from_the_manifest(monkeypatch):
+    from orch.addons.manifest import parse_manifest
+    from orch.dashboard import addon_catalog, launch
+    monkeypatch.setattr(launch, "which", lambda b: "/bin/" + b)
+    m = parse_manifest({**GOOD, "menu": None, "capabilities": ["provider", "panel", "decisions", "launch", "settings"],
+                        "slots": ["today.summary", "ticket.code"], "binaries": [], "env": ["GH_TOKEN"]})
+    assert [s["label"] for s in addon_catalog.surfaces("x", m)] == [
+        "A tile on Today", "Ticket page, Code", "Questions for you on Today", "Start agent: how sessions start"]
+    assert addon_catalog.requirements(m, trust="trusted") == [{"role": "neu", "text": "Reads GH_TOKEN when set", "hint": None}]
+    bare = parse_manifest({**GOOD, "binaries": [], "env": []})
+    assert addon_catalog.requirements(bare, trust="trusted") == [{"role": "ok", "text": "Nothing to install", "hint": None}]
+    assert addon_catalog.requirements(bare, trust="untrusted")[0]["text"] == "Trust this version first"
+    assert addon_catalog.surfaces("graph", parse_manifest({**GOOD, "menu": None, "capabilities": [], "settings_schema": []}))[0]["label"] == \
+        "The Graph page in the menu"
 
 
 def test_repositories_show_relative_paths(tmp_path):
@@ -120,3 +166,48 @@ def test_density_and_motion_tokens_are_honoured():
     assert "animation: drawer-in var(--dur-3)" in css and "transition: transform var(--dur-2)" in css
     assert re.search(r"@media \(prefers-reduced-motion: reduce\) \{[^@]*animation: none", css)
 
+
+
+EXTERNAL = {"addons": [
+    {"name": "far-away", "title": "Far away", "description": "Lives in its own repository.",
+     "repo": "https://github.com/example/far-away", "path": "addons/far-away", "needs": ["An account"],
+     "adds": {"capabilities": ["provider", "page", "panel"], "slots": ["ticket.sync"], "menu": {"title": "Far", "icon": "share"},
+              "remote_humans": True}},
+    {"name": "Bad Name", "title": "x", "description": "x", "repo": "https://github.com/example/x"},
+    {"name": "no-https", "title": "x", "description": "x", "repo": "http://example.com/x"},
+    {"name": "climbs", "title": "x", "description": "x", "repo": "https://github.com/example/x", "path": "../etc"},
+]}
+
+
+def test_more_addons_lists_external_ones_with_their_install_commands(client, ws):
+    import json
+    from orch.addons.discovery import default_addons_dir
+    (default_addons_dir() / "external.json").write_text(json.dumps(EXTERNAL), encoding="utf-8")
+    html = client.get("/workspace").text
+    more = html[html.index('id="addons-more"'):]
+    assert '<li class="addon-item addon-external" id="more-far-away"' in more
+    cmd = "orch addon install https://github.com/example/far-away --path addons/far-away"
+    assert f'<code>{cmd}</code><button type="button" class="btn btn-quiet copy-fix" data-copy="{cmd}">Copy</button>' in more
+    assert "Its own page in the menu: Far" in more and "Ticket page, Sync" in more and "Pairs phones (Phones tab)" in more
+    assert "An account" in more and "climbs" not in more and "no-https" not in more and "Bad Name" not in more
+    assert "<form" not in more[:more.index('class="addon-own"')]  # nothing installs from the page
+
+
+def test_an_installed_or_unreadable_external_list_shows_nothing(tmp_path, monkeypatch):
+    import json
+    from orch.dashboard import addon_catalog
+    monkeypatch.setattr(discovery, "default_addons_dir", lambda: tmp_path)
+    assert addon_catalog.external(set()) == []  # no file
+    (tmp_path / "external.json").write_text("{not json", encoding="utf-8")
+    assert addon_catalog.external(set()) == []
+    (tmp_path / "external.json").write_text(json.dumps(EXTERNAL), encoding="utf-8")
+    assert [e["name"] for e in addon_catalog.external(set())] == ["far-away"]
+    assert addon_catalog.external({"far-away"}) == []
+
+
+def test_the_shipped_external_list_is_well_formed():
+    import json
+    from pathlib import Path
+    data = json.loads((Path(__file__).resolve().parents[1] / "addons" / "external.json").read_text(encoding="utf-8"))
+    from orch.dashboard.addon_catalog import _entry
+    assert data["addons"] and all(_entry(e) is not None for e in data["addons"])

@@ -39,7 +39,7 @@ def _table(html):
 
 def test_table_lists_both_kinds(client):
     t = _table(client.get("/workspace").text)
-    assert "Alpha &lt;b&gt;x&lt;/b&gt;" in t and "orch-core plugin" in t and "default" in t
+    assert "Alpha &lt;b&gt;x&lt;/b&gt;" in t and "built in" in t
     assert "hello-status" in t and "custom" in t and "not trusted yet" in t and "0.1.0" in t
     assert 'action="/workspace/addons/hello-status/trust"' in t and "new binary: git" in t
     enable_hello = t[t.index('action="/workspace/addons/hello-status/enable"'):][:400]

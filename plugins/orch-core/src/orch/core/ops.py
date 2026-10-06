@@ -41,6 +41,35 @@ def _choice(field: str, value: str, allowed: tuple) -> None:
         raise UsageError(f"{field} must be one of {', '.join(allowed)}, got {value!r}")
 
 
+MAX_LABEL = 64
+
+
+def check_labels(names) -> list[str]:
+    """Label names as given, in order, each once (#173). A label is one word of up to MAX_LABEL characters: no
+    whitespace, no comma and no hidden characters, so it reads the same everywhere (`customer:arbonia`, `admin`)."""
+    from orch.textsafe import is_hidden
+    out: list[str] = []
+    for raw in names:
+        name = str(raw)
+        if not name:
+            raise UsageError("a label must not be empty")
+        if any(c.isspace() or c == "," or is_hidden(c) for c in name):
+            raise UsageError(f"label {name!r} holds whitespace, a comma or a hidden character",
+                             hint="a label is one word, e.g. customer:arbonia or admin; pass several labels separately")
+        if len(name) > MAX_LABEL:
+            raise UsageError(f"label {name[:20]!r}... is longer than {MAX_LABEL} characters")
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def _current_labels(t: Ticket) -> list[str]:
+    labels = t.meta.get("labels")
+    if isinstance(labels, str):  # a hand-written `labels: admin`
+        return [labels]
+    return [str(x) for x in labels] if isinstance(labels, list) else []
+
+
 def _refuse_hidden(what: str, *texts) -> None:
     """A human decision is refused while the text it binds holds hidden characters (orch.textsafe): controls, bidi,
     zero-width and similar could make the text read differently from what is signed."""
@@ -212,9 +241,11 @@ class Ops(TaskOpsMixin):
 
     def new(self, title: str, *, type: str = "feature", priority: str = "normal", size: str = "m",
             ask: str = "", external: str | None = None, from_ref: str | None = None, epic: str | None = None,
-            sprint: str | None = None, sections: dict[str, str] | None = None) -> Ticket:
+            sprint: str | None = None, sections: dict[str, str] | None = None,
+            labels: list[str] | None = None) -> Ticket:
         """`sections` (#24): Summary, Requirements, Acceptance criteria and Out of scope written at creation, with the
-        same rules as `orch section set`. `self.warnings` names a gated section left empty."""
+        same rules as `orch section set`. `labels` (#173): checked by `check_labels`. `self.warnings` names a gated
+        section left empty."""
         from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
         self.warnings = []
         title = " ".join(title.split())
@@ -228,6 +259,7 @@ class Ops(TaskOpsMixin):
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
         sprint_id = self._sprint(sprint) if sprint else None
+        labels = check_labels(labels or [])
         sections = sections or {}
         unknown = [n for n in sections if n not in SPLIT_SECTIONS]
         if unknown:
@@ -252,12 +284,15 @@ class Ops(TaskOpsMixin):
             ticket.meta["parent"] = parent_epic.id
         if sprint_id:
             ticket.meta["sprint"] = sprint_id
+        if labels:
+            ticket.meta["labels"] = labels
         self._log(ticket, "created" + (f" in epic {parent_epic.id}" if parent_epic else ""))
         with lock(self.ws, tid):
             store.save(self.ws, ticket)
             ticket = store.load(self.ws, tid)[1]  # the ticket as saved: what is returned and warned about is on disk
         self._emit(tid, "ticket.created", {"title": title, "from": source.id if source else None,
                                            **({"epic": parent_epic.id} if parent_epic else {}),
+                                           **({"labels": labels} if labels else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
         if source:
             def link_back(t: Ticket) -> dict:
@@ -452,6 +487,31 @@ class Ops(TaskOpsMixin):
             return changed
 
         return self._mutate(ref, "ticket.edited", fn)
+
+    def label(self, ref: str, *, add: list[str] | None = None, remove: list[str] | None = None) -> Ticket:
+        """Add or remove labels (#173). A label already there (add) or not there (remove) is skipped; when nothing
+        changes, nothing is written. Logged and recorded as a `ticket.edited` event like `link`."""
+        add, remove = check_labels(add or []), check_labels(remove or [])
+        if not add and not remove:
+            raise UsageError("no label given", hint="e.g. `orch label add <id> customer:arbonia`")
+
+        def changes(t: Ticket) -> tuple[list[str], list[str]]:
+            have = _current_labels(t)
+            return [x for x in add if x not in have], [x for x in remove if x in have]
+
+        entry = store.resolve(self.ws, ref)
+        _, current = store.load(self.ws, entry.id)
+        if changes(current) == ([], []):
+            return current
+
+        def fn(t: Ticket) -> dict:
+            added, removed = changes(t)
+            t.meta["labels"] = [x for x in _current_labels(t) if x not in removed] + added
+            parts = ([f"added {', '.join(added)}"] if added else []) + ([f"removed {', '.join(removed)}"] if removed else [])
+            self._log(t, "labels " + "; ".join(parts))
+            return {"labels_added": added, "labels_removed": removed}
+
+        return self._mutate(entry.id, "ticket.edited", fn)
 
     def _reparent(self, t: Ticket, epic: str | None) -> str:
         """Put `t` into the epic `epic` (None: out of its epic). An approved epic's set of children is part of what

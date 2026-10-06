@@ -142,6 +142,8 @@ def describe(event) -> str:
             return f"edited {section}"
         if any(data.get(k) for k in ("branch", "worktree", "pr", "external")):
             return _describe_link(data)
+        if data.get("labels_added") or data.get("labels_removed"):
+            return "changed the labels"
         return "edited the ticket"
     if kind == "log.added":
         return f"logged: {_shorten(data.get('text', ''))}"
@@ -179,6 +181,8 @@ def action_phrase(event) -> str:
     if kind == "ticket.edited":
         if any(d.get(k) for k in ("branch", "pr", "worktree", "external")):
             return "linked code" if not d.get("external") else "linked an issue"
+        if d.get("labels_added") or d.get("labels_removed"):
+            return "changed the labels"
         from orch.core.constants import FILE_ORDER
         return f"edited {d['section']}" if d.get("section") in FILE_ORDER else "edited the ticket"
     return _PHRASE.get(kind, "updated the ticket")

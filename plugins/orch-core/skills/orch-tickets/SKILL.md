@@ -23,6 +23,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (`## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Summary` in the body file go into those sections) |
 | Follow-up | `orch new --from <id> --title "..."` |
 | Epic | `orch new --type epic --title "..."` · child: `orch new --epic <epic> --title "..."` · `orch link <id> --epic <epic>` / `--no-epic` · `orch epic show <epic>` |
+| Labels | `orch new --label customer:acme --label admin ...` · `orch label add <id> customer:acme admin` · `orch label remove <id> admin` · `orch list --label admin` (one word each: no spaces or commas) |
 | Sprint | `orch sprint list` · `orch sprint current` · `orch new --sprint S1 ...` · `orch link <id> --sprint S1` / `--no-sprint` |
 | Claim / release | `orch claim <id>` · `orch release <id>` |
 | Write a section | `orch section set <id> Plan --file plan.md` (or `-m "..."`) |

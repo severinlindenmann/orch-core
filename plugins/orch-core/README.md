@@ -135,6 +135,8 @@ AI Factory (phase 1, off by default; [docs/factory.md](docs/factory.md)): with `
 
 Artifacts: agents link every file or URL they produce for a ticket with `orch artifact add <id> <file>` or `orch artifact add <id> --url <http(s) link>` (`--kind`, `--label`, `--task T3`, `--ac 2`, `--inline`). The list lives in the ticket's frontmatter `artifacts`; `orch artifact scan <id>` links files put straight into `orchestrator/artifacts/<id>/`, and `orch check` warns about unlinked files and URLs. `orch artifact list <id> --json` prints one object per artifact (`name`, `url` or `static`, plus `kind`, `label`, `task`, `ac`, `sha256`, `size`, `added`; a file in the folder that is not linked has `"unlinked": true`); before this it printed `<ticket>/<name>` strings. A section can show a linked image inline with `![what it shows](artifact:<name>)`; such an image in a gated section is part of the approval (see `docs/ticket-schema.md`).
 
+Labels group tickets without an epic (a customer, an area): `orch new --label customer:acme --label admin`, `orch label add <id> NAME...`, `orch label remove <id> NAME...` and `orch list --label NAME`. A label is one word (no spaces or commas); one a ticket already has is skipped. Agents may set them; each change is logged on the ticket. The dashboard's New ticket form takes them too, separated by commas or spaces.
+
 Sprints are planning only: define them in `orchestrator/config.json` as `"sprints": [{"id": "S1", "name": "Sprint 1", "start": "2026-10-01", "end": "2026-10-14"}]`, then `orch new --sprint S1`, `orch link <id> --sprint S1`, `orch sprint list` and `orch sprint current`.
 
 ### Request changes

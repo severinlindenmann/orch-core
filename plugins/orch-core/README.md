@@ -7,7 +7,7 @@
 - **`orch` CLI**: tickets (`new`, `show`, `claim`, `log`, `ask`, `move`, …), human-only gates (`approve`, `request-changes`, `answer`, `verdict`), `check`, `doctor` and a local dashboard (`orch serve`).
 - **Skills**: `orch-tickets`, `orch-refine-ticket`, `orch-work-on-ticket` and `orch-setup`, which guides the onboarding.
 - **Hooks** (Claude Code): a PreToolUse guard and a SessionStart hook that prints the active rules, your claimed tickets and what is waiting on you.
-- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key and rejects AI attribution lines.
+- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key and rejects AI attribution lines; commits of orch's own records alone (`orch records commit`) skip the plan gate.
 
 ## Prerequisites
 
@@ -56,12 +56,14 @@ A workspace set up earlier with harness `claude` has its own `orch guard` hooks 
 
 ## What goes into git
 
-orch never commits on its own, with one exception: the wiki addon's Create page from ticket commits the new page it writes, and only that (the owner's explicit decision; see the addon's README). The files it writes are either shared records or local to one machine:
+orch never commits on its own, with two exceptions: `orch records commit`, which you (or an agent the workspace lets commit) run on purpose, and the wiki addon's Create page from ticket, which commits the new page it writes, and only that (the owner's explicit decision; see the addon's README). The files it writes are either shared records or local to one machine:
 
 - **Commit** (shared records every clone needs): `orchestrator/config.json`, `AGENTS.orch.md`, `tickets/`, `artifacts/`, `static/`, `.state/counter.json`, `.state/events.jsonl` (the event log `orch check` and the receipts read), `.state/gates/`, `.state/remote/ledger.jsonl` (which phone decisions were applied), each addon's `.state/addons/<name>/records/`, and what `orch instructions sync` writes outside `orchestrator/` (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, …).
 - **Local** (caches, locks, spools, per-machine state): `temporary/`, `.state/locks/`, `.state/index.json`, the error logs, `.state/needs-count`, `.state/run/`, every `*.lock`, and the rest of `.state/addons/` (snapshots, cursors, inbox and outbox). The approval ledger and its key live outside the repository, in the orch config dir.
 
-`orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else.
+`orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else, or with `orch records commit`.
+
+`orch records commit` commits exactly the records doctor lists (never caches or locks) with a generated message: the subject `orch: records L-0001, L-0002` names the tickets they belong to and the body lists each changed path. It commits with `git commit --only`, so whatever else is staged stays staged and uncommitted; `--dry-run` shows what it would commit. Agents may run it only where `git.agent_may.commit` is true. The commit check accepts such a commit before plan approval because it holds no code: when every staged path is an orch record, the plan gate is skipped and the fixed subject `orch: records …` is accepted without the body lines; AI attribution is still refused. A commit that mixes records and code gets the full check. The check reads the index git hands the hook, so a commit that names paths (a temporary index) is judged by what it really commits; when git cannot say what is staged, the full check applies.
 
 ## Migrating a workspace from an older orch
 

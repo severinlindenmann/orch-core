@@ -5,17 +5,27 @@ def _yn(value: bool) -> str:
     return "yes" if value else "no"
 
 
+def _git_types(cfg: dict) -> str:
+    """The workspace's git type, plus each repo that overrides it (#165)."""
+    from orch.config.load import repo_git
+    own = repo_git(cfg, None)[0]
+    other = [f"{name}: {kind}" for name in cfg["git"].get("repos") or {}
+             for kind in [repo_git(cfg, name)[0]] if kind != own]
+    return own + (f" ({', '.join(other)})" if other else "")
+
+
 def render_rules(cfg: dict) -> str:
     git, may, commit = cfg["git"], cfg["git"]["agent_may"], cfg["commit"]
     term = git["review_term"]
     trackers = ", ".join(t["prefix"] for t in cfg["external_trackers"]) or "none"
     skip = ", ".join(cfg["gates"]["plan_skip_sizes"]) or "none"
+    req_skip = ", ".join(cfg["gates"].get("requirements_skip_sizes") or ())  # #172: shown only when set
     body = " / ".join(commit["body"]) + (" / Rollback" if commit["rollback"] else "")
     wiki = cfg["wiki"]["type"] + (f" ({cfg['wiki']['space']})" if cfg["wiki"].get("space") else "")
     lines = [
         f"customer: {cfg['customer']}",
         f"ticket ids: {cfg['id']['prefix']}-{'N' * cfg['id']['pad']} (external: {trackers})",
-        f"git: {git['type']} · review term: {term} · branch: {git['branch_pattern']}",
+        f"git: {_git_types(cfg)} · review term: {term} · branch: {git['branch_pattern']}",
         f"agent may commit: {_yn(may['commit'])} · push: {_yn(may['push'])} · open {term}: {_yn(may['open_review'])}",
         f"commit subject: {commit['subject']} · body: {body}",
         "attribution: forbidden (no Co-Authored-By, no 'Generated with', no tool or model names)"
@@ -25,11 +35,14 @@ def render_rules(cfg: dict) -> str:
         "requirements gate: binds Summary, Requirements, Acceptance criteria and Out of scope; it refuses while "
         "Requirements or Acceptance criteria are empty: write them into those sections (`orch new "
         "--requirements-file/--acceptance-file`, or `orch section set <id> Requirements --file …`), not into the Ask",
+        *([f"requirements gate skipped for sizes: {req_skip} (the human takes such a ticket out of backlog without "
+           "approving requirements; it needs no Requirements or Acceptance criteria, the rest of the flow is unchanged)"]
+          if req_skip else []),
         "tasks: write the list with `orch task add` right after claiming; one task in progress; "
         "testing needs every task done or skipped with a reason (every size)",
         "human-only: approve, request changes, answer, verdict, move to open, backlog, in-progress "
         "or done, reopen, close, `orch epic pause`, `orch ledger adopt`, `orch ledger repair`, moving a ticket into or out of an approved "
-        "epic, addon install/update/trust/enable/disable/remove/rollback, `orch widget html on` (agent HTML in widgets, signed; a "
+        "epic, addon install/update/trust/enable/disable/remove/rollback/setup, `orch widget html on` (agent HTML in widgets, signed; a "
         "config edit alone never turns it on); an "
         "agent is recognised "
         "by its environment and its process ancestry, and never acts as the human",

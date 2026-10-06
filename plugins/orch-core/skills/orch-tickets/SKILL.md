@@ -8,9 +8,9 @@ Tickets live in `orchestrator/tickets/<status>/`, one markdown file each; the fo
 
 ## Lifecycle
 
-`backlog` → human approves requirements (with the plan, when you drafted it during refinement: one confirm) → `open` → you claim → `in-progress` → you write the plan and the task list → human approves the plan (skipped for size `xs`; until then `orch task start` and `orch task done` refuse) → work the tasks down → every task done or skipped → `testing` → human verdict → `done`. A blocking question moves `in-progress` → `waiting` until the human answers.
+`backlog` → human approves requirements (with the plan, when you drafted it during refinement: one confirm) → `open` → you claim → `in-progress` → you write the plan and the task list → human approves the plan (skipped for size `xs`; until then `orch task start` and `orch task done` refuse) → work the tasks down → every task done or skipped → `testing` → human verdict → `done`. A blocking question moves `in-progress` → `waiting` until the human answers. When the workspace sets `gates.requirements_skip_sizes` (`orch rules` shows it), a ticket of a listed size needs no Requirements or Acceptance criteria and no requirements approval: the human still moves it to `open`, and everything after that is the same.
 
-You may: create tickets (they land in backlog), refine backlog tickets, claim, write sections, log, ask, link, add artifacts, move `in-progress` → `waiting` or `testing`, create and work tasks while you hold the claim (not `owner: human` ones).
+You may: create tickets (they land in backlog), refine backlog tickets, claim, write sections, log, ask, link, set due dates, add artifacts, move `in-progress` → `waiting` or `testing`, create and work tasks while you hold the claim (not `owner: human` ones).
 Only the human may: approve, request changes, answer, give verdicts, tick `owner: human` tasks, take over an open agent task (`orch task edit <id> T3 --owner human`, logged as "taken over by you"; the task is then theirs to tick), move to `open`, `in-progress` or `done`, or back to `backlog`. orch tells you from the human by your harness's environment and by process ancestry; never try to look human (no stripped environment, no terminal wrappers), the guard and `orch check` both report it. Size and type are part of the requirements approval: once it is approved, leave them alone. The Log is append-only and never names the human as actor (`orch log` adds your lines). Questions for the human go through `orch ask`, never into Requirements or Plan text: a line starting with "Open question", "Question for the human/you" or a bare "TBD" value blocks the approval until the human overrides it. An approval or answer that is not in this machine's approval ledger (made elsewhere, before the ledger, or written by hand) stops claim, task start/done and testing: tell the user to review it with `orch ledger adopt <id>`, or to request changes if they did not make it. Never touch the ledger or its key in the orch config dir. A change request on the requirements or plan is cleared only by editing that gate's section (`orch section set`); a reply in the Log alone does not clear it. When a command exits 3 it is the human's turn: tell them the exact command (for example `orch approve L-0042 plan`) or point them to the dashboard. Do not retry.
 
 ## Commands
@@ -23,7 +23,9 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (`## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Summary` in the body file go into those sections) |
 | Follow-up | `orch new --from <id> --title "..."` |
 | Epic | `orch new --type epic --title "..."` · child: `orch new --epic <epic> --title "..."` · `orch link <id> --epic <epic>` / `--no-epic` · `orch epic show <epic>` |
+| Labels | `orch new --label customer:acme --label admin ...` · `orch label add <id> customer:acme admin` · `orch label remove <id> admin` · `orch list --label admin` (one word each: no spaces or commas) |
 | Sprint | `orch sprint list` · `orch sprint current` · `orch new --sprint S1 ...` · `orch link <id> --sprint S1` / `--no-sprint` |
+| Due date | `orch new --due 2026-10-31 ...` · `orch due <id> 2026-10-31` · `orch due <id> --clear` (YYYY-MM-DD; overdue and due-soon tickets come first within their priority in `orch next`) |
 | Claim / release | `orch claim <id>` · `orch release <id>` |
 | Write a section | `orch section set <id> Plan --file plan.md` (or `-m "..."`) |
 | Task list | `orch task list <id> [--json]` (where you are, `next`, refs) |
@@ -118,6 +120,22 @@ tasks:
 ```
 
 IDs are assigned in file order from the next free number, so `needs` may name tasks the same file creates. Keys: `text` (required, one line), `refs`, `verify`, `needs`, `owner` (`agent` default, or `human`).
+
+## Quick tasks
+
+Where the human has turned them on (`orch quick` says so), quick tasks are one-line jobs too small for a ticket: a typo, a version bump, a dead import. No requirements, plan, task list or verdict. They are `Q-<n>` and live under `orchestrator/.state/quick/`, so go through `orch quick` only.
+
+| Goal | Command |
+|---|---|
+| List | `orch quick [--all] [--json]` · `orch quick show Q-12` |
+| Take one | `orch quick claim Q-12` (one at a time) |
+| Commit | `git commit -m "Q-12 <summary>"` (same body lines as a ticket commit) |
+| Prove it | `orch quick artifact add Q-12 after.png --label "After"` · `--url <link>` (optional, a few at most) |
+| Close | `orch quick done Q-12 -m "what you did"` (the note is required) |
+| Too big | `orch quick promote Q-12` files a backlog ticket with the line as its title |
+| After your ticket | `orch quick near <your ticket>` lists open quick tasks in the files that ticket changed |
+
+You get a quick task when the human starts you on one, when `orch next` lists one (it says `quick`), or once your own ticket is in testing (`orch quick near`). Never while a ticket you hold is still in progress or waiting (`orch quick claim` refuses), never one you filed yourself in the same session, and only where the human allowed it may you add them (`orch quick add`). `orch quick done` checks the size: more commits or files than the workspace allows mark the task "outgrew it" and refuse. Then stop, say so, and leave the decision to the human (make it a ticket, let it finish, or drop it). Reopening, letting it finish, dropping and the settings are the human's.
 
 ## Follow-ups instead of scope creep
 

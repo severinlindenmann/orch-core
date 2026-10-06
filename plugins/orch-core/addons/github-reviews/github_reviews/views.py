@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 
 from orch.addons.widgets import KV, Action, Badge, Callout, Card, Chips, Link, Table, Text, Tile
 
+from .github import NO_ACCESS
 from .pending import pending
 
 STATES = (("review", "Needs your review"), ("mine", "Yours"), ("failing", "Checks failing"), ("draft", "Drafts"),
@@ -148,6 +149,12 @@ def _provider(snap, remote: dict):
     return None
 
 
+def _no_access(snap) -> str:
+    """The message of a repo gh's account cannot see (#165), else ""."""
+    message = snap.message if snap is not None and isinstance(snap.message, str) else ""
+    return message.removeprefix(NO_ACCESS).strip() if message.startswith(NO_ACCESS) else ""
+
+
 def _me_known(d: Data) -> bool:
     return any(s.health != "never_fetched" for s in d.prs.values())
 
@@ -166,7 +173,8 @@ def _repo_card(d: Data, scope: str) -> Card:
     repo = next((r for r in d.repos if r.name == scope), None)
     snap = d.prs.get(scope)
     items = d.items(scope)
-    known = snap is not None and snap.health != "never_fetched"
+    blocked = _no_access(snap)
+    known = snap is not None and snap.health != "never_fetched" and not blocked
     failing = sum(1 for i in items if checks_state(i) == "failed") if known else None
     need_review = "unknown" if _me_unknown(d) else sum(1 for i in items if matches(i, "review", d.me))
     vs = d.local_item(scope, "vs-default")
@@ -180,13 +188,15 @@ def _repo_card(d: Data, scope: str) -> Card:
              _labelled(_badge(d.local_item(scope, "commit-check")), "Commit check")]
     if snap is not None and snap.health not in ("ok", "never_fetched"):
         state.append(Badge("warn" if snap.health != "error" else "err", f"{snap.health}: {snap.message}"[:200]))
+    if blocked:
+        state.append(Badge("err", "no access for this gh account"))
     counts = KV((("open PRs", len(items) if known else None),
                  ("need review", need_review if known else None),
                  ("failing", Badge("err", str(failing)) if failing else failing)), layout="stats")
     body = tuple(w for w in (Chips(tuple(x for x in who if x is not None), label=f"{d.label(scope)}: repository", show_label=False),
                              Chips(tuple(x for x in state if x is not None), label=f"{d.label(scope)}: local state", show_label=False),
                              counts) if not isinstance(w, Chips) or w.items)
-    return Card(d.label(scope), body, role="warn" if snap is not None and snap.health not in ("ok", "never_fetched") else None)
+    return Card(d.label(scope), body, role="warn" if blocked or (snap is not None and snap.health not in ("ok", "never_fetched")) else None)
 
 
 def _login_help(d: Data) -> list:
@@ -251,6 +261,11 @@ def _lists(d: Data, state: str, repo: str) -> list:
     out = []
     for scope in d.scopes():
         if repo and scope != repo:
+            continue
+        blocked = _no_access(d.prs.get(scope))
+        if blocked:  # this repo's own error row; the other repos still show
+            out.append(Card(d.label(scope), (Table(("State", "Problem"), ((Badge("err", "no access"), blocked[:300]),)),),
+                            role="warn"))
             continue
         rows = tuple(_row(d, i) for i in d.items(scope) if matches(i, state, d.me))
         if rows:

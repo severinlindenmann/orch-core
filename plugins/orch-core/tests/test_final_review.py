@@ -238,7 +238,7 @@ def test_addon_verdict_intent_needs_the_verdict_hash(ws, aops, hops, human, clos
 def test_the_ticket_document_publishes_the_verdict_hash(ws, aops, hops, close_tasks):
     from orch.core.events import latest_testing_round, read_events
     from orch.core.schema import SCHEMA_VERSION, ticket_document, ticket_schema
-    assert SCHEMA_VERSION == "1.9.0"  # 1.4: together on approve-requirements needs (F2); 1.5: artifact_items
+    assert SCHEMA_VERSION == "1.10.0"  # 1.4: together on approve-requirements needs (F2); 1.5: artifact_items
     tid = _ready(aops)
     assert ticket_document(ws, store.load(ws, tid)[1])["verdict"] is None
     _to_testing(aops, hops, tid, close_tasks)

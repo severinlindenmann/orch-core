@@ -16,6 +16,17 @@ def _claimed(entry) -> str:
     return f"{entry.id} ({entry.status}, {where})"
 
 
+def _quick_lines(ws, session: str) -> list[str]:
+    from orch.core import quick
+    cfg = quick.settings(ws)
+    if not cfg["enabled"]:
+        return []
+    tasks = [t for t in quick.all_tasks(ws) if t["status"] == "open"]
+    mine = [t["id"] for t in tasks if (quick.active_claim(t, cfg["claim_minutes"]) or {}).get("session") == session]
+    return [f"Quick tasks: {len(tasks)} open" + (f" · held by this session: {', '.join(mine)}" if mine else "")
+            + " (`orch quick`; one at a time, never while your ticket is still in progress)"]
+
+
 def session_start_text(ws, session: str) -> str:
     lines = ["# orch workspace", "", render_rules(ws.config), ""]
     mine = query.list_tickets(ws, session=session)
@@ -28,6 +39,10 @@ def session_start_text(ws, session: str) -> str:
     for i in items[:5]:
         detail = f" {i['detail']}" if i["detail"] else ""
         lines.append(f"- {i['ticket']}: {query.NEEDS_LABELS[i['kind']]}{detail}")
+    try:
+        lines += _quick_lines(ws, session)
+    except Exception:  # never break a session start over quick tasks
+        pass
     try:
         from orch.onboarding import open_setup_items
         open_items = open_setup_items(ws)

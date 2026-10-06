@@ -2,6 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "required": ["schema", "customer", "id"],
+  "$defs": {
+    "since": {"type": "string", "pattern": "^(\\d{4}-\\d{2}-\\d{2}|[0-9a-fA-F]{7,40})$"}
+  },
   "properties": {
     "schema": {"const": 1},
     "customer": {"type": "string"},
@@ -40,7 +43,9 @@
             "properties": {
               "path": {"type": "string"},
               "default_branch": {"type": "string"},
-              "review_url": {"type": "string"}
+              "review_url": {"type": "string"},
+              "type": {"type": "string", "minLength": 1},
+              "base_url": {"type": "string", "pattern": "^(https?://\\S+)?$"}
             }
           }
         },
@@ -66,7 +71,17 @@
         "forbid_attribution": {"type": "boolean"}
       }
     },
-    "gates": {"type": "object", "properties": {"plan_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}}}},
+    "check": {
+      "type": "object",
+      "properties": {
+        "since": {"oneOf": [
+          {"$ref": "#/$defs/since"},
+          {"type": "object", "additionalProperties": {"$ref": "#/$defs/since"}}
+        ]}
+      }
+    },
+    "gates": {"type": "object", "properties": {"plan_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}},
+                                             "requirements_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}}}},
     "claims": {"type": "object", "properties": {"ttl_hours": {"type": "number", "exclusiveMinimum": 0}}},
     "artifacts": {"type": "object", "properties": {"mode": {"type": "string"}, "max_mb": {"type": "number", "exclusiveMinimum": 0}}},
     "temporary": {"type": "object", "properties": {"max_age_days": {"type": "integer", "minimum": 1}}},
@@ -97,6 +112,20 @@
     "addons": {"type": "object", "additionalProperties": {"type": "object"}},
     "feedback": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
     "factory": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "quick": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "prefix": {"type": "string", "pattern": "^[A-Z][A-Z0-9]{0,5}$"},
+        "next": {"enum": ["idle", "first", "never"]},
+        "agents_add": {"type": "boolean"},
+        "max_commits": {"type": "integer", "minimum": 0, "maximum": 50},
+        "max_files": {"type": "integer", "minimum": 0, "maximum": 50},
+        "max_artifacts": {"type": "integer", "minimum": 0, "maximum": 20},
+        "claim_minutes": {"type": "integer", "minimum": 1, "maximum": 1440}
+      }
+    },
     "checks": {
       "type": "object",
       "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,39}$"},

@@ -40,7 +40,7 @@ def parse_agent_may(spec: str) -> dict:
 
 def build_config(*, customer: str, prefix: str, harnesses: list[str], trackers: list[dict], git_type: str | None,
                  git_base_url: str | None, review_term: str | None, agent_may: dict | None,
-                 repos: list[tuple[str, str | None]]) -> dict:
+                 repos: list[tuple[str, str | None]], check_since: str | None = None) -> dict:
     prefix = prefix.upper()
     check_prefix(prefix)
     git: dict = {}
@@ -56,7 +56,7 @@ def build_config(*, customer: str, prefix: str, harnesses: list[str], trackers: 
         git["repos"] = {name: ({"path": path} if path else {}) for name, path in repos}
     cfg = deep_merge(DEFAULTS, {"customer": customer, "id": {"prefix": prefix, "pad": 4},
                                 "harnesses": list(dict.fromkeys(harnesses)), "external_trackers": trackers,
-                                "git": git})
+                                "git": git, **({"check": {"since": check_since}} if check_since else {})})
     errors = validate_schema(cfg)
     if errors:
         raise ValidationError("invalid setup answers: " + "; ".join(errors))

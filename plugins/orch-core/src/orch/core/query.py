@@ -58,7 +58,11 @@ def idle_days(ws, meta: dict, status: str, now: datetime | None = None) -> int |
     return days if days >= limit else None
 
 
-def next_tickets(ws) -> list[store.Entry]:
+def next_tickets(ws, today=None) -> list[store.Entry]:
+    """Open, unblocked tickets by priority; within a priority, the overdue and due-soon ones first (earliest due
+    first, orch.core.due), then by creation."""
+    from orch.core.due import due_state, parse_due, today as local_today
+    today = today or local_today()
     entries = store.scan(ws)
     done = {e.id.upper() for e in entries if e.status == "done"}
     candidates = [
@@ -66,7 +70,12 @@ def next_tickets(ws) -> list[store.Entry]:
         if e.status == "open" and e.meta
         and all(normalize_ref(ws, str(b)).upper() in done for b in e.meta.get("blocked_by") or [])
     ]
-    return sorted(candidates, key=lambda e: (PRIORITY_RANK.get(e.meta.get("priority"), 2), str(e.meta.get("created") or ""), _num(e.id)))
+
+    def key(e: store.Entry):
+        pressing = due_state(e.meta, e.status, today) is not None
+        return (PRIORITY_RANK.get(e.meta.get("priority"), 2), not pressing,
+                parse_due(e.meta.get("due")).isoformat() if pressing else "", str(e.meta.get("created") or ""), _num(e.id))
+    return sorted(candidates, key=key)
 
 
 def search(ws, text: str) -> list[store.Entry]:

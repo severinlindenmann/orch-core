@@ -227,6 +227,34 @@ def remove(name: str) -> None:
     typer.echo(f"removed {name}")
 
 
+@addon_app.command("setup")
+def setup(name: Annotated[str, typer.Argument(help="The addon; only ticket-usage has a setup step.")]) -> None:
+    """Install what an addon needs outside orch. ticket-usage: copy the limits recorder to your Claude dir and add it
+    as your status line in the user-global Claude settings (an existing status line is never replaced)."""
+    from orch.actor import require_human_terminal
+    from orch.addons import usage_recorder as rec
+    from orch.errors import HumanOnlyError, UsageError
+    if name != rec.ADDON:
+        raise UsageError(f"{name} has no setup step", hint=f"only {rec.ADDON} has one: {rec.SETUP_CMD}")
+    # It writes a script every Claude Code session runs and the user-global settings: the human's call.
+    require_human_terminal("setting up the ticket-usage recorder",
+                           hint=f"it changes your user-global Claude settings: run `{rec.SETUP_CMD}` in your own terminal")
+    p = rec.plan()
+    typer.echo(rec.plan_text(p))
+    if p.copy or p.add_status_line:
+        if input(f"Type {name} to go ahead: ").strip() != name:
+            raise HumanOnlyError("confirmation did not match; nothing changed")
+        for line in rec.apply(p):
+            typer.echo(line)
+    manual = rec.manual_steps(p)
+    if manual:
+        typer.echo(manual)
+    elif p.copy or p.add_status_line:
+        typer.echo("Limits appear on the Usage page after Claude Code's next reply.")
+    else:
+        typer.echo("Nothing to change: the recorder is set up.")
+
+
 option_app = typer.Typer(no_args_is_help=True, help="Yes/no options enabled addons add to a ticket. list is for everyone "
                                                     "(agents may read them); set is human-only.")
 addon_app.add_typer(option_app, name="ticket-option")

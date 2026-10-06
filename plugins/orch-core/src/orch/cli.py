@@ -17,6 +17,8 @@ section_app = typer.Typer(no_args_is_help=True, help="Edit ticket sections.")
 artifact_app = typer.Typer(no_args_is_help=True, help="Files produced for a ticket.")
 app.add_typer(section_app, name="section")
 app.add_typer(artifact_app, name="artifact")
+label_app = typer.Typer(no_args_is_help=True, help="Labels on a ticket, e.g. customer:arbonia (`orch list --label`).")
+app.add_typer(label_app, name="label")
 from orch.cli_task import task_app  # noqa: E402  (cli_task imports orch.cli lazily, inside its commands)
 app.add_typer(task_app, name="task")
 
@@ -29,6 +31,8 @@ app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
 from orch.cli_permit import permit_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(permit_app, name="permit")
+from orch.cli_quick import quick_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(quick_app, name="quick")
 from orch.cli_worktree import worktree_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(worktree_app, name="worktree")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
@@ -75,6 +79,7 @@ def _view(ws, ticket) -> dict:
 
 
 def _row(e, ws=None) -> dict:
+    from orch.core.due import due_state
     from orch.core.query import idle_days, resolution
     m = e.meta or {}
     return {
@@ -83,6 +88,7 @@ def _row(e, ws=None) -> dict:
         "id": e.id, "status": e.status, "resolution": resolution(m, e.status),
         "superseded_by": m.get("superseded_by"), "type": m.get("type"), "priority": m.get("priority"),
         "size": m.get("size"), "title": m.get("title"),
+        "due": m.get("due") if isinstance(m.get("due"), str) else None, "due_state": due_state(m, e.status),
         "external": [x.get("key") for x in m.get("external") or [] if isinstance(x, dict)],
         "error": e.error,
     }
@@ -99,9 +105,10 @@ def _fmt(r: dict) -> str:
     title = r["title"] if r["title"] is not None else f"⚠ {r['error']}"
     ext = f"  [{', '.join(r['external'])}]" if r["external"] else ""
     idle = f"  ⚠ idle {r['idle_days']}d, revalidate" if r.get("idle_days") else ""
+    due = f"  due {r['due']}" + {"overdue": " (overdue)", "soon": " (soon)"}.get(r.get("due_state") or "", "") if r.get("due") else ""
     res = r.get("resolution")
     why = f"  ({res}" + (f" by {r['superseded_by']}" if r.get("superseded_by") else "") + ")" if res and res != "completed" else ""
-    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{idle}{why}"
+    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{due}{idle}{why}"
 
 
 # -- entry point -----------------------------------------------------------------------
@@ -197,6 +204,9 @@ def new(
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
     epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
+    due: Annotated[Optional[str], typer.Option("--due", help="Due date, YYYY-MM-DD (optional).")] = None,
+    label: Annotated[Optional[list[str]], typer.Option(
+        "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
         "--body-file", exists=True, dir_okay=False,
         help="Markdown for the Ask. Its `## Requirements`, `## Acceptance criteria`, `## Out of scope` and "
@@ -229,7 +239,7 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections)
+                epic=epic, sprint=sprint, sections=sections, labels=label, due=due)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")
@@ -311,11 +321,27 @@ def path(ref: str) -> None:
 
 @app.command("next")
 def next_(summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
-    """Open, unblocked tickets by priority (top 5)."""
+    """Open, unblocked tickets by priority, overdue and due-soon ones first within a priority (top 5); quick tasks too, where the workspace has them on."""
     from orch.core import query
     ws = _ws()
     rows = [_row(e, ws) for e in query.next_tickets(ws)][:5]
+    rows = _with_quick(ws, rows)
     _out(rows, json_out, _lines(rows, summary) or "nothing open")
+
+
+def _with_quick(ws, rows: list[dict]) -> list[dict]:
+    """`quick.next`: "idle" adds quick tasks only when no ticket is ready, "first" puts them before the tickets,
+    "never" leaves them out. Each row says `"quick": true`; `orch quick claim` takes one."""
+    from orch.actor import cli_actor
+    from orch.core import quick
+    cfg = quick.settings(ws)
+    if not cfg["enabled"] or cfg["next"] == "never" or (cfg["next"] == "idle" and rows):
+        return rows
+    picks = [{"idle_days": None, "summary": None, "id": t["id"], "status": "open", "resolution": None,
+              "superseded_by": None, "type": "quick", "priority": None, "size": None, "title": t["title"],
+              "external": [], "error": None, "quick": True, "area": t.get("area")}
+             for t in quick.pickable(ws, cli_actor())][:5]
+    return (picks + rows)[:5] if cfg["next"] == "first" else picks
 
 
 @app.command()
@@ -426,13 +452,50 @@ def link(
     no_epic: Annotated[bool, typer.Option("--no-epic", help="Take the ticket out of its epic.")] = False,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="Plan the ticket into this sprint.")] = None,
     no_sprint: Annotated[bool, typer.Option("--no-sprint", help="Take the ticket out of its sprint.")] = False,
+    state: Annotated[Optional[str], typer.Option("--state", help="The --pr's state: open, merged, declined or draft (default: unknown until a provider reports).")] = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Link a repo, PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
     ws = _ws()
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
-                      no_epic=no_epic, sprint=sprint, no_sprint=no_sprint)
+                      no_epic=no_epic, sprint=sprint, no_sprint=no_sprint, pr_state=state)
     _out(_view(ws, t), json_out, f"{t.id}: linked")
+
+
+@app.command()
+def due(
+    ref: str,
+    date: Annotated[Optional[str], typer.Argument(help="Due date, YYYY-MM-DD.")] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Remove the due date.")] = False,
+    json_out: JsonOpt = False,
+) -> None:
+    """Set a ticket's due date (YYYY-MM-DD) or remove it with --clear. Agents may run it."""
+    if (date is None) == (not clear):
+        raise UsageError("pass a date (YYYY-MM-DD) or --clear", hint="e.g. orch due L-0042 2026-10-31")
+    ws = _ws()
+    t = _ops(ws).set_due(ref, None if clear else date)
+    _out(_view(ws, t), json_out, f"{t.id}: due {t.meta['due']}" if t.meta.get("due") else f"{t.id}: no due date")
+
+
+LabelsArg = Annotated[list[str], typer.Argument(help="Label names, e.g. customer:arbonia admin.")]
+
+
+def _label_out(ws, t, json_out: bool) -> None:
+    _out(_view(ws, t), json_out, f"{t.id}: labels " + (", ".join(t.meta.get("labels") or []) or "none"))
+
+
+@label_app.command("add")
+def label_add(ref: str, names: LabelsArg, json_out: JsonOpt = False) -> None:
+    """Add labels to a ticket, e.g. `orch label add L-0042 customer:arbonia admin`; one it already has is skipped."""
+    ws = _ws()
+    _label_out(ws, _ops(ws).label(ref, add=names), json_out)
+
+
+@label_app.command("remove")
+def label_remove(ref: str, names: LabelsArg, json_out: JsonOpt = False) -> None:
+    """Remove labels from a ticket; one it does not have is skipped."""
+    ws = _ws()
+    _label_out(ws, _ops(ws).label(ref, remove=names), json_out)
 
 
 # -- questions and gates (human-only where noted) --------------------------------------
@@ -1143,6 +1206,7 @@ def init(
 ) -> None:
     """Create orchestrator/ with config.json and the folder layout, then write the agent instructions."""
     from orch.config.answers import build_config, parse_agent_may, parse_repo, parse_tracker
+    from orch.clock import now
     from orch.config.load import load_config
     from orch.core.fsutil import atomic_write_text
     from orch.core.workspace import Workspace
@@ -1159,7 +1223,8 @@ def init(
                        trackers=[parse_tracker(t) for t in tracker or []], git_type=git_type,
                        git_base_url=git_base_url, review_term=review_term,
                        agent_may=parse_agent_may(agent_may) if agent_may is not None else None,
-                       repos=[parse_repo(r) for r in repo or []])
+                       repos=[parse_repo(r) for r in repo or []],
+                       check_since=now().date().isoformat())  # history before adoption is not checked (#165)
     atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     ws = Workspace(home=home, config=load_config(home))
     ws.ensure_layout()
@@ -1252,15 +1317,37 @@ def hooks_install(
     repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Install even where a commit-msg hook exists in .git/hooks (that hook is kept as commit-msg.pre-orch and runs after the orch check).")] = False,
     stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists; under core.hooksPath it is delegated like commit-msg). A commit that names paths may not carry the staged records.")] = False,
+    untracked: Annotated[bool, typer.Option("--untracked", help="Change no tracked file and no existing hook: point this clone's own core.hooksPath at <git dir>/orch-hooks, where each hook runs orch's part and then the hook that ran before. `orch hooks uninstall` puts the old core.hooksPath back.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Install the commit-msg check into each repo's own hooks directory; other hooks keep working.
 
     A repo with core.hooksPath set to a folder of its own also gets a commit-msg there (or the call added to its
-    existing one) that runs the check; that file is part of the repo and has to be committed."""
+    existing one) that runs the check; that file is part of the repo and has to be committed. --untracked avoids
+    that."""
     from orch.hooks.install import install_hooks
     ws = _ws()
-    rows = [{"repo": str(p), "action": a} for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records)]
+    rows = [{"repo": str(p), "action": a}
+            for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records, untracked=untracked)]
+    _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
+
+
+@hooks_app.command("uninstall")
+def hooks_uninstall(
+    repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Undo `orch hooks install --untracked`: the clone's previous core.hooksPath comes back. Human only."""
+    from orch.actor import agent_harness
+    from orch.errors import HumanOnlyError
+    from orch.hooks.install import configured_repos, uninstall_untracked
+    harness = agent_harness()
+    if harness:  # it switches the commit check off, like changing core.hooksPath, which the guard refuses too
+        raise HumanOnlyError(f"orch hooks uninstall refused: running inside an agent harness ({harness})",
+                             hint="ask the user to run it in their own terminal")
+    ws = _ws()
+    targets = [p.resolve() for p in repo] if repo else configured_repos(ws)
+    rows = [{"repo": str(p), "action": uninstall_untracked(p)} for p in targets]
     _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
 
 
@@ -1600,11 +1687,18 @@ def feedback_dismiss(report_id: Annotated[str, typer.Argument(help="fb-… id fr
 @app.command()
 def doctor(
     fix: Annotated[bool, typer.Option("--fix", help="Write the orch block of orchestrator/.gitignore (nothing else).")] = False,
+    init_git: Annotated[bool, typer.Option("--init-git", help="Make a workspace root that is a plain folder of git repos a local-only git repository: git init, plus .gitignore blocks for the configured repos, .claude/worktrees/ and orch's caches. Adds no remote and commits nothing.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Check this repository's orch setup and say how to fix what is missing. Changes no files or settings (except
-    the orch block of orchestrator/.gitignore with --fix); may recreate missing orchestrator folders."""
+    the orch block of orchestrator/.gitignore with --fix, and the local repository --init-git sets up); may
+    recreate missing orchestrator folders."""
     from orch.onboarding import doctor as run_doctor
+    if init_git:
+        from orch.onboarding import init_root_repo
+        done = init_root_repo(_ws())
+        if not json_out:
+            typer.echo("\n".join(f"{action:<11} {what}" for action, what in done))
     if fix:
         from orch.core.gitfiles import write_ignore_block
         ws = _ws()

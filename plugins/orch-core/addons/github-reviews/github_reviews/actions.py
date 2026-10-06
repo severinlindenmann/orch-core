@@ -8,7 +8,7 @@ import re
 from orch.addons.api import Intent
 from orch.errors import ValidationError
 
-from .gh import classify
+from .gh import GhFailure, classify, token_env
 from .pending import record
 from .views import failed_runs
 
@@ -27,7 +27,12 @@ def _find(ctx, target) -> dict:
 
 
 def _gh(ctx, argv: list[str]) -> None:
-    r = ctx.run(argv, timeout=60)  # AddonRunError (missing gh, timeout) is an OrchError: the dashboard shows it
+    try:
+        env = token_env(ctx)  # the workspace's gh_user account, as the page's fetch uses
+    except GhFailure as f:
+        raise ValidationError(f.message) from f
+    # AddonRunError (missing gh, timeout) is an OrchError: the dashboard shows it
+    r = ctx.run(argv, timeout=60, env=env) if env else ctx.run(argv, timeout=60)
     if r.returncode != 0:
         raise ValidationError(classify(r.returncode, r.stderr)[1])
 

@@ -28,7 +28,7 @@ DEFAULTS: dict = {
     },
     "wiki": {"type": "markdown", "base_url": "", "space": ""},
     "commit": {"subject": "{key} {summary}", "body": ["What", "Why", "Risk"], "rollback": False, "forbid_attribution": True},
-    "gates": {"plan_skip_sizes": ["xs"]},
+    "gates": {"plan_skip_sizes": ["xs"], "requirements_skip_sizes": []},
     "claims": {"ttl_hours": 4},
     "artifacts": {"mode": "local"},
     "temporary": {"max_age_days": 14},
@@ -60,6 +60,11 @@ DEFAULTS: dict = {
     # Named checks (orch.core.receipts): what `orch task done --run` runs for a verify line `check:<name>`, step by
     # step. Each project says what its verification takes; the guard refuses an agent edit of this key.
     "checks": {},
+    # Quick tasks (orch.core.quick): one-line jobs outside the ticket flow. Off until the human turns them on with
+    # `orch quick enable`; that switch, agents_add and the size limits are signed into the ledger, so a config edit
+    # alone never turns them on or widens them.
+    "quick": {"enabled": False, "prefix": "Q", "next": "idle", "agents_add": False, "max_commits": 1, "max_files": 3,
+              "max_artifacts": 5, "claim_minutes": 30},
 }
 
 _CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
@@ -67,6 +72,23 @@ MAX_CHECK_STEPS = 20
 # Under the 600 s an agent harness's shell call allows, so the harness never kills a run before orch does; a check
 # that needs longer says so itself (`checks.<name>.timeout`).
 DEFAULT_CHECK_TIMEOUT = 540
+
+
+def repo_git(cfg: dict, name: str | None) -> tuple[str, str]:
+    """(type, base_url) of the git host of repo `name`: `git.repos.<name>.type` / `base_url` over the workspace's
+    `git.type` / `git.base_url` (#165). A repo whose type differs from the workspace's never inherits its base_url,
+    which belongs to the other host."""
+    git = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    ws_type = _str(git.get("type")) or "github"
+    repos = git.get("repos") if isinstance(git.get("repos"), dict) else {}
+    spec = repos.get(name) if name is not None and isinstance(repos.get(name), dict) else {}
+    kind = _str(spec.get("type")) or ws_type
+    base = _str(spec.get("base_url")) or (_str(git.get("base_url")) if kind == ws_type else "")
+    return kind, base.rstrip("/")
+
+
+def _str(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def check_timeout(cfg: dict, name: str | None) -> int | None:

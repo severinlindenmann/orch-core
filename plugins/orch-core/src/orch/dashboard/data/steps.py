@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 
 from orch.clock import parse_stamp
-from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state, human_questions_in
+from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state, human_questions_in, requirements_skipped
 from orch.core.lifecycle import unanswered_blocking
 
 STEP_NAMES = ("Requirements", "Plan", "Work", "Testing", "Done")
@@ -39,12 +39,13 @@ def _claim(ticket) -> dict:
     return c if isinstance(c, dict) else {}
 
 
-def steps(ticket, *, plan_skip_sizes=()) -> list[dict]:
+def steps(ticket, *, plan_skip_sizes=(), requirements_skip_sizes=()) -> list[dict]:
     """The five-step tracker: Requirements, Plan, Work, Testing, Done (an epic: without Plan).
 
     A step is done when its gate is approved or the ticket's status is already past it
     (backlog < open < in-progress < waiting < testing < done). Plan is "skipped" when the size is
-    in `plan_skip_sizes` and no plan was ever approved (an approved plan edited later shows as changed). Exactly one step is current: the first one that
+    in `plan_skip_sizes` and no plan was ever approved (an approved plan edited later shows as changed); Requirements
+    likewise for `requirements_skip_sizes` (#172). Exactly one step is current: the first one that
     is neither done nor skipped, or Done once the ticket is done. A gate or verdict that waits for
     the human says "Your turn"; a gate the human sent back says "Changes requested".
     """
@@ -52,6 +53,8 @@ def steps(ticket, *, plan_skip_sizes=()) -> list[dict]:
     rank = STATUS_ORDER.get(status, 0)
     req, plan = gate_state(ticket, "requirements"), gate_state(ticket, "plan")
     skipped = ticket.meta.get("size") in tuple(plan_skip_sizes) and plan == "pending"
+    req_skipped = req == "pending" and requirements_skipped(ticket.meta.get("size"), requirements_skip_sizes,
+                                                            ticket.meta.get("type"))
     claim = _claim(ticket)
 
     def gate_note(gate: str, state: str, waits: bool) -> str:
@@ -68,8 +71,8 @@ def steps(ticket, *, plan_skip_sizes=()) -> list[dict]:
                  and bool(ticket.section("Requirements").strip()) and bool(ticket.section("Acceptance criteria").strip()))
     plan_waits = status in ("in-progress", "waiting") and bool(ticket.section("Plan").strip())
     rows = [
-        ("done" if req == "approved" or rank >= STATUS_ORDER["open"] else None,
-         gate_note("requirements", req, req_waits)),
+        ("skipped" if req_skipped else "done" if req == "approved" or rank >= STATUS_ORDER["open"] else None,
+         "skipped" if req_skipped else gate_note("requirements", req, req_waits)),
         ("skipped" if skipped else "done" if plan == "approved" or rank >= STATUS_ORDER["testing"] else None,
          "skipped" if skipped else gate_note("plan", plan, plan_waits)),
         ("done" if rank >= STATUS_ORDER["testing"] else None,
@@ -250,7 +253,7 @@ def _candidate(ticket, item: dict, plan_skip_sizes, moves) -> dict:
     return {"text": "Something on this ticket waits for you.", "action": None, "rank": 0}
 
 
-def _agent_text(ticket, plan_skip_sizes) -> str:
+def _agent_text(ticket, plan_skip_sizes, requirements_skip_sizes=()) -> str:
     for gate in GATE_SECTIONS:
         if changes_pending(ticket, gate):
             cr = (_gates(ticket).get(gate) or {}).get("changes_requested") or {}
@@ -259,11 +262,16 @@ def _agent_text(ticket, plan_skip_sizes) -> str:
                     + f". The agent updates the {gate} next; you look again after that.")
     status = ticket.status
     plan_needed = ticket.meta.get("size") not in tuple(plan_skip_sizes)
+    req_skipped = (gate_state(ticket, "requirements") == "pending"
+                   and requirements_skipped(ticket.meta.get("size"), requirements_skip_sizes, ticket.meta.get("type")))
     if status == "backlog":
+        if req_skipped:
+            return "This size skips the requirements gate. Move it to open when an agent should pick it up."
         return "An agent refines the requirements next; you approve them after that."
     if status == "open":
-        return ("Requirements are approved. An agent writes the plan next; you approve it after that." if plan_needed
-                else "Requirements are approved. An agent picks up the work next.")
+        done = "This size skips the requirements gate." if req_skipped else "Requirements are approved."
+        return (f"{done} An agent writes the plan next; you approve it after that." if plan_needed
+                else f"{done} An agent picks up the work next.")
     if status in ("in-progress", "waiting"):
         if plan_needed and gate_state(ticket, "plan") != "approved" and not ticket.section("Plan").strip():
             return "An agent writes the plan next; you approve it after that."
@@ -275,7 +283,7 @@ def _agent_text(ticket, plan_skip_sizes) -> str:
     return "An agent takes the next step."
 
 
-def your_move(ticket, needs_items, *, plan_skip_sizes=(), moves=()) -> dict:
+def your_move(ticket, needs_items, *, plan_skip_sizes=(), moves=(), requirements_skip_sizes=()) -> dict:
     """Whose move it is: {"kind": "human" | "agent", "text", "action": dict | None, "more": [...]}.
 
     `needs_items` are query.needs_you() items (other tickets' items are ignored); in needs_you's
@@ -293,7 +301,8 @@ def your_move(ticket, needs_items, *, plan_skip_sizes=(), moves=()) -> dict:
         first = cands[0]
         more = [{"text": c["text"], "action": c["action"]} for c in cands[1:] if c["rank"] == 1]
         return {"kind": "human", "text": first["text"], "action": first["action"], "more": more}
-    return {"kind": "agent", "text": _agent_text(ticket, plan_skip_sizes), "action": None, "more": []}
+    return {"kind": "agent", "text": _agent_text(ticket, plan_skip_sizes, requirements_skip_sizes), "action": None,
+            "more": []}
 
 
 # ---------- plan checklist ----------

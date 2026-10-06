@@ -48,6 +48,9 @@
           <label class="field-col" for="external"><span>External key <span class="muted">(optional)</span></span>
             <input id="external" name="external" value="{{ values.get('external', '') }}" placeholder="ABC-123">
           </label>
+          <label class="field-col" for="labels"><span>Labels <span class="muted">(optional)</span></span>
+            <input id="labels" name="labels" value="{{ values.get('labels', '') }}" placeholder="customer:acme, admin">
+          </label>
         </div>
         <p class="field-hint">Type and size are part of what you approve with the requirements, so the agent may suggest others while it refines the ticket.</p>
         {% set opts = ticket_options() %}

@@ -17,6 +17,8 @@ section_app = typer.Typer(no_args_is_help=True, help="Edit ticket sections.")
 artifact_app = typer.Typer(no_args_is_help=True, help="Files produced for a ticket.")
 app.add_typer(section_app, name="section")
 app.add_typer(artifact_app, name="artifact")
+label_app = typer.Typer(no_args_is_help=True, help="Labels on a ticket, e.g. customer:arbonia (`orch list --label`).")
+app.add_typer(label_app, name="label")
 from orch.cli_task import task_app  # noqa: E402  (cli_task imports orch.cli lazily, inside its commands)
 app.add_typer(task_app, name="task")
 
@@ -197,6 +199,8 @@ def new(
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
     epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
+    label: Annotated[Optional[list[str]], typer.Option(
+        "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
         "--body-file", exists=True, dir_okay=False,
         help="Markdown for the Ask. Its `## Requirements`, `## Acceptance criteria`, `## Out of scope` and "
@@ -229,7 +233,7 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections)
+                epic=epic, sprint=sprint, sections=sections, labels=label)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")
@@ -434,6 +438,27 @@ def link(
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
                       no_epic=no_epic, sprint=sprint, no_sprint=no_sprint, pr_state=state)
     _out(_view(ws, t), json_out, f"{t.id}: linked")
+
+
+LabelsArg = Annotated[list[str], typer.Argument(help="Label names, e.g. customer:arbonia admin.")]
+
+
+def _label_out(ws, t, json_out: bool) -> None:
+    _out(_view(ws, t), json_out, f"{t.id}: labels " + (", ".join(t.meta.get("labels") or []) or "none"))
+
+
+@label_app.command("add")
+def label_add(ref: str, names: LabelsArg, json_out: JsonOpt = False) -> None:
+    """Add labels to a ticket, e.g. `orch label add L-0042 customer:arbonia admin`; one it already has is skipped."""
+    ws = _ws()
+    _label_out(ws, _ops(ws).label(ref, add=names), json_out)
+
+
+@label_app.command("remove")
+def label_remove(ref: str, names: LabelsArg, json_out: JsonOpt = False) -> None:
+    """Remove labels from a ticket; one it does not have is skipped."""
+    ws = _ws()
+    _label_out(ws, _ops(ws).label(ref, remove=names), json_out)
 
 
 # -- questions and gates (human-only where noted) --------------------------------------

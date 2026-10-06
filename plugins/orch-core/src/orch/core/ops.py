@@ -12,7 +12,7 @@ from orch.core import evidence, store, trackers
 from orch.core.constants import PRIORITIES, RESOLUTIONS, SECTIONS, SIZES, STATUSES, SUCCEEDED, TYPES
 from orch.core.events import Actor, Event, append_event, log_line
 from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, clear_gate, gate_hash, gate_state, human_questions_in,
-                             record_approval)
+                             record_approval, requirements_required, requirements_skip_sizes)
 from orch.core.ids import next_id
 from orch.core.lifecycle import HUMAN_HINT, check_move, require_human, unanswered_blocking
 from orch.core.locks import lock
@@ -40,6 +40,35 @@ def claim_expired(claim: dict, ttl_hours: float) -> bool:
 def _choice(field: str, value: str, allowed: tuple) -> None:
     if value not in allowed:
         raise UsageError(f"{field} must be one of {', '.join(allowed)}, got {value!r}")
+
+
+MAX_LABEL = 64
+
+
+def check_labels(names) -> list[str]:
+    """Label names as given, in order, each once (#173). A label is one word of up to MAX_LABEL characters: no
+    whitespace, no comma and no hidden characters, so it reads the same everywhere (`customer:arbonia`, `admin`)."""
+    from orch.textsafe import is_hidden
+    out: list[str] = []
+    for raw in names:
+        name = str(raw)
+        if not name:
+            raise UsageError("a label must not be empty")
+        if any(c.isspace() or c == "," or is_hidden(c) for c in name):
+            raise UsageError(f"label {name!r} holds whitespace, a comma or a hidden character",
+                             hint="a label is one word, e.g. customer:arbonia or admin; pass several labels separately")
+        if len(name) > MAX_LABEL:
+            raise UsageError(f"label {name[:20]!r}... is longer than {MAX_LABEL} characters")
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def _current_labels(t: Ticket) -> list[str]:
+    labels = t.meta.get("labels")
+    if isinstance(labels, str):  # a hand-written `labels: admin`
+        return [labels]
+    return [str(x) for x in labels] if isinstance(labels, list) else []
 
 
 def _refuse_hidden(what: str, *texts) -> None:
@@ -129,6 +158,10 @@ class Ops(TaskOpsMixin):
         return tuple(self.ws.config["gates"]["plan_skip_sizes"])
 
     @property
+    def _req_skip_sizes(self) -> tuple:
+        return requirements_skip_sizes(self.ws)
+
+    @property
     def _session(self) -> str:
         return self.actor.session or "local"
 
@@ -213,9 +246,11 @@ class Ops(TaskOpsMixin):
 
     def new(self, title: str, *, type: str = "feature", priority: str = "normal", size: str = "m",
             ask: str = "", external: str | None = None, from_ref: str | None = None, epic: str | None = None,
-            sprint: str | None = None, sections: dict[str, str] | None = None) -> Ticket:
+            sprint: str | None = None, sections: dict[str, str] | None = None,
+            labels: list[str] | None = None) -> Ticket:
         """`sections` (#24): Summary, Requirements, Acceptance criteria and Out of scope written at creation, with the
-        same rules as `orch section set`. `self.warnings` names a gated section left empty."""
+        same rules as `orch section set`. `labels` (#173): checked by `check_labels`. `self.warnings` names a gated
+        section left empty."""
         from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
         self.warnings = []
         title = " ".join(title.split())
@@ -229,6 +264,7 @@ class Ops(TaskOpsMixin):
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
         sprint_id = self._sprint(sprint) if sprint else None
+        labels = check_labels(labels or [])
         sections = sections or {}
         unknown = [n for n in sections if n not in SPLIT_SECTIONS]
         if unknown:
@@ -253,12 +289,15 @@ class Ops(TaskOpsMixin):
             ticket.meta["parent"] = parent_epic.id
         if sprint_id:
             ticket.meta["sprint"] = sprint_id
+        if labels:
+            ticket.meta["labels"] = labels
         self._log(ticket, "created" + (f" in epic {parent_epic.id}" if parent_epic else ""))
         with lock(self.ws, tid):
             store.save(self.ws, ticket)
             ticket = store.load(self.ws, tid)[1]  # the ticket as saved: what is returned and warned about is on disk
         self._emit(tid, "ticket.created", {"title": title, "from": source.id if source else None,
                                            **({"epic": parent_epic.id} if parent_epic else {}),
+                                           **({"labels": labels} if labels else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
         if source:
             def link_back(t: Ticket) -> dict:
@@ -266,7 +305,7 @@ class Ops(TaskOpsMixin):
                 self._log(t, f"follow-up {tid} created")
                 return {"follow_up": tid}
             self._mutate(source.id, "ticket.edited", link_back)
-        self.warnings = empty_gate_warnings(ticket)
+        self.warnings = empty_gate_warnings(ticket) if requirements_required(self.ws, ticket) else []
         return ticket
 
     def _epic_target(self, ref: str, *, child_type: str) -> store.Entry:
@@ -396,7 +435,7 @@ class Ops(TaskOpsMixin):
                         "cannot tick " + ", ".join(f"AC{n}" for n in unproven) + " without evidence",
                         hint="add a line such as `- AC1: <what proved it> (<command or link>)` to Verification first")
             self._log(t, f"updated {canonical}")
-            if t.status == "backlog":
+            if t.status == "backlog" and requirements_required(self.ws, t):
                 from orch.core.body import empty_gate_warnings
                 self.warnings = empty_gate_warnings(t)
             return {"section": canonical}
@@ -467,6 +506,31 @@ class Ops(TaskOpsMixin):
 
         return self._mutate(ref, "ticket.edited", fn)
 
+    def label(self, ref: str, *, add: list[str] | None = None, remove: list[str] | None = None) -> Ticket:
+        """Add or remove labels (#173). A label already there (add) or not there (remove) is skipped; when nothing
+        changes, nothing is written. Logged and recorded as a `ticket.edited` event like `link`."""
+        add, remove = check_labels(add or []), check_labels(remove or [])
+        if not add and not remove:
+            raise UsageError("no label given", hint="e.g. `orch label add <id> customer:arbonia`")
+
+        def changes(t: Ticket) -> tuple[list[str], list[str]]:
+            have = _current_labels(t)
+            return [x for x in add if x not in have], [x for x in remove if x in have]
+
+        entry = store.resolve(self.ws, ref)
+        _, current = store.load(self.ws, entry.id)
+        if changes(current) == ([], []):
+            return current
+
+        def fn(t: Ticket) -> dict:
+            added, removed = changes(t)
+            t.meta["labels"] = [x for x in _current_labels(t) if x not in removed] + added
+            parts = ([f"added {', '.join(added)}"] if added else []) + ([f"removed {', '.join(removed)}"] if removed else [])
+            self._log(t, "labels " + "; ".join(parts))
+            return {"labels_added": added, "labels_removed": removed}
+
+        return self._mutate(entry.id, "ticket.edited", fn)
+
     def unlink_worktree(self, ref: str, repo: str) -> Ticket:
         """Drop the ticket's worktree link in `repo` (`orch worktree remove`); repo and branch links stay."""
         def fn(t: Ticket) -> dict:
@@ -533,7 +597,8 @@ class Ops(TaskOpsMixin):
                 from orch.core.ledger import require_signed
                 require_signed(self.ws, t, ("requirements",)
                                + (("plan",) if t.meta.get("size") not in self._skip_sizes else ()))
-            check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="move", open_blockers=blockers)
+            check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="move", open_blockers=blockers,
+                       requirements_skip_sizes=self._req_skip_sizes)
             if (frm, to) == ("in-progress", "testing"):
                 loose = self._register_loose(t)
                 self.warnings = self._handover_warnings(t)
@@ -616,14 +681,15 @@ class Ops(TaskOpsMixin):
         return self._mutate(ref, "ticket.moved", fn)
 
     def reopen(self, ref: str, reason: str) -> Ticket:
-        """Human only: done → open when the requirements are still approved, else backlog."""
+        """Human only: done → open when the requirements are still approved (or its size skips them), else backlog."""
         require_human(self.actor, "reopening a ticket")
         reason = " ".join((reason or "").split())
         if not reason:
             raise UsageError("reopening a ticket needs a reason")
 
         def fn(t: Ticket) -> dict:
-            to = "open" if gate_state(t, "requirements") == "approved" else "backlog"
+            to = "open" if (gate_state(t, "requirements") == "approved" or not requirements_required(self.ws, t)) \
+                else "backlog"
             check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="reopen")
             t.meta["status"] = to
             t.meta.setdefault("gates", {}).pop("verify", None)

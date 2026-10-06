@@ -28,7 +28,7 @@ DEFAULTS: dict = {
     },
     "wiki": {"type": "markdown", "base_url": "", "space": ""},
     "commit": {"subject": "{key} {summary}", "body": ["What", "Why", "Risk"], "rollback": False, "forbid_attribution": True},
-    "gates": {"plan_skip_sizes": ["xs"]},
+    "gates": {"plan_skip_sizes": ["xs"], "requirements_skip_sizes": []},
     "claims": {"ttl_hours": 4},
     "artifacts": {"mode": "local"},
     "temporary": {"max_age_days": 14},

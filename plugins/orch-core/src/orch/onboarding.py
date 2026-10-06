@@ -178,9 +178,9 @@ def _git_file_checks(ws) -> list[Check]:
     if view.uncommitted:
         checks.append(Check("records", False, f"{len(view.uncommitted)} orch record(s) not committed: "
                                               f"{_few(view.uncommitted)}",
-                            "commit them (tickets, gates, events and synced instructions are shared records; "
-                            "orch never commits for you): git add -- "
-                            + " ".join(shlex.quote(p) for p in view.uncommitted)))
+                            "orch records commit (commits exactly these shared records with an `orch: records …` "
+                            "message, before plan approval too; other staged files stay staged; agents need "
+                            "git.agent_may.commit)"))
     else:
         checks.append(Check("records", True, "every orch record is committed"))
     if view.unclassified:

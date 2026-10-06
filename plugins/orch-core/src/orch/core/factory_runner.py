@@ -153,9 +153,14 @@ def work_prompt(key: str) -> str | None:
 
 
 def _same_file(a: Path, b: Path) -> bool:
+    """`a` (in the worktree) equals the workspace's regular file `b`: a copy, or a symlink to `b` itself, as
+    `orch worktree add` makes."""
     try:
-        return a.is_file() and b.is_file() and not a.is_symlink() and not b.is_symlink() \
-            and a.read_bytes() == b.read_bytes()
+        if not b.is_file() or b.is_symlink():
+            return False
+        if a.is_symlink():
+            return os.path.realpath(a) == os.path.realpath(b)
+        return a.is_file() and a.read_bytes() == b.read_bytes()
     except OSError:
         return False
 

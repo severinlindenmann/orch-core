@@ -183,7 +183,7 @@ def _code(t, reviews: list[dict]) -> dict | None:
         main = linked[0]
         number, checks, draft = pr_number(main["url"]), "unknown", False
         state = str(main.get("state") or "")
-        state = "" if state == "draft" else state  # `orch link` writes "draft" as a placeholder nobody refreshes
+        state = "" if state in ("draft", "unknown") else state  # `orch link` placeholders nobody refreshes
         urls = {p["url"] for p in linked}
     else:
         return None

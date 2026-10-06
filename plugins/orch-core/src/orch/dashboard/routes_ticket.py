@@ -140,14 +140,14 @@ def dedupe_prs(prs: list[dict], groups=()) -> list[dict]:
 
 
 def _pr_label(pr: dict, names: dict[str, str] | None = None) -> str:
-    """"repo #N · state" for the Code panel. `orch link` writes state "draft" as a placeholder that nothing
-    refreshes, so "draft" is left out (a ready PR read "draft"); the live state comes from a code-review
-    addon. A state someone set by hand (open, merged, closed) still shows."""
+    """"repo #N · state" for the Code panel. `orch link` writes "unknown" (before #165 "draft") as a placeholder that
+    nothing refreshes, so both are left out; the live state comes from a code-review addon. A state set with
+    `orch link --state` or by hand (open, merged, declined) still shows."""
     match = _PR_NUMBER.search(str(pr.get("url") or ""))
     repo = str(pr.get("repo") or "PR")
     name = (names or {}).get(repo, repo) + (f" #{match.group(1)}" if match else "")
     state = pr.get("state")
-    return f"{name} · {state}" if isinstance(state, str) and state and state != "draft" else name
+    return f"{name} · {state}" if isinstance(state, str) and state and state not in ("draft", "unknown") else name
 
 
 def _question_view(q: dict) -> dict:

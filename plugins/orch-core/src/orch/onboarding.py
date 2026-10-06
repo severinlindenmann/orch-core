@@ -340,7 +340,28 @@ def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
                             + ", ".join(f"{p.name} ({d})" for p, d in broken),
                             "restore that folder, or point core.hooksPath at the right one: "
                             f"git -C {shlex.quote(str(broken[0][0]))} config core.hooksPath FOLDER"))
-    return checks
+    return checks + _git_host_checks(ws)
+
+
+GIT_TYPES = ("github", "gitlab", "gitlab-selfhosted", "bitbucket-server", "bitbucket")
+
+
+def _git_host_checks(ws) -> list[Check]:
+    """#165: only when a repo sets its own git.repos.<name>.type, which provider each repo resolves to."""
+    from orch.config.load import repo_git
+    repos = ws.config["git"].get("repos") or {}
+    own = {n: s["type"] for n, s in repos.items() if isinstance(s, dict) and isinstance(s.get("type"), str)}
+    if not own:
+        return []
+    unknown = sorted(n for n, t in own.items() if t.strip().lower() not in GIT_TYPES)
+    if unknown:
+        return [Check("git-hosts", False, "unknown git type in git.repos: "
+                      + ", ".join(f"{n} ({own[n]})" for n in unknown), "use one of: " + ", ".join(GIT_TYPES))]
+    parts = []
+    for name in repos:
+        kind, base = repo_git(ws.config, name)
+        parts.append(f"{name} {kind}" + (f" ({base})" if base else ""))
+    return [Check("git-hosts", True, "git hosts per repo: " + ", ".join(parts))]
 
 
 def _enabled_plugin_id(path: Path) -> str | None:

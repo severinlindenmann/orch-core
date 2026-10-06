@@ -5,6 +5,15 @@ def _yn(value: bool) -> str:
     return "yes" if value else "no"
 
 
+def _git_types(cfg: dict) -> str:
+    """The workspace's git type, plus each repo that overrides it (#165)."""
+    from orch.config.load import repo_git
+    own = repo_git(cfg, None)[0]
+    other = [f"{name}: {kind}" for name in cfg["git"].get("repos") or {}
+             for kind in [repo_git(cfg, name)[0]] if kind != own]
+    return own + (f" ({', '.join(other)})" if other else "")
+
+
 def render_rules(cfg: dict) -> str:
     git, may, commit = cfg["git"], cfg["git"]["agent_may"], cfg["commit"]
     term = git["review_term"]
@@ -16,7 +25,7 @@ def render_rules(cfg: dict) -> str:
     lines = [
         f"customer: {cfg['customer']}",
         f"ticket ids: {cfg['id']['prefix']}-{'N' * cfg['id']['pad']} (external: {trackers})",
-        f"git: {git['type']} · review term: {term} · branch: {git['branch_pattern']}",
+        f"git: {_git_types(cfg)} · review term: {term} · branch: {git['branch_pattern']}",
         f"agent may commit: {_yn(may['commit'])} · push: {_yn(may['push'])} · open {term}: {_yn(may['open_review'])}",
         f"commit subject: {commit['subject']} · body: {body}",
         "attribution: forbidden (no Co-Authored-By, no 'Generated with', no tool or model names)"

@@ -12,15 +12,28 @@
   {%- if tone == "hot" %}{{ n }} {{ "decision waits" if n == 1 else "decisions wait" }} on you
   {%- else %}{{ n }} setup {{ "item" if n == 1 else "items" }} open{% endif %}
 {%- endmacro -%}
+{%- macro parts(ps) -%}{% for p in ps %}{% if not loop.first %} {% endif %}
+  {%- if p.k == "badge" %}<span class="ml-{{ p.role }}">{{ p.text }}</span>
+  {%- elif p.k == "cd" %}<span data-until="{{ p.until }}" data-done="{{ p.done }}"{% if p.prefix %} data-prefix="{{ p.prefix }}"{% endif %}>{{ p.text }}</span>
+  {%- else %}{{ p.text }}{% endif %}{% endfor %}{%- endmacro -%}
+{#- An addon's MenuStatus rows: label, meter, value, then the note on its own line under the meter. Where the rows
+    fit, the chip is hidden (app.css), so the entry's title and accessible name carry the chip's tooltip. -#}
+{%- macro rows(chip) -%}
+  <span class="menu-rows{{ ' is-stale' if chip.stale }}">{% for r in chip.rows %}<span class="mr mr-{{ r.role }}{{ ' is-muted' if r.muted }}">
+    <span class="mr-label">{{ r.label }}</span>
+    {%- if r.meter is not none %}<span class="mr-meter" aria-hidden="true"><i style="width: {{ r.meter }}%"></i></span>
+    {%- else %}<span class="mr-sep" aria-hidden="true">—</span>{% endif %}<span class="mr-value">{{ r.value }}</span>
+    {%- if r.note %}<span class="mr-note">{{ parts(r.note) }}</span>{% endif %}</span>{% endfor %}</span>
+{%- endmacro -%}
 {%- macro item(key, label, href, icon, badge=0, tone="", path=false, broken="", chip=none) -%}
-      <a class="item{{ ' has-line' if chip and chip.line }}" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>
+      {%- set has_rows = chip and chip.rows %}
+      <a class="item{{ ' has-line' if chip and (chip.line or has_rows) }}{{ ' has-rows' if has_rows }}" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}
+        {%- if has_rows and chip.title %} title="{{ chip.title }}" aria-label="{{ label }}: {{ chip.title }}{{ ', ' ~ broken if broken }}"{% endif %}>
         {% if path %}<svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ icon }}"/></svg>
         {%- else %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}
         <span class="label">{{ label }}
-          {%- if chip and chip.line %}<span class="menu-line">{% for p in chip.line %}{% if not loop.first %} {% endif %}
-            {%- if p.k == "badge" %}<span class="ml-{{ p.role }}">{{ p.text }}</span>
-            {%- elif p.k == "cd" %}<span data-until="{{ p.until }}" data-done="{{ p.done }}">{{ p.text }}</span>
-            {%- else %}{{ p.text }}{% endif %}{% endfor %}</span>{% endif %}</span>
+          {%- if chip and chip.line %}<span class="menu-line">{{ parts(chip.line) }}</span>{% endif %}
+          {%- if has_rows %}{{ rows(chip) }}{% endif %}</span>
         {% if broken %}<span class="nav-dot" role="img" aria-label="{{ label }}: {{ broken }}"></span>{% endif %}
         {% if chip and chip.badge %}{% set b = chip.badge %}<span class="chip chip-{{ b.role }}"{% if b.title %} title="{{ b.title }}"{% endif %} aria-label="{{ label }}: {{ b.title or b.text }}">{{ b.text }}</span>{% endif %}
         {% if badge and badge > 0 %}<span class="badge{{ ' badge-' ~ tone if tone }}" aria-label="{{ badge_label(tone, badge) }}">{{ badge }}</span>{% endif %}

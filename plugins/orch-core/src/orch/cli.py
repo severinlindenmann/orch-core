@@ -29,6 +29,8 @@ app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
 from orch.cli_permit import permit_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(permit_app, name="permit")
+from orch.cli_worktree import worktree_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(worktree_app, name="worktree")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")
@@ -426,7 +428,7 @@ def link(
     no_sprint: Annotated[bool, typer.Option("--no-sprint", help="Take the ticket out of its sprint.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
-    """Link a PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
+    """Link a repo, PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
     ws = _ws()
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
                       no_epic=no_epic, sprint=sprint, no_sprint=no_sprint)

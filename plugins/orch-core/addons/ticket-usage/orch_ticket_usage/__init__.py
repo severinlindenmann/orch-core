@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from orch.addons.api import Snapshot
-from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Copy, Countdown, Link, MenuStatus, Table,
+from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Copy, Countdown, Link, MenuRow, MenuStatus, Table,
                                  Tabs, Text, Time)
 
 from .data import (DEFAULT_LOG, FAMILIES, begin_fetch, open_cache, save_cache, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
@@ -277,7 +277,7 @@ def _pace_text(p, key, reset, now):
         have = f"{span / 3600:.0f} h" if span >= 3600 else f"{max(round(span / 60), 0)} min"
         return f"Weekly pace needs a day of readings; there are {have} so far."
 
-    if not p or p["n"] < 2 or p["last_ts"] <= p["first_ts"] or p["last"] <= p["first"]:
+    if not _rising(p):
         if key == "week":
             return too_early(p["last_ts"] - p["first_ts"] if p else 0)
         return None
@@ -286,15 +286,28 @@ def _pace_text(p, key, reset, now):
         return too_early(span)
     if p["last"] >= 100:
         return "The limit is reached; it frees up at the reset."
-    rate = (p["last"] - p["first"]) / span
-    eta = p["last_ts"] + (100 - p["last"]) / rate
-    if not (eta < p["last_ts"] + 366 * 86400):  # a tiny rise says nothing about when it fills
+    eta = _eta(p, key)
+    if eta is None:  # a tiny rise says nothing about when it fills
         return f"Up {p['last'] - p['first']:.0f} points in the newest window; too slow to say when it fills."
     dur = f"{span / 3600:.1f} h" if span >= 7200 else f"{round(span / 60)} min"
     if isinstance(reset, (int, float)) and eta > reset:  # the window resets first: "100 % after the reset" says nothing
         return f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it will not fill before the reset."
     return (f"Up {p['last'] - p['first']:.0f} points in {dur}. At that pace it would reach 100 % around "
             f"{_clock(eta)}.")
+
+
+def _rising(p) -> bool:
+    return bool(p) and p["n"] >= 2 and p["last_ts"] > p["first_ts"] and p["last"] > p["first"]
+
+
+def _eta(p, key):
+    """When the newest window reaches 100 % at its pace (the pace sentence's projection), or None when it cannot say."""
+    if not _rising(p) or (key == "week" and p["last_ts"] - p["first_ts"] < 86400):
+        return None
+    if p["last"] >= 100:
+        return p["last_ts"]
+    eta = p["last_ts"] + (100 - p["last"]) / ((p["last"] - p["first"]) / (p["last_ts"] - p["first_ts"]))
+    return eta if eta < p["last_ts"] + 366 * 86400 else None
 
 
 def _days(daily: dict, rng: str, today: str) -> tuple[list, list, str, str]:
@@ -470,35 +483,55 @@ def _role(v) -> str:
     return "ok" if v < 70 else "warn" if v < 90 else "err"
 
 
-def menu_chip(snaps, now: float):
-    """The menu entry: a chip with the weekly percent and, under the label, the 5-hour percent with a live countdown to
-    its reset; coloured by how little is left. None without data."""
-    last = next((i for s in snaps[:1] for i in s.items if i["kind"] == "limits"), {}).get("last")
+DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+STALE_MINUTES = 30
+SEVERITY = {"neu": 0, "ok": 1, "warn": 2, "err": 3}
+
+
+def _day_clock(epoch) -> str:
+    d = datetime.fromtimestamp(epoch)
+    return f"{DAYS[d.weekday()]} {d:%H:%M}"
+
+
+def menu_chip(snaps, now: float, stale_minutes: float = STALE_MINUTES):
+    """The menu entry: a labelled row per limit (meter, percent, reset), coloured by level or, when the pace sentence
+    sees it fill before its reset, at least warn; the chip names the riskier limit. None without data."""
+    limits = next((i for s in snaps[:1] for i in s.items if i["kind"] == "limits"), {})
+    last = limits.get("last")
     if not last:
         return None
-    parts, vals = [], {}
-    for name, k in (("5-hour", "five"), ("week", "week")):
+    pc = limits.get("pace") or {}
+    parts, rows, risks = [], [], []
+    for name, label, k in (("5-hour", "5h", "five"), ("week", "Week", "week")):
         v, reset = last.get(k), last.get(k + "_reset")
+        has_reset = isinstance(reset, (int, float))
         if not isinstance(v, (int, float)):
             parts.append(f"{name} unknown")
+            rows.append(MenuRow(label, "unknown", muted=True))
             continue
-        past = isinstance(reset, (int, float)) and reset <= now  # that window has reset since the last record
-        vals[k] = (0 if past else v, past)
-        parts.append(f"{name} {0 if past else v:.0f} %" + (" · reset" if past else f" · resets {_clock(reset)}" if isinstance(reset, (int, float)) else ""))
-    if not vals:
-        return None
-    week = vals.get("week")
-    badge = Badge(_role(week[0]), f"{week[0]:.0f} %", title=" · ".join(parts)) if week else None
-    line = ()
-    if "five" in vals:
-        v, past = vals["five"]
+        past = has_reset and reset <= now  # that window has reset since the last record
+        parts.append(f"{name} {0 if past else v:.0f} %" + (" · reset" if past else f" · resets {_clock(reset)}" if has_reset else ""))
         if past:
-            line = (Text("5h reset"),)
-        else:
-            line = (Text("5h"), Badge(_role(v), f"{v:.0f}%"))  # "5h 51% · 3h05": which limit, how full, how long
-            if isinstance(last.get("five_reset"), (int, float)):
-                line += (Text("·"), Countdown(iso(last["five_reset"])))
-    return MenuStatus(badge, line)
+            rows.append(MenuRow(label, "reset", muted=True))
+            risks.append(((0, 0), Badge("neu", f"{label} reset")))
+            continue
+        eta = _eta(pc.get(k), k)
+        role = _role(v)
+        if role == "ok" and has_reset and eta is not None and eta <= reset:  # ahead of pace: fills before the reset
+            role = "warn"
+        note = ()
+        if has_reset:
+            note = ((Countdown(iso(reset), prefix="resets in "),) if k == "five" else (Text(f"resets {_day_clock(reset)}"),))
+        rows.append(MenuRow(label, f"{v:.0f} %", meter=v, role=role, note=note))
+        risks.append(((SEVERITY[role], v), Badge(role, f"{label} {v:.0f} %")))
+    if not risks:
+        return None
+    at = to_epoch(last.get("at")) if last.get("at") else None
+    stale = at is not None and now - at > stale_minutes * 60
+    title = " · ".join(parts) + (f" · as of {_clock(at)}" if stale else "")
+    top = max(risks, key=lambda r: r[0])[1]
+    return MenuStatus(Badge(top.role, top.text, title=title), line=(Text(f"as of {_clock(at)}"),) if stale else (),
+                      rows=tuple(rows), stale=stale)
 
 
 def check_settings(values: dict) -> tuple[list[str], list[str]]:
@@ -527,7 +560,11 @@ class TicketUsage:
         return check_settings(values)
 
     def menu_badge(self, view):
-        return menu_chip(view.snapshots("usage"), time.time())
+        try:
+            stale = float(view.settings.get("stale_after") or STALE_MINUTES)
+        except (TypeError, ValueError):
+            stale = STALE_MINUTES
+        return menu_chip(view.snapshots("usage"), time.time(), stale)
 
     def _widgets(self, slot, view):
         snaps = view.snapshots("usage")

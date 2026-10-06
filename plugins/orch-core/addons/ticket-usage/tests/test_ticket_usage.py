@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -219,35 +220,90 @@ class TestAddon(AddonContract):
     addon_dir = ADDON
 
 
-def _limits_snap(**last):
+def _limits_snap(pace=None, **last):
     from datetime import datetime, timezone
     from orch.addons.api import Snapshot
-    item = {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": last or None}
+    item = {"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "last": last or None,
+            "pace": pace or {}}
     return [Snapshot("usage", "workspace", datetime(2026, 10, 4, tzinfo=timezone.utc), items=(item,))]
 
 
-def test_menu_chip_is_the_weekly_percent_coloured_by_it_with_a_five_hour_line():
-    now = 1_000_000.0
-    mk = lambda five, week: T.menu_chip(_limits_snap(five=five, week=week, five_reset=now + 3600, week_reset=now + 86400), now)  # noqa: E731
-    assert (mk(30, 39).badge.text, mk(30, 39).badge.role) == ("39 %", "ok")
-    assert mk(10, 70).badge.role == "warn" and mk(10, 89).badge.role == "warn" and mk(10, 90).badge.role == "err"
-    t = mk(30, 39).badge.title
-    assert t.startswith("5-hour 30 % · resets ") and " · week 39 % · resets " in t
-    line = mk(35, 39).line
-    assert [type(p).__name__ for p in line] == ["Text", "Badge", "Text", "Countdown"]
-    assert line[0].text == "5h" and line[1].role == "ok" and line[1].text == "35%"
-    assert mk(75, 1).line[1].role == "warn" and mk(95, 1).line[1].role == "err"
+NOW = 1_790_000_000.0
 
 
-def test_menu_chip_reset_five_hour_window_no_week_and_no_data():
-    now = 1_000_000.0
-    st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=now - 5, week_reset=now + 99), now)
-    assert st.badge.text == "40 %" and "5-hour 0 % · reset · week 40 %" in st.badge.title
-    assert [p.text for p in st.line] == ["5h reset"]
-    st = T.menu_chip(_limits_snap(five=35, week=None, five_reset=now + 60), now)
-    assert st.badge is None and st.line[1].text == "35%"
-    assert T.menu_chip(_limits_snap(), now) is None and T.menu_chip([], now) is None
-    assert T.menu_chip(_limits_snap(five=None, week=None), now) is None
+def _chip(five, week, pace=None, **kw):
+    last = {"five": five, "week": week, "five_reset": NOW + 4 * 3600 + 49 * 60, "week_reset": NOW + 3 * 86400, **kw}
+    return T.menu_chip(_limits_snap(pace=pace, **last), NOW)
+
+
+def test_menu_rows_label_both_limits_with_a_meter_a_spaced_percent_and_their_reset():
+    import re
+    st = _chip(1, 59)
+    five, week = st.rows
+    assert (five.label, five.value, five.meter, five.role) == ("5h", "1 %", 1, "ok")
+    assert (week.label, week.value, week.meter, week.role) == ("Week", "59 %", 59, "ok")
+    cd = five.note[0]
+    assert type(cd).__name__ == "Countdown" and cd.prefix == "resets in " and cd.until == T.iso(NOW + 4 * 3600 + 49 * 60)
+    assert re.fullmatch(r"resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d\d:\d\d", week.note[0].text)
+    assert not st.stale and st.line == ()
+    t = st.badge.title  # the hover text stays the full sentence
+    assert t.startswith("5-hour 1 % · resets ") and " · week 59 % · resets " in t
+
+
+def test_menu_chip_names_the_riskier_limit():
+    assert (_chip(30, 59).badge.text, _chip(30, 59).badge.role) == ("Week 59 %", "ok")
+    assert (_chip(82, 59).badge.text, _chip(82, 59).badge.role) == ("5h 82 %", "warn")
+    assert (_chip(75, 92).badge.text, _chip(75, 92).badge.role) == ("Week 92 %", "err")
+    assert [r.role for r in _chip(70, 89).rows] == ["warn", "warn"] and _chip(10, 90).rows[1].role == "err"
+
+
+def test_menu_role_turns_warn_when_the_pace_fills_the_limit_before_its_reset():
+    ahead = {"week": {"first_ts": NOW - 2 * 86400, "last_ts": NOW, "first": 0.0, "last": 40.0, "n": 5, "reset": None}}
+    st = _chip(45, 40, pace=ahead)  # 20 points a day: 100 % in 3 days, the reset is in 3 days
+    assert st.rows[1].role == "warn" and st.rows[0].role == "ok"
+    assert (st.badge.text, st.badge.role) == ("Week 40 %", "warn")
+    calm = {"week": {"first_ts": NOW - 2 * 86400, "last_ts": NOW, "first": 30.0, "last": 40.0, "n": 5, "reset": None}}
+    assert _chip(45, 40, pace=calm).rows[1].role == "ok"
+    early = {"week": {"first_ts": NOW - 3600, "last_ts": NOW, "first": 0.0, "last": 40.0, "n": 2, "reset": None}}
+    assert _chip(45, 40, pace=early).rows[1].role == "ok"  # under a day of readings says nothing yet
+
+
+def test_menu_reset_window_is_a_muted_row_and_the_chip_falls_back_to_the_other_limit():
+    st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=NOW - 5, week_reset=NOW + 99), NOW)
+    five = st.rows[0]
+    assert (five.label, five.value, five.meter, five.muted, five.note) == ("5h", "reset", None, True, ())
+    assert st.badge.text == "Week 40 %" and "5-hour 0 % · reset · week 40 %" in st.badge.title
+    st = T.menu_chip(_limits_snap(five=95, week=40, five_reset=NOW - 5, week_reset=NOW - 5), NOW)
+    assert (st.badge.text, st.badge.role) == ("5h reset", "neu")
+
+
+def test_menu_dims_stale_limits_and_says_as_of_when():
+    st = _chip(10, 50, at=T.iso(NOW - 31 * 60))
+    assert st.stale and st.line[0].text.startswith("as of ") and " · as of " in st.badge.title
+    assert not _chip(10, 50, at=T.iso(NOW - 10 * 60)).stale
+    last = {"five": 10, "week": 50, "at": T.iso(NOW - 45 * 60)}
+    assert not T.menu_chip(_limits_snap(**last), NOW, stale_minutes=60).stale
+
+
+def test_menu_unknown_limit_and_no_data():
+    st = T.menu_chip(_limits_snap(five=35, week=None, five_reset=NOW + 60), NOW)
+    assert st.badge.text == "5h 35 %" and (st.rows[1].label, st.rows[1].value, st.rows[1].muted) == ("Week", "unknown", True)
+    assert T.menu_chip(_limits_snap(), NOW) is None and T.menu_chip([], NOW) is None
+    assert T.menu_chip(_limits_snap(five=None, week=None), NOW) is None
+
+
+def test_menu_badge_reads_the_stale_setting_and_ignores_a_bad_one():
+    class View:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def snapshots(self, _):
+            return _limits_snap(five=10, week=50, at=T.iso(time.time() - 45 * 60))
+
+    addon = T.TicketUsage(type("Ctx", (), {"name": "ticket-usage"})())
+    assert addon.menu_badge(View({"stale_after": "30"})).stale
+    assert not addon.menu_badge(View({"stale_after": "60"})).stale
+    assert addon.menu_badge(View({"stale_after": "soon"})).stale
 
 
 def test_model_names_are_human_labels():

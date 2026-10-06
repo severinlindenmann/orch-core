@@ -67,6 +67,18 @@ orch never commits on its own, with two exceptions: `orch records commit`, which
 
 `orch records commit` commits exactly the records doctor lists (never caches or locks) with a generated message: the subject `orch: records L-0001, L-0002` names the tickets they belong to and the body lists each changed path. It commits with `git commit --only`, so whatever else is staged stays staged and uncommitted; `--dry-run` shows what it would commit. Agents may run it only where `git.agent_may.commit` is true. The commit check accepts such a commit before plan approval because it holds no code: when every staged path is an orch record, the plan gate is skipped and the fixed subject `orch: records …` is accepted without the body lines; AI attribution is still refused. A commit that mixes records and code gets the full check. The check reads the index git hands the hook, so a commit that names paths (a temporary index) is judged by what it really commits; when git cannot say what is staged, the full check applies.
 
+## Worktrees
+
+A ticket's git worktrees go under the workspace root, at `<root>/.claude/worktrees/<repo>/<slug>`, one per repo the ticket touches. There `orch` finds `orchestrator/` by walking up (no `ORCH_HOME`), harnesses pick up the root's `CLAUDE.md`/`AGENTS.md`, and the AI Factory starts a child's session in it.
+
+```bash
+orch worktree add L-0042 --repo hub [--base develop]   # branch from git.branch_pattern, e.g. feature/L-0042-back-up-config
+orch worktree remove L-0042 --repo hub                 # removes the worktree and its link; the branch stays
+orch link L-0042 --repo dlh_metadata                   # record a repo the ticket touches before any branch exists
+```
+
+`--repo` is a `git.repos` name, or the workspace repo's own name in a single-repo workspace. `add` checks out an existing branch of that name instead of creating it (`--base` then does not apply; it defaults to the repo's `default_branch`, else its `HEAD`), links branch and worktree to the ticket, and, for the `claude` harnesses, links `.claude/skills`, `commands`, `agents`, `settings.json`, `settings.local.json` and `.mcp.json` from the root into a real `.claude` folder in the worktree, each entry on its own and only when the root has it and the checkout does not. Never symlink the whole `.claude` folder into a worktree: it holds the worktrees, so that is a loop. The links are listed in the clone's `.git/info/exclude`, and a single-repo workspace also excludes `/.claude/worktrees/` there. `remove` refuses a worktree with uncommitted changes and one outside `.claude/worktrees`. Agents may run both commands: they only touch local git state and are reversible.
+
 ## Migrating a workspace from an older orch
 
 Older versions wrote four things this version no longer reads. `orch migrate` rewrites them once; it prints a diff and writes nothing until you add `--apply`, and running it again changes nothing.

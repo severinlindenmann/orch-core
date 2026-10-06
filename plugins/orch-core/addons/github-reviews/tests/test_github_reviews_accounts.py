@@ -131,3 +131,24 @@ def test_a_cached_no_access_snapshot_is_not_counted_as_zero(demo):
     card = addon.obj.widgets(PAGE, SlotView(demo.ws, addon, PAGE, None, {}))[0].body[0]
     kv = dict(next(w for w in card.body if w.kind == "kv").rows)
     assert kv["open PRs"] is None and card.role == "warn"
+
+
+@pytest.mark.parametrize("login", ["work-acct", "jane-doe_acme", "severin-lindenmann_pil"])
+def test_plain_and_managed_user_logins_are_accepted(login):
+    from github_reviews.gh import gh_user
+
+    class Ctx:
+        settings = {"gh_user": login}
+
+    assert gh_user(Ctx()) == login
+
+
+@pytest.mark.parametrize("login", ["-u evil", "_acme", "jane_", "jane_acme_x", "a b"])
+def test_malformed_logins_are_refused(login):
+    from github_reviews.gh import GhFailure, gh_user
+
+    class Ctx:
+        settings = {"gh_user": login}
+
+    with pytest.raises(GhFailure):
+        gh_user(Ctx())

@@ -1,9 +1,9 @@
 """Which files orch writes belong in git (#36). Durable files are shared records every clone needs: tickets, gates,
 the counter, the event log, the phone-decision ledger and what addons keep under `.state/addons/<name>/records/`.
 Local files are caches, locks, spools and per-machine state that orch can rebuild or that belong to one machine;
-the managed block in `orchestrator/.gitignore` keeps them out of git. orch never commits anything itself: commits
-belong to the human's (or the permitted agent's) own workflow, so `orch doctor` and `orch check` only name what
-is left uncommitted."""
+the managed block in `orchestrator/.gitignore` keeps them out of git. orch commits nothing on its own: `orch doctor`
+and `orch check` name what is left uncommitted, and `orch records commit` (#168) commits exactly those records when
+the human (or an agent the workspace lets commit) runs it."""
 from __future__ import annotations
 
 import re
@@ -115,6 +115,7 @@ def write_ignore_block(ws) -> str:
 class GitView:
     root: Path
     uncommitted: list[str] = field(default_factory=list)  # durable records with changes git has not committed
+    codes: dict[str, str] = field(default_factory=dict)  # porcelain status code of each uncommitted record
     unclassified: list[str] = field(default_factory=list)  # untracked, not ignored, and not an orch record
     tracked_local: list[str] = field(default_factory=list)  # local files (caches, locks) that git tracks anyway
 
@@ -144,8 +145,7 @@ def git_view(ws) -> GitView | None:
     home = ws.home.resolve()
     if not home.is_relative_to(top):
         return None
-    targets = [home] + [root / t for t in _SYNC_TARGETS if (root / t).exists() or t in ("AGENTS.md", "CLAUDE.md")]
-    specs = [p.relative_to(top).as_posix() or "." for p in targets if p.is_relative_to(top)]
+    specs = _record_specs(ws, top)
     status = _git(top, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--", *specs)
     tracked = _git(top, "ls-files", "-z", "--", home.relative_to(top).as_posix() or ".")
     if status is None or tracked is None:
@@ -153,10 +153,11 @@ def git_view(ws) -> GitView | None:
     view = GitView(top)
     for entry in filter(None, status.split("\0")):
         code, rel = entry[:2], entry[3:]
-        in_home = _rel_home(ws, top, rel)
-        kind = "durable" if in_home is None else classify(in_home)
+        kind = _record_kind(ws, top, specs, rel)
         if kind == "durable":
-            view.uncommitted.append(_shown(top, root, rel))
+            shown = _shown(top, root, rel)
+            view.uncommitted.append(shown)
+            view.codes[shown] = code
         elif kind is None and code == "??":
             view.unclassified.append(_shown(top, root, rel))
     for rel in filter(None, tracked.split("\0")):
@@ -164,6 +165,101 @@ def git_view(ws) -> GitView | None:
         if in_home is not None and classify(in_home) == "local":
             view.tracked_local.append(_shown(top, root, rel))
     return view
+
+
+def _record_specs(ws, top: Path) -> list[str]:
+    """The pathspecs (relative to the git top) where orch records live: orchestrator/ and the sync targets."""
+    root, home = ws.root.resolve(), ws.home.resolve()
+    targets = [home] + [root / t for t in _SYNC_TARGETS if (root / t).exists() or t in ("AGENTS.md", "CLAUDE.md")]
+    return [p.relative_to(top).as_posix() or "." for p in targets if p.is_relative_to(top)]
+
+
+def _record_kind(ws, top: Path, specs: list[str], git_rel: str) -> str | None:
+    """"durable" for an orch record, "local" for a cache or lock, None for anything else (code)."""
+    in_home = _rel_home(ws, top, git_rel)
+    if in_home is not None:
+        return classify(in_home)
+    if any(spec != "." and (git_rel == spec or git_rel.startswith(spec + "/")) for spec in specs):
+        return "durable"
+    return None
+
+
+def staged_paths(cwd: Path) -> tuple[Path, list[str]] | None:
+    """(git top, staged paths relative to it) of the index this commit uses: git hands a hook GIT_INDEX_FILE, so a
+    commit that names paths (a temporary index) is read correctly. None when git cannot tell."""
+    top = _git(cwd, "rev-parse", "--show-toplevel")
+    if not top or not top.strip():
+        return None
+    root = Path(top.strip()).resolve()
+    out = _git(root, "diff", "--cached", "--name-only", "-z", "--no-renames")
+    if out is None:
+        return None
+    return root, [p for p in out.split("\0") if p]
+
+
+def records_only(ws, cwd: Path) -> bool:
+    """True when this commit stages something and every staged path is an orch record, the way doctor's `records`
+    check counts them; caches and locks never count. Anything git cannot tell is False (fail closed)."""
+    found = staged_paths(cwd)
+    if found is None or not found[1]:
+        return False
+    top, paths = found
+    try:
+        if not ws.home.resolve().is_relative_to(top):
+            return False
+        specs = _record_specs(ws, top)
+        return all(_record_kind(ws, top, specs, p) == "durable" for p in paths)
+    except (OSError, ValueError):
+        return False
+
+
+RECORDS_SUBJECT = "orch: records"
+
+
+def records_message(ws, view: GitView, paths: list[str]) -> tuple[str, str]:
+    """(subject, body) for `orch records commit`: the ticket keys the records belong to, then each changed path."""
+    key = re.compile(rf"(?<![\w-])({re.escape(ws.config['id']['prefix'])}-\d+)(?!\d)")
+    keys: list[str] = []
+    for p in paths:
+        for k in key.findall(p):
+            if k not in keys:
+                keys.append(k)
+    subject = RECORDS_SUBJECT + (f" {few(sorted(keys), 8)}" if keys else "")
+    words = {"??": "added", "A": "added", "D": "deleted", "M": "modified", "R": "renamed", "T": "changed"}
+    lines = []
+    for p in paths:
+        code = view.codes.get(p, "")
+        word = next((w for c, w in words.items() if c in code), "changed")
+        lines.append(f"- {word}: {p}")
+    return subject, "Records orch wrote:\n" + "\n".join(lines)
+
+
+def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
+    """Commit exactly the records doctor lists, with a generated message, and return (paths, subject). The paths
+    are staged and committed with `git commit --only`, so whatever else is staged stays staged and uncommitted."""
+    from orch.errors import OrchError, UsageError
+    view = git_view(ws)
+    if view is None:
+        raise UsageError("the workspace is not in a git repository (or git failed)")
+    paths = list(view.uncommitted)
+    if not paths:
+        return [], ""
+    subject, body = records_message(ws, view, paths)
+    if dry_run:
+        return paths, subject
+    root = ws.root.resolve()
+    full = [(root / p).as_posix() for p in paths]
+    for args in (("add", "--", *full), ("commit", "-q", "--only", "-m", subject, "-m", body, "--", *full)):
+        try:
+            r = subprocess.run(["git", "--literal-pathspecs", "-C", str(view.root), *args], capture_output=True,
+                               check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise OrchError(f"git {args[0]} failed: {e}") from e
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout).decode("utf-8", "replace").strip() or f"exit code {r.returncode}"
+            hint = "the records are staged; fix the problem and run `orch records commit` again" if args[0] == "commit" else None
+            raise OrchError(f"git {args[0]} failed: {detail}", hint=hint)
+    return paths, subject
 
 
 def few(paths: list[str], n: int = 5) -> str:

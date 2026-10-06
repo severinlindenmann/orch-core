@@ -38,6 +38,7 @@ def create(
     size: Annotated[str, Form()] = "m",
     priority: Annotated[str, Form()] = "normal",
     external: Annotated[str, Form()] = "",
+    labels: Annotated[str, Form()] = "",
     ask: Annotated[str, Form()] = "",
     files: Annotated[Optional[list[UploadFile]], File()] = None,
     option_offered: Annotated[list[str], Form()] = [],
@@ -46,14 +47,15 @@ def create(
     ws = request.app.state.ws
     ops = Ops(ws, request_actor(request))
     ask = ask.replace("\r\n", "\n").strip()
-    values = {"title": title, "type": type_, "size": size, "priority": priority, "external": external, "ask": ask}
+    values = {"title": title, "type": type_, "size": size, "priority": priority, "external": external, "labels": labels,
+              "ask": ask}
     try:
         # The same split as `orch new --body-file` (#24): gated headings become their sections, other `##` headings
         # stay in the Ask one level down, a heading naming another orch section or an open fence is refused.
         from orch.core.body import split_body
         ask, sections = split_body(ask)
         t = ops.new(title, type=type_, size=size, priority=priority, ask=ask, external=external.strip() or None,
-                    sections=sections)
+                    sections=sections, labels=labels.replace(",", " ").split())
     except OrchError as e:
         return _form(request, values, error_text(e), 422)
     if option_offered:  # addon ticket options from the form (best effort: the ticket exists either way)

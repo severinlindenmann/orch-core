@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,9 +26,25 @@ CONTINUE_ENV = "ORCH_UPDATE_CONTINUE"  # set across the re-exec after a core upd
 
 @dataclass(frozen=True)
 class CoreUpdate:
-    repo: Path       # the git clone the installed tool was built from
-    package: Path    # the orch-core folder inside it
-    behind: int      # commits on the upstream branch the installed build does not have
+    repo: Path | None     # the git clone the installed tool was built from (None for a remote install)
+    package: Path | None  # the orch-core folder inside it
+    behind: int           # commits on the upstream branch the installed build does not have
+    tag: str | None = None  # remote install: the newer release tag to install
+    remote: GitRemote | None = None
+
+    @property
+    def summary(self) -> str:
+        if self.remote:
+            return f"{self.remote.built} → {self.tag}"
+        return f"{self.behind} new commit{'s' if self.behind != 1 else ''}"
+
+
+@dataclass(frozen=True)
+class GitRemote:
+    """orch-core installed straight from a git URL at a release tag (`uv tool install "… @ git+<url>@<tag>"`)."""
+    url: str
+    subdirectory: str | None
+    built: str  # the tag the tool was installed from, or v<version> when the install was not pinned to a tag
 
 
 def _state_path() -> Path:
@@ -69,8 +86,13 @@ def _reinstall_hint(package: Path | None) -> str:
     return f'uv tool install --force "{clone or "<clone of orch-core>/plugins/orch-core"}[dashboard]"'
 
 
-def core_source() -> tuple[Path, Path] | str:
-    """(clone, package folder) the installed tool was built from, or why there is none to update from."""
+def _version(tag: str) -> tuple[int, ...] | None:
+    m = re.fullmatch(r"v?(\d+(?:\.\d+)*)", tag)
+    return tuple(int(n) for n in m.group(1).split(".")) if m else None
+
+
+def core_source() -> tuple[Path, Path] | GitRemote | str:
+    """(clone, package folder) or the git remote the installed tool was built from, or why there is none to update from."""
     from importlib import metadata
     try:
         raw = metadata.distribution("orch-core").read_text("direct_url.json")
@@ -82,6 +104,11 @@ def core_source() -> tuple[Path, Path] | str:
         url = {}
     if not isinstance(url, dict) or not url.get("url"):
         return f"orch-core was not installed from a folder; reinstall it from a clone to get updates: {_reinstall_hint(None)}"
+    vcs = url.get("vcs_info") or {}
+    if vcs.get("vcs") == "git":
+        rev = vcs.get("requested_revision") or ""
+        return GitRemote(url["url"], url.get("subdirectory"),
+                         rev if _version(rev) else f"v{metadata.version('orch-core')}")
     package = Path(unquote(urlparse(url["url"]).path))
     if (url.get("dir_info") or {}).get("editable"):
         return f"orch-core is an editable install from {package}; update that checkout with git pull"
@@ -99,7 +126,24 @@ def _public_url(url: str) -> str:
     return p._replace(netloc=p.hostname + (f":{p.port}" if p.port else "")).geturl() if p.hostname else url
 
 
-def core_where(repo: Path) -> str:
+def _remote_status(r: GitRemote) -> CoreStatus:
+    try:
+        out = manage._git("ls-remote", "--tags", "--refs", r.url, "v*", timeout=30)
+    except OrchError as e:
+        return CoreStatus(None, f"not checked: could not list the tags of {_public_url(r.url)} (offline?): {e.message}", False)
+    tags = [t for t in (line.rpartition("refs/tags/")[2] for line in out.splitlines()) if _version(t)]
+    if not tags:
+        return CoreStatus(None, f"not checked: {_public_url(r.url)} has no release tags", False)
+    newest = max(tags, key=_version)
+    if _version(newest) <= (_version(r.built) or ()):
+        return CoreStatus(None, f"up to date ({r.built})", True)
+    c = CoreUpdate(None, None, 0, newest, r)
+    return CoreStatus(c, c.summary, True)
+
+
+def core_where(repo: Path | GitRemote) -> str:
+    if isinstance(repo, GitRemote):
+        return f"{_public_url(repo.url)} (release tags)"
     """'<origin> (<branch>)' of the clone, for the line that says what is being checked."""
     try:
         origin = _public_url(manage._git("remote", "get-url", "origin", cwd=repo, timeout=10).strip())
@@ -116,6 +160,8 @@ def core_status(src: tuple[Path, Path] | str | None = None) -> CoreStatus:
     src = core_source() if src is None else src
     if isinstance(src, str):
         return CoreStatus(None, f"not checked: {src}", False)
+    if isinstance(src, GitRemote):
+        return _remote_status(src)
     repo, package = src
     try:
         manage._git("fetch", "--quiet", cwd=repo, timeout=20)
@@ -149,6 +195,17 @@ def core_check() -> CoreUpdate | None:
 def core_apply(c: CoreUpdate) -> str:
     """Pull and reinstall; returns what happened to the Claude plugin, for the human to read."""
     uv = shutil.which("uv")
+    if c.remote:
+        if uv is None:
+            raise ValidationError("uv is not on PATH, so orch-core cannot be reinstalled")
+        sub_ = f"#subdirectory={c.remote.subdirectory}" if c.remote.subdirectory else ""
+        spec = f"orch-core[dashboard] @ git+{c.remote.url}@{c.tag}{sub_}"
+        r = subprocess.run([uv, "tool", "install", "--force", "--reinstall", spec],
+                           capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL, check=False)
+        if r.returncode:
+            tail = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+            raise ValidationError(f"the orch-core reinstall failed: {tail}")
+        return refresh_plugin()
     if uv is None:
         raise ValidationError("uv is not on PATH, so orch-core cannot be reinstalled",
                               hint=f"git -C {c.repo} pull --ff-only, then uv tool install --force --reinstall "
@@ -229,7 +286,7 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
         out("checking the custom addons for updates …")
     else:
         src = core_source()
-        out(f"checking for updates: orch-core{' at ' + core_where(src[0]) if not isinstance(src, str) else ''} "
+        out(f"checking for updates: orch-core{' at ' + core_where(src if isinstance(src, GitRemote) else src[0]) if not isinstance(src, str) else ''} "
             "and the custom addons …")
         status = core_status(src)
         out(f"orch-core: {status.line}")
@@ -247,7 +304,7 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
         _set_state(next_check=time.time() + CHECK_EVERY)
         out("nothing to update" if force or check_only else "nothing to update; next check in a day (orch update checks now)")
         return
-    names = ([f"orch-core ({core.behind} new commit{'s' if core.behind != 1 else ''})"] if core else []) + \
+    names = ([f"orch-core ({core.summary})"] if core else []) + \
             [f"{i.name} ({i.message})" for i in addons]
     if check_only:
         out("updates available: " + ", ".join(names))

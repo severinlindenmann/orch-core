@@ -218,3 +218,62 @@ def test_a_plugin_cache_install_points_at_the_marketplace_clone(tmp_path, monkey
 def test_remote_urls_lose_their_credentials():
     assert update._public_url("https://user:tok@github.com/o/r.git") == "https://github.com/o/r.git"
     assert update._public_url("git@github.com:o/r.git") == "git@github.com:o/r.git"
+
+
+@pytest.fixture
+def tagged_remote(tmp_path, monkeypatch):
+    """A git remote with release tags, and an install of it pinned at v0.4.1 (no clone anywhere)."""
+    up = tmp_path / "remote"
+    up.mkdir()
+    _git("init", "-q", "-b", "main", cwd=up)
+    (up / "f").write_text("1")
+    _git("add", ".", cwd=up)
+    _git("commit", "-qm", "one", cwd=up)
+    for t in ("v0.4.1", "v0.4.10", "v0.4.2", "nightly"):
+        _git("tag", t, cwd=up)
+    monkeypatch.setattr(update, "core_source", lambda: update.GitRemote(up.as_uri(), "plugins/orch-core", "v0.4.1"))
+    return up
+
+
+def test_remote_install_is_behind_the_newest_tag_by_version_not_by_name(tagged_remote):
+    s = update.core_status()
+    assert s.checked and s.update.tag == "v0.4.10" and s.line == "v0.4.1 → v0.4.10"
+
+
+def test_remote_install_on_the_newest_tag_is_up_to_date(tagged_remote, monkeypatch):
+    monkeypatch.setattr(update, "core_source", lambda: update.GitRemote(tagged_remote.as_uri(), None, "v0.4.10"))
+    s = update.core_status()
+    assert s.update is None and s.checked and s.line == "up to date (v0.4.10)"
+
+
+def test_unreachable_remote_says_why(tmp_path, monkeypatch):
+    monkeypatch.setattr(update, "core_source", lambda: update.GitRemote((tmp_path / "nope").as_uri(), None, "v0.4.1"))
+    s = update.core_status()
+    assert s.update is None and not s.checked and "could not list the tags" in s.line
+
+
+def test_remote_update_reinstalls_from_the_tag(tmp_path, monkeypatch, tagged_remote):
+    log = tmp_path / "uv.log"
+    uv = tmp_path / "bin" / "uv"
+    uv.parent.mkdir()
+    uv.write_text(f"#!/bin/sh\necho \"$@\" > {log}\n")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{uv.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(os, "execv", lambda path, argv: None)
+    t = Talk("")
+    t.run(check_only=False, force=True)
+    assert log.read_text().strip() == (
+        f"tool install --force --reinstall orch-core[dashboard] @ git+{tagged_remote.as_uri()}@v0.4.10#subdirectory=plugins/orch-core")
+    assert "orch-core (v0.4.1 → v0.4.10)" in " ".join(t.said) or any("v0.4.1 → v0.4.10" in s for s in t.said)
+
+
+def test_direct_url_with_vcs_info_is_a_remote_install(monkeypatch):
+    from importlib import metadata
+
+    class Dist:
+        def read_text(self, name):
+            return json.dumps({"url": "https://github.com/o/r", "subdirectory": "plugins/orch-core",
+                               "vcs_info": {"vcs": "git", "requested_revision": "v0.4.1"}})
+    monkeypatch.undo()
+    monkeypatch.setattr(metadata, "distribution", lambda name: Dist())
+    assert update.core_source() == update.GitRemote("https://github.com/o/r", "plugins/orch-core", "v0.4.1")

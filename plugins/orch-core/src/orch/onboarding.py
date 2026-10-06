@@ -119,6 +119,10 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
     elif "claude" in harnesses:
         checks.append(_harness_check(ws))
     checks += _terminals_checks(ws)
+    from orch.addons.usage_recorder import check as usage_recorder_check
+    recorder = usage_recorder_check(ws)
+    if recorder is not None:
+        checks.append(recorder)
     return checks
 
 
@@ -263,7 +267,7 @@ SETUP_HINT = (
 _SKIP_IN_WORKSPACE = {"uv", "terminal-cli", "git"}
 _ALL_DOCTOR_CODES = ("uv", "terminal-cli", "git", "workspace", "config", "adopt", "gitignore", "records",
                      "unclassified", "repos", "hooks", "plugin", "skill-copies", "harness", "tmux",
-                     "terminals-cli")
+                     "terminals-cli", "usage-recorder")
 OPEN_ITEM_CODES = tuple(c for c in _ALL_DOCTOR_CODES if c not in _SKIP_IN_WORKSPACE)
 _EMPTY_STATE = {"dismissed_repos": [], "dismissed_items": {}}
 

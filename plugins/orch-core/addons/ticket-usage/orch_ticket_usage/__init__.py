@@ -8,14 +8,15 @@ from __future__ import annotations
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from orch.addons.api import Snapshot
-from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Countdown, Link, MenuStatus, Table, Tabs,
-                                 Text, Time)
+from orch.addons.widgets import (KV, Badge, Callout, Card, Chart, ChartSeries, Copy, Countdown, Link, MenuStatus, Table,
+                                 Tabs, Text, Time)
 
-from .data import (FAMILIES, begin_fetch, open_cache, save_cache, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
+from .data import (DEFAULT_LOG, FAMILIES, begin_fetch, open_cache, save_cache, to_epoch, claude_dir, cost_of, day_of, distribute, family, limit_history, limits_log_state,
                    monday_of, names, pace,
-                   parse_file, read_limits, subagents, transcripts, week_rises)
+                   parse_file, read_limits, recorder_wired, subagents, transcripts, week_rises)
 
 WEEK_S = 7 * 86400
 HISTORY_DAYS = 90
@@ -118,7 +119,7 @@ def build(claude, tickets, log_path, now) -> list[dict]:
         row("unlinked", "unlinked", "Not linked to a ticket")
     last = log[-1] if log else None
     items.append({"id": "limits", "kind": "limits", "label": "Limits", "role": "neu", "text": "", "window_start": win,
-                  "log": log_state, "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None,
+                  "log": log_state, "recorder": recorder_wired(claude), "last": {k: last.get(k) for k in ("at", "five", "five_reset", "week", "week_reset")} if last else None,
                   "pace": {k: pace(log, k) for k in ("five", "week")}})
     attrib = {"none": 0, "shared": 0, "ticket": 0}
     top: dict = {}
@@ -150,7 +151,7 @@ class UsageProvider:
                 meta = e.meta if isinstance(e.meta, dict) else {}
                 sids = [s["id"] for s in meta.get("sessions") or [] if isinstance(s, dict) and isinstance(s.get("id"), str)]
                 tickets.append((e.id, str(meta.get("title") or ""), sids))
-            log = ctx.settings.get("limits_log") or "~/.claude/orch-usage/limits.jsonl"
+            log = ctx.settings.get("limits_log") or DEFAULT_LOG
             open_cache(ctx.addon.state_dir / "parse-cache.json")
             begin_fetch()
             try:
@@ -240,8 +241,9 @@ def ticket_panel(item, show_cost: bool) -> list:
 
 RANGES = (("week", "Last 7 days"), ("month", "Last 30 days"), ("all", "Calendar weeks"))
 PAGE_URL = "/addons/ticket-usage/"
-RECORDER = ('Add "statusLine": {"type": "command", "command": "~/.claude/orch-usage/statusline.sh"} to '
-            "~/.claude/settings.json (see this addon's README). Tokens and cost below do not need it.")
+SETUP_CMD = "orch addon setup ticket-usage"
+RECORDER = (f"To install the recorder, run `{SETUP_CMD}` in your own terminal: it asks before it adds a status line to "
+            "your user-global Claude settings (see this addon's README). Tokens and cost below do not need it.")
 
 
 def _k(n) -> str:
@@ -404,7 +406,9 @@ def page(snaps, show_cost: bool, params: dict | None = None, now: float | None =
     last = limits.get("last")
     out: list = []
     log = limits.get("log") or {}
-    if not last and log.get("state") in ("missing", "relative"):  # TU-01: the configured file is the problem, not the recorder
+    if not last and log.get("state") == "missing" and log.get("path") == str(Path(DEFAULT_LOG).expanduser()):
+        out.append(_recorder_card(limits.get("recorder") is True))
+    elif not last and log.get("state") in ("missing", "relative"):  # TU-01: a configured file is gone or unusable
         out.append(Callout("warn", "Limits log not found", (
             f"File not found: {log.get('path')}. Change \"Limits log\" in this addon's settings on Workspace & addons."
             if log["state"] == "missing" else
@@ -442,6 +446,19 @@ def page(snaps, show_cost: bool, params: dict | None = None, now: float | None =
     out.append(Card("Details", (Table(heads, tuple(rows),
                      empty="No Claude output found this week. Sessions on this machine show up here once they run."),)))
     return out
+
+
+def _recorder_card(wired: bool):
+    """No limits log at the default path: the recorder is not set up yet (or has not written yet). Info, not an error."""
+    if wired:
+        return Callout("info", "No limits recorded yet", "Your status line runs the recorder; limits appear after Claude "
+                                                         "Code's next reply. Tokens and cost below do not need it.")
+    return Card("Recorder not installed", (
+        Text("The limit cards come from Claude Code's status line, through a small recorder script. Run this in your own "
+             "terminal: it copies the script and, after you confirm, adds a status line to your user-global Claude "
+             "settings (every Claude Code session on this machine). An existing status line is never replaced; you get "
+             "the one line to add to it instead. Tokens and cost below do not need it."),
+        Copy("Setup command", SETUP_CMD)), role="info")
 
 
 def _clock(epoch) -> str:
@@ -487,7 +504,7 @@ def menu_chip(snaps, now: float):
 def check_settings(values: dict) -> tuple[list[str], list[str]]:
     """(errors, notes) for a settings save (called by Workspace & addons): a relative Limits log is refused, a file
     that is not there yet is saved with a note (the recorder creates it)."""
-    state = limits_log_state(str(values.get("limits_log") or "~/.claude/orch-usage/limits.jsonl"))
+    state = limits_log_state(str(values.get("limits_log") or DEFAULT_LOG))
     if state["state"] == "relative":
         return [f"Limits log: {state['path']} is a relative path; use an absolute path or one starting with ~/"], []
     if state["state"] == "missing":

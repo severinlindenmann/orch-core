@@ -283,7 +283,7 @@ Bump `version` for every change you ship and add a `CHANGELOG.md` section. Insta
 
 ## Install, trust, enable, update
 
-`orch addon install <folder | git URL> [--ref] [--path <folder in the repo>]` (`--path` installs an addon that lives in a subfolder of a larger repository, such as `addons/orch-tix`; `update` keeps using that folder), `orch addon trust <name>`, `orch addon enable|disable <name>` (current workspace), `orch addon update <name> | --all [--check]`, `orch addon rollback <name>`, `orch addon remove <name>`. All are human-only: they refuse inside an agent harness or without a terminal, and the guard denies them to agents. Trust, enable, settings and Check for updates are also on Mission Control → Workspace & addons. `orch addon list` and `orch addon check` are open to everyone.
+`orch addon install <folder | git URL> [--ref] [--path <folder in the repo>]` (`--path` installs an addon that lives in a subfolder of a larger repository, such as `addons/orch-tix`; `update` keeps using that folder), `orch addon trust <name>`, `orch addon enable|disable <name>` (current workspace), `orch addon update <name> | --all [--check]`, `orch addon rollback <name>`, `orch addon remove <name>`, `orch addon setup ticket-usage` (installs the Usage page's status line recorder into the user-global Claude settings after a typed confirmation; no other addon has a setup step). All are human-only: they refuse inside an agent harness or without a terminal, and the guard denies them to agents. Trust, enable, settings and Check for updates are also on Mission Control → Workspace & addons. `orch addon list` and `orch addon check` are open to everyone.
 
 ## Done checklist
 

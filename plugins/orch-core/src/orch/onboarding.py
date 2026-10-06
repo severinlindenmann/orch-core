@@ -206,7 +206,28 @@ def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
         checks.append(Check("hooks", False, f"no orch commit-message check in: {', '.join(missing)}", "orch hooks install"))
     else:
         checks.append(Check("hooks", True, "commit-message check installed in every configured repo"))
-    return checks
+    return checks + _git_host_checks(ws)
+
+
+GIT_TYPES = ("github", "gitlab", "gitlab-selfhosted", "bitbucket-server", "bitbucket")
+
+
+def _git_host_checks(ws) -> list[Check]:
+    """#165: only when a repo sets its own git.repos.<name>.type, which provider each repo resolves to."""
+    from orch.config.load import repo_git
+    repos = ws.config["git"].get("repos") or {}
+    own = {n: s["type"] for n, s in repos.items() if isinstance(s, dict) and isinstance(s.get("type"), str)}
+    if not own:
+        return []
+    unknown = sorted(n for n, t in own.items() if t.strip().lower() not in GIT_TYPES)
+    if unknown:
+        return [Check("git-hosts", False, "unknown git type in git.repos: "
+                      + ", ".join(f"{n} ({own[n]})" for n in unknown), "use one of: " + ", ".join(GIT_TYPES))]
+    parts = []
+    for name in repos:
+        kind, base = repo_git(ws.config, name)
+        parts.append(f"{name} {kind}" + (f" ({base})" if base else ""))
+    return [Check("git-hosts", True, "git hosts per repo: " + ", ".join(parts))]
 
 
 def _enabled_plugin_id(path: Path) -> str | None:

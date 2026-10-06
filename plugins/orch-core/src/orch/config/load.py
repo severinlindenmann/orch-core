@@ -69,6 +69,23 @@ MAX_CHECK_STEPS = 20
 DEFAULT_CHECK_TIMEOUT = 540
 
 
+def repo_git(cfg: dict, name: str | None) -> tuple[str, str]:
+    """(type, base_url) of the git host of repo `name`: `git.repos.<name>.type` / `base_url` over the workspace's
+    `git.type` / `git.base_url` (#165). A repo whose type differs from the workspace's never inherits its base_url,
+    which belongs to the other host."""
+    git = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    ws_type = _str(git.get("type")) or "github"
+    repos = git.get("repos") if isinstance(git.get("repos"), dict) else {}
+    spec = repos.get(name) if name is not None and isinstance(repos.get(name), dict) else {}
+    kind = _str(spec.get("type")) or ws_type
+    base = _str(spec.get("base_url")) or (_str(git.get("base_url")) if kind == ws_type else "")
+    return kind, base.rstrip("/")
+
+
+def _str(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 def check_timeout(cfg: dict, name: str | None) -> int | None:
     """The seconds the workspace's check `name` allows (`timeout`, 1-86400), or None when it sets none."""
     check = (cfg.get("checks") or {}).get(name) if name and isinstance(cfg.get("checks"), dict) else None

@@ -424,12 +424,13 @@ def link(
     no_epic: Annotated[bool, typer.Option("--no-epic", help="Take the ticket out of its epic.")] = False,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="Plan the ticket into this sprint.")] = None,
     no_sprint: Annotated[bool, typer.Option("--no-sprint", help="Take the ticket out of its sprint.")] = False,
+    state: Annotated[Optional[str], typer.Option("--state", help="The --pr's state: open, merged, declined or draft (default: unknown until a provider reports).")] = None,
     json_out: JsonOpt = False,
 ) -> None:
     """Link a PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
     ws = _ws()
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
-                      no_epic=no_epic, sprint=sprint, no_sprint=no_sprint)
+                      no_epic=no_epic, sprint=sprint, no_sprint=no_sprint, pr_state=state)
     _out(_view(ws, t), json_out, f"{t.id}: linked")
 
 
@@ -1141,6 +1142,7 @@ def init(
 ) -> None:
     """Create orchestrator/ with config.json and the folder layout, then write the agent instructions."""
     from orch.config.answers import build_config, parse_agent_may, parse_repo, parse_tracker
+    from orch.clock import now
     from orch.config.load import load_config
     from orch.core.fsutil import atomic_write_text
     from orch.core.workspace import Workspace
@@ -1157,7 +1159,8 @@ def init(
                        trackers=[parse_tracker(t) for t in tracker or []], git_type=git_type,
                        git_base_url=git_base_url, review_term=review_term,
                        agent_may=parse_agent_may(agent_may) if agent_may is not None else None,
-                       repos=[parse_repo(r) for r in repo or []])
+                       repos=[parse_repo(r) for r in repo or []],
+                       check_since=now().date().isoformat())  # history before adoption is not checked (#165)
     atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     ws = Workspace(home=home, config=load_config(home))
     ws.ensure_layout()

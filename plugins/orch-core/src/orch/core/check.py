@@ -464,6 +464,18 @@ def _check_orphan_artifacts(ws, entries) -> list[Finding]:
     ]
 
 
+_SINCE = re.compile(r"\d{4}-\d{2}-\d{2}|[0-9a-fA-F]{7,40}")
+
+
+def commits_since(cfg: dict, repo: str) -> str | None:
+    """The baseline of repo's commit checks (#165): `check.since`, one date (YYYY-MM-DD) or commit for every repo,
+    or a map of repo name to one. `orch init` sets today; without it every recent commit is checked, as before."""
+    since = (cfg.get("check") or {}).get("since") if isinstance(cfg.get("check"), dict) else None
+    if isinstance(since, dict):
+        since = since.get(repo)
+    return since if isinstance(since, str) and _SINCE.fullmatch(since) else None
+
+
 def _check_commits(ws, entries, limit: int = 200) -> list[Finding]:
     repos = ws.config["git"].get("repos") or {}
     if not repos:
@@ -487,13 +499,18 @@ def _check_commits(ws, entries, limit: int = 200) -> list[Finding]:
         path = (ws.root / ((repo or {}).get("path") or name)).resolve()
         if not (path / ".git").exists():
             continue
+        since = commits_since(ws.config, name)
+        span = [f"--since={since} 00:00:00"] if since and "-" in since else [f"{since}..HEAD"] if since else []
         try:
-            res = subprocess.run(["git", "-C", str(path), "log", f"-n{limit}", "--format=%h %s"],
+            res = subprocess.run(["git", "-C", str(path), "log", f"-n{limit}", "--format=%h %s", *span, "--"],
                                  capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
         except (OSError, subprocess.TimeoutExpired) as e:
             out.append(Finding("warning", "git-unavailable", None, f"{name}: could not read git log ({e})"))
             continue
         if res.returncode != 0:
+            if since and "-" not in since:
+                out.append(Finding("warning", "check-since", None, f"{name}: check.since commit {since} is not in "
+                                   "this repo, so its commits were not checked; set a commit of this repo or a date"))
             continue
         for line in res.stdout.splitlines():
             sha, _, subject = line.partition(" ")

@@ -155,10 +155,11 @@ class SubprocessRunner:
         self.env_names = tuple(env_names)
         self.cwd = Path(cwd)
 
-    def __call__(self, argv, timeout: float) -> RunResult:
+    def __call__(self, argv, timeout: float, env: dict | None = None) -> RunResult:
         if is_rendering():
             raise AddonRunError("ctx.run is not allowed while a page renders; fetch in a provider instead")
-        env = scrubbed_env(self.env_names)
+        extra = {k: v for k, v in (env or {}).items() if k in self.env_names and not k.startswith("ORCH_")}
+        env = {**scrubbed_env(self.env_names), **extra}
         exe = _find_executable(argv[0], env.get("PATH"))
         if not exe or not os.path.exists(exe):
             raise AddonRunError(f"{argv[0]} is not installed or not on PATH")

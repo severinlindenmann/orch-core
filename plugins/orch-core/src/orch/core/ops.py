@@ -24,6 +24,7 @@ from orch.errors import ClaimError, HumanOnlyError, OrchError, TransitionError, 
 
 _UNSAFE_NAME = re.compile(r'[\\:*?"<>|]')
 _EMPTY_CLAIM = {"session": None, "harness": None, "at": None}
+PR_STATES = ("open", "merged", "declined", "draft")  # what `orch link --state` records; new links start "unknown"
 
 
 def claim_expired(claim: dict, ttl_hours: float) -> bool:
@@ -404,9 +405,14 @@ class Ops(TaskOpsMixin):
 
     def link(self, ref: str, *, repo: str | None = None, pr: str | None = None, branch: str | None = None,
              worktree: str | None = None, external: str | None = None, epic: str | None = None,
-             no_epic: bool = False, sprint: str | None = None, no_sprint: bool = False) -> Ticket:
+             no_epic: bool = False, sprint: str | None = None, no_sprint: bool = False,
+             pr_state: str | None = None) -> Ticket:
         if not any((pr, branch, worktree, external, epic, no_epic, sprint, no_sprint)):
             raise UsageError("nothing to link", hint="pass --pr, --branch, --worktree, --external, --epic or --sprint")
+        if pr_state is not None and not pr:
+            raise UsageError("--state needs --pr", hint="orch link <id> --pr <number|url> --state merged")
+        if pr_state is not None and pr_state not in PR_STATES:
+            raise UsageError(f"unknown PR state {pr_state!r}", hint="one of: " + ", ".join(PR_STATES))
         if (epic and no_epic) or (sprint and no_sprint):
             raise UsageError("pass --epic or --no-epic (--sprint or --no-sprint), not both")
         sprint_id = self._sprint(sprint) if sprint else None
@@ -432,9 +438,12 @@ class Ops(TaskOpsMixin):
                 changed["worktree"] = worktree
             if pr:
                 prs = t.meta.setdefault("prs", [])
-                if not any(p.get("url") == pr for p in prs):
-                    prs.append({"repo": repo, "url": pr, "state": "draft"})
-                changed["pr"] = pr
+                known = next((p for p in prs if isinstance(p, dict) and p.get("url") == pr), None)
+                if known is None:  # "unknown" until a provider or --state says otherwise (#165)
+                    prs.append({"repo": repo, "url": pr, "state": pr_state or "unknown"})
+                elif pr_state:
+                    known["state"] = pr_state
+                changed["pr"] = pr + (f" ({pr_state})" if pr_state else "")
             if external:
                 ext = self._external(external)
                 exts = t.meta.setdefault("external", [])

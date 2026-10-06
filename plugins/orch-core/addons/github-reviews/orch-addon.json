@@ -1,15 +1,18 @@
 {
   "name": "github-reviews",
   "title": "GitHub code reviews",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "requires_api": "2",
   "kind": "in-process",
   "description": "Open pull requests across the harness repo and its sub-repos, with checks, review state and local branch status.",
-  "capabilities": ["provider", "page", "panel"],
+  "capabilities": ["provider", "page", "panel", "settings"],
   "slots": ["today.summary", "today.from_addons", "ticket.code"],
   "binaries": ["gh", "git"],
   "env": ["GH_HOST", "GH_TOKEN", "GH_CONFIG_DIR"],
   "entry": "github_reviews:create",
+  "settings_schema": [
+    {"key": "gh_user", "label": "GitHub account for this workspace (its gh login; empty: gh's active account)", "type": "text", "default": ""}
+  ],
   "menu": {"title": "Code reviews", "icon": "code"},
   "actions": [
     {"id": "rerun_failed", "label": "Rerun failed", "confirm": "Rerun the failed checks of this pull request?"},

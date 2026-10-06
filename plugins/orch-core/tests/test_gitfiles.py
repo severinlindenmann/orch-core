@@ -183,8 +183,9 @@ def test_doctor_names_tracked_caches(ws_root, ws):
 def test_doctor_without_git_skips_git_checks(ws_root, ws):
     from orch.onboarding import doctor
     gitfiles.write_ignore_block(ws)
-    codes = {c.code: c.ok for c in doctor(ws_root)}
-    assert codes["gitignore"] is True and "records" not in codes and "unclassified" not in codes
+    checks = {c.code: c for c in doctor(ws_root)}
+    assert checks["gitignore"].ok is True and "unclassified" not in checks
+    assert checks["records"].ok is True and "local only" in checks["records"].message  # #161: said, not silent
 
 
 def test_doctor_fix_writes_only_the_block(ws_root, ws, capsys):

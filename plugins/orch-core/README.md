@@ -63,6 +63,12 @@ orch never commits on its own, with one exception: the wiki addon's Create page 
 
 `orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else.
 
+A workspace root can also be a plain folder that holds the configured repos (`git.repos` are git repos in its subfolders). `orch doctor` then reports `git` as local only: the records work, but have no history, and `orch hooks install --stage-records` skips the pre-commit hook and says why. `orch doctor --init-git` makes such a root a local-only git repo: it runs `git init` and writes a `.gitignore` block listing each configured repo and `.claude/worktrees/`. It adds no remote and commits nothing.
+
+### Commit check without touching tracked files
+
+By default, a repo whose own `core.hooksPath` is a tracked folder gets orch's call added to that folder's `commit-msg`, which then has to be committed. `orch hooks install --untracked` changes no tracked file instead. It points this clone's `core.hooksPath` at `<git dir>/orch-hooks/`. Each hook there runs orch's part and then the hook that ran before, unchanged and in the same order. `orch hooks uninstall` (human only) puts the previous `core.hooksPath` back. `orch doctor` warns (`hooks-path`) when a repo's `core.hooksPath` points to a missing folder, so git runs none of that repo's own hooks.
+
 ## Migrating a workspace from an older orch
 
 Older versions wrote four things this version no longer reads. `orch migrate` rewrites them once; it prints a diff and writes nothing until you add `--apply`, and running it again changes nothing.

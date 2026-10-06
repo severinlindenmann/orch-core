@@ -35,7 +35,7 @@ Approvals, answers and `orch serve` must come from you, not from an agent, so th
 uv tool install "<plugin folder>[dashboard]"
 ```
 
-`orch doctor` prints this command with the real plugin folder filled in.
+`orch doctor` prints this command with the real plugin folder filled in. It also compares `orch --version` with the plugin's version; when they differ (`terminal-cli`), upgrade with `uv tool install --force "<plugin folder>[dashboard]"`.
 
 ## GitHub Copilot
 
@@ -53,6 +53,8 @@ A workspace set up earlier with harness `claude` has its own `orch guard` hooks 
 1. In `orchestrator/config.json`, change `"harnesses": ["claude"]` to `["claude-plugin"]`. Keep any other harnesses, such as `"copilot"`.
 2. Run `orch instructions sync`. It removes the orch hooks from `.claude/settings.json` and enables the plugin there.
 3. Delete the leftover copies `orch doctor` lists under `skill-copies`, such as `.claude/skills/orch-tickets` or the old `tickets`, `refine-ticket` and `work-on-ticket`.
+
+An earlier orch plugin id, such as `orch-ticket-workflow@ai-convenience-store`, still enabled next to `orch-core` also runs the hooks twice. `orch doctor` reports it as `legacy-plugin`, and `orch instructions sync` removes it from `.claude/settings.json`; it removes only the ids orch knows as its own.
 
 ## What goes into git
 

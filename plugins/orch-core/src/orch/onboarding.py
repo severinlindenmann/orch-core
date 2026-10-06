@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -66,21 +67,69 @@ def _is_plugin_own(found: Path, roots: list[Path], prefixes: list[Path]) -> bool
     return any(found.is_relative_to(base) for base in prefixes)
 
 
-def _terminal_cli() -> Check:
+def _plugin_version(roots: list[Path]) -> str:
+    """The active plugin's version: its manifest, else this package's own."""
+    for root in roots:
+        try:
+            version = json.loads((root / _PLUGIN_MANIFEST).read_text(encoding="utf-8")).get("version")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(version, str) and version:
+            return version
+    from orch import __version__
+    return __version__
+
+
+_VERSION_RE = re.compile(r"\d+(\.\d+)*\S*")
+_cli_versions: dict[tuple, str | None] = {}
+
+
+def _cli_version(path: Path) -> str | None:
+    """What `<path> --version` prints, or None (orch 0.1.0 had no --version). Cached until the file changes."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key not in _cli_versions:
+        try:
+            r = subprocess.run([str(path), "--version"], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=15, check=False)
+            out = r.stdout.strip()
+            _cli_versions[key] = out if r.returncode == 0 and _VERSION_RE.fullmatch(out) else None
+        except (OSError, subprocess.SubprocessError):
+            _cli_versions[key] = None
+    return _cli_versions[key]
+
+
+def _terminal_cli(check_version: bool = True) -> Check:
     roots = _plugin_roots()
     prefixes = [Path(sys.prefix).resolve(), Path(sys.prefix)]
-    install = f'uv tool install "{roots[0] if roots else _ROOT_PLACEHOLDER}[dashboard]"'
+    source = f'"{roots[0] if roots else _ROOT_PLACEHOLDER}[dashboard]"'
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry:
             continue
         found = shutil.which("orch", path=entry)
-        if found and not _is_plugin_own(Path(found).absolute(), roots, prefixes):
-            return Check("terminal-cli", True, f"orch is on your PATH ({Path(found).resolve()})")
+        if not found or _is_plugin_own(Path(found).absolute(), roots, prefixes):
+            continue
+        where = Path(found).resolve()
+        if not check_version:
+            return Check("terminal-cli", True, f"orch is on your PATH ({where})")
+        want, have = _plugin_version(roots), _cli_version(Path(found))
+        if have == want:
+            return Check("terminal-cli", True, f"orch {have} is on your PATH ({where})")
+        said = f"orch {have}" if have else "an orch too old to answer `orch --version`"
+        return Check("terminal-cli", False,
+                     f"{said} is on your PATH ({where}), but the orch-core plugin is {want}: "
+                     "commands and options the plugin documents may be missing or behave differently",
+                     f"uv tool install --force {source}")
     return Check("terminal-cli", False,
-                 "orch is not installed for your own terminal (needed for approvals and `orch serve`)", install)
+                 "orch is not installed for your own terminal (needed for approvals and `orch serve`)",
+                 f"uv tool install {source}")
 
 
-def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = None) -> list[Check]:
+def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = None,
+           cli_version: bool = True) -> list[Check]:
     """The setup checklist. `hook_states` ({resolved repo path: hooks.install.hook_state}) may come from a caller
     that already asked git (the dashboard's Repositories card), so no repo is asked twice."""
     from orch.config.load import validate_schema
@@ -90,7 +139,7 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
     checks = [
         Check("uv", shutil.which("uv") is not None, "uv is installed" if shutil.which("uv") else "uv is not installed",
               None if shutil.which("uv") else "install uv: https://docs.astral.sh/uv/getting-started/installation/"),
-        _terminal_cli(),
+        _terminal_cli(cli_version),
     ]
     root = git_root(start)
     checks.append(Check("git", root is not None, f"git repository {root}" if root else "not inside a git repository",
@@ -118,6 +167,7 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
         checks.append(_skill_copies_check(ws))
     elif "claude" in harnesses:
         checks.append(_harness_check(ws))
+    checks.append(_legacy_plugin_check(ws))
     checks += _terminals_checks(ws)
     return checks
 
@@ -254,6 +304,34 @@ def _plugin_check(ws) -> Check:
                  "orch instructions sync")
 
 
+def _legacy_plugin_check(ws) -> Check:
+    """An earlier orch plugin id still enabled: its guard and SessionStart hooks run next to orch-core's."""
+    from orch.instructions.settings import legacy_plugin_ids
+    project = ws.root / ".claude" / "settings.json"
+    hits: list[tuple[Path, list[str]]] = []
+    for path in (project, ws.root / ".claude" / "settings.local.json", _user_settings()):
+        try:
+            ids = legacy_plugin_ids(json.loads(path.read_text(encoding="utf-8")).get("enabledPlugins"))
+        except (OSError, ValueError, AttributeError):
+            continue
+        if ids:
+            hits.append((path, ids))
+    shown = {p: p.relative_to(ws.root).as_posix() if p.is_relative_to(ws.root) else str(p) for p, _ in hits}
+    if not hits:
+        return Check("legacy-plugin", True, "no earlier orch plugin id is enabled")
+    synced = bool({"claude", "claude-plugin"} & set(ws.config.get("harnesses") or []))
+    fixes = []
+    for path, ids in hits:
+        if path == project and synced:
+            fixes.append("orch instructions sync (removes it from .claude/settings.json)")
+        else:
+            fixes.append(f"remove {', '.join(ids)} from enabledPlugins in {shown[path]}")
+    found = "; ".join(f"{', '.join(ids)} in {shown[path]}" for path, ids in hits)
+    return Check("legacy-plugin", False,
+                 f"an earlier orch plugin is still enabled, so its guard and session hooks run twice: {found}",
+                 "; ".join(fixes))
+
+
 SETUP_HINT = (
     "orch-core is installed, but this repository has no orch workspace yet. "
     "If the user starts ticket- or task-style work (planning a change, tracking work, asking for a ticket), "
@@ -262,8 +340,8 @@ SETUP_HINT = (
 )
 _SKIP_IN_WORKSPACE = {"uv", "terminal-cli", "git"}
 _ALL_DOCTOR_CODES = ("uv", "terminal-cli", "git", "workspace", "config", "adopt", "gitignore", "records",
-                     "unclassified", "repos", "hooks", "plugin", "skill-copies", "harness", "tmux",
-                     "terminals-cli")
+                     "unclassified", "repos", "hooks", "plugin", "skill-copies", "harness", "legacy-plugin",
+                     "tmux", "terminals-cli")
 OPEN_ITEM_CODES = tuple(c for c in _ALL_DOCTOR_CODES if c not in _SKIP_IN_WORKSPACE)
 _EMPTY_STATE = {"dismissed_repos": [], "dismissed_items": {}}
 
@@ -346,7 +424,8 @@ def outside_workspace_hint(start: Path) -> str | None:
 def open_setup_items(ws) -> list[Check]:
     state = load_state()
     dismissed = set(state["dismissed_items"].get(str(Path(ws.root).resolve()), []))
-    return [c for c in doctor(ws.root) if not c.ok and c.code not in _SKIP_IN_WORKSPACE and c.code not in dismissed]
+    return [c for c in doctor(ws.root, cli_version=False)  # terminal-cli is skipped here: spare the subprocess
+            if not c.ok and c.code not in _SKIP_IN_WORKSPACE and c.code not in dismissed]
 
 
 def _skill_copies_check(ws) -> Check:

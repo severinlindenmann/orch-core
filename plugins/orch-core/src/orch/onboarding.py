@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -66,21 +67,69 @@ def _is_plugin_own(found: Path, roots: list[Path], prefixes: list[Path]) -> bool
     return any(found.is_relative_to(base) for base in prefixes)
 
 
-def _terminal_cli() -> Check:
+def _plugin_version(roots: list[Path]) -> str:
+    """The active plugin's version: its manifest, else this package's own."""
+    for root in roots:
+        try:
+            version = json.loads((root / _PLUGIN_MANIFEST).read_text(encoding="utf-8")).get("version")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(version, str) and version:
+            return version
+    from orch import __version__
+    return __version__
+
+
+_VERSION_RE = re.compile(r"\d+(\.\d+)*\S*")
+_cli_versions: dict[tuple, str | None] = {}
+
+
+def _cli_version(path: Path) -> str | None:
+    """What `<path> --version` prints, or None (orch 0.1.0 had no --version). Cached until the file changes."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key not in _cli_versions:
+        try:
+            r = subprocess.run([str(path), "--version"], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=15, check=False)
+            out = r.stdout.strip()
+            _cli_versions[key] = out if r.returncode == 0 and _VERSION_RE.fullmatch(out) else None
+        except (OSError, subprocess.SubprocessError):
+            _cli_versions[key] = None
+    return _cli_versions[key]
+
+
+def _terminal_cli(check_version: bool = True) -> Check:
     roots = _plugin_roots()
     prefixes = [Path(sys.prefix).resolve(), Path(sys.prefix)]
-    install = f'uv tool install "{roots[0] if roots else _ROOT_PLACEHOLDER}[dashboard]"'
+    source = f'"{roots[0] if roots else _ROOT_PLACEHOLDER}[dashboard]"'
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry:
             continue
         found = shutil.which("orch", path=entry)
-        if found and not _is_plugin_own(Path(found).absolute(), roots, prefixes):
-            return Check("terminal-cli", True, f"orch is on your PATH ({Path(found).resolve()})")
+        if not found or _is_plugin_own(Path(found).absolute(), roots, prefixes):
+            continue
+        where = Path(found).resolve()
+        if not check_version:
+            return Check("terminal-cli", True, f"orch is on your PATH ({where})")
+        want, have = _plugin_version(roots), _cli_version(Path(found))
+        if have == want:
+            return Check("terminal-cli", True, f"orch {have} is on your PATH ({where})")
+        said = f"orch {have}" if have else "an orch too old to answer `orch --version`"
+        return Check("terminal-cli", False,
+                     f"{said} is on your PATH ({where}), but the orch-core plugin is {want}: "
+                     "commands and options the plugin documents may be missing or behave differently",
+                     f"uv tool install --force {source}")
     return Check("terminal-cli", False,
-                 "orch is not installed for your own terminal (needed for approvals and `orch serve`)", install)
+                 "orch is not installed for your own terminal (needed for approvals and `orch serve`)",
+                 f"uv tool install {source}")
 
 
-def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = None) -> list[Check]:
+def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = None,
+           cli_version: bool = True) -> list[Check]:
     """The setup checklist. `hook_states` ({resolved repo path: hooks.install.hook_state}) may come from a caller
     that already asked git (the dashboard's Repositories card), so no repo is asked twice."""
     from orch.config.load import validate_schema
@@ -90,11 +139,11 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
     checks = [
         Check("uv", shutil.which("uv") is not None, "uv is installed" if shutil.which("uv") else "uv is not installed",
               None if shutil.which("uv") else "install uv: https://docs.astral.sh/uv/getting-started/installation/"),
-        _terminal_cli(),
+        _terminal_cli(cli_version),
     ]
     root = git_root(start)
-    checks.append(Check("git", root is not None, f"git repository {root}" if root else "not inside a git repository",
-                        None if root else "run orch inside the repository (or workspace folder) you work in"))
+    git_at = len(checks)
+    checks.append(_git_check(root, None))  # replaced below once the workspace is known
     try:
         ws = Workspace.open(start)
     except UsageError:
@@ -105,6 +154,7 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
         checks.append(Check("workspace", True, f"orch workspace at {start}"))
         checks.append(Check("config", False, e.message, "fix orchestrator/config.json"))
         return checks
+    checks[git_at] = _git_check(root, ws)
     checks.append(Check("workspace", True, f"orch workspace at {ws.home}"))
     errors = validate_schema(ws.config)
     checks.append(Check("config", not errors, "config.json is valid" if not errors else "; ".join(errors),
@@ -118,8 +168,82 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
         checks.append(_skill_copies_check(ws))
     elif "claude" in harnesses:
         checks.append(_harness_check(ws))
+    checks.append(_legacy_plugin_check(ws))
     checks += _terminals_checks(ws)
+    from orch.addons.usage_recorder import check as usage_recorder_check
+    recorder = usage_recorder_check(ws)
+    if recorder is not None:
+        checks.append(recorder)
     return checks
+
+
+def local_only_repos(ws) -> list[Path]:
+    """The configured repos when the workspace root is not in git but each of them is a git repo in a subfolder of
+    it: the usual multi-repo layout, where orch's records stay local unless the root becomes a local repo."""
+    from orch.hooks.install import configured_repos
+    root = ws.root.resolve()
+    try:
+        repos = configured_repos(ws)
+    except (AttributeError, KeyError, TypeError):
+        return []
+    if not repos or git_root(root) is not None:
+        return []
+    if any(p == root or not p.is_relative_to(root) or git_root(p) != p for p in repos):
+        return []
+    return repos
+
+
+def _git_check(root: Path | None, ws) -> Check:
+    if root is not None:
+        return Check("git", True, f"git repository {root}")
+    repos = local_only_repos(ws) if ws is not None else []
+    if repos:
+        return Check("git", True, f"local only: the workspace root {ws.root} is a plain folder holding "
+                                  f"{len(repos)} git repo(s), so orch's records are not versioned "
+                                  "(`orch doctor --init-git` makes the root a local-only git repo, with no remote)")
+    return Check("git", False, "not inside a git repository",
+                 "run orch inside the repository (or workspace folder) you work in")
+
+
+ROOT_BEGIN = "# >>> orch: workspace root as a local-only repo (no remote); written by `orch doctor --init-git`"
+ROOT_END = "# <<< orch: workspace root"
+
+
+def root_ignore_block(ws, repos: list[Path]) -> str:
+    root = ws.root.resolve()
+    lines = [ROOT_BEGIN, "# Each repo below keeps its own history; worktrees belong to one machine."]
+    lines += [f"/{p.relative_to(root).as_posix()}/" for p in repos] + ["/.claude/worktrees/", ROOT_END]
+    return "\n".join(lines)
+
+
+def init_root_repo(ws) -> list[tuple[str, str]]:
+    """`orch doctor --init-git`: git init the workspace root and ignore the configured repos and worktrees in it.
+    No remote is added and nothing is staged or committed."""
+    from orch.core.fsutil import atomic_write_text
+    from orch.core.gitfiles import apply_ignore_block, write_ignore_block
+    root = ws.root.resolve()
+    if git_root(root) is not None:
+        raise UsageError(f"{root} is already in a git repository", hint="--init-git is only for a plain folder")
+    repos = local_only_repos(ws)
+    if not repos:
+        raise UsageError("--init-git is for a workspace root whose git.repos are git repos in its subfolders",
+                         hint="list them under git.repos first, or run git init yourself")
+    r = subprocess.run(["git", "-C", str(root), "init", "-q", "-b", "main"], capture_output=True, text=True, check=False)
+    if r.returncode != 0:  # git before 2.28 has no -b
+        r = subprocess.run(["git", "-C", str(root), "init", "-q"], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        raise OrchError(f"git init failed: {(r.stderr or r.stdout).strip()}")
+    path = root / ".gitignore"
+    try:
+        old = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        old = None
+    new = apply_ignore_block(old, root_ignore_block(ws, repos), ROOT_BEGIN, ROOT_END)
+    if new != old:
+        atomic_write_text(path, new)
+    return [("initialized", f"{root} (local only: no remote, nothing committed)"),
+            ("created" if old is None else "unchanged" if new == old else "updated", ".gitignore"),
+            (write_ignore_block(ws), (ws.home / ".gitignore").relative_to(ws.root).as_posix())]
 
 
 def _terminals_checks(ws) -> list[Check]:
@@ -174,13 +298,16 @@ def _git_file_checks(ws) -> list[Check]:
     else:
         checks = [Check("gitignore", True, "orchestrator/.gitignore keeps caches and locks out of git")]
     if view is None:
+        if git_root(ws.root) is None:
+            checks.append(Check("records", True, "orch records are local only (not versioned): "
+                                                 "the workspace root is not a git repository"))
         return checks
     if view.uncommitted:
         checks.append(Check("records", False, f"{len(view.uncommitted)} orch record(s) not committed: "
                                               f"{_few(view.uncommitted)}",
-                            "commit them (tickets, gates, events and synced instructions are shared records; "
-                            "orch never commits for you): git add -- "
-                            + " ".join(shlex.quote(p) for p in view.uncommitted)))
+                            "orch records commit (commits exactly these shared records with an `orch: records …` "
+                            "message, before plan approval too; other staged files stay staged; agents need "
+                            "git.agent_may.commit)"))
     else:
         checks.append(Check("records", True, "every orch record is committed"))
     if view.unclassified:
@@ -194,7 +321,7 @@ def _git_file_checks(ws) -> list[Check]:
 
 
 def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
-    from orch.hooks.install import configured_repos, hook_state
+    from orch.hooks.install import configured_repos, hook_state, missing_hooks_path
     repos = configured_repos(ws)
     if not repos:
         return [Check("repos", False, "no repos listed under git.repos in orchestrator/config.json",
@@ -206,7 +333,35 @@ def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
         checks.append(Check("hooks", False, f"no orch commit-message check in: {', '.join(missing)}", "orch hooks install"))
     else:
         checks.append(Check("hooks", True, "commit-message check installed in every configured repo"))
-    return checks
+    broken = [(p, d) for p in repos if (d := missing_hooks_path(p)) is not None]
+    if broken:
+        checks.append(Check("hooks-path", False,
+                            "core.hooksPath points to a missing folder, so git runs none of the repo's own hooks: "
+                            + ", ".join(f"{p.name} ({d})" for p, d in broken),
+                            "restore that folder, or point core.hooksPath at the right one: "
+                            f"git -C {shlex.quote(str(broken[0][0]))} config core.hooksPath FOLDER"))
+    return checks + _git_host_checks(ws)
+
+
+GIT_TYPES = ("github", "gitlab", "gitlab-selfhosted", "bitbucket-server", "bitbucket")
+
+
+def _git_host_checks(ws) -> list[Check]:
+    """#165: only when a repo sets its own git.repos.<name>.type, which provider each repo resolves to."""
+    from orch.config.load import repo_git
+    repos = ws.config["git"].get("repos") or {}
+    own = {n: s["type"] for n, s in repos.items() if isinstance(s, dict) and isinstance(s.get("type"), str)}
+    if not own:
+        return []
+    unknown = sorted(n for n, t in own.items() if t.strip().lower() not in GIT_TYPES)
+    if unknown:
+        return [Check("git-hosts", False, "unknown git type in git.repos: "
+                      + ", ".join(f"{n} ({own[n]})" for n in unknown), "use one of: " + ", ".join(GIT_TYPES))]
+    parts = []
+    for name in repos:
+        kind, base = repo_git(ws.config, name)
+        parts.append(f"{name} {kind}" + (f" ({base})" if base else ""))
+    return [Check("git-hosts", True, "git hosts per repo: " + ", ".join(parts))]
 
 
 def _enabled_plugin_id(path: Path) -> str | None:
@@ -254,6 +409,34 @@ def _plugin_check(ws) -> Check:
                  "orch instructions sync")
 
 
+def _legacy_plugin_check(ws) -> Check:
+    """An earlier orch plugin id still enabled: its guard and SessionStart hooks run next to orch-core's."""
+    from orch.instructions.settings import legacy_plugin_ids
+    project = ws.root / ".claude" / "settings.json"
+    hits: list[tuple[Path, list[str]]] = []
+    for path in (project, ws.root / ".claude" / "settings.local.json", _user_settings()):
+        try:
+            ids = legacy_plugin_ids(json.loads(path.read_text(encoding="utf-8")).get("enabledPlugins"))
+        except (OSError, ValueError, AttributeError):
+            continue
+        if ids:
+            hits.append((path, ids))
+    shown = {p: p.relative_to(ws.root).as_posix() if p.is_relative_to(ws.root) else str(p) for p, _ in hits}
+    if not hits:
+        return Check("legacy-plugin", True, "no earlier orch plugin id is enabled")
+    synced = bool({"claude", "claude-plugin"} & set(ws.config.get("harnesses") or []))
+    fixes = []
+    for path, ids in hits:
+        if path == project and synced:
+            fixes.append("orch instructions sync (removes it from .claude/settings.json)")
+        else:
+            fixes.append(f"remove {', '.join(ids)} from enabledPlugins in {shown[path]}")
+    found = "; ".join(f"{', '.join(ids)} in {shown[path]}" for path, ids in hits)
+    return Check("legacy-plugin", False,
+                 f"an earlier orch plugin is still enabled, so its guard and session hooks run twice: {found}",
+                 "; ".join(fixes))
+
+
 SETUP_HINT = (
     "orch-core is installed, but this repository has no orch workspace yet. "
     "If the user starts ticket- or task-style work (planning a change, tracking work, asking for a ticket), "
@@ -262,8 +445,8 @@ SETUP_HINT = (
 )
 _SKIP_IN_WORKSPACE = {"uv", "terminal-cli", "git"}
 _ALL_DOCTOR_CODES = ("uv", "terminal-cli", "git", "workspace", "config", "adopt", "gitignore", "records",
-                     "unclassified", "repos", "hooks", "plugin", "skill-copies", "harness", "tmux",
-                     "terminals-cli")
+                     "unclassified", "repos", "hooks", "hooks-path", "plugin", "skill-copies", "harness",
+                     "legacy-plugin", "tmux", "terminals-cli", "usage-recorder")
 OPEN_ITEM_CODES = tuple(c for c in _ALL_DOCTOR_CODES if c not in _SKIP_IN_WORKSPACE)
 _EMPTY_STATE = {"dismissed_repos": [], "dismissed_items": {}}
 
@@ -346,7 +529,8 @@ def outside_workspace_hint(start: Path) -> str | None:
 def open_setup_items(ws) -> list[Check]:
     state = load_state()
     dismissed = set(state["dismissed_items"].get(str(Path(ws.root).resolve()), []))
-    return [c for c in doctor(ws.root) if not c.ok and c.code not in _SKIP_IN_WORKSPACE and c.code not in dismissed]
+    return [c for c in doctor(ws.root, cli_version=False)  # terminal-cli is skipped here: spare the subprocess
+            if not c.ok and c.code not in _SKIP_IN_WORKSPACE and c.code not in dismissed]
 
 
 def _skill_copies_check(ws) -> Check:

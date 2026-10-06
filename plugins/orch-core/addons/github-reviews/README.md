@@ -7,6 +7,8 @@ Open pull requests of the harness repo and every repo in `git.repos`, on Mission
 - **Ticket:** the ticket's pull requests across repos in the Code panel. Failing checks switch Start agent to "Fix failing checks".
 - **Actions** (human clicks, with a confirm dialog): Rerun failed (`gh run rerun <run> --failed`), Mark ready (`gh pr ready`).
 - **Binaries:** `gh` (signed in with `gh auth login`) and `git`, only through `ctx.run`. **Env passed through:** `GH_HOST`, `GH_TOKEN`, `GH_CONFIG_DIR`.
-- Repos whose `origin` is not on github.com show "no provider for this host". No `gh` call is made for them.
+- Repos whose `origin` is not on github.com, or whose `git.repos.<name>.type` is not `github`, show "no provider for this host". No `gh` call is made for them.
+- A repo the gh account cannot see gets its own error row naming the account (`gh auth switch -u <account>` fixes it); the other repos still show.
+- **Setting:** GitHub account for this workspace (`gh_user`). When set, the addon's own `gh` calls run with `GH_TOKEN` from `gh auth token -u <account>`; gh's active account is never switched. Empty: gh's active account.
 
 Enable it per workspace in Mission Control → Workspace & addons.

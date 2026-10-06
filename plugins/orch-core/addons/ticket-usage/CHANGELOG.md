@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
+- No limits log at the default path is now an info card with the setup command (`orch addon setup ticket-usage`, run by the human in their own terminal), not an error; the warning stays for a configured Limits log that is not there. Once the status line runs the recorder, the card says limits appear after the next reply. `orch doctor` reports the recorder as `usage-recorder` while the addon is enabled.
+- The menu entry is readable at a glance: "5h" and "Week" each get a labelled row with a small meter, the percent ("1 %", same spacing for both) and its reset ("resets in 4h49", "resets Mon 09:00"). A limit the pace sentence sees filling before its reset is amber even below 70 %. A window that has reset reads "5h — reset" in grey. Readings older than the new "Dim the menu limits after" setting (30 minutes by default) grey the rows and add "as of 13:52". Where the rows do not fit, the chip names the riskier limit ("Week 59 %"); the tooltip is unchanged. Needs orch API 2.8 (MenuRow).
 - The transcript parse cache is kept in the addon's state folder (`parse-cache.json`), so the first fetch after `orch serve` restarts re-reads only transcripts that changed.
 - A missing Limits log is named ("File not found: <path>") instead of blaming the recorder; a relative path is refused on save and a file that is not there yet is saved with a note. The Usage page refreshes after settings are saved. No empty Estimate column while dollar figures are off. A pace sentence no longer projects past the reset; limit cards no longer repeat their title; the weekly-pace hint says how much history there is; the limits history axis shows the date when it spans two calendar days.
 

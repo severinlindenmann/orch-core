@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from orch.core import store, tasks_view
+from orch.core.gates import requirements_skip_sizes
 from orch.dashboard.data import tasks as tasks_data
 from orch.dashboard.data.agents import STATUS_LABELS as AGENT_LABELS
 from orch.dashboard.data.steps import steps as step_list
@@ -151,6 +152,7 @@ def in_flight(ws, *, needs, entries, events, now: datetime | None = None, rows=N
         by_ticket.setdefault(ev.ticket, []).append(ev)
     row_of = {r.ticket: r for r in rows}
     skip = tuple(ws.config["gates"]["plan_skip_sizes"])
+    req_skip = requirements_skip_sizes(ws)
     cards = []
     for e in picked:
         try:
@@ -166,7 +168,7 @@ def in_flight(ws, *, needs, entries, events, now: datetime | None = None, rows=N
                                     events=by_ticket.get(t.id, []), settings=settings, brief=True)
             start = s if s and not s.get("disabled") else None
         cards.append({"id": t.id, "title": t.title, "status": t.status,
-                      "steps": step_list(t, plan_skip_sizes=skip),
+                      "steps": step_list(t, plan_skip_sizes=skip, requirements_skip_sizes=req_skip),
                       "next": _first_line(t.section("Current state")), "agent": agent, "start": start,
                       "tasks": tasks_data.flight(tasks_view.view(ws, t, entries, resolve_refs=False))})
     order = {s: i for i, s in enumerate(IN_FLIGHT)}

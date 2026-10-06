@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 import time
 from datetime import datetime
 
@@ -11,7 +12,7 @@ from orch.addons.api import PairingTarget, PendingDecision, worst_health
 from orch.addons.loader import _log_error
 from orch.addons.manifest import MENU_ICONS
 from orch.addons.runner import rendering
-from orch.addons.widgets import Badge, Callout, Countdown, MenuStatus, Text, countdown_text, widget_problems
+from orch.addons.widgets import Badge, Callout, Countdown, MenuRow, MenuStatus, Text, countdown_text, widget_problems
 
 HEALTH_ROLE = {"ok": "ok", "stale": "warn", "auth_required": "warn", "offline": "warn", "rate_limited": "warn",
                "error": "err", "never_fetched": "neu"}
@@ -199,8 +200,9 @@ class AddonRuntime:
             return []
 
     def _menu_badge(self, la):
-        """The addon's optional menu_badge(view) -> Badge | MenuStatus | None as {"badge": Badge | None, "line": [part]}
-        (a part is a dict with k = badge | text | cd); anything else, a bad part or an exception is dropped, logged."""
+        """The addon's optional menu_badge(view) -> Badge | MenuStatus | None as {"badge": Badge | None, "line": [part],
+        "rows": [row], "stale": bool} (a part is a dict with k = badge | text | cd); anything else, a bad part or row or
+        an exception is dropped, logged."""
         fn = getattr(la.obj, "menu_badge", None)
         if not callable(fn):
             return None
@@ -212,20 +214,42 @@ class AddonRuntime:
             if not isinstance(got, MenuStatus):
                 return None
             badge = got.badge if self._chip_ok(got.badge) else None
-            line = []
-            for p in got.line if isinstance(got.line, (tuple, list)) else ():
-                if isinstance(p, Badge) and self._chip_ok(p):
-                    line.append({"k": "badge", "role": p.role, "text": str(p.text)})
-                elif isinstance(p, Text) and str(p.text).strip():
-                    line.append({"k": "text", "text": str(p.text)})
-                elif isinstance(p, Countdown) and (t := countdown_text(p.until, str(p.done))) is not None:
-                    line.append({"k": "cd", "text": t, "until": p.until, "done": str(p.done)})
-                else:
-                    _log_error(self.ws, la.name, "menu_badge", f"dropped a line part: {p!r}")
+            line = self._parts(la, got.line, badge=True)
+            rows = []
+            for r in got.rows if isinstance(got.rows, (tuple, list)) else ():
+                if not (isinstance(r, MenuRow) and str(r.label).strip() and str(r.value).strip()
+                        and r.role in ("ok", "warn", "err", "neu")):
+                    _log_error(self.ws, la.name, "menu_badge", f"dropped a row: {r!r}")
+                    continue
+                m = r.meter
+                ok_m = isinstance(m, (int, float)) and not isinstance(m, bool) and math.isfinite(m)
+                m = min(max(float(m), 0.0), 100.0) if ok_m else None
+                rows.append({"label": str(r.label), "value": str(r.value), "role": r.role, "muted": r.muted is True,
+                             "meter": None if m is None else round(max(m, 4.0) if m > 0 else 0.0, 1),  # 1 % stays visible
+                             "note": self._parts(la, r.note, badge=False)})
         except Exception:
             _log_error(self.ws, la.name, "menu_badge")
             return None
-        return {"badge": badge, "line": line} if badge or line else None
+        if badge or line or rows:
+            return {"badge": badge, "line": line, "rows": rows, "stale": got.stale is True,
+                    "title": badge.title if badge else ""}
+        return None
+
+    def _parts(self, la, parts, badge: bool) -> list:
+        """A MenuStatus line or MenuRow note as dicts (k = badge | text | cd); bad parts are dropped and logged."""
+        out = []
+        for p in parts if isinstance(parts, (tuple, list)) else ():
+            if badge and isinstance(p, Badge) and self._chip_ok(p):
+                out.append({"k": "badge", "role": p.role, "text": str(p.text)})
+            elif isinstance(p, Text) and str(p.text).strip():
+                out.append({"k": "text", "text": str(p.text)})
+            elif isinstance(p, Countdown) and (t := countdown_text(p.until, str(p.done))) is not None:
+                pre = str(p.prefix or "")
+                out.append({"k": "cd", "text": t if t == str(p.done) else pre + t,
+                            "until": p.until, "done": str(p.done), "prefix": pre})
+            else:
+                _log_error(self.ws, la.name, "menu_badge", f"dropped a line part: {p!r}")
+        return out
 
     @staticmethod
     def _chip_ok(b) -> bool:

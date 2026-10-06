@@ -156,9 +156,7 @@ def test_doctor_reports_block_records_and_unclassified(ws_root, ws):
     checks = {c.code: c for c in doctor(ws_root)}
     assert checks["gitignore"].ok is False and checks["gitignore"].fix == "orch doctor --fix"
     assert checks["records"].ok is False and "orchestrator/.state/gates/L-0001-plan.md" in checks["records"].message
-    assert checks["records"].fix.startswith("commit them")
-    assert "git add -- " in checks["records"].fix and "orchestrator/.state/gates/L-0001-plan.md" in checks["records"].fix
-    assert "-A" not in checks["records"].fix
+    assert checks["records"].fix.startswith("orch records commit")
     assert checks["unclassified"].ok is False and "orchestrator/notes.md" in checks["unclassified"].message
     assert run(["doctor", "--fix"]) == 0
     _git(ws_root, "add", "-A")
@@ -183,8 +181,9 @@ def test_doctor_names_tracked_caches(ws_root, ws):
 def test_doctor_without_git_skips_git_checks(ws_root, ws):
     from orch.onboarding import doctor
     gitfiles.write_ignore_block(ws)
-    codes = {c.code: c.ok for c in doctor(ws_root)}
-    assert codes["gitignore"] is True and "records" not in codes and "unclassified" not in codes
+    checks = {c.code: c for c in doctor(ws_root)}
+    assert checks["gitignore"].ok is True and "unclassified" not in checks
+    assert checks["records"].ok is True and "local only" in checks["records"].message  # #161: said, not silent
 
 
 def test_doctor_fix_writes_only_the_block(ws_root, ws, capsys):

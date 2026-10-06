@@ -200,8 +200,8 @@ programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's ab
 path only when owned by you or root and not writable by group or others. The agent gets `env -i` with a fixed PATH (the
 folders of those programs, then the system's) and a short allowlist of variables, nothing else the dashboard holds. A
 session starts in the child's worktree only when the child names exactly one, below the workspace's
-`.claude/worktrees` folder or a git worktree in the workspace whose branch names the child; otherwise in the workspace
-root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
+`.claude/worktrees` folder (where `orch worktree add` puts it) or a git worktree in the workspace whose branch names
+the child; otherwise in the workspace root. Residual risk, stated plainly: the operating system does not isolate processes of the same user from each other,
 so the guard and these checks are best effort against an agent that tries; they close the obvious routes.
 
 The guard's part is a text check, not a shell. It refuses a command run from inside the orch config dir, a `cd` or
@@ -213,7 +213,12 @@ taken from the hook's working directory) and every segment of a command. A path 
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
 length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
 hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
-a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
+a heredoc body or quoted text is not. The rule against reading the config dir wholesale (a recursive reader, archiver
+or glob next to the config dir or a folder above it) likewise skips text that is only data: a heredoc body fed to
+`cat`, `tee`, `gh … --body-file -` or `git commit -F -` when nothing in the line runs code, and the quoted message of
+`git commit -m` or title and body of a `gh` create, edit or comment (a double-quoted one with `$` or a backtick stays
+judged). A heredoc or string that a shell or interpreter runs is code, its quoted strings included, and stays judged; the
+name `remote-humans.json` counts anywhere. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
 (unless its target names orch's own environment or config place, such as `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `.config/orch`,
 or an obfuscated lookup that also names orch or config (the bare words orch, env and printenv do not count): that is judged as a cd into the config dir). A command that names the config
 location and tmux or screen anywhere in its text, interpreter strings included, is refused. Otherwise
@@ -244,6 +249,8 @@ edits by setting it in your user settings, not in this command.
 **Worktrees are written by agents.** The launched session ignores the settings and MCP servers a worktree carries
 (user settings, which hold orch's hook, still apply), and the runner refuses to launch a child whose worktree has a
 `.claude/settings.json`, `.claude/settings.local.json` or `.mcp.json` that is not identical to the workspace's own.
+Identical means a copy with the same bytes, or a symlink to the workspace's own file itself (what `orch worktree add`
+makes); a symlink to any other file is refused, even one with the same bytes.
 Residual risk: instruction files such as `CLAUDE.md` or `AGENTS.md` in a worktree still reach the session as text.
 
 **Known gap.** An auto-mode classifier denial still needs a card from you each time (see "Harness settings and auto

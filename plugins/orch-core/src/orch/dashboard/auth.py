@@ -5,6 +5,8 @@ from urllib.parse import urlencode, urlsplit
 
 from starlette.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
+from orch.dashboard.switcher import STATUS_PATH
+
 COOKIE = "orch_token"
 UNAUTHORIZED = """<!doctype html><html lang="en" data-theme="system"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Locked · orch</title>
@@ -33,6 +35,8 @@ async def auth_middleware(request, call_next):
     # Unauthenticated, but safe: StaticFiles resolves paths within STATIC_DIR itself and
     # refuses any "../" traversal outside it, so this prefix check does not need to.
     if request.url.path.startswith("/static/"):
+        return await call_next(request)
+    if request.url.path == STATUS_PATH and request.method == "GET":  # the switcher probe; the route allows local only
         return await call_next(request)
     token = request.app.state.token
     given = request.query_params.get("token")

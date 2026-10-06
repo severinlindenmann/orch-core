@@ -46,7 +46,8 @@ def agents_rules(cfg: dict) -> str:
     term = git["review_term"]
     key = example_key(cfg)
     sections = ["What", "Why", "Risk", "Verification"] + (["Rollback"] if commit["rollback"] else [])
-    commit_rule = ("You may commit on the ticket's branch." if may["commit"]
+    commit_rule = ("You may commit on the ticket's branch. Commit orch's own records (tickets, gates, events) with "
+                   "`orch records commit`, never mixed with code." if may["commit"]
                    else "You do not commit: prepare the change, run the checks, and tell the user it is ready to commit.")
     push_rule = "You may push the ticket's branch." if may["push"] else "You do not push; the user does."
     review_rule = f"You may open a draft {term}." if may["open_review"] else f"You do not open {term}s; the user does."
@@ -67,7 +68,7 @@ Tickets live in `orchestrator/tickets/` and are managed with the `orch` command.
 
 1. **Tickets first.** No work without a ticket. Use `orch` for every ticket action; never move or rename ticket files or hand-edit status, gates, answers or claims. Put the ticket key in every commit and {term}. The requirements gate binds the Summary, Requirements, Acceptance criteria and Out of scope sections and refuses while Requirements or Acceptance criteria are empty: write them into those sections (`orch new --requirements-file … --acceptance-file …`, or `orch section set <id> Requirements --file …`), not into the Ask.
 2. **Human-only actions.** Never approve gates, answer questions or close tickets, never type a ticket ID into an `orch` confirmation prompt, and never work around how orch tells you from the human. Questions go through `orch ask`, not into Requirements or Plan text, and the Log is append-only. When you need a decision, run `orch ask <id> --file questions.yaml` with options, costs and a recommended default. Never assume silently. Whenever the next step is the human's (requirements or plan to approve, a blocking question, changes you made on request, a verdict in testing), run `orch wait <id> --json` in the background (in the foreground where your harness has no background commands) and carry on when it returns, instead of ending on "tell me when"; on timeout, run it again. Stop waiting only when the user says so.
-3. **Scope.** Implement only what the approved Requirements and Plan cover. Anything else goes into `## Findings` and becomes a follow-up: `orch new --from <id> --title "..."`. Work from the ticket's task list: create it with `orch task add` right after claiming, keep one task in progress, tick each with evidence (`orch task done <id> T<n> -m "..."`) and resume from `orch task list <id>`.
+3. **Scope.** Implement only what the approved Requirements and Plan cover. Anything else goes into `## Findings` and becomes a follow-up: `orch new --from <id> --title "..."`. Work from the ticket's task list: create it with `orch task add` right after claiming, keep one task in progress, tick each with evidence (`orch task done <id> T<n> -m "..."`) and resume from `orch task list <id>`. A worktree goes under `.claude/worktrees/<repo>/<slug>`: create it with `orch worktree add <id> --repo <repo>` (branch, links and harness files included), never by symlinking the whole `.claude` folder.
 4. **Commits.** Subject `{commit['subject']}`; body lines {body_list}. Example:
 
    ```

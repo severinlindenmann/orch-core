@@ -203,6 +203,7 @@ def test_grid_and_view_render_screens(dash, fake):
     grid = dash.get("/terminals").text
     assert 'href="/terminals"' in grid and 'data-screen="DEMO-1"' in grid and "&lt;b&gt;" in grid
     assert 'data-screen="other"' not in grid
+    assert 'href="/terminals"' in dash.get("/board").text.split('class="menu-addons"')[1]  # #167: under Addons
     view = dash.get("/terminals/DEMO-1")
     assert view.status_code == 200 and 'data-term="DEMO-1"' in view.text and "ready" in view.text
     assert dash.get("/terminals/other").status_code == 404

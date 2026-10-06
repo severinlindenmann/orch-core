@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from orch.core import store
 from orch.core.gates import gate_state, plan_required
+from orch.core.gitfiles import records_only
 from orch.errors import NotFoundError, TicketParseError, UsageError
 from orch.instructions.render import body_names, commit_example
 
@@ -14,6 +16,7 @@ ATTRIBUTION_PATTERNS = (
 )
 _SKIP_FORMAT = re.compile(r"^(Merge |Revert |fixup! |squash! |amend! )")
 _SCISSORS = re.compile(r"^# -+ >8 -+$")
+_RECORDS = re.compile(r"orch: records(?: \S.*)?")
 
 
 def clean_message(text: str) -> str:
@@ -44,7 +47,8 @@ def subject_regex(cfg: dict) -> re.Pattern:
     return re.compile(pattern)
 
 
-def check_message(ws, text: str) -> list[str]:
+def check_message(ws, text: str, cwd: Path | None = None) -> list[str]:
+    """Problems with this commit message; `cwd` is where git runs the hook, to read which paths are staged."""
     cfg = ws.config
     msg = clean_message(text)
     if not msg:
@@ -57,6 +61,12 @@ def check_message(ws, text: str) -> list[str]:
                 problems.append(f"remove the AI attribution ({m.group(0).strip()!r}); this workspace forbids it")
     subject, _, rest = msg.partition("\n")
     if _SKIP_FORMAT.match(subject):
+        return problems
+    # #168: a commit of nothing but orch's own records is bookkeeping, not code: no plan gate
+    if _RECORDS.fullmatch(subject):
+        if not records_only(ws, cwd or Path.cwd()):
+            problems.append("an 'orch: records' commit may stage only orch records (tickets, gates, events, synced "
+                            "instructions); commit code under a ticket key, or run `orch records commit`")
         return problems
     m = subject_regex(cfg).fullmatch(subject)
     if not m:
@@ -81,7 +91,8 @@ def check_message(ws, text: str) -> list[str]:
     except (UsageError, TicketParseError) as e:
         problems.append(f"{key}: {e.message}")
     else:
-        if plan_required(ws, ticket) and gate_state(ticket, "plan") != "approved":
+        if (plan_required(ws, ticket) and gate_state(ticket, "plan") != "approved"
+                and not records_only(ws, cwd or Path.cwd())):
             problems.append(f"{ticket.id}: plan is not approved yet (size {ticket.meta.get('size')}); "
                             f"the human runs `orch approve {ticket.id} plan`")
     body = rest.strip()

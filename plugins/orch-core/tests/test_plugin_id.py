@@ -81,3 +81,27 @@ def test_doctor_accepts_orch_core_from_any_marketplace(tmp_path):
     assert _plugin_enabled_in(path) and _enabled_plugin_id(path) == "orch-core@orch-core"
     path.write_text(json.dumps({"enabledPlugins": {"orch-core@orch-core": False, "orch-corex@y": True}}))
     assert not _plugin_enabled_in(path)
+
+
+def test_sync_drops_a_legacy_orch_id_and_keeps_other_plugins():
+    existing = {"enabledPlugins": {"orch-ticket-workflow@ai-convenience-store": True, "other@market": True}}
+    merged = merge_settings(existing, CFG, plugin_mode=True)
+    assert merged["enabledPlugins"] == {"other@market": True, PLUGIN_ID: True}
+
+
+def test_sync_drops_a_legacy_orch_id_next_to_orch_core():
+    existing = {"enabledPlugins": {"orch-ticket-workflow@x": False, "orch-core@orch-core": True}}
+    assert merge_settings(existing, CFG, plugin_mode=True)["enabledPlugins"] == {"orch-core@orch-core": True}
+
+
+def test_claude_mode_drops_a_legacy_orch_id_too():
+    merged = merge_settings({"enabledPlugins": {"orch-ticket-workflow@x": True}}, CFG)
+    assert "enabledPlugins" not in merged
+    assert merge_settings({"enabledPlugins": {}}, CFG)["enabledPlugins"] == {}
+
+
+def test_legacy_ids_need_a_marketplace():
+    assert st.is_legacy_plugin_id("orch-ticket-workflow@ai-convenience-store")
+    assert not st.is_legacy_plugin_id("orch-ticket-workflow@")
+    assert not st.is_legacy_plugin_id("orch-ticket-workflowx@y")
+    assert not st.is_legacy_plugin_id("orch-core@orch-core")

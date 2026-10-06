@@ -3,6 +3,7 @@
 Claude Code usage per ticket: what a ticket cost, how many output tokens each model wrote for it, and an estimate of how much of your weekly limit it used. Off until you enable it per workspace in **Workspace & addons**. It only reads files; it changes nothing and never edits Claude's settings.
 
 - **Ticket page, Usage panel** (in the code column): the estimate at API list prices (Claude Code's own figure) per model, the weekly limit share, working time, lines added and removed, first and last message, and output tokens per model for the main session and for subagents.
+- **Menu entry**: a row per limit, "5h" and "Week", each with a small meter, the percent and its reset ("resets in 4h49", "resets Mon 09:00"). Colour comes from the level (amber from 70 %, red from 90 %) and turns amber earlier when the pace sentence sees the limit fill before its reset. A window that has reset reads "5h — reset" in grey. When the last reading is older than the stale setting, the rows are greyed and say "as of 13:52". In a menu too narrow for the rows, one labelled chip shows the riskier limit ("Week 59 %"). The tooltip lists both limits and their resets. Needs orch API 2.8.
 - **Usage page** (menu): limit cards (5-hour and weekly) with reset time and a pace sentence; output tokens by model per day (last 7 / 30 days or calendar weeks, local days, from every transcript on this machine, subagents included); how much of this week's output is tied to a ticket and output per ticket; limits history with real time spacing; the API-price equivalent per calendar week (booked on the day a session ended); then this week's table. Needs orch API 2.6 for the charts. Without the recorder the limit cards give way to the install line.
 
 ## How the numbers are made
@@ -26,5 +27,6 @@ Claude Code only exposes the limit percentages to its status line, so a small sc
 
 - **Limits log**: path of that file (default `~/.claude/orch-usage/limits.jsonl`).
 - **Show the estimated cost** (on): switch off to hide every dollar figure.
+- **Dim the menu limits after** (30 minutes): how old the last reading may be before the menu entry greys its rows.
 
 Binaries: none. Data is refreshed in the background while Mission Control is open (or on Refresh); big transcripts are parsed there, never while a page renders.

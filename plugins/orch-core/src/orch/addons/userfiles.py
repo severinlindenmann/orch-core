@@ -145,6 +145,23 @@ def set_keyboard_shortcuts(root, on: bool) -> None:
     update_json(workspaces_json_path(), mutate)
 
 
+def workspace_switcher(root) -> bool:
+    """The human's per-workspace switch for the sidebar's list of other running workspaces (#167): off unless
+    turned on, since most people run one workspace."""
+    entry = read_json_object(workspaces_json_path()).get(workspace_key(root))
+    return isinstance(entry, dict) and entry.get("switcher") is True
+
+
+def set_workspace_switcher(root, on: bool) -> None:
+    def mutate(data: dict) -> None:
+        key = workspace_key(root)
+        entry = data.get(key)
+        if not isinstance(entry, dict):
+            entry = data[key] = {"path": key}
+        entry["switcher"] = bool(on)
+    update_json(workspaces_json_path(), mutate)
+
+
 DENSITIES = ("comfortable", "compact")
 
 

@@ -9,7 +9,7 @@ from typing import Annotated, Optional
 import typer
 
 from orch import __version__
-from orch.errors import OrchError, UsageError
+from orch.errors import HumanOnlyError, OrchError, UsageError
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_enable=False,
                   help="Local ticket system with human-in-the-loop gates.")
@@ -31,6 +31,8 @@ app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
 from orch.cli_permit import permit_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(permit_app, name="permit")
+from orch.cli_worktree import worktree_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(worktree_app, name="worktree")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")
@@ -430,7 +432,7 @@ def link(
     no_sprint: Annotated[bool, typer.Option("--no-sprint", help="Take the ticket out of its sprint.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
-    """Link a PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
+    """Link a repo, PR/MR, branch, worktree or external key; put a ticket into an epic or a sprint."""
     ws = _ws()
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
                       no_epic=no_epic, sprint=sprint, no_sprint=no_sprint)
@@ -1285,6 +1287,38 @@ def hooks_install(
     ws = _ws()
     rows = [{"repo": str(p), "action": a} for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records)]
     _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
+
+
+# -- orch's own records in git (#168) ------------------------------------------------------
+
+records_app = typer.Typer(no_args_is_help=True, help="orch's own records (tickets, gates, events) in git.")
+app.add_typer(records_app, name="records")
+
+
+@records_app.command("commit")
+def records_commit(
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be committed; change nothing.")] = False,
+    json_out: JsonOpt = False,
+) -> None:
+    """Commit exactly the records `orch doctor` lists as uncommitted, with a generated `orch: records …` message.
+
+    Other staged files stay staged and are not committed. The commit check accepts it before plan approval because
+    it holds no code. Agents need git.agent_may.commit."""
+    from orch.actor import agent_harness
+    from orch.core.gitfiles import commit_records
+    ws = _ws()
+    harness = agent_harness()
+    if harness and not ws.config["git"]["agent_may"]["commit"] and not dry_run:
+        raise HumanOnlyError(f"orch records commit refused: agents do not commit in this workspace "
+                             f"(git.agent_may.commit is false; running inside {harness})",
+                             hint="tell the user the records are ready; they run `orch records commit`")
+    paths, subject = commit_records(ws, dry_run=dry_run)
+    if not paths:
+        _out({"committed": False, "paths": []}, json_out, "every orch record is committed; nothing to do")
+        return
+    head = f"would commit {len(paths)} record(s) as '{subject}':" if dry_run else f"committed {len(paths)} record(s): {subject}"
+    _out({"committed": not dry_run, "subject": subject, "paths": paths}, json_out,
+         "\n".join([head] + [f"  {p}" for p in paths]))
 
 
 # -- Claude Code guard (sub-project 2) --------------------------------------------------

@@ -36,7 +36,8 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Log a step | `orch log <id> -m "..."` |
 | Ask the human | `orch ask <id> --file questions.yaml` |
 | Wait for the human | `orch wait <id> [--timeout S] --json` — block until the human answers, approves, requests changes or gives a verdict (agents may run it) |
-| Link work | `orch link <id> --repo hub --branch feature/x` · `--pr 22` (a number resolves in `--repo`, default the workspace repo) or `--pr <url>` · `--external TIX-17` |
+| Link work | `orch link <id> --repo hub` (the ticket touches that repo) · `--repo hub --branch feature/x` · `--pr 22` (a number resolves in `--repo`, default the workspace repo) or `--pr <url>` · `--external TIX-17` |
+| Worktree | `orch worktree add <id> --repo hub [--base develop]` (branch from `git.branch_pattern`, worktree at `.claude/worktrees/hub/<slug>`, both linked, harness files linked in) · `orch worktree remove <id> --repo hub` (keeps the branch; refuses uncommitted changes) |
 | Evidence (files) | `orch artifact add <id> shot.png --ac 2 --inline --label "Login after the fix"` · `orch artifact add <id> report.html --task T3` (`--kind` screenshot, report, log, dataset, build, diagram, other; guessed when left out) |
 | Evidence (links) | `orch artifact add <id> --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"` (http/https only; never fetched) |
 | Loose files | `orch artifact list <id>` shows what is linked and what is not · `orch artifact scan <id>` links files written straight into `orchestrator/artifacts/<id>/` |

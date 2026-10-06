@@ -98,6 +98,9 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     # settings, the agent-HTML switch, update-all), and anything that serves or starts the dashboard
     ("GET", "/workspace"): NO,
     ("POST", "/workspace/tidy"): NO, ("POST", "/workspace/shortcuts"): NO, ("POST", "/workspace/density"): NO,
+    ("POST", "/workspace/switcher"): NO,
+    # the switcher probe: loopback only, never through the bridge
+    ("GET", "/__orch/status"): NO,
     ("POST", "/workspace/addons/check-updates"): NO, ("POST", "/workspace/addons/update-all"): NO,
     ("POST", "/workspace/addons/{name}/enable"): NO, ("POST", "/workspace/addons/{name}/background"): NO,
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,

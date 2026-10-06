@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 
 from orch.config.load import validate_schema
 from orch.core import evidence, ledger, store
+from orch.core.due import due_problem
 from orch.core.events import Actor, append_event, read_events, scan_events
 from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required, requirements_required
 from orch.core.ids import normalize_ref
@@ -233,6 +234,10 @@ def _check_entries(entries) -> list[Finding]:
             out.append(Finding("error", "filename", e.id, f"{where}: filename does not match id {e.meta.get('id')}"))
         if e.meta.get("status") != e.status:
             out.append(Finding("error", "status-mismatch", e.id, f"{where}: in folder {e.status} but status is {e.meta.get('status')!r}"))
+        due = due_problem(e.meta.get("due"))
+        if due:
+            out.append(Finding("error", "invalid-due", e.id, f"{where}: {due}; set it with `orch due {e.id} YYYY-MM-DD` "
+                                                             f"or remove it with `orch due {e.id} --clear`"))
     return out
 
 

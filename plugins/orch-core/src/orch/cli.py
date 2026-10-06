@@ -79,6 +79,7 @@ def _view(ws, ticket) -> dict:
 
 
 def _row(e, ws=None) -> dict:
+    from orch.core.due import due_state
     from orch.core.query import idle_days, resolution
     m = e.meta or {}
     return {
@@ -87,6 +88,7 @@ def _row(e, ws=None) -> dict:
         "id": e.id, "status": e.status, "resolution": resolution(m, e.status),
         "superseded_by": m.get("superseded_by"), "type": m.get("type"), "priority": m.get("priority"),
         "size": m.get("size"), "title": m.get("title"),
+        "due": m.get("due") if isinstance(m.get("due"), str) else None, "due_state": due_state(m, e.status),
         "external": [x.get("key") for x in m.get("external") or [] if isinstance(x, dict)],
         "error": e.error,
     }
@@ -103,9 +105,10 @@ def _fmt(r: dict) -> str:
     title = r["title"] if r["title"] is not None else f"⚠ {r['error']}"
     ext = f"  [{', '.join(r['external'])}]" if r["external"] else ""
     idle = f"  ⚠ idle {r['idle_days']}d, revalidate" if r.get("idle_days") else ""
+    due = f"  due {r['due']}" + {"overdue": " (overdue)", "soon": " (soon)"}.get(r.get("due_state") or "", "") if r.get("due") else ""
     res = r.get("resolution")
     why = f"  ({res}" + (f" by {r['superseded_by']}" if r.get("superseded_by") else "") + ")" if res and res != "completed" else ""
-    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{idle}{why}"
+    return f"{r['id']:<8} {r['status']:<12} {r['type'] or '':<13} {r['size'] or '':<2}  {title}{ext}{due}{idle}{why}"
 
 
 # -- entry point -----------------------------------------------------------------------
@@ -201,6 +204,7 @@ def new(
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
     epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
+    due: Annotated[Optional[str], typer.Option("--due", help="Due date, YYYY-MM-DD (optional).")] = None,
     label: Annotated[Optional[list[str]], typer.Option(
         "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
@@ -235,7 +239,7 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections, labels=label)
+                epic=epic, sprint=sprint, sections=sections, labels=label, due=due)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")
@@ -317,7 +321,7 @@ def path(ref: str) -> None:
 
 @app.command("next")
 def next_(summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
-    """Open, unblocked tickets by priority (top 5); quick tasks too, where the workspace has them on."""
+    """Open, unblocked tickets by priority, overdue and due-soon ones first within a priority (top 5); quick tasks too, where the workspace has them on."""
     from orch.core import query
     ws = _ws()
     rows = [_row(e, ws) for e in query.next_tickets(ws)][:5]
@@ -456,6 +460,21 @@ def link(
     t = _ops(ws).link(ref, repo=repo, pr=pr, branch=branch, worktree=worktree, external=external, epic=epic,
                       no_epic=no_epic, sprint=sprint, no_sprint=no_sprint, pr_state=state)
     _out(_view(ws, t), json_out, f"{t.id}: linked")
+
+
+@app.command()
+def due(
+    ref: str,
+    date: Annotated[Optional[str], typer.Argument(help="Due date, YYYY-MM-DD.")] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Remove the due date.")] = False,
+    json_out: JsonOpt = False,
+) -> None:
+    """Set a ticket's due date (YYYY-MM-DD) or remove it with --clear. Agents may run it."""
+    if (date is None) == (not clear):
+        raise UsageError("pass a date (YYYY-MM-DD) or --clear", hint="e.g. orch due L-0042 2026-10-31")
+    ws = _ws()
+    t = _ops(ws).set_due(ref, None if clear else date)
+    _out(_view(ws, t), json_out, f"{t.id}: due {t.meta['due']}" if t.meta.get("due") else f"{t.id}: no due date")
 
 
 LabelsArg = Annotated[list[str], typer.Argument(help="Label names, e.g. customer:arbonia admin.")]

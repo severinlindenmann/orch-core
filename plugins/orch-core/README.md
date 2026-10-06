@@ -166,6 +166,8 @@ Labels group tickets without an epic (a customer, an area): `orch new --label cu
 
 Sprints are planning only: define them in `orchestrator/config.json` as `"sprints": [{"id": "S1", "name": "Sprint 1", "start": "2026-10-01", "end": "2026-10-14"}]`, then `orch new --sprint S1`, `orch link <id> --sprint S1`, `orch sprint list` and `orch sprint current`.
 
+Due dates are planning only too: `orch new --due 2026-10-31` gives a ticket a `due: YYYY-MM-DD` in its frontmatter, `orch due <id> 2026-11-07` changes it and `orch due <id> --clear` removes it (agents may run both; the Log and the event log record each change). `orch list` and `orch show` print it, and `orch list` and the Board mark an overdue ticket that is not done. Within the same priority, `orch next` puts open tickets that are overdue or due within the next 3 days (today included; `DUE_SOON_DAYS` in `orch/core/constants.py`) first, the earliest first. `orch check` reports a `due` that is not a valid date (`invalid-due`). No gate binds the date, and orch sends no reminders.
+
 ### Request changes
 
 Instead of approving requirements or a plan, you can send them back with a message: Request changes on the Today card or the ticket page, or `orch request-changes <ref> <gate> -m "..."` (`gate` is `requirements` or `plan`; human only, like `approve`). The ticket leaves your list until the agent edits that gate's section; a reply in the Log alone does not clear the request. While the request is pending, the dashboard offers no Approve for that gate. `orch approve` in your terminal still works as your override and clears the request.

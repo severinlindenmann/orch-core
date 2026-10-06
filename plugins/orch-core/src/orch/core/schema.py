@@ -13,7 +13,7 @@ from pathlib import Path
 
 from orch.core.model import Ticket
 
-SCHEMA_VERSION = "1.9.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
+SCHEMA_VERSION = "1.10.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.3: `verdict` {hash, round}: what a verdict must echo (orch.core.epics.verdict_hash)
 # 1.4: `together` on an approve-requirements need: requirements and plan may be approved in one decision (F2);
 # `move`: whose move it is, by the dashboard's rules (orch.dashboard.data.cards.move_summary)
@@ -22,6 +22,7 @@ SCHEMA_VERSION = "1.9.0"  # 1.1: the Summary section. 1.2: type epic, sprint.
 # 1.7: `gates.verify.hash`: the verdict hash the verdict was given on (null when none was stored)
 # 1.9: `resolution` and `superseded_by` (orch close --as)
 # 1.8: `artifact_items[].by` (who added it) and `.run` (a receipt's facts, orch task done --run); `revalidate`
+# 1.10: `due`: the optional due date (YYYY-MM-DD, orch.core.due), null when none or not a valid date
 TASKS_SCHEMA_FILE = "tasks-view.schema.json"
 _PACKAGED = Path(__file__).resolve().parent.parent / "schemas" / TASKS_SCHEMA_FILE  # wheels: hatch force-include
 _SOURCE = Path(__file__).resolve().parents[3] / "docs" / TASKS_SCHEMA_FILE  # plugin root: source checkout
@@ -81,6 +82,7 @@ def ticket_schema() -> dict:
             "priority": {"enum": list(PRIORITIES)}, "size": {"enum": list(SIZES)},
             "created": _NS, "updated": _NS, "labels": _SL, "parent": _NS, "blocked_by": _SL, "follow_ups": _SL,
             "sprint": _NS,  # 1.2: a sprint id from the workspace config (planning only)
+            "due": {"type": ["string", "null"], "pattern": r"^\d{4}-\d{2}-\d{2}$"},  # 1.10: planning only (#174)
             # 1.9: why a done ticket is done (null while it is not), and the ticket that replaced it
             "resolution": {"enum": [*RESOLUTIONS, None]}, "superseded_by": _NS,
             "external": {"type": "array", "items": {"type": "object", "required": ["key"], "properties": {"key": _S, "url": _NS}}},
@@ -170,6 +172,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
     doc["resolution"] = query.resolution(m, str(m.get("status") or ""))
     doc["superseded_by"] = str(m["superseded_by"]) if doc["resolution"] in ("superseded", "duplicate") and m.get("superseded_by") else None
     doc["sprint"] = str(m["sprint"]) if isinstance(m.get("sprint"), (str, int)) and str(m["sprint"]) else None
+    from orch.core.due import parse_due
+    doc["due"] = m["due"] if parse_due(m.get("due")) else None
     doc["claim"] = {"session": claim.get("session"), "harness": claim.get("harness"), "at": claim.get("at")}
     verify = (m.get("gates") or {}).get("verify") or {}
     doc["gates"] = {"requirements": _gate(ticket, "requirements"), "plan": _gate(ticket, "plan"),
@@ -239,6 +243,8 @@ def ticket_from_document(doc: dict) -> Ticket:
     t.meta["claim"] = dict(doc.get("claim") or {})
     if doc.get("sprint"):
         t.meta["sprint"] = doc["sprint"]
+    if doc.get("due"):
+        t.meta["due"] = doc["due"]
     gates = doc.get("gates") or {}
     for gate in ("requirements", "plan"):
         g = gates.get(gate) or {}
@@ -282,6 +288,7 @@ def example_document() -> dict:
                        created=_FIXED)
         t.meta["status"] = "waiting"
         t.meta["labels"] = ["export"]
+        t.meta["due"] = "2026-10-31"
         for name, text in {"Ask": "The client needs the readings as CSV.",
                            "Requirements": "- One file per day", "Acceptance criteria": "- [ ] Opens in Excel",
                            "Plan": "1. Inventory\n2. Exporter", "Tasks": _EXAMPLE_TASKS}.items():

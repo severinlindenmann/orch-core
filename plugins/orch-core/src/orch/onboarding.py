@@ -142,8 +142,8 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
         _terminal_cli(cli_version),
     ]
     root = git_root(start)
-    checks.append(Check("git", root is not None, f"git repository {root}" if root else "not inside a git repository",
-                        None if root else "run orch inside the repository (or workspace folder) you work in"))
+    git_at = len(checks)
+    checks.append(_git_check(root, None))  # replaced below once the workspace is known
     try:
         ws = Workspace.open(start)
     except UsageError:
@@ -154,6 +154,7 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
         checks.append(Check("workspace", True, f"orch workspace at {start}"))
         checks.append(Check("config", False, e.message, "fix orchestrator/config.json"))
         return checks
+    checks[git_at] = _git_check(root, ws)
     checks.append(Check("workspace", True, f"orch workspace at {ws.home}"))
     errors = validate_schema(ws.config)
     checks.append(Check("config", not errors, "config.json is valid" if not errors else "; ".join(errors),
@@ -170,6 +171,75 @@ def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = N
     checks.append(_legacy_plugin_check(ws))
     checks += _terminals_checks(ws)
     return checks
+
+
+def local_only_repos(ws) -> list[Path]:
+    """The configured repos when the workspace root is not in git but each of them is a git repo in a subfolder of
+    it: the usual multi-repo layout, where orch's records stay local unless the root becomes a local repo."""
+    from orch.hooks.install import configured_repos
+    root = ws.root.resolve()
+    try:
+        repos = configured_repos(ws)
+    except (AttributeError, KeyError, TypeError):
+        return []
+    if not repos or git_root(root) is not None:
+        return []
+    if any(p == root or not p.is_relative_to(root) or git_root(p) != p for p in repos):
+        return []
+    return repos
+
+
+def _git_check(root: Path | None, ws) -> Check:
+    if root is not None:
+        return Check("git", True, f"git repository {root}")
+    repos = local_only_repos(ws) if ws is not None else []
+    if repos:
+        return Check("git", True, f"local only: the workspace root {ws.root} is a plain folder holding "
+                                  f"{len(repos)} git repo(s), so orch's records are not versioned "
+                                  "(`orch doctor --init-git` makes the root a local-only git repo, with no remote)")
+    return Check("git", False, "not inside a git repository",
+                 "run orch inside the repository (or workspace folder) you work in")
+
+
+ROOT_BEGIN = "# >>> orch: workspace root as a local-only repo (no remote); written by `orch doctor --init-git`"
+ROOT_END = "# <<< orch: workspace root"
+
+
+def root_ignore_block(ws, repos: list[Path]) -> str:
+    root = ws.root.resolve()
+    lines = [ROOT_BEGIN, "# Each repo below keeps its own history; worktrees belong to one machine."]
+    lines += [f"/{p.relative_to(root).as_posix()}/" for p in repos] + ["/.claude/worktrees/", ROOT_END]
+    return "\n".join(lines)
+
+
+def init_root_repo(ws) -> list[tuple[str, str]]:
+    """`orch doctor --init-git`: git init the workspace root and ignore the configured repos and worktrees in it.
+    No remote is added and nothing is staged or committed."""
+    from orch.core.fsutil import atomic_write_text
+    from orch.core.gitfiles import apply_ignore_block, write_ignore_block
+    root = ws.root.resolve()
+    if git_root(root) is not None:
+        raise UsageError(f"{root} is already in a git repository", hint="--init-git is only for a plain folder")
+    repos = local_only_repos(ws)
+    if not repos:
+        raise UsageError("--init-git is for a workspace root whose git.repos are git repos in its subfolders",
+                         hint="list them under git.repos first, or run git init yourself")
+    r = subprocess.run(["git", "-C", str(root), "init", "-q", "-b", "main"], capture_output=True, text=True, check=False)
+    if r.returncode != 0:  # git before 2.28 has no -b
+        r = subprocess.run(["git", "-C", str(root), "init", "-q"], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        raise OrchError(f"git init failed: {(r.stderr or r.stdout).strip()}")
+    path = root / ".gitignore"
+    try:
+        old = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        old = None
+    new = apply_ignore_block(old, root_ignore_block(ws, repos), ROOT_BEGIN, ROOT_END)
+    if new != old:
+        atomic_write_text(path, new)
+    return [("initialized", f"{root} (local only: no remote, nothing committed)"),
+            ("created" if old is None else "unchanged" if new == old else "updated", ".gitignore"),
+            (write_ignore_block(ws), (ws.home / ".gitignore").relative_to(ws.root).as_posix())]
 
 
 def _terminals_checks(ws) -> list[Check]:
@@ -224,6 +294,9 @@ def _git_file_checks(ws) -> list[Check]:
     else:
         checks = [Check("gitignore", True, "orchestrator/.gitignore keeps caches and locks out of git")]
     if view is None:
+        if git_root(ws.root) is None:
+            checks.append(Check("records", True, "orch records are local only (not versioned): "
+                                                 "the workspace root is not a git repository"))
         return checks
     if view.uncommitted:
         checks.append(Check("records", False, f"{len(view.uncommitted)} orch record(s) not committed: "
@@ -244,7 +317,7 @@ def _git_file_checks(ws) -> list[Check]:
 
 
 def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
-    from orch.hooks.install import configured_repos, hook_state
+    from orch.hooks.install import configured_repos, hook_state, missing_hooks_path
     repos = configured_repos(ws)
     if not repos:
         return [Check("repos", False, "no repos listed under git.repos in orchestrator/config.json",
@@ -256,6 +329,13 @@ def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
         checks.append(Check("hooks", False, f"no orch commit-message check in: {', '.join(missing)}", "orch hooks install"))
     else:
         checks.append(Check("hooks", True, "commit-message check installed in every configured repo"))
+    broken = [(p, d) for p in repos if (d := missing_hooks_path(p)) is not None]
+    if broken:
+        checks.append(Check("hooks-path", False,
+                            "core.hooksPath points to a missing folder, so git runs none of the repo's own hooks: "
+                            + ", ".join(f"{p.name} ({d})" for p, d in broken),
+                            "restore that folder, or point core.hooksPath at the right one: "
+                            f"git -C {shlex.quote(str(broken[0][0]))} config core.hooksPath FOLDER"))
     return checks
 
 
@@ -340,8 +420,8 @@ SETUP_HINT = (
 )
 _SKIP_IN_WORKSPACE = {"uv", "terminal-cli", "git"}
 _ALL_DOCTOR_CODES = ("uv", "terminal-cli", "git", "workspace", "config", "adopt", "gitignore", "records",
-                     "unclassified", "repos", "hooks", "plugin", "skill-copies", "harness", "legacy-plugin",
-                     "tmux", "terminals-cli")
+                     "unclassified", "repos", "hooks", "hooks-path", "plugin", "skill-copies", "harness",
+                     "legacy-plugin", "tmux", "terminals-cli")
 OPEN_ITEM_CODES = tuple(c for c in _ALL_DOCTOR_CODES if c not in _SKIP_IN_WORKSPACE)
 _EMPTY_STATE = {"dismissed_repos": [], "dismissed_items": {}}
 

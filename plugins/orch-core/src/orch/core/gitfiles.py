@@ -58,16 +58,17 @@ def ignore_block() -> str:
     return "\n".join(lines)
 
 
-def apply_ignore_block(text: str | None) -> str:
+def apply_ignore_block(text: str | None, block: str | None = None, begin: str = BEGIN, end: str = END) -> str:
     """The .gitignore text with the managed block replaced, or inserted first (lines after it can override it)."""
-    block = ignore_block()
+    block = ignore_block() if block is None else block
     if text is None or not text.strip():
         return block + "\n"
     crlf = "\r\n" in text
     lf = text.replace("\r\n", "\n")
-    start, stop = lf.find(BEGIN), lf.find(END)
+    start = lf.find(begin)
+    stop = lf.find(end, start) if start != -1 else -1
     if start != -1 and stop > start:
-        out = lf[:start] + block + lf[stop + len(END):]
+        out = lf[:start] + block + lf[stop + len(end):]
     else:
         out = block + "\n\n" + lf
     if not out.endswith("\n"):

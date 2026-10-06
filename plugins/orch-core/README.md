@@ -67,6 +67,12 @@ orch never commits on its own, with two exceptions: `orch records commit`, which
 
 `orch records commit` commits exactly the records doctor lists (never caches or locks) with a generated message: the subject `orch: records L-0001, L-0002` names the tickets they belong to and the body lists each changed path. It commits with `git commit --only`, so whatever else is staged stays staged and uncommitted; `--dry-run` shows what it would commit. Agents may run it only where `git.agent_may.commit` is true. The commit check accepts such a commit before plan approval because it holds no code: when every staged path is an orch record, the plan gate is skipped and the fixed subject `orch: records …` is accepted without the body lines; AI attribution is still refused. A commit that mixes records and code gets the full check. The check reads the index git hands the hook, so a commit that names paths (a temporary index) is judged by what it really commits; when git cannot say what is staged, the full check applies.
 
+A workspace root can also be a plain folder that holds the configured repos (`git.repos` are git repos in its subfolders). `orch doctor` then reports `git` as local only: the records work, but have no history, and `orch hooks install --stage-records` skips the pre-commit hook and says why. `orch doctor --init-git` makes such a root a local-only git repo: it runs `git init` and writes a `.gitignore` block listing each configured repo and `.claude/worktrees/`. It adds no remote and commits nothing.
+
+### Commit check without touching tracked files
+
+By default, a repo whose own `core.hooksPath` is a tracked folder gets orch's call added to that folder's `commit-msg`, which then has to be committed. `orch hooks install --untracked` changes no tracked file instead. It points this clone's `core.hooksPath` at `<git dir>/orch-hooks/`. Each hook there runs orch's part and then the hook that ran before, unchanged and in the same order. `orch hooks uninstall` (human only) puts the previous `core.hooksPath` back. `orch doctor` warns (`hooks-path`) when a repo's `core.hooksPath` points to a missing folder, so git runs none of that repo's own hooks.
+
 ## Worktrees
 
 A ticket's git worktrees go under the workspace root, at `<root>/.claude/worktrees/<repo>/<slug>`, one per repo the ticket touches. There `orch` finds `orchestrator/` by walking up (no `ORCH_HOME`), harnesses pick up the root's `CLAUDE.md`/`AGENTS.md`, and the AI Factory starts a child's session in it.

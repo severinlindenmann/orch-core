@@ -21,6 +21,8 @@ If `orch` itself cannot run (for example under GitHub Copilot, where the plugin'
 ## 2. CLI for the user's own terminal (`terminal-cli`)
 Explain: approvals, answers and the dashboard (`orch serve`) must come from the human's own terminal, so orch needs to be installed there once. Offer the exact `fix` command from doctor (it looks like `uv tool install "<plugin folder>[dashboard]"`); run it only after the user says yes. If the user declines: say that approvals and `orch serve` still need it, give them the command to run later themselves, and don't promise the dashboard works yet.
 
+**Version first:** do this before `orch init` and before any `orch hooks install`. If an `orch` is on the PATH but doctor says its version differs from the plugin's (or that it is too old to report its version), `orch init` and `orch hooks install` would run that older CLI and its options may be missing. Tell the user both versions, offer doctor's `fix` (`uv tool install --force "<plugin folder>[dashboard]"`), run it only after the user says yes, and run `orch doctor --json` again until `terminal-cli` is ok. If the user declines, stop before `orch init`.
+
 ## 3. Before `orch init`: existing agent files
 Check whether `AGENTS.md` or `CLAUDE.md` already exists at the repo root (doctor cannot tell you this yet — there is no workspace). If one does, explain that orch keeps everything already there and only appends a marked block at the end, which it can update later without touching the rest; ask the user. On a yes, add `--adopt` to the `orch init` command in step 4.
 
@@ -53,6 +55,7 @@ Run `orch doctor --json` again — this is the first point where `adopt`, `repos
 - `plugin`: the plugin is not enabled in `.claude/settings.json`; run `orch instructions sync` only after the user says yes.
 - `harness`: the workspace still uses harness `claude` while this plugin is active, so the guard, hooks and skills run twice. Explain that, then — only after the user says yes — follow doctor's `fix`: change `"harnesses"` in `orchestrator/config.json` from `"claude"` to `"claude-plugin"`, run `orch instructions sync` (it removes the old orch hooks from `.claude/settings.json` and enables the plugin), then re-run doctor.
 - `skill-copies`: leftover skill copies in `.claude/skills` (from an earlier `claude`-mode sync, including the old names `tickets`, `refine-ticket`, `work-on-ticket`). Show the folders doctor lists and delete them only after the user says yes; never delete anything doctor did not list.
+- `legacy-plugin`: an earlier orch plugin id (such as `orch-ticket-workflow@ai-convenience-store`) is still enabled, so the guard and session hooks run twice. For `.claude/settings.json`, run `orch instructions sync` only after the user says yes; it removes only the earlier orch ids and leaves every other plugin alone. For any other file doctor names, show the entry and let the user remove it.
 
 ## 6. Finish
 Offer to create a first ticket from what the user is working on right now (`orch new --title "..."`, then the orch-refine-ticket skill). Tell the user to run `orch serve` in their own terminal to open the dashboard — never run `orch serve` yourself, the guard blocks it for agents.

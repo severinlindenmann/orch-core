@@ -119,9 +119,10 @@ in_plugin = pytest.mark.skipif(not (PLUGIN_ROOT / ".claude-plugin" / "plugin.jso
 posix = pytest.mark.skipif(__import__("sys").platform == "win32", reason="POSIX executables")
 
 
-def _exe(path):
+def _exe(path, body=None):
+    from orch import __version__
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.write_text("#!/bin/sh\n" + (f"echo {__version__}\n" if body is None else body), encoding="utf-8")
     path.chmod(0o755)
     return path
 
@@ -229,3 +230,108 @@ def test_doctor_reuses_known_hook_states(configure, ws_root, monkeypatch):
     monkeypatch.setattr(install_mod, "hook_state", lambda repo: (_ for _ in ()).throw(AssertionError("asked git again")))
     got = {c.code: c.ok for c in doctor(ws_root, hook_states={(ws_root / "hub").resolve(): "installed"})}
     assert got["hooks"] is True
+
+
+# -- #162: CLI/plugin version skew, legacy plugin ids ---------------------------------------
+
+def _plugin(tmp_path, version):
+    root = tmp_path / "plugin"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "orch-core", "version": version}))
+    return root
+
+
+def _terminal_with(ws_root, tmp_path, monkeypatch, body, plugin_version="0.4.1"):
+    root = _plugin(tmp_path, plugin_version)
+    cli = _exe(tmp_path / "home" / ".local" / "bin" / "orch", body)
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
+    monkeypatch.setattr(onboarding.sys, "prefix", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("PATH", str(cli.parent))
+    return root, _terminal(ws_root)
+
+
+@posix
+def test_terminal_cli_ok_when_versions_match(ws_root, ws, tmp_path, monkeypatch):
+    _, check = _terminal_with(ws_root, tmp_path, monkeypatch, "echo 0.4.1\n")
+    assert check.ok is True and "orch 0.4.1" in check.message
+
+
+@posix
+def test_terminal_cli_flags_an_older_cli_and_offers_the_upgrade(ws_root, ws, tmp_path, monkeypatch):
+    root, check = _terminal_with(ws_root, tmp_path, monkeypatch, "echo 0.3.0\n")
+    assert check.ok is False
+    assert "orch 0.3.0" in check.message and "0.4.1" in check.message
+    assert check.fix == f'uv tool install --force "{root}[dashboard]"'
+
+
+@posix
+def test_terminal_cli_flags_a_cli_without_version_flag(ws_root, ws, tmp_path, monkeypatch):
+    body = "echo \"Error: No such option: --version\" >&2\nexit 2\n"
+    root, check = _terminal_with(ws_root, tmp_path, monkeypatch, body)
+    assert check.ok is False and "too old to answer `orch --version`" in check.message
+    assert "--force" in check.fix and str(root) in check.fix
+
+
+@posix
+def test_terminal_cli_version_is_cached_until_the_file_changes(ws_root, ws, tmp_path, monkeypatch):
+    calls = tmp_path / "calls"
+    body = f"echo x >> {calls}\necho 0.4.1\n"
+    _terminal_with(ws_root, tmp_path, monkeypatch, body)
+    _terminal(ws_root)
+    assert calls.read_text().count("x") == 1
+
+
+@posix
+def test_open_setup_items_does_not_run_the_terminal_cli(ws_root, ws, tmp_path, monkeypatch):
+    calls = tmp_path / "calls"
+    root = _plugin(tmp_path, "0.4.1")
+    cli = _exe(tmp_path / "bin" / "orch", f"echo x >> {calls}\necho 0.4.1\n")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
+    monkeypatch.setenv("PATH", str(cli.parent))
+    onboarding.open_setup_items(ws)
+    assert not calls.exists()
+
+
+def test_legacy_plugin_is_an_open_item_code():
+    assert "legacy-plugin" in OPEN_ITEM_CODES
+
+
+def _project_settings(ws_root, data, name="settings.json"):
+    path = ws_root / ".claude" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _legacy(ws_root):
+    return next(c for c in doctor(ws_root) if c.code == "legacy-plugin")
+
+
+def test_doctor_legacy_plugin_ok_without_one(ws_root, ws):
+    assert _legacy(ws_root).ok is True
+
+
+def test_doctor_flags_legacy_plugin_and_sync_removes_only_it(configure, ws_root):
+    configure(harnesses=["claude-plugin"])
+    path = _project_settings(ws_root, {"enabledPlugins": {
+        "orch-ticket-workflow@ai-convenience-store": True, "orch-core@orch-core": True, "other@market": True}})
+    check = _legacy(ws_root)
+    assert check.ok is False
+    assert "orch-ticket-workflow@ai-convenience-store" in check.message and ".claude/settings.json" in check.message
+    assert "orch instructions sync" in check.fix
+    assert run(["instructions", "sync"]) == 0
+    assert json.loads(path.read_text())["enabledPlugins"] == {"orch-core@orch-core": True, "other@market": True}
+    assert _legacy(ws_root).ok is True
+
+
+def test_doctor_legacy_plugin_in_local_settings_is_fixed_by_hand(configure, ws_root):
+    configure(harnesses=["claude-plugin"])
+    _project_settings(ws_root, {"enabledPlugins": {"orch-ticket-workflow@x": True}}, "settings.local.json")
+    check = _legacy(ws_root)
+    assert check.ok is False
+    assert check.fix == "remove orch-ticket-workflow@x from enabledPlugins in .claude/settings.local.json"
+
+
+def test_doctor_ignores_a_disabled_legacy_plugin(ws_root, ws):
+    _project_settings(ws_root, {"enabledPlugins": {"orch-ticket-workflow@ai-convenience-store": False}})
+    assert _legacy(ws_root).ok is True

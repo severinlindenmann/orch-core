@@ -21,6 +21,9 @@ EVENT_KINDS = frozenset({
     "setting.changed",  # a workspace setting changed through orch (`orch widget html`)
     # AI Factory (orch.core.permits): an agent's request and a grant's use; the human's answers (signed in the ledger)
     "permit.requested", "permit.used", "permit.granted", "permit.denied", "permit.revoked",
+    # Quick tasks (orch.core.quick): one-line jobs outside the ticket flow; `data["quick"]` names the task
+    "quick.added", "quick.claimed", "quick.released", "quick.done", "quick.outgrew", "quick.reopened",
+    "quick.dropped", "quick.promoted", "quick.artifact",
 })
 
 

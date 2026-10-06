@@ -64,6 +64,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/w/preview/{ref}"): LOOK, ("GET", "/w/{ref}/{section}/{digest}"): LOOK,
     ("GET", "/wp/{addon}/{digest}"): LOOK, ("GET", "/wpf/{addon}/{digest}"): LOOK,
     ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK,
+    ("GET", "/quick"): LOOK, ("GET", "/quick/{qid}"): LOOK,
     # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
     # one-time token and deletes the file, so it counts as a change
     ("GET", "/terminals"): OPERATE, ("GET", "/terminals/stream"): OPERATE, ("GET", "/terminals/{name}"): OPERATE,
@@ -94,6 +95,10 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/t/{ref}/agent/start"): TYPE,
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),
     ("POST", "/addons/{name}/actions/{action_id}"): TYPE,  # runs addon code; a later change may lower it
+    # quick tasks (orch.core.quick): adding and closing are ordinary edits; reopen and drop are the human's call
+    ("POST", "/quick/add"): OPERATE, ("POST", "/quick/{qid}/done"): OPERATE, ("POST", "/quick/{qid}/release"): OPERATE,
+    ("POST", "/quick/{qid}/promote"): OPERATE,
+    ("POST", "/quick/{qid}/reopen"): DECIDE, ("POST", "/quick/{qid}/drop"): DECIDE,
     # -- never remote: the whole Workspace family (phones, permissions, addon install/update/trust/enable/disable,
     # settings, the agent-HTML switch, update-all), and anything that serves or starts the dashboard
     ("GET", "/workspace"): NO,
@@ -103,6 +108,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,
     ("POST", "/workspace/phones/pair"): NO, ("POST", "/workspace/phones/{phone_id}/revoke"): NO,
     ("POST", "/workspace/phones/permissions"): NO,
+    ("POST", "/quick/settings"): NO,  # the quick-task switch: signed into the ledger, like the agent-HTML switch
     # the Remote tab: pairing, approving, rescoping, revoking and cutting off devices is only ever done here
     ("POST", "/workspace/remote/offer"): NO, ("POST", "/workspace/remote/disconnect"): NO,
     ("POST", "/workspace/remote/pending/{did}/approve"): NO, ("POST", "/workspace/remote/pending/{did}/reject"): NO,

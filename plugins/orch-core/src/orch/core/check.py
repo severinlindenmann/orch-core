@@ -456,7 +456,8 @@ def _check_artifacts(ws, t) -> list[Finding]:
 def _check_orphan_artifacts(ws, entries) -> list[Finding]:
     if not ws.artifacts_dir.is_dir():
         return []
-    ids = {e.id.upper() for e in entries}
+    from orch.core.quick import all_tasks
+    ids = {e.id.upper() for e in entries} | {t["id"].upper() for t in all_tasks(ws)}  # quick tasks keep artifacts too
     return [
         Finding("warning", "orphan-artifacts", d.name, f"artifacts/{d.name} has no matching ticket")
         for d in sorted(ws.artifacts_dir.iterdir())

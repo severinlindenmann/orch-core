@@ -118,6 +118,22 @@ tasks:
 
 IDs are assigned in file order from the next free number, so `needs` may name tasks the same file creates. Keys: `text` (required, one line), `refs`, `verify`, `needs`, `owner` (`agent` default, or `human`).
 
+## Quick tasks
+
+Where the human has turned them on (`orch quick` says so), quick tasks are one-line jobs too small for a ticket: a typo, a version bump, a dead import. No requirements, plan, task list or verdict. They are `Q-<n>` and live under `orchestrator/.state/quick/`, so go through `orch quick` only.
+
+| Goal | Command |
+|---|---|
+| List | `orch quick [--all] [--json]` · `orch quick show Q-12` |
+| Take one | `orch quick claim Q-12` (one at a time) |
+| Commit | `git commit -m "Q-12 <summary>"` (same body lines as a ticket commit) |
+| Prove it | `orch quick artifact add Q-12 after.png --label "After"` · `--url <link>` (optional, a few at most) |
+| Close | `orch quick done Q-12 -m "what you did"` (the note is required) |
+| Too big | `orch quick promote Q-12` files a backlog ticket with the line as its title |
+| After your ticket | `orch quick near <your ticket>` lists open quick tasks in the files that ticket changed |
+
+You get a quick task when the human starts you on one, when `orch next` lists one (it says `quick`), or once your own ticket is in testing (`orch quick near`). Never while a ticket you hold is still in progress or waiting (`orch quick claim` refuses), never one you filed yourself in the same session, and only where the human allowed it may you add them (`orch quick add`). `orch quick done` checks the size: more commits or files than the workspace allows mark the task "outgrew it" and refuse. Then stop, say so, and leave the decision to the human (make it a ticket, let it finish, or drop it). Reopening, letting it finish, dropping and the settings are the human's.
+
 ## Follow-ups instead of scope creep
 
 When you notice something outside the approved scope, add it to `## Findings`, file it with `orch new --from <id> --title "..." --type bug`, and mention it in your report. Don't fix it now.

@@ -29,6 +29,8 @@ app.add_typer(epic_app, name="epic")
 app.add_typer(sprint_app, name="sprint")
 from orch.cli_permit import permit_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(permit_app, name="permit")
+from orch.cli_quick import quick_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(quick_app, name="quick")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")
@@ -309,11 +311,27 @@ def path(ref: str) -> None:
 
 @app.command("next")
 def next_(summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
-    """Open, unblocked tickets by priority (top 5)."""
+    """Open, unblocked tickets by priority (top 5); quick tasks too, where the workspace has them on."""
     from orch.core import query
     ws = _ws()
     rows = [_row(e, ws) for e in query.next_tickets(ws)][:5]
+    rows = _with_quick(ws, rows)
     _out(rows, json_out, _lines(rows, summary) or "nothing open")
+
+
+def _with_quick(ws, rows: list[dict]) -> list[dict]:
+    """`quick.next`: "idle" adds quick tasks only when no ticket is ready, "first" puts them before the tickets,
+    "never" leaves them out. Each row says `"quick": true`; `orch quick claim` takes one."""
+    from orch.actor import cli_actor
+    from orch.core import quick
+    cfg = quick.settings(ws)
+    if not cfg["enabled"] or cfg["next"] == "never" or (cfg["next"] == "idle" and rows):
+        return rows
+    picks = [{"idle_days": None, "summary": None, "id": t["id"], "status": "open", "resolution": None,
+              "superseded_by": None, "type": "quick", "priority": None, "size": None, "title": t["title"],
+              "external": [], "error": None, "quick": True, "area": t.get("area")}
+             for t in quick.pickable(ws, cli_actor())][:5]
+    return (picks + rows)[:5] if cfg["next"] == "first" else picks
 
 
 @app.command()

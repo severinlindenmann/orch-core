@@ -97,6 +97,20 @@
     "addons": {"type": "object", "additionalProperties": {"type": "object"}},
     "feedback": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
     "factory": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+    "quick": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "prefix": {"type": "string", "pattern": "^[A-Z][A-Z0-9]{0,5}$"},
+        "next": {"enum": ["idle", "first", "never"]},
+        "agents_add": {"type": "boolean"},
+        "max_commits": {"type": "integer", "minimum": 0, "maximum": 50},
+        "max_files": {"type": "integer", "minimum": 0, "maximum": 50},
+        "max_artifacts": {"type": "integer", "minimum": 0, "maximum": 20},
+        "claim_minutes": {"type": "integer", "minimum": 1, "maximum": 1440}
+      }
+    },
     "checks": {
       "type": "object",
       "propertyNames": {"pattern": "^[a-z][a-z0-9-]{0,39}$"},

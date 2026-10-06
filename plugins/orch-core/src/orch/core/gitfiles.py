@@ -33,7 +33,7 @@ _ADDON_LINES = ("/.state/addons/*", "!/.state/addons/*/", "/.state/addons/*/*", 
 _ADDON_LOCAL = r"\.state/addons/(?:[^/]+|[^/]+/(?!records/).*)"
 _DURABLE = (r"config\.json", r"AGENTS\.orch\.md", r"\.gitignore", r"tickets/.*", r"artifacts/.*", r"static/.*",
             r"\.state/counter\.json", r"\.state/events\.jsonl", r"\.state/gates/.*", r"\.state/remote/ledger\.jsonl",
-            r"\.state/addons/[^/]+/records/.*")
+            r"\.state/addons/[^/]+/records/.*", r"\.state/quick-counter\.json", r"\.state/quick/[^/]+\.json")
 _LOCAL_RE = re.compile("|".join(f"(?:{rx})" for _, rx in _LOCAL) + f"|(?:{_ADDON_LOCAL})")
 _DURABLE_RE = re.compile("|".join(f"(?:{rx})" for rx in _DURABLE))
 # Files outside orchestrator/ that `orch instructions sync` writes: shared, so they belong in git too.

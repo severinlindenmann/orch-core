@@ -8,7 +8,7 @@ from addon_fixtures import loaded
 from orch.addons import cache
 from orch.addons.api import PendingDecision, Snapshot
 from orch.addons.loader import AddonRegistry
-from orch.addons.widgets import KV, Badge, Card, Countdown, MenuStatus, Link, Search, Table, Text, Tile, Action, QR
+from orch.addons.widgets import KV, Badge, Card, Countdown, MenuRow, MenuStatus, Link, Search, Table, Text, Tile, Action, QR
 
 XSS = "<script>alert(1)</script>"
 OVER = {"capabilities": ["provider", "page", "settings", "panel", "decisions"],
@@ -156,6 +156,51 @@ def test_menu_status_drops_bad_parts_and_plain_badge_still_works(client, demo):
     assert 'chip chip-ok' in _menu(client.get("/").text) and "menu-line" not in _menu(client.get("/").text)
     demo.chip = "raise"
     assert client.get("/addons/demo/").status_code == 200
+
+
+def test_menu_status_rows_render_labels_meters_values_and_notes(client, demo):
+    from datetime import timedelta
+    until = (datetime.now(timezone.utc) + timedelta(hours=4, minutes=49, seconds=30)).isoformat()
+    demo.chip = MenuStatus(Badge("warn", "Week 59 %", title="5-hour 1 % · week 59 %"), rows=(
+        MenuRow("5h", "1 %", 1, "ok", (Countdown(until, prefix="resets in "),)),
+        MenuRow("Week", "59 %", 59, "warn", (Text("resets Mon 09:00"),)),
+        MenuRow("Day", "reset", muted=True)))
+    m = _menu(client.get("/addons/demo/").text)
+    assert 'class="item has-line has-rows"' in m
+    assert 'title="5-hour 1 % · week 59 %" aria-label="Demo status: 5-hour 1 % · week 59 %"' in m
+    assert '<span class="menu-rows">' in m and "menu-line" not in m
+    assert '<span class="mr mr-ok">' in m and '<span class="mr-label">5h</span>' in m
+    assert '<i style="width: 4.0%"></i>' in m and '<i style="width: 59.0%"></i>' in m  # a sliver for 1 %
+    assert '<span class="mr-value">1 %</span>' in m and '<span class="mr-value">59 %</span>' in m
+    assert f'data-until="{until}" data-done="reset" data-prefix="resets in ">resets in 4h49</span>' in m
+    assert "resets Mon 09:00" in m
+    assert '<span class="mr mr-neu is-muted">' in m and '<span class="mr-sep" aria-hidden="true">—</span><span class="mr-value">reset</span>' in m
+    assert 'class="chip chip-warn"' in m  # still drawn: app.css shows it only where the rows do not fit
+
+
+def test_menu_status_stale_rows_get_the_line_and_a_dim_class(client, demo):
+    demo.chip = MenuStatus(Badge("ok", "Week 9 %"), (Text("as of 13:52"),), rows=(MenuRow("Week", "9 %", 9, "ok"),), stale=True)
+    m = _menu(client.get("/").text)
+    assert '<span class="menu-line">as of 13:52</span>' in m and '<span class="menu-rows is-stale">' in m
+    assert " title=" not in m.split('class="i-ui"')[0]  # no tooltip without one from the addon
+
+
+def test_menu_status_drops_bad_rows_and_clamps_meters(client, demo):
+    demo.chip = MenuStatus(None, rows=(MenuRow("A", "1 %", 150, "ok"), MenuRow("B", "2 %", float("nan")),
+                                       MenuRow("C", "3 %", True), MenuRow(" ", "x"), MenuRow("D", "y", role="you"),
+                                       Text("not a row"), MenuRow("E", "5 %", 5, note=(Badge("ok", "x"), Countdown("nope")))))
+    m = _menu(client.get("/").text)
+    assert '<i style="width: 100.0%"></i>' in m and m.count('class="mr-sep"') == 2  # NaN and a bool are no meter
+    assert ">D<" not in m and "not a row" not in m and "mr-you" not in m and "nope" not in m
+    assert '<span class="mr-label">E</span>' in m and "mr-note" not in m  # a Badge is no note part
+    demo.chip = MenuStatus(None, rows=(MenuRow(" ", "x"),))
+    assert "menu-rows" not in _menu(client.get("/").text)
+
+
+def test_menu_status_countdown_prefix_is_dropped_once_done(client, demo):
+    demo.chip = MenuStatus(None, (Countdown("2020-01-01T00:00:00Z", prefix="resets in "),))
+    m = _menu(client.get("/").text)
+    assert 'data-prefix="resets in ">reset</span>' in m and "resets in reset" not in m
 
 
 def test_addon_page_renders_widgets_escaped_with_core_csp(client, ws):

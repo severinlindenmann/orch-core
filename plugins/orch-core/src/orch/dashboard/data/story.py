@@ -259,7 +259,9 @@ def journey(t, card: dict, steps: list[dict], events, ask_by: dict, signers: dic
     whos = sorted({signers[g] for g in approved if signers.get(g)})
     agreed_who = "approval not signed here" if unsigned else ", ".join(whos)
     agreed_note = " + ".join({"requirements": "req", "plan": "plan"}[g] for g in approved)
-    agreed_note = ", ".join(x for x in (agreed_note, agreed_who) if x) or "waits for your approval"
+    skipped_all = all(by[n]["state"] == "skipped" for n in ("Requirements", "Plan") if n in by)  # #172
+    agreed_note = (", ".join(x for x in (agreed_note, agreed_who) if x)
+                   or ("skipped for this size" if skipped_all else "waits for your approval"))
     tasks = card.get("tasks")
     doing_bits = [f"tasks {tasks['closed']}/{tasks['total']}"] if tasks else []
     if card.get("code"):

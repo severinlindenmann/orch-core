@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from orch.config.load import validate_schema
 from orch.core import evidence, ledger, store
 from orch.core.events import Actor, append_event, read_events, scan_events
-from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required
+from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required, requirements_required
 from orch.core.ids import normalize_ref
 from orch.core.lifecycle import unanswered_blocking
 from orch.core.ops import claim_expired
@@ -300,7 +300,8 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
             out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval"))
             if emit:
                 _record_invalidation(ws, t, gate, events)
-    if not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending":
+    if (not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending"
+            and requirements_required(ws, t)):  # #172: a size in gates.requirements_skip_sizes needs none
         out.append(Finding("error", "status-without-gate", tid, f"ticket is {entry.status} but its requirements were never approved"))
     if not closed and entry.status in ("testing", "done") and plan_required(ws, t) and gate_state(t, "plan") != "approved":
         out.append(Finding("error", "status-without-plan", tid, f"ticket is {entry.status} but its plan is {gate_state(t, 'plan')}"))

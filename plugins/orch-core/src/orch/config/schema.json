@@ -66,7 +66,8 @@
         "forbid_attribution": {"type": "boolean"}
       }
     },
-    "gates": {"type": "object", "properties": {"plan_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}}}},
+    "gates": {"type": "object", "properties": {"plan_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}},
+                                             "requirements_skip_sizes": {"type": "array", "items": {"enum": ["xs", "s", "m", "l"]}}}},
     "claims": {"type": "object", "properties": {"ttl_hours": {"type": "number", "exclusiveMinimum": 0}}},
     "artifacts": {"type": "object", "properties": {"mode": {"type": "string"}, "max_mb": {"type": "number", "exclusiveMinimum": 0}}},
     "temporary": {"type": "object", "properties": {"max_age_days": {"type": "integer", "minimum": 1}}},

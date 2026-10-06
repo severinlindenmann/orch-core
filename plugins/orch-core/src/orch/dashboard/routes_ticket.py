@@ -11,7 +11,8 @@ from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 from orch.core import evidence, query, store, tasks_view
 from orch.core.epics import verdict_hash
 from orch.core.events import read_events
-from orch.core.gates import GATE_SECTIONS, approved_snapshot, gate_hash, gate_state, invalidated_gates, plan_required
+from orch.core.gates import (GATE_SECTIONS, approved_snapshot, gate_hash, gate_state, invalidated_gates, plan_required,
+                             requirements_skip_sizes)
 from orch.core.protect import agent_wrote_ask, ask_author
 from orch.clock import now as clock_now
 from orch.core.lifecycle import allowed_targets
@@ -169,6 +170,7 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
     if error:
         return error
     skip = tuple(ws.config["gates"]["plan_skip_sizes"])
+    req_skip = requirements_skip_sizes(ws)
     blockers = query.open_blockers(ws, t, entries)
     gate_seen = {g: gate_hash(t, g) for g in GATE_SECTIONS}
     from orch.core.gates import human_questions_in
@@ -197,7 +199,8 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
         "approve_plan": can["plan"],
         "verdict": t.status == "testing",
         "accept": t.status == "testing" and not invalidated_gates(t),  # a changed gate is re-approved first
-        "moves": allowed_targets(t, request_actor(request), plan_skip_sizes=skip, open_blockers=blockers),
+        "moves": allowed_targets(t, request_actor(request), plan_skip_sizes=skip, open_blockers=blockers,
+                                 requirements_skip_sizes=req_skip),
         "release": bool(claim.get("session")),
         "close": t.status != "done" and t.meta.get("type") != "epic" and request_actor(request).is_human,
         "reopen": t.status == "done" and request_actor(request).is_human,
@@ -222,7 +225,7 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
                  now=at).for_ticket(t, tasks=None if task_view["error"] else _task_items(t))
     start_box = suggest_start(ws, t, needs_items=needs, now=at, events=ticket_events, rows=rows, failing_prs=failing,
                              request=request)
-    move = your_move(t, needs, plan_skip_sizes=skip, moves=actions["moves"])
+    move = your_move(t, needs, plan_skip_sizes=skip, moves=actions["moves"], requirements_skip_sizes=req_skip)
     chapter = story.current_chapter(t, card)
     gate_views = {g: story.gate_view(ws, t, g, card, can_approve=can[g], seen=gate_seen[g],
                                      snapshot=approved_snapshot(ws, t.id, g), question=gate_question[g],
@@ -241,7 +244,7 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
     # The status card answers blocking questions in place; other open questions are answered in Agreed.
     card_qids = {q["id"] for q in questions if not q["answered_flag"] and q.get("blocking", True)} \
         if (move.get("action") or {}).get("kind") == "answer" else set()
-    step_list = steps(t, plan_skip_sizes=skip)
+    step_list = steps(t, plan_skip_sizes=skip, requirements_skip_sizes=req_skip)
     ask_by = ask_author(t, ticket_events)
     widgets, ac_chips = _widgets(ws, path, t)
     return page(request, "ticket.html", nav="board", title=f"{t.id} {t.title}", needs=all_needs,

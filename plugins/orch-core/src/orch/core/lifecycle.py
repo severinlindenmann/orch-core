@@ -4,7 +4,7 @@ from contextvars import ContextVar
 
 from orch.core import tasks as tk
 from orch.core.constants import STATUSES
-from orch.core.gates import gate_state
+from orch.core.gates import gate_state, requirements_skipped
 from orch.errors import HumanOnlyError, TransitionError, UsageError, ValidationError
 
 HUMAN_HINT = "ask the human to do this in their own terminal or in the dashboard"
@@ -57,8 +57,10 @@ def _tasks_closed(ticket) -> None:
         raise ValidationError("open tasks: " + ", ".join(open_), hint=f"finish them, or `orch task skip {ticket.id} <T> -m reason`")
 
 
-def check_move(ticket, to: str, actor, *, plan_skip_sizes, command: str = "move", open_blockers=()) -> None:
-    """Raise unless `actor` may move `ticket` to `to` via `command` (move | claim | auto | verdict | close | reopen)."""
+def check_move(ticket, to: str, actor, *, plan_skip_sizes, command: str = "move", open_blockers=(),
+               requirements_skip_sizes=()) -> None:
+    """Raise unless `actor` may move `ticket` to `to` via `command` (move | claim | auto | verdict | close | reopen).
+    `requirements_skip_sizes` (#172): sizes that leave the backlog without an approved requirements gate."""
     frm = ticket.status
     if to not in STATUSES:
         raise UsageError(f"unknown status {to!r}", hint="one of: " + ", ".join(STATUSES))
@@ -84,6 +86,8 @@ def check_move(ticket, to: str, actor, *, plan_skip_sizes, command: str = "move"
         return
     if pair == ("backlog", "open"):
         require_human(actor, "moving a ticket to open")
+        if requirements_skipped(ticket.meta.get("size"), requirements_skip_sizes, ticket.meta.get("type")):
+            return  # this size skips the requirements gate; the move itself stays the human's
         state = gate_state(ticket, "requirements")
         if state != "approved":
             raise ValidationError(f"requirements gate is {state}", hint=f"orch approve {ticket.id} requirements")
@@ -121,14 +125,15 @@ def check_move(ticket, to: str, actor, *, plan_skip_sizes, command: str = "move"
     raise TransitionError(f"{frm} → {to} is not an allowed transition")
 
 
-def allowed_targets(ticket, actor, *, plan_skip_sizes, open_blockers=()) -> list[str]:
+def allowed_targets(ticket, actor, *, plan_skip_sizes, open_blockers=(), requirements_skip_sizes=()) -> list[str]:
     """Statuses `actor` could move `ticket` to with a plain move right now (verdicts are separate)."""
     out = []
     for status in STATUSES:
         if status == ticket.status:
             continue
         try:
-            check_move(ticket, status, actor, plan_skip_sizes=plan_skip_sizes, command="move", open_blockers=open_blockers)
+            check_move(ticket, status, actor, plan_skip_sizes=plan_skip_sizes, command="move", open_blockers=open_blockers,
+                       requirements_skip_sizes=requirements_skip_sizes)
         except (TransitionError, ValidationError, UsageError):
             continue
         out.append(status)

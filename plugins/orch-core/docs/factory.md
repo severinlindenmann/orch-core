@@ -213,7 +213,12 @@ taken from the hook's working directory) and every segment of a command. A path 
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
 length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
 hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
-a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
+a heredoc body or quoted text is not. The rule against reading the config dir wholesale (a recursive reader, archiver
+or glob next to the config dir or a folder above it) likewise skips text that is only data: a heredoc body fed to
+`cat`, `tee`, `gh … --body-file -` or `git commit -F -` when nothing in the line runs code, and the quoted message of
+`git commit -m` or title and body of a `gh` create, edit or comment (a double-quoted one with `$` or a backtick stays
+judged). A heredoc or string that a shell or interpreter runs is code, its quoted strings included, and stays judged; the
+name `remote-humans.json` counts anywhere. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed
 (unless its target names orch's own environment or config place, such as `ORCH_STATE_DIR`, `XDG_CONFIG_HOME`, `.config/orch`,
 or an obfuscated lookup that also names orch or config (the bare words orch, env and printenv do not count): that is judged as a cd into the config dir). A command that names the config
 location and tmux or screen anywhere in its text, interpreter strings included, is refused. Otherwise

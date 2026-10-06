@@ -46,7 +46,8 @@ def agents_rules(cfg: dict) -> str:
     term = git["review_term"]
     key = example_key(cfg)
     sections = ["What", "Why", "Risk", "Verification"] + (["Rollback"] if commit["rollback"] else [])
-    commit_rule = ("You may commit on the ticket's branch." if may["commit"]
+    commit_rule = ("You may commit on the ticket's branch. Commit orch's own records (tickets, gates, events) with "
+                   "`orch records commit`, never mixed with code." if may["commit"]
                    else "You do not commit: prepare the change, run the checks, and tell the user it is ready to commit.")
     push_rule = "You may push the ticket's branch." if may["push"] else "You do not push; the user does."
     review_rule = f"You may open a draft {term}." if may["open_review"] else f"You do not open {term}s; the user does."

@@ -38,7 +38,6 @@ _GIT_WORD = re.compile(r"\bgit\b")
 _GIT_CONFIG = re.compile(_GIT + r"config\b")
 _HOOKS_PATH_OVERRIDE = re.compile(r"(?i)\s-c\s*core\.hookspath\s*=")
 _HOOKS_PATH_KEY = re.compile(r"(?i)\bcore\.hookspath\b")
-_CONFIG_READ = re.compile(r"\sconfig\s+(?:\S+\s+)*?(?:--get(?:-all|-regexp)?|get|--list|-l)(?=\s|$)")
 # `orch serve`, `uv run orch serve`, `python -m orch.cli serve`, `/path/to/orch --x serve`, ...
 _SERVE = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*serve\b")
 # A quoted string that is itself an `orch serve` command line (e.g. `script -c "orch serve"`), or a
@@ -662,8 +661,10 @@ _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereferen
                          r"|\bcp\s+(?:-\w+\s+)*-\w*[rRa]|\bcp\b[^;&|\n]*\s--(?:recursive|archive)\b")
 _GLOB = re.compile(r"[*?\[]")
 _REVIEW = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b")
-_STATE_PATH = r"orchestrator[/\\]tickets\b|(?:orchestrator[/\\])?(?:tickets[/\\](?:backlog|open|in-progress|waiting|testing|done|INDEX\.md)|\.state)\b"
-_STATE = re.compile(_STATE_PATH)
+# Ticket and state paths: under an `orchestrator/` folder always; a bare `tickets/<status>` or `.state` is judged by
+# where it resolves (see _names_state_path).
+_STATE = re.compile(r"orchestrator[/\\]+(?:tickets|\.state)\b")
+_STATE_BARE = re.compile(r"tickets[/\\]+(?:backlog|open|in-progress|waiting|testing|done|INDEX\.md)\b|\.state\b")
 # `cd DIR`, `cd -- DIR`, `cd -P DIR`, `pushd DIR`: options before the target are skipped.
 _CD = re.compile(r'\b(?:cd|pushd)\s+(?:-\S*\s+)*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 _WRITE_TOOL = re.compile(r"(?:^|[\s;&|(`'\"])(?:mv|rm|cp|tee|truncate|touch|git\s+mv|git\s+rm|sed\s+(?:-\w*i|--in-place)|perl\s+-\w*i)\b")
@@ -1019,7 +1020,73 @@ def _changes_hooks_path(seg: str, plain: str) -> bool:
     bare = seg.replace("'", "").replace('"', "")
     if _HOOKS_PATH_OVERRIDE.search(bare):
         return True
-    return bool(_GIT_CONFIG.search(plain) and _HOOKS_PATH_KEY.search(bare) and not _CONFIG_READ.search(bare))
+    if not (_GIT_CONFIG.search(plain) and _HOOKS_PATH_KEY.search(bare)):
+        return False
+    outer = _without_substitutions(seg)
+    if not _GIT_CONFIG.search(_unquoted(outer)):
+        return False  # only inside $( … ): that payload is judged as its own segment
+    return not _git_config_reads(outer)
+
+
+# `git config` options that neither write nor take a value; and those that take one value.
+_CONFIG_READ_OPTS = frozenset({"--local", "--global", "--system", "--worktree", "--get", "--get-all", "--get-regexp",
+                               "--get-urlmatch", "--list", "-l", "--includes", "--no-includes", "--null", "-z",
+                               "--name-only", "--show-origin", "--show-scope", "--bool", "--int", "--bool-or-int",
+                               "--path", "--expiry-date", "--fixed-value", "--all", "--regexp", "--show-names"})
+_CONFIG_VALUE_OPTS = frozenset({"-f", "--file", "--blob", "--type", "--default", "--value", "--url"})
+_CONFIG_READ_ACTIONS = frozenset({"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"})
+_GIT_VALUE_OPTS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"})
+_REDIRECT_WORD = re.compile(r"\d*(?:&>>?|>>?&?|<&?)(.*)", re.S)
+_CONFIG_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*")
+
+
+def _without_substitutions(seg: str) -> str:
+    """`seg` with every `$( … )` and backtick payload replaced by a placeholder that still reads as an expansion."""
+    for inner in _substitutions(seg):
+        seg = seg.replace("$(" + inner + ")", "$SUB").replace("`" + inner + "`", "$SUB")
+    return seg
+
+
+def _git_config_reads(seg: str) -> bool:
+    """`seg` is one plain `git … config` command that only reads: a read action (`--get`, `--list`, `get`, `list`) or
+    exactly one plain key and no value. Anything else (an unknown option, an expansion, a glob, a second word,
+    git not being the command word) counts as a write."""
+    words, _ = _command(seg)
+    if not words or os.path.basename(words[0]) != "git":
+        return False
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in _GIT_VALUE_OPTS else 1
+    if i >= len(words) or words[i] != "config":
+        return False
+    positional, read_action, j = [], False, i + 1
+    while j < len(words):
+        w = words[j]
+        r = _REDIRECT_WORD.fullmatch(w)
+        if r:
+            j += 1 if r.group(1) else 2
+            continue
+        if re.search(r"[$`*?\[\]{}\\\s#]", w):
+            return False
+        if w.startswith("-"):
+            name = w.split("=", 1)[0]
+            if name in _CONFIG_VALUE_OPTS:
+                j += 1 if "=" in w else 2
+                continue
+            if name not in _CONFIG_READ_OPTS or ("=" in w and name not in _CONFIG_VALUE_OPTS):
+                return False
+            read_action = read_action or name in _CONFIG_READ_ACTIONS
+            j += 1
+            continue
+        positional.append(w)
+        j += 1
+    if not positional:
+        return read_action
+    if positional[0] in ("get", "list"):
+        return True
+    if positional[0] in ("set", "unset", "rename-section", "remove-section", "edit"):
+        return False
+    return read_action or (len(positional) == 1 and bool(_CONFIG_KEY.fullmatch(positional[0])))
 
 
 def _cd_targets_state(cmd: str) -> bool:
@@ -1280,8 +1347,38 @@ def _reaches_pairing_keys(cmd: str, cwd=None) -> bool:
     - nested or numeric braces (`{a,{b,c}}`, `{1..3}`), aliases and shell functions;
     - `cd` changing what a later relative path means, beyond the one `cd` followed by a glob or a
       recursive reader;
-    - tools this does not know as recursive readers, and symlinks or hard links made by other means."""
-    return any(_reaches_pairing_keys_1(c) or _path_tokens_reach(c, cwd) for c in _key_check_candidates(cmd))
+    - tools this does not know as recursive readers, and symlinks or hard links made by other means.
+
+    The file's name counts anywhere in the text. The path rules skip text that is only data (see _without_data_text);
+    a heredoc an interpreter or shell runs is code and stays judged, quoted strings in it included."""
+    if any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd)):
+        return True
+    text = _without_data_text(cmd)
+    return any(_reaches_pairing_keys_1(c) or _path_tokens_reach(c, cwd) for c in _key_check_candidates(text))
+
+
+_GIT_MESSAGE_CMD = re.compile(r"git(?:\s+-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+))*\s+commit\b")
+_GIT_MESSAGE_ARG = re.compile(r"""((?:^|\s)(?:-[A-Za-z]*m|--message)(?:=|\s*))('[^']*'|"[^"$`\\]*")""")
+_GH_TEXT_CMD = re.compile(r"gh\s+(?:pr|issue|release)\s+(?:create|edit|comment)\b")
+_GH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-t|--title|-b|--body)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
+
+
+def _without_data_text(cmd: str) -> str:
+    """`cmd` without the text that is only data: data heredoc bodies (see _code_text), and the quoted message of a
+    `git commit` or title/body of a `gh` create/edit/comment that starts its simple command. A double-quoted string
+    with `$`, a backtick or a backslash stays, since the shell expands it."""
+    code = _code_text(cmd)
+    out, last = [], 0
+    for a, b in _segment_spans(code):
+        seg = code[a:b]
+        head = seg.lstrip()
+        if _GIT_MESSAGE_CMD.match(head):
+            seg = _GIT_MESSAGE_ARG.sub(r"\1''", seg)
+        elif _GH_TEXT_CMD.match(head):
+            seg = _GH_TEXT_ARG.sub(r"\1''", seg)
+        out += [code[last:a], seg]
+        last = b
+    return "".join(out) + code[last:]
 
 
 def _pairing_key_path(raw: str, *, dirs_too: bool = False) -> bool:
@@ -1638,9 +1735,129 @@ def _ticket_file_re(ws) -> re.Pattern:
     return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b")
 
 
+# Commands that can neither move, link, copy a link nor change into a folder, nor run another program: with only these
+# in the line, a folder that exists before the command runs still is that folder when a later command uses it.
+_STATE_SAFE_WORDS = frozenset({"cat", "cp", "head", "tail", "grep", "egrep", "fgrep", "ls", "wc", "rm", "rmdir", "mkdir",
+                               "touch", "echo", "printf", "diff", "cmp", "sort", "uniq", "cut", "tee", "orch", "true",
+                               "false", "test", "[", "stat", "basename", "dirname", "pwd"})
+_STATE_UNSAFE_VARS = re.compile(r"PATH|HOME|IFS|CDPATH|PWD|OLDPWD|ENV|BASH_ENV|(?:LD|DYLD)_\w+")
+_PLAIN_PREFIX = re.compile(r"~?[A-Za-z0-9_.@+/ -]*")  # a blank here was quoted or escaped: still one word
+_PREFIX_ASSIGN = re.compile(r"^(?:[A-Za-z_]\w*|--?[\w-]+)=")
+
+
+def _word_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each shell word in `text`: split on unquoted blanks and `;&|()<>`, quotes and escapes kept."""
+    spans, start, quote, i, n = [], None, None, 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c.isspace() or c in ";&|()<>":
+            if start is not None:
+                spans.append((start, i))
+                start = None
+        else:
+            if start is None:
+                start = i
+            if c == "\\":
+                i += 2
+                continue
+            if c in "'\"":
+                quote = c
+        i += 1
+    if start is not None:
+        spans.append((start, n))
+    return spans
+
+
+def _state_words_safe(cmd: str) -> bool:
+    """Every simple command in `cmd` is one of _STATE_SAFE_WORDS, run plainly: no prefix assignment, no assignment
+    to a variable that changes how commands or paths resolve, no process substitution, no `cp` option that copies
+    links or recursively, no `printf -v`."""
+    for seg in _command_segments(cmd):
+        if re.search(r"[<>]\(", seg):
+            return False
+        words, assigns = _command(seg)
+        if any(_STATE_UNSAFE_VARS.fullmatch(k) for k in assigns) or (words and assigns):
+            return False
+        if not words:
+            continue
+        if words[0] not in _STATE_SAFE_WORDS:
+            return False
+        if words[0] == "cp" and any(w.startswith("-") and w != "--" and not re.fullmatch(r"-[pvinf]+", w)
+                                    for w in words[1:]):
+            return False
+        if words[0] == "printf" and "-v" in words:
+            return False
+    return True
+
+
+def _outside_home(ws, folder: str, word: str, cwd) -> bool:
+    """`folder` (a `…/tickets` or `…/.state` as written) exists now, outside the workspace's orch home, and nothing
+    `word` names resolves into it or is a hard link (which may share a ticket file's contents). Unsure is False."""
+    import glob
+    from itertools import islice
+    try:
+        home = ws.home.resolve()
+        base = Path(str(cwd)) if cwd else Path.cwd()
+        base = base if base.is_absolute() else ws.root / base
+        d = Path(os.path.expanduser(folder))
+        d = d if d.is_absolute() else base / d
+        if not d.is_dir():
+            return False
+        rd = d.resolve()
+        if _under(rd, home) or _under(home, rd):
+            return False
+        w = os.path.expanduser(word)
+        w = w if os.path.isabs(w) else str(base / w)
+        hits = list(islice(glob.iglob(w), MAX_GLOB + 1)) if _GLOB.search(w) else [w]
+        if len(hits) > MAX_GLOB:
+            return False
+        for h in hits:
+            p = Path(h)
+            if _under(p.resolve(), home) or (p.is_file() and p.stat().st_nlink > 1):
+                return False
+        return True
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _names_state_path(ws, cmd: str, cwd) -> bool:
+    """`cmd` names the workspace's ticket or state folder. `orchestrator/tickets` and `orchestrator/.state` always count.
+    A bare `tickets/<status>` or `.state` counts unless it is part of another name (`mytickets/open`, `app.state`) or
+    sits below a plain folder that resolves outside the orch home, checked only when no command in the line can
+    change what that folder is (see _state_words_safe). An empty or unreadable prefix counts."""
+    if _STATE.search(cmd):
+        return True
+    matches = list(_STATE_BARE.finditer(cmd))
+    if not matches:
+        return False
+    if not _state_words_safe(cmd):
+        return True
+    spans = _word_spans(cmd)
+    for m in matches:
+        start, end = next(((a, b) for a, b in spans if a <= m.start() < b), (m.start(), m.end()))
+        prefix = _PREFIX_ASSIGN.sub("", _strip_quotes_and_escapes(cmd[start:m.start()]))
+        if not _PLAIN_PREFIX.fullmatch(prefix):
+            return True
+        if prefix and not prefix.endswith("/"):
+            continue  # another name that ends in `tickets` or `.state`
+        if not prefix:
+            return True
+        folder = prefix + ("tickets" if m.group(0).startswith("tickets") else ".state")
+        word = _PREFIX_ASSIGN.sub("", _strip_quotes_and_escapes(cmd[start:end]))
+        if not _outside_home(ws, folder, word, cwd):
+            return True
+    return False
+
+
 def _touches_state(ws, cmd: str, cwd) -> bool:
     return bool(
-        _STATE.search(cmd)
+        _names_state_path(ws, cmd, cwd)
         or _cwd_in_state(ws, cwd)
         or _cd_targets_state(cmd)
         or _ticket_file_re(ws).search(cmd)
@@ -1752,7 +1969,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _touches_state(ws, code, cwd) and _is_write(cmd):
         return Decision(False, _USE_ORCH)
-    if _STARTUP_FILE.search(code) and _is_write(cmd):
+    if _writes_startup_file(cmd, code):
         return Decision(False, _STARTUP_DENIED)
     if (_RECORDER_FILE.search(code) or (_SETTINGS_JSON.search(code) and _STATUS_LINE.search(code))) and _is_write(cmd):
         return Decision(False, _RECORDER_DENIED)
@@ -1775,7 +1992,7 @@ _WIDGETS_DENIED = ("widgets.html (whether agent-written HTML runs in ticket widg
                    "the approval ledger; ask the user to run `orch widget html on` in their own terminal (anyone may "
                    "turn it off with `orch widget html off`)")
 # Files that run code in the human's own sessions: shell startup files, direnv's .envrc, git hooks.
-_STARTUP_FILE = re.compile(r"(?:^|[\s'\"=/~])\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|bash_login|profile|"
+_STARTUP_FILE = re.compile(r"(?:^|[\s'\"=/~<>])\.(?:zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|bash_login|profile|"
                            r"envrc)\b|\.git[/\\]hooks(?:[/\\]|\b)")
 _STARTUP_DENIED = ("agents do not change shell startup files, .envrc or git hooks: they run code in the human's own "
                    "sessions")
@@ -1785,6 +2002,45 @@ _SETTINGS_JSON = re.compile(r"(?<![\w.-])settings(?:\.local)?\.json\b")
 _STATUS_LINE = re.compile(r"\bstatusLine\b")
 _RECORDER_DENIED = ("the ticket-usage recorder and the status line in Claude's settings run in every one of the human's "
                     "Claude Code sessions; ask the user to run `orch addon setup ticket-usage` in their own terminal")
+# Commands that only print what they read: no write option, no way to run another command.
+_STARTUP_READERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "diff", "cmp", "ls", "stat", "test",
+                              "["})
+# Any output redirect, `1>f`, `&>f` and `>|f` included; only /dev/null and a descriptor copy are not.
+_ANY_REDIRECT = re.compile(r">{1,2}\|?(?!\s*(?:/dev/null\b|&[0-9-]))")
+
+
+def _names_startup_file(text: str) -> bool:
+    return bool(_STARTUP_FILE.search(text) or _STARTUP_FILE.search(_strip_quotes_and_escapes(text)))
+
+
+def _startup_read(seg: str, cmd: str) -> bool:
+    """`seg` names a startup file only to read it: a plain reader, no output redirect, no assignment naming the file,
+    and its output not piped on (a name printed into `| xargs …` could reach a write)."""
+    words, assigns = _command(seg)
+    if not words or words[0] not in _STARTUP_READERS:
+        return False
+    if any(_names_startup_file(v) for v in assigns.values()) or _ANY_REDIRECT.search(_unquoted(seg)):
+        return False
+    pos = cmd.find(seg)
+    while pos != -1:
+        rest = cmd[pos + len(seg):].lstrip(" \t")
+        if rest.startswith("|") and not rest.startswith("||"):
+            return False
+        pos = cmd.find(seg, pos + 1)
+    return True
+
+
+def _writes_startup_file(cmd: str, code: str) -> bool:
+    """A write in a command that names a startup file, unless every simple command naming one is a plain read of it."""
+    if not _names_startup_file(code):
+        return False
+    segs = _command_segments(cmd)
+    if not any(_is_write(s) or _ANY_REDIRECT.search(_unquoted(s)) for s in [cmd, *segs]):  # `sh -c '…'` payloads too
+        return False
+    named = [seg for seg in segs if _names_startup_file(seg)]
+    return not named or not all(_startup_read(seg, cmd) for seg in named)
+
+
 def _under(path: Path, base: Path) -> bool:
     try:
         path.relative_to(base)

@@ -81,9 +81,22 @@ def decisions(request: Request, q: str = "", type_: str = Query("", alias="type"
                 has_tickets=bool(entries), agent_cards=agent_cards,
                 ticket_status_labels=metrics.STATUS_LABELS, ticket_status_roles=metrics.STATUS_ROLES,
                 delegated_fyi=epic_data.delegated_fyi(ws, entries, all_events), permits=factory_data.permit_view(ws),
+                schedule_findings=_schedule_findings(ws),
                 phone_receipts=timeline.phone_receipts(ws, all_events, now=at),
                 backlog_total=sum(1 for e in entries if e.status == "backlog"),
                 away=today.away(ws, events=all_events, entries=entries, now=at), away_hours=today.AWAY_HOURS)
+
+
+def _schedule_findings(ws) -> list[dict]:
+    """Open findings of schedule runs (docs/schedules.md), while the schedules addon is on. Never breaks Today."""
+    from orch.dashboard import schedules
+    if not schedules.addon_on(ws):
+        return []
+    try:
+        from orch.dashboard.routes_schedules import findings_view
+        return findings_view(ws)
+    except Exception:
+        return []
 
 
 def _start_panel(ws, ref: str, *, needs, rows, now, settings, events=None, request=None):

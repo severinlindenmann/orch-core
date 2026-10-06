@@ -2,6 +2,7 @@
 {% import "_ui.html" as ui %}
 {% import "_decisions.html" as dc with context %}
 {% import "_permits.html" as pm %}
+{% import "_schedules.html" as sch %}
 {% import "_ticket_card.html" as tc %}
 {% from "_tasks.html" import task_now %}
 {#- Today (#11/#17, Main / Moments drafts): what blocks an agent first, then what can wait, then the backlog folded
@@ -61,6 +62,15 @@
     <section class="dc-section permit-section" id="permits" aria-labelledby="permits-h">
       <h2 id="permits-h" class="dc-section-h">Permissions <span class="count">{{ permits.requests|length + permits.budget|length }}</span></h2>
       {{ pm.cards(permits, "/") }}
+    </section>
+    {% endif %}
+    {% if schedule_findings %}
+    {#- Schedules (docs/schedules.md): what runs found. A run proposes; filing a ticket is yours. Not part of the
+        decision count above: no agent waits on them. -#}
+    <section class="dc-section permit-section" id="schedule-findings" aria-labelledby="schedule-findings-h">
+      <h2 id="schedule-findings-h" class="dc-section-h">From schedules <span class="count">{{ schedule_findings|length }}</span> <a class="lnk muted" href="/schedules">Schedules →</a></h2>
+      {% for f in schedule_findings[:6] %}{{ sch.finding_card(f, "/") }}{% endfor %}
+      {% if schedule_findings|length > 6 %}<p class="muted"><a class="lnk" href="/schedules#schedule-findings">{{ schedule_findings|length - 6 }} more on Schedules →</a></p>{% endif %}
     </section>
     {% endif %}
     {% if n %}
@@ -191,6 +201,12 @@
   </aside>
 </div>
 {% else %}
+{% if schedule_findings %}
+<section class="dc-section permit-section" id="schedule-findings" aria-labelledby="schedule-findings-h">
+  <h2 id="schedule-findings-h" class="dc-section-h">From schedules <span class="count">{{ schedule_findings|length }}</span> <a class="lnk muted" href="/schedules">Schedules →</a></h2>
+  {% for f in schedule_findings[:6] %}{{ sch.finding_card(f, "/") }}{% endfor %}
+</section>
+{% endif %}
 <div class="grid-2 today-empty">
   <section class="panel">
     <h2>Start with a ticket</h2>

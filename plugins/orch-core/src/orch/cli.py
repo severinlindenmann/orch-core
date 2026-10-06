@@ -35,6 +35,8 @@ from orch.cli_quick import quick_app  # noqa: E402  (light: commands import thei
 app.add_typer(quick_app, name="quick")
 from orch.cli_worktree import worktree_app  # noqa: E402  (light: commands import their own modules)
 app.add_typer(worktree_app, name="worktree")
+from orch.cli_schedule import schedule_app  # noqa: E402  (light: commands import their own modules)
+app.add_typer(schedule_app, name="schedule")
 ledger_app = typer.Typer(no_args_is_help=True, help="The approval ledger on this machine (human only).")
 app.add_typer(ledger_app, name="ledger")
 schema_app = typer.Typer(no_args_is_help=True, help="The ticket model as JSON, for tools such as phone apps.")

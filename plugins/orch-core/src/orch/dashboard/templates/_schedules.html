@@ -1,0 +1,23 @@
+{#- Schedules (docs/schedules.md): a finding a run reported, on Today and the Schedules page. Title, text and the
+    proposed ticket arrive as plain text (autoescaped, hidden characters already made visible); filing is bound to the
+    finding's sha, so a changed finding files nothing. -#}
+{% import "_ui.html" as ui %}
+
+{% macro finding_card(f, back) %}
+<article class="card permit-card sched-finding-card" data-finding="{{ f.run }}/{{ f.id }}" aria-labelledby="sf-{{ f.run }}-{{ f.id }}">
+  <div class="permit-head">{{ ui.status("you", "Due" if f.recurring else "Finding") }} <b id="sf-{{ f.run }}-{{ f.id }}">{{ f.title }}</b>
+    <span class="muted">{{ f.name }}{% if f.started %} · <time datetime="{{ f.started.isoformat() }}">{{ f.started.strftime("%d.%m. %H:%M") }}</time>{% endif %}</span></div>
+  {% if f.text %}<p class="sched-text">{{ f.text }}</p>{% endif %}
+  {% if f.ticket %}
+  <details class="sched-ticket" open><summary>Proposed ticket: <b>{{ f.ticket.title }}</b> <span class="muted">{{ f.ticket.type }} · {{ f.ticket.priority }}</span></summary>
+    {% if f.ticket.ask %}<pre class="permit-cmd">{{ f.ticket.ask }}</pre>{% endif %}
+  </details>
+  {% endif %}
+  <div class="actions">
+    <form method="post" action="/schedules/runs/{{ f.run }}/{{ f.id }}/file"><input type="hidden" name="sha" value="{{ f.sha }}"><input type="hidden" name="next" value="{{ back }}">
+      <button type="submit" class="btn btn-primary">{{ "File ticket in backlog" if f.ticket else "File as ticket" }}</button></form>
+    <form method="post" action="/schedules/runs/{{ f.run }}/{{ f.id }}/dismiss"><input type="hidden" name="next" value="{{ back }}">
+      <button type="submit" class="btn">Dismiss</button></form>
+  </div>
+</article>
+{% endmacro %}

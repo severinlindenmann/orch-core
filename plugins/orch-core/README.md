@@ -7,7 +7,7 @@
 - **`orch` CLI**: tickets (`new`, `show`, `claim`, `log`, `ask`, `move`, …), human-only gates (`approve`, `request-changes`, `answer`, `verdict`), `check`, `doctor` and a local dashboard (`orch serve`).
 - **Skills**: `orch-tickets`, `orch-refine-ticket`, `orch-work-on-ticket` and `orch-setup`, which guides the onboarding.
 - **Hooks** (Claude Code): a PreToolUse guard and a SessionStart hook that prints the active rules, your claimed tickets and what is waiting on you.
-- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key and rejects AI attribution lines.
+- **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key and rejects AI attribution lines; commits of orch's own records alone (`orch records commit`) skip the plan gate.
 
 ## Prerequisites
 
@@ -35,7 +35,7 @@ Approvals, answers and `orch serve` must come from you, not from an agent, so th
 uv tool install "<plugin folder>[dashboard]"
 ```
 
-`orch doctor` prints this command with the real plugin folder filled in.
+`orch doctor` prints this command with the real plugin folder filled in. It also compares `orch --version` with the plugin's version; when they differ (`terminal-cli`), upgrade with `uv tool install --force "<plugin folder>[dashboard]"`.
 
 ## GitHub Copilot
 
@@ -54,14 +54,30 @@ A workspace set up earlier with harness `claude` has its own `orch guard` hooks 
 2. Run `orch instructions sync`. It removes the orch hooks from `.claude/settings.json` and enables the plugin there.
 3. Delete the leftover copies `orch doctor` lists under `skill-copies`, such as `.claude/skills/orch-tickets` or the old `tickets`, `refine-ticket` and `work-on-ticket`.
 
+An earlier orch plugin id, such as `orch-ticket-workflow@ai-convenience-store`, still enabled next to `orch-core` also runs the hooks twice. `orch doctor` reports it as `legacy-plugin`, and `orch instructions sync` removes it from `.claude/settings.json`; it removes only the ids orch knows as its own.
+
 ## What goes into git
 
-orch never commits on its own, with one exception: the wiki addon's Create page from ticket commits the new page it writes, and only that (the owner's explicit decision; see the addon's README). The files it writes are either shared records or local to one machine:
+orch never commits on its own, with two exceptions: `orch records commit`, which you (or an agent the workspace lets commit) run on purpose, and the wiki addon's Create page from ticket, which commits the new page it writes, and only that (the owner's explicit decision; see the addon's README). The files it writes are either shared records or local to one machine:
 
 - **Commit** (shared records every clone needs): `orchestrator/config.json`, `AGENTS.orch.md`, `tickets/`, `artifacts/`, `static/`, `.state/counter.json`, `.state/events.jsonl` (the event log `orch check` and the receipts read), `.state/gates/`, `.state/remote/ledger.jsonl` (which phone decisions were applied), each addon's `.state/addons/<name>/records/`, and what `orch instructions sync` writes outside `orchestrator/` (`AGENTS.md`, `CLAUDE.md`, `.claude/settings.json`, …).
 - **Local** (caches, locks, spools, per-machine state): `temporary/`, `.state/locks/`, `.state/index.json`, the error logs, `.state/needs-count`, `.state/run/`, every `*.lock`, and the rest of `.state/addons/` (snapshots, cursors, inbox and outbox). The approval ledger and its key live outside the repository, in the orch config dir.
 
-`orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else.
+`orch init` and `orch instructions sync` write a managed block into `orchestrator/.gitignore` with the local list (your own lines outside the block stay; lines after it can override it). `orch doctor` reports a missing or outdated block (`gitignore`, fixed by `orch doctor --fix`, which writes nothing else), orch records git has not committed (`records`) and files in `orchestrator/` orch did not write (`unclassified`); `orch check` lists the uncommitted records as an `info` line. After `orch instructions sync` changed a file git tracks, it says which files to commit. Commit them the way your workspace commits anything else, or with `orch records commit`.
+
+`orch records commit` commits exactly the records doctor lists (never caches or locks) with a generated message: the subject `orch: records L-0001, L-0002` names the tickets they belong to and the body lists each changed path. It commits with `git commit --only`, so whatever else is staged stays staged and uncommitted; `--dry-run` shows what it would commit. Agents may run it only where `git.agent_may.commit` is true. The commit check accepts such a commit before plan approval because it holds no code: when every staged path is an orch record, the plan gate is skipped and the fixed subject `orch: records …` is accepted without the body lines; AI attribution is still refused. A commit that mixes records and code gets the full check. The check reads the index git hands the hook, so a commit that names paths (a temporary index) is judged by what it really commits; when git cannot say what is staged, the full check applies.
+
+## Worktrees
+
+A ticket's git worktrees go under the workspace root, at `<root>/.claude/worktrees/<repo>/<slug>`, one per repo the ticket touches. There `orch` finds `orchestrator/` by walking up (no `ORCH_HOME`), harnesses pick up the root's `CLAUDE.md`/`AGENTS.md`, and the AI Factory starts a child's session in it.
+
+```bash
+orch worktree add L-0042 --repo hub [--base develop]   # branch from git.branch_pattern, e.g. feature/L-0042-back-up-config
+orch worktree remove L-0042 --repo hub                 # removes the worktree and its link; the branch stays
+orch link L-0042 --repo dlh_metadata                   # record a repo the ticket touches before any branch exists
+```
+
+`--repo` is a `git.repos` name, or the workspace repo's own name in a single-repo workspace. `add` checks out an existing branch of that name instead of creating it (`--base` then does not apply; it defaults to the repo's `default_branch`, else its `HEAD`), links branch and worktree to the ticket, and, for the `claude` harnesses, links `.claude/skills`, `commands`, `agents`, `settings.json`, `settings.local.json` and `.mcp.json` from the root into a real `.claude` folder in the worktree, each entry on its own and only when the root has it and the checkout does not. Never symlink the whole `.claude` folder into a worktree: it holds the worktrees, so that is a loop. The links are listed in the clone's `.git/info/exclude`, and a single-repo workspace also excludes `/.claude/worktrees/` there. `remove` refuses a worktree with uncommitted changes and one outside `.claude/worktrees`. Agents may run both commands: they only touch local git state and are reversible.
 
 ## Migrating a workspace from an older orch
 

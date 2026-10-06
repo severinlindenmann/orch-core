@@ -156,9 +156,7 @@ def test_doctor_reports_block_records_and_unclassified(ws_root, ws):
     checks = {c.code: c for c in doctor(ws_root)}
     assert checks["gitignore"].ok is False and checks["gitignore"].fix == "orch doctor --fix"
     assert checks["records"].ok is False and "orchestrator/.state/gates/L-0001-plan.md" in checks["records"].message
-    assert checks["records"].fix.startswith("commit them")
-    assert "git add -- " in checks["records"].fix and "orchestrator/.state/gates/L-0001-plan.md" in checks["records"].fix
-    assert "-A" not in checks["records"].fix
+    assert checks["records"].fix.startswith("orch records commit")
     assert checks["unclassified"].ok is False and "orchestrator/notes.md" in checks["unclassified"].message
     assert run(["doctor", "--fix"]) == 0
     _git(ws_root, "add", "-A")

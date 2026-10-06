@@ -148,3 +148,11 @@ def test_setup_skill_existing_workspace_and_doctor_items():
     for code in ("`adopt`", "`repos`", "`hooks`", "`plugin`", "`harness`", "`skill-copies`"):
         assert f"- {code}:" in step5, code
     assert "`tickets`, `refine-ticket`, `work-on-ticket`" in step5
+
+
+def test_setup_skill_checks_the_cli_version_before_init():
+    text = SKILL.read_text(encoding="utf-8")
+    before_init = text.split("## 4.", 1)[0]
+    assert "**Version first:**" in before_init and "uv tool install --force" in before_init
+    step5 = text.split("## 5.", 1)[1].split("## 6.", 1)[0]
+    assert "- `legacy-plugin`:" in step5 and "orch-ticket-workflow@ai-convenience-store" in step5

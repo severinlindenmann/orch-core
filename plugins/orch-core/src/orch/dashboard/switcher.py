@@ -1,7 +1,9 @@
-"""Multi-workspace switcher (spec §4.2): no cross-workspace server, just a per-user file,
+"""Multi-workspace switcher (spec §4.2, #167): no cross-workspace server, just a per-user file,
 `~/.config/orch/workspaces.json` (honouring `ORCH_STATE_DIR` the same way `launch.config_dir()`
 does, so it lives next to `launch.json`), that each running workspace updates with its own path,
-name and port, and each workspace's own `state_dir/needs-count` file that the others read.
+name, port and pid. Each dashboard answers `GET /__orch/status` on loopback; a switcher lists another
+workspace only when that answer comes from orch-core and names the workspace it expects. Off unless
+the human turns it on (userfiles.workspace_switcher).
 """
 from __future__ import annotations
 
@@ -13,6 +15,8 @@ import re
 import secrets
 import socket
 import sys
+import threading
+import time
 from pathlib import Path
 
 from orch.clock import stamp
@@ -148,15 +152,14 @@ def listen_first_free(host: str, ports: list[int]) -> tuple[socket.socket, int]:
 def register(ws, port: int) -> None:
     """Record this workspace in `workspaces.json`, keyed by its real path, so other running
     workspaces' switchers can link to it; merges into the entry, so the addons section survives.
-    Stores `state_dir` too, so `others()` never has to open another workspace to find its
-    needs-count file."""
+    `state_dir` is kept for older versions, which read the needs-count file from it."""
     from orch.addons.userfiles import update_json
 
     key = str(ws.root.resolve())
 
     def mutate(data: dict) -> None:
         entry = data.get(key) if isinstance(data.get(key), dict) else {}
-        entry.update({"path": key, "name": ws.config.get("customer") or ws.root.name, "last_port": port,
+        entry.update({"path": key, "name": display_name(ws), "last_port": port,
                       "pid": os.getpid(), "workspace_id": workspace_id(ws), "state_dir": str(ws.state_dir), "updated": stamp()})
         data[key] = entry
 
@@ -177,9 +180,9 @@ def _valid_str(value) -> str | None:
 
 
 def _needs_for(state_dir: str | None) -> int | None:
-    """Another workspace's needs-you count, or None. The path comes from the user-level
-    workspaces.json, so the file may be anything: it is opened non-blocking (a FIFO never hangs
-    the page), must be a regular file of at most 16 bytes, and at most 16 bytes are read."""
+    """The needs-you count in `state_dir/needs-count`, or None. The file may be anything: it is opened
+    non-blocking (a FIFO never hangs the status endpoint), must be a regular file of at most 16 bytes,
+    and at most 16 bytes are read."""
     if not state_dir:
         return None
     raw = read_regular_file(Path(state_dir, "needs-count"), _COUNT_MAX_BYTES)
@@ -189,42 +192,162 @@ def _needs_for(state_dir: str | None) -> int | None:
         return None
 
 
-def others(ws) -> list[dict]:
-    """Other registered workspaces with a valid `last_port` and a path that still exists, sorted
-    by name, each as {name, url, needs}. Runs on every page render, so it must never raise: a
-    malformed `workspaces.json` (wrong top-level type, a non-dict entry, or a field of the wrong
-    type) yields fewer or no entries, never a 500."""
+SERVICE = "orch-core-dashboard"
+STATUS_PATH = "/__orch/status"
+STATUS_SCHEMA = 1
+PROBE_TIMEOUT = 0.2
+REFRESH_SECONDS = 5.0
+_PROBE_MAX_BYTES = 8192
+GONE = "gone"  # probe verdict: nothing listens there, or something that is not an orch dashboard answers
+
+
+def display_name(ws) -> str:
+    return ws.config.get("customer") or ws.root.name
+
+
+def status(ws, *, started: str, addons=()) -> dict:
+    """What `GET /__orch/status` answers: who serves this port. No ticket content and no paths."""
+    from orch import __version__
+
+    return {"service": SERVICE, "schema": STATUS_SCHEMA, "orch_version": __version__,
+            "workspace_id": workspace_id(ws), "name": display_name(ws), "pid": os.getpid(), "started": started,
+            "addons": [{"name": la.name, "version": la.manifest.version} for la in addons],
+            "needs": _needs_for(str(ws.state_dir))}
+
+
+def probe(port: int, timeout: float = PROBE_TIMEOUT):
+    """The status JSON of whatever serves 127.0.0.1:`port`; GONE when nothing listens or something else answers;
+    None when it did not answer in time (a busy dashboard is not a stale one)."""
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request("GET", STATUS_PATH, headers={"Accept": "application/json"})
+        resp = conn.getresponse()
+        body = resp.read(_PROBE_MAX_BYTES + 1)
+    except TimeoutError:
+        return None
+    except (OSError, http.client.HTTPException, ValueError):
+        return GONE
+    finally:
+        conn.close()
+    if resp.status != 200 or len(body) > _PROBE_MAX_BYTES:
+        return GONE
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return GONE
+    return data if isinstance(data, dict) else GONE
+
+
+def _count(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def scan(ws) -> list[dict]:
+    """Other workspaces whose dashboard runs now, sorted by name, each as {name, url, needs}. Blocking: it probes
+    each candidate's port. An entry counts only with a live pid and a status answer from orch-core for its own
+    workspace_id; one that fails for sure loses its pid in workspaces.json. Never raises."""
     try:
         key = str(ws.root.resolve())
         data = _load()
     except Exception:
         return []
-    out = []
+    out, stale = [], []
     for path, entry in data.items():
         try:
-            if path == key or not isinstance(entry, dict):
-                continue
+            if path == key or not isinstance(entry, dict) or "pid" not in entry:
+                continue  # no pid: an older version's entry, or a dashboard that shut down cleanly
             port = _valid_port(entry.get("last_port"))
-            if port is None:
-                continue
-            if "pid" in entry and not pid_alive(entry["pid"]):
-                continue  # not running any more: its port may belong to someone else by now
             entry_path = _valid_str(entry.get("path"))
-            if not entry_path or not Path(entry_path).exists():
-                continue
             name = _valid_str(entry.get("name"))
-            if not name or not name.strip():
+            wid = _valid_str(entry.get("workspace_id"))
+            if port is None or not entry_path or not name or not name.strip() or not wid:
                 continue
-            state_dir = _valid_str(entry.get("state_dir"))
-            out.append({
-                "name": name[:_NAME_MAX],
-                "url": f"http://127.0.0.1:{port}/",
-                "needs": _needs_for(state_dir),
-            })
+            if not Path(entry_path).exists():
+                continue
+            if not pid_alive(entry["pid"]):
+                stale.append((path, entry["pid"], port))
+                continue
+            got = probe(port)
+            if got is None:
+                continue
+            if got is GONE or got.get("service") != SERVICE or got.get("workspace_id") != wid:
+                stale.append((path, entry["pid"], port))  # pid reused, or the port belongs to someone else now
+                continue
+            out.append({"name": name[:_NAME_MAX], "url": f"http://127.0.0.1:{port}/", "needs": _count(got.get("needs"))})
         except Exception:  # one malformed entry must never take down the whole switcher
             continue
+    if stale:
+        _prune(stale)
     out.sort(key=lambda e: e["name"])
     return out
+
+
+def _prune(stale: list[tuple]) -> None:
+    """Clear the pid of entries found stale, unless they re-registered meanwhile. The entry itself stays: it also
+    holds that workspace's addon switches and dashboard settings."""
+    from orch.addons.userfiles import update_json
+
+    def mutate(data: dict) -> None:
+        for path, pid, port in stale:
+            entry = data.get(path)
+            if isinstance(entry, dict) and entry.get("pid") == pid and entry.get("last_port") == port:
+                del entry["pid"]
+
+    try:
+        update_json(_workspaces_path(), mutate)
+    except Exception as exc:
+        log.warning("could not prune stale entries from workspaces.json: %s", exc)
+
+
+_lock = threading.Lock()
+_cache: dict[str, tuple[float, list]] = {}
+_running: set[str] = set()
+
+
+def others(ws) -> list[dict]:
+    """The switcher list for a page render: the last scan, never waiting on one. A scan older than REFRESH_SECONDS
+    (or none yet) starts a fresh one in a background thread. Never raises."""
+    try:
+        key = str(ws.root.resolve())
+        with _lock:
+            at, entries = _cache.get(key, (None, []))
+            if (at is None or time.monotonic() - at >= REFRESH_SECONDS) and key not in _running:
+                _running.add(key)
+                try:
+                    threading.Thread(target=_refresh, args=(ws, key), name="orch-switcher", daemon=True).start()
+                except RuntimeError:
+                    _running.discard(key)
+        return list(entries)
+    except Exception:
+        return []
+
+
+def _refresh(ws, key: str) -> None:
+    entries: list = []
+    try:
+        entries = scan(ws)
+    except Exception as exc:  # scan never raises; this only keeps the thread quiet if it ever does
+        log.warning("workspace switcher scan failed: %s", exc)
+    finally:
+        with _lock:
+            _cache[key] = (time.monotonic(), entries)
+            _running.discard(key)
+
+
+def unregister(ws) -> None:
+    """On a clean shutdown: clear our pid from our entry, so no switcher links to this port any more."""
+    from orch.addons.userfiles import update_json
+
+    key, me = str(ws.root.resolve()), os.getpid()
+
+    def mutate(data: dict) -> None:
+        entry = data.get(key)
+        if isinstance(entry, dict) and entry.get("pid") == me:
+            del entry["pid"]
+
+    update_json(_workspaces_path(), mutate)
 
 
 def write_needs(ws, n: int) -> None:

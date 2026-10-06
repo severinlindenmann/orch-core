@@ -4,7 +4,6 @@
 {%- set items = [
   ("today", "Today", "/", "today", needs_count, "hot"),
   ("board", "Board", "/board", "board", 0, ""),
-  ("graph", "Graph", "/graph", "graph", 0, ""),
   ("activity", "Activity", "/activity", "activity", 0, ""),
   ("reports", "Reports", "/reports", "reports", 0, ""),
 ] -%}
@@ -42,10 +41,12 @@
       {% for key, label, href, icon, badge, tone in items %}
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
-      {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
-      {% if addon_nav %}
+      {% if addon_nav or graph_nav or terminals_nav %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
         <p class="menu-group" id="menu-addons-h">Addons</p>
+        {#- Graph and Terminals are core pages; their default addons are the switch (#167) -#}
+        {% if graph_nav %}{{ item("graph", "Graph", "/graph", "graph") }}{% endif %}
+        {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
         {% for label, href, icon, broken, chip in addon_nav %}
         {{ item("addon:" ~ href, label, href, icon, path=true, broken=broken, chip=chip) }}
         {% endfor %}

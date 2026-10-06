@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 
-from orch.dashboard import factory_runner
+from orch.dashboard import factory_runner, schedules
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
 from orch.dashboard.auth import auth_middleware
@@ -235,11 +235,11 @@ async def form_error(request, exc):
 def router_modules() -> tuple:
     """The route modules, in the order they are included (and so matched)."""
     from orch.dashboard import (routes_actions, routes_activity, routes_addons, routes_agent_start, routes_board,
-                                routes_design, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_terminals, routes_theme,
+                                routes_design, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_schedules, routes_terminals, routes_theme,
                                 routes_ticket, routes_widgets, routes_workspace)
     return (routes_board, routes_graph, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
             routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design,
-            routes_guide, routes_terminals, routes_widgets, routes_remote)
+            routes_guide, routes_terminals, routes_schedules, routes_widgets, routes_remote)
 
 
 def dashboard_routes() -> list:
@@ -279,6 +279,7 @@ def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastA
         tasks.append(asyncio.create_task(outbox_loop(ws, seconds, app.state.outbox)))
         tasks.append(asyncio.create_task(store_sweep_loop(STORE_SWEEP_SECONDS, app.state.downloads, app.state.reveals)))
         tasks.append(asyncio.create_task(factory_runner.loop(ws)))  # AI Factory: idle unless the human started an epic
+        tasks.append(asyncio.create_task(schedules.loop(ws)))  # schedules: idle unless the addon is on and one is armed
         bridge = app.state.bridge_loop
         if bridge is not None:  # the remote bridge: polls the relay through its transport child, beside the runner
             tasks.append(asyncio.create_task(bridge.run()))

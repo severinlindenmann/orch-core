@@ -61,8 +61,10 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
+_HUMAN_SCHEDULE = ("arm", "resume", "run-now", "file", "dismiss")  # `orch schedule …` (docs/schedules.md)
 _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|checks\s+(?:-\S+\s+)*sign|epic\s+(?:-\S+\s+)*pause"
-                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke))(?![\w-])")
+                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
+                  r"|schedule\s+(?:-\S+\s+)*(?:arm|resume|run-now|file|dismiss))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -71,7 +73,7 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 # the command, or a human Actor built by hand.
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
 _HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|ledger_repair|epic_pause"
-                              r"|permit_(?:grant|deny|revoke))(?![\w-])")
+                              r"|permit_(?:grant|deny|revoke)|file_finding|dismiss_finding|request_run)(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal
 # outside the agent's process tree.
@@ -529,7 +531,7 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
-                      "permissions and moving a "
+                      "permissions, arming schedules and filing their findings, and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
                       "terminal or the dashboard")
 # The harness markers orch reads to tell an agent from a human (orch.actor): an agent does not strip or blank them.
@@ -566,6 +568,8 @@ def _human_only_tokens(seg: str) -> bool:
         if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
             return True
         if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
+            return True
+        if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -1743,7 +1747,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _HUMAN_ONLY_DENIED)
     for m in _XARGS_ORCH.finditer(_unquoted(code)):
         sub = m.group(2)
-        if not sub or sub in _HUMAN_VERBS or sub in ("move", "permit") or sub.startswith(("$", "{", "`", "|", ";", "&")):
+        if not sub or sub in _HUMAN_VERBS or sub in ("move", "permit", "schedule") or sub.startswith(("$", "{", "`", "|", ";", "&")):
             return Decision(False, _HUMAN_ONLY_DENIED)
     if _DECODED_RUN.search(code):
         return Decision(False, _DECODED_DENIED)

@@ -133,7 +133,8 @@ def test_actor_is_request_scoped():
 
 def test_no_module_uses_the_fixed_actor_constant():
     """Derived: a new use of a fixed human actor in the dashboard fails here."""
-    allowed_local = {"reach.py", "factory_runner.py"}  # the constant itself; the background runner has no request
+    # the constant itself; the background runners (AI Factory, schedules) have no request
+    allowed_local = {"reach.py", "factory_runner.py", "schedules.py"}
     for path in DASHBOARD.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         rel = path.relative_to(DASHBOARD).as_posix()
@@ -300,7 +301,7 @@ def test_the_workspace_family_is_never_remote():
 
 # What arms or launches something: derived from what a route's code calls, so a new route that does it is caught.
 ARMS = re.compile(r"_arm_runner|factory_sessions\.arm|launch\.start|permit_grant|terminals\.(?:send|resize|end)\b"
-                  r"|\.act\(|execute\(")
+                  r"|\.act\(|execute\(|sc\.arm\(|request_run\(")
 
 
 def test_routes_that_arm_or_launch_are_type():
@@ -321,7 +322,8 @@ def test_routes_that_arm_or_launch_are_type():
                 assert tag.scope is not None and tag.scope >= Scope.TYPE or key in ADDON_DECISIONS, key
     for expected in (("POST", "/t/{ref}/approve"), ("POST", "/t/{ref}/agent/start"), ("POST", "/permits/{rid}/grant"),
                      ("POST", "/terminals/{name}/keys"), ("POST", "/terminals/new"),
-                     ("POST", "/addons/{name}/actions/{action_id}")):
+                     ("POST", "/addons/{name}/actions/{action_id}"), ("POST", "/schedules/{sid}/arm"),
+                     ("POST", "/schedules/{sid}/run")):
         assert expected in found, f"the arming scan no longer sees {expected}"
     assert remote_gate.TAGS[("POST", "/permits/{rid}/grant")].fresh
 

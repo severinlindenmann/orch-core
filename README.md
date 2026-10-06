@@ -24,6 +24,7 @@ Agents are fast. They are also confident, and they will happily approve their ow
 - **Epics and sprints**: approve an epic once for all its children, optionally delegate small follow-ups, plan in sprints.
 - **Ticket widgets**: agents put charts, check tables, diffs, before/after sliders and other small visual blocks into tickets, drawn safely and pinned into the verdict you sign ([format](plugins/orch-core/docs/widgets.md)).
 - **Mission Control**: a local web dashboard for everything that needs you.
+- **Schedules**: run a workspace skill on a clock or when an orch event happens, or put a recurring ticket on Today; you arm each one, signed and pinned to its skill, and whatever a run finds waits for you ([docs](plugins/orch-core/docs/schedules.md)).
 - **Addons**: GitHub reviews and issues, Databricks, a wiki and agent terminals ship in the box; write your own against a small, documented API.
 - **GitHub Copilot** support for the skills and the CLI.
 
@@ -113,7 +114,7 @@ The format, every built-in type and the security model are in [docs/widgets.md](
 
 ## Addons
 
-Addons add pages and panels to Mission Control. Five ship with the plugin, all off until you enable them per workspace:
+Addons add pages and panels to Mission Control. Several ship with the plugin, all off until you enable them per workspace:
 
 | Addon | What it shows |
 |---|---|
@@ -122,6 +123,7 @@ Addons add pages and panels to Mission Control. Five ship with the plugin, all o
 | `databricks` | Workspaces, failed job runs, pipelines and compute, read-only through the `databricks` CLI |
 | `wiki` | Related wiki pages on each ticket and "may need an update" hints, from a GitHub wiki or a local Markdown folder |
 | `terminals` | Run, watch and type into agent sessions from Mission Control (needs tmux) |
+| `schedules` | Workspace skills on a clock or an orch event, and recurring tickets; findings on Today (needs tmux) |
 | `model-routing` | Start each agent session on a model chosen by its Start agent mode, a subagent model, one tier up after a task failed its verify twice |
 
 Custom addons are installed with `orch addon install <folder | git URL>` and run only after you trust that exact version; any change disables them until you review it again. Agents can never install, trust or enable an addon. To write one, read [ADDONS.md](plugins/orch-core/ADDONS.md) and start from [addon-template/](plugins/orch-core/addon-template/). Widget and copy rules are in [DESIGN.md](plugins/orch-core/DESIGN.md).

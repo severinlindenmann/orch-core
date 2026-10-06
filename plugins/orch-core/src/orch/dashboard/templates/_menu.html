@@ -43,6 +43,7 @@
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
       {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
+      {% if schedules_nav %}{{ item("schedules", "Schedules", "/schedules", "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2", path=true) }}{% endif %}
       {% if addon_nav %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
         <p class="menu-group" id="menu-addons-h">Addons</p>

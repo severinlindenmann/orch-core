@@ -286,6 +286,11 @@ def _live_version(ws) -> str:
         return ""
 
 
+def _schedules_on(ws) -> bool:
+    from orch.dashboard.schedules import addon_on  # lazy: it pulls in the runner
+    return addon_on(ws)
+
+
 def page(request, name: str, status_code: int = 200, *, nav: str = "", title: str = "", **ctx):
     ws = request.app.state.ws
     dashboard = ws.config.get("dashboard", {})
@@ -309,6 +314,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request
+        "schedules_nav": _schedules_on(ws),  # docs/schedules.md: the schedules addon is on
         "dedupe_prs": lambda prs, groups=(): __import__("orch.dashboard.routes_ticket", fromlist=["dedupe_prs"]).dedupe_prs(prs, groups),
         "addon_slot": runtime.slot if runtime else (lambda name, ticket=None, params=None, always_banner=False: []),
         # the yes/no options enabled, trusted addons add to a ticket (the form, the approve card, the ticket page)

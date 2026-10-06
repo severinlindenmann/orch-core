@@ -1252,15 +1252,37 @@ def hooks_install(
     repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
     force: Annotated[bool, typer.Option("--force", help="Install even where a commit-msg hook exists in .git/hooks (that hook is kept as commit-msg.pre-orch and runs after the orch check).")] = False,
     stage_records: Annotated[bool, typer.Option("--stage-records", help="Also install a pre-commit hook that stages orch's record in the state folder whenever a commit stages a ticket (skipped where a pre-commit hook exists; under core.hooksPath it is delegated like commit-msg). A commit that names paths may not carry the staged records.")] = False,
+    untracked: Annotated[bool, typer.Option("--untracked", help="Change no tracked file and no existing hook: point this clone's own core.hooksPath at <git dir>/orch-hooks, where each hook runs orch's part and then the hook that ran before. `orch hooks uninstall` puts the old core.hooksPath back.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Install the commit-msg check into each repo's own hooks directory; other hooks keep working.
 
     A repo with core.hooksPath set to a folder of its own also gets a commit-msg there (or the call added to its
-    existing one) that runs the check; that file is part of the repo and has to be committed."""
+    existing one) that runs the check; that file is part of the repo and has to be committed. --untracked avoids
+    that."""
     from orch.hooks.install import install_hooks
     ws = _ws()
-    rows = [{"repo": str(p), "action": a} for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records)]
+    rows = [{"repo": str(p), "action": a}
+            for p, a in install_hooks(ws, repo or None, force=force, stage_records=stage_records, untracked=untracked)]
+    _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
+
+
+@hooks_app.command("uninstall")
+def hooks_uninstall(
+    repo: Annotated[Optional[list[Path]], typer.Option("--repo", help="Repo path (default: git.repos from config).")] = None,
+    json_out: JsonOpt = False,
+) -> None:
+    """Undo `orch hooks install --untracked`: the clone's previous core.hooksPath comes back. Human only."""
+    from orch.actor import agent_harness
+    from orch.errors import HumanOnlyError
+    from orch.hooks.install import configured_repos, uninstall_untracked
+    harness = agent_harness()
+    if harness:  # it switches the commit check off, like changing core.hooksPath, which the guard refuses too
+        raise HumanOnlyError(f"orch hooks uninstall refused: running inside an agent harness ({harness})",
+                             hint="ask the user to run it in their own terminal")
+    ws = _ws()
+    targets = [p.resolve() for p in repo] if repo else configured_repos(ws)
+    rows = [{"repo": str(p), "action": uninstall_untracked(p)} for p in targets]
     _out(rows, json_out, "\n".join(f"{r['action']:<10} {r['repo']}" for r in rows))
 
 
@@ -1600,11 +1622,18 @@ def feedback_dismiss(report_id: Annotated[str, typer.Argument(help="fb-… id fr
 @app.command()
 def doctor(
     fix: Annotated[bool, typer.Option("--fix", help="Write the orch block of orchestrator/.gitignore (nothing else).")] = False,
+    init_git: Annotated[bool, typer.Option("--init-git", help="Make a workspace root that is a plain folder of git repos a local-only git repository: git init, plus .gitignore blocks for the configured repos, .claude/worktrees/ and orch's caches. Adds no remote and commits nothing.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Check this repository's orch setup and say how to fix what is missing. Changes no files or settings (except
-    the orch block of orchestrator/.gitignore with --fix); may recreate missing orchestrator folders."""
+    the orch block of orchestrator/.gitignore with --fix, and the local repository --init-git sets up); may
+    recreate missing orchestrator folders."""
     from orch.onboarding import doctor as run_doctor
+    if init_git:
+        from orch.onboarding import init_root_repo
+        done = init_root_repo(_ws())
+        if not json_out:
+            typer.echo("\n".join(f"{action:<11} {what}" for action, what in done))
     if fix:
         from orch.core.gitfiles import write_ignore_block
         ws = _ws()

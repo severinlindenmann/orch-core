@@ -2,7 +2,36 @@ import html
 import json
 import re
 
+import pytest
+
 from orch.cli import run
+
+
+def _client(ws, graph: bool):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orch.addons import userfiles
+    from orch.dashboard.app import create_app
+    if graph:  # the `graph` default addon is the page's switch (#167)
+        userfiles.set_enabled(ws.root, "graph", True)
+    client = TestClient(create_app(ws, "tok"))
+    assert client.get("/?token=tok").status_code == 200
+    return client
+
+
+@pytest.fixture
+def dash(ws):
+    return _client(ws, graph=True)
+
+
+def test_off_by_default_no_menu_and_404(ws, ticket_history):
+    off = _client(ws, graph=False)
+    r = off.get("/graph")
+    assert r.status_code == 404 and "Graph is an addon" in r.text and 'id="graph-data"' not in r.text
+    assert off.get("/graph.json").status_code == 404
+    assert off.get(f"/graph/related?t={ticket_history['mine']}").status_code == 404
+    assert 'href="/graph"' not in off.get("/board").text
+    assert run(["graph", "--json"]) == 0  # the CLI stays core
 
 
 def test_build_nodes_edges_and_collisions(ws, ticket_history, put):
@@ -57,7 +86,8 @@ def test_page_embeds_the_data_and_is_in_the_menu(dash, ticket_history, ws):
     assert data["collisions"][0]["file"] == "src/auth/login.py"
     assert "/static/graph.js" in page and "/static/graph.css" in page
     assert "<code>src/auth/login.py</code>" in page  # the collision list works without JS
-    assert 'href="/graph"' in dash.get("/board").text  # every page's menu links it
+    board = dash.get("/board").text
+    assert 'href="/graph"' in board.split('class="menu-addons"')[1]  # every page's menu links it, under Addons
 
 
 def test_page_escapes_ticket_text_in_the_json_block(dash, put):

@@ -34,6 +34,9 @@ def clean_message(text: str) -> str:
 def _key_pattern(cfg: dict) -> str:
     from orch.core.trackers import plain
     parts = [rf"{re.escape(cfg['id']['prefix'])}-\d+"] + [f"(?:{plain(t['pattern'])})" for t in cfg["external_trackers"]]
+    if (cfg.get("quick") or {}).get("enabled") is True:  # quick-task keys (orch.core.quick), checked in check_message
+        from orch.core.quick import key_pattern_of
+        parts.append(key_pattern_of(cfg))
     return "|".join(parts)
 
 
@@ -71,6 +74,16 @@ def check_message(ws, text: str, cwd: Path | None = None) -> list[str]:
         problems.append(f"subject must match '{cfg['commit']['subject']}', e.g. '{example}'")
         return problems
     key = m.group("key")
+    from orch.core import quick
+    if quick.is_key(ws, key) and (cfg.get("quick") or {}).get("enabled") is True:
+        problem = quick.commit_problem(ws, key)
+        if problem:
+            problems.append(problem)
+        body = rest.strip()
+        for name in body_names(cfg):
+            if not re.search(rf"(?m)^{re.escape(name)}:[ \t]*\S", body):
+                problems.append(f"body needs a '{name}:' line")
+        return problems
     try:
         _, ticket = store.load(ws, key)
     except NotFoundError:

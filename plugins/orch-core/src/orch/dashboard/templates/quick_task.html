@@ -1,0 +1,102 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{% block head %}
+  <link rel="stylesheet" href="{{ static_url('quick.css') }}">
+{% endblock %}
+{% block main %}
+{% set role = {"open": "info", "done": "ok", "moved": "neu", "dropped": "neu"}[t.status] %}
+<p class="muted"><a class="lnk" href="/quick">Quick tasks</a> › {{ t.id }}</p>
+<div class="page-head">
+  <div>
+    <p class="quick-head">{{ t.id }} {{ ui.status("warn", "outgrew it") if t.outgrew else ui.status(role, t.status) }} <span class="muted">quick task · no sign-off</span></p>
+    <h1>{{ t.title }}</h1>
+    <p class="quick-meta muted">
+      <span>added by {{ who(t.added.by) }}{% if t.added.at %} · {{ t.added.at|ago }}{% endif %}</span>
+      {% if t.done %}<span>done by {{ who(t.done.by) }} · {{ t.done.at|ago }}</span>{% endif %}
+      {% if t.claimed_by and t.status == "open" %}<span>{{ "stale claim" if t.stale else "claimed" }} by {{ t.claimed_by }}</span>{% endif %}
+      {% if t.area %}<code>{{ t.area }}</code>{% endif %}
+      {% if t.ticket %}<span>moved to <a class="lnk" href="/t/{{ t.ticket }}">{{ t.ticket }}</a></span>{% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="quick-layout">
+<div class="quick-main stack">
+  {% if t.outgrew %}
+  <section class="card card-warn" aria-labelledby="quick-outgrew-h">
+    <h2 id="quick-outgrew-h">Bigger than a quick task</h2>
+    <p>{{ t.outgrew.commits }} commit(s) and {{ t.outgrew.files_n }} file(s) when the agent tried to close it; the limit is {{ cfg.max_commits }} commit(s), {{ cfg.max_files }} file(s). The agent stopped. Your call:</p>
+    {% if t.outgrew.files %}<ul class="plain quick-files">{% for f in t.outgrew.files[:12] %}<li><code>{{ f }}</code></li>{% endfor %}</ul>{% endif %}
+    <div class="row">
+      <form method="post" action="/quick/{{ t.id }}/promote"><input type="hidden" name="next" value="/quick/{{ t.id }}"><button class="btn btn-primary" type="submit">Make it a ticket</button></form>
+      <form method="post" action="/quick/{{ t.id }}/reopen"><input type="hidden" name="next" value="/quick/{{ t.id }}"><button class="btn" type="submit">Let it finish</button></form>
+      <form method="post" action="/quick/{{ t.id }}/drop"><input type="hidden" name="next" value="/quick"><button class="btn btn-quiet" type="submit">Drop it</button></form>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if t.done %}
+  <section class="card" aria-labelledby="quick-done-h">
+    <h2 id="quick-done-h" class="card-title">Done with</h2>
+    <p class="quick-note">{{ t.done.note or "No note: closed by you." }}</p>
+  </section>
+  {% endif %}
+
+  <section class="card" aria-labelledby="quick-files-h">
+    <h2 id="quick-files-h" class="card-title">Artifacts <span class="count">{{ files|length }}</span> <span class="muted">· up to {{ cfg.max_artifacts }} on a quick task</span></h2>
+    {% set images = files|selectattr("image")|list %}
+    {% if images %}
+    <ul class="plain art-grid">{% for a in images %}<li class="art-tile"><a class="artifact-thumb" href="{{ a.href }}" target="_blank" rel="noopener"><img src="{{ a.href }}" alt="{{ a.label or a.name }}" loading="lazy" decoding="async"></a><span class="art-cap">{{ a.label or a.name }}</span></li>{% endfor %}</ul>
+    {% endif %}
+    {% set others = files|rejectattr("image")|list %}
+    {% if others %}
+    <ul class="plain artifact-list">{% for a in others %}<li class="artifact-item"><span class="artifact-text">
+      {% if a.url %}<a class="lnk" href="{{ a.href }}" target="_blank" rel="noopener noreferrer">{{ a.label or "link" }} ↗</a> <span class="muted artifact-url">{{ a.url }}</span>
+      {% else %}<a class="lnk" href="{{ a.href }}" target="_blank" rel="noopener">{{ a.name }}</a> <span class="muted">{{ a.kind }}{% if a.label %} · {{ a.label }}{% endif %}</span>{% endif %}
+    </span></li>{% endfor %}</ul>
+    {% endif %}
+    {% if not files %}<p class="muted">Nothing attached. The agent adds a screenshot, report or link with <code>orch quick artifact add {{ t.id }} &lt;file&gt;</code>.</p>{% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="quick-time-h">
+    <h2 id="quick-time-h" class="card-title">Timeline</h2>
+    <ol class="plain quick-timeline">
+      {% for e in timeline %}
+      <li><span class="muted">{{ e.at|local }}</span> {{ who(e.actor) }} {{ {"quick.added": "added it", "quick.claimed": "claimed it", "quick.released": "released it", "quick.done": "marked it done", "quick.outgrew": "tried to close it: outgrew it", "quick.reopened": "reopened it", "quick.dropped": "dropped it", "quick.promoted": "made it a ticket", "quick.artifact": "added an artifact"}.get(e.kind, e.kind) }}</li>
+      {% endfor %}
+    </ol>
+    {% for n in t.notes or [] %}<p class="quick-note"><b>{{ who(n.by) }}:</b> {{ n.text }}</p>{% endfor %}
+  </section>
+</div>
+
+<aside class="quick-aside stack">
+  {% if t.status == "done" %}
+  <form method="post" action="/quick/{{ t.id }}/reopen" class="card stack">
+    <input type="hidden" name="next" value="/quick/{{ t.id }}">
+    <label for="reopen-note" class="card-title">Not right? Say why and reopen</label>
+    <input id="reopen-note" name="note" type="text" maxlength="500" placeholder="e.g. the legend in light mode got too pale">
+    <div class="row"><button class="btn" type="submit">Reopen</button></div>
+  </form>
+  {% elif t.status == "open" and not t.outgrew %}
+  <form method="post" action="/quick/{{ t.id }}/done" class="card stack">
+    <input type="hidden" name="next" value="/quick/{{ t.id }}">
+    <label for="done-note" class="card-title">Close it yourself</label>
+    <input id="done-note" name="note" type="text" maxlength="500" placeholder="What was done (optional)">
+    <div class="row"><button class="btn btn-primary" type="submit">Mark done</button></div>
+  </form>
+  <section class="card stack" aria-labelledby="quick-agent-h">
+    <h2 id="quick-agent-h" class="card-title">Start an agent on it</h2>
+    <p class="muted">Paste this into a new agent session:</p>
+    <pre class="quick-prompt">Work on quick task {{ t.id }}: claim it with `orch quick claim {{ t.id }}`, do it, commit as `{{ t.id }} &lt;summary&gt;` and close it with `orch quick done {{ t.id }} -m "&lt;what you did&gt;"`.</pre>
+    {% if t.claimed_by %}<form method="post" action="/quick/{{ t.id }}/release"><input type="hidden" name="next" value="/quick/{{ t.id }}"><button class="btn btn-quiet" type="submit">Release the claim</button></form>{% endif %}
+  </section>
+  {% endif %}
+  {% if t.status == "open" and not t.outgrew %}
+  <section class="card stack">
+    <form method="post" action="/quick/{{ t.id }}/promote"><input type="hidden" name="next" value="/quick/{{ t.id }}"><button class="btn" type="submit">Make it a ticket</button></form>
+    <form method="post" action="/quick/{{ t.id }}/drop"><input type="hidden" name="next" value="/quick"><button class="btn btn-quiet" type="submit">Drop it</button></form>
+  </section>
+  {% endif %}
+</aside>
+</div>
+{% endblock %}

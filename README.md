@@ -17,10 +17,11 @@ Agents are fast. They are also confident, and they will happily approve their ow
 
 ## Features
 
-- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `graph`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
+- **`orch` CLI**: `new`, `list`, `show`, `search`, `next`, `related`, `graph`, `claim`, `task`, `ask`, `wait`, `log`, `link`, `artifact`, `quick`, `move`, `check`, `doctor`, plus the human-only `approve`, `request-changes`, `answer` and `verdict`.
 - **Skills** for Claude Code: `orch-tickets`, `orch-refine-ticket` (requirements engineering), `orch-work-on-ticket` (claim, plan, implement, verify) and `orch-setup` (guided onboarding).
 - **Hooks**: the guard, and a `SessionStart` hook that prints the active rules, your claimed tickets and what is waiting on you.
 - **Commit check**: an optional git `commit-msg` hook (`orch hooks install`) that requires a ticket key in every commit.
+- **Quick tasks**: one-line jobs too small for a ticket (`orch quick`), closed with one line of proof; a size limit turns one that grows into a ticket ([docs](plugins/orch-core/docs/quick-tasks.md)).
 - **Epics and sprints**: approve an epic once for all its children, optionally delegate small follow-ups, plan in sprints.
 - **Ticket widgets**: agents put charts, check tables, diffs, before/after sliders and other small visual blocks into tickets, drawn safely and pinned into the verdict you sign ([format](plugins/orch-core/docs/widgets.md)).
 - **Mission Control**: a local web dashboard for everything that needs you.

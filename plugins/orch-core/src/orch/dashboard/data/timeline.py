@@ -153,7 +153,18 @@ def describe(event) -> str:
         return _describe_addon_action(data)
     if kind == "addon.decision":
         return f"chose {_words(data.get('choice'), 'an option')} on an item of {_words(data.get('addon'), 'an addon')}"
+    if kind.startswith("quick.") and kind in _QUICK:
+        q = str(data.get("quick") or "a quick task")
+        return _QUICK[kind].format(q=q, ticket=str(data.get("ticket") or "a ticket"))
     return kind.replace(".", " ")
+
+
+# Quick tasks (orch.core.quick): fixed phrases, never the task's own text
+_QUICK = {"quick.added": "added quick task {q}", "quick.claimed": "claimed quick task {q}",
+          "quick.released": "released quick task {q}", "quick.done": "finished quick task {q}",
+          "quick.outgrew": "stopped quick task {q}: it outgrew the size limit", "quick.reopened": "reopened quick task {q}",
+          "quick.dropped": "dropped quick task {q}", "quick.promoted": "made quick task {q} the ticket {ticket}",
+          "quick.artifact": "added a file to quick task {q}"}
 
 
 _PHRASE = {"ticket.created": "created the ticket", "claim.taken": "claimed the ticket", "claim.released": "released the claim",

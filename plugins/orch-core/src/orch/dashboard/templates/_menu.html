@@ -54,6 +54,8 @@
       {% for key, label, href, icon, badge, tone in items %}
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
+      {{ item("quick", "Quick tasks", "/quick", "M4 4h16v16H4zM8 12l3 3 5-6", path=true,
+              chip=({"badge": {"role": "info", "text": quick_nav.open ~ " open", "title": quick_nav.open ~ " quick tasks open"}} if quick_nav and quick_nav.enabled and quick_nav.open else none)) }}
       {% if addon_nav or graph_nav or terminals_nav %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
         <p class="menu-group" id="menu-addons-h">Addons</p>

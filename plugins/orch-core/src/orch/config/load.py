@@ -60,6 +60,11 @@ DEFAULTS: dict = {
     # Named checks (orch.core.receipts): what `orch task done --run` runs for a verify line `check:<name>`, step by
     # step. Each project says what its verification takes; the guard refuses an agent edit of this key.
     "checks": {},
+    # Quick tasks (orch.core.quick): one-line jobs outside the ticket flow. Off until the human turns them on with
+    # `orch quick enable`; that switch, agents_add and the size limits are signed into the ledger, so a config edit
+    # alone never turns them on or widens them.
+    "quick": {"enabled": False, "prefix": "Q", "next": "idle", "agents_add": False, "max_commits": 1, "max_files": 3,
+              "max_artifacts": 5, "claim_minutes": 30},
 }
 
 _CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")

@@ -28,7 +28,7 @@ def test_page_off_offers_the_switch(client):
 
 
 def test_turn_on_add_done_reopen(client, ws):
-    r = _post(client, "/quick/settings", enabled="1", max_commits="1", max_files="3")
+    r = _post(client, "/workspace/quick", enabled="1", max_commits="1", max_files="3")
     assert r.status_code == 303 and "err=" not in r.headers["location"]
     assert quick.enabled(ws)
     r = _post(client, "/quick/add", title="Fix the README typo", area="README.md", next="/quick")
@@ -95,4 +95,4 @@ def test_every_quick_route_has_a_remote_tag():
     for route in routes_quick.router.routes:
         for method in route.methods:
             assert (method, route.path) in remote_gate.TAGS, (method, route.path)
-    assert remote_gate.TAGS[("POST", "/quick/settings")] is remote_gate.NO
+    assert remote_gate.TAGS[("POST", "/workspace/quick")] is remote_gate.NO

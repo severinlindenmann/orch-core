@@ -108,7 +108,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,
     ("POST", "/workspace/phones/pair"): NO, ("POST", "/workspace/phones/{phone_id}/revoke"): NO,
     ("POST", "/workspace/phones/permissions"): NO,
-    ("POST", "/quick/settings"): NO,  # the quick-task switch: signed into the ledger, like the agent-HTML switch
+    ("POST", "/workspace/quick"): NO,  # the quick-task switch: signed into the ledger, like the agent-HTML switch
     # the Remote tab: pairing, approving, rescoping, revoking and cutting off devices is only ever done here
     ("POST", "/workspace/remote/offer"): NO, ("POST", "/workspace/remote/disconnect"): NO,
     ("POST", "/workspace/remote/pending/{did}/approve"): NO, ("POST", "/workspace/remote/pending/{did}/reject"): NO,

@@ -21,7 +21,7 @@
   {% else %}
   <p>Turn them on to let agents do one-line jobs without a ticket. You decide whether agents may add tasks and how big a quick task may get; agents cannot change either.</p>
   {% endif %}
-  <form method="post" action="/quick/settings" class="row">
+  <form method="post" action="/workspace/quick" class="row">
     <input type="hidden" name="enabled" value="1"><input type="hidden" name="next" value="/quick">
     <input type="hidden" name="max_commits" value="{{ cfg.max_commits }}"><input type="hidden" name="max_files" value="{{ cfg.max_files }}">
     <button class="btn btn-primary" type="submit">Turn on quick tasks</button>
@@ -117,14 +117,14 @@
   {% if cfg.enabled %}
   <section class="card" aria-labelledby="quick-set-h">
     <h2 id="quick-set-h" class="card-title">Settings</h2>
-    <form method="post" action="/quick/settings" class="stack">
+    <form method="post" action="/workspace/quick" class="stack">
       <input type="hidden" name="enabled" value="1"><input type="hidden" name="next" value="/quick">
       <label class="quick-toggle"><input type="checkbox" name="agents_add" value="1"{{ ' checked' if cfg.agents_add }}> Agents may add quick tasks</label>
       <label class="field-col">Most commits <input type="number" name="max_commits" min="0" max="50" value="{{ cfg.max_commits }}"></label>
       <label class="field-col">Most files <input type="number" name="max_files" min="0" max="50" value="{{ cfg.max_files }}"></label>
       <button class="btn" type="submit">Save settings</button>
     </form>
-    <form method="post" action="/quick/settings" class="row quick-off">
+    <form method="post" action="/workspace/quick" class="row quick-off">
       <input type="hidden" name="enabled" value="0"><input type="hidden" name="next" value="/quick">
       <button class="btn btn-quiet" type="submit">Turn quick tasks off</button>
     </form>

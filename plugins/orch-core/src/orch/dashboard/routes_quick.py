@@ -139,7 +139,7 @@ def drop(request: Request, qid: str, next_url: Next = ""):
     return _run(request, next_url, lambda: _ops(request).drop(qid), lambda t: f"{t['id']} dropped")
 
 
-@router.post("/quick/settings")
+@router.post("/workspace/quick")
 def settings(request: Request, enabled: Annotated[str, Form()] = "", agents_add: Annotated[str, Form()] = "",
              max_commits: Annotated[str, Form()] = "", max_files: Annotated[str, Form()] = "", next_url: Next = ""):
     def _int(v: str) -> int | None:

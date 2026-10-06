@@ -141,6 +141,8 @@ Approvals bind what you saw. The requirements approval covers the Summary (when 
 
 Until you approve the plan (sizes with a plan gate), an agent may add tasks but cannot start or finish them.
 
+Which sizes skip a gate is set in `orchestrator/config.json` under `gates`: `plan_skip_sizes` (default `["xs"]`) skips the plan gate, `requirements_skip_sizes` (default `[]`) skips the requirements gate, for small tasks that need no written requirements (submit expenses, book a room): `"gates": {"plan_skip_sizes": ["xs"], "requirements_skip_sizes": ["xs"]}`. A ticket of a listed size needs no Requirements or Acceptance criteria and leaves the backlog without an approval, but only you move it to `open` (`orch move <id> open` or the dashboard); claim, tasks, testing and your verdict or close work as for every ticket. Once it is out of backlog, agents cannot change its size or type. `orch check` and the dashboard show its requirements as skipped, not missing. An epic always needs its approval. The generated agent rules (`orch rules`, `AGENTS.md`) mention the setting when it lists a size.
+
 The ticket's `## Log` is plain text in the file and only a mirror: agents may append to it but not change or remove lines, and not write lines in your name. `orch check` reports a Log line that claims a human action with no matching event (`unverified-log-line`). The ticket page's Activity comes from the event log; the raw Log is labelled as unverified file text. Agents do not write shell startup files, `.envrc` or git hooks. Git commands are not policed beyond commit, push and review rules: whatever a checkout or merge does to ticket files, an agent still proceeds only on decisions the ledger holds, and `orch check` reports the rest.
 
 ### Epics and sprints

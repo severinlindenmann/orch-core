@@ -12,7 +12,7 @@ from orch.core import evidence, store, trackers
 from orch.core.constants import PRIORITIES, RESOLUTIONS, SECTIONS, SIZES, STATUSES, SUCCEEDED, TYPES
 from orch.core.events import Actor, Event, append_event, log_line
 from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, clear_gate, gate_hash, gate_state, human_questions_in,
-                             record_approval)
+                             record_approval, requirements_required, requirements_skip_sizes)
 from orch.core.ids import next_id
 from orch.core.lifecycle import HUMAN_HINT, check_move, require_human, unanswered_blocking
 from orch.core.locks import lock
@@ -126,6 +126,10 @@ class Ops(TaskOpsMixin):
     @property
     def _skip_sizes(self) -> tuple:
         return tuple(self.ws.config["gates"]["plan_skip_sizes"])
+
+    @property
+    def _req_skip_sizes(self) -> tuple:
+        return requirements_skip_sizes(self.ws)
 
     @property
     def _session(self) -> str:
@@ -265,7 +269,7 @@ class Ops(TaskOpsMixin):
                 self._log(t, f"follow-up {tid} created")
                 return {"follow_up": tid}
             self._mutate(source.id, "ticket.edited", link_back)
-        self.warnings = empty_gate_warnings(ticket)
+        self.warnings = empty_gate_warnings(ticket) if requirements_required(self.ws, ticket) else []
         return ticket
 
     def _epic_target(self, ref: str, *, child_type: str) -> store.Entry:
@@ -395,7 +399,7 @@ class Ops(TaskOpsMixin):
                         "cannot tick " + ", ".join(f"AC{n}" for n in unproven) + " without evidence",
                         hint="add a line such as `- AC1: <what proved it> (<command or link>)` to Verification first")
             self._log(t, f"updated {canonical}")
-            if t.status == "backlog":
+            if t.status == "backlog" and requirements_required(self.ws, t):
                 from orch.core.body import empty_gate_warnings
                 self.warnings = empty_gate_warnings(t)
             return {"section": canonical}
@@ -524,7 +528,8 @@ class Ops(TaskOpsMixin):
                 from orch.core.ledger import require_signed
                 require_signed(self.ws, t, ("requirements",)
                                + (("plan",) if t.meta.get("size") not in self._skip_sizes else ()))
-            check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="move", open_blockers=blockers)
+            check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="move", open_blockers=blockers,
+                       requirements_skip_sizes=self._req_skip_sizes)
             if (frm, to) == ("in-progress", "testing"):
                 loose = self._register_loose(t)
                 self.warnings = self._handover_warnings(t)
@@ -607,14 +612,15 @@ class Ops(TaskOpsMixin):
         return self._mutate(ref, "ticket.moved", fn)
 
     def reopen(self, ref: str, reason: str) -> Ticket:
-        """Human only: done → open when the requirements are still approved, else backlog."""
+        """Human only: done → open when the requirements are still approved (or its size skips them), else backlog."""
         require_human(self.actor, "reopening a ticket")
         reason = " ".join((reason or "").split())
         if not reason:
             raise UsageError("reopening a ticket needs a reason")
 
         def fn(t: Ticket) -> dict:
-            to = "open" if gate_state(t, "requirements") == "approved" else "backlog"
+            to = "open" if (gate_state(t, "requirements") == "approved" or not requirements_required(self.ws, t)) \
+                else "backlog"
             check_move(t, to, self.actor, plan_skip_sizes=self._skip_sizes, command="reopen")
             t.meta["status"] = to
             t.meta.setdefault("gates", {}).pop("verify", None)

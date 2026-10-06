@@ -38,9 +38,11 @@ def _requirements_approved(meta: dict) -> bool:
 
 def protected_changes(old: dict, new: dict, *, freeze_after_approval: bool = False) -> list[str]:
     """Protected fields that differ. `freeze_after_approval` (the guard, i.e. agents) adds size and type once the
-    requirements are approved; a human's raw edit may change them, and the v2 hash then invalidates the approval."""
+    requirements are approved, or once the ticket left the backlog without an approval (#172: a size in
+    gates.requirements_skip_sizes, opened by the human at that size); a human's raw edit may change them, and the v2
+    hash then invalidates the approval."""
     changed = [k for k in PROTECTED_KEYS if old.get(k) != new.get(k)]
-    if freeze_after_approval and _requirements_approved(old):
+    if freeze_after_approval and (_requirements_approved(old) or old.get("status") not in (None, "backlog")):
         changed += [k for k in FROZEN_AFTER_APPROVAL if old.get(k) != new.get(k)]
     before, after = _answers(old), _answers(new)
     removed_or_changed = any(after.get(qid) != value for qid, value in before.items())

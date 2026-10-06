@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Linked Workspaces</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Manrope:wght@500;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 1040px column; a topology map, then a stepper (story list left, three workspace lanes right), then reference blocks. Mission Control tokens. */
+:root{
+  --bg:#F2F3F5; --surface:#FFFFFF; --sunk:#E9EBEE; --fg:#15171A; --muted:#495159; --line:#E1E4E8; --line2:#C9CED4;
+  --mint:#00A87E; --mint-bg:#DDF6EE; --you:#D6247A; --you-bg:#FCE4EF;
+  --int:#00A87E; --acme:#2F6FEB; --acme-bg:#E3ECFC; --glx:#B86A00; --glx-bg:#FCEFD9;
+  --code-bg:#1B1E22; --code-fg:#E6E8EB; --code-dim:#8A939E; --code-key:#5BE0B8; --code-str:#F5B342;
+  --f-display:"Manrope",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Figtree",ui-sans-serif,system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#15171A; --surface:#1C1F23; --sunk:#23272D; --fg:#ECEEF1; --muted:#A3ABB5; --line:#2B3038; --line2:#3A414A;
+  --mint:#00CC99; --mint-bg:#123A30; --you:#F84A9B; --you-bg:#3D1A2B;
+  --int:#00CC99; --acme:#6E9EFF; --acme-bg:#1B2A44; --glx:#F5B342; --glx-bg:#3A2C14;
+  --code-bg:#0F1113; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#15171A; --surface:#1C1F23; --sunk:#23272D; --fg:#ECEEF1; --muted:#A3ABB5; --line:#2B3038; --line2:#3A414A;
+  --mint:#00CC99; --mint-bg:#123A30; --you:#F84A9B; --you-bg:#3D1A2B;
+  --int:#00CC99; --acme:#6E9EFF; --acme-bg:#1B2A44; --glx:#F5B342; --glx-bg:#3A2C14;
+  --code-bg:#0F1113; color-scheme:dark;}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--f-body);padding-inline:16px;padding-block:0 64px}
+.wrap{max-width:1040px;margin:0 auto}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(30px,5vw,46px);font-weight:800;letter-spacing:-.02em}
+h2{font-size:24px;font-weight:800;letter-spacing:-.01em}
+h3{font-size:16px;font-weight:700}
+p{margin:0}
+code,.mono{font-family:var(--f-mono);font-size:.88em}
+.eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:18px;color:var(--muted);max-width:64ch}
+section{padding-top:56px;display:grid;gap:18px}
+.sec-head{display:grid;gap:6px}
+.sec-head p{color:var(--muted);max-width:68ch}
+
+header{padding-top:40px;display:grid;gap:14px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:28px;height:28px}
+.tag{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--f-body);padding:6px 10px;border-radius:999px;background:var(--sunk);color:var(--muted)}
+
+/* topology */
+.map{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;overflow-x:auto}
+.map svg{display:block;width:100%;min-width:640px;height:auto}
+.m-box{fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:6 6}
+.m-label{fill:var(--muted);font:600 12px var(--f-body);letter-spacing:.06em;text-transform:uppercase}
+.node{fill:var(--surface);stroke-width:2}
+.n-int{stroke:var(--int)} .n-acme{stroke:var(--acme)} .n-glx{stroke:var(--glx)}
+.n-title{fill:var(--fg);font:800 17px var(--f-display)}
+.n-sub{fill:var(--muted);font:500 12.5px var(--f-body)}
+.n-mono{fill:var(--muted);font:400 11.5px var(--f-mono)}
+.e-out{fill:none;stroke-width:2.2}
+.e-back{fill:none;stroke-width:2.2;stroke-dasharray:7 5}
+.e-acme{stroke:var(--acme)} .e-glx{stroke:var(--glx)}
+.ah-acme{fill:var(--acme)} .ah-glx{fill:var(--glx)}
+.e-label{font:600 12px var(--f-body)}
+.l-acme{fill:var(--acme)} .l-glx{fill:var(--glx)}
+.dot-int{fill:var(--int)} .dot-acme{fill:var(--acme)} .dot-glx{fill:var(--glx)} .dot-you{fill:var(--you)}
+.vpn{fill:var(--bg);stroke:var(--line2)}
+.vpn-t{fill:var(--muted);font:600 11px var(--f-mono)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;color:var(--muted);font-size:13px;padding:4px 6px 0}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.sw{width:22px;height:0;border-top:2.2px solid var(--fg)}
+.sw.d{border-top-style:dashed}
+.pip{width:10px;height:10px;border-radius:50%;background:var(--you)}
+
+/* principles */
+.three{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.pr{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;gap:6px;align-content:start}
+.pr p{color:var(--muted);font-size:14px}
+
+/* stepper */
+.stepper{display:grid;grid-template-columns:minmax(0,330px) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:820px){.stepper{grid-template-columns:minmax(0,1fr)}}
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:4px;counter-reset:s}
+.steps button{all:unset;box-sizing:border-box;width:100%;cursor:pointer;display:grid;grid-template-columns:26px minmax(0,1fr);gap:10px;padding:9px 10px;border-radius:10px;align-items:start}
+.steps button:hover{background:var(--sunk)}
+.steps button:focus-visible{outline:2px solid var(--mint);outline-offset:1px}
+.steps .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:700 12px var(--f-display);background:var(--sunk);color:var(--muted);font-variant-numeric:tabular-nums}
+.steps .t{font-weight:600;font-size:14px;line-height:1.35}
+.steps .w{font-size:12px;color:var(--muted)}
+.steps button[aria-current="step"]{background:var(--surface);box-shadow:0 0 0 1px var(--line2)}
+.steps button[aria-current="step"] .n{background:var(--fg);color:var(--bg)}
+.steps button.done .n{background:var(--mint-bg);color:var(--mint)}
+
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;gap:16px;min-width:0}
+.stage-top{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:center}
+.ctl{display:flex;gap:6px}
+.ctl button{font:600 13px var(--f-body);padding:7px 12px;border-radius:8px;border:1px solid var(--line2);background:var(--surface);color:var(--fg);cursor:pointer}
+.ctl button:hover{background:var(--sunk)}
+.ctl button:focus-visible{outline:2px solid var(--mint);outline-offset:1px}
+.ctl button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.who{display:inline-flex;align-items:center;gap:6px;font:600 12px var(--f-body);padding:4px 9px;border-radius:999px}
+.who.you{background:var(--you-bg);color:var(--you)}
+.who.agent{background:var(--mint-bg);color:var(--mint)}
+.who.sys{background:var(--sunk);color:var(--muted)}
+.narr{display:grid;gap:8px}
+.narr h3{font-size:20px}
+.narr p{color:var(--muted);max-width:70ch}
+.cmd{background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:10px 14px;font:13px/1.55 var(--f-mono);overflow-x:auto;white-space:pre}
+.cmd .c{color:var(--code-dim)}
+
+.lanes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:620px){.lanes{grid-template-columns:minmax(0,1fr)}}
+.lane{border-radius:12px;background:var(--sunk);padding:10px;display:grid;gap:8px;align-content:start;min-height:170px;transition:box-shadow .2s}
+.lane.hot{box-shadow:0 0 0 2px var(--lc)}
+.lane-h{display:flex;align-items:center;gap:8px;font:700 13px var(--f-display)}
+.lane-h i{width:9px;height:9px;border-radius:50%;background:var(--lc)}
+.lane-h small{font:500 11.5px var(--f-body);color:var(--muted);margin-left:auto}
+.lane[data-ws="int"]{--lc:var(--int)} .lane[data-ws="acme"]{--lc:var(--acme)} .lane[data-ws="glx"]{--lc:var(--glx)}
+.tk{background:var(--surface);border-radius:9px;padding:10px;display:grid;gap:6px;border:1px solid var(--line)}
+.tk .id{font:500 12px var(--f-mono);color:var(--muted)}
+.tk .ti{font-weight:600;font-size:13.5px;line-height:1.3}
+.tk .row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.st{font:600 11.5px var(--f-body);padding:3px 8px;border-radius:6px;background:var(--sunk);color:var(--muted)}
+.st.s-open,.st.s-in-progress{background:var(--mint-bg);color:var(--mint)}
+.st.s-waiting{background:var(--glx-bg);color:var(--glx)}
+.st.s-testing{background:var(--acme-bg);color:var(--acme)}
+.st.s-done{background:var(--fg);color:var(--bg)}
+.need{font:600 11.5px var(--f-body);color:var(--you);display:flex;gap:6px;align-items:center}
+.need::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--you)}
+.note{font-size:12px;color:var(--muted);line-height:1.4}
+.empty{font-size:12.5px;color:var(--muted);border:1.5px dashed var(--line2);border-radius:9px;padding:14px 10px;text-align:center}
+.flight{font:500 11.5px var(--f-mono);color:var(--lc);display:flex;gap:6px;align-items:center}
+.flight::before{content:"";width:16px;border-top:2px dashed var(--lc)}
+@media (prefers-reduced-motion:no-preference){.flight{animation:pulse 1.4s ease-in-out infinite}}
+@keyframes pulse{50%{opacity:.45}}
+
+/* lifecycle */
+.life{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;overflow-x:auto}
+.life svg{display:block;width:100%;min-width:680px;height:auto}
+.lf-lane{fill:var(--sunk)}
+.lf-name{fill:var(--fg);font:700 13px var(--f-display)}
+.lf-st{stroke-width:0}
+.lf-t{fill:var(--fg);font:600 11.5px var(--f-body)}
+.lf-ax{fill:var(--muted);font:500 11px var(--f-body)}
+.lf-gate{fill:var(--you)}
+.lf-link{stroke:var(--muted);stroke-width:1.3;fill:none;stroke-dasharray:3 4}
+.st-int{fill:var(--mint-bg)} .st-wait{fill:var(--glx-bg)} .st-test{fill:var(--acme-bg)} .st-back{fill:var(--line)}
+
+/* reference */
+.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:720px){.two{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:grid;gap:10px;align-content:start;min-width:0}
+.card p{color:var(--muted);font-size:14px}
+pre.code{margin:0;background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:12px 14px;font:12.5px/1.6 var(--f-mono);overflow-x:auto}
+pre.code .k{color:var(--code-key)} pre.code .s{color:var(--code-str)} pre.code .c{color:var(--code-dim)}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 12px var(--f-body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:600;white-space:nowrap}
+td .mono{color:var(--muted)}
+
+ul.guard{margin:0;padding:0;list-style:none;display:grid;gap:10px}
+ul.guard li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;font-size:14.5px}
+ul.guard li::before{content:"";width:12px;height:12px;margin-top:6px;border-radius:3px;border:2px solid var(--mint)}
+ul.guard b{font-weight:600}
+ul.guard span{color:var(--muted)}
+
+/* mission control mock */
+.mc{background:var(--bg);border:1px solid var(--line2);border-radius:14px;overflow:hidden}
+.mc-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface);font:700 13px var(--f-display)}
+.mc-bar .tabs{display:flex;gap:4px;margin-left:12px;font:500 13px var(--f-body);color:var(--muted);flex-wrap:wrap}
+.mc-bar .tabs span{padding:4px 9px;border-radius:7px}
+.mc-bar .tabs .on{background:var(--sunk);color:var(--fg)}
+.mc-body{padding:14px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}
+@media (max-width:760px){.mc-body{grid-template-columns:minmax(0,1fr)}}
+.mc-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px}
+.sub{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border-radius:9px;background:var(--sunk);font-size:13px}
+.sub i{width:10px;height:10px;border-radius:50%}
+.sub .mono{color:var(--muted)}
+.peer{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)}
+.peer:last-child{border-bottom:0}
+.peer i{width:10px;height:10px;border-radius:50%}
+.ok{color:var(--mint);font-weight:600;font-size:12px}
+.pend{color:var(--you);font-weight:600;font-size:12px}
+.btn{justify-self:start;font:600 13px var(--f-body);padding:7px 12px;border-radius:8px;background:var(--you);color:#fff;border:0}
+
+.road{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.ph{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:8px;align-content:start}
+.ph .eyebrow{color:var(--mint)}
+.ph ul{margin:0;padding-left:18px;color:var(--muted);font-size:14px;display:grid;gap:4px}
+.qs{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.qs li{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:grid;gap:4px}
+.qs li b{font-family:var(--f-display);font-weight:700}
+.qs li span{color:var(--muted);font-size:14px}
+footer{padding-top:48px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect x=".5" y=".5" width="63" height="63" rx="14" fill="#15171a"/><path d="M18.41 28.66A15 15 0 0 1 45.59 28.66" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round"/><path d="M12.97 26.13A21 21 0 0 1 51.03 26.13" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round" opacity=".7"/><path d="M7.53 23.59A27 27 0 0 1 56.47 23.59" fill="none" stroke="#00CC99" stroke-width="3.2" stroke-linecap="round" opacity=".4"/><circle cx="52.68" cy="17.64" r="4" fill="#F84A9B"/></svg>
+    <span class="eyebrow">orch-core · concept draft</span>
+    <span class="tag">Draft 1 · 6 Oct 2026</span>
+  </div>
+  <h1>Linked Workspaces</h1>
+  <p class="lede">Several orch workspaces on one machine, or on another PC reachable over a VPN, hand tickets to each other. Your Internal workspace asks two customer workspaces for their part of the weekly report. Each one picks the request up, works it on its own data, and sends the result back. The Internal agent waits, then carries on.</p>
+</header>
+
+<section aria-labelledby="topo">
+  <div class="sec-head">
+    <span class="eyebrow">The setup</span>
+    <h2 id="topo">Three workspaces, two machines, one person</h2>
+    <p>Each workspace stays a normal orch workspace: its own repository, tickets, ledger and agents. A small listener next to <code>orch serve</code> watches for incoming handoffs. Workspaces only ever talk to peers you paired.</p>
+  </div>
+  <div class="map">
+    <svg viewBox="0 0 900 390" role="img" aria-label="Internal and ACME run on your laptop, Globex on a second PC over VPN. Internal sends handoffs to both and receives results back.">
+      <defs>
+        <marker id="ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ah-acme"/></marker>
+        <marker id="hg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ah-glx"/></marker>
+      </defs>
+      <rect class="m-box" x="14" y="18" width="566" height="356" rx="16"/>
+      <text class="m-label" x="34" y="44">Your laptop</text>
+      <rect class="m-box" x="604" y="168" width="284" height="206" rx="16"/>
+      <text class="m-label" x="624" y="194">Second PC · same VPN</text>
+
+      <!-- Internal -->
+      <rect class="node n-int" x="40" y="150" width="215" height="124" rx="12"/>
+      <circle class="dot-int" cx="62" cy="178" r="6"/>
+      <text class="n-title" x="76" y="184">Internal</text>
+      <text class="n-sub" x="58" y="208">INT · your company</text>
+      <text class="n-mono" x="58" y="232">sends handoffs</text>
+      <text class="n-mono" x="58" y="252">orch wait INT-0142</text>
+      <circle class="dot-you" cx="236" cy="172" r="5"/>
+
+      <!-- ACME -->
+      <rect class="node n-acme" x="350" y="56" width="210" height="124" rx="12"/>
+      <circle class="dot-acme" cx="372" cy="84" r="6"/>
+      <text class="n-title" x="386" y="90">Customer ACME</text>
+      <text class="n-sub" x="368" y="114">ACME · same machine</text>
+      <text class="n-mono" x="368" y="138">spool ~/.orch/peers/acme</text>
+      <text class="n-mono" x="368" y="158">listens, auto-starts</text>
+      <circle class="dot-you" cx="541" cy="78" r="5"/>
+
+      <!-- Globex -->
+      <rect class="node n-glx" x="638" y="222" width="220" height="124" rx="12"/>
+      <circle class="dot-glx" cx="660" cy="250" r="6"/>
+      <text class="n-title" x="674" y="256">Customer Globex</text>
+      <text class="n-sub" x="656" y="280">GLX · 10.8.0.12</text>
+      <text class="n-mono" x="656" y="304">https listener :7710</text>
+      <text class="n-mono" x="656" y="324">listens, auto-starts</text>
+      <circle class="dot-you" cx="839" cy="244" r="5"/>
+
+      <!-- edges ACME -->
+      <path class="e-out e-acme" d="M255 172 C305 172 300 100 346 100" marker-end="url(#ha)"/>
+      <path class="e-back e-acme" d="M350 140 C312 140 312 204 259 204" marker-end="url(#ha)"/>
+      <text class="e-label l-acme" x="262" y="122">handoff</text>
+      <text class="e-label l-acme" x="300" y="226">result</text>
+
+      <!-- edges Globex -->
+      <path class="e-out e-glx" d="M255 238 C430 238 470 268 634 268" marker-end="url(#hg)"/>
+      <path class="e-back e-glx" d="M638 318 C460 318 420 258 259 258" marker-end="url(#hg)"/>
+      <text class="e-label l-glx" x="400" y="236">handoff</text>
+      <text class="e-label l-glx" x="440" y="334">result</text>
+
+      <rect class="vpn" x="560" y="281" width="66" height="22" rx="11"/>
+      <text class="vpn-t" x="593" y="296" text-anchor="middle">VPN</text>
+    </svg>
+    <div class="legend">
+      <span><span class="sw"></span>handoff: a request becomes a ticket over there</span>
+      <span><span class="sw d"></span>result: released artifacts come back</span>
+      <span><span class="pip"></span>you, the human, with a separate ledger per workspace</span>
+    </div>
+  </div>
+  <div class="three">
+    <div class="pr"><h3>A request is a ticket</h3><p>A handoff lands as an ordinary backlog ticket in the receiving workspace, with requirements, acceptance criteria and its origin. The receiving agents work it like any other ticket.</p></div>
+    <div class="pr"><h3>The sender waits, it does not poll</h3><p>The Internal ticket moves to <b>waiting</b>, blocked by the remote tickets. <code>orch wait</code> returns when every result is in, and the agent continues where it stopped.</p></div>
+    <div class="pr"><h3>Gates stay local</h3><p>A peer never approves anything for another workspace. Auto-start and auto-release happen only under a charter you signed in the receiving workspace.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="walk">
+  <div class="sec-head">
+    <span class="eyebrow">Walkthrough</span>
+    <h2 id="walk">The weekly report, step by step</h2>
+    <p>Click a step or use the arrow keys. The lanes show each workspace's ticket at that moment. Pink marks a decision only you can make.</p>
+  </div>
+  <div class="stepper">
+    <ol class="steps" id="steps"></ol>
+    <div class="stage" aria-live="polite">
+      <div class="stage-top">
+        <span id="who" class="who agent">Agent</span>
+        <div class="ctl">
+          <button id="prev" type="button">Back</button>
+          <button id="next" type="button" class="primary">Next step</button>
+        </div>
+      </div>
+      <div class="narr"><h3 id="st-title"></h3><p id="st-body"></p></div>
+      <div class="cmd" id="st-cmd"></div>
+      <div class="lanes" id="lanes"></div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="life">
+  <div class="sec-head">
+    <span class="eyebrow">Lifecycle</span>
+    <h2 id="life">How the three tickets line up</h2>
+    <p>The parent ticket sits in <b>waiting</b> exactly as long as a handoff is open. A question a customer agent cannot answer travels up to the requester instead of stopping the work silently.</p>
+  </div>
+  <div class="life">
+    <svg viewBox="0 0 900 250" role="img" aria-label="Timeline: INT-0142 open, then waiting while ACME-0311 and GLX-0088 run, then in progress and testing after results arrive.">
+      <text class="lf-ax" x="120" y="20">Mon 09:00</text><text class="lf-ax" x="400" y="20">Mon 09:40</text><text class="lf-ax" x="690" y="20">Mon 10:30</text>
+      <rect class="lf-lane" x="10" y="32" width="880" height="56" rx="10"/>
+      <circle class="dot-int" cx="28" cy="60" r="5"/><text class="lf-name" x="40" y="65">INT-0142</text>
+      <rect class="lf-st st-int" x="120" y="44" width="80" height="32" rx="7"/><text class="lf-t" x="130" y="65">open</text>
+      <rect class="lf-st st-wait" x="204" y="44" width="476" height="32" rx="7"/><text class="lf-t" x="214" y="65">waiting · blocked by ACME-0311, GLX-0088</text>
+      <rect class="lf-st st-int" x="684" y="44" width="110" height="32" rx="7"/><text class="lf-t" x="694" y="65">in progress</text>
+      <rect class="lf-st st-test" x="798" y="44" width="84" height="32" rx="7"/><text class="lf-t" x="808" y="65">testing</text>
+      <circle class="lf-gate" cx="120" cy="44" r="5"/><circle class="lf-gate" cx="882" cy="44" r="5"/>
+
+      <rect class="lf-lane" x="10" y="100" width="880" height="56" rx="10"/>
+      <circle class="dot-acme" cx="28" cy="128" r="5"/><text class="lf-name" x="40" y="133">ACME-0311</text>
+      <rect class="lf-st st-back" x="214" y="112" width="40" height="32" rx="7"/>
+      <rect class="lf-st st-int" x="258" y="112" width="280" height="32" rx="7"/><text class="lf-t" x="268" y="133">in progress · auto-started</text>
+      <rect class="lf-st st-test" x="542" y="112" width="90" height="32" rx="7"/><text class="lf-t" x="552" y="133">release</text>
+      <text class="lf-ax" x="218" y="160">charter</text>
+
+      <rect class="lf-lane" x="10" y="168" width="880" height="56" rx="10"/>
+      <circle class="dot-glx" cx="28" cy="196" r="5"/><text class="lf-name" x="40" y="201">GLX-0088</text>
+      <rect class="lf-st st-back" x="214" y="180" width="80" height="32" rx="7"/><text class="lf-t" x="222" y="201">backlog</text>
+      <rect class="lf-st st-int" x="298" y="180" width="120" height="32" rx="7"/><text class="lf-t" x="308" y="201">in progress</text>
+      <rect class="lf-st st-wait" x="422" y="180" width="72" height="32" rx="7"/><text class="lf-t" x="430" y="201">asks</text>
+      <rect class="lf-st st-int" x="498" y="180" width="110" height="32" rx="7"/><text class="lf-t" x="508" y="201">in progress</text>
+      <rect class="lf-st st-test" x="612" y="180" width="66" height="32" rx="7"/><text class="lf-t" x="620" y="201">release</text>
+      <circle class="lf-gate" cx="298" cy="180" r="5"/><circle class="lf-gate" cx="678" cy="180" r="5"/>
+
+      <path class="lf-link" d="M204 76 L214 112"/><path class="lf-link" d="M204 76 L214 180"/>
+      <path class="lf-link" d="M458 180 C458 120 440 90 440 76"/>
+      <path class="lf-link" d="M632 128 L684 76"/><path class="lf-link" d="M678 196 L684 76"/>
+      <text class="lf-ax" x="470" y="94">question goes up to INT</text>
+      <circle class="lf-gate" cx="30" cy="241" r="5"/><text class="lf-ax" x="42" y="245">your decision (approve, release, verdict)</text>
+      <rect class="st-back" x="330" y="235" width="14" height="12" rx="3"/><text class="lf-ax" x="350" y="245">auto-approved by a signed charter</text>
+    </svg>
+  </div>
+</section>
+
+<section aria-labelledby="mc">
+  <div class="sec-head">
+    <span class="eyebrow">Mission Control</span>
+    <h2 id="mc">What you see on the Internal side</h2>
+    <p>The parent card shows its handoffs with whose move it is in each workspace. A Peers panel shows which workspaces are reachable. Decisions for a customer workspace link to that workspace's own dashboard; they are never made from here.</p>
+  </div>
+  <div class="mc">
+    <div class="mc-bar">Mission Control · Internal
+      <div class="tabs"><span class="on">Today</span><span>Board</span><span>Peers</span><span>Activity</span></div>
+    </div>
+    <div class="mc-body">
+      <div class="mc-card">
+        <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="mono" style="color:var(--muted)">INT-0142</span>
+          <span class="st s-waiting">waiting on 2 peers</span>
+        </div>
+        <h3>Weekly report KW41 for ACME and Globex</h3>
+        <div class="sub"><i style="background:var(--acme)"></i><span>ACME-0311 · agent working, 4 of 6 tasks</span><span class="ok">auto-started</span></div>
+        <div class="sub"><i style="background:var(--glx)"></i><span>GLX-0088 · waits for you to approve in Globex</span><span class="pend">your move</span></div>
+        <div class="note">Reply by Thu 16:00. If a peer misses it, this card asks you whether to wait longer, resend or drop that part.</div>
+        <span class="btn">Open Globex Mission Control</span>
+      </div>
+      <div class="mc-card">
+        <h3>Peers</h3>
+        <div class="peer"><i style="background:var(--acme)"></i><span>ACME <span class="mono">spool · this laptop</span></span><span class="ok">online</span></div>
+        <div class="peer"><i style="background:var(--glx)"></i><span>Globex <span class="mono">https · 10.8.0.12</span></span><span class="ok">online</span></div>
+        <div class="peer"><i style="background:var(--line2)"></i><span>Initech <span class="mono">tix relay</span></span><span class="note">paused</span></div>
+        <div class="note">Outbox empty · last result 3 min ago</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="transport">
+  <div class="sec-head">
+    <span class="eyebrow">Transport</span>
+    <h2 id="transport">One message format, three ways to carry it</h2>
+    <p>A handoff is a signed JSON envelope. How it travels depends only on where the peer is. The receiving side runs the same checks in every case.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Where the peer is</th><th>Carrier</th><th>How it listens</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Same machine</td><td>Spool folder <span class="mono">~/.orch/peers/&lt;name&gt;/inbox</span></td><td>File watch, no network port</td><td>Simplest case and the first to build. Outside every repository, so nothing reaches git.</td></tr>
+        <tr><td>Same network or VPN</td><td>HTTPS with pinned peer keys</td><td>Listener bound to the VPN address, for example <span class="mono">10.8.0.12:7710</span></td><td>Works with Tailscale or WireGuard. Refuses any key you did not pair. Never binds to 0.0.0.0 by default.</td></tr>
+        <tr><td>Anywhere</td><td>TIX mailbox, sealed end to end</td><td>Dials out, as <span class="mono">orch serve --remote</span> already does</td><td>Reuses the existing bridge, replay store and pairing. No open port on either side.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="shapes">
+  <div class="sec-head">
+    <span class="eyebrow">Shapes</span>
+    <h2 id="shapes">The envelope, the peer list and the charter</h2>
+  </div>
+  <div class="two">
+    <div class="card">
+      <h3>Handoff envelope</h3>
+      <p>Sent by <code>orch handoff send</code>. The hash binds the exact request text, like gate hashes do today.</p>
+<pre class="code">{
+  <span class="k">"orch_handoff"</span>: 1,
+  <span class="k">"id"</span>: <span class="s">"h_01JA7Q3M9V"</span>,
+  <span class="k">"kind"</span>: <span class="s">"request"</span>,
+  <span class="k">"from"</span>: { <span class="k">"workspace"</span>: <span class="s">"internal"</span>, <span class="k">"ticket"</span>: <span class="s">"INT-0142"</span> },
+  <span class="k">"to"</span>: <span class="s">"acme"</span>,
+  <span class="k">"template"</span>: <span class="s">"weekly-report"</span>,
+  <span class="k">"title"</span>: <span class="s">"Weekly report KW41"</span>,
+  <span class="k">"requirements"</span>: <span class="s">"Deploys, incidents, open PRs, 30 Sep to 6 Oct"</span>,
+  <span class="k">"acceptance"</span>: [<span class="s">"report.md in the agreed layout"</span>, <span class="s">"kpis.json"</span>],
+  <span class="k">"reply_by"</span>: <span class="s">"2026-10-09T16:00Z"</span>,
+  <span class="k">"hash"</span>: <span class="s">"sha256:4be1…"</span>,
+  <span class="k">"sig"</span>: <span class="s">"ed25519:9f3c…"</span>
+}</pre>
+    </div>
+    <div class="card">
+      <h3>Result envelope</h3>
+      <p>Sent only after release. It lists exactly the files that leave, each with its hash; they arrive as artifacts on INT-0142.</p>
+<pre class="code">{
+  <span class="k">"orch_handoff"</span>: 1,
+  <span class="k">"id"</span>: <span class="s">"h_01JA7Q3M9V"</span>,
+  <span class="k">"kind"</span>: <span class="s">"result"</span>,
+  <span class="k">"from"</span>: { <span class="k">"workspace"</span>: <span class="s">"acme"</span>, <span class="k">"ticket"</span>: <span class="s">"ACME-0311"</span> },
+  <span class="k">"outcome"</span>: <span class="s">"delivered"</span>,  <span class="c">// or declined, partial</span>
+  <span class="k">"summary"</span>: <span class="s">"12 deploys, 1 incident (P3), 7 open PRs"</span>,
+  <span class="k">"artifacts"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"report.md"</span>, <span class="k">"sha256"</span>: <span class="s">"a91c…"</span> },
+    { <span class="k">"name"</span>: <span class="s">"kpis.json"</span>, <span class="k">"sha256"</span>: <span class="s">"07de…"</span> }
+  ],
+  <span class="k">"released"</span>: { <span class="k">"by"</span>: <span class="s">"charter"</span>, <span class="k">"at"</span>: <span class="s">"2026-10-06T10:12Z"</span> },
+  <span class="k">"sig"</span>: <span class="s">"ed25519:c2a0…"</span>
+}</pre>
+    </div>
+    <div class="card">
+      <h3>Peer list (Internal)</h3>
+      <p><code>orchestrator/peers.json</code> names peers and transports. Keys live outside the repository, beside the ledger.</p>
+<pre class="code">{
+  <span class="k">"self"</span>: <span class="s">"internal"</span>,
+  <span class="k">"peers"</span>: {
+    <span class="k">"acme"</span>:   { <span class="k">"via"</span>: <span class="s">"spool"</span> },
+    <span class="k">"globex"</span>: { <span class="k">"via"</span>: <span class="s">"https"</span>, <span class="k">"url"</span>: <span class="s">"https://10.8.0.12:7710"</span> }
+  },
+  <span class="k">"templates"</span>: [<span class="s">"weekly-report"</span>, <span class="s">"data-pull"</span>]
+}</pre>
+    </div>
+    <div class="card">
+      <h3>Charter (ACME, signed by you)</h3>
+      <p>Lets one peer's requests of one template start and release without asking. Anything outside it lands on Today.</p>
+<pre class="code"><span class="c"># in the ACME workspace, your own terminal</span>
+orch peer charter internal \
+  --template weekly-report \
+  --max-size s --read-only \
+  --auto-start --auto-release \
+  --release-paths "reports/**" \
+  --expires 2026-12-31</pre>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="cli">
+  <div class="sec-head">
+    <span class="eyebrow">CLI sketch</span>
+    <h2 id="cli">New commands</h2>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Command</th><th>Who</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mono">orch peer pair &lt;name&gt;</span></td><td>You</td><td>Exchange keys with another workspace (a code shown on one side, typed on the other).</td></tr>
+        <tr><td><span class="mono">orch peer listen</span></td><td>You</td><td>Run the listener. Also part of <span class="mono">orch serve --peers</span>.</td></tr>
+        <tr><td><span class="mono">orch peer charter</span></td><td>You</td><td>Sign which requests from a peer may auto-start and auto-release.</td></tr>
+        <tr><td><span class="mono">orch handoff send &lt;id&gt; --to …</span></td><td>Agent</td><td>Send a request, add the remote tickets to <span class="mono">blocked_by</span>, move the ticket to waiting.</td></tr>
+        <tr><td><span class="mono">orch handoff list</span></td><td>Agent</td><td>Open handoffs in both directions, with remote status.</td></tr>
+        <tr><td><span class="mono">orch handoff release &lt;id&gt;</span></td><td>You</td><td>Review and send the result package back when no charter covers it.</td></tr>
+        <tr><td><span class="mono">orch wait &lt;id&gt;</span></td><td>Agent</td><td>Exists today. Also returns when the last handoff result arrives.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section aria-labelledby="guard">
+  <div class="sec-head">
+    <span class="eyebrow">Guardrails</span>
+    <h2 id="guard">What keeps customers apart and you in charge</h2>
+  </div>
+  <ul class="guard">
+    <li><span><b>No remote decisions.</b> <span>A peer can file a ticket and send a result. It cannot approve, answer, release or give a verdict in another workspace. Each workspace keeps its own ledger.</span></span></li>
+    <li><span><b>Customers never see each other.</b> <span>Fan-out happens in Internal. ACME gets only its envelope and has no idea Globex exists; peers do not relay to third peers.</span></span></li>
+    <li><span><b>Only released bytes leave.</b> <span>The release shows every file and hash going out. A charter can limit release to paths such as <code>reports/**</code> and runs a secret scan first.</span></span></li>
+    <li><span><b>Requests are data.</b> <span>Text from a peer is treated like an external issue: the receiving agent reads it, it does not follow it as instructions. The guard hook and a read-only charter still apply.</span></span></li>
+    <li><span><b>No loops.</b> <span>A ticket that came in as a handoff cannot send handoffs of its own, unless you allow a depth of 2.</span></span></li>
+    <li><span><b>Nothing gets lost.</b> <span>The outbox retries while a peer is offline, the handoff id makes delivery idempotent, and a missed <code>reply_by</code> becomes a card on your Today.</span></span></li>
+  </ul>
+</section>
+
+<section aria-labelledby="road">
+  <div class="sec-head">
+    <span class="eyebrow">Plan</span>
+    <h2 id="road">Build it in four phases</h2>
+  </div>
+  <div class="road">
+    <div class="ph"><span class="eyebrow">Phase 1</span><h3>Same machine, manual start</h3><ul><li>Spool transport and pairing</li><li><span class="mono">handoff send</span>, inbox tickets, results as artifacts</li><li><span class="mono">orch wait</span> covers handoffs</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 2</span><h3>Charters and auto-start</h3><ul><li>Signed charters per peer and template</li><li>Runner starts agents in Terminals (tmux)</li><li>Release gate with path limits</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 3</span><h3>VPN and the Peers page</h3><ul><li>HTTPS listener with pinned keys</li><li>Peers page, handoff chips on cards</li><li>Questions travel up to the requester</li></ul></div>
+    <div class="ph"><span class="eyebrow">Phase 4</span><h3>Relay and recurring work</h3><ul><li>TIX relay for peers off the network</li><li>Recurring handoffs: every Monday 08:00</li><li>Reports on peer lead times</li></ul></div>
+  </div>
+</section>
+
+<section aria-labelledby="open">
+  <div class="sec-head">
+    <span class="eyebrow">Open questions</span>
+    <h2 id="open">To decide before building</h2>
+  </div>
+  <ul class="qs">
+    <li><b>Who answers a question a customer agent cannot settle?</b><span>Proposal: it goes up to the requesting ticket; the Internal agent answers when its own approved requirements cover it, otherwise you do.</span></li>
+    <li><b>Release by default, or charter only?</b><span>Proposal: every result needs your release until you sign a charter for that peer and template.</span></li>
+    <li><b>One listener per workspace, or one per machine?</b><span>One daemon serving all workspaces on a laptop is lighter; one per workspace keeps the isolation simpler to reason about.</span></li>
+    <li><b>Can a customer workspace send requests upward?</b><span>For example "Internal, please review this PR". Same mechanism in reverse, off until you allow it per peer.</span></li>
+  </ul>
+</section>
+
+<footer>Concept draft for orch-core. Ticket IDs, names and times are examples.</footer>
+</div>
+
+<script>
+const STEPS = [
+  { who:"you", title:"Ask for the weekly report", lane:"int",
+    body:"In the Internal workspace you tell the agent: weekly report KW41 for ACME and Globex. It files INT-0142 with requirements and acceptance criteria and waits for your approval.",
+    cmd:'orch new --title "Weekly report KW41" --requirements-file req.md --acceptance-file ac.md',
+    s:{ int:{id:"INT-0142",st:"backlog",need:"Approve requirements"}, acme:null, glx:null } },
+  { who:"you", title:"Approve the requirements", lane:"int",
+    body:"You approve in Mission Control or your own terminal. The approval is signed into the Internal ledger, bound to the text you read.",
+    cmd:"orch approve INT-0142 requirements",
+    s:{ int:{id:"INT-0142",st:"open",note:"Agent claims it and plans"}, acme:null, glx:null } },
+  { who:"agent", title:"Send handoffs to both customers", lane:"int",
+    body:"The plan shows that the numbers live in the customer workspaces. The agent sends one handoff per customer. INT-0142 moves to waiting, blocked by the two remote tickets, and the agent blocks on orch wait.",
+    cmd:"orch handoff send INT-0142 --to acme --to globex --template weekly-report\norch wait INT-0142   # blocks until both results are in",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{flight:"handoff in flight"}, glx:{flight:"handoff in flight · VPN"} } },
+  { who:"sys", title:"Listeners file the incoming tickets", lane:"both",
+    body:"ACME picks the envelope up from its spool folder, Globex from its HTTPS listener. Each checks the peer key, signature and hash, then files a backlog ticket that records where it came from.",
+    cmd:"# ACME event log\nhandoff.received  h_01JA7Q3M9V  from internal:INT-0142  ->  ACME-0311",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"backlog",note:"from internal · weekly-report"}, glx:{id:"GLX-0088",st:"backlog",note:"from internal · weekly-report"} } },
+  { who:"sys", title:"Charter decides: start now or ask you", lane:"both",
+    body:"ACME has your signed charter for weekly reports from Internal, so its requirements are approved by the charter. Globex has no charter yet, so the ticket lands on Globex's Today for you.",
+    cmd:"# ACME\ngate.approved  ACME-0311 requirements  via charter internal/weekly-report",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"open",note:"Approved by charter"}, glx:{id:"GLX-0088",st:"backlog",need:"Approve in Globex"} } },
+  { who:"agent", title:"Agents start on their own", lane:"both",
+    body:"The ACME runner claims the ticket and starts an agent in a Terminals session. You approve Globex from its Mission Control or your phone, and its runner does the same. Each agent works only on its own customer's repository and data.",
+    cmd:"orch claim ACME-0311\norch task start ACME-0311 T1   # collect deploys",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Waiting on 2 peers"}, acme:{id:"ACME-0311",st:"in-progress",note:"Agent · task 2 of 6"}, glx:{id:"GLX-0088",st:"in-progress",note:"Agent · task 1 of 5"} } },
+  { who:"agent", title:"A question travels up", lane:"glx",
+    body:"The Globex agent is unsure whether staging incidents count. It asks on GLX-0088; the question goes up to INT-0142. The Internal agent answers from its approved requirements (production only), or the question waits for you.",
+    cmd:'orch ask GLX-0088 --file q.yaml   # "Count staging incidents?"\n# answered upstream: production only',
+    s:{ int:{id:"INT-0142",st:"waiting",note:"Answered GLX question"}, acme:{id:"ACME-0311",st:"in-progress",note:"Agent · task 5 of 6"}, glx:{id:"GLX-0088",st:"waiting",note:"Asked INT, answer back",flight:"answer in flight"} } },
+  { who:"you", title:"Release what leaves the customer", lane:"both",
+    body:"Both agents finish and attach report.md and kpis.json with evidence. ACME releases under its charter (path limit, secret scan). For Globex you see every file and hash before it goes out.",
+    cmd:"orch handoff release GLX-0088   # shows report.md, kpis.json with their sha256",
+    s:{ int:{id:"INT-0142",st:"waiting",note:"1 of 2 results in"}, acme:{id:"ACME-0311",st:"done",note:"Released by charter",flight:"result in flight"}, glx:{id:"GLX-0088",st:"testing",need:"Release in Globex"} } },
+  { who:"agent", title:"Internal continues with both results", lane:"int",
+    body:"The results arrive as artifacts on INT-0142 and orch wait returns. The agent merges both parts into one weekly report and hands it to testing.",
+    cmd:"orch wait INT-0142   # returns: 2 of 2 results\norch move INT-0142 testing",
+    s:{ int:{id:"INT-0142",st:"testing",need:"Your verdict"}, acme:{id:"ACME-0311",st:"done",note:"Released"}, glx:{id:"GLX-0088",st:"done",note:"Released by you"} } },
+];
+const WS = { int:["Internal","INT"], acme:["ACME","same machine"], glx:["Globex","VPN"] };
+const WHO = { you:["you","You decide"], agent:["agent","Agent"], sys:["sys","orch"] };
+const TITLES = { int:"Weekly report KW41", acme:"Weekly report KW41 (ACME part)", glx:"Weekly report KW41 (Globex part)" };
+const STLABEL = { "in-progress":"in progress" };
+let cur = 0;
+
+const list = document.getElementById("steps");
+STEPS.forEach((s,i)=>{
+  const li=document.createElement("li"), b=document.createElement("button");
+  b.type="button"; b.id="step-"+i;
+  b.innerHTML=`<span class="n">${i+1}</span><span><span class="t">${s.title}</span><br><span class="w">${WHO[s.who][1]}</span></span>`;
+  b.addEventListener("click",()=>go(i));
+  li.appendChild(b); list.appendChild(li);
+});
+
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function lane(key, t, hot){
+  const [name, sub] = WS[key];
+  let inner = "";
+  if (!t) inner = `<div class="empty">No ticket yet</div>`;
+  else {
+    if (t.id) inner += `<div class="tk"><span class="id">${t.id}</span><span class="ti">${TITLES[key]}</span>
+      <div class="row"><span class="st s-${t.st}">${STLABEL[t.st]||t.st}</span></div>
+      ${t.need?`<span class="need">${t.need}</span>`:""}${t.note?`<span class="note">${t.note}</span>`:""}</div>`;
+    else inner += `<div class="empty">Ticket being created</div>`;
+    if (t.flight) inner += `<span class="flight">${t.flight}</span>`;
+  }
+  return `<div class="lane${hot?" hot":""}" data-ws="${key}"><div class="lane-h"><i></i>${name}<small>${sub}</small></div>${inner}</div>`;
+}
+function go(i){
+  cur = Math.max(0, Math.min(STEPS.length-1, i));
+  const s = STEPS[cur];
+  document.querySelectorAll("#steps button").forEach((b,j)=>{
+    if(j===cur) b.setAttribute("aria-current","step"); else b.removeAttribute("aria-current");
+    b.classList.toggle("done", j<cur);
+  });
+  const w=document.getElementById("who"); w.className="who "+WHO[s.who][0]; w.textContent=`Step ${cur+1} of ${STEPS.length} · ${WHO[s.who][1]}`;
+  document.getElementById("st-title").textContent=s.title;
+  document.getElementById("st-body").textContent=s.body;
+  document.getElementById("st-cmd").innerHTML=esc(s.cmd).replace(/(#[^\n]*)/g,'<span class="c">$1</span>');
+  const hot = k => s.lane===k || (s.lane==="both" && k!=="int");
+  document.getElementById("lanes").innerHTML = ["int","acme","glx"].map(k=>lane(k,s.s[k],hot(k))).join("");
+  document.getElementById("prev").disabled = cur===0;
+  const n=document.getElementById("next"); n.textContent = cur===STEPS.length-1 ? "Start over" : "Next step";
+  try{ localStorage.setItem("lw-step", String(cur)); }catch(e){}
+}
+document.getElementById("prev").addEventListener("click",()=>go(cur-1));
+document.getElementById("next").addEventListener("click",()=>go(cur===STEPS.length-1?0:cur+1));
+document.addEventListener("keydown",e=>{
+  if (e.target.closest && e.target.closest("input,textarea")) return;
+  if (e.key==="ArrowRight") go(cur+1);
+  if (e.key==="ArrowLeft") go(cur-1);
+});
+let start=0; try{ start=parseInt(localStorage.getItem("lw-step")||"0",10)||0; }catch(e){}
+go(start);
+</script>
+</body>
+</html>

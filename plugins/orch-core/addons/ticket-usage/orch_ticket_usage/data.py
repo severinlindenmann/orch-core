@@ -74,6 +74,26 @@ def claude_dir() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser()
 
 
+DEFAULT_LOG = "~/.claude/orch-usage/limits.jsonl"
+RECORDER_MARK = "orch-usage/statusline.sh"
+
+
+def recorder_wired(claude: Path) -> bool:
+    """Claude's user settings have a status line that runs the recorder (by name, or a script file that names it)."""
+    try:
+        line = json.loads((claude / "settings.json").read_text(encoding="utf-8")).get("statusLine")
+        command = line.get("command") if isinstance(line, dict) else None
+        if not isinstance(command, str):
+            return False
+        if RECORDER_MARK in command:
+            return True
+        first = Path(command.split()[0]).expanduser() if command.split() else None
+        return bool(first and first.is_file() and first.stat().st_size <= 256 * 1024
+                    and RECORDER_MARK in first.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def to_epoch(text) -> float | None:
     try:
         return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()

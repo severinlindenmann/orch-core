@@ -18,7 +18,7 @@ from orch.addons.settings import form_value, parse_settings
 from orch.core.check import record_invalidations, run_checks
 from orch.core.maintenance import tidy
 from orch.dashboard.auth import strict_same_origin
-from orch.dashboard import routes_remote, routes_widgets, setup_state
+from orch.dashboard import addon_catalog, routes_remote, routes_widgets, setup_state
 from orch.dashboard.reach import request_actor
 from orch.dashboard.views import _theme, back, confirm_page, error_text, invalidate_setup_count, page
 from orch.errors import OrchError
@@ -106,7 +106,18 @@ def _addon_rows(ws, runtime) -> list[dict]:
             # the "Keep syncing while Mission Control runs" switch, only for an addon that has an always_on provider
             "background_capable": la is not None and any(getattr(p, "always_on", False) is True for p in la.providers()),
             "background": enabled.get(f.name, {}).get("background", False),
+            "description": f.manifest.description if f.manifest else "",
+            "icon_path": addon_catalog.menu_icon(f.manifest),
+            "surfaces": addon_catalog.surfaces(f.name, f.manifest) if f.manifest else [],
+            "needs": addon_catalog.requirements(f.manifest, trust=state) if f.manifest else [],
         })
+        r = rows[-1]
+        r["areas"] = sorted({s["area"] for s in r["surfaces"]})
+        r["missing"] = sum(n["role"] == "warn" for n in r["needs"])
+        # what earns a card a place under "Needs attention": something broke, or something waits for the human
+        r["attention"] = bool(r["error"] or r["problem"] or r["update"] or state in ("changed", "invalid", "error")
+                              or (r["enabled"] and (r["missing"] or (r["health"] and r["health"].role in ("warn", "err")))))
+    rows.sort(key=lambda r: (not r["enabled"], r["title"].lower()))
     return rows
 
 
@@ -180,7 +191,7 @@ def workspace(request: Request):
                 temp_kb=round(sum(p.stat().st_size for p in temp_files) / 1024, 1),
                 max_age=ws.config["temporary"]["max_age_days"],
                 static_files=static_files[:500], static_hidden=max(0, len(static_files) - 500),
-                addon_rows=rows, suggested=_suggested(ws, rows), has_custom=any(r["kind"] == "custom" for r in rows),
+                addon_rows=rows, suggested=_suggested(ws, rows), external=addon_catalog.external({r["name"] for r in rows}), addon_guide=addon_catalog.GUIDE_URL, has_custom=any(r["kind"] == "custom" for r in rows),
                 kind_label=_KIND_LABEL,
                 terminal=launch_settings["terminal"], launch_path=launch_settings["path"],
                 default_harness=agent_start.default_harness(ws, launch_settings) or "none",

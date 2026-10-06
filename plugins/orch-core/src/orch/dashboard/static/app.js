@@ -106,6 +106,33 @@
   openTabFor(document);
   window.addEventListener("hashchange", () => openTabFor(document));
 
+  // The Addons tab's search and On / Off / Needs attention filter: hides cards in the page, nothing is fetched. The
+  // toolbar is hidden in the HTML so a page without JS shows every card and no control that does nothing.
+  document.querySelectorAll("form[data-addon-filter]").forEach((form) => {
+    const apply = () => {
+      const q = String(form.elements.q.value || "").trim().toLowerCase();
+      const show = (form.querySelector("input[name=show]:checked") || {}).value || "all";
+      let any = false;
+      document.querySelectorAll("[data-addon-group]").forEach((group) => {
+        let shown = 0;
+        group.querySelectorAll("[data-addon-item]").forEach((card) => {
+          const fits = (show === "all" || (show === "on" && card.dataset.on === "1") || (show === "off" && card.dataset.on === "0")
+            || (show === "attention" && card.dataset.attention === "1")) && (!q || q.split(/\s+/).every((t) => card.dataset.search.includes(t)));
+          card.hidden = !fits;
+          if (fits) shown += 1;
+        });
+        group.hidden = shown === 0;
+        any = any || shown > 0;
+      });
+      const none = document.querySelector("[data-addon-none]");
+      if (none) none.hidden = any;
+    };
+    form.addEventListener("input", apply);
+    form.addEventListener("change", apply);
+    form.addEventListener("submit", (event) => { event.preventDefault(); apply(); });
+    form.hidden = false;
+  });
+
   // A form marked data-busy (Refresh on an addon page): after 1 s its button says so; after 10 s it counts.
   document.addEventListener("submit", (event) => {
     const form = event.target;

@@ -11,7 +11,7 @@ from orch.addons.manifest import CAPABILITIES, MENU_ICONS, SLOT_NAMES, Manifest
 from orch.dashboard import launch
 
 # Core pages a default addon stands for (it has no page of its own; core draws the page while the addon is on).
-CORE_PAGES = {"graph": "Graph", "terminals": "Terminals"}
+CORE_PAGES = {"graph": ("Graph", "graph"), "terminals": ("Terminals", "workspace"), "schedules": ("Schedules", "today")}
 
 _TICKET = "path:M7 3h7l5 5v13H7zM14 3v5h5"  # no ticket icon in the sprite: a page with a folded corner
 _GUIDE = "path:" + MENU_ICONS["book"]
@@ -43,8 +43,8 @@ def surfaces(name: str, m: Manifest) -> list[dict]:
     for an SVG path, or is None for the addon's own menu icon; `area` is the region the preview map highlights."""
     out: list[dict] = []
     if name in CORE_PAGES:
-        out.append({"icon": "graph" if name == "graph" else "workspace", "area": "menu",
-                    "label": f"The {CORE_PAGES[name]} page in the menu"})
+        title, icon = CORE_PAGES[name]
+        out.append({"icon": icon, "area": "menu", "label": f"The {title} page in the menu"})
     if m.menu:
         out.append({"icon": None, "area": "menu", "label": f"Its own page in the menu: {m.menu.get('title') or m.title}"})
     elif m.has("page"):

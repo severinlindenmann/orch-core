@@ -122,6 +122,8 @@ def test_surfaces_and_requirements_from_the_manifest(monkeypatch):
     assert addon_catalog.requirements(bare, trust="untrusted")[0]["text"] == "Trust this version first"
     assert addon_catalog.surfaces("graph", parse_manifest({**GOOD, "menu": None, "capabilities": [], "settings_schema": []}))[0]["label"] == \
         "The Graph page in the menu"
+    assert addon_catalog.surfaces("schedules", parse_manifest({**GOOD, "menu": None, "capabilities": [], "settings_schema": []}))[0]["label"] == \
+        "The Schedules page in the menu"
 
 
 def test_repositories_show_relative_paths(tmp_path):

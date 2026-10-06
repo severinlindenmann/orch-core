@@ -63,7 +63,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/graph/related"): LOOK, ("GET", "/design"): LOOK, ("GET", "/guide"): LOOK, ("GET", "/widgets"): LOOK,
     ("GET", "/w/preview/{ref}"): LOOK, ("GET", "/w/{ref}/{section}/{digest}"): LOOK,
     ("GET", "/wp/{addon}/{digest}"): LOOK, ("GET", "/wpf/{addon}/{digest}"): LOOK,
-    ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK,
+    ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK, ("GET", "/schedules"): LOOK,
     ("GET", "/quick"): LOOK, ("GET", "/quick/{qid}"): LOOK,
     # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
     # one-time token and deletes the file, so it counts as a change
@@ -81,11 +81,14 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/t/{ref}/epic/pause"): DECIDE,  # only stops delegation
     ("POST", "/permits/{rid}/deny"): DECIDE,  # only refuses a request
     ("POST", "/permits/grants/{gid}/revoke"): DECIDE,  # only takes a grant away
+    ("POST", "/schedules/{sid}/pause"): DECIDE,  # only stops a schedule
+    ("POST", "/schedules/runs/{rid}/{fid}/dismiss"): DECIDE,  # a finding needs nothing
     # -- ordinary ticket and wiki edits
     ("POST", "/t/{ref}/comment"): OPERATE, ("POST", "/t/{ref}/release"): OPERATE,
     ("POST", "/t/{ref}/artifacts"): OPERATE, ("POST", "/t/{ref}/edit"): OPERATE,
     ("POST", "/t/{ref}/task"): OPERATE, ("POST", "/t/{ref}/task/add"): OPERATE,
     ("POST", "/new"): _t(Scope.OPERATE, kind="ticket_request"),
+    ("POST", "/schedules/runs/{rid}/{fid}/file"): _t(Scope.OPERATE, kind="ticket_request"),  # a backlog ticket
     ("POST", "/board/backlog"): OPERATE, ("POST", "/theme"): OPERATE,
     ("POST", "/addons/{name}/refresh"): OPERATE,
     ("POST", "/addons/{name}/decisions"): OPERATE,  # an addon's decision applies an intent as the human
@@ -93,6 +96,8 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/terminals/new"): TYPE, ("POST", "/terminals/{name}/keys"): TYPE,
     ("POST", "/terminals/{name}/size"): TYPE, ("POST", "/terminals/{name}/end"): TYPE,
     ("POST", "/t/{ref}/agent/start"): TYPE,
+    ("POST", "/schedules/{sid}/run"): TYPE,  # starts an agent run on the host
+    ("POST", "/schedules/{sid}/arm"): _t(Scope.TYPE, fresh=True),  # lets agents run on a clock, like the factory's start
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),
     ("POST", "/addons/{name}/actions/{action_id}"): TYPE,  # runs addon code; a later change may lower it
     # quick tasks (orch.core.quick): adding and closing are ordinary edits; reopen and drop are the human's call

@@ -262,9 +262,12 @@ def _update_everything(actor) -> tuple[list[str], list[str]]:
     something new is installed and left for the human to review and trust in its row."""
     done, problems = [], []
     try:
-        core = update.core_check()
+        status = update.core_status()
+        core = status.update
         if core:
             done.append(f"orch-core updated ({core.behind} commits); restart orch serve to run it. {update.core_apply(core)}")
+        elif not status.checked:  # say so, rather than call it up to date
+            problems.append(f"orch-core {status.line}")
     except OrchError as e:
         problems.append(f"orch-core: {e.message}")
     updated = set()

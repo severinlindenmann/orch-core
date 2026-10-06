@@ -102,10 +102,17 @@ def _cli_version(path: Path) -> str | None:
     return _cli_versions[key]
 
 
+def _install_source(roots: list[Path]) -> str:
+    """What to install the terminal CLI from: the marketplace clone rather than Claude's plugin cache when there is
+    one, so that `orch update` can pull it later."""
+    from orch.update import marketplace_clone
+    folder = (marketplace_clone(roots[0]) or roots[0]) if roots else _ROOT_PLACEHOLDER
+    return f'"{folder}[dashboard]"'
+
+
 def _terminal_cli(check_version: bool = True) -> Check:
     roots = _plugin_roots()
     prefixes = [Path(sys.prefix).resolve(), Path(sys.prefix)]
-    source = f'"{roots[0] if roots else _ROOT_PLACEHOLDER}[dashboard]"'
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry:
             continue
@@ -122,10 +129,10 @@ def _terminal_cli(check_version: bool = True) -> Check:
         return Check("terminal-cli", False,
                      f"{said} is on your PATH ({where}), but the orch-core plugin is {want}: "
                      "commands and options the plugin documents may be missing or behave differently",
-                     f"uv tool install --force {source}")
+                     f"uv tool install --force {_install_source(roots)}")
     return Check("terminal-cli", False,
                  "orch is not installed for your own terminal (needed for approvals and `orch serve`)",
-                 f"uv tool install {source}")
+                 f"uv tool install {_install_source(roots)}")
 
 
 def doctor(start: Path | None = None, *, hook_states: dict[Path, str] | None = None,

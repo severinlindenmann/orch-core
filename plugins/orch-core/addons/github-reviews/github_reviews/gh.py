@@ -11,7 +11,8 @@ LOGIN_COMMAND = "gh auth login"
 RATE_LIMIT_WAIT = timedelta(minutes=15)
 _AUTH = ("gh auth login", "not logged in", "authentication required", "bad credentials")
 _NO_REPO = ("could not resolve to a repository",)
-_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
+# Enterprise Managed Users get an `_<shortcode>` suffix (e.g. `jane-doe_acme`).
+_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:_[A-Za-z0-9]{1,39})?")
 _OFFLINE = ("error connecting to", "could not resolve host", "no such host", "network is unreachable",
             "connection refused", "connection reset", "i/o timeout", "tls handshake timeout")
 

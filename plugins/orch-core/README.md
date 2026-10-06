@@ -35,7 +35,7 @@ Approvals, answers and `orch serve` must come from you, not from an agent, so th
 uv tool install "<plugin folder>[dashboard]"
 ```
 
-`orch doctor` prints this command with the real plugin folder filled in. It also compares `orch --version` with the plugin's version; when they differ (`terminal-cli`), upgrade with `uv tool install --force "<plugin folder>[dashboard]"`.
+`orch doctor` prints this command with the real plugin folder filled in, pointing at the marketplace clone (`~/.claude/plugins/marketplaces/<marketplace>/plugins/orch-core`) rather than Claude's plugin cache: `orch update` pulls the git clone the CLI was installed from, so an install from the cache cannot update and `orch update` says so. `orch update` always prints what it checked and what it found. It also compares `orch --version` with the plugin's version; when they differ (`terminal-cli`), upgrade with `uv tool install --force "<plugin folder>[dashboard]"`.
 
 ## GitHub Copilot
 

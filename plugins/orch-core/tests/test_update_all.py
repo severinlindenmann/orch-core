@@ -15,7 +15,7 @@ ORIGIN = {"origin": "http://testserver"}
 @pytest.fixture
 def src(tmp_path, monkeypatch):
     monkeypatch.setattr(discovery, "default_addons_dir", lambda: tmp_path / "no-defaults")
-    monkeypatch.setattr(update, "core_source", lambda: None)
+    monkeypatch.setattr(update, "core_source", lambda: "no clone in tests")
     s = make_addon(tmp_path / "src")
     manage.install(str(s), actor=DASH)
     return s
@@ -43,7 +43,8 @@ def test_update_all_asks_then_updates_and_trusts_again(client, ws, src):
     assert userfiles.trust_state(discovery.find("hello-status")) == "trusted"
     assert userfiles.workspace_addons(ws.root)["hello-status"]["enabled"] is True
     again = client.post("/workspace/addons/update-all", headers=ORIGIN, follow_redirects=False)
-    assert "Everything+is+up+to+date" in again.headers["location"]
+    assert "orch-core+not+checked%3A+no+clone+in+tests" in again.headers["location"]
+    assert "Everything+is+up+to+date" not in again.headers["location"]
 
 
 def test_update_all_leaves_an_addon_with_new_permissions_for_review(client, ws, src):

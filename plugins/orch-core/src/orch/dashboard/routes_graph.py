@@ -1,6 +1,7 @@
 """The Graph page: tickets, the files their commits changed and the links between tickets (orch.core.graph), drawn by
 static/graph.js. The data is embedded in the page as a JSON block (the CSP allows no inline script); /graph.json
-serves the same, and /graph/related the `orch related` text an agent reads for one ticket or file."""
+serves the same, and /graph/related the `orch related` text an agent reads for one ticket or file. All of it answers
+404 until the human enables the `graph` default addon in this workspace (#167); `orch graph` stays core."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
@@ -8,11 +9,16 @@ from fastapi.responses import JSONResponse
 
 from orch.core import graph as core_graph
 from orch.core import related
-from orch.dashboard.views import page
+from orch.dashboard.views import GRAPH_ADDON, addon_on, page
 from orch.errors import OrchError
 
 router = APIRouter()
 VIEWS = ("code", "deps", "local")
+OFF = "Graph is an addon: enable it in Workspace & addons"
+
+
+def _off(request: Request) -> bool:
+    return not addon_on(request.app.state.ws, GRAPH_ADDON)
 
 
 def _data(ws) -> dict:
@@ -28,6 +34,8 @@ def _data(ws) -> dict:
 
 @router.get("/graph")
 def graph_page(request: Request):
+    if _off(request):
+        return page(request, "error.html", 404, nav="graph", title="Graph", heading="Graph is off", message=OFF)
     ws = request.app.state.ws
     data = _data(ws)
     view = request.query_params.get("view")
@@ -43,12 +51,16 @@ def graph_page(request: Request):
 
 @router.get("/graph.json")
 def graph_json(request: Request):
+    if _off(request):
+        return JSONResponse({"error": OFF}, status_code=404)
     return JSONResponse(_data(request.app.state.ws))
 
 
 @router.get("/graph/related")
 def graph_related(request: Request):
     """{text, data} of `orch related` for ?t=<ticket> or ?p=<repo-qualified path>."""
+    if _off(request):
+        return JSONResponse({"error": OFF}, status_code=404)
     ws = request.app.state.ws
     ref, path = request.query_params.get("t"), request.query_params.get("p")
     if not ref and not path:

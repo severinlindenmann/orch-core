@@ -212,7 +212,7 @@ class Ops(TaskOpsMixin):
 
     def new(self, title: str, *, type: str = "feature", priority: str = "normal", size: str = "m",
             ask: str = "", external: str | None = None, from_ref: str | None = None, epic: str | None = None,
-            sprint: str | None = None, sections: dict[str, str] | None = None) -> Ticket:
+            sprint: str | None = None, sections: dict[str, str] | None = None, due: str | None = None) -> Ticket:
         """`sections` (#24): Summary, Requirements, Acceptance criteria and Out of scope written at creation, with the
         same rules as `orch section set`. `self.warnings` names a gated section left empty."""
         from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
@@ -228,6 +228,9 @@ class Ops(TaskOpsMixin):
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
         sprint_id = self._sprint(sprint) if sprint else None
+        if due is not None:
+            from orch.core.due import checked_due
+            due = checked_due(due)
         sections = sections or {}
         unknown = [n for n in sections if n not in SPLIT_SECTIONS]
         if unknown:
@@ -252,12 +255,15 @@ class Ops(TaskOpsMixin):
             ticket.meta["parent"] = parent_epic.id
         if sprint_id:
             ticket.meta["sprint"] = sprint_id
+        if due:
+            ticket.meta["due"] = due
         self._log(ticket, "created" + (f" in epic {parent_epic.id}" if parent_epic else ""))
         with lock(self.ws, tid):
             store.save(self.ws, ticket)
             ticket = store.load(self.ws, tid)[1]  # the ticket as saved: what is returned and warned about is on disk
         self._emit(tid, "ticket.created", {"title": title, "from": source.id if source else None,
                                            **({"epic": parent_epic.id} if parent_epic else {}),
+                                           **({"due": due} if due else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
         if source:
             def link_back(t: Ticket) -> dict:
@@ -450,6 +456,23 @@ class Ops(TaskOpsMixin):
                 changed["sprint"] = "none"
             self._log(t, "linked " + ", ".join(f"{k} {v}" for k, v in changed.items()))
             return changed
+
+        return self._mutate(ref, "ticket.edited", fn)
+
+    def set_due(self, ref: str, due: str | None) -> Ticket:
+        """Set the ticket's due date (`YYYY-MM-DD`), or clear it with None (#174). Planning only, like a sprint: no
+        gate binds it, so agents may change it; the Log and a `ticket.edited` event record each change."""
+        from orch.core.due import checked_due
+        value = checked_due(due) if due is not None else None
+
+        def fn(t: Ticket) -> dict:
+            if value is None:
+                t.meta.pop("due", None)
+                self._log(t, "due date cleared")
+            else:
+                t.meta["due"] = value
+                self._log(t, f"due {value}")
+            return {"due": value or "none"}
 
         return self._mutate(ref, "ticket.edited", fn)
 

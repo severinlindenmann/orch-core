@@ -1472,6 +1472,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
   border-radius: var(--chip-radius); background: var(--neu-bg); color: var(--neu-fg); font: var(--type-meta); white-space: nowrap; }
 .tc-fact-ok { background: var(--ok-bg); color: var(--ok-fg); }
 .tc-fact-warn { background: var(--warn-bg); color: var(--warn-fg); }
+.tc-fact-err { background: var(--err-bg); color: var(--err-fg); }
 /* Epics view: one group card per epic and lane. The header is the link, the foot a button outside it; the tickets
    unfold below as compact cards. Never draggable; the cards inside are. */
 .col-h .count-sub { font: var(--type-meta); font-weight: 600; color: var(--muted); }

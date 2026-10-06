@@ -432,6 +432,9 @@ class Cards:
             card["parent"] = None  # shown as the epic link instead
         from orch.core.query import idle_days
         card["idle_days"] = idle_days(self.ws, meta, status, self.now)  # outside the static cache: it ages by itself
+        from orch.core.due import due_state, parse_due
+        card["due"] = ({"date": meta["due"], "state": due_state(meta, status, self.now.astimezone().date())}
+                       if parse_due(meta.get("due")) else None)  # likewise: overdue tomorrow without a write
         card.update(move=move, code=_code(t, self._reviews_of(tid)), agent=agent, blockers=blockers,
                     mentions=_mentioned(self._mentions.get(tid, ())), epic=epic, rollup=rollup)
         return _card(card)

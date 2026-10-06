@@ -34,6 +34,7 @@ such as "this ticket uses schema 2; update the app". Unknown keys inside a known
 | `labels` | Free labels. |
 | `parent` | Parent ticket ID, or null: the epic of a child, or the source of a follow-up. |
 | `sprint` | A sprint id from the workspace config, or null (1.2; planning only). |
+| `due` | 1.10: the due date, `YYYY-MM-DD`, or null when the ticket has none (or its file holds no valid date, which `orch check` reports as `invalid-due`). Planning only: set with `orch new --due` and `orch due`, no gate binds it. |
 | `blocked_by` | Ticket IDs this ticket waits for. |
 | `follow_ups` | Follow-up ticket IDs. |
 | `resolution` | 1.9: why a done ticket is done: `completed`, `wont-do`, `superseded` or `duplicate` (`orch close --as`; a done verdict is `completed`); null while the ticket is not done. A done ticket without one in its file (closed before 1.9) reads as `completed`. Only `orch close`, a verdict and `orch reopen` change it. |
@@ -236,6 +237,10 @@ auto-approvals is only as trustworthy as that file (see the ledger's limits).
 
 Sprints are planning metadata: `sprints: [{id, name, start, end}]` in the workspace config and `sprint: <id>` in a
 ticket's frontmatter. No gate depends on them.
+
+A due date is planning metadata as well: `due: YYYY-MM-DD` in a ticket's frontmatter (absent when there is none).
+A ticket that is not done is overdue after that day and due soon from `DUE_SOON_DAYS` (3) days before it, today
+counted by the local date; `orch next` puts both first within their priority. No gate depends on it.
 
 ## Task list
 

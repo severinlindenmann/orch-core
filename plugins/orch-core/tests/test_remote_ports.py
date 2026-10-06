@@ -245,22 +245,25 @@ def test_corrupt_workspaces_file_is_harmless(ws):
 def _other(tmp_path, pid):
     other = tmp_path / "other"
     (other / ".state").mkdir(parents=True, exist_ok=True)
-    return {"path": str(other), "name": "northwind", "last_port": 8766, "state_dir": str(other / ".state"), "pid": pid}, other
+    return {"path": str(other), "name": "northwind", "last_port": 8766, "workspace_id": "northwind-id-0123456789",
+            "pid": pid}, other
 
 
-def test_others_skips_dead_pid_and_keeps_live_one(ws, tmp_path):
+def test_scan_skips_dead_pid_and_keeps_live_one(ws, tmp_path, monkeypatch):
     from orch.dashboard.launch import config_dir
+    monkeypatch.setattr(switcher, "probe", lambda port, timeout=0.2: {
+        "service": switcher.SERVICE, "workspace_id": "northwind-id-0123456789", "needs": 0})
     switcher.register(ws, 8765)
     path = config_dir() / "workspaces.json"
     data = json.loads(path.read_text())
     entry, other = _other(tmp_path, os.getpid())
     data[str(other)] = entry
     path.write_text(json.dumps(data))
-    assert [e["name"] for e in switcher.others(ws)] == ["northwind"]
+    assert [e["name"] for e in switcher.scan(ws)] == ["northwind"]
     for dead in (2 ** 22 + 12345, "123", True, 0, -5):
         data[str(other)] = {**entry, "pid": dead}
         path.write_text(json.dumps(data))
-        assert switcher.others(ws) == []
+        assert switcher.scan(ws) == []
 
 
 @pytest.mark.parametrize("bad", ["70000", "-1", "0"])

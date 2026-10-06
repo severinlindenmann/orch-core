@@ -78,6 +78,12 @@
       <form method="post" action="/workspace/shortcuts"><input type="hidden" name="on" value="{{ '0' if shortcuts else '1' }}"><button type="submit" class="btn">{{ "Turn shortcuts off" if shortcuts else "Turn shortcuts on" }}</button></form>
     </section>
 
+    <section class="card" id="switcher" aria-labelledby="switcher-h">
+      <h2 id="switcher-h">Workspace switcher</h2>
+      <p>{{ "On" if switcher_on else "Off" }} in this workspace. <span class="muted">Lists your other running workspaces in the menu, with how many decisions wait in each. Useful only when you run more than one.</span></p>
+      <form method="post" action="/workspace/switcher"><input type="hidden" name="on" value="{{ '0' if switcher_on else '1' }}"><button type="submit" class="btn">{{ "Turn switcher off" if switcher_on else "Turn switcher on" }}</button></form>
+    </section>
+
     <section class="card" id="density" aria-labelledby="density-h">
       <h2 id="density-h">Density</h2>
       <p class="muted">Compact fits more rows and cards on a screen; touch screens keep 44 px targets either way.</p>

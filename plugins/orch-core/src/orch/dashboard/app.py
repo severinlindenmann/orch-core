@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 
+from orch.clock import stamp
 from orch.dashboard import factory_runner, schedules
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
@@ -235,9 +236,9 @@ async def form_error(request, exc):
 def router_modules() -> tuple:
     """The route modules, in the order they are included (and so matched)."""
     from orch.dashboard import (routes_actions, routes_activity, routes_addons, routes_agent_start, routes_board,
-                                routes_design, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_schedules, routes_terminals, routes_theme,
-                                routes_ticket, routes_widgets, routes_workspace)
-    return (routes_board, routes_graph, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
+                                routes_design, routes_graph, routes_guide, routes_live, routes_new, routes_permits, routes_remote, routes_reports, routes_schedules, routes_status, routes_terminals,
+                                routes_theme, routes_ticket, routes_widgets, routes_workspace)
+    return (routes_status, routes_board, routes_graph, routes_ticket, routes_actions, routes_new, routes_workspace, routes_live, routes_theme,
             routes_activity, routes_permits, routes_reports, routes_agent_start, routes_addons, routes_design,
             routes_guide, routes_terminals, routes_schedules, routes_widgets, routes_remote)
 
@@ -256,11 +257,13 @@ def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastA
     from orch.addons.scheduler import Scheduler
     from orch.remote.bridge_link import NullLink
 
+    registered = False
     if port is not None:
         # The switcher is a convenience: a read-only or full config directory must never stop
         # `orch serve` from starting, it only leaves this workspace out of the others' lists.
         try:
             switcher.register(ws, port)
+            registered = True
         except OSError as exc:
             log.warning("could not record this workspace in workspaces.json for the switcher: %s", exc)
 
@@ -295,11 +298,17 @@ def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastA
                     await task
             await app.state.scheduler.shutdown()  # fetches and outbox rounds still in flight
             await app.state.outbox.shutdown()
+            if registered:  # no other switcher links to this port once it is closed
+                try:
+                    await asyncio.to_thread(switcher.unregister, ws)
+                except Exception as exc:
+                    log.warning("could not clear this workspace's pid in workspaces.json: %s", exc)
 
     app = FastAPI(title="orch", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.exception_handler(RequestValidationError)(form_error)
     app.state.ws = ws
     app.state.token = token
+    app.state.started = stamp()  # for /__orch/status
     app.state.scheduler = Scheduler(ws, live=lambda: routes_live.subscriber_count(ws) > 0)
     app.state.outbox = OutboxPump(ws)
     app.state.addons = AddonRuntime(ws)  # what pages ask of addons: cache reads and widgets, never ctx.run

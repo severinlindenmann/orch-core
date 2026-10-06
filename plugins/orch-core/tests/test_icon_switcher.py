@@ -1,4 +1,5 @@
 import json
+import os
 import re
 
 import pytest
@@ -32,18 +33,32 @@ def test_brand_none_uses_plain_icon(ws, configure):
     assert "mc-icon-plain.svg" in html and "/static/brand/mc-icon.svg" not in html
 
 
+OTHER_ID = "northwind-id-0123456789"
+
+
+@pytest.fixture(autouse=True)
+def answers(monkeypatch):
+    """Port 8766 answers as northwind's dashboard; a test changes the dict to make it answer otherwise."""
+    from orch.dashboard import switcher
+    status = {"service": switcher.SERVICE, "workspace_id": OTHER_ID, "needs": 1}
+    monkeypatch.setattr(switcher, "probe", lambda port, timeout=0.2: status if port == 8766 else switcher.GONE)
+    return status
+
+
+def _valid_other_entry(other):
+    return {"path": str(other), "name": "northwind", "last_port": 8766, "pid": os.getpid(), "workspace_id": OTHER_ID}
+
+
 def test_switcher_lists_other_workspaces(ws, tmp_path, monkeypatch):
     from orch.dashboard import switcher
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
     switcher.register(ws, 8765)
     other = tmp_path / "other"
     (other / ".state").mkdir(parents=True)
-    (tmp_path / "state").mkdir(exist_ok=True)
     data = json.loads((tmp_path / "state" / "workspaces.json").read_text())
-    data[str(other)] = {"path": str(other), "name": "northwind", "last_port": 8766, "state_dir": str(other / ".state")}
-    (tmp_path / "state" / "workspaces.json").write_text(json.dumps(data))
-    (other / ".state" / "needs-count").write_text("1")
-    assert switcher.others(ws) == [{"name": "northwind", "url": "http://127.0.0.1:8766/", "needs": 1}]
+    data[str(other)] = _valid_other_entry(other)
+    _write_workspaces(tmp_path, data)
+    assert switcher.scan(ws) == [{"name": "northwind", "url": "http://127.0.0.1:8766/", "needs": 1}]
 
 
 # -- Fix round 1: a malformed workspaces.json must never crash others() or build a spoofed URL ---
@@ -66,13 +81,9 @@ def test_switcher_skips_invalid_port(ws, tmp_path, monkeypatch, bad_port):
     other = tmp_path / "other"
     (other / ".state").mkdir(parents=True)
     data = json.loads((tmp_path / "state" / "workspaces.json").read_text())
-    data[str(other)] = {"path": str(other), "name": "northwind", "last_port": bad_port, "state_dir": str(other / ".state")}
+    data[str(other)] = {**_valid_other_entry(other), "last_port": bad_port}
     _write_workspaces(tmp_path, data)
-    assert switcher.others(ws) == []
-
-
-def _valid_other_entry(other):
-    return {"path": str(other), "name": "northwind", "last_port": 8766, "state_dir": str(other / ".state")}
+    assert switcher.scan(ws) == []
 
 
 @pytest.mark.parametrize("override", [
@@ -81,6 +92,8 @@ def _valid_other_entry(other):
     {"name": 123},
     {"name": ""},
     {"name": "   "},
+    {"workspace_id": None},
+    {"workspace_id": ""},
 ])
 def test_switcher_skips_entry_with_bad_field_types(ws, tmp_path, monkeypatch, override):
     """A non-str/empty `path` or `name` is not enough to trust and show the entry: it is dropped."""
@@ -93,22 +106,23 @@ def test_switcher_skips_entry_with_bad_field_types(ws, tmp_path, monkeypatch, ov
     data = json.loads((tmp_path / "state" / "workspaces.json").read_text())
     data[str(other)] = entry
     _write_workspaces(tmp_path, data)
-    assert switcher.others(ws) == []
+    assert switcher.scan(ws) == []
 
 
-def test_switcher_shows_entry_with_bad_state_dir_without_needs_count(ws, tmp_path, monkeypatch):
-    """A non-str `state_dir` must never crash `Path(...)`; the workspace still shows, just with
-    no needs-you count (the one field that was unusable), not a 500 for the whole switcher."""
+@pytest.mark.parametrize("needs", ["3", -1, True, None, 2.5])
+def test_switcher_shows_entry_with_bad_needs_without_a_count(ws, tmp_path, monkeypatch, answers, needs):
+    """The needs-you count comes from the status answer; one that is not a count shows the workspace without it."""
     from orch.dashboard import switcher
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
     switcher.register(ws, 8765)
     other = tmp_path / "other"
     (other / ".state").mkdir(parents=True)
-    entry = {**_valid_other_entry(other), "state_dir": 123}
+    (other / ".state" / "needs-count").write_text("9")  # never read from another workspace's folder any more
     data = json.loads((tmp_path / "state" / "workspaces.json").read_text())
-    data[str(other)] = entry
+    data[str(other)] = _valid_other_entry(other)
     _write_workspaces(tmp_path, data)
-    assert switcher.others(ws) == [{"name": "northwind", "url": "http://127.0.0.1:8766/", "needs": None}]
+    answers["needs"] = needs
+    assert switcher.scan(ws) == [{"name": "northwind", "url": "http://127.0.0.1:8766/", "needs": None}]
 
 
 @pytest.mark.parametrize("top_level", [
@@ -121,14 +135,14 @@ def test_switcher_treats_non_dict_top_level_as_empty(ws, tmp_path, monkeypatch, 
     from orch.dashboard import switcher
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
     _write_workspaces(tmp_path, top_level)
-    assert switcher.others(ws) == []
+    assert switcher.scan(ws) == []
 
 
 def test_switcher_skips_non_dict_entry(ws, tmp_path, monkeypatch):
     from orch.dashboard import switcher
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
     _write_workspaces(tmp_path, {"other": ["not", "a", "dict"]})
-    assert switcher.others(ws) == []
+    assert switcher.scan(ws) == []
 
 
 def test_switcher_tolerates_invalid_json(ws, tmp_path, monkeypatch):
@@ -137,7 +151,7 @@ def test_switcher_tolerates_invalid_json(ws, tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
     (state / "workspaces.json").write_text("{not json")
-    assert switcher.others(ws) == []
+    assert switcher.scan(ws) == []
 
 
 def test_page_renders_with_malformed_workspaces_file(dash, tmp_path, monkeypatch):

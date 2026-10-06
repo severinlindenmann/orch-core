@@ -671,12 +671,12 @@ def test_findings_show_on_today_and_file_from_there(ws, fake, human, on):
     assert sc.open_findings(ws) == [] and "From schedules" not in c.get("/").text
 
 
-def test_the_menu_shows_schedules_only_while_the_addon_is_on(ws, monkeypatch):
-    from orch.dashboard import schedules as dash
-    c = _client(ws)
-    assert 'href="/schedules"' not in c.get("/board").text
-    monkeypatch.setattr(dash, "addon_on", lambda ws: True)
-    assert 'href="/schedules"' in c.get("/board").text
+def test_the_menu_shows_schedules_only_while_the_addon_is_on(ws):
+    from orch.addons import userfiles
+    assert 'href="/schedules"' not in _client(ws).get("/board").text
+    userfiles.set_enabled(ws.root, "schedules", True)
+    ws._addons = None
+    assert 'href="/schedules"' in _client(ws).get("/board").text
 
 
 def test_every_schedules_route_has_a_remote_scope():

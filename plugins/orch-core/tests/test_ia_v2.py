@@ -9,7 +9,8 @@ def test_menu_order_and_labels(dash):
     html = dash.get("/").text
     nav = html[html.index('<nav class="menu"'):html.index("</nav>")]
     labels = re.findall(r'class="item[^"]*"[^>]*>.*?<span class="label">([^<]+)</span>', nav, re.S)
-    assert labels[:5] == ["Today", "Board", "Graph", "Activity", "Reports"] and "Workspace &amp; addons" in nav
+    assert labels[:4] == ["Today", "Board", "Activity", "Reports"] and "Workspace &amp; addons" in nav
+    assert "Graph" not in labels and "Terminals" not in labels  # #167: both are opt-in addons
 
 
 def test_no_addon_group_without_addons(dash):
@@ -48,6 +49,17 @@ def test_addon_group_renders_when_addon_nav_given(dash):
         nav="", needs_count=0, setup_count=0, theme="system", brand="none", customer="c", prefix="P",
         repo_count=0, addon_nav=[("Code reviews", "/addons/reviews", "M0 0", "", None)])
     assert "menu-addons" in html and 'href="/addons/reviews"' in html and "Code reviews" in html
+
+
+def test_graph_and_terminals_go_under_addons_when_on():
+    from orch.dashboard.views import TEMPLATES
+    html = TEMPLATES.env.get_template("_menu.html").render(
+        nav="", needs_count=0, setup_count=0, theme="system", brand="none", customer="c", prefix="P",
+        repo_count=0, addon_nav=[], graph_nav=True, terminals_nav=True)
+    before, group = html.split('class="menu-addons"')
+    group = group.split("</div>")[0]
+    assert group.index('href="/graph"') < group.index('href="/terminals"')
+    assert 'href="/graph"' not in before and 'href="/terminals"' not in before
 
 
 def test_agents_redirect_keeps_query(dash):

@@ -218,6 +218,15 @@ def keyboard_shortcuts(request: Request, on: str = Form("0")):
     return back("/workspace?tab=setup#shortcuts", msg="Keyboard shortcuts on" if on == "1" else "Keyboard shortcuts off")
 
 
+@router.post("/workspace/switcher")
+def workspace_switcher(request: Request, on: str = Form("0")):
+    """The human's switch for the sidebar's list of other running workspaces in this workspace (kept per user)."""
+    if not strict_same_origin(request):
+        return _refused()
+    userfiles.set_workspace_switcher(request.app.state.ws.root, on == "1")
+    return back("/workspace?tab=setup#switcher", msg="Workspace switcher on" if on == "1" else "Workspace switcher off")
+
+
 @router.post("/workspace/addons/check-updates")
 async def addon_check_updates(request: Request):
     """Human POST only; never run during a render (the daily automatic check is not part of A1)."""

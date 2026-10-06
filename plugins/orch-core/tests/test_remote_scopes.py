@@ -296,7 +296,8 @@ def test_the_workspace_family_is_never_remote():
         assert not callable(tag) and tag.scope is remote_gate.NEVER, key
     for key, tag in remote_gate.TAGS.items():
         if not callable(tag) and tag.scope is remote_gate.NEVER:
-            assert NEVER_REMOTE.match(key[1]), f"{key} is never-remote but is not in the Workspace family"
+            ok = NEVER_REMOTE.match(key[1]) or key == ("GET", "/__orch/status")  # the loopback-only switcher probe
+            assert ok, f"{key} is never-remote but is not in the Workspace family"
 
 
 # What arms or launches something: derived from what a route's code calls, so a new route that does it is caught.

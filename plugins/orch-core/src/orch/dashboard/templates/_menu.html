@@ -4,7 +4,6 @@
 {%- set items = [
   ("today", "Today", "/", "today", needs_count, "hot"),
   ("board", "Board", "/board", "board", 0, ""),
-  ("graph", "Graph", "/graph", "graph", 0, ""),
   ("activity", "Activity", "/activity", "activity", 0, ""),
   ("reports", "Reports", "/reports", "reports", 0, ""),
 ] -%}
@@ -12,15 +11,28 @@
   {%- if tone == "hot" %}{{ n }} {{ "decision waits" if n == 1 else "decisions wait" }} on you
   {%- else %}{{ n }} setup {{ "item" if n == 1 else "items" }} open{% endif %}
 {%- endmacro -%}
+{%- macro parts(ps) -%}{% for p in ps %}{% if not loop.first %} {% endif %}
+  {%- if p.k == "badge" %}<span class="ml-{{ p.role }}">{{ p.text }}</span>
+  {%- elif p.k == "cd" %}<span data-until="{{ p.until }}" data-done="{{ p.done }}"{% if p.prefix %} data-prefix="{{ p.prefix }}"{% endif %}>{{ p.text }}</span>
+  {%- else %}{{ p.text }}{% endif %}{% endfor %}{%- endmacro -%}
+{#- An addon's MenuStatus rows: label, meter, value, then the note on its own line under the meter. Where the rows
+    fit, the chip is hidden (app.css), so the entry's title and accessible name carry the chip's tooltip. -#}
+{%- macro rows(chip) -%}
+  <span class="menu-rows{{ ' is-stale' if chip.stale }}">{% for r in chip.rows %}<span class="mr mr-{{ r.role }}{{ ' is-muted' if r.muted }}">
+    <span class="mr-label">{{ r.label }}</span>
+    {%- if r.meter is not none %}<span class="mr-meter" aria-hidden="true"><i style="width: {{ r.meter }}%"></i></span>
+    {%- else %}<span class="mr-sep" aria-hidden="true">—</span>{% endif %}<span class="mr-value">{{ r.value }}</span>
+    {%- if r.note %}<span class="mr-note">{{ parts(r.note) }}</span>{% endif %}</span>{% endfor %}</span>
+{%- endmacro -%}
 {%- macro item(key, label, href, icon, badge=0, tone="", path=false, broken="", chip=none) -%}
-      <a class="item{{ ' has-line' if chip and chip.line }}" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}>
+      {%- set has_rows = chip and chip.rows %}
+      <a class="item{{ ' has-line' if chip and (chip.line or has_rows) }}{{ ' has-rows' if has_rows }}" href="{{ href }}"{% if nav == key %} aria-current="page"{% endif %}
+        {%- if has_rows and chip.title %} title="{{ chip.title }}" aria-label="{{ label }}: {{ chip.title }}{{ ', ' ~ broken if broken }}"{% endif %}>
         {% if path %}<svg class="i-ui" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{ icon }}"/></svg>
         {%- else %}<svg class="i-ui" aria-hidden="true"><use href="#i-{{ icon }}"/></svg>{% endif %}
         <span class="label">{{ label }}
-          {%- if chip and chip.line %}<span class="menu-line">{% for p in chip.line %}{% if not loop.first %} {% endif %}
-            {%- if p.k == "badge" %}<span class="ml-{{ p.role }}">{{ p.text }}</span>
-            {%- elif p.k == "cd" %}<span data-until="{{ p.until }}" data-done="{{ p.done }}">{{ p.text }}</span>
-            {%- else %}{{ p.text }}{% endif %}{% endfor %}</span>{% endif %}</span>
+          {%- if chip and chip.line %}<span class="menu-line">{{ parts(chip.line) }}</span>{% endif %}
+          {%- if has_rows %}{{ rows(chip) }}{% endif %}</span>
         {% if broken %}<span class="nav-dot" role="img" aria-label="{{ label }}: {{ broken }}"></span>{% endif %}
         {% if chip and chip.badge %}{% set b = chip.badge %}<span class="chip chip-{{ b.role }}"{% if b.title %} title="{{ b.title }}"{% endif %} aria-label="{{ label }}: {{ b.title or b.text }}">{{ b.text }}</span>{% endif %}
         {% if badge and badge > 0 %}<span class="badge{{ ' badge-' ~ tone if tone }}" aria-label="{{ badge_label(tone, badge) }}">{{ badge }}</span>{% endif %}
@@ -42,11 +54,13 @@
       {% for key, label, href, icon, badge, tone in items %}
       {{ item(key, label, href, icon, badge, tone) }}
       {% endfor %}
-      {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
-      {% if schedules_nav %}{{ item("schedules", "Schedules", "/schedules", "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2", path=true) }}{% endif %}
-      {% if addon_nav %}
+      {% if addon_nav or graph_nav or terminals_nav or schedules_nav %}
       <div class="menu-addons" role="group" aria-labelledby="menu-addons-h">
         <p class="menu-group" id="menu-addons-h">Addons</p>
+        {#- Graph, Terminals and Schedules are core pages; their default addons are the switch (#167) -#}
+        {% if graph_nav %}{{ item("graph", "Graph", "/graph", "graph") }}{% endif %}
+        {% if terminals_nav %}{{ item("terminals", "Terminals", "/terminals", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4", path=true) }}{% endif %}
+        {% if schedules_nav %}{{ item("schedules", "Schedules", "/schedules", "M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2", path=true) }}{% endif %}
         {% for label, href, icon, broken, chip in addon_nav %}
         {{ item("addon:" ~ href, label, href, icon, path=true, broken=broken, chip=chip) }}
         {% endfor %}

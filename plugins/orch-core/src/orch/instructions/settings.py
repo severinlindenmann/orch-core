@@ -24,11 +24,26 @@ PLUGIN_ID = f"{PLUGIN_NAME}@{MARKETPLACE}"  # the fallback when nothing says whe
 # Marketplaces orch-core ships from, by the name Claude Code knows them under: a project's settings name the one
 # its plugin id points at, so a teammate without it is offered to add it.
 KNOWN_MARKETPLACES = {MARKETPLACE: MARKETPLACE_SOURCE}
+# Earlier names of this plugin: enabled next to orch-core, their guard and SessionStart hooks run twice.
+LEGACY_PLUGIN_NAMES = ("orch-ticket-workflow",)
 
 
 def is_plugin_id(key) -> bool:
     """orch-core from any marketplace (orch-core@orch-core, orch-core@my-fork, ...)."""
     return isinstance(key, str) and key.startswith(f"{PLUGIN_NAME}@") and len(key) > len(PLUGIN_NAME) + 1
+
+
+def is_legacy_plugin_id(key) -> bool:
+    """An earlier orch plugin id from any marketplace (orch-ticket-workflow@ai-convenience-store, ...)."""
+    return isinstance(key, str) and any(key.startswith(f"{name}@") and len(key) > len(name) + 1
+                                        for name in LEGACY_PLUGIN_NAMES)
+
+
+def legacy_plugin_ids(enabled) -> list[str]:
+    """The legacy orch ids an enabledPlugins mapping turns on."""
+    if not isinstance(enabled, dict):
+        return []
+    return [k for k, v in enabled.items() if is_legacy_plugin_id(k) and v is True]
 
 
 def _marketplace_in(path: Path) -> str | None:
@@ -115,6 +130,12 @@ def merge_settings(existing: dict, cfg: dict, *, plugin_mode: bool = False, plug
     settings = deepcopy(existing)
     if cfg["commit"]["forbid_attribution"]:
         settings["attribution"] = {"commit": "", "pr": ""}
+    enabled = settings.get("enabledPlugins")
+    legacy = [k for k in enabled if is_legacy_plugin_id(k)] if isinstance(enabled, dict) else []
+    for key in legacy:
+        del enabled[key]  # only ids orch knows as its own; every other plugin stays
+    if legacy and not enabled and not plugin_mode:
+        del settings["enabledPlugins"]
     if plugin_mode:
         hooks = settings.get("hooks")
         if isinstance(hooks, dict):

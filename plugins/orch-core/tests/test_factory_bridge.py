@@ -563,3 +563,50 @@ def test_the_gates_fresh_backstop_holds_where_the_hook_asks_for_no_assertion(bri
     assert v.code == "assertion_failed"  # the strictest tag: a fresh assertion is asked for, but there is nothing to show
     assert bridge.raw(Scope.TYPE, False, "POST", f"/t/{e}/approve", "gate=requirements&factory=1")[0] == 403
     assert epics.delegation(fws, store.load(fws, e)[1]) is None
+
+
+def test_the_route_hook_is_never_less_strict_than_the_gate_for_every_route_and_body_shape(fws, running):
+    """Table-driven from remote_gate.TAGS: for each route and body shape the gate would decide (its own parse), the hook's
+    scope is at least the gate's, and a route the gate never allows is never remote for the hook."""
+    from urllib.parse import parse_qs, parse_qsl
+    from orch.dashboard import remote_gate as G
+    eid, cid, r = running
+    routes = dashboard_routes()
+    hook = route_hook(routes, fws)
+    form = {"content-type": "application/x-www-form-urlencoded"}
+    shapes = [({}, b""), (form, b""), (form, b"factory=1&seen=x&gate=requirements"), (form, b"delegate=1&max_children=3"),
+              (form, b"factory=1;delegate=1"), (form, "text=é&factory=1".encode()), (form, b"\xff\xfe=1&factory=1"),
+              (form, b"factory=1&" + b"a=b&" * 20000), ({"content-type": "application/json"}, b'{"factory": 1}'),
+              ({"content-type": "multipart/form-data; boundary=x"}, b"--x\r\n\r\nfactory\r\n--x--"), ({}, b"factory=1")]
+    for (method, path), _tag in G.TAGS.items():
+        for ref in (cid, eid):
+            real = re.sub(r"\{[^}]*:path\}", "a.txt", path)
+            real = re.sub(r"\{ref\}", ref, real)
+            real = re.sub(r"\{[^}]*\}", "x1", real)
+            for query in ("", "?factory=1"):
+                for headers, body in shapes:
+                    scope = {"type": "http", "method": method, "path": real, "raw_path": real.encode(),
+                             "query_string": query[1:].encode(), "root_path": "",
+                             "headers": [(k.encode(), v.encode()) for k, v in headers.items()]}
+                    params = None
+                    if G.is_conditional(routes, scope):
+                        if len(body) > G.MAX_PEEK:
+                            continue  # the gate refuses it outright
+                        if G._is_form(scope):
+                            params = {}
+                            for k, v in parse_qsl(query[1:], keep_blank_values=True):
+                                params.setdefault(k, []).append(v)
+                            for k, v in parse_qs(body.decode("utf-8", "replace").replace(";", "&"),
+                                                 keep_blank_values=True).items():
+                                params.setdefault(k, []).extend(v)
+                    tag = G.tag_for(routes, scope, params)
+                    got = hook({"op": "http", "method": method, "path": real + query, "headers": headers}, body)
+                    if tag is None or tag.scope is None:
+                        assert got is None, (method, real, headers, body[:20])
+                        continue
+                    need = None
+                    if method == "POST":
+                        need = G.factory_need(fws, method, G.match_route(routes, scope).path,
+                                              G._match_params(routes, scope), tag)
+                    want = max(tag.scope, need[0]) if need else tag.scope
+                    assert got is not None and G.Scope[got.scope.upper()] >= want, (method, real, headers, body[:20])

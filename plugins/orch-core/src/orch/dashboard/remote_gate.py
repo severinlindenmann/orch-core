@@ -158,6 +158,15 @@ def match_route(routes, scope):
     return None
 
 
+def _match_params(routes, scope) -> dict:
+    """The path parameters of the route the router matches ({} when none)."""
+    for route in routes:
+        match, child = route.matches(scope)
+        if match is Match.FULL:
+            return child.get("path_params", {})
+    return {}
+
+
 def tag_for(routes, scope, params=None) -> Tag | None:
     """The tag of the route this scope matches; None when there is no route or no tag. A conditional tag is
     resolved with `params` (None means the parameters could not be read)."""

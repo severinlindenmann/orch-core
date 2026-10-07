@@ -48,7 +48,9 @@ def test_a_clone_child_is_merged_deployed_released_and_the_epic_closes_by_itself
     fake = ProdFake()
     lines = release_once(fws, run=fake)
     assert _states(fws, eid) == {"merge": "proven", "dev": "proven", "production": "proven"}, lines
-    assert lines[-1].startswith(f"{eid}: closed by itself"), lines
+    closed = [i for i, x in enumerate(lines) if x.startswith(f"{eid}: closed by itself")]
+    proven = [i for i, x in enumerate(lines) if x.startswith(f"{eid}: production of") and x.endswith("proven")]
+    assert closed and proven and proven[-1] < closed[0], lines  # the close follows the production proof
     assert store.load(fws, eid)[1].status == "done" and factory_close.closed_by_charter(fws, store.load(fws, eid)[1])
     merged = [a for a, *_ in fake.calls if "--match-head-commit" in a]
     assert merged and merged[0][merged[0].index("--match-head-commit") + 1] == sha  # the clone's own commit

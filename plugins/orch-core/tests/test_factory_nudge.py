@@ -972,6 +972,13 @@ def test_a_free_child_with_free_slots_says_it_starts_next_round(fws, fa, fh, hum
     assert r["state"] == "slot" and r["headline"] == "A child's session starts in the runner's next round"
 
 
+def test_a_free_child_with_every_slot_in_use_says_it_waits_for_a_slot(fws, fa, fh, human, monkeypatch):
+    eid, (cid,), d = _started(fws, fa, fh)
+    monkeypatch.setattr(fr, "concurrency", lambda ws: 0)  # no slot is free
+    r = _state(fws, eid)
+    assert r["state"] == "slot" and r["headline"] == "Waiting for a session slot"
+
+
 def test_screen_tails_on_the_run_view_only_for_this_machine(fws, fa, fh, human, pane, at):
     from test_terminals import _client as local_client
     eid, (cid,), d = _started(fws, fa, fh)

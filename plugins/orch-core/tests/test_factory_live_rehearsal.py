@@ -61,7 +61,7 @@ def test_rehearsal_merges_deploys_releases_and_closes_for_real(fws, live, human,
     eid, kids, _ = make()
     lines = release_once(fws)
     assert _states(fws, eid) == {"merge": "proven", "dev": "proven", "production": "proven"}, lines
-    assert lines[-1].startswith(f"{eid}: closed by itself")
+    assert any(x.startswith(f"{eid}: closed by itself") for x in lines), lines
     head = _g(remote, "rev-parse", "refs/heads/main")
     for k in kids:  # both children's commits are on the remote's main
         sha = _g(fws.root, "rev-parse", f"feat/{k.lower()}-work")

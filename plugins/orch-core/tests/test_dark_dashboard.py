@@ -574,7 +574,7 @@ def test_run_view_working_dark_and_the_glow(dws, fa, human, close_tasks):
     eid = _started(c, dws, "dark")
     cid = _child(fa, eid)
     html = c.get(f"/factory/{eid}").text
-    assert _chip_head(html) == ("Waiting", "Waiting for a session slot")  # launchable, no session yet
+    assert _chip_head(html) == ("Waiting", "A child's session starts in the runner's next round")  # launchable, no session yet
     assert "data-slot" in html and "one of its 3 session slots is free" in html and "is-live" not in _panel(html)
     _tick(dws, human, Fake())  # a session runs on the child now
     html = c.get(f"/factory/{eid}").text

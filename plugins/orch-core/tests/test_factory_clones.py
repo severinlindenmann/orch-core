@@ -355,7 +355,7 @@ def test_the_clone_prompt_names_the_same_orch_commands_as_the_worktree_prompt(fw
 def _to_testing(fa, cid, close_tasks):
     fa.claim(cid)
     close_tasks(fa, cid)
-    fa.set_section(cid, "Verification", "- AC1: ran the suite, green")
+    fa.set_section(cid, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
     fa.move(cid, "testing")
 
 

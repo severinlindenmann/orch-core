@@ -157,6 +157,9 @@ Terminals work from a paired device on the same routes as at the desk, each tagg
   arrive, or was rate limited, is sent again unchanged with the same `n`. Polling the snapshot adds to the count, so
   it runs only while the stream is not open, at most every 2 seconds, and never while keys are waiting or out: the
   sustained rate stays under 1.1 a second either way. A host that serves the page sets `remote: true` in its adapter.
+- Browser EventSource reconnects while the stream is bad also count as bridged requests (about one every 3
+  seconds), so typing during an outage can reach the per-device record quota after about 13 minutes; the device client
+  must back off its reconnects (tracked in #239).
 - If the stream is not open (it errored, or is reconnecting), the page shows a snapshot from
   `/terminals/<name>/snapshot`. Each poll's answer holds the screen (up to 64 KiB) and is written to the host's
   on-disk replay store for 15 minutes.

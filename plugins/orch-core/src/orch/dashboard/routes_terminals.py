@@ -284,7 +284,7 @@ REMOTE_POSTS, REMOTE_WINDOW_MS = 11, 10_000  # posts per device per window: 1.1 
 REMOTE_MAX_ITEMS, REMOTE_MAX_CHARS = 64, 2048  # one device post: items, and characters of text
 _PAGE = re.compile(r"[A-Za-z0-9_-]{4,64}")
 _DEVICE_LOCK = threading.Lock()
-MAX_PAGES = 256  # page counters kept; the oldest are forgotten first
+MAX_PAGES, MAX_PAGES_PER_DEVICE = 256, 8  # page counters kept (all, and one device's); the oldest go first
 _DEVICE_LAST: dict[tuple, int] = {}  # (device, page) -> the highest post number taken
 _DEVICE_RATE: dict = {}  # device -> its SlidingLimit
 
@@ -299,6 +299,12 @@ def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
     if not isinstance(seq, list) or len(seq) > REMOTE_MAX_ITEMS or sum(
             len(i["text"]) for i in seq if isinstance(i, dict) and isinstance(i.get("text"), str)) > REMOTE_MAX_CHARS:
         return 413, "too many keys in one post"
+    try:  # a lone surrogate cannot reach tmux: refused here, before a number is taken
+        for i in seq:
+            if isinstance(i, dict) and isinstance(i.get("text"), str):
+                i["text"].encode("utf-8")
+    except UnicodeEncodeError:
+        return 400, "text is not valid Unicode"
     from orch.remote.bridge_host.budgets import SlidingLimit  # a bridged request only: a local run never loads it
     with _DEVICE_LOCK:
         if n <= _DEVICE_LAST.get((device, page), 0):
@@ -308,6 +314,9 @@ def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
             return 429, "too many key posts: batch the keys"
         _DEVICE_LAST.pop((device, page), None)  # re-inserted last: the oldest go first
         _DEVICE_LAST[(device, page)] = n
+        mine = [k for k in _DEVICE_LAST if k[0] == device]
+        for k in mine[:max(0, len(mine) - MAX_PAGES_PER_DEVICE)]:
+            del _DEVICE_LAST[k]
         while len(_DEVICE_LAST) > MAX_PAGES:
             del _DEVICE_LAST[next(iter(_DEVICE_LAST))]
     return None

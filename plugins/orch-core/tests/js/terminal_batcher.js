@@ -83,6 +83,14 @@ const rig = (answers) => {
   for (let i = 0; i < 4; i++) await r.tick();
   assert.deepStrictEqual(r.sent.map((s) => s.items.length), [64, 64, 22]);
 
+  // an emoji at the 2048 boundary is never cut in half
+  r = rig([]);
+  const emoji = "x".repeat(2047) + "\u{1F600}" + "yz";
+  r.b.push({ text: emoji });
+  for (let i = 0; i < 3; i++) await r.tick();
+  assert.strictEqual(r.sent.map((s) => s.items.map((it) => it.text).join("")).join(""), emoji);
+  for (const s of r.sent) for (const it of s.items) assert(!/[\uD800-\uDBFF]$/.test(it.text) && !/^[\uDC00-\uDFFF]/.test(it.text));
+
   // active() is true while keys wait or are out, so the snapshot poll stays quiet
   r = rig([0, 204]);
   assert.strictEqual(r.b.active(), false);

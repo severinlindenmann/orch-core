@@ -88,8 +88,12 @@
       const room = MAX_POST_CHARS - chars;
       if (room <= 0) break;
       if (it.text.length <= room) { items.push(queue.shift()); chars += it.text.length; continue; }
-      items.push({ text: it.text.slice(0, room) });
-      queue[0] = { text: it.text.slice(room) };
+      let cut = room;
+      const c = it.text.charCodeAt(cut - 1);
+      if (c >= 0xD800 && c <= 0xDBFF) cut -= 1;  // never cut an emoji (a surrogate pair) in half
+      if (cut <= 0) break;
+      items.push({ text: it.text.slice(0, cut) });
+      queue[0] = { text: it.text.slice(cut) };
       break;
     }
     return items;

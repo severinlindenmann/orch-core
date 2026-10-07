@@ -351,3 +351,21 @@ def test_a_route_the_gate_does_not_know_is_refused_by_the_hook():
     for method, path in (("GET", "/no/such/page"), ("POST", "/terminals/x/other"), ("DELETE", "/terminals/x/keys"),
                          ("POST", "/workspace/remote/offer")):
         assert HOOK(meta(method, path), b"") is None, (method, path)
+
+
+def test_a_lone_surrogate_is_refused_with_400_and_takes_no_number(app, tmux):
+    bad = {"seq": [{"text": "a\ud83d"}], "page": "pageone", "n": 5}
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, bad)[0] == 400
+    assert keys(app, 5, "ok") == 204  # the number was not used up
+    assert tmux.typed == ["ok"]
+
+
+def test_one_device_cannot_push_other_devices_page_counters_out(app, tmux):
+    routes_terminals._DEVICE_LAST.clear()  # noqa: SLF001
+    routes_terminals._DEVICE_LAST[("dev_other", "pageother")] = 9  # noqa: SLF001
+    for i in range(routes_terminals.MAX_PAGES_PER_DEVICE + 5):
+        routes_terminals._DEVICE_LAST.clear() if False else None  # noqa: SLF001
+        assert keys(app, 1, "x", page=f"page{i:04d}") in (204, 429)
+    mine = [k for k in routes_terminals._DEVICE_LAST if k[0] == "dev_abc123"]  # noqa: SLF001
+    assert len(mine) <= routes_terminals.MAX_PAGES_PER_DEVICE
+    assert ("dev_other", "pageother") in routes_terminals._DEVICE_LAST  # noqa: SLF001

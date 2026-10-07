@@ -556,7 +556,7 @@ def test_an_operate_device_cannot_change_things_under_a_running_factory_epic(con
     async def main():
         loop = make_loop(fws, host, app=create_app(fws, TOKEN))
         task = await started(loop)
-        cases = (("approve", b"gate=requirements&seen=x", "assertion_required"), ("move", b"to=backlog", "assertion_required"),
+        cases = (("approve", b"gate=requirements&seen=x", "forbidden_scope"), ("move", b"to=backlog", "forbidden_scope"),
                  ("edit", b"text=changed", "forbidden_scope"))
         rids = [fake.request(dev.envelope(http("POST", f"/t/{child.id}/{action}", FORM), body))
                 for action, body, _ in cases]

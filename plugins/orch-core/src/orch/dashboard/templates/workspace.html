@@ -11,7 +11,8 @@
 <div class="page-head">
   <div>
     <h1>Workspace &amp; addons</h1>
-    <p>{{ customer }} · {{ prefix }} · {{ repo_count }} repositories · <a href="/workspace?tab=setup#about">orch {{ orch_version }}</a></p>
+    <p>{{ customer }} · {{ prefix }} · {{ repo_count }} repositories · <a href="/workspace?tab=setup#about">orch {{ orch_version }}</a>
+      {%- for h in harnesses if h.has_update %} · <a href="/workspace?tab=setup#harnesses">{{ h.label }} {{ h.latest }} available</a>{% endfor %}</p>
   </div>
 </div>
 <nav class="tabs ws-tabs" aria-label="Workspace sections">
@@ -64,6 +65,18 @@
       <p>Python <b>{{ about.python }}</b> · <span class="path">{{ about.executable }}</span></p>
       <p class="muted">{% if about.kind == "git release" %}<code>orch update</code> installs the newest release tag of that repository.{% elif about.kind == "git clone" %}<code>orch update</code> pulls that clone.{% else %}<code>orch update</code> cannot update this install; the reason is above.{% endif %}
         {% if about.next_check %} Next automatic check {{ about.next_check }}.{% endif %}</p>
+    </section>
+
+    <section class="card" id="harnesses" aria-labelledby="harnesses-h">
+      <h2 id="harnesses-h">Agent harnesses</h2>
+      {% for h in harnesses %}
+      <p><b>{{ h.label }}</b> {% if h.has_update %}{{ ui.status("warn", h.installed ~ " → " ~ h.latest) }}{% elif h.installed and h.latest %}{{ ui.status("ok", h.installed) }}{% else %}{{ h.installed or "" }}{% endif %}
+        <br><span class="muted">{{ h.line }}</span></p>
+      {% if h.has_update %}<form method="post" action="/workspace/harnesses/{{ h.name }}/update"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Update {{ h.label }}</button></form>{% endif %}
+      {% else %}<p class="empty">{% if harnesses_checked %}No agent harness found on PATH.{% else %}Not checked yet.{% endif %}</p>
+      {% endfor %}
+      <form method="post" action="/workspace/harnesses/check"><button type="submit" class="btn">Check for updates</button></form>
+      <p class="muted">{% if harnesses_checked %}Last checked {{ harnesses_checked }}. {% endif %}<code>orch serve</code> and <code>orch update</code> check these too and offer the update with orch's own.</p>
     </section>
 
     <section class="card" aria-labelledby="agent-start-h">

@@ -167,7 +167,7 @@ def test_orch_update_always_says_what_it_checked_and_found(clone):
     upstream, repo = clone
     t = Talk("")
     t.run(check_only=False, force=True)
-    assert t.said[0] == f"checking for updates: orch-core at {upstream} (main) and the custom addons …"
+    assert t.said[0] == f"checking for updates: orch-core at {upstream} (main), the custom addons and the agent harnesses …"
     assert t.said[1].startswith("orch-core: up to date (commit ")
     assert t.said[2:] == ["addons: no custom addons installed", "nothing to update"]
     t.run(check_only=True, force=True)

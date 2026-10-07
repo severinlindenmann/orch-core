@@ -23,6 +23,9 @@ def _clean_env(monkeypatch, tmp_path_factory):
     # Tests that exercise ancestry detection replace this with their own chain.
     import orch.actor
     monkeypatch.setattr(orch.actor, "process_chain", lambda: [])
+    # The update check must not run the developer's real claude/codex/brew or reach npm; tests opt in with fakes.
+    import orch.harness_update
+    monkeypatch.setattr(orch.harness_update, "harness_bins", lambda: {})
 
 
 @pytest.fixture(autouse=True)

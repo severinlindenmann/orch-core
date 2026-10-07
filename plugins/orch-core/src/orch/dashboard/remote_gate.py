@@ -113,6 +113,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     # the switcher probe: loopback only, never through the bridge
     ("GET", "/__orch/status"): NO,
     ("POST", "/workspace/addons/check-updates"): NO, ("POST", "/workspace/addons/update-all"): NO,
+    ("POST", "/workspace/harnesses/check"): NO, ("POST", "/workspace/harnesses/{name}/update"): NO,
     ("POST", "/workspace/addons/{name}/enable"): NO, ("POST", "/workspace/addons/{name}/background"): NO,
     ("POST", "/workspace/addons/{name}/trust"): NO, ("POST", "/workspace/addons/{name}/settings"): NO,
     ("POST", "/workspace/phones/pair"): NO, ("POST", "/workspace/phones/{phone_id}/revoke"): NO,

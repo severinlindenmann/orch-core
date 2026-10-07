@@ -2261,12 +2261,26 @@ def _decode_ansi_c(cmd: str) -> str:
     return _ANSI_C.sub(one, cmd)
 
 
-def _bash(ws, cmd: str, cwd=None, _decoded: bool = False) -> Decision:
-    cmd = re.sub(r"\\\r?\n", "", cmd)  # a backslash-newline is nothing to the shell: `or\<nl>ch` is `orch`
+_CONTINUATION = re.compile(r"'[^']*'|\\\n")
+
+
+def _join_continuations(cmd: str) -> str:
+    """`cmd` with every backslash-newline outside single quotes removed, as the shell does outside a comment. The
+    guard cannot tell a comment from code here, so it judges the raw text and this view, never only this one."""
+    return _CONTINUATION.sub(lambda m: m.group(0) if m.group(0) != "\\\n" else "", cmd)
+
+
+def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False) -> Decision:
+    if not _joined and "\\\n" in cmd:
+        joined = _join_continuations(cmd)
+        if joined != cmd:
+            d = _bash(ws, joined, cwd, _decoded, _joined=True)
+            if not d.allow:
+                return d
     if not _decoded and "$'" in cmd:
         decoded = _decode_ansi_c(cmd)
         if decoded != cmd:
-            d = _bash(ws, decoded, cwd, _decoded=True)  # judged as the shell would run it, too
+            d = _bash(ws, decoded, cwd, _decoded=True, _joined=_joined)  # judged as the shell would run it, too
             if not d.allow:
                 return d
     if _reaches_pairing_keys(cmd, cwd):

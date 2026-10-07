@@ -220,6 +220,21 @@ def test_shell_tokenization_tricks_stay_denied(ws, cmd):
     _check(ws, cmd, False)
 
 
+CONTINUATION_AND_COMMENTS = [
+    'true # \\\n orch approve L-1',
+    "echo hi # c \\\no''rch approve L-1",
+    'true # \\\n or\\ch approve L-1',
+    'true # \\\norch approve L-1',
+    'true # x \\\n\norch approve L-1',
+    "echo 'a \\\n' ; orch approve L-1",
+]
+
+
+@pytest.mark.parametrize("cmd", CONTINUATION_AND_COMMENTS)
+def test_a_backslash_does_not_continue_a_comment(ws, cmd):
+    _check(ws, cmd, False)
+
+
 def test_escaped_quotes_inside_one_message_are_still_one_message(ws):
     ws.config["git"]["agent_may"]["commit"] = True
     _check(ws, 'git commit -m "a\\" ; orch approve L-1 ; \\""', True)

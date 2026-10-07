@@ -2608,13 +2608,64 @@ def _writes_human_script(cmd: str) -> bool:
     return writes_file and any(_human_text(t) for t in texts)
 
 
+def _bash_view(cmd: str, join_single: bool = False) -> str:
+    """`cmd` as bash reads its lines: a comment (a `#` that starts a word, outside quotes) runs to the end of its line
+    and a backslash does not continue it; a backslash-newline outside quotes and comments joins the lines."""
+    out, i, n, quote = [], 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "\\" and join_single and cmd.startswith("\n", i + 1):
+                i += 2  # a payload for an inner shell (`bash -c '…'`) reads this continuation
+                continue
+            if c == "'":
+                quote = None
+            out.append(c)
+            i += 1
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                if cmd[i + 1] == "\n":
+                    i += 2
+                    continue
+                out.append(cmd[i:i + 2])
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            if cmd[i + 1] == "\n":
+                i += 2
+            else:
+                out.append(cmd[i:i + 2])
+                i += 2
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+        elif c == "#" and (not out or out[-1] in " \t\n;&|("):
+            j = cmd.find("\n", i)
+            j = n if j == -1 else j
+            out.append(cmd[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False) -> Decision:
     if not _joined and "\\\n" in cmd:
-        joined = _join_continuations(cmd)
-        if joined != cmd:
-            d = _bash(ws, joined, cwd, _decoded, _joined=True)
-            if not d.allow:
-                return d
+        # Three views: the raw text, every continuation joined, and bash's own reading (comments end at the newline,
+        # then the continuations outside them join). A line is allowed only if all of them are.
+        # The fourth joins inside single quotes too: `bash -c 'or\<nl>ch approve'` is read again by the inner shell.
+        for view in (_join_continuations(cmd), _bash_view(cmd), cmd.replace("\\\n", ""),
+                     _bash_view(cmd, True)):
+            if view != cmd:
+                d = _bash(ws, view, cwd, _decoded, _joined=True)
+                if not d.allow:
+                    return d
     if not _decoded and "$'" in cmd:
         decoded = _decode_ansi_c(cmd)
         if decoded is None:

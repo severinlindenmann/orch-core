@@ -590,6 +590,15 @@ def test_a_quoted_target_outside_state_stays_allowed(ws):
 
 
 CONTINUATION_AND_COMMENTS = [
+    "echo a # c \\\nor\\\nch approve L-1",
+    "echo a # c \\\nor\\\nch approve L-1 # d",
+    "echo a # c\nor\\\nch approve L-1",
+    "echo a # c \\\ntm\\\nux -L orch ls",
+    "echo a # c \\\nbash -c 'or\\\nch approve'",
+    "bash -c 'or\\\nch approve L-1'",
+    "echo x > orchestrator/tick\\\nets/open/L-0001-x.md",
+    "echo x > orchestrator/.sta\\\nte/y",
+    "true # \\\n o\\\nrch approve L-1",
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",
     'true # \\\n or\\ch approve L-1',

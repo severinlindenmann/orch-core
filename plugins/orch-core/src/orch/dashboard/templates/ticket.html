@@ -304,7 +304,8 @@
         </form>
         <form method="post" action="/t/{{ t.id }}/artifacts" enctype="multipart/form-data" class="stack" id="upload">
           <label for="upload-files">Add files</label>
-          <input id="upload-files" type="file" name="files" multiple required>
+          <input id="upload-files" type="file" name="files" multiple required data-dropzone data-max-bytes="{{ upload_max }}">
+          <span class="muted nojs-files">Up to {{ (upload_max / 1048576)|round(1)|replace('.0', '') }} MB per file.</span>
           <button type="submit" class="btn">Upload</button>
         </form>
         {% if start_box and start_box.disabled %}

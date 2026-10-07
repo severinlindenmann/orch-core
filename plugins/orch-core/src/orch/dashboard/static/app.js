@@ -791,21 +791,7 @@
     if (window.matchMedia && window.matchMedia("(min-width: 900px)").matches) {
       root.querySelectorAll("details[data-wide-open]").forEach((d) => { d.open = true; });
     }
-    // Paste screenshots into the new-ticket form.
-    const pasteArea = root.querySelector("[data-paste-target]");
-    if (pasteArea && window.DataTransfer) {
-      const input = document.getElementById(pasteArea.dataset.pasteTarget);
-      pasteArea.addEventListener("paste", (event) => {
-        const images = [...(event.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
-        if (!images.length || !input) return;
-        const all = new DataTransfer();
-        [...input.files, ...images].forEach((f) => all.items.add(f));
-        input.files = all.files;
-        event.preventDefault();
-        const note = document.getElementById("paste-count");
-        if (note) note.textContent = `${all.files.length} image(s) attached`;
-      });
-    }
+    // Pasting screenshots and dropping files: files.js (inputs marked data-dropzone).
     // <details data-remember="name">: closed by default (server-rendered); this browser remembers
     // whether it was opened. Storage may be off (private mode, blocked): then it just stays closed.
     root.querySelectorAll("details[data-remember]").forEach((details) => {

@@ -273,6 +273,11 @@ def _live_version(ws) -> str:
         return ""
 
 
+def _upload_max(ws) -> int:
+    from orch.core import artifacts
+    return artifacts.max_bytes(ws)
+
+
 def page(request, name: str, status_code: int = 200, *, nav: str = "", title: str = "", **ctx):
     ws = request.app.state.ws
     dashboard = ws.config.get("dashboard", {})
@@ -293,6 +298,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "needs_count": needs_count,
         "setup_count": _setup_count(ws, ctx.get("checks")) + (runtime.attention() if runtime else 0),
         "nav": nav,
+        "upload_max": _upload_max(ws),  # the per-file artifact limit the upload routes enforce, shown by the file pickers
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request

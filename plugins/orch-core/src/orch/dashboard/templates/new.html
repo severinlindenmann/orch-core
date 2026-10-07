@@ -16,7 +16,7 @@
 </div>
 {% if problem %}<p class="flash err" role="alert">{{ problem }}{% if problem_href %} <a class="lnk" href="{{ problem_href }}">Open it</a>{% endif %}</p>{% endif %}
 <div class="grid-2">
-  <form class="card form-card" method="post" action="/new" enctype="multipart/form-data" data-paste-target="files"
+  <form class="card form-card" method="post" action="/new" enctype="multipart/form-data"
         data-new-form data-confirm-build="start" data-factory-confirm="{{ limit_text }}">
     <input type="hidden" name="once" value="{{ once }}">
     <label class="field-col" for="title">Title
@@ -55,8 +55,9 @@
         <input id="external" name="external" value="{{ values.get('external', '') }}" placeholder="ABC-123">
       </label>
     </div>
-    <label class="field-col" for="ask"><span>Ask <span class="muted only-ticket">(markdown; paste screenshots here)</span>{% if factory_on %}<span class="muted only-factory">(becomes the epic's Requirements, word for word)</span>{% endif %}</span>
-      <textarea id="ask" name="ask" rows="6" placeholder="What should be done and why? Links, examples, constraints.">{{ values.get('ask', '') }}</textarea>
+    <label class="field-col" for="ask"><span>Ask <span class="muted only-ticket">(markdown)</span>{% if factory_on %}<span class="muted only-factory">(becomes the epic's Requirements, word for word)</span>{% endif %}</span>
+      <textarea id="ask" name="ask" rows="6" placeholder="What should be done and why? Links, examples, constraints." aria-describedby="ask-paste-hint">{{ values.get('ask', '') }}</textarea>
+      <span class="muted js-only" id="ask-paste-hint" data-paste-hint>You can paste screenshots here (Ctrl+V or Cmd+V): they are attached as files below.</span>
     </label>
     {% if factory_on %}
     <label class="field-col only-factory" for="done_when"><span>Done when <span class="muted">(becomes the epic's Acceptance criteria)</span></span>
@@ -73,10 +74,12 @@
     <div class="field-col only-dark">{{ fx.close_choice("new") }}</div>
     {% endif %}
     {% endif %}
-    <label class="field-col" for="files">Screenshots and files
-      <input id="files" type="file" name="files" multiple>
-    </label>
-    <p id="paste-count" class="muted"></p>
+    {#- files.js turns the input into a drop zone (drop, Choose files, paste into Ask); without JS it is the native input. -#}
+    <div class="field-col">
+      <label for="files">Screenshots and files</label>
+      <input id="files" type="file" name="files" multiple data-dropzone data-paste-from="ask" data-max-bytes="{{ upload_max }}">
+      <span class="muted nojs-files">Up to {{ (upload_max / 1048576)|round(1)|replace('.0', '') }} MB per file.</span>
+    </div>
     <div><button type="submit" class="btn btn-primary"><span class="only-ticket">Create ticket</span>{% if factory_on %}<span class="only-factory only-plain">Start AI Factory</span><span class="only-dark">Start Dark AI Factory</span>{% endif %}</button></div>
   </form>
   <aside>

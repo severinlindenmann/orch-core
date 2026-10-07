@@ -1416,6 +1416,7 @@ def guard(
     if not isinstance(payload, dict):
         return
     start = Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
+    decision = None
     try:
         ws = Workspace.open(start)
     except UsageError:
@@ -1424,17 +1425,19 @@ def guard(
         typer.echo(f"orch guard: workspace config problem, allowing ({e.message})", err=True)
         return
     except Exception as e:
-        typer.echo(f"orch guard: internal error, allowing ({type(e).__name__}: {e})", err=True)
-        return
-    try:
-        decision = guard_mod.evaluate(ws, payload)
-    except Exception as e:
+        # fail closed: if the workspace cannot be opened for a reason we do not know, nothing is judged, so nothing passes
+        decision = guard_mod.Decision(False, f"internal error opening workspace: {type(e).__name__}: {e}; "
+                                             "command refused (fail-closed)")
+    if decision is None:
         try:
-            _guard_error(ws)  # leave a trace
-        except Exception:
-            pass
-        # fail closed: a bug in the guard must never turn into an allow
-        decision = guard_mod.Decision(False, f"guard error: {type(e).__name__}: {e}; command refused (fail-closed)")
+            decision = guard_mod.evaluate(ws, payload)
+        except Exception as e:
+            try:
+                _guard_error(ws)  # leave a trace
+            except Exception:
+                pass
+            # fail closed: a bug in the guard must never turn into an allow
+            decision = guard_mod.Decision(False, f"guard error: {type(e).__name__}: {e}; command refused (fail-closed)")
     if not decision.allow:
         reason = f"orch guard: {decision.reason}"
         if hook_json:

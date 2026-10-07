@@ -223,16 +223,33 @@ def test_cli_guard_fails_closed_even_when_the_log_cannot_be_written(ws_root, ws,
     assert _run_guard(monkeypatch, {**bash("ls"), "cwd": str(ws_root)}) == 2
 
 
-def test_cli_guard_allows_on_workspace_open_failure(ws_root, monkeypatch, capsys):
+def test_cli_guard_fails_closed_on_workspace_open_failure(ws_root, monkeypatch, capsys):
     import orch.core.workspace as workspace_mod
 
     def boom(start=None):
         raise OSError("disk fell off")
 
     monkeypatch.setattr(workspace_mod.Workspace, "open", staticmethod(boom))
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
+    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 2
     err = capsys.readouterr().err
-    assert "orch guard: internal error, allowing" in err and "OSError" in err
+    assert "orch guard: internal error opening workspace: OSError: disk fell off; command refused (fail-closed)" in err
+
+
+def test_cli_guard_hook_json_fails_closed_on_workspace_open_failure(ws_root, monkeypatch, capsys):
+    import orch.core.workspace as workspace_mod
+
+    monkeypatch.setattr(workspace_mod.Workspace, "open",
+                        staticmethod(lambda start=None: (_ for _ in ()).throw(RuntimeError("bug"))))
+    assert _run_guard_json(monkeypatch, {**bash("ls"), "cwd": str(ws_root)}) == 0
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["permissionDecision"] == "deny" and "opening workspace" in out["permissionDecisionReason"]
+
+
+def test_cli_guard_still_allows_a_folder_that_is_not_a_workspace(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(tmp_path)}) == 0
+    assert _run_guard_json(monkeypatch, {**bash("rm -rf x"), "cwd": str(tmp_path)}) == 0
+    assert capsys.readouterr().out == ""
 
 
 # -- final review fixes ------------------------------------------------------------------

@@ -1,0 +1,29 @@
+/* The one confirm dialog (confirm.js). With confirm.js loaded, the no-JS fallbacks (typed words, a reason asked in
+   the form) are hidden: the dialog asks instead and fills them in. */
+html.confirm-js .nojs-only { display: none !important; }
+
+dialog.confirm-dialog { padding: 0; margin: auto; border: 1px solid var(--line); width: min(460px, calc(100vw - 32px));
+                        max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow: auto; }
+.confirm-dialog .cd-in { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--dialog-pad); }
+.confirm-dialog h2 { margin: 0; font: var(--type-section); }
+.confirm-dialog .cd-sum { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.confirm-dialog .cd-head { margin: var(--s-2) 0 0; font: var(--type-meta); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.confirm-dialog .cd-items { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.confirm-dialog .cd-items li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px;
+                               background: var(--surface2); border: 1px solid transparent; overflow-wrap: anywhere; }
+.confirm-dialog .cd-items li.is-care { background: var(--warn-bg); border-color: var(--warn-mark); }
+.confirm-dialog .cd-items svg { flex: none; width: 18px; height: 18px; margin-top: 2px; fill: none; stroke: var(--muted);
+                                stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.confirm-dialog .cd-items li.is-care svg { stroke: var(--warn-fg); }
+.confirm-dialog .cd-stays { margin: 0; font-size: .9em; color: var(--muted); }
+.confirm-dialog .cd-field textarea { width: 100%; box-sizing: border-box; }
+.confirm-dialog .cd-acts { display: flex; flex-wrap: wrap; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-2); }
+.confirm-dialog .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 480px) {
+  .confirm-dialog .cd-acts { flex-direction: column-reverse; }
+  .confirm-dialog .cd-acts .btn { width: 100%; }
+}
+
+/* A long explanation folded under one short line ("What does this do?"). */
+.what-does details { margin-top: 4px; }
+.what-does summary { cursor: pointer; font-size: .9em; }

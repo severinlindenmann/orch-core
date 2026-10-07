@@ -1602,6 +1602,11 @@ in testing:
   in backticks, a test name (`test_x`, `name.test.ts`, `pytest path::name`), a URL, a path or file with a known
   extension, or a number next to a unit (`12 passed`, `3 rows`, `40 ms`). A bare number or a slash in prose is not
   concrete.
+- **Artifact receipts.** The strongest proof is a file orch itself recorded: `- AC2: artifact <name>` (more text may
+  follow) counts as concrete when `<name>` is an artifact of that child added with `orch artifact add`, its recorded
+  sha256 still matches the bytes on disk and the file is not empty, whatever its extension. A line that claims an
+  artifact that does not resolve so (another ticket's, a changed, empty or missing file) proves nothing, even when its
+  name looks like a file; doubt words still block it.
 - A child with no acceptance criteria never closes by itself.
 
 It closes on what the agents wrote under these rules: **nothing is executed or verified by the factory** (and with no

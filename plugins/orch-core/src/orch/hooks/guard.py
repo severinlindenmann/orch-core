@@ -1321,8 +1321,48 @@ _RUNS_ITS_ARGS = frozenset({"awk", "gawk", "mawk", "sed", "ssh", "watch", "expec
 def _relative_glob(plain: str) -> bool:
     """`plain` (quoted text blanked) has an unquoted word with a wildcard that the shell expands in the working
     directory: not an option, an absolute or `~`/`$` path (judged on its own), or a URL's `?`."""
-    return any(_GLOB.search(w) and not w.startswith(("/", "~", "$", "-")) and "://" not in w
+    return any(_GLOB.search(w) and not w.startswith(("/", "~", "$HOME", "${HOME}", "-")) and "://" not in w
                for w in _REL_GLOB_SPLIT.split(plain))
+
+
+_EXPANSION = re.compile(r"\$[A-Za-z_{(@*#?$!0-9-]|`")
+_HOME_VAR = re.compile(r"\$\{?HOME\}?")
+
+
+def _expands_to_glob(raw_rest: str) -> bool:
+    """`raw_rest` (quoted text kept) holds a variable, `$( )` or backtick expansion and a wildcard character anywhere,
+    quoted or not: the expansion can carry the wildcard (`x='.c*/orch/r*'; cat $x`, `cat $PWD/.c*/orch/r*`)."""
+    return bool(_GLOB.search(raw_rest) and _EXPANSION.search(_HOME_VAR.sub("", raw_rest)))
+
+
+_GIT_VALUE_FLAGS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"})
+_GIT_READ_SUBS = frozenset({"grep", "archive", "ls-files", "ls-tree", "whatchanged"})
+
+
+def _git_reads_dir(rest: str) -> bool:
+    """A command of `rest` is `git grep`, `archive`, `ls-files`, `ls-tree`, `log -p` or `diff --no-index`: git reads
+    files and directories without a path of its own naming them, from the working directory down."""
+    if not _GIT_WORD.search(rest):
+        return False
+    for seg in _command_segments(rest):
+        words, _ = _command(seg)
+        while words and os.path.basename(words[0]) in _READER_WRAPPERS:
+            words = [w for w in words[1:] if not w.startswith("-") and not (words[0] == "env" and "=" in w)]
+        if not words or os.path.basename(words[0]) != "git":
+            continue
+        i = 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 2 if words[i] in _GIT_VALUE_FLAGS else 1
+        sub, args = (words[i] if i < len(words) else ""), words[i + 1:]
+        if (sub in _GIT_READ_SUBS or (sub == "log" and any(a in ("-p", "--patch", "-u") for a in args))
+                or (sub in ("diff", "show") and "--no-index" in args) or "--no-index" in args):
+            return True
+    return False
+
+
+def _reads_a_dir(text: str) -> bool:
+    """`text` runs a recursive reader or archiver (see _runs_dir_reader), or git as one."""
+    return bool((_DIR_READER.search(text) and _runs_dir_reader(text)) or _git_reads_dir(text))
 
 
 def _runs_dir_reader(rest: str) -> bool:
@@ -1344,13 +1384,14 @@ def _runs_dir_reader(rest: str) -> bool:
     return False
 
 
-def _reads_dir_wholesale(rest: str, plain: str | None) -> bool:
+def _reads_dir_wholesale(rest: str, plain: str | None, raw_rest: str = "") -> bool:
     """After a `cd` into the config dir or a dir above it, `rest` expands a relative wildcard or runs a recursive
     reader. `plain` is the whole command with quoted text blanked, from before the quote-stripping normalisation, so
     text only a quoted string held (a jq filter, a URL, prose) is not read as a glob or a reader."""
     if plain is None:
         return bool(_GLOB.search(rest) or _DIR_READER.search(rest))
-    return _relative_glob(plain) or (bool(_DIR_READER.search(plain)) and _runs_dir_reader(rest))
+    return (_relative_glob(plain) or _expands_to_glob(raw_rest) or (bool(_DIR_READER.search(plain)) and _runs_dir_reader(rest))
+            or _git_reads_dir(rest))
 
 
 def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
@@ -1361,7 +1402,7 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
     import os
 
     dirs, ancestors = _config_paths()
-    reader = bool((_DIR_READER.search(cmd) and _runs_dir_reader(cmd)) or _SYMLINK.search(cmd))
+    reader = bool(_reads_a_dir(cmd) or _SYMLINK.search(cmd))
     for n, m in enumerate(_PATH_TOKEN.finditer(cmd)):
         if n > 200:
             break
@@ -1377,7 +1418,7 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
         path = _expand_path_token(target, cwd)
         if path is not None and _path_hits(path, ancestors):
             rest = _unquoted(cmd[m.end():])
-            if _reads_dir_wholesale(rest, plain):
+            if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
                 return True
     return False
 
@@ -1389,13 +1430,13 @@ def _reaches_pairing_keys_1(cmd: str, plain: str | None = None) -> bool:
         return True
     glob_in_dir, dir_itself = _config_dir_res(cmd)
     if glob_in_dir.search(cmd) or (dir_itself.search(cmd) and (
-            (_DIR_READER.search(cmd) and _runs_dir_reader(cmd)) or _SYMLINK.search(cmd))):
+            _reads_a_dir(cmd) or _SYMLINK.search(cmd))):
         return True
     for m in _CD.finditer(cmd):  # `cd ~/.config/orch && cat *` or `... && grep -r key .`
         target = next(g for g in m.groups() if g is not None)
         if dir_itself.search(target + " "):
             rest = _unquoted(cmd[m.end():])
-            if _reads_dir_wholesale(rest, plain):
+            if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
                 return True
     return False
 
@@ -1808,9 +1849,31 @@ def _cwd_in_state(ws, cwd) -> bool:
 
 def _ticket_file_re(ws) -> re.Pattern:
     prefix = re.escape(str(ws.config["id"]["prefix"]))
-    # not a note kept in the workspace's scratch folders (`orchestrator/temporary/L-0004-plan.md`): tickets live under
-    # tickets/<status>/, and a path that goes through tickets/ or .state/ is judged by _names_state_path
-    return re.compile(rf"(?<!temporary/)(?<!artifacts/)\b{prefix}-\d+[-\w.]*\.md\b")
+    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b")
+
+
+# A note kept in the workspace's scratch folders, spelled out in full (`orchestrator/temporary/L-0004-plan.md`): no
+# wildcard, brace, variable, quote or `..`, so it cannot be a ticket file whatever its name looks like.
+_SCRATCH_NOTE = re.compile(r"(?:[\w.+@~-]+/)*orchestrator/(?:temporary|artifacts)/[\w-][\w.-]*\.md")
+_PATH_SPECIAL = re.compile(r"[*?\[{$`'\"\\]")
+
+
+def _names_ticket_file(ws, cmd: str) -> bool:
+    """`cmd` names a file called like a ticket (`L-0004-x.md`), except one spelled out in full under
+    orchestrator/temporary or orchestrator/artifacts. When such a note is named, any other path word of the line
+    with a wildcard, brace, variable or quote could still lead into the ticket folder: that counts as a hit."""
+    spans = _word_spans(cmd)
+    notes: set[tuple[int, int]] = set()
+    for m in _ticket_file_re(ws).finditer(cmd):
+        a, b = next(((a, b) for a, b in spans if a <= m.start() < b), (m.start(), m.end()))
+        word = _PREFIX_ASSIGN.sub("", cmd[a:b])
+        if len(word) > 2 and word[0] == word[-1] and word[0] in "'\"" and not _PATH_SPECIAL.search(word[1:-1]):
+            word = word[1:-1]
+        if _SCRATCH_NOTE.fullmatch(word) and ".." not in word.split("/"):
+            notes.add((a, b))
+            continue
+        return True
+    return any((a, b) not in notes and "/" in cmd[a:b] and _PATH_SPECIAL.search(cmd[a:b]) for a, b in spans) if notes else False
 
 
 # Commands that can neither move, link, copy a link nor change into a folder, nor run another program: with only these
@@ -1938,7 +2001,7 @@ def _touches_state(ws, cmd: str, cwd) -> bool:
         _names_state_path(ws, cmd, cwd)
         or _cwd_in_state(ws, cwd)
         or _cd_targets_state(cmd)
-        or _ticket_file_re(ws).search(cmd)
+        or _names_ticket_file(ws, cmd)
     )
 
 

@@ -73,3 +73,37 @@ DENIED = [
 @pytest.mark.parametrize("cmd", DENIED)
 def test_real_accesses_are_still_denied(ws, cmd):
     assert not _bash(ws, cmd).allow, cmd
+
+
+BYPASSES = [
+    # a ticket file written through an expansion that only ends in temporary/ or artifacts/
+    "echo x > orchestrator/t*/open/artifacts/L-0001-x.md",
+    "echo x > orchestrator/tick{ets}/open/artifacts/L-0001-x.md",
+    "echo x > orchestrator/\"tick\"ets/open/artifacts/L-0001-x.md",
+    "d=tickets; echo x > orchestrator/$d/open/artifacts/L-0001-x.md",
+    "cd orchestrator; echo x > t*/open/artifacts/L-0001-x.md",
+    "cd orchestrator; cd t*; echo x > artifacts/L-0001-x.md",
+    "echo x > orchestrator/*/open/temporary/L-0001-x.md",
+    "cd orchestrator; sed -i s/a/b/ t*/open/artifacts/L-0001-x.md",
+    "rm orchestrator/t*/open/temporary/L-0001-x.md",
+    "mv orchestrator/temporary/L-0001-x.md orchestrator/t*/open/",
+    "cp orchestrator/temporary/L-0001-x.md orchestrator/tick*/open/",
+    # the config dir read after a cd through expansions
+    "cd ~ && cat $PWD/.c*/orch/r*",
+    "cd ~ && cat $(pwd)/.c*/orch/r*",
+    "cd ~ && cat ../$(basename $PWD)/.c*/orch/r*",
+    "cd ~ && x='.c*/orch/r*'; cat $x",
+    "cd ~ && echo \"$(<.c*/orch/r*)\"",
+    # git as a recursive reader
+    "cd ~ && git grep -r key .",
+    "cd ~ && git grep -r key --no-index .config",
+    "cd ~ && git grep --no-index key",
+    "cd ~ && git archive HEAD .config",
+    "cd ~; git ls-files -o .config",
+    "cd ~ && git log -p --all -- .config",
+]
+
+
+@pytest.mark.parametrize("cmd", BYPASSES)
+def test_relaxations_do_not_open_bypasses(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd

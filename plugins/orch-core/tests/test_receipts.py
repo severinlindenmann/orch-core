@@ -2,10 +2,11 @@
 import subprocess
 
 from orch.core.receipts import CUT, run_steps
+from conftest import init_repo
 
 
 def _git(path):
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    init_repo(path)
     (path / "a.txt").write_text("x")
     subprocess.run(["git", "-C", str(path), "add", "."], check=True)
     subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],

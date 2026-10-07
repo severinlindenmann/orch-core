@@ -346,6 +346,8 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         # spec §8: "(N) " in the tab title while N blocking items wait (the same count as the menu badge)
         "page_title_prefix": f"({needs_count}) " if needs_count > 0 else "",
         "shortcuts": _shortcuts(ws),
+        # "Widgets for this section" links to authoring docs: shown only on request (dashboard.authoring_hints)
+        "authoring_hints": dashboard.get("authoring_hints") is True,
         "density": _density(ws),
         # The page's own address, for app.js: the dashboard never reads it back from the address bar.
         "here": request.url.path + ("?" + request.url.query if request.url.query else ""),

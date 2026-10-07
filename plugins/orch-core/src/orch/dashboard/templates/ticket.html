@@ -58,12 +58,10 @@
 {% macro changes_form(gate) %}{% if gate not in changes_shown.gates %}{% set _ = changes_shown.gates.append(gate) %}
 <details class="ym-more" id="{{ gate }}-changes">
   <summary class="btn btn-quiet">Request changes…</summary>
-  <form method="post" action="/t/{{ t.id }}/request-changes" class="stack" data-delayed-send="Sending your change request to {{ t.id }}">
+  <form method="post" action="/t/{{ t.id }}/request-changes" enctype="multipart/form-data" class="stack" data-composer data-delayed-send="Sending your change request to {{ t.id }}">
     <input type="hidden" name="gate" value="{{ gate }}">
     <input type="hidden" name="seen" value="{{ gate_views[gate].seen }}">
-    <label for="{{ gate }}-changes-message">Tell the agent what to change in the {{ gate }}.</label>
-    <input id="{{ gate }}-changes-message" name="message" placeholder="What should change?" required>
-    <button type="submit" class="btn">Request changes</button>
+    {{ ui.composer(gate ~ "-changes-message", "Tell the agent what to change in the " ~ gate ~ ".", "What should change?", "Request changes") }}
   </form>
 </details>{% endif %}
 {% endmacro %}
@@ -78,11 +76,9 @@
   {% else %}<p class="muted">No verdict yet: {{ invalidated|join(" and ") }} changed after approval. Re-approve first (see above), or send it back.</p>{% endif %}
   <details class="ym-more" id="send-back">
     <summary class="btn btn-quiet">Send back…</summary>
-    <form method="post" action="/t/{{ t.id }}/verdict" class="stack" data-delayed-send="Sending {{ t.id }} back to the agent">
+    <form method="post" action="/t/{{ t.id }}/verdict" enctype="multipart/form-data" class="stack" data-composer data-delayed-send="Sending {{ t.id }} back to the agent">
       <input type="hidden" name="verdict" value="follow-up"><input type="hidden" name="seen" value="{{ verdict_seen }}">
-      <label for="verdict-message">Not done yet? Tell the agent what is missing.</label>
-      <input id="verdict-message" name="message" placeholder="What is missing?" required>
-      <button type="submit" class="btn">Send back</button>
+      {{ ui.composer("verdict-message", "Not done yet? Tell the agent what is missing.", "What is missing?", "Send back", criteria) }}
     </form>
   </details>
 </div>
@@ -92,7 +88,7 @@
 <div class="question" id="q-{{ q.id }}">
   <p><b>{{ q.id }}</b> {{ q.text }}{% if q.get("blocking", True) %} {{ ui.status("warn", "blocking") }}{% endif %}</p>
   {% if q.get("why") %}<p class="muted">{{ q.why }}</p>{% endif %}
-  <form method="post" action="/t/{{ t.id }}/answer" data-delayed-send="Sending your answer to {{ t.id }}">
+  <form method="post" action="/t/{{ t.id }}/answer" enctype="multipart/form-data" data-composer data-delayed-send="Sending your answer to {{ t.id }}">
     <input type="hidden" name="qid" value="{{ q.id }}">
     <input type="hidden" name="qhash" value="{{ q.qhash }}">
     {% if q.get("type") == "text" %}
@@ -109,7 +105,7 @@
       {% endfor %}
     </div>
     {% endif %}
-    <input name="note" placeholder="Note for the agent (optional)" aria-label="Note">
+    {{ ui.composer("note-" ~ q.id, none, "Note for the agent (optional)", none, field="note", required=false, rows=2) }}
     <button type="submit" class="btn btn-primary">Answer {{ q.id }}</button>
   </form>
   {% for addon, d in ticket_decisions if d.anchor == q.id %}{{ ui.addon_decision(addon, d) }}{% endfor %}
@@ -629,7 +625,7 @@
     <h3>Other evidence</h3>
     {% for e in other_evidence %}<div class="proof-evidence">{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
     {% endif %}
-    <p class="muted widgets-for"><a class="lnk" href="/workspace?tab=widgets&amp;section=Verification">Widgets for this section</a></p>
+    {% if authoring_hints %}<p class="muted widgets-for"><a class="lnk" href="/workspace?tab=widgets&amp;section=Verification">Widgets for this section</a></p>{% endif %}
     {% if actions.verdict %}{{ verdict_forms() }}{% endif %}
   {% endcall %}
   {% endif %}
@@ -643,7 +639,7 @@
     <summary><h2 class="notes-title">Agent notes</h2> <span class="muted">· {{ notes|map(attribute="label")|join(", ") }}</span></summary>
     {% for n in notes %}
     <section class="note" aria-labelledby="note-{{ loop.index }}">
-      <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span>{% if n.name in ("Context", "Current state", "Findings") %} <a class="lnk widgets-for" href="/workspace?tab=widgets&amp;section={{ n.name|urlencode }}">Widgets for this section</a>{% endif %}</h3>
+      <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span>{% if authoring_hints and n.name in ("Context", "Current state", "Findings") %} <a class="lnk widgets-for" href="/workspace?tab=widgets&amp;section={{ n.name|urlencode }}">Widgets for this section</a>{% endif %}</h3>
       <div class="note-text">{{ n.text|section_md(n.name, widgets)|safe }}</div>
     </section>
     {% endfor %}

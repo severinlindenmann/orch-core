@@ -418,9 +418,15 @@ def wait(ref: str,
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
     status = store.resolve(ws, event.ticket).status
     who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
-    _out({"ticket": event.ticket, "event": asdict(event), "status": status,
+    from orch.core.wait import feedback
+    said = feedback(ws, event)
+    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said,
           "cursor": event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq}, json_out,
-         f"{event.ticket}: {event.kind} {who} (status {status})")
+         f"{event.ticket}: {event.kind} {who} (status {status})"
+         + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
+                                                 ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
+                                                 ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
+                   if v))
 
 
 @app.command()

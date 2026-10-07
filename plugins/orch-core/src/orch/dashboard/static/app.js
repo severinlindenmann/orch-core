@@ -395,14 +395,20 @@
     if (next) focusCard(next); else r.focus();
     keepReceipt(text + " · " + clock());
   };
+  // A form that carries images (Send back's composer) goes as multipart: the browser sets the boundary, so no
+  // Content-Type header. Every other form stays urlencoded, as before.
+  const fileInputs = (form) => (form.querySelectorAll ? [...form.querySelectorAll("input[type=file]")] : []);
   const encode = (form, submitter) => {
     const data = new FormData(form);
     if (submitter && submitter.name && !data.has(submitter.name)) data.append(submitter.name, submitter.value);
+    const inputs = fileInputs(form);
+    if (inputs.some((i) => i.files && i.files.length)) return data;
+    inputs.forEach((i) => data.delete(i.name));  // an empty file input sends one nameless part
     return new URLSearchParams(data);
   };
   const post = (form, body) => fetch(form.action, {
     method: "POST", body, credentials: "same-origin", redirect: "follow",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: body instanceof FormData ? {} : { "Content-Type": "application/x-www-form-urlencoded" },
   });
   const outcome = (response) => {
     const url = new URL(response.url);
@@ -658,6 +664,15 @@
   const settle = (item) => {
     // The answered question goes; a card with nothing left to answer (or a message's card) goes with it.
     const card = item.box.closest && item.box.closest("[data-decision]");
+    const drawer = item.box.closest && item.box.closest("dialog[data-proof-drawer]");
+    if (drawer) {  // sent from the proof drawer: its receipt moves to the card's place on the board, then the drawer goes
+      const home = drawer.orchHome;
+      const at = home && home.isConnected ? home.closest("article") : null;
+      const receipt = item.done || item.receipt;
+      if (at) at.before(receipt); else if (document.querySelector("main")) document.querySelector("main").prepend(receipt);
+      drawer.close();
+      return;
+    }
     if (item.box !== card) item.box.remove();
     if (card && (item.box === card || !card.querySelector(".question"))) card.remove();
   };
@@ -684,7 +699,8 @@
         const o = outcome(response);
         if (!o.ok) { failHeld(item, "Not recorded: " + refusal(o, response)); return; }
         const text = (o.msg ? o.msg.charAt(0).toUpperCase() + o.msg.slice(1) : "Sent") + " · " + item.ticket;
-        item.receipt.replaceWith(receiptEl(text + " · " + clock()));
+        item.done = receiptEl(text + " · " + clock());
+        item.receipt.replaceWith(item.done);
         settle(item);
         keepReceipt(text + " · " + clock());
       }).catch((e) => failHeld(item, "Not recorded: could not reach the dashboard (" + ((e && e.message) || e) + "); nothing changed"));
@@ -738,7 +754,7 @@
       clearInterval(item.tick);
       try {
         fetch(item.form.action, { method: "POST", body: item.body, credentials: "same-origin", keepalive: true,
-                                  headers: { "Content-Type": "application/x-www-form-urlencoded" } }).catch(() => {});
+                                  headers: item.body instanceof FormData ? {} : { "Content-Type": "application/x-www-form-urlencoded" } }).catch(() => {});
         keepReceipt(item.label + " as you left the page: check " + (item.ticket || "the ticket") + " that it arrived");
       } catch (e) {
         keepReceipt(item.label + " was not sent: the page closed first");
@@ -746,6 +762,252 @@
     }
   });
   window.orchDelayedSend = { DELAY_MS, held, HELD_IN };  // read by the unit test
+
+  // ---------- Composer: Send back / Request changes with pasted, dropped or picked images ----------
+  // A form with data-composer holds a textarea, optional criteria chips and an images file input. Pasting an image
+  // (or dropping one on the form) adds it; each shows as a thumbnail with a remove button; ⌘↵ / Ctrl↵ sends. The
+  // images live in the file input itself, so without this script the input is a plain file picker, and the form posts
+  // multipart either way. Nothing is stored until the form is sent (the server checks type and size again).
+  const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const MAX_IMAGES = 8;
+  const composerSetup = (form) => {
+    if (form.dataset.composerReady || !window.DataTransfer) return;
+    form.dataset.composerReady = "1";
+    const input = form.querySelector("input[type=file][name=images]");
+    const text = form.querySelector("[data-composer-text]");
+    const list = form.querySelector(".cmp-thumbs");
+    const hint = form.querySelector(".cmp-hint");
+    if (!input || !text || !list) return;
+    const draw = () => {
+      list.textContent = "";
+      [...input.files].forEach((file, i) => {
+        const li = document.createElement("li");
+        const img = document.createElement("img");
+        img.alt = "";
+        // a data: URL, not a blob: one: the page's policy lets images come from itself and data: only
+        const reader = new FileReader();
+        reader.addEventListener("load", () => { img.src = String(reader.result); });
+        reader.readAsDataURL(file);
+        const cap = document.createElement("small");
+        cap.textContent = file.name + " · " + Math.max(1, Math.round(file.size / 1024)) + " kB";
+        const drop = document.createElement("button");
+        drop.type = "button";
+        drop.className = "cmp-x";
+        drop.setAttribute("aria-label", "Remove " + file.name);
+        drop.textContent = "✕";
+        drop.addEventListener("click", () => {
+          const rest = new DataTransfer();
+          [...input.files].forEach((f, j) => { if (j !== i) rest.items.add(f); });
+          input.files = rest.files;
+          draw();
+        });
+        li.append(img, cap, drop);
+        list.append(li);
+      });
+      list.hidden = !input.files.length;
+    };
+    const add = (files) => {
+      const images = [...files].filter((f) => IMAGE_TYPES.includes(f.type));
+      if (!images.length) return false;
+      const all = new DataTransfer();
+      [...input.files, ...images].slice(0, MAX_IMAGES).forEach((f, i) => {
+        // a pasted screenshot is called "image.png": a number keeps each one apart in the list
+        all.items.add(f.name === "image.png" ? new File([f], "pasted-" + (i + 1) + ".png", { type: f.type }) : f);
+      });
+      input.files = all.files;
+      draw();
+      if (hint) hint.textContent = input.files.length + (input.files.length === 1 ? " image" : " images") + " attached";
+      return true;
+    };
+    form.addEventListener("paste", (event) => {
+      if (add((event.clipboardData && event.clipboardData.files) || [])) event.preventDefault();
+    });
+    form.addEventListener("dragover", (event) => {
+      if (event.dataTransfer && [...event.dataTransfer.types].includes("Files")) { event.preventDefault(); form.classList.add("cmp-over"); }
+    });
+    form.addEventListener("dragleave", () => form.classList.remove("cmp-over"));
+    form.addEventListener("drop", (event) => {
+      form.classList.remove("cmp-over");
+      if (event.dataTransfer && add(event.dataTransfer.files)) event.preventDefault();
+    });
+    input.addEventListener("change", () => draw());
+    form.addEventListener("keydown", (event) => {
+      if (event.target.tagName === "TEXTAREA" && event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.repeat) {
+        event.preventDefault();
+        if (form.reportValidity()) form.requestSubmit();
+      }
+    });
+  };
+  const composersIn = (root) => root.querySelectorAll("form[data-composer]").forEach(composerSetup);
+  window.orchComposer = { composersIn, IMAGE_TYPES };  // read by the unit test
+
+  // ---------- Review widgets: gallery lightbox, preview viewports, review marks ----------
+  // gallery: a click on an image thumbnail opens it large in an in-page <dialog> (← → move, Esc closes), never a new tab.
+  // preview: the width buttons resize the frame. review: marks live on the page only (nothing is stored); "Send back flagged" opens the
+  // Send back composer with the ✕ criteria ticked. Without this script a gallery thumbnail is a link to the file, a
+  // preview shows at its first width and review has no marks.
+  let lightbox = null;
+  const lightboxOpen = (links, index) => {
+    if (!lightbox) {
+      lightbox = document.createElement("dialog");
+      lightbox.className = "w-lightbox";
+      lightbox.setAttribute("aria-label", "Image");
+      lightbox.innerHTML = '<img class="w-lb-img" alt=""><div class="w-lb-bar"><button type="button" class="btn btn-quiet" data-lb="-1" aria-label="Previous image">←</button>'
+        + '<span class="w-lb-cap"></span><button type="button" class="btn btn-quiet" data-lb="1" aria-label="Next image">→</button>'
+        + '<button type="button" class="btn" data-lb="0">Close</button></div>';
+      document.body.append(lightbox);
+      lightbox.addEventListener("click", (event) => {
+        const b = isEl(event.target) && event.target.closest("[data-lb]");
+        if (!b) return;
+        if (b.dataset.lb === "0") lightbox.close(); else lightbox.show(Number(b.dataset.lb));
+      });
+      lightbox.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowLeft") lightbox.show(-1);
+        else if (event.key === "ArrowRight") lightbox.show(1);
+      });
+    }
+    lightbox.items = links;
+    lightbox.at = index;
+    lightbox.show = (step) => {
+      const n = lightbox.items.length;
+      lightbox.at = (lightbox.at + step + n) % n;
+      const link = lightbox.items[lightbox.at];
+      lightbox.querySelector(".w-lb-img").src = link.href;
+      lightbox.querySelector(".w-lb-img").alt = link.dataset.lightbox || "";
+      lightbox.querySelector(".w-lb-cap").textContent = (link.dataset.lightbox || "") + " · " + (lightbox.at + 1) + " / " + n;
+    };
+    lightbox.show(0);
+    if (!lightbox.open) lightbox.showModal();
+  };
+  document.addEventListener("click", (event) => {
+    const link = isEl(event.target) && event.target.closest("a[data-lightbox]");
+    if (!link || event.metaKey || event.ctrlKey || event.shiftKey || !window.HTMLDialogElement) return;
+    event.preventDefault();
+    const links = [...link.closest(".w-gallery").querySelectorAll("a[data-lightbox]")];
+    lightboxOpen(links, links.indexOf(link));
+  });
+  document.addEventListener("click", (event) => {
+    const b = isEl(event.target) && event.target.closest(".w-pv-size");
+    if (!b) return;
+    const root = b.closest("[data-preview]");
+    root.querySelectorAll(".w-pv-size").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    root.querySelector(".w-pv-frame").style.width = b.dataset.w + "px";
+  });
+  const reviewCount = (root) => {
+    const marks = [...root.querySelectorAll("li[data-ac]")].map((li) => (li.querySelector("input:checked") || {}).value || "open");
+    const n = (v) => marks.filter((m) => m === v).length;
+    root.querySelector(".w-rv-count").textContent = n("ok") + " ok · " + n("no") + " not met · " + n("open") + " open";
+    root.querySelector("[data-review-send]").hidden = n("no") === 0;
+  };
+  document.addEventListener("change", (event) => {
+    const root = isEl(event.target) && event.target.closest("[data-review]");
+    if (root) reviewCount(root);
+  });
+  document.addEventListener("click", (event) => {
+    const b = isEl(event.target) && event.target.closest("[data-review-send]");
+    if (!b) return;
+    const root = b.closest("[data-review]");
+    const flagged = [...root.querySelectorAll("li[data-ac]")].filter((li) => (li.querySelector("input:checked") || {}).value === "no").map((li) => li.dataset.ac);
+    const scope = document.querySelector("dialog[open]") || document;
+    const form = [...scope.querySelectorAll("form[data-composer]")].find((f) => f.querySelector("input[name=verdict][value=follow-up]"));
+    if (!form) { host.navigate("#send-back"); return; }
+    const details = form.closest("details");
+    if (details) details.open = true;
+    form.querySelectorAll("input[name=acs]").forEach((c) => { c.checked = flagged.includes(c.value); });
+    const text = form.querySelector("[data-composer-text]");
+    if (text && !text.value.trim()) text.value = "Not met: " + flagged.map((n) => "AC" + n).join(", ") + ". ";
+    if (text) { text.focus(); text.setSelectionRange(text.value.length, text.value.length); }
+    form.scrollIntoView({ block: "nearest" });
+  });
+  const widgetsIn = (root) => root.querySelectorAll("[data-review]").forEach(reviewCount);
+
+  // ---------- Proof drawer (the board's verdict cards) ----------
+  // "Check the proof…" opens the card's <dialog class="proof-drawer"> as a side panel over the board: Esc closes it, the
+  // board behind keeps its scroll, J / K step to the next or previous verdict, and the address carries ?proof=<id> so the
+  // view can be linked (the id is kept out of the server-rendered path: the history entry is only replaced). While it is
+  // open a live refresh waits (it is a dialog). The dialog moves to <body> while open, out of its card's layout
+  // container, and goes home when it closes. Without this script the button is a link to the ticket's own proof.
+  const proofDrawer = (id) => document.querySelector('dialog[data-proof-drawer="' + CSS.escape(id) + '"]');
+  const proofButtons = () => [...document.querySelectorAll("[data-proof-open]")].filter((b) => b.getClientRects().length);
+  const proofParam = (id) => {  // ?proof=<id> on the page's own address, replaced, never pushed
+    const now = host.pageHistory.current();
+    const [path, rest] = now.split("#")[0].split("?");
+    const params = new URLSearchParams(rest || "");
+    if (id) params.set("proof", id); else params.delete("proof");
+    const query = params.toString();
+    host.pageHistory.replace(path + (query ? "?" + query : "") + (now.includes("#") ? "#" + now.split("#")[1] : ""));
+  };
+  const proofTab = (dlg, name) => {
+    dlg.querySelectorAll("[data-pd-tab]").forEach((t) => {
+      const on = t.dataset.pdTab === name;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    });
+    dlg.querySelectorAll("[data-pd-panel]").forEach((p) => { p.hidden = p.dataset.pdPanel !== name; });
+  };
+  const proofOpen = (id) => {
+    const dlg = proofDrawer(id);
+    if (!dlg || !dlg.showModal) return false;
+    if (dlg.open) return true;
+    dlg.orchHome = dlg.parentNode;
+    document.body.append(dlg);
+    proofTab(dlg, "criteria");
+    composersIn(dlg);
+    dlg.showModal();
+    dlg.querySelector(".pd-body").scrollTop = 0;
+    if (host.pageHistory.canPush()) proofParam(id);
+    return true;
+  };
+  const proofStep = (from, step) => {
+    const all = proofButtons();
+    const i = all.findIndex((b) => b.dataset.proofOpen === from);
+    const next = all[i + step];
+    if (!next) { say("No more tickets to verdict"); return; }
+    proofDrawer(from).close();
+    proofOpen(next.dataset.proofOpen);
+  };
+  document.addEventListener("click", (event) => {
+    const t = isEl(event.target) && event.target;
+    const open = t && t.closest("[data-proof-open]");
+    if (open && !event.metaKey && !event.ctrlKey && !event.shiftKey && proofOpen(open.dataset.proofOpen)) { event.preventDefault(); return; }
+    const dlg = t && t.closest("dialog[data-proof-drawer]");
+    if (!dlg) return;
+    if (t.closest("[data-proof-close]")) dlg.close();
+    const tab = t.closest("[data-pd-tab]");
+    if (tab) proofTab(dlg, tab.dataset.pdTab);
+    if (t === dlg) dlg.close();  // a click on the backdrop (the dialog's own box is the whole panel)
+  });
+  document.addEventListener("keydown", (event) => {
+    const dlg = isEl(event.target) && event.target.closest("dialog[data-proof-drawer]");
+    if (!dlg) return;
+    const tab = event.target.closest("[data-pd-tab]");
+    if (tab && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {  // tabs move with the arrows
+      const tabs = [...dlg.querySelectorAll("[data-pd-tab]")];
+      const to = tabs[(tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+      proofTab(dlg, to.dataset.pdTab);
+      to.focus();
+      event.preventDefault();
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target) || !shortcutsOn()) return;
+    if (event.key === "j" || event.key === "k") { event.preventDefault(); proofStep(dlg.dataset.proofDrawer, event.key === "j" ? 1 : -1); }
+  });
+  document.addEventListener("close", (event) => {
+    const dlg = event.target;
+    if (!dlg.matches || !dlg.matches("dialog[data-proof-drawer]")) return;
+    const home = dlg.orchHome;
+    const card = home && home.isConnected ? home.closest("article") : null;
+    // a send still held (its Undo is in the drawer) keeps its receipt on the board, where Undo still works
+    held.filter((h) => dlg.contains(h.receipt)).forEach((h) => { if (card) card.before(h.receipt); });
+    if (home && home.isConnected) home.append(dlg); else dlg.remove();
+    if (host.pageHistory.canPush() && new URLSearchParams(host.pageHistory.current().split("#")[0].split("?")[1] || "").get("proof") === dlg.dataset.proofDrawer) proofParam("");
+    const opener = document.querySelector('[data-proof-open="' + CSS.escape(dlg.dataset.proofDrawer) + '"]');
+    if (opener && !document.querySelector("dialog[open]")) opener.focus({ preventScroll: true });
+  }, true);
+  const proofFromAddress = () => {
+    const id = new URLSearchParams(host.pageHistory.current().split("#")[0].split("?")[1] || "").get("proof");
+    if (id && !document.querySelector("dialog[open]")) proofOpen(id);
+  };
 
   // ---------- Keyboard (design system ShortcutOverlay): moves and arms, never commits a gate ----------
   // j/k move between decisions, 1–9 focus an answer option, a arms the primary (then Enter confirms), c opens
@@ -1106,6 +1368,9 @@
     if (window.matchMedia && window.matchMedia("(min-width: 900px)").matches) {
       root.querySelectorAll("details[data-wide-open]").forEach((d) => { d.open = true; });
     }
+    composersIn(root);
+    widgetsIn(root);
+    proofFromAddress();
     // Paste screenshots into the new-ticket form.
     const pasteArea = root.querySelector("[data-paste-target]");
     if (pasteArea && window.DataTransfer) {

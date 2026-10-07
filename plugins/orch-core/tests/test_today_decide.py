@@ -46,7 +46,10 @@ def test_no_open_textarea_no_popup_no_chart(dash, put, aops):
     asking = put("open")
     aops.ask(asking, [{"text": "Which schema?", "type": "text"}])
     html = dash.get("/").text
-    assert "<textarea" not in html and "data-confirm=" not in html
+    # the only text areas are the folded Send back / Request changes composers (issue #202): multi-line, never open
+    import re
+    bare = re.sub(r"<details class=\"dc-more\">.*?</details>", "", html, flags=re.S)
+    assert "<textarea" not in bare and "data-confirm=" not in html
     assert "Done per day" not in html and 'class="bars"' not in html
     # the folded disclosures
     assert "Request changes…</summary>" in html and "Send back…</summary>" in html

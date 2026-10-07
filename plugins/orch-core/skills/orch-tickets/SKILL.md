@@ -36,7 +36,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Handoff note | `orch state <id> -m "..."` (rewrites Current state, shown as the Handoff) |
 | Log a step | `orch log <id> -m "..."` |
 | Ask the human | `orch ask <id> --file questions.yaml` |
-| Wait for the human | `orch wait <id> [--timeout S] --json` — block until the human answers, approves, requests changes or gives a verdict (agents may run it) |
+| Wait for the human | `orch wait <id> [--timeout S] --json` — block until the human answers, approves, requests changes or gives a verdict (agents may run it). A send-back or change request returns `message`, `acs` (the criteria it names) and `attachments` (`name`, `path` from the workspace root, `sha256`): the human's pasted screenshots. Open them before you change anything |
 | Link work | `orch link <id> --repo hub` (the ticket touches that repo) · `--repo hub --branch feature/x` · `--pr 22` (a number resolves in `--repo`, default the workspace repo) or `--pr <url>` · `--external TIX-17` |
 | Worktree | `orch worktree add <id> --repo hub [--base develop]` (branch from `git.branch_pattern`, worktree at `.claude/worktrees/hub/<slug>`, both linked, harness files linked in) · `orch worktree remove <id> --repo hub` (keeps the branch; refuses uncommitted changes) |
 | Evidence (files) | `orch artifact add <id> shot.png --ac 2 --inline --label "Login after the fix"` · `orch artifact add <id> report.html --task T3` (`--kind` screenshot, report, log, dataset, build, diagram, other; guessed when left out) |
@@ -146,7 +146,7 @@ When you notice something outside the approved scope, add it to `## Findings`, f
 
 A widget is a small visual block, a ```` ```orch ```` fence holding one JSON object, that saves the human reading:
 measured numbers, a verdict per criterion, the files a change touches. Default to one for Verification: a `checks` widget with one row per acceptance criterion. Add
-`screens` or `compare` for a UI change, `stats` for measured numbers, `options` when you ask the human to choose, and
+`screens` or `compare` for a UI change, `gallery` for many files (posts, drafts), `preview` for a local HTML page, `summary` for the handoff (what you delivered, what to check first, open points), `stats` for measured numbers, `options` when you ask the human to choose, and
 `callout`, `table` or `diff` when a warning or a list of changes reads faster than prose. Write prose only when none fits.
 
 - **Where:** Context, Current state, Verification, Findings (and extra `## Headings`). Never in Ask, Summary,

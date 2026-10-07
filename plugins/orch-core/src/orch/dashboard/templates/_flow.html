@@ -15,6 +15,82 @@
 /t/{{ d.ticket }}#{{ "epic-approve" if d.charter else ("approve-together" if d.together else "gate-" ~ d.gate) }}
 {%- endmacro %}
 
+{#- A criterion's thumbnail: the first image its evidence shows (pinned by hash), else an image the criterion links as an
+    artifact, else a typed tile (HTML, URL, PDF, ...) for a linked file that is not an image. Nothing when the criterion
+    has neither (the caller draws its own placeholder). -#}
+{% macro ac_tile(k, d, cls="ev-img") -%}
+{%- set pics = k.evidence|join("\n")|pinned(d.art, 1) if k.proven else [] -%}
+{%- set linked = ((d.artifact_view.by_ac.get(k.n) if d.artifact_view else none) or [])|selectattr("href")|list -%}
+{%- set imgs = linked|selectattr("image")|list -%}
+{%- set files = linked|rejectattr("image")|list -%}
+{%- if pics %}{{ thumb(pics[0], cls) }}
+{%- elif imgs %}<a class="{{ cls }}" href="{{ imgs[0].href }}" target="_blank" rel="noopener"><img src="{{ imgs[0].href }}" alt="{{ imgs[0].label or 'AC' ~ k.n }}" loading="lazy" decoding="async"></a>
+{%- elif files %}<a class="{{ cls }} ev-file" href="{{ files[0].href }}" target="_blank" rel="noopener" title="{{ files[0].label or files[0].text }}"><span class="ev-kind">{{ "URL" if files[0].source == "url" else (files[0].text.rsplit(".", 1)[-1]|upper if "." in files[0].text else "FILE") }}</span></a>
+{%- endif -%}
+{%- endmacro %}
+
+{#- The proof drawer of a verdict card: one modal <dialog> per card, opened by "Check the proof…" (app.js), over the
+    board, so the board never grows and keeps its scroll. Tabs: Criteria (one line each, evidence on click), Deliverables,
+    Verification, Handoff. "What to check" sits above the tabs; Accept and Send back stay in the footer. Without JS the
+    button is a link to the ticket's own proof. -#}
+{% macro proof_drawer(d, back_to) %}
+{%- set av = d.artifact_view -%}
+<dialog class="proof-drawer" id="proof-{{ d.ticket }}" data-proof-drawer="{{ d.ticket }}" data-ticket="{{ d.ticket }}" aria-labelledby="pd-h-{{ d.ticket }}">
+  <header class="pd-head">
+    <div class="pd-row">{{ ui.status("you", "Your verdict") }}<a class="lnk" href="/t/{{ d.ticket }}">{{ d.ticket }} · open ticket ↗</a>
+      <button type="button" class="btn btn-quiet pd-close" data-proof-close>Close <kbd>Esc</kbd></button></div>
+    <h3 id="pd-h-{{ d.ticket }}">{{ d.title }}</h3>
+    <p class="pd-chips">
+      {%- set proven = (d.criteria or [])|selectattr("proven")|list|length -%}
+      {%- if d.criteria %}<span class="chip chip-{{ 'ok' if proven == d.criteria|length else 'warn' }}">{{ proven }}/{{ d.criteria|length }} criteria have evidence</span>{% endif %}
+      {% if av and av.count %}<span class="chip chip-neu">{{ av.count }} artifact{{ "" if av.count == 1 else "s" }}</span>{% endif %}
+    </p>
+    <div class="pd-tabs" role="tablist" aria-label="Proof">
+      <button type="button" role="tab" class="pd-tab" id="pd-t-{{ d.ticket }}-criteria" data-pd-tab="criteria" aria-selected="true" aria-controls="pd-p-{{ d.ticket }}-criteria">Criteria</button>
+      <button type="button" role="tab" class="pd-tab" id="pd-t-{{ d.ticket }}-deliverables" data-pd-tab="deliverables" aria-selected="false" tabindex="-1" aria-controls="pd-p-{{ d.ticket }}-deliverables">Deliverables{% if av and av.count %} <span class="muted">{{ av.count }}</span>{% endif %}</button>
+      <button type="button" role="tab" class="pd-tab" id="pd-t-{{ d.ticket }}-verification" data-pd-tab="verification" aria-selected="false" tabindex="-1" aria-controls="pd-p-{{ d.ticket }}-verification">Verification</button>
+      <button type="button" role="tab" class="pd-tab" id="pd-t-{{ d.ticket }}-handoff" data-pd-tab="handoff" aria-selected="false" tabindex="-1" aria-controls="pd-p-{{ d.ticket }}-handoff">Handoff</button>
+    </div>
+  </header>
+  <div class="pd-body">
+    {% if d.what_to_check %}<section class="pd-check" aria-label="What to check"><b>What to check</b>
+      <ul>{% for line in d.what_to_check %}<li>{{ line|md_inline|safe }}</li>{% endfor %}</ul></section>{% endif %}
+    <div role="tabpanel" id="pd-p-{{ d.ticket }}-criteria" data-pd-panel="criteria" aria-labelledby="pd-t-{{ d.ticket }}-criteria">
+      {% if d.criteria %}<ol class="pd-acs" aria-label="Acceptance criteria">
+        {% for k in d.criteria %}<li><details class="pd-ac proof-{{ 'ok' if k.proven else 'open' }}">
+          <summary><span class="proof-mark" aria-hidden="true">{{ "✓" if k.proven else "○" }}</span>
+            <span class="pd-ac-t"><b class="ac-n">AC{{ k.n }}</b> {{ k.text|md_inline|safe }}<span class="sr-only"> {{ "has evidence" if k.proven else "no evidence yet" }}</span></span>
+            <span class="pd-ac-th">{{ ac_tile(k, d, "ev-img") }}</span><span class="pd-chev" aria-hidden="true">▾</span></summary>
+          <div class="pd-ev">{% if k.proven %}{% for e in k.evidence %}<div class="proof-evidence">{{ e|section_md("Verification", d.widgets, d.art)|safe }}</div>{% endfor %}
+            {% else %}<p class="muted">No evidence yet{% if k.ticked %}; ticked without a Verification line{% endif %}.</p>{% endif %}
+            {% for it in ((av.by_ac.get(k.n) if av else none) or []) %}{% if it.href and not it.image %}<p class="pd-file"><a class="lnk" href="{{ it.href }}" target="_blank" rel="noopener">{{ it.label or it.text }} ↗</a></p>{% endif %}{% endfor %}</div>
+        </details></li>{% endfor %}
+      </ol>{% else %}<p class="muted">No acceptance criteria as checkboxes, so nothing to prove item by item.</p>{% endif %}
+    </div>
+    <div role="tabpanel" id="pd-p-{{ d.ticket }}-deliverables" data-pd-panel="deliverables" aria-labelledby="pd-t-{{ d.ticket }}-deliverables" hidden>
+      {% if av and av.groups %}{% for g in av.groups %}<h4 class="pd-h">{{ g.title }}</h4>
+        <ul class="pd-files">{% for it in g["items"] %}<li>{% if it.image and it.href %}<a class="pd-img" href="{{ it.href }}" target="_blank" rel="noopener"><img src="{{ it.href }}" alt="{{ it.label or it.text }}" loading="lazy" decoding="async"></a>
+          {% elif it.href %}<a class="lnk" href="{{ it.href }}" target="_blank" rel="noopener">{{ it.label or it.text }} ↗</a>
+          {% else %}<span>{{ it.label or it.text }}</span>{% if it.state %} <span class="muted">({{ it.state }})</span>{% endif %}{% endif %}
+          {% if it.ac %}<span class="chip chip-neu">AC{{ it.ac }}</span>{% endif %}</li>{% endfor %}</ul>{% endfor %}
+      {% else %}<p class="muted">No artifacts linked.</p>{% endif %}
+    </div>
+    <div role="tabpanel" id="pd-p-{{ d.ticket }}-verification" data-pd-panel="verification" aria-labelledby="pd-t-{{ d.ticket }}-verification" hidden>
+      {% if d.verification.strip() %}<div class="gate-body ym-verification">{{ d.verification|section_md("Verification", d.widgets, d.art)|safe }}</div>
+      {% else %}<p class="muted">No Verification section yet.</p>{% endif %}
+    </div>
+    <div role="tabpanel" id="pd-p-{{ d.ticket }}-handoff" data-pd-panel="handoff" aria-labelledby="pd-t-{{ d.ticket }}-handoff" hidden>
+      {% if d.handoff.strip() %}<div class="gate-body">{{ d.handoff|section_md("Current state", d.widgets, d.art)|safe }}</div>
+      {% else %}<p class="muted">The agent wrote no handoff.</p>{% endif %}
+    </div>
+  </div>
+  <footer class="pd-foot">
+    <div class="cluster ym-actions">{{ dc.verdict_forms(d, back_to) }}</div>
+    <p class="muted pd-keys"><kbd>J</kbd>/<kbd>K</kbd> next ticket</p>
+  </footer>
+</dialog>
+{% endmacro %}
+
 {% macro move_card(s, kind_labels, back_to="/board") %}
 {%- set c, d = s.card, s.d -%}
 <article class="card ym-card" data-ym="{{ c.id }}" data-move="{{ c.move.what }}" aria-labelledby="ym-h-{{ c.id }}">
@@ -46,21 +122,16 @@
   {%- elif d.kind == "verdict" %}
     {% if d.criteria %}
     <ul class="ym-tiles" aria-label="Acceptance criteria">
-      {% for k in d.criteria[:3] %}{% set pics = k.evidence|join("\n")|pinned(d.art, 1) %}
-      <li class="ev-tile{{ ' ev-tile-ok' if k.proven else ' ev-tile-missing' }}">{% if pics and k.proven %}{{ thumb(pics[0], "ev-img") }}{% endif %}<span class="ev-cap"><span aria-hidden="true">{{ "✓" if k.proven else "○" }}</span> AC{{ k.n }}<span class="sr-only"> {{ "has evidence" if k.proven else "no evidence yet" }}</span></span></li>
+      {% for k in d.criteria[:3] %}{% set tile = ac_tile(k, d, "ev-img")|trim %}
+      <li class="ev-tile{{ ' ev-tile-ok' if k.proven else ' ev-tile-missing' }}">{% if tile %}{{ tile|safe }}{% endif %}<span class="ev-cap"><span aria-hidden="true">{{ "✓" if k.proven else "○" }}</span> AC{{ k.n }}<span class="sr-only"> {{ "has evidence" if k.proven else "no evidence yet" }}</span></span></li>
       {% endfor %}
       {% if d.criteria|length > 3 %}<li class="ev-tile ev-tile-more"><span class="ev-cap">+{{ d.criteria|length - 3 }}</span></li>{% endif %}
     </ul>
     {% endif %}
-    {#- Accept only after the whole proof is shown: every criterion with its evidence and the Verification notes. -#}
-    <details class="ym-proof">
-      <summary class="btn btn-primary">Check the proof…</summary>
-      {% if d.criteria %}<ol class="proof dc-proof" aria-label="Acceptance criteria and their evidence">{% for k in d.criteria %}{{ dc.criterion(k, d.art, d.widgets) }}{% endfor %}</ol>
-      {% else %}<p class="muted">No acceptance criteria as checkboxes, so nothing to prove item by item.</p>{% endif %}
-      {% if d.verification.strip() %}<div class="gate-body ym-verification"><p class="dc-gated-head"><b>Verification</b></p>{{ d.verification|section_md("Verification", d.widgets, d.art)|safe }}</div>
-      {% else %}<p class="muted">No Verification section yet.</p>{% endif %}
-      <div class="cluster ym-actions">{{ dc.verdict_forms(d, back_to) }}</div>
-    </details>
+    {#- Accept only after the whole proof is shown: the drawer lists every criterion with its evidence and the Verification
+        notes, and holds the verdict buttons. -#}
+    <a class="btn btn-primary" href="/t/{{ d.ticket }}#proven" data-proof-open="{{ d.ticket }}" aria-haspopup="dialog">Check the proof…</a>
+    {{ proof_drawer(d, back_to) }}
   {%- elif d.kind == "task" and d.task %}
     {% if d.task.text %}<p>{{ d.task.text }}</p>{% endif %}
     <a class="btn btn-primary" href="/t/{{ d.ticket }}#task-{{ d.task.id }}">Open {{ d.task.id }}</a>

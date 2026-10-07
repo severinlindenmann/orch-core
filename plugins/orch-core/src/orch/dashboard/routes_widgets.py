@@ -210,12 +210,13 @@ CORE_FIRST = ("checks", "screens", "compare", "stats", "options", "callout", "ta
 # Task-first entry: what the agent wants to do -> the types that do it.
 TASKS = (("prove", "Prove it works", "In Verification, one row per acceptance criterion", ("checks", "stats", "links")),
          ("ui", "Show a UI change", "So you can judge it on a phone", ("screens", "compare", "links")),
+         ("review", "Hand over content or design", "Many files to read, a page to look at, a verdict per criterion", ("gallery", "preview", "review", "summary")),
          ("choose", "Ask you to choose", "With the recommended option marked", ("options", "table", "callout")),
          ("warn", "Warn about something", "A risk or a side effect you must not miss", ("callout", "diff", "table")))
 # "Widgets for this section" on a ticket: the types that earn their place there.
 SECTION_TYPES = {"Context": ("callout", "table", "chips", "flow", "risk", "links", "options"),
-                 "Current state": ("callout", "flow", "checks", "health", "stats", "links"),
-                 "Verification": ("checks", "stats", "gates", "tests", "screens", "compare", "links"),
+                 "Current state": ("summary", "callout", "flow", "checks", "health", "stats", "links"),
+                 "Verification": ("checks", "stats", "gates", "tests", "screens", "compare", "gallery", "preview", "review", "links"),
                  "Findings": ("callout", "diff", "table", "risk", "runs", "stats")}
 
 

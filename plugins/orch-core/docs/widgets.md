@@ -137,6 +137,10 @@ hue alone (icon or word as well). Geometry is derived from the numbers. Every ty
 | `compare` | two images side by side (static) | `{"before": {path, sha256}, "after": {..}, "labels"?: [before, after]}` |
 | `screens` | screenshot grid (viewport × theme), mockups | `{"items": [{"label","path","sha256"}], "columns"?: 1–6}` |
 | `video` | a recording, native `<video>` | `{"path","sha256","poster"?: {path, sha256}}` |
+| `gallery` | thumbnails of many outputs of one criterion; an image opens in a lightbox (← → Esc), an HTML/PDF/other file is a tile that links it, with an optional pinned `poster` as its thumbnail | `{"items": [{"label","path","sha256","poster"?: {path, sha256}}] (1–60),"columns"?: 2–6}` |
+| `preview` | a local HTML artifact in a frame (no scripts: the artifact route's own sandbox) with viewport buttons; a `url` is shown as a link, never framed | `{"path","sha256"}` or `{"url"}`, `"label"?`, `"viewports"?: [px] (default [390, 1280])`, `"height"?: 120–1200 (default 480)` |
+| `review` | a ✓ / ✕ / ? mark per acceptance criterion of the ticket, for the person reading; ✕ marks make "Send back flagged…" open Send back with those criteria chosen. Marks live on the page only: nothing is stored and none is a verdict | `{"acs"?: [n]}` (default: every criterion) |
+| `summary` | the handoff as fields; the verdict drawer pins its "check first" and open points on top | `{"delivered","check_first","open"?: [str ≤ 8],"not_done"?}` (each ≤ 400 chars, Markdown inline) |
 
 `progress` is not a type: the Tasks section is already drawn by core.
 

@@ -30,7 +30,7 @@ import re
 import stat
 from pathlib import Path
 
-KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other", "receipt")
+KINDS = ("screenshot", "report", "log", "link", "dataset", "build", "diagram", "other", "receipt", "feedback")
 RESERVED_KINDS = ("receipt",)  # written only by `orch task done --run` (orch.core.receipts)
 _INT = lambda v: isinstance(v, int) and not isinstance(v, bool)  # noqa: E731
 # A receipt's facts for the ticket document, each only when well typed (a hand edit never reaches the phone as is);

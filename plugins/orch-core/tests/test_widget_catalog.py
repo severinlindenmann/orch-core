@@ -74,7 +74,17 @@ def test_detail_panel_example_is_valid_and_copyable(dash, ws):
     assert "Template:" in tmpl_side and "orch widget add" in tmpl_side
 
 
-def test_section_links_on_a_ticket(dash, put):
+def test_section_links_are_hidden_on_a_ticket_unless_authoring_hints_are_on(dash, ws, put):
+    tid = put("in-progress", sections={"Context": "Because.", "Findings": "Found.", "Acceptance criteria": "- [ ] a",
+                                       "Verification": "- AC1: ok"}, size="xs")
+    assert "Widgets for this section" not in dash.get(f"/t/{tid}").text  # a person reading a ticket does not author it
+    assert ws.config["dashboard"]["authoring_hints"] is False
+    ws.config["dashboard"]["authoring_hints"] = True
+    assert "Widgets for this section" in dash.get(f"/t/{tid}").text
+
+
+def test_section_links_on_a_ticket(dash, ws, put):
+    ws.config["dashboard"]["authoring_hints"] = True
     tid = put("in-progress", sections={"Context": "Because.", "Findings": "Found."})
     body = dash.get(f"/t/{tid}").text
     assert 'href="/workspace?tab=widgets&amp;section=Context"' in body

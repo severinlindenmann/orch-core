@@ -110,12 +110,12 @@ def test_a_request_runs_once_and_its_replay_is_the_stored_outcome(host, clock):
     assert again.result == "replay" and again.outcome["status"] == 200 and again.body == b'{"moved":true}'
 
 
-def test_a_body_over_64_kib_is_not_stored_and_the_record_keeps_no_outcome(host):
+def test_a_body_over_64_kib_keeps_only_its_head_and_a_replay_is_already_done_with_the_status(host):
     e = env(KEY_A, http("/"), seq=1)
     run = host.authorize(send(host, e))
-    with pytest.raises(ValueError):
-        host.finish(run.answer_rids, {"status": 200}, bytes(64 * 1024 + 1))
-    assert send(host, e).code == "already_done"
+    assert host.finish(run.answer_rids, {"status": 201}, bytes(64 * 1024 + 1)) is True
+    again = send(host, e)
+    assert (again.result, again.code, again.fields) == ("refuse", "already_done", {"status": 201})
 
 
 def test_route_scope_is_checked_and_the_refusal_replaces_the_record(host, clock):
@@ -401,7 +401,7 @@ def test_pairing_registration_and_approval(host, clock):
     assert dev.scope == "look" and dev.credential.pub == pub(AUTH) and dev.credential.sign_count == 0
     assert host.registry.get(did(NEW)).label == "My phone"
     v = host.authorize(send(host, env(NEW, {"op": "pair_status"}, seq=1)))
-    assert v.result == "pair_status" and v.fields == {"state": "approved"}
+    assert v.result == "pair_status" and v.fields == {"state": "approved", "scope": "look"}
 
 
 @pytest.mark.parametrize("bad", ["no_uv", "no_at", "other_alg", "other_cid", "get_type", "other_origin", "replayed"])
@@ -684,9 +684,8 @@ def test_a_device_over_its_quota_is_refused_busy_and_another_device_is_not(tmp_p
     assert got["refusal"] and got["meta"] == {"refusal": "busy"}
 
 
-def test_past_the_busy_allowance_a_device_is_dropped_and_others_still_run(tmp_path, clock, monkeypatch):
-    monkeypatch.setattr(RS, "BUSY_ALLOWANCE", 2)
-    host = make_host(tmp_path, clock, per_device=2)
+def test_past_the_busy_allowance_a_device_is_dropped_and_others_still_run(tmp_path, clock):
+    host = make_host(tmp_path, clock, per_device=2, busy_allowance=2)
     codes = [send(host, env(KEY_A, http("/"), seq=s)) for s in range(1, 6)]
     assert [c.code or c.result for c in codes] == ["accept", "accept", "busy", "busy", "drop"]
     assert codes[-1].why == "busy_unrecordable"

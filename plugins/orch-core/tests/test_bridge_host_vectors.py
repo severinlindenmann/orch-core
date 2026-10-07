@@ -14,13 +14,13 @@ from orch.remote.bridge_host.assertion import (Issued, assertion_challenge, regi
                                                verify_assertion)
 from orch.remote.bridge_host.budgets import BUDGET, BUDGET_WINDOW_MS, OFFER_BUDGET, SlidingLimit  # noqa: E402
 from orch.remote.bridge_host.host_check import SEQ_WINDOW, WINDOW_MS, Host, Requirement  # noqa: E402
-from orch.remote.bridge_host.pairing import Offer, Pairing, Pending  # noqa: E402
+from orch.remote.bridge_host.pairing import LABEL_MAX, Offer, Pairing, Pending  # noqa: E402
 from orch.remote.bridge_host.registry import Credential, Device  # noqa: E402
 from orch.remote.bridge_host.replay_store import MAX_REPLAY_BODY, RETENTION_MS, Record, _decode  # noqa: E402
 from orch.remote.bridge_host.shown import clean_shown, subject_hash  # noqa: E402
 
 VECTORS = Path(__file__).parent / "fixtures" / "bridge" / "bridge_vectors.json"
-VECTORS_SHA256 = "d23716c6ffe83faffa96c89f33d8b96a55bcbe62904f123c5f0f5ac75d575587"
+VECTORS_SHA256 = "040f154bf62b96bb4e248fe4407e6ec02f43575b190b8f5ad2d2e195b3609191"
 RAW = VECTORS.read_bytes()
 VEC = json.loads(RAW)
 K_WS = bytes.fromhex(VEC["hkdf"][0]["okm"])
@@ -144,7 +144,7 @@ def host_from_state(config_dir: Path, state: dict, clock: Clock, route=None) -> 
     host = Host(workspace=ws, k_ws=K_WS, host_key=signatures.private_key(bytes.fromhex(VEC["keys"]["host"]["d"])),
                 root=files.bridge_dir(config_dir, state["workspace"]), clock=clock, rand=__import__("os").urandom,
                 route=route or (lambda meta, data: Requirement("look")), phone_key=phones.get, rp_id=RP_ID,
-                origin=ORIGIN, key_version=state["key_version"])
+                origin=ORIGIN, key_version=state["key_version"], **state.get("limits", {}))
     for did, d in state["devices"].items():
         host.registry.add(Device(did, bytes.fromhex(d["pub"]), d["scope"], "", 0, d["revoked"]), 0)
         host.store.save_seq(did, d["high"], d["bitmap"])
@@ -168,7 +168,10 @@ def flat(v) -> dict:
     d = {"result": v.result}
     if v.code is not None:
         d["code"] = v.code
-    d.update(v.fields)
+    if v.result in ("pair_pending", "pair_status"):  # the vectors name the answer's meta separately
+        d["answer"] = v.fields
+    else:
+        d.update(v.fields)
     if v.result == "accept":
         d.update(scope=v.scope, meta=v.meta, data=v.data.hex())
     if v.result == "replay":
@@ -183,6 +186,15 @@ def record_until(host: Host, rid: str):
     return None if raw is None else _decode(raw).until
 
 
+def flat_pairing(host: Host, v) -> dict:
+    """flat() plus what the host shows the owner for a pair_pending (scope, phone link, label, fingerprint)."""
+    d = flat(v)
+    if v.result == "pair_pending":
+        p = host.pairing.pending[v.device]
+        d.update(fingerprint=p.fingerprint, device=v.device, scope=p.scope, phone_link=p.phone_link, label=p.label)
+    return d
+
+
 def run_host_case(tmp_path, case) -> list[str]:
     """Each step against ONE host; returns the mismatches."""
     clock = Clock(case.get("now_ms", (case.get("steps") or [{}])[0].get("now_ms", 0)))
@@ -191,7 +203,7 @@ def run_host_case(tmp_path, case) -> list[str]:
     for i, st in enumerate(case.get("steps", [case])):
         env = bytes(st["envelope_zeros"]) if "envelope_zeros" in st else bytes.fromhex(st["envelope"])
         clock.now = st["now_ms"]
-        got = flat(host.check(env, st["mailbox_id"]))
+        got = flat_pairing(host, host.check(env, st["mailbox_id"]))
         want = st["expect"]
         if {k: got.get(k, MISSING) for k in want} != want:
             bad.append(f"step {i}: got {got}, want {want}")
@@ -208,52 +220,123 @@ def test_host_case(tmp_path, case):
 
 def test_every_host_step_runs():
     steps = sum(len(c.get("steps", [c])) for c in VEC["host_cases"])
-    assert len(VEC["host_cases"]) == 51 and steps == 75
+    assert len(VEC["host_cases"]) == 69 and steps == 96
 
 
 # -- device cases: the responses the vectors sign with the host key open and verify with these primitives --------------
+# The device side itself is the TIX app's; this is a port of the reference in orch-tix (tests/support/
+# bridge_protocol_ref.py), so the vectors' responses are proved to be exactly what a conforming device accepts.
+
+import hmac  # noqa: E402
+import re  # noqa: E402
+
+MAX_OFFSET_MS, PIN_FAILURES, MAX_LABEL = 86_400_000, 3, 80
+DROP = {"result": "drop"}
+
+
+def _adopt(res: dict, pend: dict, meta: dict, now_ms: int) -> None:
+    """A verified stale_timestamp refusal gives the clock offset: once per pending request, at most 24 h (§5.1)."""
+    if not pend.get("offset_adopted"):
+        pend["offset_adopted"] = True
+        off = meta["host_ms"] - now_ms
+        if abs(off) <= MAX_OFFSET_MS:
+            res["offset_ms"] = off
+        else:
+            res["clock_wrong"] = True
+
 
 def device_check(env: bytes, pending: dict, mailbox: dict, now_ms: int, offset_ms: int) -> dict:
-    """The device's §7 checks, written here only to prove the host's envelope, sealing and signature code agrees
-    with the vectors' responses (the device side itself is the TIX app's)."""
-    drop = {"result": "drop"}
     if not E.OVERHEAD <= len(env) <= E.MAX_CHUNK:
-        return drop
+        return DROP
     hb, body, sig = E.split(env)
     h = E.Header.decode(hb)
     if h.magic != E.MAGIC or h.version != E.VERSION or h.direction != E.TO_DEVICE \
             or h.flags & ~(E.F_LAST | E.F_STREAM | E.F_REFUSAL) or (h.flags & E.F_REFUSAL and not h.flags & E.F_LAST):
-        return drop
+        return DROP
     if h.key_version != 1 or h.workspace.hex() != VEC["keys"]["workspace"] \
             or h.device.hex() != VEC["ids"]["device_a"]["device_id"]:
-        return drop
+        return DROP
     pend = pending.get(h.rid.hex())
     if pend is None:
-        return drop
+        return DROP
     if (mailbox["id"], mailbox["idx"], mailbox["last"], mailbox["stream"]) != \
             (h.rid.hex(), h.seq, bool(h.flags & E.F_LAST), bool(h.flags & E.F_STREAM)) or pend["stream"] != mailbox["stream"]:
-        return drop
+        return DROP
     if not signatures.verify(HOST_PUB, sig, signatures.signed_bytes(hb, body)):
-        return drop
+        try:  # only a K_ws holder can make the tag verify: only such a chunk is evidence the host key changed (§7)
+            keys.open_sealed(K_WS, hb, body)
+            return {**DROP, "pin_failure": True}
+        except keys.InvalidTag:
+            return {**DROP, "pin_failure": False}
     try:
         meta, data = E.unframe(keys.open_sealed(K_WS, hb, body))
     except (keys.InvalidTag, E.Malformed):
-        return drop
+        return DROP
     if h.seq != pend["next"]:
-        return drop
+        return DROP
     res = {"result": "accept", "last": bool(h.flags & E.F_LAST), "refusal": bool(h.flags & E.F_REFUSAL),
            "meta": meta, "data": data.hex(), "offset_ms": None, "clock_wrong": None}
     if h.flags & E.F_REFUSAL and meta.get("refusal") == "stale_timestamp" and type(meta.get("host_ms")) is int:
-        if not pend.get("offset_adopted"):
-            pend["offset_adopted"] = True
-            off = meta["host_ms"] - now_ms
-            if abs(off) <= 86_400_000:
-                res["offset_ms"] = off
-            else:
-                res["clock_wrong"] = True
+        _adopt(res, pend, meta, now_ms)
     elif abs(now_ms + offset_ms - h.ts_ms) > WINDOW_MS:
-        return drop
+        return DROP
     pend["next"] += 1
+    return res
+
+
+def pin_run(results: list) -> list:
+    """After each result: has the device said "the host key changed: pair again"? A pin failure counts, a verified
+    chunk resets the run, any other drop neither counts nor resets (§7)."""
+    run, alarm, out = 0, False, []
+    for r in results:
+        if r.get("pin_failure"):
+            run += 1
+            alarm = alarm or run >= PIN_FAILURES
+        elif r["result"] == "accept":
+            run = 0
+        out.append(alarm)
+    return out
+
+
+def open_pending_answer(env: bytes, case: dict) -> dict:
+    """Every answer to a pair request (§8.1 step 4): tag first, then the pin of the host_pub it carries, then the
+    signature with that key, then the rest of §7."""
+    mailbox, pending, now_ms = case["mailbox"], json.loads(json.dumps(case["pending"])), case["now_ms"]
+    if not E.OVERHEAD <= len(env) <= E.MAX_CHUNK:
+        return DROP
+    hb, body, sig = E.split(env)
+    h = E.Header.decode(hb)
+    if h.magic != E.MAGIC or h.version != E.VERSION or h.direction != E.TO_DEVICE \
+            or h.flags not in (E.F_LAST, E.F_LAST | E.F_REFUSAL):
+        return DROP
+    refusal = bool(h.flags & E.F_REFUSAL)
+    if h.key_version != 1 or h.workspace.hex() != VEC["keys"]["workspace"] \
+            or h.device.hex() != VEC["ids"]["device_a"]["device_id"]:
+        return DROP
+    pend = pending.get(h.rid.hex())
+    if pend is None:
+        return DROP
+    if (mailbox["id"], mailbox["idx"], mailbox["last"], mailbox["stream"]) != (h.rid.hex(), h.seq, True, False):
+        return DROP
+    try:
+        meta, _ = E.unframe(keys.open_sealed(K_WS, hb, body))
+        host_pub = bytes.fromhex(meta["host_pub"])
+    except (keys.InvalidTag, E.Malformed, ValueError, KeyError, TypeError):
+        return DROP
+    if len(host_pub) != 65 or (meta.get("refusal") is None if refusal else meta.get("state") != "pending"):
+        return DROP
+    if not hmac.compare_digest(keys.host_pin(host_pub), bytes.fromhex(case["host_pin"])):
+        return DROP
+    if not signatures.verify(host_pub, sig, signatures.signed_bytes(hb, body)):
+        return DROP
+    if h.seq != pend["next"]:
+        return DROP
+    res = {"result": "accept", "host_pub": host_pub.hex(), "fingerprint": None if refusal else meta.get("fingerprint"),
+           "refusal": meta["refusal"] if refusal else None, "offset_ms": None, "clock_wrong": None}
+    if refusal and meta["refusal"] == "stale_timestamp" and type(meta.get("host_ms")) is int:
+        _adopt(res, pend, meta, now_ms)
+    elif abs(now_ms - h.ts_ms) > WINDOW_MS:
+        return DROP
     return res
 
 
@@ -262,6 +345,65 @@ def test_device_case(case):
     got = device_check(bytes.fromhex(case["envelope"]), json.loads(json.dumps(case["pending"])), case["mailbox"],
                        case["now_ms"], case["offset_ms"])
     assert {k: got.get(k) for k in case["expect"]} == case["expect"]
+
+
+@pytest.mark.parametrize("case", VEC["pending_answers"], ids=lambda c: c["name"])
+def test_pending_answer(case):
+    got = open_pending_answer(bytes.fromhex(case["envelope"]), case)
+    assert {k: got.get(k) for k in case["expect"]} == case["expect"]
+
+
+@pytest.mark.parametrize("case", VEC["pin_runs"], ids=lambda c: c["name"])
+def test_pin_runs(case):
+    by_name = {c["name"]: c for c in VEC["device_cases"]}
+    results = [device_check(bytes.fromhex(by_name[n]["envelope"]), json.loads(json.dumps(by_name[n]["pending"])),
+                            by_name[n]["mailbox"], by_name[n]["now_ms"], by_name[n]["offset_ms"])
+               for n in case["steps"]]
+    assert pin_run(results) == case["alarm"]
+
+
+_FRAGMENT = re.compile(r"#?v1\.([0-9a-f]{32})\.([0-9a-f]{32})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})")
+
+
+def parse_pair_fragment(fragment: str):
+    """The pairing link, strictly (§8.1 step 1): the device's parser, ported."""
+    m = _FRAGMENT.fullmatch(fragment)
+    if not m:
+        return None
+    try:
+        s, pin = E.unb64u(m.group(3)), E.unb64u(m.group(4))
+    except ValueError:  # not canonical
+        return None
+    if len(s) != 32 or len(pin) != 32:
+        return None
+    return {"workspace": m.group(1), "pairing_id": m.group(2), "secret": s.hex(), "host_pin": pin.hex()}
+
+
+@pytest.mark.parametrize("case", VEC["links"], ids=lambda c: c["name"])
+def test_links(case):
+    assert parse_pair_fragment(case["fragment"]) == case["parsed"]
+
+
+def test_the_host_offers_a_link_the_strict_parser_accepts():
+    draws = iter([bytes(range(16)), bytes(range(32))])
+    _, fragment = Pairing(bytes.fromhex(VEC["keys"]["workspace"])).offer("decide", 0, lambda n: next(draws), HOST_PUB)
+    parsed = parse_pair_fragment(fragment)
+    assert parsed and parsed["host_pin"] == keys.host_pin(HOST_PUB).hex() and parsed["secret"] == bytes(range(32)).hex()
+
+
+@pytest.mark.parametrize("case", VEC["labels"], ids=lambda c: c["name"])
+def test_labels(case):
+    text = "".join(map(chr, case["codepoints"]))
+    assert [ord(c) for c in clean_shown(text)[:LABEL_MAX]] == case["host_stores"]
+    assert (not any(0xD800 <= ord(c) <= 0xDFFF for c in text) and len(text) <= MAX_LABEL) is case["device_accepts"]
+
+
+@pytest.mark.parametrize("case", VEC["challenge_parts"], ids=lambda c: c["name"])
+def test_challenge_parts(case):
+    m = case["meta"]
+    nonce, exp = m.get("nonce"), m.get("expires_ms")
+    ok = isinstance(nonce, str) and re.fullmatch(r"[0-9a-f]{64}", nonce) and type(exp) is int and exp >= 0
+    assert ({"nonce": nonce, "expires_ms": exp} if ok else None) == case["parsed"]
 
 
 # -- assertions ---------------------------------------------------------------------------------------------------------
@@ -308,7 +450,10 @@ def test_assertion_case(case):
 
 def test_vector_counts():
     """Nothing in the file goes unrun: the sections and their sizes this suite covers."""
-    assert sorted(VEC) == sorted(["comment", "version", "constants", "keys", "hkdf", "ids", "seal", "sign",
-                                  "sig_scalars", "host_cases", "pairing", "device_cases", "shown", "assertion"])
-    assert [len(VEC[k]) for k in ("hkdf", "seal", "sign", "sig_scalars", "device_cases", "shown")] == [3, 1, 8, 7, 17, 6]
+    assert sorted(VEC) == sorted(["version", "constants", "comment", "keys", "hkdf", "ids", "seal", "sign", "sig_scalars",
+                                  "host_cases", "pairing", "device_cases", "pin_runs", "pending_answers", "labels",
+                                  "links", "challenge_parts", "shown", "assertion"])
+    assert [len(VEC[k]) for k in ("hkdf", "seal", "sign", "sig_scalars", "device_cases", "shown")] == [3, 1, 8, 7, 34, 6]
+    assert [len(VEC[k]) for k in ("pin_runs", "pending_answers", "labels", "links", "challenge_parts")] \
+        == [4, 22, 6, 9, 7]
     assert len(VEC["assertion"]["cases"]) == 17

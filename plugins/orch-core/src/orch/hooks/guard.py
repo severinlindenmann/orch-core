@@ -57,7 +57,7 @@ _QUOTED_ADDON_ADMIN = re.compile(r"""['"]\s*(?:[^'"\n]*/)?orch['"]\s+(?:-\S+\s+)
 _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
-# grant|deny|revoke` (AI Factory), `dark profile add|remove|prune`, `factory dark on` and `factory release ...` (Dark AI
+# grant|deny|revoke` (AI Factory), `dark profile add|remove|prune`, `factory on`, `factory dark on` and `factory release ...` (Dark AI
 # Factory), and moves to a
 # status only
 # the human moves to. Agents never run them, in any spelling: `uv run orch`, `python -m orch.cli`, a wrapper path,
@@ -67,7 +67,7 @@ _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
 _HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
                   r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
                   r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                  r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
+                  r"|factory\s+(?:-\S+\s+)*(?:dark\s+(?:-\S+\s+)*)?on"
                   r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
                   r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
@@ -78,7 +78,7 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 # the command, or a human Actor built by hand.
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
 _HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|ledger_repair|epic_pause"
-                              r"|permit_(?:grant|deny|revoke)|add_from_request|set_factory_dark|set_recipe|clear_recipe)(?![\w-])")
+                              r"|permit_(?:grant|deny|revoke)|add_from_request|set_factory_dark|set_factory|set_recipe|clear_recipe)(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal
 # outside the agent's process tree.
@@ -527,12 +527,13 @@ _APP_HUMAN = re.compile(
     _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
     + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove|prune)" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
+    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
     + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"clones" + _Q
     + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
 _HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
                          r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                         r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
+                         r"|factory\s+(?:-\S+\s+)*(?:dark\s+(?:-\S+\s+)*)?on"
                          r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
                   r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
@@ -575,6 +576,8 @@ def _human_only_tokens(seg: str) -> bool:
         if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove", "prune"):
             return True
         if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
+            return True
+        if len(rest) >= 2 and rest[0] == "factory" and rest[1] == "on":
             return True
         if len(rest) >= 2 and rest[0] == "factory" and rest[1] in ("release", "clones"):
             return True

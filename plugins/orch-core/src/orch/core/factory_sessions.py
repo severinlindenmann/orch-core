@@ -172,6 +172,21 @@ def _read(ws, path: Path) -> dict | None:
     return body
 
 
+def recorded(session) -> bool:
+    """Whether a binding record may exist for this session id, without a workspace (its config may not even parse):
+    True when the file exists or looking failed, False only for an id the runner never makes or a certain absence.
+    For failing closed when nothing else can be read."""
+    if not isinstance(session, str) or not SESSION_ID.match(session):
+        return False
+    try:
+        os.lstat(_root() / "sessions" / f"{session}.json")
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return True
+    return True
+
+
 def binding(ws, session) -> dict | None:
     """The binding of a session the runner launched and has not ended, for this workspace; None otherwise."""
     if not isinstance(session, str) or not SESSION_ID.match(session):

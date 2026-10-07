@@ -46,8 +46,33 @@ _NONCE = re.compile(r"^[0-9a-f]{16}$")
 
 # -- the factory switch and factory epics ---------------------------------------------------------------------------
 
-def enabled(ws) -> bool:
+FACTORY_SETTING = "factory.enabled"
+UNSIGNED = ("factory.enabled is on in orchestrator/config.json but not signed, so AI Factory stays off: run "
+            "`orch factory on` in your own terminal")
+
+
+def config_enabled(ws) -> bool:
+    """What `orchestrator/config.json` asks for. An agent can edit that file: it never switches the factory on alone."""
     return bool((ws.config.get("factory") or {}).get("enabled"))
+
+
+def enabled(ws, checkout: str | None = None) -> bool:
+    """The factory switch: the config asks for it and this checkout's newest signed `factory.enabled` setting says on
+    (`orch factory on`, human only; anyone may sign it off). Fails closed: any error is off. A cut ledger leaves it
+    on so the views can say the ledger was cut; everything that adds power checks ledger.head_ok() itself."""
+    if not config_enabled(ws):
+        return False
+    from orch.core import ledger
+    try:
+        return ledger.signed_setting(ws, FACTORY_SETTING, checkout=checkout, cut_ok=True) is True  # cut: every use checks head_ok
+    except Exception:
+        return False
+
+
+def off_reason(ws) -> str:
+    """Why the factory is off, in one line: the config's switch is off, or it is on but not signed (the migration from
+    a plain config value)."""
+    return UNSIGNED if config_enabled(ws) else "AI Factory is switched off in this workspace"
 
 
 def enabled_at(start) -> bool:
@@ -71,7 +96,7 @@ DARK_SETTING = "factory.dark"
 
 
 def dark_on(ws, checkout: str | None = None) -> bool:
-    """Dark AI Factory (phase 5): `factory.enabled` is on and the newest signed Dark setting of this checkout (or of
+    """Dark AI Factory (phase 5): the factory is on (signed, `enabled`) and the newest signed Dark setting of this checkout (or of
     `checkout`, the id a session binding recorded) says on (`orch factory dark on`, human only; anyone may sign it
     off). Not a config value: an agent can edit the config."""
     if not enabled(ws):
@@ -554,7 +579,7 @@ def _session_ticket(ws, session: str | None):  # (ticket, the trusted binding) o
     if b is None:
         return None
     t = store.read_ticket(store.resolve(ws, b["child"]).path)
-    epic = factory_epic(ws, t)
+    epic = charter_epic(ws, t) if enabled(ws, b["checkout"]) else None  # the switch of the checkout it was bound in
     d = factory_delegation(ws, epic) if epic is not None else None
     if epic is None or epic.id != b["epic"] or d is None or d["id"] != b["delegation"]:
         return None
@@ -577,10 +602,21 @@ def _decision(behavior: str, message: str | None = None) -> dict:
 def hook_decision(ws, payload: dict) -> dict | None:
     """The hook's answer to one PermissionRequest payload: None (no opinion: the harness asks as usual) outside a
     factory session or with the factory off; else `allow` from a live signed grant, or `deny` with the request to
-    wait for. Never `allow` on an error."""
-    if not enabled(ws):
+    wait for. Never `allow` on an error. A session the runner may have bound is denied, never left to the harness,
+    when the factory is off (the switch of the checkout its binding names) or its binding cannot be read."""
+    from orch.core import factory_sessions, ledger
+    sid = payload.get("session_id")
+    try:
+        b = factory_sessions.binding(ws, sid)
+        on = enabled(ws, b["checkout"] if b else None)
+    except Exception:
+        b, on = None, False
+    if not on:
+        if b is not None or factory_sessions.recorded(sid):
+            return _decision("deny", "AI Factory is off for this session (switched off, not signed, or its binding "
+                                     "or the workspace config cannot be read); nothing was allowed. Stop and ask "
+                                     "the human.")
         return None
-    from orch.core import ledger
     if not ledger.head_ok() and _bound(ws, payload.get("session_id")):
         return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
                                  "grant counts; nothing was allowed. Stop and ask the human to look at it.")
@@ -1071,7 +1107,7 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
     """The answer for a session whose binding `b` the caller verified (_session_ticket: factory_sessions.trusted, the
     record the guard's session_state trusts too)."""
     from orch.core.events import Actor
-    epic = factory_epic(ws, ticket)
+    epic = charter_epic(ws, ticket)  # the caller checked the switch of the checkout the binding names
     if payload.get("tool_name") != "Bash":
         return _decision("deny", "in a factory epic only shell commands can be granted (this tool is not one); do "
                                  "without it and record why in the ticket")

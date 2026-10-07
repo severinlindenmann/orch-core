@@ -1010,10 +1010,10 @@ class Ops(TaskOpsMixin):
             raise UsageError(f"{eid} is an epic: it has only the requirements gate (its children have plans)",
                              hint=f"orch approve {eid} requirements")
         if isinstance(delegate, dict) and delegate.get("factory"):
-            from orch.core.permits import enabled
+            from orch.core.permits import enabled, off_reason
             if not enabled(self.ws):
-                raise UsageError("AI Factory is switched off in this workspace",
-                                 hint="set factory.enabled to true in orchestrator/config.json (docs/factory.md)")
+                raise UsageError(off_reason(self.ws),
+                                 hint="the human runs `orch factory on` in their own terminal (docs/factory.md)")
         if isinstance(delegate, dict) and delegate.get("dark"):
             from orch.core.permits import dark_on
             if delegate.get("factory") and not dark_on(self.ws):
@@ -1281,6 +1281,29 @@ class Ops(TaskOpsMixin):
             atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
         self.ws.config.setdefault("widgets", {})["html"] = on
         self._emit(None, "setting.changed", {"setting": ledger.WIDGETS_HTML, "value": on})
+
+    def set_factory(self, on: bool) -> None:
+        """AI Factory's switch for this checkout: a signed setting (orch.core.permits.enabled) and `factory.enabled` in
+        the config, written together. On is the human's decision; off takes power away, so anyone may sign it."""
+        import json
+        from orch.actor import process_evidence
+        from orch.config.load import CONFIG_NAME
+        from orch.core import ledger
+        from orch.core.fsutil import atomic_write_text
+        from orch.core.permits import FACTORY_SETTING
+        if on:
+            require_human(self.actor, "turning on AI Factory")
+        if self.dry_run:
+            return
+        path = self.ws.home / CONFIG_NAME
+        with lock(self.ws, "config"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            ledger.record_setting(self.ws, FACTORY_SETTING, on, self.actor, process_evidence())
+            factory = raw.get("factory") if isinstance(raw.get("factory"), dict) else {}
+            raw["factory"] = {**factory, "enabled": on}
+            atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        self.ws.config.setdefault("factory", {})["enabled"] = on
+        self._emit(None, "setting.changed", {"setting": FACTORY_SETTING, "value": on})
 
     def set_factory_dark(self, on: bool) -> None:
         """Dark AI Factory's switch for this checkout, a signed setting (orch.core.permits.dark_on), never a config

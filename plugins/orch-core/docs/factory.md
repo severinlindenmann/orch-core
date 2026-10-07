@@ -12,8 +12,23 @@ described below.
 
 ## Switching it on
 
-Set `factory.enabled` to `true` in `orchestrator/config.json`. That alone changes nothing: a factory epic needs
-your signed start, and switching the factory off again turns its epics back into ordinary delegated epics.
+In your own terminal:
+
+```bash
+orch factory on       # human only: typed confirmation (FACTORY); refused to agents and under an agent harness
+orch factory status   # anyone
+orch factory off      # anyone: it only takes power away
+```
+
+`orch factory on` signs a setting into the approval ledger, bound to this checkout (as the Dark switch below), and
+sets `factory.enabled` to `true` in `orchestrator/config.json`. The factory is on only while both hold: the config
+value alone is a file an agent can edit, so it switches nothing on. A workspace whose config says `factory.enabled`
+but has no signed switch (one from before the switch was signed, or a hand or agent edit) stays off, and the runner,
+the readiness line, `orch factory status` and a refused `--factory` start all say the same one line: "factory.enabled
+is on in orchestrator/config.json but not signed, so AI Factory stays off: run `orch factory on` in your own
+terminal". A session the runner bound is denied (never left to the harness) while the switch is off. Switching on
+alone changes nothing else: a factory epic needs your signed start, and switching the factory off again turns its
+epics back into ordinary delegated epics.
 
 ## Starting a factory epic (you only)
 
@@ -417,7 +432,7 @@ orch's own commands only: ticket files are plain files in the repository, so a p
 (`pytest`, `make`, `npm run ...`) can change any ticket file without orch. Prefer exact rules (see "A prefix rule
 trusts the repository").
 
-The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
+The runner never approves, grants, signs or starts a factory by itself. It does nothing unless the factory is on (signed, `orch factory on`),
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
 `orch approve --factory` signs the charter but does not arm the runner). It runs only in a process that is not under an
 agent harness, like the dashboard's other human actions.
@@ -783,8 +798,7 @@ commands Dark runs in this checkout may run.
 runner. A Dark charter you sign with `orch approve --dark` in the terminal is not armed, so no agent session is
 launched for it.
 
-**Switching it on (you only).** Set `factory.enabled` to `true` in `orchestrator/config.json`, then in your own
-terminal:
+**Switching it on (you only).** Switch the factory on (`orch factory on`, above), then in your own terminal:
 
 ```bash
 orch factory dark on       # human only: typed confirmation; refused to agents and under an agent harness
@@ -798,10 +812,7 @@ behaves as an ordinary factory epic: the profile is ignored and every prompt is 
 off, nothing here does anything.
 
 **The brakes.** `orch factory dark off` (anyone, signed) turns every Dark epic of this checkout back into an ordinary
-factory epic at once; `orch epic pause <epic>` (yours, signed) stops one epic. Known limitation: `factory.enabled`
-itself is still a plain config value an agent can edit (as since phase 1). Switching it off only takes power away;
-switching it on still needs your signed Dark setting and a signed Dark charter before the profile answers anything. A
-signed factory switch is a follow-up.
+factory epic at once; `orch epic pause <epic>` (yours, signed) stops one epic. `orch factory off` (anyone, signed) stops the whole factory.
 
 **Starting a Dark epic (you only).**
 
@@ -1614,7 +1625,6 @@ record what they were told: [factory-release-live-test.md](factory-release-live-
   coverage block are tested with stand-ins only).
 - Removing a child's clone once its work is released.
 - The Dark switch on the dashboard.
-- A signed `factory.enabled` switch (today a plain config value).
 - Phone cards through the signed phone-decision flow.
 - Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

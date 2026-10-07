@@ -108,12 +108,13 @@ def record_setting(ws, name: str, value, actor, evidence: dict | None) -> dict:
                   checkout=checkout_id(ws), prev=chain[-1]["mac"] if chain else "")
 
 
-def signed_setting(ws, name: str, signed: list[dict] | None = None, checkout: str | None = None):
+def signed_setting(ws, name: str, signed: list[dict] | None = None, checkout: str | None = None, cut_ok=False):
     """The value of this checkout's (or the given checkout id's) newest signed entry for `name`, or None when there is
     none or it does not chain onto the entry before it (a replayed, reordered or out-of-place entry): that counts as
-    no decision."""
+    no decision. A cut ledger (head_ok False) is no decision too, unless `cut_ok`: for a switch whose every use checks
+    head_ok itself and must still tell the human the ledger was cut (the factory switch)."""
     chain = _settings(ws, name, entries(ws) if signed is None else signed, checkout)
-    if not chain or not head_ok():
+    if not chain or not (cut_ok or head_ok()):
         return None
     last, prev = chain[-1], (chain[-2]["mac"] if len(chain) > 1 else "")
     if last.get("prev") != prev or sum(e["mac"] == last["mac"] for e in chain) > 1:

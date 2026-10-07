@@ -566,8 +566,8 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         from orch.core.permits import dark_on
         if not dark_on(ws):
             raise UsageError("Dark AI Factory is switched off in this checkout",
-                             hint="set factory.enabled to true in orchestrator/config.json and run `orch factory dark "
-                                  "on` in your own terminal (docs/factory.md)")
+                             hint="run `orch factory on` and `orch factory dark on` in your own terminal "
+                                  "(docs/factory.md)")
     if release is not None and release != "none" and not dark:
         raise UsageError("--release goes with --dark: only a Dark charter signs a release")
     if rollback and release != "prod":

@@ -42,8 +42,9 @@ example `/Users/<you>/orch-live-test/remote.git`), then:
 orch factory release set --file recipe.json   # shows the recipe and the pinned script; type RELEASE
 ```
 
-Turn the factory on, and let the workers commit in their clones: in `orchestrator/config.json` set
-`factory.enabled` to `true` and `git.agent_may.commit` to `true` (`"git": {"agent_may": {"commit": true}}`). Commit
+Turn the factory on (`orch factory on` in your terminal, which also sets `factory.enabled`), and let the workers
+commit in their clones: in `orchestrator/config.json` set `git.agent_may.commit` to `true` (`"git": {"agent_may":
+{"commit": true}}`). Commit
 that change and push it (`git push ~/orch-live-test/remote.git main`): each child's clone starts from `main` as the
 bare remote has it, never from your local `main`, so a commit you have not pushed is not in any child (and a local
 `main` that shares no history with the remote's gets no clone at all, with "share no history" in the run view). Then

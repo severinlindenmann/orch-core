@@ -120,6 +120,8 @@ def runner_blocker(ws, settings=None) -> str | None:
     """The runner's current reason to start nothing, or None: a program it needs (program_blocker), the user-scope
     settings (user_settings_blocker), or the last readiness run's first blocking check (never run here). One function
     for the runner round and every view, so nothing fails silently."""
+    if permits.config_enabled(ws) and not permits.enabled(ws):
+        return permits.UNSIGNED
     why = program_blocker(settings)
     if why:
         return why

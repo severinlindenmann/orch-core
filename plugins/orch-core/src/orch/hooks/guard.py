@@ -482,21 +482,45 @@ def _mux_segment_risky(seg: str) -> bool:
     return False
 
 
+_MUX_WORD_BOUNDED = re.compile(r"(?<![A-Za-z0-9_-])(?:tmux|screen)(?![A-Za-z0-9_-])", re.I)
+# Code that starts a process: an interpreter that names tmux or screen next to one may be driving it.
+_PROC_LAUNCH = re.compile(r"(?i)subprocess|\bos\.|popen|system\b|\bexec|spawn|child_process|pexpect|\bsh\b|bash|\brun\b|\bcall\b"
+                          r"|check_output|\bshell\b|\bcmd\b|`")
+_INTERP_PROG = re.compile(r"(?:python[0-9.]*|perl|ruby|node|deno|bun|php|lua)")
+
+
+def _mux_in_interpreter_code(cmd: str) -> bool:
+    """Code that is not shell (a code heredoc body, or the command line of an interpreter) names tmux or screen as a
+    word next to something that starts a process."""
+    main, docs = _split_heredocs(cmd)
+    texts = [d.body for d in docs if not _is_data_heredoc(main, d)]
+    for seg in _segments(main):
+        words, _ = _command(seg)
+        if words and _INTERP_PROG.fullmatch(os.path.basename(words[0])):
+            texts.append(seg)
+    return any(_MUX_WORD_BOUNDED.search(t) and _PROC_LAUNCH.search(t) for t in texts)
+
+
 def _mux_risky(cmd: str) -> bool:
     """A tmux or screen command the guard cannot show plain. Only the command word and its own arguments count: a
     `grep tmux`, a heredoc body, a quoted message or a `#` inside quotes is not one. Best effort."""
-    if len(cmd) > MAX_CMD and re.search(r"tmux|screen", cmd, re.I):
+    if len(cmd) > MAX_CMD and _MUX_WORD_BOUNDED.search(cmd):
         raise _Bound("length")
     flat = _prep(cmd)
     if _config_and_mux(flat):
         return True
-    whole = re.search(r"tmux|screen", flat, re.I)
+    whole = _MUX_WORD_BOUNDED.search(flat)
     if _MUX_ANSI_C.search(flat) and _MUX_FLAG.search(flat):
         return True
     if not whole:
         return False
-    if whole and re.search(r"(?<![\w-])function\s|\w\s*\(\)|(?<![\w-])alias\s", flat):
-        return True  # a function or an alias that may wrap the command: not provable
+    if _mux_in_interpreter_code(flat):
+        return True
+    # a function or an alias that may wrap the command: not provable. Only code counts, not a data heredoc's prose.
+    # A command line that runs orch keeps every heredoc body in view: the data-only orch allow-list is not relied on here.
+    shown = flat if _ORCH_WORD.search(_split_heredocs(flat)[0]) else _without_message_text(_code_text(flat))
+    if re.search(r"(?<![\w-])function\s|\w\s*\(\)|(?<![\w-])alias\s", shown):
+        return True
     for seg in _command_segments(flat):
         words, _ = _command(seg)
         if not words:
@@ -505,7 +529,7 @@ def _mux_risky(cmd: str) -> bool:
         if prog in ("tmux", "screen"):
             if _mux_segment_risky(seg):
                 return True
-        elif (prog in _WRAPPERS or prog in _DEFINERS) and re.search(r"tmux|screen", seg, re.I):
+        elif (prog in _WRAPPERS or prog in _DEFINERS) and _MUX_WORD_BOUNDED.search(seg):
             if prog in _DEFINERS or _mux_segment_risky(seg):
                 return True
         elif re.match(r"[$`]", words[0]) and whole:  # a command word the guard cannot read, and tmux is mentioned

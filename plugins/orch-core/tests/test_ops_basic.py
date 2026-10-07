@@ -148,15 +148,15 @@ def test_artifact_add_failure_leaves_nothing(ws, aops, put, tmp_path, monkeypatc
     def boom(*a, **kw):
         raise OSError("disk full")
 
-    monkeypatch.setattr(ops_module.shutil, "copy2", boom)
-    with pytest.raises(OSError):
-        aops.artifact_add(tid, src, name="report.html")
+    with monkeypatch.context() as m:
+        m.setattr(ops_module.shutil, "copy2", boom)
+        with pytest.raises(OSError):
+            aops.artifact_add(tid, src, name="report.html")
     dest_dir = ws.artifacts_dir / tid
     dest = dest_dir / "report.html"
     assert not dest.exists()
     assert not dest_dir.exists() or list(dest_dir.iterdir()) == []
 
-    monkeypatch.undo()
     assert aops.artifact_add(tid, src, name="report.html") == dest
     assert dest.read_text(encoding="utf-8") == "<p>x</p>"
 

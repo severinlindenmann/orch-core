@@ -472,8 +472,9 @@ def test_the_view_backs_off_while_nothing_changes_and_a_key_wakes_it(ws, fake, m
         waits.append(seconds)
         return len(waits) == 6  # a key POST arrives during the sixth nap
 
-    monkeypatch.setattr(routes_terminals, "_nap", nap)
-    _stream(ws, "DEMO-1", rounds=8)
+    with monkeypatch.context() as m:
+        m.setattr(routes_terminals, "_nap", nap)
+        _stream(ws, "DEMO-1", rounds=8)
     assert waits[:6] == [0.2, 0.4, 0.8, 1.6, 2.0, 2.0] and waits[6] == 0.4  # woken: back to the quick tick
 
     async def woken():
@@ -482,7 +483,6 @@ def test_the_view_backs_off_while_nothing_changes_and_a_key_wakes_it(ws, fake, m
         routes_terminals._wake("DEMO-1")
         return await task
 
-    monkeypatch.undo()
     assert asyncio.run(woken()) is True and routes_terminals._WAKE == {}
 
 

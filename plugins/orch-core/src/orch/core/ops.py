@@ -641,7 +641,8 @@ class Ops(TaskOpsMixin):
 
         # under the release lock whenever a release is signed: what is not released is read, and the close written,
         # while no stage can run
-        with factory_release.quiet(self.ws, entry.id, epic is not None and factory_release.signs_release(self.ws, epic)):
+        signed = epic is not None and factory_release.signs_release(self.ws, epic)
+        with factory_release.quiet(self.ws, entry.id, signed):
             if epic is not None:
                 release.update(factory_release.skip_fields(self.ws, epic, skip_release,
                                                            "Close without releasing, with a reason"))

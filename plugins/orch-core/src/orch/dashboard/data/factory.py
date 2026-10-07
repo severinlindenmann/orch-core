@@ -93,10 +93,10 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
     "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy; for "
                        "production, look at production now: it may be half-deployed). Retry release only when running "
                        "it again is safe; otherwise finish it by hand.",
-    "release-stale": "Look at what changed since the stage was proven (a child's branch, the children, or the base when "
-                     "another production released a later commit). Retry release on the out-of-date stage to run it "
-                     "for the children and the base as they are now (the merge, then dev, then production), or release "
-                     "the change by hand.",
+    "release-stale": "Look at what changed since the stage was proven (a child's branch, the children, or the base "
+                     "when another production released a later commit). Retry release on the out-of-date stage to "
+                     "run it for the children and the base as they are now (the merge, then dev, then production), or "
+                     "release the change by hand.",
     "production-failed": "Look at production now: its commands ran, or began to, and did not prove themselves (a "
                          "command failed, or its check did not pass), so it may be half-deployed, and nothing was "
                          "rolled back (a rollback runs only after a failed check, and only when signed and in the "
@@ -359,7 +359,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
-            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait", "windowlook": "wait", "relhold": "wait"}.get(state, "stop")
+            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait",
+            "windowlook": "wait", "relhold": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works

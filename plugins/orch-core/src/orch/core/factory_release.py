@@ -1191,7 +1191,8 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                                        else _text(u.get("why") or f"exit code {code}", 200)) + ")"})
             elif u["state"] == "unknown":
                 out.append({"code": "release-unknown", "label": "Release outcome unknown",
-                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and its outcome is unknown "
+                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and its outcome is "
+                                    "unknown "
                                     f"({_text(u.get('why') or 'the runner stopped while it ran', 200)})"
                                     + ("; look at production now: it may be half-deployed"
                                        if s["name"] == "production" else "")})

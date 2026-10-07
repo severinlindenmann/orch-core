@@ -307,3 +307,142 @@ def test_a_journal_only_block_does_not_claim_its_file_was_removed(fws, ready, hu
                           "epic": eid})
     why = fr._blocked_record(fws, eid)["why"]
     assert "removed" in why and "its record was removed" not in why and "runner stopped" in why
+
+
+# -- every reader agrees on whether the release is complete ---------------------------------------------------------
+# The combinations are derived, not listed: each release stage in each record state (with the others as the runner
+# left them), and for a production that waits, each window state; then the same with the charter paused, and with
+# the child deleted. For each, unreleased(), the close's release blockers, the run view's release steps and orch
+# check's closed-unreleased finding must say the same thing. Documented exceptions, asserted as such:
+# - the close's blockers stop at the charter (paused) before they read the release: not compared then;
+# - the run view lights a release step only once the epic is Ready (Evidence): with the child deleted it is not, so
+#   the run view says "not complete", which agrees because the others say so too (the merge has no unit left);
+# - the clone dimension (present, removed, swapped) is not enumerated: no reader of the release state reads a clone
+#   (status() reads records only; a clone counts for the stage gate before the merge and for the close's own
+#   "built" blockers, which test_factory_built and test_factory_clones_release cover); nor is "child done", which
+#   keeps a proven merge counted (test_factory_production's closed-after-merge test) or, with a failed merge, is
+#   test_a_failed_merge_of_a_child_that_left_stays_a_reason above.
+
+STAGE_STATES = ("proven", "stale", "failed", "unknown", "blocked", "running", "held", "waiting", "old")
+ONLY = {"held": "production", "old": "merge"}  # another epic's hold is production's; an old record is a merge's
+WINDOWS = ("open", "shut", "unreadable", "future")
+
+
+def _snapshot(fws, eid):
+    d = fr._dir(fws, eid)
+    files = {p.name: p.read_bytes() for p in d.iterdir() if p.is_file()}
+    return files, fr._index_path(fws).read_text(encoding="utf-8"), fr._window_path(fws).read_bytes()
+
+
+def _restore(fws, eid, snap):
+    import shutil
+    files, j, w = snap
+    fr.release_lock(fws)
+    d = fr._dir(fws, eid)
+    shutil.rmtree(d)
+    d.mkdir(mode=0o700)
+    for name, body in files.items():
+        (d / name).write_bytes(body)
+    fr._index_path(fws).write_text(j, encoding="utf-8")
+    fr._window_path(fws).write_bytes(w)
+    shutil.rmtree(fr._dir(fws, "X-9"), ignore_errors=True)
+
+
+def _apply(fws, eid, c, stage, state, window):
+    import json
+    d = fr._dir(fws, eid)
+    unit = c if stage == "merge" else eid
+    later = fr.STAGES[fr.STAGES.index(stage):]
+
+    def drop(stages):
+        for p in list(d.iterdir()):
+            if p.name.split(".")[0] in stages:
+                p.unlink()
+        lines = [x for x in fr._index_path(fws).read_text(encoding="utf-8").splitlines()
+                 if json.loads(x).get("stage") not in stages]
+        fr._index_path(fws).write_text("".join(x + "\n" for x in lines), encoding="utf-8")
+        if "production" in stages:
+            fr._window_path(fws).unlink()
+    out = d / fr._name(stage, unit, 1, "outcome")
+    if state == "stale":
+        fr._write(d / fr._name(stage, unit, 1, "stale"), {"why": "changed"})
+    elif state == "failed":
+        out.write_text(json.dumps({**json.loads(out.read_text(encoding="utf-8")), "proven": False}), encoding="utf-8")
+    elif state == "unknown":
+        out.unlink()
+    elif state == "old":  # a merge record from before the base it was checked against was recorded
+        body = json.loads(out.read_text(encoding="utf-8"))
+        body.pop("base_sha", None)
+        out.write_text(json.dumps(body), encoding="utf-8")
+    elif state == "running":
+        out.unlink()
+        assert fr.acquire(fws, eid, 60)
+    elif state == "blocked":
+        fr._write(d / "blocked.json", {"code": "release-blocked", "stage": stage, "unit": unit, "why": "x",
+                                       "epic": eid})
+    elif state in ("waiting", "held"):
+        drop(later)
+        if state == "held":  # another epic's production failed and is unresolved
+            x = fr._dir(fws, "X-9")
+            fr._write(x / fr._name("production", "X-9", 1, "intent"), {"epic": "X-9", "unit": "X-9",
+                                                                       "started": "2020-01-01T00:00:00Z"})
+            fr._write(x / fr._name("production", "X-9", 1, "outcome"),
+                      {"proven": False, "ended": "2020-01-01T00:00:00Z"})
+    if "production" in later and state in ("waiting", "held") and window != "open":
+        from orch import clock
+        at = {"shut": clock.stamp_s(), "unreadable": "nonsense", "future": "2999-01-01T00:00:00Z"}[window]
+        fr._atomic(fr._window_path(fws), json.dumps({"at": at}))
+
+
+def _readers(fws, eid):
+    from types import SimpleNamespace
+
+    from orch.core import factory_close
+    from orch.core.check import _check_release_skips
+    from orch.dashboard.data import factory as data
+    epic = store.load(fws, eid)[1]
+    d = permits.factory_delegation(fws, epic)
+    bl = factory_close.blockers(fws, epic, d)
+    close = None if any(b["code"] == "charter" for b in bl) else not any(b["code"] == "release" for b in bl)
+    run = data.run_view(fws, epic)
+    marks = dict(zip(run["names"], run["marks"]))
+    entry = next(e for e in store.scan(fws) if e.id == eid)
+    done = SimpleNamespace(status="done", meta=entry.meta, path=entry.path, id=eid)  # as if it were closed now
+    return {"unreleased": fr.unreleased(fws, epic) == [], "close": close,
+            "run view": all(marks[n] == "done" for n in ("Merge", "Dev", "Production")),
+            "orch check": not any(f.code == "closed-unreleased" for f in _check_release_skips(fws, [done]))}
+
+
+def test_every_reader_agrees_whether_the_release_is_complete(fws, ready, fh, human, remote):
+    import itertools
+    pytest.importorskip("fastapi")
+    eid, (c,), _ = ready(release="prod", recipe=_prod_recipe(remote), charter={"close": True})
+    fr.tick(fws, human, ProdFake())
+    assert _states(fws, eid) == {"merge": "proven", "dev": "proven", "production": "proven"}
+    snap = _snapshot(fws, eid)
+    combos = [(s, st, w) for s, st in itertools.product(fr.STAGES, STAGE_STATES) if ONLY.get(st, s) == s
+              for w in (WINDOWS if st in ("waiting", "held") else ("open",))]
+    assert len(combos) > 30
+    seen = set()
+    for phase in ("live", "paused", "deleted"):
+        if phase == "paused":
+            fh.epic_pause(eid)
+        elif phase == "deleted":
+            store.resolve(fws, c).path.unlink()
+        for stage, state, window in combos:
+            _restore(fws, eid, snap)
+            _apply(fws, eid, c, stage, state, window)
+            got = _readers(fws, eid)
+            fr.release_lock(fws)
+            want = got["unreleased"]
+            where = (phase, stage, state, window, got)
+            assert got["orch check"] == want, where
+            if got["close"] is not None:
+                assert got["close"] == want, where
+            else:
+                assert phase != "live", where  # only a stopped charter keeps the close from saying
+            assert got["run view"] == want, where
+            # complete exactly when every stage is proven: a block or another epic's hold changes nothing proven
+            assert want == (phase != "deleted" and state in ("proven", "blocked")), where
+            seen.add(want)
+    assert seen == {True, False}

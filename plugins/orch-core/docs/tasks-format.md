@@ -93,7 +93,7 @@ check looks at that literal path only.
 - Done and skipped tasks are closed; they cannot be edited until they are reopened.
 - Tasks change only while the ticket is in progress or waiting. An agent needs its own unexpired
   claim for every task write. A claim runs out `claims.ttl_hours` after its holder's last sign of life
-  (the claim or any event on the ticket), never while the ticket is waiting on the human; when yours ran
+  (the claim, or an event its own session wrote on the ticket; the human's events and other sessions' do not count), never while the ticket is waiting on the human; when yours ran
   out and nobody took it over, `orch claim <id>` renews it.
 - `owner: human` tasks belong to the human: an agent may not start, tick, skip, block, reopen or
   edit them, and only the human changes an owner. The human may skip (with a reason) or reopen an

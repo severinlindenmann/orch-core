@@ -82,6 +82,46 @@ def test_check_and_held_ticket_use_the_same_rule(ws, aops, working, monkeypatch)
     assert "claim-expired" in codes
 
 
+def _shift(monkeypatch, hours):
+    """Every clock reads `hours` later from now on, so events written afterwards are dated in that future."""
+    fake = lambda: real_now() + timedelta(hours=hours)  # noqa: E731
+    monkeypatch.setattr("orch.clock.now", fake)
+    monkeypatch.setattr(query, "clock_now", fake)
+
+
+def _expired(ws, tid):
+    t = store.load(ws, tid)[1]
+    return query.claim_is_expired(ws, tid, t.status, t.meta["claim"])
+
+
+def test_human_events_do_not_extend_a_claim(ws, aops, hops, working, monkeypatch):
+    aops.ask(working, [{"text": "Which?", "type": "text", "blocking": False}])
+    _shift(monkeypatch, 5)
+    hops.answer(working, "Q1", "this one")             # the human keeps answering; the agent is silent
+    assert read_events(ws, working)[-1].actor.startswith("human:")
+    assert _expired(ws, working)
+
+
+def test_the_claiming_sessions_own_events_extend_it(ws, aops, working, monkeypatch):
+    _shift(monkeypatch, 5)
+    assert _expired(ws, working)
+    aops.log(working, "still here")
+    assert not _expired(ws, working)
+
+
+def test_another_sessions_events_do_not_extend_it(ws, aops, other_agent, working, monkeypatch):
+    _shift(monkeypatch, 5)
+    Ops(ws, other_agent).log(working, "someone else")
+    assert read_events(ws, working)[-1].actor.startswith("agent:copilot")
+    assert _expired(ws, working)
+
+
+def test_waiting_still_never_expires_even_without_own_events(ws, aops, working, monkeypatch):
+    aops.ask(working, [{"text": "Go?", "type": "confirm", "blocking": True}])
+    _shift(monkeypatch, 100)
+    assert not _expired(ws, working)
+
+
 def test_check_does_not_flag_old_claim_with_recent_activity(ws, aops, working):
     _age_claim(ws, working)
     assert "claim-expired" not in [f.code for f in check_mod.run_checks(ws)]

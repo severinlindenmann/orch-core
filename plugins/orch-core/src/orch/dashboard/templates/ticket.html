@@ -534,7 +534,7 @@
         </div>
       </details>
       {% if gv.can_approve and not epic %}
-      <p class="dc-ff muted">{% if gv.gate == "requirements" %}Approving moves {{ t.id }} to open, so an agent can claim it.{% else %}Lets {{ card.agent.harness if card.agent else "the agent" }} work the tasks.{% if card.code %} Does not approve {{ card.code.label }}.{% endif %}{% endif %}</p>
+      <p class="dc-ff muted">{% if gv.gate == "requirements" and gv.reapprove and t.status != "backlog" %}{{ t.id }} stays {{ t.status }} and keeps its plan approval.{% elif gv.gate == "requirements" %}Approving moves {{ t.id }} to open, so an agent can claim it.{% if t.meta.parent %} It covers {{ t.id }} only: the epic and its other children are not approved again.{% endif %}{% else %}Lets {{ card.agent.harness if card.agent else "the agent" }} work the tasks.{% if card.code %} Does not approve {{ card.code.label }}.{% endif %}{% endif %}</p>
       {% if together and gv.gate == "requirements" %}
       <div class="cluster story-actions">{{ approve_form(gv, "Approve requirements only", false) }}{{ changes_form(gv.gate) }}</div>
       {% else %}

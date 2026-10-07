@@ -37,6 +37,10 @@ def charter_lines(s: dict) -> list[str]:
         lines.append(f"  {c['id']:<8} {c['status']:<12} {c['state_label']:<34} {visible(c['title'])}")
     for rid in s["diff"]["removed"]:
         lines.append(f"  {rid:<8} left the epic since its approval")
+    added = [c["id"] for c in s["children"] if c["state"] == "new" and c["status"] == "backlog"]
+    if s["approved"] and added:  # a child added later is approved on its own: the epic and its other children stay as they are
+        lines.append("  approve just the new " + ("child" if len(added) == 1 else "children") + " without the epic: "
+                     + ", ".join(f"orch approve {i}" for i in added))
     d = s["delegation"]
     if d:
         state = ("paused" if d["paused"] else "suspended (epic changed)" if d["epic_changed"]

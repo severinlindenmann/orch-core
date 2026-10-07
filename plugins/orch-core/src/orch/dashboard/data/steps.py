@@ -209,7 +209,8 @@ def _candidate(ticket, item: dict, plan_skip_sizes, moves) -> dict:
         text = ("Read the epic and every open child, then approve the epic (or request changes)."
                 if kind == "approve-requirements" else
                 "Something changed since you approved the epic" + (f" ({detail})" if detail else "")
-                + ". Read what changed, then approve the epic again.")
+                + ". Read what changed, then approve the epic again; a child added later can also be approved on its "
+                "own, from its own page.")
         label = "Approve the epic" if kind == "approve-requirements" else "Re-approve the epic"
         return {"text": text, "action": {"kind": "approve", "gate": "requirements", "label": label}, "rank": 0}
     if gate:
@@ -225,6 +226,8 @@ def _candidate(ticket, item: dict, plan_skip_sizes, moves) -> dict:
                                "label": "Approve requirements and plan"}, "rank": 0}
         else:
             text, label = _APPROVE_TEXT[gate], f"Approve {gate}"
+        if kind == "approve-requirements" and ticket.meta.get("parent"):
+            text += " It covers this ticket only: its epic and the other children are not approved again."
         return {"text": text, "action": {"kind": "approve", "gate": gate, "label": label}, "rank": 0}
     if kind == "answer":
         qids = [q.strip() for q in detail.split(",") if q.strip()]

@@ -588,7 +588,14 @@ def _orch_subcommand_starts(words: list[str]) -> list[list[str]]:
     offer both `val approve L-1` and `approve L-1`. Words after a bare `--` are not options."""
     opts, pos, ended = 0, 0, False
     positional, idx = [], []
+    skip = False
     for w in words:
+        if skip:  # the value of -C (orch's one known option with a value) is a folder, never the subcommand
+            skip = False
+            continue
+        if not ended and w == "-C":
+            skip = True
+            continue
         if not ended and w == "--":
             ended = True
         elif not ended and w.startswith("-"):
@@ -630,6 +637,43 @@ def _orch_programs(seg: str):
     for k, word in enumerate(words):
         if re.split(r"[/\\]", word)[-1] in ("orch", "orch.cli"):
             yield words[k + 1:]
+
+
+_ORCH_LEADERS = frozenset({"command", "exec", "env", "sudo", "doas", "nohup", "time", "builtin", "uv", "run", "uvx", "nice",
+                           "timeout", "xargs", "stdbuf", "setsid", "ionice", "--"})
+
+
+def _orch_dynamic_tokens(seg: str) -> bool:
+    """The orch program is the command word (quotes and a wrapper aside: `"orch" $x`, `o"rch" $x`, `command "orch" $x`)
+    and a word that could be its subcommand is built by the shell (`$x`, `${x}`, a backtick, a glob)."""
+    import shlex
+    try:
+        words = shlex.split(seg, comments=True, posix=True)
+    except ValueError:
+        return False
+    for k, word in enumerate(words):
+        if re.split(r"[/\\]", word)[-1] not in ("orch", "orch.cli"):
+            continue
+        before = words[:k]
+        if not all(w in _ORCH_LEADERS or w.startswith("-") or re.fullmatch(r"python[0-9.]*", w)
+                   or re.fullmatch(r"[A-Za-z_]\w*=.*", w)
+                   for w in before):
+            continue
+        for rest in _orch_subcommand_starts(words[k + 1:]):
+            if rest and re.search(r"[$`*?\[]", rest[0]):
+                return True
+    return False
+
+
+_DEFINES_ORCH = re.compile(r"(?:^|[\s;&|(){}])(?:function\s+)?(?:orch|" + "|".join(re.escape(v) for v in _HUMAN_VERBS)
+                           + r")\s*(?:\(\s*\)|\{)|(?:^|[\s;&|(){}])(?:function|alias)\s+(?:--\s+)?(?:orch|"
+                           + "|".join(re.escape(v) for v in _HUMAN_VERBS) + r")\b")
+_DEFINES_ANY = re.compile(r"\w\s*\(\)|(?<![\w-])(?:function|alias)\s")
+
+
+def _defines_orch(cmd: str) -> bool:
+    """A shell function or alias named orch or after a human verb: it could turn `orch show` into anything."""
+    return bool(_DEFINES_ORCH.search(cmd.replace("'", "").replace('"', "").replace("\\", "")))
 
 
 def _human_only_tokens(seg: str) -> bool:
@@ -748,7 +792,7 @@ def _help_only(seg: str) -> bool:
 
 
 def _runs_human_only(seg: str, plain: str, sole: bool = False, msg: bool = True) -> bool:
-    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole, msg)) or _human_only_tokens(seg)
+    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole, msg)) or _human_only_tokens(seg) or _orch_dynamic_tokens(seg)
                 or _ORCH_DYNAMIC.search(seg))
 
 
@@ -2409,7 +2453,9 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
     all_segs = _command_segments(cmd)
     msg_ok = _message_exempt(cmd)
     for seg in all_segs:
-        if _help_only(seg) and not re.search(r"(?<!\|)\|(?!\|)", cmd):  # not piped on (`| sh` would run the text)
+        if _defines_orch(cmd):
+            return Decision(False, _HUMAN_ONLY_DENIED)
+        if _help_only(seg) and not _DEFINES_ANY.search(cmd) and not re.search(r"(?<!\|)\|(?!\|)", cmd):  # not piped on (`| sh` would run the text)
             continue
         # git checks look at the command with quoted text blanked out, so a commit message or an
         # echo that mentions `git push` or `-n` is not mistaken for the command itself.

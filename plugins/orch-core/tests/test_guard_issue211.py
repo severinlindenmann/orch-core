@@ -326,6 +326,40 @@ def test_a_dollar_and_quote_in_plain_text_is_not_ansi_c(ws):
     _check(ws, "echo $'plain text'", True)
 
 
+QUOTED_PROGRAM_DENIED = [
+    'x=approve; "orch" $x L-0001',
+    'o"rch" $x L-1',
+    'command "orch" $x L-1',
+    'orch() { command "orch" ${x} L-0001; }; x=approve; orch approve --help',
+    "x=approve; 'orch' ${x} L-1",
+    "x=approve; env orch $x L-1",
+    "x=approve; orch `echo $x` L-1",
+    "orch app* L-1",
+    "orch appro?e L-1",
+    "orch -C x $v L-1",
+    "orch --json $x L-1",
+    "uv run orch $x L-1",
+    "python3 -m orch.cli $x L-1",
+    "orch() { :; }; orch approve --help",
+    "function orch { :; }; orch approve --help",
+    "alias orch='orch --json'; orch approve --help",
+    "alias orch=echo",
+    "approve() { :; }",
+    "f() { :; }; orch approve --help",
+    "alias a=b; orch approve --help",
+]
+
+
+@pytest.mark.parametrize("cmd", QUOTED_PROGRAM_DENIED)
+def test_a_quoted_or_built_program_or_subcommand_is_refused(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_plain_words_after_orch_stay_allowed(ws):
+    _check(ws, "orch show $id", True)
+    _check(ws, 'orch -C "$d" show L-0001', True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

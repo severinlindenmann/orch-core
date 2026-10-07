@@ -508,7 +508,9 @@ the one the runner recorded, so a copied id gets no factory treatment (and the b
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
 private folder), not on the Terminals' socket; Mission Control's Terminals page shows them in a group of their own
-("Watching the sessions", below). The
+("Watching the sessions", below). Every tmux call of the runner, and of orch's own Terminals server, passes
+`-f /dev/null`: no tmux server orch starts reads `~/.tmux.conf`, a file agents can write, and the runner's server runs
+the session's command through `/bin/sh` (`default-shell`), never your login shell. The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
 path only when trusted: the file owned by you or root and not writable by group or others, its folder owned by you
 or root and not writable by everyone (Homebrew's group-writable `/opt/homebrew/bin` is fine; `/tmp` is not). That keeps

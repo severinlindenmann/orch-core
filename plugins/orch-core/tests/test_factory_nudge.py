@@ -415,6 +415,26 @@ def test_the_launcher_keeps_a_pane_after_its_process_ends(monkeypatch):
     first = seen[0]
     assert first[:7] == ["start-server", ";", "set-option", "-g", "-w", "remain-on-exit", "on"]
     assert first.index("new-session") > first.index("remain-on-exit")
+    # the session's command runs through /bin/sh, never the user's login shell (set before the session exists)
+    assert first[8:12] == ["set-option", "-g", "default-shell", "/bin/sh"] and first.index("new-session") > 12
+
+
+def test_every_factory_tmux_call_skips_the_tmux_config(monkeypatch, tmp_path):
+    """~/.tmux.conf is a file agents can write: no tmux call of the runner may let its server read it."""
+    from orch.dashboard import factory_runner as dash
+    from test_factory_runner import _Run
+    seen = []
+    monkeypatch.setattr(dash.factory_runner, "resolve_bin", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(dash, "socket_path", lambda: tmp_path / "factory")
+    monkeypatch.setattr(dash.subprocess, "run", lambda argv, **k: seen.append(argv) or _Run(0, "160\n"))
+    monkeypatch.setattr(dash, "_sleep", lambda s: None)
+    launcher = dash.TmuxLauncher()
+    launcher.alive()
+    launcher.capture("fx-a")
+    launcher.reap("fx-a")
+    launcher.type("fx-a", fr.NUDGES["answered"])
+    launcher.start("fx-a", "/w", ["/usr/bin/env", "-i", "/opt/claude"])
+    assert seen and all(a[:5] == ["/usr/bin/tmux", "-S", str(tmp_path / "factory"), "-f", "/dev/null"] for a in seen)
 
 
 def test_a_planner_gets_the_planner_line(fws, fa, fh, human, pane, at):

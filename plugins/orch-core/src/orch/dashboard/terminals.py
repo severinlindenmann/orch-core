@@ -35,8 +35,9 @@ _CTRL = re.compile(r"C-[a-z]")
 
 
 def tmux(args: list[str], timeout: float = 5) -> subprocess.CompletedProcess:
-    """Run one tmux command against orch's server. Tests replace this."""
-    return subprocess.run(["tmux", "-L", SOCKET, *args], capture_output=True, text=True, timeout=timeout,
+    """Run one tmux command against orch's server, never reading a tmux config (`-f /dev/null`: ~/.tmux.conf is a
+    file agents can write, and a server started with it would run its commands). Tests replace this."""
+    return subprocess.run(["tmux", "-L", SOCKET, "-f", "/dev/null", *args], capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL)
 
 

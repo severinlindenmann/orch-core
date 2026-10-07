@@ -85,12 +85,14 @@ def available() -> bool:
 
 
 def _tmux(args: list[str], timeout: float = 10) -> subprocess.CompletedProcess:
-    """One tmux command on the factory socket, by the resolved program, with the fixed environment. Tests replace it."""
+    """One tmux command on the factory socket, by the resolved program, with the fixed environment, never reading a
+    tmux config (`-f /dev/null`: ~/.tmux.conf is a file agents can write, and the server that starts with it would run
+    its commands as you). Tests replace it."""
     tmux = factory_runner.resolve_bin("tmux")
     if tmux is None:
         raise UsageError("tmux was not found at a trusted path")
     env = {"PATH": factory_runner.child_path(tmux), "LC_ALL": "C"}
-    return subprocess.run([tmux, "-S", str(socket_path()), *args], capture_output=True, text=True, timeout=timeout,
+    return subprocess.run([tmux, "-S", str(socket_path()), "-f", "/dev/null", *args], capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, env=env)
 
 
@@ -216,7 +218,9 @@ class TmuxLauncher:
         # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment.
         # remain-on-exit is set (server-wide, in the same tmux call, before the session exists) so a session that ends
         # right away leaves its last screen and exit status for reap().
+        # default-shell /bin/sh: the session's command never runs through the user's login shell and its rc files
         r = _tmux(["start-server", ";", "set-option", "-g", "-w", "remain-on-exit", "on", ";",
+                   "set-option", "-g", "default-shell", "/bin/sh", ";",
                    "new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
                    launch.tmux_arg(shlex.join(argv))])
         if r.returncode != 0:

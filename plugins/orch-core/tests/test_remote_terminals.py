@@ -320,3 +320,34 @@ def test_a_scope_change_returns_the_devices_streams_and_clears_its_lease(tmp_pat
     host.authorize(H.send(host, H.env(H.KEY_A, H.assertion_for(refusal, H.rid_of(e)), seq=3)))
     assert host.set_scope(H.did(H.KEY_A), "operate") == [stream.hex()]
     assert host.leases == {} and host.streams == {}
+
+
+# -- the hook never asks for less than the gate's own table, and a route it does not know is refused -------------------
+
+def _concrete(template: str) -> str:
+    import re
+    return re.sub(r"\{[^}:]+:path\}", "a/b", re.sub(r"\{[^}:]+\}", "x", template))
+
+
+def test_the_hook_agrees_with_the_gates_table_for_every_tagged_route():
+    from orch.dashboard import remote_gate
+    from orch.dashboard.bridge_loop import LEASE_ROUTES
+    seen = 0
+    for (method, template), entry in remote_gate.TAGS.items():
+        tag = entry({}) if callable(entry) else entry  # a conditional tag at its lowest, as the hook reads it
+        got = HOOK(meta(method, _concrete(template)), b"")
+        seen += 1
+        if tag.scope is None:
+            assert got is None, (method, template)  # never remote stays never remote
+            continue
+        assert got is not None and got.scope == tag.scope.name.lower(), (method, template)
+        assert (got.assertion == "lease") == (not tag.fresh and tag.scope is Scope.TYPE and (method, template) in LEASE_ROUTES), (method, template)
+        assert got.assertion in ("none", "lease")
+    assert seen > 50
+    assert LEASE_ROUTES <= set(remote_gate.TAGS)  # a lease route the gate does not know would be a typo
+
+
+def test_a_route_the_gate_does_not_know_is_refused_by_the_hook():
+    for method, path in (("GET", "/no/such/page"), ("POST", "/terminals/x/other"), ("DELETE", "/terminals/x/keys"),
+                         ("POST", "/workspace/remote/offer")):
+        assert HOOK(meta(method, path), b"") is None, (method, path)

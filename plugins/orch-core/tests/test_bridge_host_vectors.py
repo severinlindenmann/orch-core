@@ -20,7 +20,7 @@ from orch.remote.bridge_host.replay_store import MAX_REPLAY_BODY, RETENTION_MS, 
 from orch.remote.bridge_host.shown import clean_shown, subject_hash  # noqa: E402
 
 VECTORS = Path(__file__).parent / "fixtures" / "bridge" / "bridge_vectors.json"
-VECTORS_SHA256 = "040f154bf62b96bb4e248fe4407e6ec02f43575b190b8f5ad2d2e195b3609191"
+VECTORS_SHA256 = "11abcbd4b981ba85628f30778a351b288128e4ba2b494ecb3d8b56badfe6372d"
 RAW = VECTORS.read_bytes()
 VEC = json.loads(RAW)
 K_WS = bytes.fromhex(VEC["hkdf"][0]["okm"])
@@ -149,6 +149,10 @@ def host_from_state(config_dir: Path, state: dict, clock: Clock, route=None) -> 
         host.registry.add(Device(did, bytes.fromhex(d["pub"]), d["scope"], "", 0, d["revoked"]), 0)
         host.store.save_seq(did, d["high"], d["bitmap"])
     for rid, r in state["rids"].items():
+        if r.get("damaged"):  # an unreadable file: holds a slot of the total cap, belongs to no device
+            (host.store.dir / f"{rid}.json").write_text("not a record", encoding="utf-8")
+            host.store.damaged.add(rid)
+            continue
         host.store.put(rid, Record(r["device"], r["digest"], r["until"] - RETENTION_MS, r["until"], r["outcome"]),
                        clock.now)
     for pid, o in state["offers"].items():
@@ -168,6 +172,8 @@ def flat(v) -> dict:
     d = {"result": v.result}
     if v.code is not None:
         d["code"] = v.code
+    if v.result == "refuse" and v.header is not None:  # a refusal answering a STREAM request carries the flag
+        d["stream"] = bool(v.header.flags & E.F_STREAM)
     if v.result in ("pair_pending", "pair_status"):  # the vectors name the answer's meta separately
         d["answer"] = v.fields
     else:
@@ -220,7 +226,7 @@ def test_host_case(tmp_path, case):
 
 def test_every_host_step_runs():
     steps = sum(len(c.get("steps", [c])) for c in VEC["host_cases"])
-    assert len(VEC["host_cases"]) == 69 and steps == 96
+    assert len(VEC["host_cases"]) == 76 and steps == 104
 
 
 # -- device cases: the responses the vectors sign with the host key open and verify with these primitives --------------
@@ -453,7 +459,7 @@ def test_vector_counts():
     assert sorted(VEC) == sorted(["version", "constants", "comment", "keys", "hkdf", "ids", "seal", "sign", "sig_scalars",
                                   "host_cases", "pairing", "device_cases", "pin_runs", "pending_answers", "labels",
                                   "links", "challenge_parts", "shown", "assertion"])
-    assert [len(VEC[k]) for k in ("hkdf", "seal", "sign", "sig_scalars", "device_cases", "shown")] == [3, 1, 8, 7, 34, 6]
+    assert [len(VEC[k]) for k in ("hkdf", "seal", "sign", "sig_scalars", "device_cases", "shown")] == [3, 1, 8, 7, 37, 6]
     assert [len(VEC[k]) for k in ("pin_runs", "pending_answers", "labels", "links", "challenge_parts")] \
         == [4, 22, 6, 9, 7]
     assert len(VEC["assertion"]["cases"]) == 17

@@ -60,7 +60,7 @@ def test_the_count_includes_each_file_once(dash, ws, aops, working, tmp_path):
     _page(dash, aops, working, tmp_path)  # shot.png is an artifact and pinned twice in one block
     aops.set_section(working, "Plan", f"x\n\n{F}orch\n" + json.dumps({"type": "compare", "before": {
         "path": "artifact:shot.png", "sha256": hashlib.sha256(b"\x89PNG-one").hexdigest()}}) + f"\n{F}")
-    assert 'Artifacts <span class="count">1</span>' in _panel(dash, working)
+    assert 'Files <span class="count">1</span>' in _panel(dash, working)
 
 
 def test_a_long_ref_wraps(dash, ws, aops, working, tmp_path):

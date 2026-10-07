@@ -61,7 +61,7 @@ The loop, with the agent's half and yours:
 orch new --title "Add dark mode" --requirements-file req.md --acceptance-file ac.md
 
 # You: approve the requirements (and, for larger tickets, the plan)
-orch approve L-0001 requirements
+orch approve L-0001   # requirements, and the plan too when both wait: one confirmation
 
 # Agent: pick up the next open ticket and plan it as a task list
 orch next

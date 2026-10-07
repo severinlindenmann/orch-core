@@ -55,8 +55,10 @@ def _match(event, ticket_id: str) -> bool:
 
 
 def wait_for_human(ws, ref: str, *, after: int | str | None = None, timeout: float = 0.0, poll: float = 1.0,
-                   clock=time.monotonic, sleep=time.sleep):
+                   clock=time.monotonic, sleep=time.sleep, all_events: bool = False):
     """The first human decision event on `ref` after `after`, or None once `timeout` seconds passed (0 = no limit).
+    With `all_events`: the list of every human decision event after the cursor (at least one), or None; the largest
+    seq among them is the cursor to chain with `--after`.
     On a factory epic, also a derived `factory.ready` / `factory.stopped` event, once per state: its cursor names the
     state, and passing that cursor back as `after` waits for the next change. The state is looked at when the event
     log changed and at most every FACTORY_EVERY seconds (it is time-dependent: the budget runs out)."""
@@ -74,17 +76,18 @@ def wait_for_human(ws, ref: str, *, after: int | str | None = None, timeout: flo
         changed = current != size
         if changed:
             size = current
-            for event in read_events(ws, ticket_id, after=cursor):
-                if _match(event, ticket_id):
-                    return event
+            found = [e for e in read_events(ws, ticket_id, after=cursor) if _match(e, ticket_id)]
+            if found:
+                return found if all_events else found[0]
         if factory is not None and (changed or clock() >= next_look):
             next_look = clock() + FACTORY_EVERY
             from orch.core import factory_report
             sig = factory_report.signal(ws, factory)
             if sig is not None and sig != seen:
                 seq = last_seq(ws)
-                return Event(seq, stamp_s(), factory.id, f"factory.{sig[0]}", "orch:factory", "derived",
-                             {"cursor": f"{seq}:{sig[0]}:{sig[1]}"})
+                derived = Event(seq, stamp_s(), factory.id, f"factory.{sig[0]}", "orch:factory", "derived",
+                                {"cursor": f"{seq}:{sig[0]}:{sig[1]}"})
+                return [derived] if all_events else derived
         if deadline is None:
             sleep(interval)
             continue

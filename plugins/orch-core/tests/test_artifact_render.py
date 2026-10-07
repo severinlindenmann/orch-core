@@ -104,11 +104,11 @@ def test_ticket_page_groups_artifacts_by_kind_with_their_task_and_criterion(dash
     (d / "loose.log").write_text("x", encoding="utf-8")
     html = dash.get(f"/t/{working}?open=all").text
     area = html[html.index('id="ticket-artifacts"'):]
-    area = area[:area.index("</section>")]
-    assert "Screenshots and diagrams" in area and "Links" in area  # M: the aside panel groups images, files, links
+    area = area[:area.index('<section class="card act-card"')]
+    assert "Screenshots" in area and "Builds" in area  # M: the aside panel groups by orch's kinds
     assert 'loading="lazy"' in area and "Jobs page" in area and "AC1" in area
-    assert '<a class="lnk" href="https://ci.example.com/run/5" target="_blank" rel="noopener noreferrer">' in area
-    assert "ci.example.com/run/5" in area.split("</a>", 2)[-1] or "https://ci.example.com/run/5</span>" in area
+    assert '<a class="file-open" href="https://ci.example.com/run/5" target="_blank" rel="noopener noreferrer">' in area
+    assert '<span class="artifact-url">https://ci.example.com/run/5</span>' in area  # the full address, as text
     assert ids[0] in area
     assert "loose.log" in area and "not linked" in area
 

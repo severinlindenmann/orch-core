@@ -55,6 +55,7 @@ def test_wrapper_runs_bundled_cli():
     assert r.stdout.strip() == __version__
 
 
+@pytest.mark.slow  # builds a venv
 @pytest.mark.skipif(shutil.which("sh") is None or shutil.which("uv") is None, reason="needs sh and uv")
 def test_wrapper_picks_up_source_changes(tmp_path):
     copy_dir = tmp_path / "copy dir"
@@ -119,6 +120,7 @@ def readonly_copy(tmp_path):
     subprocess.run(["chmod", "-R", "u+w", str(copy_dir)], check=True)
 
 
+@pytest.mark.slow  # builds a venv
 @_NEEDS_UV
 def test_wrapper_never_exits_2_on_a_read_only_plugin_root(readonly_copy):
     r = _wrapper(readonly_copy / "bin" / "orch", "guard", "--hook-json",
@@ -128,6 +130,7 @@ def test_wrapper_never_exits_2_on_a_read_only_plugin_root(readonly_copy):
     assert r.returncode == 1, (r.returncode, r.stderr)
 
 
+@pytest.mark.slow  # builds a venv
 @_NEEDS_UV
 def test_wrapper_puts_the_venv_into_plugin_data(tmp_path, readonly_copy):
     data = tmp_path / "plugin data"

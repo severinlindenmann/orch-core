@@ -68,7 +68,11 @@ def test_proof_so_far_has_evidence_tiles(dash, ws, aops, working, tmp_path):
     proof = html.split('id="proven"', 1)[1].split("</details>", 1)[0]
     assert '<h2 class="chapter-title">Proof so far</h2>' in html and '<h2 class="chapter-title">What we agreed</h2>' in html
     sha = store.load(ws, working)[1].meta["artifacts"][0]["sha256"]
-    assert re.search(rf'<span class="ev-tile proof-tile ev-tile-ok" aria-hidden="true"><img src="/a/{working}/jobs.png\?v={sha[:16]}"', proof)
+    # the criterion's images show as a thumbnail strip under it, pinned to the bytes it links; a missing proof keeps its
+    # dashed tile
+    strip = proof.split('class="plain art-strip"', 1)[1].split("</ul>", 1)[0]
+    assert re.search(rf'<img src="/a/{working}/jobs.png\?v={sha[:16]}"', strip)
+    assert f'href="/t/{working}/view/jobs.png?v={sha[:16]}" data-viewer' in strip
     assert '<span class="ev-tile proof-tile ev-tile-missing" aria-hidden="true"><span class="ev-cap">no evidence yet</span>' in proof
 
 
@@ -89,12 +93,15 @@ def test_the_artifacts_panel_groups_by_kind_and_ties_items_to_tasks_and_criteria
     (ws.artifacts_dir / working / "loose.log").write_text("x", encoding="utf-8")
     html = dash.get(f"/t/{working}").text
     aside = html.split("<aside", 1)[1]
-    panel = aside.split('<section class="card art-panel" id="artifacts"', 1)[1].split("</section>", 1)[0]
-    titles = re.findall(r'<h3 class="artifact-kind">([^<]+)</h3>', panel)
-    assert titles == ["Screenshots and diagrams", "Reports and files", "Links", "Not linked yet"]
+    panel = aside.split('<section class="card art-panel" id="artifacts"', 1)[1].split('<section class="card act-card"', 1)[0]
+    # not in testing: grouped by orch's kinds, each group's images as a grid and its other files as rows with a type icon
+    titles = re.findall(r'<h3 class="artifact-kind" id="art-g-\w+">([^<]+?) <span', panel)
+    assert titles == ["Screenshots", "Datasets", "Builds"]
     grid = panel.split('class="plain art-grid"', 1)[1].split("</ul>", 1)[0]
-    assert "<img " in grid and '<a class="chip" href="#proven">AC1</a>' in grid
-    assert f'href="#task-{ids[0]}"' in panel and "loose.log" in panel
+    assert "<img " in grid and 'aria-label="cluster list, AC1"' in grid
+    assert '<span class="fi fi-csv" aria-hidden="true">CSV</span>' in panel and '<span class="fi fi-link" aria-hidden="true">↗</span>' in panel
+    assert f'href="#task-{ids[0]}"' in panel and "loose.log" in panel and "in the folder not linked" in panel
+    assert 'aria-current="true">By type</a>' in panel
     assert 'rel="noopener noreferrer"' in panel  # a web link never sends the referrer
     assert aside.index('id="artifacts"') < aside.index('id="log"')
 
@@ -105,7 +112,7 @@ def test_a_file_not_linked_yet_is_named_never_drawn(dash, ws, working):
     d.mkdir(parents=True, exist_ok=True)
     (d / "loose.png").write_bytes(b"\x89PNG-x")
     panel = dash.get(f"/t/{working}").text.split('id="artifacts"', 1)[1].split("</section>", 1)[0]
-    assert "Not linked yet" in panel and "loose.png" in panel and "<img" not in panel
+    assert "in the folder not linked" in panel and "loose.png" in panel and "<img" not in panel
 
 
 def test_agreed_names_a_human_only_when_the_ledger_signs_it(dash, ws, put):

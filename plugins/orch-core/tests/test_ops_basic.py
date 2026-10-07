@@ -47,7 +47,7 @@ def test_claim_moves_open_to_in_progress(ws, aops, put):
     assert store.resolve(ws, tid).status == "in-progress"
 
 
-def test_claim_conflict_and_expiry(ws, aops, other_agent, put):
+def test_claim_conflict_and_expiry(ws, aops, other_agent, put, monkeypatch):
     tid = put("open")
     aops.claim(tid)
     with pytest.raises(ClaimError):
@@ -55,6 +55,12 @@ def test_claim_conflict_and_expiry(ws, aops, other_agent, put):
     path, t = store.load(ws, tid)
     t.meta["claim"]["at"] = "2020-01-01T00:00Z"
     store.save(ws, t, path)
+    with pytest.raises(ClaimError):  # claim.at alone does not expire it: the holder's events are recent (#217)
+        Ops(ws, other_agent).claim(tid)
+    from datetime import timedelta
+    from orch.clock import now
+    from orch.core import query
+    monkeypatch.setattr(query, "clock_now", lambda: now() + timedelta(hours=5))  # no sign of life for over the ttl
     assert Ops(ws, other_agent).claim(tid).meta["claim"]["harness"] == "copilot"
 
 
@@ -95,15 +101,15 @@ def test_log_state_sections(ws, aops, hops, put):
 
 def test_link(ws, aops, put):
     tid = put("in-progress")
-    with pytest.raises(UsageError):
-        aops.link(tid, branch="feature/x")  # a branch needs --repo; a PR defaults to the workspace repo (#14)
+    aops.link(tid, branch="feature/x")  # --repo defaults to the workspace's only repo (#14, #214)
+    assert store.load(ws, tid)[1].meta["branches"] == {"harness": "feature/x"}
     aops.link(tid, repo="hub", pr="https://x/pr/1", branch="feature/L-1")
     aops.link(tid, repo="hub", pr="https://x/pr/1")  # idempotent
     aops.link(tid, external="TIX-17")
     aops.link(tid, external="tix-17")
     m = store.load(ws, tid)[1].meta
     assert m["prs"] == [{"repo": "hub", "url": "https://x/pr/1", "state": "unknown"}]
-    assert m["branches"] == {"hub": "feature/L-1"} and m["repos"] == ["hub"]
+    assert m["branches"] == {"harness": "feature/x", "hub": "feature/L-1"} and m["repos"] == ["harness", "hub"]
     assert [x["key"] for x in m["external"]] == ["TIX-17"]
 
 

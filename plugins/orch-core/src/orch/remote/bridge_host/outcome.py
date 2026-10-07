@@ -14,6 +14,8 @@ REFUSAL_FIELDS = {"stale_sequence": {"high"}, "stale_timestamp": {"host_ms"}, "a
                   "assertion_required": {"purpose", "scope", "expires_ms", "nonce", "subject"},
                   "lease_required": {"purpose", "scope", "expires_ms", "nonce", "subject"}}
 
+PAIR_REFUSALS = frozenset({"pairing_closed", "bad_signature", "stale_timestamp", "malformed"})
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -53,6 +55,9 @@ def drop(why: str) -> Verdict:
 
 
 def refuse(code: str, why: str = "", **fields) -> Verdict:
-    if code not in CODES or set(fields) - REFUSAL_FIELDS.get(code, set()):
+    allowed = REFUSAL_FIELDS.get(code, set())
+    if code in PAIR_REFUSALS:  # §6.2: every refusal to an op=pair request also carries host_pub
+        allowed = allowed | {"host_pub"}
+    if code not in CODES or set(fields) - allowed:
         raise ValueError(f"not a refusal the protocol has: {code} {sorted(fields)}")
     return Verdict("refuse", why=why, code=code, fields=fields)

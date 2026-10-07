@@ -1,0 +1,532 @@
+<title>Artifacts Browser</title>
+<meta name="description" content="Visual draft: a Mission Control page that lists every ticket artifact as a folder tree with an inline preview.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;600;700;800&family=Manrope:wght@400;600;700&display=swap">
+<style>
+/* Layout: Mission Control shell (248 px menu) + a split page: folder tree (320 px) | preview. Tokens copied from
+   plugins/orch-core/src/orch/dashboard/static/tokens.css so the draft reads like the real dashboard. */
+:root {
+  color-scheme: light;
+  --font-heading: "Figtree", system-ui, sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --bg: #F2F3F5; --surface: #FFFFFF; --surface2: #F7F8F9; --hover: #EEF0F2; --chip: #EEF0F2; --nav-active: #EEF0F2;
+  --line: #E1E4E8; --line2: #C9CED4; --ctl: #7A838D; --text: #15171A; --muted: #495159; --link: #0A6B5A;
+  --primary: #15171A; --on-primary: #FFFFFF; --mint: #00CC99; --focus: #15171A;
+  --ok-bg: #DDF9E8; --ok-fg: #0B4F3D; --ok-mark: #008A6B;
+  --info-bg: #E3ECFC; --info-fg: #1F5FD1; --info-mark: #2F6FEB;
+  --you-bg: #FDE3EE; --you-fg: #B8136A;
+  --warn-bg: #FFF1D6; --warn-fg: #7A4E00; --warn-mark: #B07A10;
+  --err-bg: #FEE4E2; --err-fg: #B42318;
+  --neu-bg: #EEF0F2; --neu-fg: #495159; --neu-mark: #6B7480;
+  --s1: #2A78D6; --s2: #EB6834; --s3: #1BAF7A; --s4: #EDA100;
+  --code-bg: #15171A; --code-fg: #E1E4E8; --code-dim: #A3ABB5;
+  --shadow: 0 1px 3px rgba(21,23,26,.08);
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --bg: #15171A; --surface: #1D2025; --surface2: #23272D; --hover: #23272D; --chip: #2A2F36; --nav-active: #2A2F36;
+  --line: #2B3038; --line2: #3A414A; --ctl: #6B7480; --text: #F2F3F5; --muted: #A3ABB5; --link: #5BE0B8;
+  --primary: #E6E8EB; --on-primary: #15171A; --focus: #00CC99;
+  --ok-bg: #0F3B30; --ok-fg: #A9F7C0; --ok-mark: #00CC99;
+  --info-bg: #1B2A44; --info-fg: #9CC0FF; --info-mark: #6E9EFF;
+  --you-bg: #3A1F2E; --you-fg: #FF8FC4;
+  --warn-bg: #3A2E14; --warn-fg: #F5B544; --warn-mark: #F5B544;
+  --err-bg: #3B1D1B; --err-fg: #FF8A80;
+  --neu-bg: #2A2F36; --neu-fg: #A3ABB5; --neu-mark: #6B7480;
+  --s1: #3987E5; --s2: #D95926; --s3: #199E70; --s4: #C98500;
+  --code-bg: #0F1113; --code-fg: #E1E4E8; --code-dim: #8D96A0;
+  --shadow: 0 1px 3px rgba(0,0,0,.35);
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #15171A; --surface: #1D2025; --surface2: #23272D; --hover: #23272D; --chip: #2A2F36; --nav-active: #2A2F36;
+  --line: #2B3038; --line2: #3A414A; --ctl: #6B7480; --text: #F2F3F5; --muted: #A3ABB5; --link: #5BE0B8;
+  --primary: #E6E8EB; --on-primary: #15171A; --focus: #00CC99;
+  --ok-bg: #0F3B30; --ok-fg: #A9F7C0; --ok-mark: #00CC99;
+  --info-bg: #1B2A44; --info-fg: #9CC0FF; --info-mark: #6E9EFF;
+  --you-bg: #3A1F2E; --you-fg: #FF8FC4;
+  --warn-bg: #3A2E14; --warn-fg: #F5B544; --warn-mark: #F5B544;
+  --err-bg: #3B1D1B; --err-fg: #FF8A80;
+  --neu-bg: #2A2F36; --neu-fg: #A3ABB5; --neu-mark: #6B7480;
+  --s1: #3987E5; --s2: #D95926; --s3: #199E70; --s4: #C98500;
+  --code-bg: #0F1113; --code-fg: #E1E4E8; --code-dim: #8D96A0;
+  --shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 14px/1.57 var(--font-body); }
+a { color: var(--link); }
+button { font: 600 14px/1.4 var(--font-body); color: var(--text); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); font-size: 12.5px; }
+.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.i-sm { width: 15px; height: 15px; }
+.muted { color: var(--muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ── Shell ─────────────────────────────────────────── */
+.shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100%; }
+.menu { position: sticky; top: env(safe-area-inset-top, 0px); height: 100vh; overflow-y: auto; display: flex; flex-direction: column;
+        gap: 2px; padding: 24px 16px; background: var(--surface); border-right: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 10px; margin: 0 8px 16px; font: 700 17px/1.2 var(--font-heading); }
+.brand-mark { width: 40px; height: 40px; border-radius: var(--r-md); background: var(--primary); display: grid; place-items: center; color: var(--mint); }
+.menu .new { display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; margin-bottom: 12px; border: 1px solid var(--ctl);
+             border-radius: var(--r-md); color: var(--text); text-decoration: none; font-weight: 600; }
+.item { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px; border-radius: var(--r-md); color: var(--muted);
+        font-weight: 600; text-decoration: none; }
+.item:hover { background: var(--hover); color: var(--text); }
+.item[aria-current="page"] { background: var(--nav-active); color: var(--text); font-weight: 700; box-shadow: inset 3px 0 0 var(--mint); }
+.item .lbl { flex: 1; }
+.badge { min-width: 22px; padding: 1px 8px; border-radius: 999px; text-align: center; font: 700 12px/1.5 var(--font-body);
+         background: var(--chip); font-variant-numeric: tabular-nums; }
+.badge-hot { background: var(--you-bg); color: var(--you-fg); }
+.group { margin: 16px 12px 4px; font: 600 12px/1.33 var(--font-body); color: var(--muted); }
+.new-tag { font: 700 10.5px/1 var(--font-body); letter-spacing: .04em; padding: 3px 6px; border-radius: 999px; background: var(--info-bg); color: var(--info-fg); }
+.menu-foot { margin-top: auto; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); display: flex; flex-direction: column; gap: 2px; }
+.menu-foot span { font: 600 12px/1.33 var(--font-body); color: var(--muted); }
+
+/* ── Page ──────────────────────────────────────────── */
+.content { min-width: 0; padding: 32px 32px 40px; max-width: 1440px; display: flex; flex-direction: column; gap: 20px; }
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.page-head h1 { margin: 0; font: 800 28px/1.21 var(--font-heading); letter-spacing: -.01em; }
+.page-head p { margin: 4px 0 0; color: var(--muted); max-width: 64ch; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.stat { display: flex; flex-direction: column; }
+.stat b { font: 800 18px/1.33 var(--font-heading); font-variant-numeric: tabular-nums; }
+.stat span { font: 600 12px/1.33 var(--font-body); color: var(--muted); }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.search { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; flex: 1 1 260px; max-width: 420px;
+          border: 1px solid var(--ctl); border-radius: var(--r-md); background: var(--surface); color: var(--muted); }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: 400 14px var(--font-body); outline: none; }
+.search kbd { font: 600 11px var(--font-mono); padding: 2px 6px; border: 1px solid var(--line2); border-radius: 4px; }
+.seg { display: inline-grid; grid-auto-flow: column; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--surface2); border: 1px solid var(--line); }
+.seg button { height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-f { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2);
+          background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; }
+.chip-f[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.chip-f .n { font-variant-numeric: tabular-nums; opacity: .75; }
+
+/* ── Split: tree | preview ─────────────────────────── */
+.split { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); min-width: 0; }
+.tree-wrap { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 8px; }
+.tree-root { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px; font: 600 12px/1.33 var(--font-body); color: var(--muted); }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree ul { padding-left: 14px; margin-left: 13px; border-left: 1px solid var(--line); }
+.row { width: 100%; display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 8px; border: 0; border-radius: 8px;
+       background: transparent; color: var(--text); text-align: left; cursor: pointer; font-weight: 500; }
+.row:hover { background: var(--hover); }
+.row[aria-selected="true"] { background: var(--nav-active); box-shadow: inset 3px 0 0 var(--mint); font-weight: 700; }
+.row .caret { width: 14px; height: 14px; color: var(--muted); transition: transform .15s ease-out; }
+.row[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+.row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { display: block; font: 600 12px/1.3 var(--font-body); color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.row .cnt { font: 600 12px var(--font-body); color: var(--muted); font-variant-numeric: tabular-nums; }
+.row.folder { font-weight: 700; }
+.ficon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.k-screenshot { color: var(--s1); } .k-report { color: var(--s2); } .k-log, .k-receipt { color: var(--neu-mark); }
+.k-dataset { color: var(--s3); } .k-diagram { color: var(--s4); } .k-link, .k-build { color: var(--info-mark); } .k-folder { color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot-warn { background: var(--warn-mark); } .dot-neu { background: transparent; border: 1.5px dashed var(--neu-mark); }
+.empty-tree { padding: 24px 12px; color: var(--muted); }
+
+/* status pills: icon + words, never colour alone */
+.st { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font: 700 12px/1 var(--font-body); white-space: nowrap; }
+.st svg { width: 12px; height: 12px; stroke-width: 2.6; }
+.st-ok { background: var(--ok-bg); color: var(--ok-fg); } .st-info { background: var(--info-bg); color: var(--info-fg); }
+.st-warn { background: var(--warn-bg); color: var(--warn-fg); } .st-neu { background: var(--neu-bg); color: var(--neu-fg); }
+.st-you { background: var(--you-bg); color: var(--you-fg); }
+.tchip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--text);
+         font: 600 12px/1 var(--font-body); text-decoration: none; }
+
+/* preview */
+.pv-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.pv-title { flex: 1 1 280px; min-width: 0; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font: 600 12px/1.4 var(--font-body); color: var(--muted); }
+.crumbs a { color: var(--muted); text-decoration: none; } .crumbs a:hover { color: var(--text); text-decoration: underline; }
+.pv-title h2 { margin: 4px 0 6px; font: 700 18px/1.33 var(--font-heading); overflow-wrap: anywhere; }
+.pv-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border: 1px solid var(--ctl); border-radius: var(--r-md);
+       background: var(--surface); color: var(--text); text-decoration: none; cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.btn:hover { background: var(--hover); }
+.btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 700; }
+.btn-primary:hover { background: var(--primary); opacity: .9; }
+.pv-body { padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 20px; }
+.stage { min-width: 0; border-radius: var(--r-md); background: var(--surface2); border: 1px solid var(--line); overflow: hidden; }
+.stage-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line);
+             font: 600 12px var(--font-body); color: var(--muted); }
+.stage-in { padding: 16px; overflow: auto; max-height: 560px; }
+.stage-in img, .stage-in svg.shot { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; box-shadow: var(--shadow); }
+.facts { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.facts dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; font-size: 13px; }
+.facts dt { color: var(--muted); font-weight: 600; }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.facts h3 { margin: 0 0 6px; font: 600 12px/1.33 var(--font-body); color: var(--muted); }
+.note { margin: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface2); border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.note.warn { background: var(--warn-bg); border-color: transparent; color: var(--warn-fg); }
+
+/* preview renderers */
+.log { margin: 0; padding: 14px 16px; background: var(--code-bg); color: var(--code-fg); border-radius: 8px; font: 12.5px/1.6 var(--font-mono);
+       white-space: pre; overflow-x: auto; }
+.log .ln { color: var(--code-dim); user-select: none; display: inline-block; width: 2.5em; }
+.log .ok { color: #5BE0B8; } .log .fail { color: #FF8A80; } .log .hd { color: #9CC0FF; }
+.tbl-wrap { overflow-x: auto; background: var(--surface); border-radius: 8px; border: 1px solid var(--line); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-weight: 700; color: var(--muted); background: var(--surface2); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.doc { background: var(--surface); padding: 20px 24px; border-radius: 8px; border: 1px solid var(--line); max-width: 68ch; }
+.doc h4 { margin: 0 0 8px; font: 700 18px/1.3 var(--font-heading); } .doc h5 { margin: 16px 0 4px; font: 700 15px var(--font-heading); }
+.doc p, .doc li { margin: 0 0 8px; }
+.linkcard { display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.linkcard code { padding: 8px 10px; background: var(--surface2); border-radius: 6px; overflow-wrap: anywhere; }
+.sandbox { display: flex; flex-direction: column; gap: 10px; }
+.receipt { display: flex; flex-direction: column; gap: 8px; }
+.step { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.step .nm { flex: 1; font-family: var(--font-mono); font-size: 12.5px; }
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.compare figure { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.compare figcaption { font: 600 12px var(--font-body); color: var(--muted); }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.thumb { display: flex; flex-direction: column; gap: 6px; padding: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+         cursor: pointer; text-align: left; }
+.thumb:hover { border-color: var(--line2); }
+.thumb .tv { height: 92px; border-radius: 6px; background: var(--surface2); display: grid; place-items: center; overflow: hidden; }
+.thumb .tv svg.shot { width: 100%; height: 100%; object-fit: cover; box-shadow: none; border-radius: 0; }
+.thumb .tn { font: 600 12.5px var(--font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thumb .tk { font: 600 11.5px var(--font-body); color: var(--muted); }
+
+.draft-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-md); background: var(--info-bg); color: var(--info-fg); font-size: 13px; }
+.draft-note b { font-weight: 700; }
+
+/* ── Narrow ────────────────────────────────────────── */
+@media (max-width: 1180px) { .pv-body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 960px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .menu { position: static; height: auto; flex-direction: row; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .menu > :not(.brand) { display: none; }
+  .brand { margin: 0; }
+  .content { padding: 20px 16px 32px; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .tree-wrap { position: static; max-height: 360px; }
+}
+@media (max-width: 520px) { .compare { grid-template-columns: 1fr; } .stage-in { padding: 10px; } .pv-head, .pv-body { padding: 14px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-today" viewBox="0 0 24 24"><path d="M4 13h4l2 3h4l2-3h4M5 5h14l1 8v6H4v-6z"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><path d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v11h-4z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-reports" viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></symbol>
+  <symbol id="i-graph" viewBox="0 0 24 24"><path d="M6 6m-2 0a2 2 0 104 0 2 2 0 10-4 0M18 6m-2 0a2 2 0 104 0 2 2 0 10-4 0M12 18m-2 0a2 2 0 104 0 2 2 0 10-4 0M7.5 7.5l3.5 8.5M16.5 7.5L13 16"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 10l3 2-3 2M13 15h4"/></symbol>
+  <symbol id="i-sched" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></symbol>
+  <symbol id="i-art" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 14l2-2 2 2 3-3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M11 4a7 7 0 100 14 7 7 0 000-14zM20 20l-4-4"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4"/><path d="M15 9h.01"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h5M8 16h7"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 10h16M4 15h16M10 5v14"/></symbol>
+  <symbol id="i-diagram" viewBox="0 0 24 24"><path d="M4 4h6v5H4zM14 15h6v5h-6zM14 4h6v5h-6zM7 9v4h10v2M17 9v6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 006 0l3-3a4 4 0 00-6-6l-1 1M14 10a4 4 0 00-6 0l-3 3a4 4 0 006 6l1-1"/></symbol>
+  <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><path d="M9 9h11v11H9zM5 15V4h11"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 11v5M12 8h.01"/></symbol>
+</svg>
+
+<div class="shell">
+  <nav class="menu" aria-label="Main">
+    <div class="brand"><span class="brand-mark"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/></svg></span>Mission Control</div>
+    <a class="new" href="#"><svg class="i"><use href="#i-plus"/></svg>New ticket</a>
+    <a class="item" href="#"><svg class="i"><use href="#i-today"/></svg><span class="lbl">Today</span><span class="badge badge-hot">3</span></a>
+    <a class="item" href="#"><svg class="i"><use href="#i-board"/></svg><span class="lbl">Board</span></a>
+    <a class="item" href="#"><svg class="i"><use href="#i-activity"/></svg><span class="lbl">Activity</span></a>
+    <a class="item" href="#"><svg class="i"><use href="#i-reports"/></svg><span class="lbl">Reports</span></a>
+    <p class="group">Addons</p>
+    <a class="item" href="#"><svg class="i"><use href="#i-graph"/></svg><span class="lbl">Graph</span></a>
+    <a class="item" href="#"><svg class="i"><use href="#i-term"/></svg><span class="lbl">Terminals</span></a>
+    <a class="item" href="#"><svg class="i"><use href="#i-sched"/></svg><span class="lbl">Schedules</span></a>
+    <a class="item" href="#" aria-current="page"><svg class="i"><use href="#i-art"/></svg><span class="lbl">Artifacts</span><span class="new-tag">DRAFT</span></a>
+    <div class="menu-foot"><b>Acme · DEMO</b><span>2 repos · orch 0.4.4</span></div>
+  </nav>
+
+  <main class="content" id="main">
+    <div class="draft-note" role="note"><svg class="i"><use href="#i-info"/></svg>
+      <span><b>Visual draft.</b> Sample workspace data; nothing here reads your files. Click folders and files in the tree to try the preview.</span></div>
+
+    <header class="page-head">
+      <div>
+        <h1>Artifacts</h1>
+        <p>Every screenshot, report, log, dataset and link your agents produced, as folders by ticket. Open one to see it with the task or criterion it proves.</p>
+      </div>
+      <div class="stats" id="stats"></div>
+    </header>
+
+    <div class="toolbar">
+      <label class="search" for="q"><svg class="i"><use href="#i-search"/></svg><span class="sr-only">Search</span>
+        <input id="q" type="search" placeholder="Search name, ticket or label" autocomplete="off"><kbd>/</kbd></label>
+      <div class="seg" role="group" aria-label="Group by">
+        <button type="button" data-group="ticket" aria-pressed="true">By ticket</button>
+        <button type="button" data-group="kind" aria-pressed="false">By kind</button>
+        <button type="button" data-group="disk" aria-pressed="false">On disk</button>
+      </div>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Filter by kind"></div>
+
+    <div class="split">
+      <section class="panel tree-wrap" aria-label="Artifact folders">
+        <div class="tree-root"><svg class="i i-sm"><use href="#i-folder"/></svg><span id="rootlabel">orchestrator/artifacts</span></div>
+        <ul class="tree" id="tree" role="tree" aria-label="Artifacts"></ul>
+      </section>
+      <section class="panel" id="preview" aria-live="polite"></section>
+    </div>
+  </main>
+</div>
+
+<script>
+(() => {
+"use strict";
+// ── Sample data (shape follows orch.core.artifacts: name/url/static, kind, sha256, task, ac) ──
+const T = {
+  "DEMO-0042": { title: "Login page redesign", status: ["you", "Testing"], epic: "DEMO-0040 Auth revamp" },
+  "DEMO-0038": { title: "Export jobs to CSV", status: ["ok", "Done"], epic: null },
+  "DEMO-0045": { title: "Billing flow diagram", status: ["info", "In progress"], epic: "DEMO-0044 Billing v2" },
+  "DEMO-0047": { title: "Flaky checkout test", status: ["info", "In progress"], epic: "DEMO-0044 Billing v2" },
+};
+const A = [
+  { t: "DEMO-0042", name: "login-before.png", kind: "screenshot", size: 48213, added: "2026-10-04T09:12Z", label: "Login before the fix", task: "T1", view: "shot-before" },
+  { t: "DEMO-0042", name: "login-after.png", kind: "screenshot", size: 51877, added: "2026-10-05T14:40Z", label: "Login after the fix", task: "T3", ac: 2, view: "shot-after" },
+  { t: "DEMO-0042", name: "login-mobile.png", kind: "screenshot", size: 30122, added: "2026-10-05T14:42Z", label: "Login at 375 px", ac: 3, view: "shot-mobile", state: "changed" },
+  { t: "DEMO-0042", name: "lighthouse.html", kind: "report", size: 182004, added: "2026-10-05T15:02Z", label: "Lighthouse run", ac: 4, view: "html" },
+  { t: "DEMO-0042", name: "receipt-T3-20261005T1438Z.log", kind: "receipt", size: 2210, added: "2026-10-05T14:38Z", task: "T3", view: "receipt" },
+  { t: "DEMO-0042", url: "https://github.com/acme/web/actions/runs/11873", kind: "build", label: "CI run on the PR", added: "2026-10-05T15:10Z", view: "link" },
+  { t: "DEMO-0038", name: "job-inventory.csv", kind: "dataset", size: 9310, added: "2026-09-28T11:05Z", label: "Exported jobs", ac: 1, view: "csv" },
+  { t: "DEMO-0038", name: "export.log", kind: "log", size: 4022, added: "2026-09-28T11:04Z", task: "T2", view: "log" },
+  { t: "DEMO-0038", static: "DEMO-0038/notes.md", kind: "report", size: 1880, added: "2026-09-28T11:20Z", label: "Export notes", view: "md" },
+  { t: "DEMO-0045", name: "billing-flow.svg", kind: "diagram", size: 6120, added: "2026-10-06T08:30Z", label: "Billing flow", task: "T2", view: "diagram" },
+  { t: "DEMO-0045", name: "draft-flow-old.svg", kind: "diagram", size: 5800, added: null, unlinked: true, view: "diagram" },
+  { t: "DEMO-0047", name: "checkout-run-12.log", kind: "log", size: 12880, added: "2026-10-06T16:12Z", label: "Failing run", task: "T1", view: "logfail" },
+];
+A.forEach((a, i) => { a.id = "a" + i; a.display = a.name || (a.static ? a.static.split("/").pop() : a.label);
+  a.sha = a.url ? null : Array.from({ length: 64 }, (_, j) => "0123456789abcdef"[(i * 7 + j * 13 + j * j) % 16]).join(""); });
+
+const KINDS = { screenshot: ["Screenshots", "i-image"], report: ["Reports", "i-doc"], dataset: ["Datasets", "i-table"],
+  log: ["Logs", "i-log"], receipt: ["Receipts", "i-receipt"], diagram: ["Diagrams", "i-diagram"], build: ["Links", "i-link"] };
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ic = (id, cls = "i") => `<svg class="${cls}"><use href="#${id}"/></svg>`;
+const fsize = b => b == null ? "—" : b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB";
+const ago = iso => { if (!iso) return "—"; const d = (Date.parse("2026-10-07T09:00Z") - Date.parse(iso)) / 36e5;
+  return d < 24 ? Math.round(d) + " h ago" : Math.round(d / 24) + " d ago"; };
+const pill = (role, text, icon) => `<span class="st st-${role}">${icon ? ic(icon) : ""}${esc(text)}</span>`;
+const stateOf = a => a.unlinked ? ["neu", "not linked", "i-dash"] : a.state === "changed" ? ["warn", "changed since linked", "i-warn"]
+  : a.url ? ["neu", "link, not loaded", "i-link"] : ["ok", "pinned", "i-check"];
+
+let group = "ticket", filter = null, query = "", sel = null;
+const open = new Set(["t:DEMO-0042", "k:screenshot", "d:artifacts", "d:artifacts/DEMO-0042"]);
+try { const g = localStorage.getItem("art-group"); if (g) group = g; } catch (e) {}
+
+// ── Mock previews ──
+function shot(kind) {
+  const after = kind !== "shot-before", mobile = kind === "shot-mobile";
+  const w = mobile ? 300 : 640, h = mobile ? 520 : 400, cx = w / 2, fw = mobile ? 240 : 300;
+  const accent = after ? "#00CC99" : "#7A838D";
+  return `<svg class="shot" viewBox="0 0 ${w} ${h}" width="${w}" role="img" aria-label="Mock screenshot">
+    <rect width="${w}" height="${h}" fill="#F7F8F9"/><rect width="${w}" height="44" fill="#FFFFFF"/><rect x="16" y="15" width="70" height="14" rx="4" fill="#15171A"/>
+    <rect x="${w - 80}" y="15" width="64" height="14" rx="7" fill="#E1E4E8"/>
+    <rect x="${cx - fw / 2}" y="${mobile ? 90 : 78}" width="${fw}" height="${mobile ? 330 : 270}" rx="12" fill="#FFFFFF" stroke="#E1E4E8"/>
+    <rect x="${cx - fw / 2 + 24}" y="${mobile ? 116 : 102}" width="${after ? 120 : 160}" height="16" rx="4" fill="#15171A"/>
+    ${[0, 1].map(i => `<rect x="${cx - fw / 2 + 24}" y="${(mobile ? 160 : 140) + i * 62}" width="60" height="9" rx="3" fill="#7A838D"/>
+      <rect x="${cx - fw / 2 + 24}" y="${(mobile ? 174 : 154) + i * 62}" width="${fw - 48}" height="34" rx="8" fill="#FFFFFF" stroke="${after ? "#7A838D" : "#E1E4E8"}"/>`).join("")}
+    ${after ? "" : `<rect x="${cx - fw / 2 + 24}" y="${mobile ? 288 : 268}" width="${fw - 48}" height="18" rx="4" fill="#FEE4E2"/><rect x="${cx - fw / 2 + 32}" y="${mobile ? 294 : 274}" width="140" height="6" rx="3" fill="#B42318"/>`}
+    <rect x="${cx - fw / 2 + 24}" y="${mobile ? 360 : 300}" width="${fw - 48}" height="36" rx="8" fill="${after ? "#15171A" : accent}"/>
+    <rect x="${cx - 30}" y="${mobile ? 375 : 315}" width="60" height="7" rx="3" fill="#FFFFFF"/>
+    ${mobile && kind === "shot-mobile" ? `<rect x="${cx - fw / 2 + 24}" y="440" width="${fw - 48}" height="10" rx="3" fill="#C9CED4"/>` : ""}
+  </svg>`;
+}
+function diagram() {
+  const box = (x, y, t, c) => `<rect x="${x}" y="${y}" width="128" height="44" rx="10" fill="${c}" stroke="#7A838D"/><text x="${x + 64}" y="${y + 27}" text-anchor="middle" font-family="Manrope, sans-serif" font-size="13" font-weight="600" fill="#15171A">${t}</text>`;
+  const arr = (x1, y1, x2, y2) => `<path d="M${x1} ${y1}L${x2} ${y2}" stroke="#495159" stroke-width="1.6" marker-end="url(#ah)" fill="none"/>`;
+  return `<svg class="shot" viewBox="0 0 600 300" width="600" role="img" aria-label="Billing flow diagram">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#495159"/></marker></defs>
+    <rect width="600" height="300" fill="#FFFFFF"/>
+    ${box(24, 40, "Cart", "#E3ECFC")}${box(236, 40, "Checkout", "#E3ECFC")}${box(448, 40, "Payment", "#FFF1D6")}
+    ${box(236, 200, "Invoice", "#DDF9E8")}${box(448, 200, "Retry queue", "#FEE4E2")}
+    ${arr(152, 62, 232, 62)}${arr(364, 62, 444, 62)}${arr(512, 84, 512, 196)}${arr(470, 84, 330, 196)}${arr(448, 222, 368, 222)}
+    <text x="520" y="146" font-family="Manrope, sans-serif" font-size="11" fill="#495159">declined</text>
+    <text x="352" y="146" font-family="Manrope, sans-serif" font-size="11" fill="#495159">paid</text>
+  </svg>`;
+}
+const LOG = [["hd", "$ uv run python -m jobs.export --out artifacts/DEMO-0038/job-inventory.csv"], ["", "reading 3 workspaces"],
+  ["", "  prod        112 jobs"], ["", "  staging      41 jobs"], ["", "  dev          19 jobs"], ["", "dropping 4 archived jobs"],
+  ["ok", "wrote 168 rows to job-inventory.csv (9.1 KB)"], ["ok", "done in 3.4 s"]];
+const LOGFAIL = [["hd", "$ pnpm test checkout --repeat 20"], ["ok", "run 1-11  passed"], ["fail", "run 12    FAILED checkout.spec.ts:88"],
+  ["", "  expected status 'paid' but got 'pending'"], ["", "  webhook arrived 1240 ms after assertion"], ["ok", "run 13-20 passed"],
+  ["fail", "1 of 20 runs failed"]];
+const logView = lines => `<pre class="log">${lines.map((l, i) => `<span class="ln">${i + 1}</span><span class="${l[0]}">${esc(l[1])}</span>`).join("\n")}</pre>`;
+
+function render(a) {
+  switch (a.view) {
+    case "shot-before": case "shot-after": case "shot-mobile": {
+      const pair = a.view === "shot-after" ? `<div class="compare"><figure>${shot("shot-before")}<figcaption>login-before.png</figcaption></figure>
+        <figure>${shot("shot-after")}<figcaption>login-after.png</figcaption></figure></div>` : shot(a.view);
+      return { bar: a.view === "shot-after" ? "Side by side with login-before.png" : "Image · fit to width", html: pair };
+    }
+    case "diagram": return { bar: "SVG · drawn as an image, scripts stripped", html: diagram() };
+    case "log": return { bar: "Last 200 lines", html: logView(LOG) };
+    case "logfail": return { bar: "Last 200 lines", html: logView(LOGFAIL) };
+    case "csv": {
+      const rows = [["prod", "nightly-billing", "02:00", 112, "ok"], ["prod", "ledger-sync", "*/15", 96, "ok"], ["staging", "nightly-billing", "02:30", 41, "ok"],
+        ["dev", "seed-fixtures", "manual", 3, "paused"], ["prod", "invoice-pdf", "06:00", 88, "ok"]];
+      return { bar: "5 of 168 rows · 5 columns", html: `<div class="tbl-wrap"><table><thead><tr><th>workspace</th><th>job</th><th>schedule</th><th>runs (30 d)</th><th>state</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td>${r[0]}</td><td class="mono">${r[1]}</td><td class="mono">${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join("")}</tbody></table></div>` };
+    }
+    case "md": return { bar: "Markdown · rendered", html: `<div class="doc"><h4>Export notes</h4><p>The export reads every workspace the service principal can see and skips archived jobs.</p>
+      <h5>Decisions</h5><ul><li>Schedules are written as cron text, not parsed.</li><li>Run counts cover the last 30 days.</li></ul><h5>Open</h5><p>Staging has 2 jobs without an owner; DEMO-0039 tracks them.</p></div>` };
+    case "html": return { bar: "HTML · sandboxed frame, no network", html: `<div class="sandbox"><div class="doc" style="max-width:none"><h4>Lighthouse · /login</h4>
+      <div class="thumbs" style="grid-template-columns:repeat(4,minmax(0,1fr))">${[["Performance", 94], ["Accessibility", 100], ["Best practices", 96], ["SEO", 91]].map(([n, v]) =>
+        `<div class="thumb" style="cursor:default;align-items:center"><span style="font:800 26px var(--font-heading);color:var(--ok-fg)">${v}</span><span class="tk">${n}</span></div>`).join("")}</div></div>
+      <p class="note">Runs in a sandboxed frame without scripts reaching your files or the network, as on the ticket.</p></div>` };
+    case "receipt": return { bar: "Receipt · written by orch task done --run", html: `<div class="receipt">
+      ${[["uv run pytest tests/test_login.py", "pass", "4 s"], ["pnpm lint", "pass", "11 s"], ["pnpm e2e login", "pass", "38 s"]].map(s =>
+        `<div class="step">${pill("ok", s[1], "i-check")}<span class="nm">${s[0]}</span><span class="muted">${s[2]}</span></div>`).join("")}
+      <p class="note">exit 0 · commit 4e1a9c2 · clean tree · 53 s</p></div>` };
+    case "link": return { bar: "Web link · never loaded here", html: `<div class="linkcard"><b>${esc(a.label)}</b><code>${esc(a.url)}</code>
+      <div><a class="btn" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">Open in new tab ${ic("i-ext", "i i-sm")}</a></div></div>` };
+  }
+}
+
+// ── Tree ──
+function visible() {
+  const q = query.trim().toLowerCase();
+  return A.filter(a => (!filter || a.kind === filter) && (!q || [a.display, a.t, a.label, T[a.t].title].join(" ").toLowerCase().includes(q)));
+}
+function fileRow(a, depth) {
+  const st = stateOf(a), k = KINDS[a.kind];
+  const flag = a.unlinked ? `<span class="dot dot-neu" title="Not linked"></span>` : a.state === "changed" ? `<span class="dot dot-warn" title="Changed since linked"></span>` : "";
+  return `<li role="none"><button class="row" role="treeitem" data-file="${a.id}" aria-selected="${sel === a.id}" aria-level="${depth}">
+    ${ic(k[1], "ficon k-" + a.kind)}<span class="nm">${esc(a.display)}</span>${flag}${a.task ? `<span class="cnt">${a.task}</span>` : a.ac ? `<span class="cnt">AC${a.ac}</span>` : ""}
+    <span class="sr-only">${st[1]}</span></button></li>`;
+}
+function folderRow(key, name, sub, count, children, depth, icon = "i-folder") {
+  const isOpen = open.has(key) || query;
+  return `<li role="none"><button class="row folder" role="treeitem" data-folder="${key}" aria-expanded="${!!isOpen}" aria-selected="${sel === key}" aria-level="${depth}">
+    ${ic("i-caret", "i caret")}${ic(icon, "ficon k-folder")}<span class="nm">${esc(name)}${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</span><span class="cnt">${count}</span></button>
+    ${isOpen ? `<ul role="group">${children}</ul>` : ""}</li>`;
+}
+function drawTree() {
+  const list = visible(), tree = $("#tree");
+  $("#rootlabel").textContent = group === "disk" ? "orchestrator/" : group === "kind" ? "All artifacts, by kind" : "orchestrator/artifacts";
+  if (!list.length) { tree.innerHTML = `<li class="empty-tree">No artifact matches "${esc(query)}". Search looks at file names, ticket keys and labels.</li>`; return; }
+  let html = "";
+  if (group === "ticket") {
+    for (const t of Object.keys(T)) { const fs = list.filter(a => a.t === t); if (!fs.length) continue;
+      html += folderRow("t:" + t, t, T[t].title, fs.length, fs.map(a => fileRow(a, 2)).join(""), 1); }
+  } else if (group === "kind") {
+    for (const k of Object.keys(KINDS)) { const fs = list.filter(a => a.kind === k); if (!fs.length) continue;
+      html += folderRow("k:" + k, KINDS[k][0], null, fs.length, fs.map(a => fileRow(a, 2)).join(""), 1, KINDS[k][1]); }
+  } else {
+    const inArt = list.filter(a => a.name), inStatic = list.filter(a => a.static), links = list.filter(a => a.url);
+    const sub = (root, fs) => Object.keys(T).filter(t => fs.some(a => a.t === t)).map(t => {
+      const g = fs.filter(a => a.t === t); return folderRow(`d:${root}/${t}`, t + "/", null, g.length, g.map(a => fileRow(a, 3)).join(""), 2); }).join("");
+    if (inArt.length) html += folderRow("d:artifacts", "artifacts/", "files agents attached", inArt.length, sub("artifacts", inArt), 1);
+    if (inStatic.length) html += folderRow("d:static", "static/", "shared files tickets point to", inStatic.length, sub("static", inStatic), 1);
+    if (links.length) html += folderRow("d:links", "Web links", "in ticket frontmatter, no file", links.length, links.map(a => fileRow(a, 2)).join(""), 1, "i-link");
+  }
+  tree.innerHTML = html;
+}
+
+// ── Preview ──
+function previewFile(a) {
+  const t = T[a.t], st = stateOf(a), r = render(a), k = KINDS[a.kind];
+  const path = a.url ? "frontmatter · artifacts:" : a.static ? "orchestrator/static/" + a.static : `orchestrator/artifacts/${a.t}/${a.name}`;
+  const warn = a.unlinked ? `<p class="note warn">This file sits in the ticket's folder but the ticket does not link it, so it proves nothing yet. <code>orch artifact scan ${a.t}</code> links it.</p>`
+    : a.state === "changed" ? `<p class="note warn">The file changed after it was linked. The ticket and any verdict still pin the old hash; the agent re-adds it with <code>orch artifact add</code>.</p>` : "";
+  $("#preview").innerHTML = `
+    <div class="pv-head"><div class="pv-title">
+      <nav class="crumbs" aria-label="Path"><a href="#" data-folder-go="t:${a.t}">${a.t}</a><span>/</span><span>${esc(k[0])}</span></nav>
+      <h2>${esc(a.display)}</h2>
+      <div class="pv-tags">${pill(st[0], st[1], st[2])}${a.task ? `<a class="tchip" href="#">${a.task}</a>` : ""}${a.ac ? `<a class="tchip" href="#">AC${a.ac}</a>` : ""}<span class="muted">${esc(a.label || "")}</span></div>
+    </div><div class="pv-actions">
+      <a class="btn btn-primary" href="#">Open ${a.t}</a>
+      ${a.url ? "" : `<a class="btn" href="#">Open file ${ic("i-ext", "i i-sm")}</a>`}
+      <button class="btn" type="button" data-copy="${esc(a.url ? a.url : a.static ? "static:" + a.static : "artifact:" + a.name)}">${ic("i-copy", "i i-sm")}Copy ref</button>
+    </div></div>
+    <div class="pv-body">
+      <div class="stage"><div class="stage-bar"><span>${r.bar}</span><span>${fsize(a.size)}</span></div><div class="stage-in">${r.html}</div></div>
+      <aside class="facts">${warn}
+        <div><h3>File</h3><dl><dt>Kind</dt><dd>${a.kind}</dd><dt>Size</dt><dd>${fsize(a.size)}</dd><dt>Added</dt><dd>${ago(a.added)}</dd>
+          <dt>Path</dt><dd class="mono">${esc(path)}</dd>${a.sha ? `<dt>sha256</dt><dd class="mono" title="${a.sha}">${a.sha.slice(0, 12)}…</dd>` : ""}</dl></div>
+        <div><h3>Ticket</h3><dl><dt>Key</dt><dd><a href="#">${a.t}</a></dd><dt>Title</dt><dd>${esc(t.title)}</dd><dt>Status</dt><dd>${pill(t.status[0], t.status[1])}</dd>
+          ${t.epic ? `<dt>Epic</dt><dd>${esc(t.epic)}</dd>` : ""}</dl></div>
+      </aside>
+    </div>`;
+}
+function previewFolder(key) {
+  const list = visible(); let fs, title, sub, crumbs;
+  if (key.startsWith("t:")) { const t = key.slice(2); fs = list.filter(a => a.t === t); title = t + " · " + T[t].title; sub = pill(T[t].status[0], T[t].status[1]); crumbs = "Tickets"; }
+  else if (key.startsWith("k:")) { const k = key.slice(2); fs = list.filter(a => a.kind === k); title = KINDS[k][0]; sub = ""; crumbs = "By kind"; }
+  else { const p = key.slice(2); fs = p === "links" ? list.filter(a => a.url) : list.filter(a => (p.startsWith("static") ? a.static : a.name) && (!p.includes("/") || a.t === p.split("/")[1]));
+    title = p === "links" ? "Web links" : "orchestrator/" + p + "/"; sub = ""; crumbs = "On disk"; }
+  const thumb = a => { const k = KINDS[a.kind]; const isImg = /shot|diagram/.test(a.view);
+    return `<button class="thumb" type="button" data-file="${a.id}"><span class="tv">${isImg ? (a.view === "diagram" ? diagram() : shot(a.view)) : ic(k[1], "i k-" + a.kind)}</span>
+      <span class="tn">${esc(a.display)}</span><span class="tk">${a.t} · ${a.kind}${a.unlinked ? " · not linked" : ""}</span></button>`; };
+  $("#preview").innerHTML = `<div class="pv-head"><div class="pv-title"><nav class="crumbs" aria-label="Path"><span>${crumbs}</span></nav><h2>${esc(title)}</h2>
+    <div class="pv-tags">${sub}<span class="muted">${fs.length} item${fs.length === 1 ? "" : "s"}</span></div></div>
+    ${key.startsWith("t:") ? `<div class="pv-actions"><a class="btn btn-primary" href="#">Open ${key.slice(2)}</a></div>` : ""}</div>
+    <div class="pv-body" style="grid-template-columns:minmax(0,1fr)"><div class="thumbs">${fs.map(thumb).join("")}</div></div>`;
+}
+function drawPreview() {
+  if (!sel) { $("#preview").innerHTML = `<div class="pv-body" style="grid-template-columns:1fr"><p class="muted">Pick a file in the tree to preview it.</p></div>`; return; }
+  const a = A.find(x => x.id === sel); a ? previewFile(a) : previewFolder(sel);
+}
+
+// ── Header stats + chips ──
+function drawChrome() {
+  const files = A.filter(a => !a.url), linked = A.filter(a => !a.unlinked);
+  $("#stats").innerHTML = [[A.length, "artifacts"], [Object.keys(T).length, "tickets"], [fsize(files.reduce((s, a) => s + (a.size || 0), 0)), "on disk"],
+    [A.filter(a => a.unlinked || a.state).length, "need a look"]].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+  $("#chips").innerHTML = `<button class="chip-f" type="button" data-kind="" aria-pressed="${!filter}">All <span class="n">${A.length}</span></button>` +
+    Object.keys(KINDS).map(k => `<button class="chip-f" type="button" data-kind="${k}" aria-pressed="${filter === k}">${KINDS[k][0]} <span class="n">${A.filter(a => a.kind === k).length}</span></button>`).join("");
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.group === group));
+}
+function draw() { drawChrome(); drawTree(); drawPreview(); }
+
+document.addEventListener("click", e => {
+  const f = e.target.closest("[data-file]"), d = e.target.closest("[data-folder]"), g = e.target.closest("[data-group]"),
+        k = e.target.closest("[data-kind]"), go = e.target.closest("[data-folder-go]"), cp = e.target.closest("[data-copy]");
+  if (f) { sel = f.dataset.file; const a = A.find(x => x.id === sel); open.add("t:" + a.t); open.add("k:" + a.kind); drawTree(); drawPreview(); }
+  else if (d) { const key = d.dataset.folder; if (sel === key && open.has(key)) open.delete(key); else open.add(key); sel = key; drawTree(); drawPreview(); }
+  else if (go) { e.preventDefault(); group = "ticket"; sel = go.dataset.folderGo; open.add(sel); draw(); }
+  else if (g) { group = g.dataset.group; try { localStorage.setItem("art-group", group); } catch (_) {} draw(); }
+  else if (k) { filter = k.dataset.kind || null; draw(); }
+  else if (cp) { const t = cp.dataset.copy, done = () => { cp.lastChild.textContent = "Copied"; setTimeout(() => cp.lastChild.textContent = "Copy ref", 1400); };
+    navigator.clipboard?.writeText(t).then(done, done) ?? done(); }
+  else if (e.target.closest('a[href="#"]')) e.preventDefault();
+});
+$("#q").addEventListener("input", e => { query = e.target.value; drawTree(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && document.activeElement !== $("#q")) { e.preventDefault(); $("#q").focus(); }
+  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target.closest("#tree")) {
+    const rows = [...document.querySelectorAll("#tree .row")], i = rows.indexOf(e.target.closest(".row"));
+    const n = rows[i + (e.key === "ArrowDown" ? 1 : -1)]; if (n) { e.preventDefault(); n.focus(); }
+  }
+});
+sel = "a1"; draw();
+})();
+</script>

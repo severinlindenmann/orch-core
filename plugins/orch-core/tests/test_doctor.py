@@ -17,9 +17,7 @@ def codes(checks):
 
 def _git_init(path):
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
-
-
+    init_repo(path)
 @needs_git
 def test_doctor_outside_workspace(tmp_path):
     _git_init(tmp_path / "repo")
@@ -112,6 +110,7 @@ def test_doctor_skill_copies_not_ok_when_present(configure, ws_root):
 
 from orch import onboarding  # noqa: E402
 from orch.onboarding import OPEN_ITEM_CODES, _package_plugin_root as REAL_PACKAGE_ROOT  # noqa: E402
+from conftest import init_repo
 
 PLUGIN_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 in_plugin = pytest.mark.skipif(not (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").exists(),

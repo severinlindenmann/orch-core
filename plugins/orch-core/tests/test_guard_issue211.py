@@ -589,6 +589,80 @@ def test_a_quoted_target_outside_state_stays_allowed(ws):
     _check(ws, 'echo x > "/tmp/out.txt"', True)
 
 
+SCRATCH_RACE_DENIED = [
+    "python3 -c \"import os; os.rename('orchestrator/temporary','orchestrator/tmp0'); os.symlink('tickets','orchestrator/temporary')\"\n"
+    "echo x > orchestrator/temporary/L-0001-a.md",
+    "node -e \"require('fs').symlinkSync('tickets','orchestrator/temporary')\"; echo x > orchestrator/temporary/L-0001-a.md",
+    "perl -e 'symlink(\"tickets\",\"orchestrator/temporary\")'; echo x > orchestrator/temporary/L-0001-a.md",
+    "tar xf evil.tar; echo x > orchestrator/temporary/L-0001-a.md",
+    "unzip evil.zip; echo x > orchestrator/temporary/L-0001-a.md",
+    "git checkout evil; echo x > orchestrator/temporary/L-0001-a.md",
+    "rsync -a evil/ orchestrator/; echo x > orchestrator/artifacts/L-0001-a.md",
+    "ln -sfn tickets orchestrator/temporary; echo x > orchestrator/temporary/L-0001-a.md",
+    "mv orchestrator/temporary orchestrator/t0; ln -s tickets orchestrator/temporary; echo x > orchestrator/temporary/L-0001-a.md",
+    "cp -r evil orchestrator/temporary; echo x > orchestrator/temporary/L-0001-a.md",
+    "X=1 echo x > orchestrator/temporary/L-0001-a.md",
+    "cd /tmp && echo x > orchestrator/temporary/L-0001-a.md",
+    "cd; echo x > orchestrator/temporary/L-0001-a.md",
+    "python3 -c \"import os; os.symlink('tickets','orchestrator/temporary')\" && cat /dev/null | python3 -c 'import sys; print(1)'; echo x > orchestrator/temporary/L-0001-a.md",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCH_RACE_DENIED)
+def test_scratch_exemption_needs_a_line_that_cannot_relink_it(ws, cmd):
+    (ws.root / "orchestrator" / "temporary").mkdir(parents=True, exist_ok=True)
+    (ws.root / "orchestrator" / "artifacts").mkdir(parents=True, exist_ok=True)
+    _check(ws, cmd, False)
+
+
+def test_a_hard_linked_note_is_not_a_scratch_note(ws):
+    import os
+    tickets_open = ws.tickets_dir / "open"
+    tickets_open.mkdir(parents=True, exist_ok=True)
+    tmp = ws.root / "orchestrator" / "temporary"
+    tmp.mkdir(parents=True, exist_ok=True)
+    target = tickets_open / "L-0001-t.md"
+    target.write_text("x")
+    os.link(target, tmp / "L-0001-h.md")
+    _check(ws, "echo y > orchestrator/temporary/L-0001-h.md", False)
+    _check(ws, "echo y > orchestrator/temporary/L-0001-fresh.md", True)
+
+
+SCRATCHLIKE_NAMES_ALLOWED = [
+    "mv build artifacts/",
+    "cp -r coverage artifacts/",
+    "cp -R build/ artifacts",
+    "mv foo.txt temporary/",
+    "ln -s /tmp/x temporary",
+    "mkdir -p artifacts && mv *.log artifacts/",
+    "mv dist/ artifacts",
+    "ln -s ../x artifacts/latest",
+    "cp -a out/ temporary",
+    "rsync -a build/ artifacts/",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCHLIKE_NAMES_ALLOWED)
+def test_folders_named_like_the_scratch_folders_elsewhere_are_just_folders(ws, cmd):
+    _check(ws, cmd, True)
+
+
+SCRATCH_REAL_DENIED = [
+    "mv build orchestrator/artifacts/",
+    "cp -r coverage orchestrator/artifacts/",
+    "ln -s /tmp/x orchestrator/temporary",
+    "mv orchestrator/temporary orchestrator/t0",
+    "cp -R build/ '{ws}/orchestrator/artifacts'",
+    "ln -sfn x ./orchestrator//temporary",
+    "mv *.log orchestrator/artifacts/",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCH_REAL_DENIED)
+def test_the_workspace_scratch_folders_stay_guarded_against_links(ws, cmd):
+    _check(ws, cmd, False)
+
+
 CONTINUATION_AND_COMMENTS = [
     "echo a # c \\\nor\\\nch approve L-1",
     "echo a # c \\\nor\\\nch approve L-1 # d",

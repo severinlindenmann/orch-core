@@ -7,6 +7,7 @@ It keeps the common, one-command paths closed and gives clear reasons; the human
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 from dataclasses import dataclass
@@ -2090,9 +2091,35 @@ _SCRATCH_NOTE = re.compile(r"(?:[\w.+@~-]+/)*orchestrator/(?:temporary|artifacts
 _PATH_SPECIAL = re.compile(r"[*?\[{$`'\"\\]")
 
 
+_SCRATCH_LINE_OK: "contextvars.ContextVar[bool]" = contextvars.ContextVar("scratch_line_ok", default=False)
+
+
+def _scratch_line_safe(cmd: str, cwd) -> bool:
+    """Nothing else on the line can change what a scratch folder is before a note is written to it: every command is
+    one of _STATE_SAFE_WORDS run plainly (see _state_words_safe), or a `cd` to the working directory itself. No
+    interpreter, ln, mv, tar, unzip, git or rsync, no prefix assignment."""
+    try:
+        here = os.path.realpath(str(cwd)) if cwd else os.path.realpath(os.getcwd())
+        for seg in _command_segments(cmd):
+            words, assigns = _command(seg)
+            if words and words[0] == "cd":
+                target = [w for w in words[1:] if not w.startswith("-")]
+                if assigns or not target or (len(target) == 1 and os.path.realpath(os.path.expanduser(target[0])) != here):
+                    return False
+                continue  # (`cd a b` fails in bash and changes nothing)
+            if not (_seg_state_safe(seg) or _pure_python(words)):
+                return False
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _scratch_is_real(ws, word: str, cwd) -> bool:
     """The note's folder, resolved through every symlink against the working directory, is outside the ticket and state
-    folders. A folder that cannot be resolved gives no exemption."""
+    folders, the line has nothing else that could relink it, and an existing note is no link or hard link. A folder
+    that cannot be resolved gives no exemption."""
+    if not _SCRATCH_LINE_OK.get():
+        return False
     try:
         base = Path(str(cwd)) if cwd else Path(ws.root)
         base = base if base.is_absolute() else Path(ws.root) / base
@@ -2100,7 +2127,7 @@ def _scratch_is_real(ws, word: str, cwd) -> bool:
         w = w if w.is_absolute() else base / w
         parent = Path(os.path.realpath(w.parent))
         full = parent / w.name
-        if full.is_symlink():
+        if full.is_symlink() or (full.is_file() and full.stat().st_nlink > 1):
             return False
         return not (_under(parent, ws.tickets_dir.resolve()) or _under(parent, ws.state_dir.resolve()))
     except (OSError, RuntimeError, ValueError):
@@ -2168,21 +2195,42 @@ def _state_words_safe(cmd: str) -> bool:
     """Every simple command in `cmd` is one of _STATE_SAFE_WORDS, run plainly: no prefix assignment, no assignment
     to a variable that changes how commands or paths resolve, no process substitution, no `cp` option that copies
     links or recursively, no `printf -v`."""
-    for seg in _command_segments(cmd):
-        if re.search(r"[<>]\(", seg):
-            return False
-        words, assigns = _command(seg)
-        if any(_STATE_UNSAFE_VARS.fullmatch(k) for k in assigns) or (words and assigns):
-            return False
-        if not words:
-            continue
-        if words[0] not in _STATE_SAFE_WORDS:
-            return False
-        if words[0] == "cp" and any(w.startswith("-") and w != "--" and not re.fullmatch(r"-[pvinf]+", w)
-                                    for w in words[1:]):
-            return False
-        if words[0] == "printf" and "-v" in words:
-            return False
+    return all(_seg_state_safe(seg) for seg in _command_segments(cmd))
+
+
+# A python one-liner that can only compute on its input: a few pure modules, no file, process or dynamic-code names.
+_PY_PURE_IMPORT = re.compile(r"import\s+(?:json|sys|re|collections|itertools|textwrap|math|datetime|csv)"
+                             r"(?:\s*,\s*(?:json|sys|re|collections|itertools|textwrap|math|datetime|csv))*(?=\s*(?:;|$))")
+_PY_IMPURE = re.compile(r"\bopen\b|__|\b(?:eval|exec|compile|getattr|setattr|globals|locals|input|breakpoint|system|popen|"
+                        r"rename|replace|symlink|link|remove|unlink|rmdir|write|mkdir|chdir|spawn|fork|run|call)\b")
+
+
+def _pure_python(words: list[str]) -> bool:
+    """`python3 -c 'import json,sys; print(json.load(sys.stdin)["x"])'`: -c code that imports only pure modules and
+    names nothing that touches files, processes or the interpreter itself."""
+    if not words or not re.fullmatch(r"python[0-9.]*", os.path.basename(words[0])) or len(words) != 3 or words[1] != "-c":
+        return False
+    code = words[2]
+    stmts = [x.strip() for x in code.split(";") if x.strip()]
+    return all(_PY_PURE_IMPORT.fullmatch(x) or not x.startswith(("import", "from")) for x in stmts) and not _PY_IMPURE.search(
+        code) and not re.search(r"\bfrom\b", code)
+
+
+def _seg_state_safe(seg: str) -> bool:
+    if re.search(r"[<>]\(", seg):
+        return False
+    words, assigns = _command(seg)
+    if any(_STATE_UNSAFE_VARS.fullmatch(k) for k in assigns) or (words and assigns):
+        return False
+    if not words:
+        return True
+    if words[0] not in _STATE_SAFE_WORDS:
+        return False
+    if words[0] == "cp" and any(w.startswith("-") and w != "--" and not re.fullmatch(r"-[pvinf]+", w)
+                                for w in words[1:]):
+        return False
+    if words[0] == "printf" and "-v" in words:
+        return False
     return True
 
 
@@ -2246,14 +2294,35 @@ def _names_state_path(ws, cmd: str, cwd) -> bool:
 
 
 _PATH_NOISE = re.compile(r"/(?:\.?/)+")
-_LINKS_SCRATCH = re.compile(r"(?:^|[\s;&|(`'\"])(?:ln|mv|cp\s+(?:-\w*[rRa]\w*)|install)\b[^;&|\n]*"
-                            r"(?<![\w.-])(?:temporary|artifacts)(?:/?['\"]?(?=\s|$|[;&|)])|/\.?/)")
+_LINK_PROGS = frozenset({"ln", "mv", "cp", "install", "rsync", "ditto"})
 
 
-def _links_scratch(cmd: str) -> bool:
-    """A link, move or recursive copy whose operand is a scratch folder (orchestrator/temporary or artifacts): the
-    folder may become a link into the tickets, so notes written through it later are not notes."""
-    return any(_LINKS_SCRATCH.search(seg) for seg in _command_segments(cmd))
+def _links_scratch(ws, cmd: str, cwd) -> bool:
+    """A link, move or recursive copy with an operand that resolves to the workspace's orchestrator/temporary or
+    orchestrator/artifacts folder (or, unreadable, names them): the folder may become a link into the tickets, so notes
+    written through it later are not notes. A bare `artifacts` or `temporary` elsewhere is just a folder."""
+    scratch = {os.path.realpath(str(d)) for d in (ws.temporary_dir, ws.artifacts_dir)}
+    scratch |= {str(Path(ws.root) / "orchestrator" / n) for n in ("temporary", "artifacts")}
+    base = os.path.realpath(str(cwd)) if cwd else os.path.realpath(str(ws.root))
+    for seg in _command_segments(cmd):
+        words, _ = _command(seg)
+        if not words or os.path.basename(words[0]) not in _LINK_PROGS:
+            continue
+        prog = os.path.basename(words[0])
+        if prog in ("cp", "install") and not any(w.startswith("-") and re.fullmatch(r"-\w*[rRa]\w*|--recursive|--archive", w)
+                                                  for w in words[1:]):
+            continue
+        for w in words[1:]:
+            if w.startswith("-"):
+                continue
+            if re.search(r"[$`*?\[{~]", w):
+                if re.search(r"(?<![\w.-])(?:temporary|artifacts)(?![\w-])", w):
+                    return True
+                continue
+            path = os.path.realpath(w if os.path.isabs(w) else os.path.join(base, w))
+            if any(path == d or path.startswith(d + os.sep) for d in scratch):
+                return True
+    return False
 
 
 def _touches_state(ws, cmd: str, cwd) -> bool:
@@ -2263,7 +2332,7 @@ def _touches_state(ws, cmd: str, cwd) -> bool:
         or _cwd_in_state(ws, cwd)
         or _cd_targets_state(cmd)
         or _names_ticket_file(ws, cmd, cwd)
-        or _links_scratch(cmd)
+        or _links_scratch(ws, cmd, cwd)
     )
 
 
@@ -2674,6 +2743,7 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
             d = _bash(ws, decoded, cwd, _decoded=True, _joined=_joined)  # judged as the shell would run it, too
             if not d.allow:
                 return d
+    _SCRATCH_LINE_OK.set(_scratch_line_safe(cmd, cwd))
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)

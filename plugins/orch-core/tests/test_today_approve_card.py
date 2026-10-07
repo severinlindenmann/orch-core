@@ -72,8 +72,10 @@ def test_approve_form_confirms_with_the_hash_prefix(dash, ws, put):
     card = _card(dash.get("/groom").text, tid)
     form = card.split(f'action="/t/{tid}/approve"', 1)[1].split("</form>", 1)[0]
     seen = _seen(card)
-    # the inline two-step confirm names the hash it binds (no browser popup)
-    assert f"data-inline-confirm=\"Confirm · requirements {seen[7:11]}" in card.split(f'action="/t/{tid}/approve"', 1)[1].split(">", 1)[0]
+    # the confirm dialog names the gate and the hash it binds (no browser popup)
+    tag = card.split(f'action="/t/{tid}/approve"', 1)[1].split(">", 1)[0]
+    assert f'data-confirm-title="Approve the requirements of {tid}?"' in tag and f"(its hash {seen[7:11]}" in tag
+    assert 'data-confirm-ok="Approve requirements"' in tag
     assert seen[7:15] in card and 'name="seen"' in form
 
 

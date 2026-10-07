@@ -94,7 +94,7 @@ def test_databricks_page_today_and_create_ticket(client, ws):
     html = client.get("/addons/databricks/").text
     assert "int, prod are simulated (demo)" in html and "&lt;script&gt;" in html
     assert 'action="/addons/databricks/actions/create_ticket"' in html
-    assert 'data-dialog="Create a backlog ticket for this failed run?"' in html
+    assert 'data-confirm-title="Create a backlog ticket for this failed run?"' in html
     today = client.get("/").text
     assert "Databricks failures" in today and "Databricks: 1 failed run" in today
     target = "int|501|9001|acme-ingest-daily"

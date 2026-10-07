@@ -25,7 +25,7 @@
       <button type="button" class="btn" data-mode="cli" aria-pressed="false" title="Every key goes straight to the session">CLI</button>
     </div>
     <button type="button" class="btn" data-details aria-expanded="true" aria-controls="term-details">Details</button>
-    {% if not factory %}<form method="post" action="/terminals/{{ s.name }}/end" data-dialog="End {{ s.name }}?" data-dialog-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-dialog-confirm="End session" data-dialog-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>{% endif %}
+    {% if not factory %}<form method="post" action="/terminals/{{ s.name }}/end" data-confirm-title="End {{ s.name }}?" data-confirm-body="The program running in it stops at once. Its conversation stays wherever the program keeps it." data-confirm-ok="End session" data-confirm-cancel="Keep running"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">End session…</button></form>{% endif %}
   </div>
 </div>
 

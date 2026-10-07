@@ -67,7 +67,7 @@ def test_approve_card_shows_hash_feedforward_and_inline_confirm(dash, ws, put):
     h = gate_hash(store.load(ws, tid)[1], "plan").removeprefix("sha256:")
     html = dash.get("/").text
     assert f"sha256 {h[:4]}…{h[-2:]}" in html
-    assert f'data-inline-confirm="Confirm · plan {h[:4]}…{h[-2:]}"' in html
+    assert f'data-confirm-ok="Approve plan"' in html and f"(its hash {h[:4]}…{h[-2:]})" in html
     assert "Lets claude-code work the tasks. Does not accept the work." in html
     # the full text sits before the button
     assert html.index("step two") < html.index(f'action="/t/{tid}/approve"')
@@ -98,7 +98,7 @@ def test_verdict_card_lists_acceptance_criteria_with_proof(dash, put):
     card = html.split(f'id="d-{tid}-verdict"', 1)[1].split("</article>", 1)[0]
     assert "<b class=\"ac-n\">AC1</b> retries 3 times" in card and "test_retry.py passed" in card
     assert "Show 1 more criteria</summary>" in card
-    assert f'data-inline-confirm="Confirm · close {tid} as done"' in card
+    assert f'data-confirm-title="Close {tid} as done?"' in card
     assert "Verification notes</summary>" in card
 
 
@@ -110,7 +110,7 @@ def test_stale_claims_are_one_compact_list_with_dialog_releases(dash, configure,
     section = html.split('class="card stale-claims"', 1)[1].split("</section>", 1)[0]
     assert "1 claim gone silent" in section and "claude-code silent 3 h" in section
     form = section.split(f'action="/t/{tid}/release"', 1)[1].split("</form>", 1)[0]
-    assert f'data-dialog="Release claude-code\'s claim on {tid}?"' in form and 'name="ask" value="1"' in form
+    assert f'data-confirm-title="Release claude-code\'s claim on {tid}?"' in form and 'name="ask" value="1"' in form
     assert "<title>(1) Today" in html
 
 
@@ -204,7 +204,7 @@ def test_revoke_and_trust_forms_use_the_dialog_tier():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1] / "src" / "orch" / "dashboard"
     workspace = (root / "templates" / "workspace.html").read_text(encoding="utf-8")
-    assert "data-confirm" not in workspace and workspace.count("data-dialog=") >= 3
+    assert "data-confirm=" not in workspace and workspace.count("data-confirm-title=") >= 3
     for path in (root / "templates").glob("*.html"):
         assert "data-confirm=" not in path.read_text(encoding="utf-8"), path
     assert "window.confirm" not in (root / "static" / "app.js").read_text(encoding="utf-8")

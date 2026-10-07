@@ -39,7 +39,7 @@ def test_page_lists_prs_and_escapes_titles(mc):
     assert "<h1>Code reviews</h1>" in html and "#23" in html and "#91" in html
     assert "<script>alert(1)</script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
     assert 'action="/addons/github-reviews/actions/rerun_failed"' in html
-    assert 'data-dialog="Rerun the failed checks of this pull request?"' in html
+    assert 'data-confirm-title="Rerun the failed checks of this pull request?"' in html
 
 
 def test_menu_today_and_ticket(mc):

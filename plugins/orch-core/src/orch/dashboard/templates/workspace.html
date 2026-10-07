@@ -169,7 +169,7 @@
     <ul class="plain">{% for c in a.review.changed[:50] %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
     {% if a.review.changelog %}<details><summary>Changelog</summary><pre>{{ a.review.changelog }}</pre></details>{% endif %}
     <p class="muted">Trusting runs this code inside orch serve with your permissions. Only trust code you have read.</p>
-    <form method="post" action="/workspace/addons/{{ a.name }}/trust" data-dialog="Trust {{ a.name }} {{ a.version }}?" data-dialog-body="It runs inside Mission Control with your permissions. Read what changed above before you trust it." data-dialog-confirm="Trust this version"><input type="hidden" name="ask" value="1"><input type="hidden" name="seen" value="{{ a.review.digest }}"><button type="submit" class="btn btn-primary">Trust this version</button></form>
+    <form method="post" action="/workspace/addons/{{ a.name }}/trust" data-confirm-title="Trust {{ a.name }} {{ a.version }}?" data-confirm-body="It runs inside Mission Control with your permissions. Read what changed above before you trust it." data-confirm-ok="Trust this version"><input type="hidden" name="ask" value="1"><input type="hidden" name="seen" value="{{ a.review.digest }}"><button type="submit" class="btn btn-primary">Trust this version</button></form>
   </details>
   {% endfor %}
   {% else %}<p class="empty">No addons found.</p>{% endif %}
@@ -213,7 +213,7 @@
         <td data-label="Addon"><code>{{ p.addon }}</code></td>
         <td data-label="Paired">{{ p.paired_at }}</td>
         <td class="no-prefix" data-label="Status">{% if p.revoked_at %}{{ ui.status("neu", "revoked " ~ p.revoked_at) }}{% else %}{{ ui.status("ok", "paired") }}{% endif %}</td>
-        <td>{% if not p.revoked_at %}<form method="post" action="/workspace/phones/{{ p.id }}/revoke" data-dialog="Revoke {{ p.label }}?" data-dialog-body="Its decisions stop applying. Pair it again to use it." data-dialog-confirm="Revoke phone" data-dialog-cancel="Keep phone" data-dialog-danger><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
+        <td>{% if not p.revoked_at %}<form method="post" action="/workspace/phones/{{ p.id }}/revoke" data-confirm-title="Revoke {{ p.label }}?" data-confirm-body="Its decisions stop applying. Pair it again to use it." data-confirm-ok="Revoke phone" data-confirm-cancel="Keep phone" data-confirm-tone="care"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Revoke</button></form>{% endif %}</td>
       </tr>
       {% endfor %}
       </tbody>
@@ -262,7 +262,7 @@
   <section class="card">
     <h2>Housekeeping</h2>
     <p>{{ temp_count }} file(s), {{ temp_kb }} KB in temporary/. Files older than {{ max_age }} days are removed by Tidy.</p>
-    <form method="post" action="/workspace/tidy" data-dialog="Delete old files from temporary/?" data-dialog-body="Files older than {{ max_age }} days and old Start agent run scripts are removed. Tickets, artifacts and the event log are not touched." data-dialog-confirm="Tidy now" data-dialog-cancel="Keep files"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Tidy now</button></form>
+    <form method="post" action="/workspace/tidy" data-confirm-title="Delete old files from temporary/?" data-confirm-body="Files older than {{ max_age }} days and old Start agent run scripts are removed. Tickets, artifacts and the event log are not touched." data-confirm-ok="Tidy now" data-confirm-cancel="Keep files"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Tidy now</button></form>
   </section>
 <section class="card">
   <h2>Configuration</h2>

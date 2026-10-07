@@ -1074,15 +1074,7 @@ aside .table:not(.wtable) td:not(:first-child)[data-label]:has(> .chip)::before 
 @container (max-width: 559px) {
   .decision-card .cluster { flex-direction: column; align-items: stretch; }
 }
-.inline-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
-.inline-confirm > p { flex: 1 0 100%; margin: 0; font: var(--type-meta); }
-/* Armed: a 2 px underline in muted runs the 6 s countdown (with reduced motion the text says "6 s"). */
-.btn.is-armed { position: relative; overflow: hidden; transition: background-color var(--dur-2) var(--ease-out); }
-.btn.is-armed::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--muted);
-                       animation: ic-countdown 6s linear forwards; }
-.btn-primary.is-armed::after { background: var(--on-primary); }
-@keyframes ic-countdown { from { width: 100%; } to { width: 0; } }
-@media (prefers-reduced-motion: reduce) { .btn.is-armed::after { animation: none; } }  /* the live text says "within 6 s" */
+/* A form that asks in the confirm dialog (confirm.css) keeps its fields and button in one wrapping row. */
 form.inline-confirm-form { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
 .dialog-sheet { display: flex; flex-direction: column; gap: var(--dialog-gap); max-width: var(--dialog-w); padding: var(--dialog-pad);
                 border-radius: var(--dialog-radius); box-shadow: var(--shadow-overlay); }
@@ -1198,18 +1190,13 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
                padding: 0 var(--s-3); border-radius: var(--r-md); cursor: pointer; }
 .palette-opt[aria-selected="true"] { background: var(--surface2); box-shadow: inset 0 0 0 1px var(--line); }
 .palette-foot { margin: 0; padding: var(--s-2) var(--s-4) var(--s-3); font: var(--type-meta); border-top: 1px solid var(--line); }
-.orch-dialog { width: min(100% - 2 * var(--s-4), var(--dialog-w)); }
 .confirm-page { max-width: var(--dialog-w); }
 .confirm-page h1 { margin: 0; font: var(--type-section); }
 .start-agent-shared { margin-top: var(--s-4); }
 @media (max-width: 559px) {
-  /* Phone: dialogs become bottom sheets; an armed inline confirm docks at the bottom over the text it binds. */
-  dialog.orch-dialog, dialog.shortcut-overlay { width: 100%; max-width: none; margin: auto 0 0; border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
+  /* Phone: the key list becomes a bottom sheet (the confirm dialog stays centred, confirm.css). */
+  dialog.shortcut-overlay { width: 100%; max-width: none; margin: auto 0 0; border-radius: var(--dialog-radius) var(--dialog-radius) 0 0;
                                                padding-bottom: calc(var(--dialog-pad) + env(safe-area-inset-bottom)); }
-  .orch-dialog .dialog-actions { flex-direction: column-reverse; align-items: stretch; }
-  form.inline-confirm[data-armed] { position: sticky; bottom: 0; z-index: 5; margin: 0 calc(-1 * var(--s-4)); padding: var(--s-3) var(--s-4) calc(var(--s-3) + env(safe-area-inset-bottom));
-                                    background: var(--overlay); border-radius: var(--dialog-radius) var(--dialog-radius) 0 0; box-shadow: var(--shadow-overlay); }
-  form.inline-confirm[data-armed] .btn { flex: 1 1 auto; }
   .palette { margin-top: 0; width: 100%; max-width: none; border-radius: 0 0 var(--r-lg) var(--r-lg); }
   .palette-opt { min-height: 44px; }
   .kbd-hint { display: none; }  /* no on-screen shortcut UI on a phone */
@@ -1689,13 +1676,6 @@ html.term-full-open { overflow: hidden; }
 .new-ticket:has(#mode-factory:checked) :is(.only-ticket, .only-dark),
 .new-ticket:has(#mode-dark:checked) :is(.only-ticket, .only-plain) { display: none; }
 .new-mode .muted { margin: var(--s-2) 0 0; }
-/* A factory start uses the inline confirm on the whole New ticket form: the form keeps its column layout while armed,
-   and on a phone it stays in place (it does not dock like a small confirm form; the button is the last field). */
-form.form-card.inline-confirm { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: calc(var(--s-4) + 2px); }
-@media (max-width: 559px) {
-  form.form-card.inline-confirm[data-armed] { position: static; margin: 0; padding: var(--s-4); background: var(--surface);
-                                              border-radius: var(--r-lg); box-shadow: none; }
-}
 .permit-dark { margin: 0; overflow-wrap: anywhere; }
 
 /* The ring: five steps, never colour only. Done = solid thin, current = thick, waiting for you = dashed,

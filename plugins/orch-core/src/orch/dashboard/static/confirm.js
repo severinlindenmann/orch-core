@@ -205,7 +205,7 @@
     }
     const fallback = ((submitter && submitter.textContent) || "").replace(/…\s*$/, "").trim();
     return { title: ds.confirmTitle, body: ds.confirmBody || "", ok: ds.confirmOk || fallback || "Go ahead", items,
-             stays: ds.confirmStays || "", tone: ds.confirmTone || "", field };
+             stays: ds.confirmStays || "", tone: ds.confirmTone || "", field, cancel: ds.confirmCancel || "" };
   };
 
   const words = (form) => (form.querySelectorAll ? [...form.querySelectorAll("[data-confirm-word]")] : []);

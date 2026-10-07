@@ -19,7 +19,7 @@
     {% if run.auto %}{% set au = run.auto %}
     {% if au.by_charter %}
     <div data-auto-closed><p>Closed by itself under your charter{% if au.closed and au.closed.at %} at <time datetime="{{ au.closed.at }}">{{ au.closed.at|local }}</time>{% endif %}. You signed the charter with "close the epic by itself", so this replaced your verdict for this run. It closed on what the agents wrote under the close rules: nothing is executed or verified by the factory. If it is not done, reopen it: that is yours.</p>
-      <form method="post" action="/factory/{{ run.epic }}/reopen" class="inline-confirm-form" data-inline-confirm="Confirm · reopen {{ run.epic }} and stop its run (the delegation is paused): its children stay done">
+      <form method="post" action="/factory/{{ run.epic }}/reopen" class="inline-confirm-form" data-confirm-title="Reopen {{ run.epic }}?" data-confirm-body="This reopens it with your reason and will stop its run (the delegation is paused). Its children stay done." data-confirm-ok="Reopen epic" data-confirm-stays="Approve the epic again for a new run.">
         <label class="field-col" for="reopen-reason"><span>Why reopen it</span><input id="reopen-reason" name="reason" required autocomplete="off"></label>
         <button type="submit" class="btn btn-quiet">Reopen…</button>
       </form></div>
@@ -29,7 +29,7 @@
     {% else %}<div data-auto-pending><p>It closes by itself, under your charter, {% if au.blockers %}when:{% else %}in the runner's next round: everything it needs is proven.{% endif %}</p>{% if au.blockers %}<ul class="plain">{% for b in au.blockers %}<li>{{ b.text }}</li>{% endfor %}</ul>{% endif %}<p class="muted">This replaces your verdict for this run, as you signed. It closes on what the agents wrote under the close rules: nothing is executed or verified by the factory, and coverage is checked as text mentions only, and an epic that names no file is not closed by itself. You can still accept it yourself from the Ready report; Reopen stays yours.</p></div>{% endif %}
     {% endif %}{% endif %}
     {% if run.all_done %}<div data-all-done><p>Every child is done, so there is no Ready report and no epic verdict to give. To finish the epic, close it here with a reason (signed, yours), or send work back by starting a new child under this epic and approving the epic again.</p>
-      <form method="post" action="/factory/{{ run.epic }}/close" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ run.epic }} as done">
+      <form method="post" action="/factory/{{ run.epic }}/close" class="inline-confirm-form" data-confirm-title="{{ 'Close without releasing?' if run.unreleased else 'Close the epic?' }}" data-confirm-body="{{ run.epic }} is closed as done with your reason{{ '; the release that has not run is skipped' if run.unreleased }}." data-confirm-ok="{{ 'Close without releasing' if run.unreleased else 'Close the epic' }}"{{ ' data-confirm-tone=care' if run.unreleased }} data-confirm-stays="Reopen, with a reason.">
         <label class="field-col" for="close-reason"><span>Why close it</span><input id="close-reason" name="reason" required autocomplete="off"></label>
         {% if run.unreleased %}<p data-release-unrun="{{ run.epic }}">The release has not run; closing now skips it ({{ run.unreleased|join(", ") }} not proven yet).</p>
         <label class="field-col" for="close-skip"><span>Why close it without releasing</span><input id="close-skip" name="skip_release" required maxlength="300" autocomplete="off"></label>{% endif %}
@@ -71,7 +71,7 @@
     <p class="muted permit-meta">Build is as the agents report it: the children's tasks they closed.</p>
     <div class="actions">
       {% if run.active %}
-      <form method="post" action="/t/{{ run.epic }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · stop the run: sessions end, tickets and work stay">
+      <form method="post" action="/t/{{ run.epic }}/epic/pause" class="inline-confirm-form" data-confirm-title="Stop the run?" data-confirm-body="The epic's delegation pauses and the runner ends its sessions." data-confirm-ok="Stop the run" data-confirm-items='[{"icon": "pause", "text": "No new children start and agents approve nothing more"}, {"icon": "x", "text": "The runner ends the running sessions"}, {"icon": "check", "text": "Every ticket, branch and note stays"}]' data-confirm-stays="Approve the epic again to start anew.">
         <input type="hidden" name="next" value="{{ here }}">
         <button type="submit" class="btn btn-quiet">Stop the run…</button>
       </form>
@@ -99,7 +99,7 @@
       <div class="release-unit" data-release-unit="{{ s.name }} {{ u.unit }}" data-state="{{ u.state }}">
         <span><a class="lnk key" href="/t/{{ u.unit }}">{{ u.unit }}</a> · {{ WORDS[u.state] }}{% if u.why %} · {{ u.why }}{% endif %}</span>
         {% if u.state in ("failed", "unknown", "stale") %}
-        <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · run the {{ s.name }} stage of {{ u.unit }} once more">
+        <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-confirm-title="Retry the {{ s.name }} stage of {{ u.unit }}?" data-confirm-body="The runner makes exactly one more attempt with the same recipe on this machine, in its next round." data-confirm-items='[{"icon": "refresh", "text": "One more attempt; if it fails, it stops again"}]' data-confirm-ok="{{ 'Release to production' if s.name == 'production' else 'Retry release once' }}"{{ ' data-confirm-tone=care' if s.name == 'production' }}>
           <input type="hidden" name="stage" value="{{ s.name }}">
           <input type="hidden" name="unit" value="{{ u.unit }}">
           <button type="submit" class="btn btn-quiet">Retry release…</button>
@@ -117,7 +117,7 @@
   {% if rel.sensitive %}
   <div class="release-unit" data-release-sensitive>
     <span>A child branch touches a sensitive path: nothing was merged.</span>
-    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · check the branches again before the merge">
+    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-confirm-title="Check the branches again?" data-confirm-body="The runner checks the child branches for sensitive paths again before the merge, in its next round." data-confirm-ok="Check again">
       <input type="hidden" name="stage" value="merge">
       <input type="hidden" name="unit" value="{{ run.epic }}">
       <button type="submit" class="btn btn-quiet">Retry release…</button>
@@ -127,7 +127,7 @@
   {% if rel.blocked %}
   <div class="release-unit" data-release-blocked>
     <span>The {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} could not start: {{ rel.blocked.why }}. Nothing ran.</span>
-    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · try the {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} again in the next round">
+    <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-confirm-title="Try the {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} again?" data-confirm-body="The runner tries it again in its next round, with the recipe on this machine." data-confirm-ok="{{ 'Release to production' if rel.blocked.stage == 'production' else 'Try again' }}"{{ ' data-confirm-tone=care' if rel.blocked.stage == 'production' }}>
       <input type="hidden" name="stage" value="{{ rel.blocked.stage }}">
       <input type="hidden" name="unit" value="{{ rel.blocked.unit }}">
       <button type="submit" class="btn btn-quiet">Retry release…</button>
@@ -138,7 +138,7 @@
   {% if prod and prod.state in ("failed", "unknown") and not prod.resolved %}
   <div class="release-unit" data-release-resolve>
     <span>While this production is unresolved, no other epic's production runs in this workspace.</span>
-    <form method="post" action="/factory/{{ run.epic }}/release/resolve" class="inline-confirm-form" data-inline-confirm="Confirm · lift the hold on other epics; this production does not run again">
+    <form method="post" action="/factory/{{ run.epic }}/release/resolve" class="inline-confirm-form" data-confirm-title="Lift the production hold?" data-confirm-body="Other epics' production may run again in this workspace. This production does not run again." data-confirm-ok="Lift the hold" data-confirm-tone="care">
       <label class="field-col" for="resolve-reason"><span>Why the hold can be lifted (for example: production checked by hand)</span><input id="resolve-reason" name="reason" required autocomplete="off"></label>
       <button type="submit" class="btn btn-quiet">Resolve…</button>
     </form>

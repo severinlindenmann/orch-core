@@ -38,7 +38,7 @@ def test_a_short_plan_is_shown_in_full_and_approved_with_its_hash(dash, ws, work
     assert "query system tables" in card and "build the dashboard" in card and 'data-gate-part="Plan"' in card
     seen = re.search(r'name="seen" value="([^"]+)"', card).group(1)
     assert seen == gate_hash(store.load(ws, working)[1], "plan")
-    assert 'action="/t/' + working + '/approve"' in card and "data-inline-confirm=" in card
+    assert 'action="/t/' + working + '/approve"' in card and "data-confirm-title=" in card
     r = dash.post(f"/t/{working}/approve", data={"gate": "plan", "seen": seen, "next": "/board"}, follow_redirects=False)
     assert r.status_code == 303
     assert store.load(ws, working)[1].meta["gates"]["plan"]["approved"]
@@ -93,7 +93,7 @@ def test_accept_sits_inside_the_expanded_proof(dash, ws, put):
     assert proof.index("AC4") < proof.index('value="done"')  # every criterion, then Accept
     assert "query log clean" in proof and "Verification" in proof
     assert f'name="seen" value="{verdict_hash([store.load(ws, tid)[1]], ws)}"' in proof
-    assert "data-inline-confirm=" in proof and "+1" in before  # three tiles, then "+1"
+    assert "data-confirm-title=" in proof and "+1" in before  # three tiles, then "+1"
 
 
 def test_more_than_eight_moves_link_to_the_list(dash, put):

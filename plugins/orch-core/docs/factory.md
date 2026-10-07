@@ -131,7 +131,8 @@ real settings.
 Only while `factory.enabled` is on; otherwise none of it is drawn and the routes refuse. Everything here is yours:
 the dashboard's own cookie and same-origin checks apply, and orch refuses these answers to a process running inside
 an agent harness, as it does for the terminal commands. Each is a signed ledger entry written by the same functions
-as `orch permit ...`, with the dashboard's inline confirm (no popup), bound to the hash of the command the card shows.
+as `orch permit ...`, bound to the hash of the command the card shows. Grant once and Deny answer at once; Grant for this epic and
+Add to the Dark profile ask first in the dashboard's confirm dialog (no popup).
 
 - The human-only check runs in the dashboard process, as for approvals: keep the dashboard link and its cookie
   yours, because a grant lets a command run.
@@ -1564,7 +1565,7 @@ latest main" deploys whatever main is then).
 - *Signed rollback missing*: the charter signs a rollback but the recipe's production stage has none now; production
   did not run. Put the rollback back into the recipe and Retry release, or approve the epic again without it.
 
-**Retry release** is yours: the run view's button (inline confirm) or `orch factory release retry`. It allows exactly
+**Retry release** is yours: the run view's button (confirm dialog; for production its primary says "Release to production") or `orch factory release retry`. It allows exactly
 one more attempt of one failed, unknown or out-of-date stage (or, after a sensitive-path stop, a fresh check of the
 branches) and runs nothing itself; the runner's next round does.
 

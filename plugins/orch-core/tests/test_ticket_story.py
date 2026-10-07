@@ -145,13 +145,14 @@ def test_the_ticket_page_never_asks_with_a_browser_popup(dash, put):
         html = _page(dash, tid)
         assert "data-confirm=" not in html, status
     tid = put("testing", sections=REQ)
-    assert 'data-inline-confirm="Confirm · close' in _page(dash, tid)
+    assert f'data-confirm-title="Close {tid} as done?"' in _page(dash, tid)
 
 
-def test_app_js_has_the_inline_confirm():
-    js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "form[data-inline-confirm]" in js and "\"Escape\"" in js and "ARM_MS = 6000" in js and "event.repeat" in js
-    assert "focus()" in js and "window.confirm" not in js  # no browser popup anywhere (#17)
+def test_confirm_js_has_the_one_dialog():
+    js = (STATIC / "confirm.js").read_text(encoding="utf-8")
+    assert "form[data-confirm-title], form[data-confirm-build]" in js and "showModal()" in js and '"cancel"' in js
+    assert "(field || cancel).focus()" in js and "window.confirm" not in js  # no browser popup anywhere (#17)
+    assert "window.confirm" not in (STATIC / "app.js").read_text(encoding="utf-8")
 
 
 def test_story_reuses_the_request_scan(dash, ws, put, monkeypatch):

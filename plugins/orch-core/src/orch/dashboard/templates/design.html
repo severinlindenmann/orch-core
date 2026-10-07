@@ -119,15 +119,21 @@
       <h5 class="artifact-kind">Not linked yet</h5>
       <p class="muted">notes.txt (not linked)</p>
     </section>
-    <h3>Inline confirm, armed</h3>
-    <div class="inline-confirm"><button type="button" class="btn btn-primary is-armed">Confirm · plan ab1e…7f</button><button type="button" class="btn btn-quiet">Cancel</button>
-      <p class="muted" aria-live="polite">Press again to confirm. Esc cancels.</p></div>
-    <h3>Dialog</h3>
-    <div class="dialog-sheet overlay" role="group" aria-labelledby="dlg-{{ theme }}">
-      <h4 id="dlg-{{ theme }}">Release claude-code's claim on {{ prefix }}-0019?</h4>
-      <p>The ticket goes back to open and any agent can claim it. claude-code's branch and notes stay.</p>
-      <label class="field-col">Reason <input type="text" value="No activity for 3 h"></label>
-      <div class="cluster dialog-actions"><button type="button" class="btn">Keep claim</button><button type="button" class="btn btn-primary">Release claim</button></div>
+    <h3>Confirm dialog (confirm.js: the one confirmation; Cancel has focus, the primary names the action)</h3>
+    <div class="confirm-dialog confirm-sample overlay" role="group" aria-labelledby="dlg-{{ theme }}"><div class="cd-in">
+      <h2 id="dlg-{{ theme }}">Stop the run?</h2>
+      <p class="cd-sum">The epic's delegation pauses and the runner ends its sessions.</p>
+      <h3 class="cd-head">What will happen</h3>
+      <ul class="cd-items"><li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg><span>No new children start and agents approve nothing more</span></li>
+        <li class="is-care"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg><span>Care row: outward or hard to undo, such as production</span></li></ul>
+      <p class="cd-stays"><b>What stays yours: </b>Approve the epic again to start anew.</p>
+      <div class="cd-acts"><button type="button" class="btn">Cancel</button><button type="button" class="btn btn-primary">Stop the run</button></div>
+    </div></div>
+    <h3>Dialog sheet</h3>
+    <div class="dialog-sheet overlay" role="group" aria-labelledby="dlg2-{{ theme }}">
+      <h4 id="dlg2-{{ theme }}">Keyboard shortcuts</h4>
+      <p>The key list (?) and the command palette use this sheet.</p>
+      <div class="cluster dialog-actions"><button type="button" class="btn">Close</button></div>
     </div>
     <h3>Receipt and message bar</h3>
     <p class="receipt" role="status"><span class="receipt-mark" aria-hidden="true">✓</span> Plan approved (ab1e…7f) · claude-code can start · 14:32</p>

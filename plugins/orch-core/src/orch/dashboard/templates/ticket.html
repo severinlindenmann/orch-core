@@ -10,11 +10,11 @@
 <script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
 {#- The ticket as a story (#16): header (L card), status card, then Asked → Agreed → Doing → Proven → Left, the
     agent's notes, and an aside with the timeline (from events), links and files. Every gated text is shown in
-    full above its Approve button; Approve, Accept and moves confirm inline (app.js), and without JS the plain
+    full above its Approve button; Approve, Accept and moves ask in the confirm dialog (confirm.js), and without JS the plain
     POST is still checked by the server against the hash of the text shown. -#}
 
 {% macro approve_form(gv, label, primary=true) %}
-<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ gv.gate }} {{ gv.seen_short|replace('sha256 ', '') }}">
+<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-confirm-title="Approve the {{ gv.gate }} of {{ t.id }}?" data-confirm-body="You approve the {{ gv.gate }} exactly as shown above (its hash {{ gv.seen_short|replace('sha256 ', '') }})." data-confirm-ok="Approve {{ gv.gate }}">
   <input type="hidden" name="gate" value="{{ gv.gate }}">
   <input type="hidden" name="seen" value="{{ gv.seen }}">
   {% if gv.question %}
@@ -29,7 +29,7 @@
 {% macro together_form(req, plan) %}
 {#- F2: requirements and plan in one confirm; both texts are shown in full in their sections above, and each hash
     posted is the hash of the text shown. -#}
-<form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ req.seen_short|replace('sha256 ', '') }} + plan {{ plan.seen_short|replace('sha256 ', '') }}">
+<form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-confirm-title="Approve requirements and plan of {{ t.id }}?" data-confirm-body="Both exactly as shown above: requirements {{ req.seen_short|replace('sha256 ', '') }} and plan {{ plan.seen_short|replace('sha256 ', '') }}." data-confirm-ok="Approve both">
   <input type="hidden" name="seen" value="{{ req.seen }}">
   <input type="hidden" name="seen_plan" value="{{ plan.seen }}">
   {#- every open-question line of both gates: the one override box covers them all -#}
@@ -45,7 +45,7 @@
 {% endmacro %}
 
 {% macro move_form(to, label, primary=false) %}
-<form method="post" action="/t/{{ t.id }}/move" class="inline-confirm-form" data-inline-confirm="Confirm · move to {{ to }}">
+<form method="post" action="/t/{{ t.id }}/move" class="inline-confirm-form" data-confirm-title="Move {{ t.id }} to {{ to }}?" data-confirm-ok="Move to {{ to }}">
   <input type="hidden" name="to" value="{{ to }}">
   <button type="submit" class="btn{{ ' btn-primary' if primary }}">{{ label }}</button>
 </form>
@@ -71,7 +71,7 @@
 {% if epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone releases nothing. The runner releases the epic's children together once the epic is Ready.</p>{% endif %}
 <div class="cluster story-actions">
   {% if actions.accept %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ t.id }} as done">
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-confirm-title="Close {{ t.id }} as done?" data-confirm-body="Your done verdict, bound to the criteria and evidence shown above." data-confirm-ok="Mark done">
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ verdict_seen }}">
     <button type="submit" class="btn btn-primary">Accept, mark done</button>
   </form>
@@ -117,7 +117,7 @@
 {% endmacro %}
 
 {#- E2: an epic's approval is its charter: the epic's requirements (shown in the gate above) and, per child, its
-    requirements and plan as hashed. One inline confirm; the delegation checkbox sits inside the form. -#}
+    requirements and plan as hashed. One confirm dialog; the delegation checkbox sits inside the form. -#}
 {% macro gated_text(s) %}{% if s.raw %}<p class="muted">Shown as plain text: it has link definitions that formatted text would hide.</p><pre class="gate-raw">{{ s.text }}</pre>{% elif s.text.strip() %}{{ s.text|md|safe }}{% else %}<p class="muted">Empty.</p>{% endif %}{% endmacro %}
 
 {% macro charter_form(e, epic_question) %}
@@ -227,7 +227,7 @@
   <p>{% if d.paused %}{{ ui.status("neu", "paused") }}{% elif d.epic_changed %}{{ ui.status("warn", "suspended: the epic changed") }}{% else %}{{ ui.status("info", "active") }}{% endif %}
     Agents may approve up to {{ d.max_children }} children they add, of size up to {{ d.max_size }}.</p>
   {% if d.active %}
-  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · pause the delegation">
+  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-confirm-title="Pause the delegation?" data-confirm-body="Agents approve no more children of this epic. The ones approved so far stay approved." data-confirm-ok="Pause delegation">
     <button type="submit" class="btn">Pause delegation</button>
   </form>
   {% endif %}
@@ -258,7 +258,7 @@
   {% endfor %}
   {% if e.verdict_ready and e.unreleased %}{{ pm.skip_release_form(t.id, e.verdict_seen, "", e.unreleased) }}
   {% elif e.verdict_ready %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ t.id }} and {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}">
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-confirm-title="Accept {{ t.id }} and close {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}?" data-confirm-body="Your done verdict for the epic, bound to these children and their evidence as shown above." data-confirm-ok="Accept and close">
     <input type="hidden" name="verdict" value="done">
     <input type="hidden" name="seen" value="{{ e.verdict_seen }}"><button type="submit" class="btn btn-primary">Accept the epic and close {{ e.proof|length }} {{ "child" if e.proof|length == 1 else "children" }}</button>
   </form>
@@ -295,7 +295,7 @@
         </form>
         {% endif %}
         {% if actions.release and not stale %}
-        <form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
+        <form method="post" action="/t/{{ t.id }}/release" data-confirm-title="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-confirm-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
         {% endif %}
         <form method="post" action="/t/{{ t.id }}/comment" class="stack" id="comment" data-delayed-send="Adding your comment to {{ t.id }}">
           <label for="comment-text">Comment for the agent</label>
@@ -347,7 +347,7 @@
     {% if a.kind in ("repair", "task") %}<a class="btn btn-primary" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
     {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
     {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
-    {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}
+    {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-confirm-title="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-confirm-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}
   </div>
   {% if card_qids %}{% for q in questions if q.id in card_qids %}{{ question_form(q) }}{% endfor %}{% endif %}
   {% for m in move.more %}

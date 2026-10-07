@@ -60,7 +60,7 @@ def test_design_page_renders_both_themes_in_three_frames(dash):
         assert f'class="ds-frame" data-theme="{theme}" style="width: 375px"' in html
     for marker in ('class="callout callout-warn"', 'class="table wtable cols-m"', 'class="table wtable cols-xl"',
                    'class="widget-tabs"', "<time datetime=", 'class="kv-stats"', 'class="widget-chips"',
-                   'class="decision-card"', 'class="inline-confirm"', 'class="dialog-sheet overlay"', 'class="receipt"',
+                   'class="decision-card"', 'class="confirm-dialog confirm-sample overlay"', 'class="dialog-sheet overlay"', 'class="receipt"',
                    'class="btn btn-primary" disabled', 'aria-busy="true"', 'class="addon-banner', 'class="sum sum-err"',
                    '<svg viewBox'):
         assert marker in html, marker

@@ -122,7 +122,7 @@ def test_today_lists_the_combined_approval_under_ready_to_start(dash, ws, aops):
     assert '<div class="dc-wide dc-pair">' in card and "export as CSV" in card and "add the button" in card
     t = store.load(ws, tid)[1]
     assert f'name="seen" value="{gate_hash(t, "requirements")}"' in card
-    assert f'name="seen_plan" value="{gate_hash(t, "plan")}"' in card and "data-inline-confirm=" in card
+    assert f'name="seen_plan" value="{gate_hash(t, "plan")}"' in card and "data-confirm-title=" in card
     assert "Backlog <b>" not in html  # not in the backlog line as well
     r = dash.post(f"/t/{tid}/approve-together", data={"seen": gate_hash(t, "requirements"),
                                                      "seen_plan": gate_hash(t, "plan"), "next": "/"},

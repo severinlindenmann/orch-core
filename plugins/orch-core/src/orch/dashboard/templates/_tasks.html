@@ -24,7 +24,7 @@
 {%- endmacro %}
 
 {% macro _task_form(t, r, a) %}
-<form method="post" action="/t/{{ t.id }}/task" class="stack{{ ' inline-confirm-form' if a.action == 'reopen' }}"{% if a.action == "reopen" %} data-inline-confirm="Confirm · reopen {{ r.id }}"{% endif %}>
+<form method="post" action="/t/{{ t.id }}/task" class="stack{{ ' inline-confirm-form' if a.action == 'reopen' }}"{% if a.action == "reopen" %} data-confirm-title="Reopen task {{ r.id }}?" data-confirm-body="It goes back to open; its notes and artifacts stay." data-confirm-ok="Reopen task"{% endif %}>
   <input type="hidden" name="task" value="{{ r.id }}">
   <input type="hidden" name="action" value="{{ a.action }}">
   {% if a.message %}<label for="task-{{ r.id }}-{{ a.action }}">{{ a.message }}</label>

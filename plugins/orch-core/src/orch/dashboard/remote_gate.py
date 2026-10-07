@@ -57,6 +57,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/"): LOOK, ("GET", "/board"): LOOK, ("GET", "/groom"): LOOK, ("GET", "/palette.json"): LOOK,
     ("GET", "/t/{ref}"): LOOK, ("GET", "/t/{ref}/raw"): LOOK, ("GET", "/t/{ref}/edit"): LOOK,
     ("GET", "/t/{ref}/agent/panel"): LOOK, ("GET", "/a/{ticket}/{name:path}"): LOOK, ("GET", "/new"): LOOK,
+    ("GET", "/t/{ref}/view/{name:path}"): LOOK,
     ("GET", "/events"): LOOK, ("GET", "/agents"): LOOK, ("GET", "/timeline"): LOOK, ("GET", "/timeline.md"): LOOK,
     ("GET", "/activity"): LOOK, ("GET", "/activity.md"): LOOK, ("GET", "/reports"): LOOK,
     ("GET", "/reports.md"): LOOK, ("GET", "/graph"): LOOK, ("GET", "/graph.json"): LOOK,

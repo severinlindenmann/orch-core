@@ -1,6 +1,7 @@
-"""The ticket page as a story (#16, ticket design review §3.4): Asked → Agreed → Doing → Proven → Left, then the
-agent's notes and the timeline. Pure helpers over a ticket, its events and its ticket_card(); every heading and
-sentence here is rule text. Agent prose only appears in the Agent notes, attributed to whoever wrote it."""
+"""The ticket page as a story (#16, ticket design review §3.4): Asked → Agreed → Doing → Proven, then the
+agent's notes and the activity. Pure helpers over a ticket, its events and its ticket_card(); every heading and
+sentence here is rule text. Agent prose only appears in the Agent notes (and, in testing, the handoff under the status
+card), attributed to whoever wrote it."""
 from __future__ import annotations
 
 import difflib
@@ -12,8 +13,9 @@ from orch.core.gates import HASH_VERSION, gate_hash, gate_meta, gate_parts, norm
 from orch.dashboard.data.steps import CHANGES_REQUESTED, YOUR_TURN, day, when
 from orch.dashboard.data.timeline import describe, who
 
-CHAPTERS = ("asked", "agreed", "doing", "proven", "left")
-CHAPTER_TITLES = {"asked": "Asked", "agreed": "What we agreed", "doing": "Doing", "proven": "Proof so far", "left": "Left"}
+# What is left is one line in the status card (cards._left), not a chapter of its own.
+CHAPTERS = ("asked", "agreed", "doing", "proven")
+CHAPTER_TITLES = {"asked": "Asked", "agreed": "What we agreed", "doing": "Doing", "proven": "Proof so far"}
 NOTE_LABELS = {"Current state": "Handoff", "Context": "Context", "Findings": "Findings"}
 # Events that only say "a section changed": folded on the timeline (the text itself is on the page).
 _NOISE = ("ticket.edited", "state.updated", "task.edited")
@@ -185,6 +187,106 @@ def timeline(events, limit: int = 50) -> list[dict]:
         if row["folded"] and row["count"] > 1:
             row["what"] = "edited " + (", ".join(row["sections"]) if row["sections"] else "the ticket") + f" · {row['count']} edits"
     return rows
+
+
+ACTIVITY_MAX = 400  # events the ticket page's Activity reads (the newest); the raw Log has the rest
+_STATUS_WORDS = {"backlog": "Backlog", "open": "Open", "in-progress": "In progress", "waiting": "Waiting",
+                 "testing": "Testing", "done": "Done"}
+_FOLD_PHRASE = {"artifact.added": "added {n} files", "ticket.edited": "edited the ticket {n} times",
+                "state.updated": "updated the handoff {n} times", "task.edited": "edited tasks {n} times",
+                "log.added": "logged {n} lines", "task.added": "added tasks {n} times",
+                "claim.taken": "claimed it {n} times", "question.asked": "asked {n} times"}
+_TASK_ID = re.compile(r"^[A-Za-z]{1,3}\d{1,4}$")
+
+
+def elapsed(start, end) -> str:
+    """"7 min", "4 h 32", "2 d 3 h" between two datetimes; "" when either is unknown."""
+    if not start or not end:
+        return ""
+    s = max(0, int((end - start).total_seconds()))
+    if s < 3600:
+        return f"{max(1, s // 60)} min"
+    if s < 86400:
+        return f"{s // 3600} h {s % 3600 // 60:02d}"
+    return f"{s // 86400} d {s % 86400 // 3600} h"
+
+
+def _fold_key(e) -> tuple | None:
+    """Events that fold with their neighbours of the same actor: files, section edits, task moves of one kind."""
+    if e.kind == "task.moved":
+        return ("task.moved", str((e.data or {}).get("now")))
+    if e.kind == "ticket.edited" and any((e.data or {}).get(k) for k in ("branch", "pr", "worktree", "external", "raw")):
+        return None  # a link is worth its own line
+    return (e.kind,) if e.kind in _FOLD_PHRASE else None
+
+
+def _fold_text(key: tuple, events: list) -> str:
+    if key[0] == "task.moved":
+        from orch.dashboard.data.timeline import _TASK_VERB
+        ids = [str((e.data or {}).get("task")) for e in events if _TASK_ID.match(str((e.data or {}).get("task") or ""))]
+        verb = _TASK_VERB.get(key[1], "moved")
+        return f"{verb} {len(events)} tasks" + (f" ({', '.join(ids)})" if ids and len(ids) <= 6 else "")
+    return _FOLD_PHRASE[key[0]].format(n=len(events))
+
+
+def activity(events, now=None) -> list[dict]:
+    """The ticket page's Activity: oldest first, split at every status change into rounds (a status entered twice,
+    say testing after a send-back, is "round 2"), each {label, round, start, end, elapsed, you, rows}. Within a round
+    a run of 2+ events of one kind by the same actor folds into one row that keeps its events for a disclosure; a
+    row shows its time only when the minute changes. Durations are wall-clock time between status changes, never
+    split into agent time and the human's (nothing measures that)."""
+    from orch.clock import now as clock_now
+    events = list(events)[-ACTIVITY_MAX:]
+    rounds: list[dict] = []
+    seen: dict[str, int] = {}
+
+    def start_round(status: str, at) -> dict:
+        seen[status] = seen.get(status, 0) + 1
+        r = {"status": status, "label": _STATUS_WORDS.get(status, status.capitalize() if status else "Created"),
+             "round": seen[status], "start": at, "end": None, "elapsed": "", "rows": [], "you": status == "testing"}
+        rounds.append(r)
+        return r
+
+    current = None
+    for e in events:
+        data = e.data or {}
+        at = when(e.at)
+        if e.kind == "ticket.moved" and data.get("to") and data.get("to") != data.get("from"):
+            if current is not None:
+                current["end"] = at
+            current = start_round(str(data["to"]), at)
+        elif current is None:
+            current = start_round(str(data.get("status") or "backlog") if e.kind == "ticket.created" else "", at)
+        actor = who(e)
+        key = _fold_key(e)
+        rows = current["rows"]
+        last = rows[-1] if rows else None
+        if key and last and last["key"] == key and last["who"] == actor:
+            last["events"].append({"at": at, "what": describe(e)})
+            last["what"] = _fold_text(key, last["raw"] + [e])
+            last["raw"].append(e)
+            continue
+        rows.append({"at": at, "who": actor, "what": describe(e), "key": key, "raw": [e], "events": [],
+                     "human": actor == "you", "kind": e.kind})
+    for r in rounds:
+        prev_minute = None
+        for row in r["rows"]:
+            if row["events"]:  # a folded run: its first event's line leads the disclosure
+                row["events"].insert(0, {"at": row["at"], "what": describe(row["raw"][0])})
+            minute = row["at"].astimezone().strftime("%d.%m %H:%M") if row["at"] else None
+            row["time"] = row["at"].astimezone().strftime("%H:%M") if row["at"] and minute != prev_minute else ""
+            prev_minute = minute
+            del row["raw"]
+    if rounds:
+        last = rounds[-1]
+        if last["status"] != "done":
+            last["end"] = None
+            last["open"] = True
+        end_now = now or clock_now()
+        for r in rounds:
+            r["elapsed"] = elapsed(r["start"], r["end"] or (end_now if r.get("open") else None))
+            r["day"] = r["start"].astimezone().strftime("%d.%m") if r["start"] else ""
+    return rounds
 
 
 JOURNEY = ("Asked", "Agreed", "Doing", "Proven", "Done")

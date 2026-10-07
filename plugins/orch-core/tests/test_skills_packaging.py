@@ -33,6 +33,7 @@ def test_no_old_skill_names_left():
     assert offenders == []
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 def test_wheel_contains_skills(tmp_path):
     subprocess.run(["uv", "build", "--wheel", "--out-dir", str(tmp_path)], cwd=PLUGIN_ROOT, check=True,

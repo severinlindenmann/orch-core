@@ -18,6 +18,7 @@ from orch.core.check import run_checks
 from orch.core.prlink import review_url
 from orch.core.rules import render_rules
 from orch.errors import UsageError
+from conftest import init_repo
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 MIXED = {"type": "github", "repos": {"hub": {"path": "hub"},
@@ -81,7 +82,7 @@ def test_review_url_follows_the_repo_provider(host, path, kind, base, want):
 def test_link_a_pr_number_in_a_bitbucket_server_repo(configure, ws_root, agent):
     for name, url in (("hub", "git@github.com:acme/hub.git"), ("meta", "ssh://git@bitbucket.example.com:7999/dis/meta.git")):
         (ws_root / name).mkdir()
-        _git(ws_root / name, "init", "-q")
+        init_repo(ws_root / name)
         _git(ws_root / name, "remote", "add", "origin", url)
     ws = configure(git=MIXED)
     from orch.core.ops import Ops
@@ -121,7 +122,7 @@ def history(ws_root):
     """hub: one old commit (2020) citing ABC-1, then one new commit citing ABC-2; returns the new commit's sha."""
     repo = ws_root / "hub"
     repo.mkdir()
-    _git(repo, "init", "-q")
+    init_repo(repo)
     old = {"GIT_AUTHOR_DATE": "2020-01-01T12:00:00", "GIT_COMMITTER_DATE": "2020-01-01T12:00:00"}
     _git(repo, "commit", "--allow-empty", "-q", "-m", "ABC-1 Old work", env=old)
     base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -178,7 +179,7 @@ URL = "https://github.com/acme/energy-data/pull/9"
 
 @pytest.fixture
 def origin(ws_root):
-    _git(ws_root, "init", "-q")
+    init_repo(ws_root)
     _git(ws_root, "remote", "add", "origin", "git@github.com:acme/energy-data.git")
 
 

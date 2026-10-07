@@ -495,12 +495,17 @@ def test_a_hung_authorization_check_counts_as_no(app):
 def test_an_abandoned_iterator_is_cut_by_the_watchdog(app):
     async def main():
         before = set(extra_tasks())
+        # max_seconds leaves room to read the first two events on a busy machine (0.2 s was cut before the second
+        # one under parallel CI load); then the consumer holds the iterator and never asks again
         stream = dispatch(app, get("/events"), origin(Scope.LOOK), still_authorized=yes,
-                          limits=Limits(max_seconds=0.2, grace_seconds=0.2))
+                          limits=Limits(max_seconds=1.0, grace_seconds=0.2))
         await stream.__anext__()
         await stream.__anext__()
         assert subscriber_count(app.state.ws) == 1
-        await asyncio.sleep(1.0)  # the consumer holds the iterator and never asks again
+        deadline = time.monotonic() + 5.0  # the watchdog cuts it after about 1.2 s; wait for that, not a fixed time
+        while subscriber_count(app.state.ws) and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)  # let the cut task finish
         subs, leaked = subscriber_count(app.state.ws), set(extra_tasks()) - before
         await stream.aclose()
         return subs, leaked

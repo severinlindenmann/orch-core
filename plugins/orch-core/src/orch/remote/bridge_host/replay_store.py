@@ -95,11 +95,13 @@ def _encode(rec: Record) -> bytes:
 class ReplayStore:
     """`root` is the workspace's bridge directory (files.bridge_dir). Not thread-safe: the host serialises calls."""
 
-    def __init__(self, root: Path, max_records: int = MAX_RECORDS, per_device: int = PER_DEVICE):
+    def __init__(self, root: Path, max_records: int = MAX_RECORDS, per_device: int = PER_DEVICE,
+                 busy_allowance: int = BUSY_ALLOWANCE):
         self.dir = files.ensure_dir(Path(root) / "requests")
         self.seq_dir = files.ensure_dir(Path(root) / "seq")
         self.max_records = max_records
         self.per_device = per_device
+        self.busy_allowance = busy_allowance
         self._index: dict[str, tuple[str, int]] = {}  # rid -> (device, until)
         self.damaged: set[str] = set()  # rids whose file cannot be trusted: kept, counted, shown to the owner
         for name in os.listdir(self.dir):  # the one full read, when the store opens
@@ -152,7 +154,7 @@ class ReplayStore:
         self.prune(now_ms)
         if len(self._index) + len(self.damaged) >= self.max_records:
             raise StoreFull()
-        if self.count_for(rec.device, now_ms) >= self.per_device + BUSY_ALLOWANCE:
+        if self.count_for(rec.device, now_ms) >= self.per_device + self.busy_allowance:
             raise DeviceFull()
         files.create_exclusive(self._path(rid), _encode(rec))
         self._index[rid] = (rec.device, rec.until)

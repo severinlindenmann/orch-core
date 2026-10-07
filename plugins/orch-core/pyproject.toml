@@ -36,3 +36,8 @@ packages = ["src/orch"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The 15 slowest tests are listed after every run (#229).
+addopts = "--durations=15"
+markers = [
+    "slow: builds wheels or venvs, re-runs cases against mutants or measures a performance budget; a quick loop skips them with -m 'not slow' (CI runs everything)",
+]

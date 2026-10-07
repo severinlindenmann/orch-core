@@ -17,6 +17,8 @@ uv run --project plugins/orch-core python plugins/orch-session/test/make_fixture
   && ORCH_SESSION_FIXTURES=/tmp/orch-session-fixtures node --test plugins/orch-session/test/*.spec.ts
 ```
 
+While you work, `uv run pytest -q -m "not slow"` skips the tests marked `slow` (wheel and venv builds, the bridge mutants, a performance budget); CI runs them all. Every run lists its 15 slowest tests: mark a new test `@pytest.mark.slow` when it lands there.
+
 CI uses Python 3.11 and Node 24, so avoid syntax that needs a newer Python. The orch-core workflow runs the core tests and the addon checks as parallel jobs; the `orch-core` check is green when both are. CI also runs on every pull request to `main` and on `main` itself, but not on pushes to other branches.
 
 ## Pull requests

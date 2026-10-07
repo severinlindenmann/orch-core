@@ -4,6 +4,7 @@ import shutil
 import subprocess
 
 import pytest
+from conftest import init_repo
 
 from orch.cli import run
 from orch.onboarding import (
@@ -22,7 +23,7 @@ needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not inst
 
 def _repo(path):
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    init_repo(path)
     return path
 
 

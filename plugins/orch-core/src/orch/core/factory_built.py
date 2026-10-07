@@ -347,8 +347,10 @@ def move_refusal(ws, t) -> str | None:
         return "orch could not read your clone's state: try the move again in a moment"
     if st["lines"]:
         paths = ", ".join(permits.shown(ln[3:])[:80] for ln in st["lines"][:5])
+        # never "delete it": a session has no delete tool, `rm` stops for a card and `git rm` is refused (the e2e run)
         return (f"your clone has work that is not committed ({paths}): commit it (git add, then git commit, as two "
-                "commands) or delete what does not belong, then move again")
+                "commands), then move again; if it does not belong, say so with orch log and stop (removing a file "
+                "needs a person here)")
     sha, _, why = child_tree(ws, t)
     if sha is None:
         return f"orch could not read your branch ({permits.shown(why)[:120]}): try the move again in a moment"
@@ -370,6 +372,6 @@ def move_refusal(ws, t) -> str | None:
         both = sorted(mine & (adds(ws, rec, tip, base) or set())) if tip else []
         if both:
             return (f"you add {both[0]}, which {e.id} adds too: only one child creates a file, and the merge would "
-                    f"conflict. Delete it with your file tools, then git add {both[0]} and git commit (two commands), "
-                    "then move again")
+                    f"conflict. Removing it needs a person here (no file tool deletes, and rm and git rm stop): say "
+                    f"so with orch log, naming {both[0]} and {e.id}, and stop")
     return None

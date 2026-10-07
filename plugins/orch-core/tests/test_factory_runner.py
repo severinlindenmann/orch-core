@@ -1196,14 +1196,14 @@ def test_an_exception_inside_the_new_rules_denies_but_an_unrelated_error_still_f
     with monkeypatch.context() as m:  # the file tools' resolution
         m.setattr(guard, "_ledger_path", lambda *a, **k: (_ for _ in ()).throw(OSError("bug")))
         assert not _tool(ws, "Read", file_path="README.md").allow
-    # an internal error elsewhere is not the new rules' business: evaluate raises, and the hook fails open and logs
+    # an internal error elsewhere is not the new rules' business: evaluate raises, and the hook fails closed and logs
     with monkeypatch.context() as m:
         m.setattr(guard, "_runs_human_only", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
         with pytest.raises(RuntimeError):
             _bash(ws, "echo hi")
 
 
-def test_the_hook_still_fails_open_on_an_unrelated_guard_error(ws_root, ws, monkeypatch):
+def test_the_hook_fails_closed_on_an_unrelated_guard_error(ws_root, ws, monkeypatch):
     import orch.hooks.guard as guard
     from test_guard import _run_guard, bash
 
@@ -1211,7 +1211,7 @@ def test_the_hook_still_fails_open_on_an_unrelated_guard_error(ws_root, ws, monk
         raise RuntimeError("bug")
 
     monkeypatch.setattr(guard, "evaluate", boom)
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
+    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 2
 
 
 def test_a_path_that_cannot_be_resolved_is_refused(ws):

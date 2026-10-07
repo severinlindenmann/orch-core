@@ -7,6 +7,7 @@ It keeps the common, one-command paths closed and gives clear reasons; the human
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 from dataclasses import dataclass
@@ -482,21 +483,70 @@ def _mux_segment_risky(seg: str) -> bool:
     return False
 
 
+_MUX_WORD_BOUNDED = re.compile(r"(?<![A-Za-z0-9_-])(?:tmux|screen)(?![A-Za-z0-9_-])", re.I)
+# Code that starts a process: an interpreter that names tmux or screen next to one may be driving it.
+_PROC_LAUNCH = re.compile(r"(?i)subprocess|\bos\.|popen|system\b|\bexec|spawn|child_process|pexpect|\bsh\b|bash|\brun\b|\bcall\b"
+                          r"|check_output|\bshell\b|\bcmd\b|`")
+_INTERP_PROG = re.compile(r"(?:python[0-9.]*|perl|ruby|node|deno|bun|php|lua)")
+
+
+def _mux_in_interpreter_code(cmd: str) -> bool:
+    """Code that is not shell (a code heredoc body, or the command line of an interpreter) names tmux or screen as a
+    word next to something that starts a process."""
+    main, docs = _split_heredocs(cmd)
+    texts = [d.body for d in docs if not _is_data_heredoc(main, d)]
+    for seg in _segments(main):
+        words, _ = _command(seg)
+        if words and _INTERP_PROG.fullmatch(os.path.basename(words[0])):
+            texts.append(seg)
+    return any(_MUX_WORD_BOUNDED.search(t) and _PROC_LAUNCH.search(t) for t in texts)
+
+
+_MUX_SUBCMD = re.compile(r"-[LS]\s*['\"]?\S|(?<![\w-])(?:send-keys|send-prefix|new-session|new-window|attach(?:-session)?|"
+                         r"kill-server|kill-session|capture-pane|paste-buffer|load-buffer|set-buffer|run-shell|pipe-pane|"
+                         r"list-sessions|list-panes|has-session|respawn-pane|source-file|-X\s+stuff|-X\s+eval)(?![\w-])")
+
+
+def _mux_program_disguised(flat: str) -> bool:
+    """A command word that is, or can expand to, tmux or screen without spelling it: a glob that matches the name
+    (`tm?x`, `/usr/bin/scr*`), or a word built by the shell (`${T}ux`, `$(echo tmux)`, a backtick) on a line that
+    also carries a tmux or screen socket option or subcommand. Conservative: such a line is refused."""
+    import fnmatch
+    for seg in _command_segments(flat):
+        words, _ = _command(seg)
+        if not words:
+            continue
+        base = os.path.basename(words[0])
+        if re.search(r"[*?\[]", base) and any(fnmatch.fnmatchcase(n, base) for n in ("tmux", "screen")):
+            return True
+        if re.search(r"[$`]", words[0]) and _MUX_SUBCMD.search(" ".join(words[1:])):
+            return True
+    return False
+
+
 def _mux_risky(cmd: str) -> bool:
     """A tmux or screen command the guard cannot show plain. Only the command word and its own arguments count: a
     `grep tmux`, a heredoc body, a quoted message or a `#` inside quotes is not one. Best effort."""
-    if len(cmd) > MAX_CMD and re.search(r"tmux|screen", cmd, re.I):
+    if len(cmd) > MAX_CMD and _MUX_WORD_BOUNDED.search(cmd):
         raise _Bound("length")
     flat = _prep(cmd)
     if _config_and_mux(flat):
         return True
-    whole = re.search(r"tmux|screen", flat, re.I)
+    # The word as the shell reads it: `scr''een` and `t\mux` are the program, not text.
+    whole = _MUX_WORD_BOUNDED.search(flat) or _MUX_WORD_BOUNDED.search(re.sub(r"""['"\\]""", "", flat))
     if _MUX_ANSI_C.search(flat) and _MUX_FLAG.search(flat):
+        return True
+    if _mux_program_disguised(flat):
         return True
     if not whole:
         return False
-    if whole and re.search(r"(?<![\w-])function\s|\w\s*\(\)|(?<![\w-])alias\s", flat):
-        return True  # a function or an alias that may wrap the command: not provable
+    if _mux_in_interpreter_code(flat):
+        return True
+    # a function or an alias that may wrap the command: not provable. Only code counts, not a data heredoc's prose.
+    # A command line that runs orch keeps every heredoc body in view: the data-only orch allow-list is not relied on here.
+    shown = flat if _ORCH_WORD.search(_split_heredocs(flat)[0]) else _without_message_text(_code_text(flat))
+    if re.search(r"(?<![\w-])function\s|\w\s*\(\)|(?<![\w-])alias\s", shown):
+        return True
     for seg in _command_segments(flat):
         words, _ = _command(seg)
         if not words:
@@ -505,7 +555,7 @@ def _mux_risky(cmd: str) -> bool:
         if prog in ("tmux", "screen"):
             if _mux_segment_risky(seg):
                 return True
-        elif (prog in _WRAPPERS or prog in _DEFINERS) and re.search(r"tmux|screen", seg, re.I):
+        elif (prog in _WRAPPERS or prog in _DEFINERS) and _MUX_WORD_BOUNDED.search(seg):
             if prog in _DEFINERS or _mux_segment_risky(seg):
                 return True
         elif re.match(r"[$`]", words[0]) and whole:  # a command word the guard cannot read, and tmux is mentioned
@@ -523,12 +573,15 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     """Interpreter or pty-wrapped code that runs a human-only orch command, or builds a human actor. The orch word
     and the verb must sit in one simple command, one shell payload or one heredoc body that is code, so a test run
     such as `python -m pytest -k approve && orch show L-1` is not mistaken for it."""
-    if not (_HUMAN_INTERP.search(code) or _pty_wrapped(code)):
+    msg = _message_exempt(cmd)
+    shown = _without_message_text(code) if msg else code  # a gh --body or git commit -m that mentions python is text, not code
+    if not (_HUMAN_INTERP.search(shown) or _pty_wrapped(shown)):
         return False
     if _HUMAN_PY.search(code):
         return True
     main, docs = _split_heredocs(cmd)
-    units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
+    segs = _command_segments(cmd)
+    units = [_prose_view(u, len(segs) == 1, msg) for u in segs] + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, reopening or dropping quick tasks, arming schedules and filing their "
@@ -550,9 +603,75 @@ _ENV_DENIED = ("changing the environment to remove or blank the agent harness ma
                "ORCH_HARNESS, ...) is not allowed: orch uses them to keep human-only actions with the human")
 
 
-def _human_only_tokens(seg: str) -> bool:
-    """The simple command, split as the shell would (quotes and escapes resolved), runs an orch program (`orch`,
-    `…/bin/orch`, `-m orch.cli`) with a human-only subcommand. Catches spellings such as `o''rch approve`."""
+# Options of orch that take no value (everything else with a leading dash may take one: orch has no top-level option
+# with a value today, so a future one must not hide the subcommand behind its value).
+_ORCH_FLAGS = frozenset({"--json", "--help", "-h", "--version", "--quiet", "-q", "--verbose", "-v"})
+
+
+def _orch_subcommand_starts(words: list[str]) -> list[list[str]]:
+    """The positional words after an orch program, once for every position the subcommand could stand at: a word
+    that follows an option may be that option's value, so `orch --opt val approve L-1` and `orch -C x approve L-1`
+    offer both `val approve L-1` and `approve L-1`. Words after a bare `--` are not options."""
+    opts, pos, ended = 0, 0, False
+    positional, idx = [], []
+    skip = False
+    for w in words:
+        if skip:  # the value of -C (orch's one known option with a value) is a folder, never the subcommand
+            skip = False
+            continue
+        if not ended and w == "-C":
+            skip = True
+            continue
+        if not ended and w == "--":
+            ended = True
+        elif not ended and w.startswith("-"):
+            if "=" not in w and w not in _ORCH_FLAGS:
+                opts += 1
+        else:
+            if pos <= opts:  # enough options before it to have taken every earlier positional as a value
+                idx.append(pos)
+            positional.append(w)
+            pos += 1
+    return [positional[i:] for i in idx]
+
+
+def _human_rest(rest: list[str]) -> bool:
+    if rest and rest[0] in _HUMAN_VERBS:
+        return True
+    if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
+        return True
+    if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
+        return True
+    if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
+        return True
+    if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
+        return True
+    if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
+        return True
+    if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
+        return True
+    return False
+
+
+def _orch_programs(seg: str):
+    """(words after each orch program word) of the simple command, split as the shell would."""
+    import shlex
+    try:
+        words = shlex.split(seg, comments=True, posix=True)
+    except ValueError:
+        return
+    for k, word in enumerate(words):
+        if re.split(r"[/\\]", word)[-1] in ("orch", "orch.cli"):
+            yield words[k + 1:]
+
+
+_ORCH_LEADERS = frozenset({"command", "exec", "env", "sudo", "doas", "nohup", "time", "builtin", "uv", "run", "uvx", "nice",
+                           "timeout", "xargs", "stdbuf", "setsid", "ionice", "--"})
+
+
+def _orch_dynamic_tokens(seg: str) -> bool:
+    """The orch program is the command word (quotes and a wrapper aside: `"orch" $x`, `o"rch" $x`, `command "orch" $x`)
+    and a word that could be its subcommand is built by the shell (`$x`, `${x}`, a backtick, a glob)."""
     import shlex
     try:
         words = shlex.split(seg, comments=True, posix=True)
@@ -561,28 +680,53 @@ def _human_only_tokens(seg: str) -> bool:
     for k, word in enumerate(words):
         if re.split(r"[/\\]", word)[-1] not in ("orch", "orch.cli"):
             continue
-        rest = [w for w in words[k + 1:] if not w.startswith("-")]
-        if rest and rest[0] in _HUMAN_VERBS:
-            return True
-        if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
-            return True
-        if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
-            return True
-        if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
-            return True
-        if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
-            return True
-        if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
-            return True
-        if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
-            return True
+        before = words[:k]
+        if not all(w in _ORCH_LEADERS or w.startswith("-") or re.fullmatch(r"python[0-9.]*", w)
+                   or re.fullmatch(r"[A-Za-z_]\w*=.*", w)
+                   for w in before):
+            continue
+        for rest in _orch_subcommand_starts(words[k + 1:]):
+            if rest and re.search(r"[$`*?\[]", rest[0]):
+                return True
     return False
+
+
+_DEFINES_ORCH = re.compile(r"(?:^|[\s;&|(){}])(?:function\s+)?(?:orch|" + "|".join(re.escape(v) for v in _HUMAN_VERBS)
+                           + r")\s*(?:\(\s*\)|\{)|(?:^|[\s;&|(){}])(?:function|alias)\s+(?:--\s+)?(?:orch|"
+                           + "|".join(re.escape(v) for v in _HUMAN_VERBS) + r")\b")
+_DEFINES_ANY = re.compile(r"\w\s*\(\)|(?<![\w-])(?:function|alias)\s")
+
+
+def _defines_orch(cmd: str) -> bool:
+    """A shell function or alias named orch or after a human verb: it could turn `orch show` into anything."""
+    return bool(_DEFINES_ORCH.search(cmd.replace("'", "").replace('"', "").replace("\\", "")))
+
+
+def _human_only_tokens(seg: str) -> bool:
+    """The simple command, split as the shell would (quotes and escapes resolved), runs an orch program (`orch`,
+    `…/bin/orch`, `-m orch.cli`) with a human-only subcommand. Catches spellings such as `o''rch approve`. An option
+    word may swallow the next word as its value, so every word that could be the subcommand is judged."""
+    return any(_human_rest(rest) for after in _orch_programs(seg) for rest in _orch_subcommand_starts(after))
+
+
+_ADMIN_WORDS = ("install", "update", "trust", "enable", "disable", "remove", "rollback", "setup")
+
+
+def _orch_serve_or_admin_tokens(seg: str) -> str:
+    """`serve` or `addon <admin verb>` as the subcommand of an orch program, behind options with values."""
+    for after in _orch_programs(seg):
+        for rest in _orch_subcommand_starts(after):
+            if rest[:1] == ["serve"]:
+                return "serve"
+            if rest[:1] == ["addon"] and any(w in _ADMIN_WORDS or w == "ticket-option" for w in rest[1:3]):
+                return "addon"
+    return ""
 
 
 # Interpreters whose code can run orch (for _drives_orch_as_human).
 _HUMAN_INTERP = re.compile(r"\b(?:python[0-9.]*|perl|ruby|node|deno|bun|php|lua)\b|<<")
 # `orch $X …`, `orch "$(…)"`: a subcommand the guard cannot read. Agents name their orch subcommands.
-_ORCH_DYNAMIC = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*['\"]?(?:\$|`)")
+_ORCH_DYNAMIC = re.compile(r"\borch(?:\.cli)?\s+(?:(?:-C\s+\S+|(?!-C\b)-\S+)\s+)*['\"]?(?:\$|`)")
 # `xargs orch` / `xargs -I{} orch …`: orch as the command of xargs; denied unless a literal subcommand that is not
 # human-only follows (`xargs -n1 orch show`).
 _XARGS_ORCH = re.compile(r"\bxargs(?:\s+(?:-\S+|\{\}|\d+))*\s+(?:\S*/)?orch(?:\.cli)?(?![\w.-])((?:\s+-\S+)*)\s*(\S*)")
@@ -612,8 +756,69 @@ _ENV_UNEXPORT = re.compile(r"\bexport\s+(?:-\w*\s+)*-\w*n\w*\s+(?:\S+\s+)*?" + _
                            r"|(?<![\w-])exec\s+(?:-\w*\s+)*-\w*c\w*(?=\s|$)")
 
 
-def _runs_human_only(seg: str, plain: str) -> bool:
-    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(seg) or _human_only_tokens(seg)
+_GIT_SHELL_ALIAS = re.compile(r"(?<![\w.-])alias\.[\w-]+\s*[=\s]\s*!")
+
+
+_FEEDS = re.compile(r"(?:ba|da|k|z|fi|a)?sh|python[0-9.]*|node|deno|bun|perl|ruby|php|lua|osascript|busybox|xargs|source|\.|eval|exec|env"
+                    r"|sudo|doas|nohup|command|builtin|time|nice|timeout|stdbuf|setsid|script|unbuffer|expect|socat|watch|ssh|parallel")
+
+
+def _message_exempt(cmd: str) -> bool:
+    """Quoted message text may be treated as text only when the message command is the whole command line: one simple
+    command, no `;`, `|`, `&&`, `||`, `&` or newline, no `$(` or backtick anywhere, no redirect to a file, no here-string
+    or process substitution, and no heredoc that is not plain data. Anything else on the line could run, store or
+    forward the text, so the quoted words stay in view."""
+    if "<<<" in cmd or "<(" in cmd or ">(" in cmd or "$(" in cmd or "`" in cmd or "${" in cmd:
+        return False
+    main, docs = _split_heredocs(cmd)
+    if any(not _is_data_heredoc(main, d) for d in docs):
+        return False
+    if len(_segment_spans(main)) != 1 or len(_command_segments(cmd)) != 1:
+        return False
+    plain = _unquoted(main)
+    if re.search(r"(?<![&>])&(?![&>])", plain) or _ANY_REDIRECT.search(plain.replace("2>&1", "")):
+        return False
+    return True
+
+
+def _prose_view(seg: str, sole: bool = False, msg: bool = True) -> str:
+    """`seg` with the quoted text that is only a message blanked: the message argument of a known command (git commit
+    -m, gh --body/--title, orch log -m, ...), and, when `seg` is the whole command, the arguments of a plain echo or
+    printf (which prints and runs nothing). A quoted `orch approve` handed to anything else (script -c, ssh, bash -c,
+    watch, expect) stays visible."""
+    if not msg:
+        return seg
+    out = _without_message_text(seg)
+    if sole:
+        words, _ = _command(out)
+        if words and words[0] in ("echo", "printf") and not re.search(r"[$`]", _unquoted(out)):
+            out = _unquoted(out)
+    return out
+
+
+_HELP_PATHS = frozenset(
+    [*_HUMAN_VERBS, "move", "serve", "checks sign", "epic pause", "quick reopen", "quick drop"]
+    + [f"permit {v}" for v in ("grant", "deny", "revoke")] + [f"schedule {v}" for v in _HUMAN_SCHEDULE])
+
+
+def _help_only(seg: str) -> bool:
+    """The simple command is exactly `orch <verb path> --help`: no option or argument before or after, no quote,
+    expansion, redirect or glob. Typer prints the help and runs nothing, so a human verb or `serve` in it is fine.
+    `orch approve L-1 --help` and `orch approve L-1 --note --help` are not this: they carry another word."""
+    import shlex
+    if re.search(r"""[$`'"\\<>(){}*?~!&|;]""", seg):
+        return False
+    try:
+        words = shlex.split(seg, comments=False, posix=True)
+    except ValueError:
+        return False
+    if len(words) < 3 or words[0] != "orch" or words[-1] != "--help":
+        return False
+    return " ".join(words[1:-1]) in _HELP_PATHS
+
+
+def _runs_human_only(seg: str, plain: str, sole: bool = False, msg: bool = True) -> bool:
+    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole, msg)) or _human_only_tokens(seg) or _orch_dynamic_tokens(seg)
                 or _ORCH_DYNAMIC.search(seg))
 
 
@@ -664,7 +869,8 @@ _BRIDGE_CMD_DENIED = ("the relay tool's bridge-key and bridge-host commands hand
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
-                         r"|\b(?:rg|ag|ack|tar|zip|7z|rsync|scp|find|xargs|ditto|pax)\b"
+                         r"|\b(?:rg|ag|ack|tar|bsdtar|gtar|zip|unzip|zipinfo|7z|7za|7zr|rsync|rclone|scp|find|xargs|ditto|pax|cpio)\b"
+                         r"|\bdiff\b[^;&|\n]*\s-\w*r|\bdiff\b[^;&|\n]*\s--recursive\b"
                          r"|\bcp\s+(?:-\w+\s+)*-\w*[rRa]|\bcp\b[^;&|\n]*\s--(?:recursive|archive)\b")
 _GLOB = re.compile(r"[*?\[]")
 _REVIEW = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b")
@@ -684,7 +890,8 @@ _OTHER_WRITE = re.compile(
 # Any real output redirect (not to /dev/null, not a bare fd dup like 2>&1 or >&2). Checked against
 # the command with quoted substrings blanked out, so a literal ">" inside quotes (e.g. `grep ">"
 # file`) is not mistaken for a shell redirect.
-_OUTPUT_REDIRECT = re.compile(r"(?<![0-9&])>{1,2}(?!\s*(?:/dev/null\b|&))")
+# `>f`, `>>f`, `>|f`, `N>f` (any descriptor, `{var}>f` too), `&>f`, `>&f` and `<>f`; not `2>&1`, `>&2`, `>(cmd)` or /dev/null.
+_OUTPUT_REDIRECT = re.compile(r"(?:&>>?|(?<![>&<])(?:>>|>(?!>))\|?|<>)(?!\s*(?:/dev/null\b|&[0-9-]|\())")
 _QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 _INTERP_WRITE = re.compile(r"\b(?:python3?|perl|ruby|node)\s+-[ce]\b")
 # `sh -c "..."`, `bash -lc '...'`, `eval "..."`: the quoted payload is itself a command line.
@@ -1310,7 +1517,8 @@ def _path_hits(path: str, targets: set[str]) -> bool:
 
 
 _REL_GLOB_SPLIT = re.compile(r"[\s;&|()<>]+")
-_READER_PROGS = frozenset({"rg", "ag", "ack", "tar", "zip", "7z", "rsync", "scp", "find", "xargs", "ditto", "pax"})
+_READER_PROGS = frozenset({"rg", "ag", "ack", "tar", "bsdtar", "gtar", "zip", "unzip", "zipinfo", "7z", "7za", "7zr", "rsync",
+                           "rclone", "scp", "find", "xargs", "ditto", "pax", "cpio"})
 _READER_WRAPPERS = frozenset({"sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "nice", "ionice",
                               "timeout", "stdbuf", "setsid", "sh", "bash", "zsh", "dash", "ksh"})
 
@@ -1379,9 +1587,20 @@ def _runs_dir_reader(rest: str) -> bool:
         if not words:
             continue
         if os.path.basename(words[0]) in _READER_PROGS or (
-                os.path.basename(words[0]) in ("grep", "egrep", "fgrep", "cp") and _DIR_READER.search(_unquoted(seg))):
+                os.path.basename(words[0]) in ("grep", "egrep", "fgrep", "cp", "diff") and _DIR_READER.search(_unquoted(seg))):
             return True
     return False
+
+
+_INDIRECT_RAW = re.compile(r"\$\(|`|[<>]\(")
+_INDIRECT_READ = re.compile(r"(?<![\w-])(?:for|while|until|xargs)(?![\w-])"
+                            r"|(?<![\w-])git\b[^;&|\n]*\s(?:add|diff|stash|commit|apply|bundle|status|log|show)\b")
+
+
+def _indirect_in_config(raw: str) -> bool:
+    """Run from inside the config dir itself: a substitution, process substitution, backtick, loop, xargs or a git
+    command that reads the working tree builds a listing of it, so none of them is allowed."""
+    return bool(_INDIRECT_RAW.search(raw) or _INDIRECT_READ.search(_unquoted(raw)))
 
 
 def _reads_dir_wholesale(rest: str, plain: str | None, raw_rest: str = "") -> bool:
@@ -1402,6 +1621,12 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
     import os
 
     dirs, ancestors = _config_paths()
+    if cwd:
+        try:
+            if os.path.realpath(str(cwd)) in dirs and _indirect_in_config(cmd):
+                return True  # the working directory is the config dir itself
+        except (OSError, ValueError):
+            return True
     reader = bool(_reads_a_dir(cmd) or _SYMLINK.search(cmd))
     for n, m in enumerate(_PATH_TOKEN.finditer(cmd)):
         if n > 200:
@@ -1420,6 +1645,8 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
             rest = _unquoted(cmd[m.end():])
             if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
                 return True
+            if _path_hits(path, dirs) and _indirect_in_config(cmd[m.end():]):
+                return True
     return False
 
 
@@ -1430,13 +1657,14 @@ def _reaches_pairing_keys_1(cmd: str, plain: str | None = None) -> bool:
         return True
     glob_in_dir, dir_itself = _config_dir_res(cmd)
     if glob_in_dir.search(cmd) or (dir_itself.search(cmd) and (
-            _reads_a_dir(cmd) or _SYMLINK.search(cmd))):
+            _reads_a_dir(cmd) or _SYMLINK.search(cmd)
+            or re.search(r"(?<![\w-])git\b[^;&|\n]*\s(?:add|diff|stash|commit|apply|bundle)\b", cmd))):
         return True
     for m in _CD.finditer(cmd):  # `cd ~/.config/orch && cat *` or `... && grep -r key .`
         target = next(g for g in m.groups() if g is not None)
         if dir_itself.search(target + " "):
             rest = _unquoted(cmd[m.end():])
-            if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
+            if _reads_dir_wholesale(rest, plain, cmd[m.end():]) or _indirect_in_config(cmd[m.end():]):
                 return True
     return False
 
@@ -1472,6 +1700,9 @@ _GIT_MESSAGE_CMD = re.compile(r"git(?:\s+-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+))*\s+
 _GIT_MESSAGE_ARG = re.compile(r"""((?:^|\s)(?:-[A-Za-z]*m|--message)(?:=|\s*))('[^']*'|"[^"$`\\]*")""")
 _GH_TEXT_CMD = re.compile(r"gh\s+(?:pr|issue|release)\s+(?:create|edit|comment)\b")
 _GH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-t|--title|-b|--body)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
+# `orch log|section|task|new|ask … -m TEXT` (and --message/--title/--body/--description): text someone will read.
+_ORCH_TEXT_CMD = re.compile(r"(?:uv\s+run\s+)?orch(?:\.cli)?\s+(?:-\S+\s+)*(?:log|section|task|new|ask)\b")
+_ORCH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-m|-t|--message|--title|--body|--description)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
 
 
 def _without_data_text(cmd: str, heredocs: bool = True) -> str:
@@ -1487,6 +1718,8 @@ def _without_data_text(cmd: str, heredocs: bool = True) -> str:
             seg = _GIT_MESSAGE_ARG.sub(r"\1''", seg)
         elif _GH_TEXT_CMD.match(head):
             seg = _GH_TEXT_ARG.sub(r"\1''", seg)
+        elif _ORCH_TEXT_CMD.match(head):
+            seg = _ORCH_TEXT_ARG.sub(r"\1''", seg)
         out += [code[last:a], seg]
         last = b
     return "".join(out) + code[last:]
@@ -1858,7 +2091,50 @@ _SCRATCH_NOTE = re.compile(r"(?:[\w.+@~-]+/)*orchestrator/(?:temporary|artifacts
 _PATH_SPECIAL = re.compile(r"[*?\[{$`'\"\\]")
 
 
-def _names_ticket_file(ws, cmd: str) -> bool:
+_SCRATCH_LINE_OK: "contextvars.ContextVar[bool]" = contextvars.ContextVar("scratch_line_ok", default=False)
+
+
+def _scratch_line_safe(cmd: str, cwd) -> bool:
+    """Nothing else on the line can change what a scratch folder is before a note is written to it: every command is
+    one of _STATE_SAFE_WORDS run plainly (see _state_words_safe), or a `cd` to the working directory itself. No
+    interpreter, ln, mv, tar, unzip, git or rsync, no prefix assignment."""
+    try:
+        here = os.path.realpath(str(cwd)) if cwd else os.path.realpath(os.getcwd())
+        for seg in _command_segments(cmd):
+            words, assigns = _command(seg)
+            if words and words[0] == "cd":
+                target = [w for w in words[1:] if not w.startswith("-")]
+                if assigns or not target or (len(target) == 1 and os.path.realpath(os.path.expanduser(target[0])) != here):
+                    return False
+                continue  # (`cd a b` fails in bash and changes nothing)
+            if assigns or not _seg_state_safe(seg):  # no assignment (FOO=1, PATH=…, PYTHONPATH=…), no interpreter, not even a one-liner
+                return False
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _scratch_is_real(ws, word: str, cwd) -> bool:
+    """The note's folder, resolved through every symlink against the working directory, is outside the ticket and state
+    folders, the line has nothing else that could relink it, and an existing note is no link or hard link. A folder
+    that cannot be resolved gives no exemption."""
+    if not _SCRATCH_LINE_OK.get():
+        return False
+    try:
+        base = Path(str(cwd)) if cwd else Path(ws.root)
+        base = base if base.is_absolute() else Path(ws.root) / base
+        w = Path(os.path.expanduser(word))
+        w = w if w.is_absolute() else base / w
+        parent = Path(os.path.realpath(w.parent))
+        full = parent / w.name
+        if full.is_symlink() or (full.is_file() and full.stat().st_nlink > 1):
+            return False
+        return not (_under(parent, ws.tickets_dir.resolve()) or _under(parent, ws.state_dir.resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _names_ticket_file(ws, cmd: str, cwd=None) -> bool:
     """`cmd` names a file called like a ticket (`L-0004-x.md`), except one spelled out in full under
     orchestrator/temporary or orchestrator/artifacts. When such a note is named, any other path word of the line
     with a wildcard, brace, variable or quote could still lead into the ticket folder: that counts as a hit."""
@@ -1869,7 +2145,7 @@ def _names_ticket_file(ws, cmd: str) -> bool:
         word = _PREFIX_ASSIGN.sub("", cmd[a:b])
         if len(word) > 2 and word[0] == word[-1] and word[0] in "'\"" and not _PATH_SPECIAL.search(word[1:-1]):
             word = word[1:-1]
-        if _SCRATCH_NOTE.fullmatch(word) and ".." not in word.split("/"):
+        if _SCRATCH_NOTE.fullmatch(word) and ".." not in word.split("/") and _scratch_is_real(ws, word, cwd):
             notes.add((a, b))
             continue
         return True
@@ -1919,21 +2195,24 @@ def _state_words_safe(cmd: str) -> bool:
     """Every simple command in `cmd` is one of _STATE_SAFE_WORDS, run plainly: no prefix assignment, no assignment
     to a variable that changes how commands or paths resolve, no process substitution, no `cp` option that copies
     links or recursively, no `printf -v`."""
-    for seg in _command_segments(cmd):
-        if re.search(r"[<>]\(", seg):
-            return False
-        words, assigns = _command(seg)
-        if any(_STATE_UNSAFE_VARS.fullmatch(k) for k in assigns) or (words and assigns):
-            return False
-        if not words:
-            continue
-        if words[0] not in _STATE_SAFE_WORDS:
-            return False
-        if words[0] == "cp" and any(w.startswith("-") and w != "--" and not re.fullmatch(r"-[pvinf]+", w)
-                                    for w in words[1:]):
-            return False
-        if words[0] == "printf" and "-v" in words:
-            return False
+    return all(_seg_state_safe(seg) for seg in _command_segments(cmd))
+
+
+def _seg_state_safe(seg: str) -> bool:
+    if re.search(r"[<>]\(", seg):
+        return False
+    words, assigns = _command(seg)
+    if any(_STATE_UNSAFE_VARS.fullmatch(k) for k in assigns) or (words and assigns):
+        return False
+    if not words:
+        return True
+    if words[0] not in _STATE_SAFE_WORDS:
+        return False
+    if words[0] == "cp" and any(w.startswith("-") and w != "--" and not re.fullmatch(r"-[pvinf]+", w)
+                                for w in words[1:]):
+        return False
+    if words[0] == "printf" and "-v" in words:
+        return False
     return True
 
 
@@ -1996,12 +2275,53 @@ def _names_state_path(ws, cmd: str, cwd) -> bool:
     return False
 
 
+_PATH_NOISE = re.compile(r"/(?:\.?/)+")
+_LINK_PROGS = frozenset({"ln", "mv", "cp", "install", "rsync", "ditto"})
+
+
+def _links_scratch(ws, cmd: str, cwd) -> bool:
+    """A link, move or recursive copy with an operand that resolves to the workspace's orchestrator/temporary or
+    orchestrator/artifacts folder (or, unreadable, names them): the folder may become a link into the tickets, so notes
+    written through it later are not notes. A bare `artifacts` or `temporary` elsewhere is just a folder."""
+    try:
+        return _links_scratch_1(ws, cmd, cwd)
+    except (OSError, ValueError, RuntimeError):
+        return True  # a path that cannot be resolved (a NUL byte, a loop) is not shown to be elsewhere
+
+
+def _links_scratch_1(ws, cmd: str, cwd) -> bool:
+    scratch = {os.path.realpath(str(d)) for d in (ws.temporary_dir, ws.artifacts_dir)}
+    scratch |= {str(Path(ws.root) / "orchestrator" / n) for n in ("temporary", "artifacts")}
+    base = os.path.realpath(str(cwd)) if cwd else os.path.realpath(str(ws.root))
+    for seg in _command_segments(cmd):
+        words, _ = _command(seg)
+        if not words or os.path.basename(words[0]) not in _LINK_PROGS:
+            continue
+        prog = os.path.basename(words[0])
+        if prog in ("cp", "install") and not any(w.startswith("-") and re.fullmatch(r"-\w*[rRa]\w*|--recursive|--archive", w)
+                                                  for w in words[1:]):
+            continue
+        for w in words[1:]:
+            if w.startswith("-"):
+                continue
+            if re.search(r"[$`*?\[{~]", w):
+                if re.search(r"(?<![\w.-])(?:temporary|artifacts)(?![\w-])", w):
+                    return True
+                continue
+            path = os.path.realpath(w if os.path.isabs(w) else os.path.join(base, w))
+            if any(path == d or path.startswith(d + os.sep) for d in scratch):
+                return True
+    return False
+
+
 def _touches_state(ws, cmd: str, cwd) -> bool:
+    cmd = _PATH_NOISE.sub("/", cmd)  # `tickets/./open` and `tickets//open` are `tickets/open`
     return bool(
         _names_state_path(ws, cmd, cwd)
         or _cwd_in_state(ws, cwd)
         or _cd_targets_state(cmd)
-        or _names_ticket_file(ws, cmd)
+        or _names_ticket_file(ws, cmd, cwd)
+        or _links_scratch(ws, cmd, cwd)
     )
 
 
@@ -2046,12 +2366,375 @@ def _is_user_addon_file(path: Path) -> bool:
                for base in _user_config_dirs())
 
 
+_SED_CMD_W = re.compile(r"(?:^|[;{}\n]|\d|\$|,|/|!)\s*[wWe](?:\s|$)")
+_SED_FLAG_W = re.compile(r"(?:^|[;{}\n\s])[0-9,$/!]*s(.).*?\1.*?\1[a-zA-Z0-9]*[we]")
+
+
+def _tool_writes(cmd: str) -> bool:
+    """A command whose own options make it write a file or run a program, though it is no redirect: `sed -n 'w f'`,
+    `sed 's/a/b/w f'`, `sed e`, `sort -o f`, `uniq IN OUT`, `xxd IN OUT`, `rg --pre`, awk's print > f or system()."""
+    for seg in _command_segments(cmd):
+        words, _ = _command(seg)
+        if not words:
+            continue
+        prog = os.path.basename(words[0])
+        args = words[1:]
+        plain = [a for a in args if not a.startswith("-")]
+        if prog == "sed":
+            if any(_SED_CMD_W.search(a) or _SED_FLAG_W.search(a) for a in args):
+                return True
+        elif prog in ("awk", "gawk", "mawk", "nawk"):
+            if any(re.search(r"[>|]|system\s*\(|getline", a) for a in plain):
+                return True
+        elif prog == "sort":
+            if any(a == "-o" or a.startswith("--output") or re.fullmatch(r"-[A-Za-z]*o\S*", a) for a in args):
+                return True
+        elif prog in ("uniq", "xxd"):
+            if len(plain) >= 2:
+                return True
+        elif prog in ("less", "more"):
+            if any(a in ("-o", "-O") or a.startswith(("--log-file", "--LOG-FILE")) for a in args):
+                return True
+        elif prog == "file":
+            if any(a in ("-C", "--compile") for a in args):
+                return True
+        elif prog == "rg":
+            if any(a == "--pre" or a.startswith("--pre=") or a.startswith("--hostname-bin") for a in args):
+                return True
+    return False
+
+
 def _is_write(cmd: str) -> bool:
-    return bool(_WRITE_TOOL.search(cmd) or _OTHER_WRITE.search(cmd)
+    return bool(_WRITE_TOOL.search(cmd) or _OTHER_WRITE.search(cmd) or _tool_writes(cmd)
                 or _OUTPUT_REDIRECT.search(_unquoted(cmd)) or _INTERP_WRITE.search(cmd))
 
 
-def _bash(ws, cmd: str, cwd=None) -> Decision:
+# Commands that only print what they read. A segment of one of these that names the state folder, with no output
+# redirect to a path that may be in it, does not write there.
+# sort -o, uniq IN OUT, xxd -r IN OUT, rg --pre, file, less and more can write or run a program: not readers.
+_STATE_READERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "jq", "wc", "ls", "stat", "diff", "cmp", "cut",
+                            "nl", "od", "md5sum", "shasum", "sha256sum", "cksum", "test", "[", "echo", "printf", "true", ":"})
+_JQ_FILTER = re.compile(r"""^(\s*(?:\S*/)?jq\s+(?:-[A-Za-z]+\s+|--(?:arg|argjson|slurpfile|rawfile)\s+\S+\s+\S+\s+|--(?:indent)\s+\d+\s+|--[a-z-]+\s+)*)"""
+                         r"""('[^']*'|"[^"$`\\]*"|[^\s'"$`\\-]\S*)""")
+_STATE_INDIRECT = re.compile(r"(?<![\w-])(?:xargs|while|for|read|eval|source|exec)(?![\w-])|^\s*\.\s|[;&|]\s*\.\s")
+
+
+def _jq_filter_blanked(seg: str) -> str:
+    """`jq '.state' f`: the filter is jq's program, not a path (unless it comes from -f, where it is a file name)."""
+    if re.search(r"\s(?:-[A-Za-z]*f|--from-file)(?:\s|$)", seg):
+        return seg
+    return _JQ_FILTER.sub(r"\1''", seg, count=1)
+
+
+def _redirect_targets(seg: str) -> list[str]:
+    """The target word of every output redirect in `seg`, quotes and escapes resolved (`> 'a/b'` is `a/b`). An
+    operator with no readable target gives "" (callers treat that as touching anything). /dev/null and descriptor
+    copies (`>&2`, `2>&1`) are left out."""
+    out: list[str] = []
+    i, n, quote = 0, len(seg), None
+    while i < n:
+        c = seg[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c in "'\"":
+            quote = c
+            i += 1
+            continue
+        if seg.startswith("$(", i):
+            i = _sub_end(seg, i + 2)
+            continue
+        if c == ">" or seg.startswith("<>", i):
+            j = i + (2 if seg.startswith("<>", i) else 1)
+            while j < n and seg[j] in "&>|":
+                j += 1
+            while j < n and seg[j] in " \t":
+                j += 1
+            if j < n and seg[j] == "(":
+                i = j  # `>(cmd)`: a process, judged as its own segment
+                continue
+            k, q = j, None
+            while k < n:
+                d = seg[k]
+                if q:
+                    if d == "\\" and q == '"':
+                        k += 2
+                        continue
+                    if d == q:
+                        q = None
+                elif d == "\\":
+                    k += 2
+                    continue
+                elif d in "'\"":
+                    q = d
+                elif d.isspace() or d in ";&|<>()":
+                    break
+                k += 1
+            word = _strip_quotes_and_escapes(seg[j:k])
+            i = max(k, i + 1)
+            if re.fullmatch(r"[0-9-]", word) and seg[j - 1:j] == "&":
+                continue
+            if word != "/dev/null":
+                out.append(word)
+            continue
+        i += 1
+    return out
+
+
+_LN_CMD = re.compile(r"(?:^|[\s;&|(`])ln\b")  # a link into or out of the state folders is a change to what they are
+
+
+def _state_write(ws, cmd: str, code: str, cwd) -> bool:
+    """The command names the ticket or state files and writes. Judged by command when every command that names them
+    is a plain reader whose own redirects stay outside them; a cd, a working directory, a variable naming them, or
+    anything that feeds a later command (xargs, loops, eval) keeps the whole-line test."""
+    if not _touches_state(ws, code, cwd):
+        return False
+    if not (_is_write(cmd) or _LN_CMD.search(_unquoted(code))):
+        return False
+    if _cwd_in_state(ws, cwd) or _cd_targets_state(code) or _STATE_INDIRECT.search(_unquoted(code)):
+        return True
+    for seg in _command_segments(code):
+        shown = _jq_filter_blanked(seg)
+        words, assigns = _command(seg)
+        if any(_touches_state(ws, v, cwd) for v in assigns.values()):
+            return True  # a variable that holds the path: a later command may write through it
+        if not _touches_state(ws, shown, cwd):
+            # A write tool or redirect in a command that does not name the state may still reach it (a symlink or
+            # variable set earlier in the line): only a bare interpreter call (`python3 -c`) or a redirect to a plain
+            # path outside it is skipped.
+            if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg):
+                return True
+            if any(not t or re.search(r"[$`*?\[~]", t) or _touches_state(ws, t, cwd) for t in _redirect_targets(seg)):
+                return True
+            continue
+        prog = os.path.basename(words[0]) if words else ""
+        if prog not in _STATE_READERS:
+            return True  # not provably a reader: the old whole-line test (already true above)
+        for target in _redirect_targets(seg):
+            if not target or re.search(r"[$`*?\[~]", target) or _touches_state(ws, target, cwd):
+                return True
+        if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg) or _INTERP_WRITE.search(seg):
+            return True
+    return False
+
+
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+                "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def _ansi_c_body(body: str) -> str:
+    """The text of one `$'…'` string as bash reads it: \\xH(H), \\uH..(4), \\UH..(8), octal 1-3 digits, \\cX control
+    characters, \\e, \\E and the usual single-letter escapes; an unknown escape stays as written; the string ends at
+    the first NUL."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        e = body[i + 1]
+        if e in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[e])
+            i += 2
+        elif e in "xuU":
+            width = {"x": 2, "u": 4, "U": 8}[e]
+            m = re.match(r"[0-9A-Fa-f]{1,%d}" % width, body[i + 2:])
+            if m:
+                code = int(m.group(0), 16)
+                out.append(chr(code) if code <= 0x10FFFF else "")
+                i += 2 + len(m.group(0))
+            else:
+                out.append("\\" + e)
+                i += 2
+        elif e in "01234567":
+            m = re.match(r"[0-7]{1,3}", body[i + 1:])
+            out.append(chr(int(m.group(0), 8) & 0xFF))
+            i += 1 + len(m.group(0))
+        elif e == "c" and i + 2 < n:
+            x = body[i + 2]
+            out.append("\x7f" if x == "?" else chr(ord(x) & 0x1F))
+            i += 3
+        else:
+            out.append("\\" + e)
+            i += 2
+        if out and out[-1] == "\x00":
+            return "".join(out[:-1])
+    return "".join(out)
+
+
+def _decode_ansi_c(cmd: str) -> str | None:
+    """Every `$'…'` string of `cmd` (outside single and double quotes, where `$'` is plain text) replaced by its text,
+    as bash reads it. None when one does not close: the guard cannot say what it holds, and the caller denies."""
+    out, i, n, quote = [], 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            out.append(cmd[i:i + 2])
+            i += 2
+        elif quote is None and cmd.startswith("$'", i):
+            j = i + 2
+            while j < n and cmd[j] != "'":
+                j += 2 if cmd[j] == "\\" else 1
+            if j >= n:
+                return None
+            out.append(_ansi_c_body(cmd[i + 2:j]))
+            i = j + 1
+        elif c in "'\"":
+            if quote is None:
+                quote = c
+            elif quote == c:
+                quote = None
+            out.append(c)
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+_CONTINUATION = re.compile(r"'[^']*'|\\\n")
+
+
+def _join_continuations(cmd: str) -> str:
+    """`cmd` with every backslash-newline outside single quotes removed, as the shell does outside a comment. The
+    guard cannot tell a comment from code here, so it judges the raw text and this view, never only this one."""
+    return _CONTINUATION.sub(lambda m: m.group(0) if m.group(0) != "\\\n" else "", cmd)
+
+
+def _human_text(text: str) -> bool:
+    """`text` (a heredoc body, an echo's words) holds a human-only orch invocation, whatever runs it later."""
+    import shlex
+    for line in text.splitlines():
+        for seg in _command_segments(line):
+            try:
+                words = shlex.split(seg, comments=True, posix=True)
+            except ValueError:
+                words = seg.split()
+            while words and (words[0] in _ORCH_LEADERS or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])
+                             or re.fullmatch(r"python[0-9.]*|-m", words[0]) or words[0] == "$"):
+                words = words[1:]
+            # only a line that starts with the orch program is a command; prose that mentions one is not
+            if words and re.split(r"[/\\]", words[0])[-1] in ("orch", "orch.cli") and _runs_human_only(
+                    seg, _unquoted(seg), False, False):
+                return True
+    return False
+
+
+_SCRIPT_WRITERS = frozenset({"cat", "tee", "dd", "cp", "install"})
+
+
+def _writes_human_script(cmd: str) -> bool:
+    """The line writes a file (a redirect or tee) and the text it writes holds a human-only orch invocation: a
+    heredoc body, a here-string, or the words of echo/printf. Whatever the file is called, running it later is the
+    same as running the command, so it is refused now."""
+    segs = _command_segments(cmd)
+    writes_file = False
+    texts: list[str] = []
+    for seg in segs:
+        words, _ = _command(seg)
+        prog = os.path.basename(words[0]) if words else ""
+        if _OUTPUT_REDIRECT.search(_unquoted(seg)) or prog == "tee":
+            writes_file = True
+        if prog in ("echo", "printf"):
+            texts.append(" ".join(words[1:]))
+        for m in _HERE_STRING.finditer(seg):
+            texts.append(next(g for g in m.groups() if g is not None))
+    main, docs = _split_heredocs(cmd)
+    if any(os.path.basename((_command(seg)[0] or [""])[0]) in ("tee",) for seg in _segments(main)):
+        writes_file = True
+    for d in docs:
+        receiver = next((main[a:b] for a, b in _segment_spans(main) if a <= d.pos < b), "")
+        words, _ = _command(receiver)
+        prog = os.path.basename(words[0]) if words else ""
+        if prog in _SCRIPT_WRITERS:  # whether the line writes a file at all is judged by writes_file
+            texts.append(d.body)
+    return writes_file and any(_human_text(t) for t in texts)
+
+
+def _bash_view(cmd: str, join_single: bool = False) -> str:
+    """`cmd` as bash reads its lines: a comment (a `#` that starts a word, outside quotes) runs to the end of its line
+    and a backslash does not continue it; a backslash-newline outside quotes and comments joins the lines."""
+    out, i, n, quote = [], 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "\\" and join_single and cmd.startswith("\n", i + 1):
+                i += 2  # a payload for an inner shell (`bash -c '…'`) reads this continuation
+                continue
+            if c == "'":
+                quote = None
+            out.append(c)
+            i += 1
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                if cmd[i + 1] == "\n":
+                    i += 2
+                    continue
+                out.append(cmd[i:i + 2])
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            if cmd[i + 1] == "\n":
+                i += 2
+            else:
+                out.append(cmd[i:i + 2])
+                i += 2
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+        elif c == "#" and (not out or out[-1] in " \t\n;&|("):
+            j = cmd.find("\n", i)
+            j = n if j == -1 else j
+            out.append(cmd[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False) -> Decision:
+    if not _joined and "\\\n" in cmd:
+        # Three views: the raw text, every continuation joined, and bash's own reading (comments end at the newline,
+        # then the continuations outside them join). A line is allowed only if all of them are.
+        # The fourth joins inside single quotes too: `bash -c 'or\<nl>ch approve'` is read again by the inner shell.
+        for view in (_join_continuations(cmd), _bash_view(cmd), cmd.replace("\\\n", ""),
+                     _bash_view(cmd, True)):
+            if view != cmd:
+                d = _bash(ws, view, cwd, _decoded, _joined=True)
+                if not d.allow:
+                    return d
+    if not _decoded and "$'" in cmd:
+        decoded = _decode_ansi_c(cmd)
+        if decoded is None:
+            return Decision(False, "a $'…' string the guard cannot read to its end could hold a command it would refuse")
+        if decoded != cmd:
+            d = _bash(ws, decoded, cwd, _decoded=True, _joined=_joined)  # judged as the shell would run it, too
+            if not d.allow:
+                return d
+    if "\x00" in cmd:  # a shell word cannot hold a NUL byte; the path checks below cannot resolve one
+        return Decision(False, "a NUL byte in a command is not allowed")
+    _SCRATCH_LINE_OK.set(_scratch_line_safe(cmd, cwd))
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
@@ -2069,16 +2752,28 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _ORCH_TMUX_DENIED if named else _MUX_DENIED)
     may = ws.config["git"]["agent_may"]
     term = ws.config["git"]["review_term"]
-    for seg in _command_segments(cmd):
+    all_segs = _command_segments(cmd)
+    msg_ok = _message_exempt(cmd)
+    for seg in all_segs:
+        if _defines_orch(cmd):
+            return Decision(False, _HUMAN_ONLY_DENIED)
+        if _help_only(seg) and not _DEFINES_ANY.search(cmd) and not re.search(r"(?<!\|)\|(?!\|)", cmd):  # not piped on (`| sh` would run the text)
+            continue
         # git checks look at the command with quoted text blanked out, so a commit message or an
         # echo that mentions `git push` or `-n` is not mistaken for the command itself.
         plain = _unquoted(seg)
-        if _SERVE.search(plain) or _QUOTED_SERVE.search(seg):
+        behind_options = _orch_serve_or_admin_tokens(seg)
+        if behind_options == "addon":
+            return Decision(False, _ADDON_ADMIN_DENIED)
+        if _SERVE.search(plain) or _QUOTED_SERVE.search(seg) or behind_options == "serve":
             return Decision(False, _SERVE_DENIED)
         if _ORCH_TMUX.search(seg.replace("'", "").replace('"', "")):  # quotes removed: -L "orch" is -L orch
             return Decision(False, _ORCH_TMUX_DENIED)
-        if _runs_human_only(seg, plain):
+        if _runs_human_only(seg, plain, len(all_segs) == 1, msg_ok):
             return Decision(False, _HUMAN_ONLY_DENIED)
+        if _GIT_WORD.search(plain) and _GIT_SHELL_ALIAS.search(seg.replace("'", "").replace('"', "")):
+            return Decision(False, "a git alias that starts with ! runs a shell command the guard cannot read: "
+                                   "run the command itself")
         if _strips_harness_env(seg, plain):
             return Decision(False, _ENV_DENIED)
         if _ADDON_ADMIN.search(plain) or _QUOTED_ADDON_ADMIN.search(seg):
@@ -2095,6 +2790,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
             return Decision(False, "agents do not push in this workspace (git.agent_may.push is false)")
         if not may["open_review"] and _REVIEW.search(plain):
             return Decision(False, f"agents do not open {term}s in this workspace (git.agent_may.open_review is false)")
+    if _writes_human_script(cmd):
+        return Decision(False, _HUMAN_ONLY_DENIED)
     if _INTERPRETER.search(cmd) and _ADMIN_PY.search(cmd):
         return Decision(False, _ADDON_ADMIN_DENIED)
     code = _code_text(cmd)  # prose in a data heredoc is not code
@@ -2108,7 +2805,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _DECODED_DENIED)
     if (_user_addon_path(cmd) or _config_dir_indirect(cmd)) and _is_write(cmd):
         return Decision(False, _ADDON_ADMIN_DENIED)
-    if _touches_state(ws, code, cwd) and _is_write(cmd):
+    if _state_write(ws, cmd, code, cwd):
         return Decision(False, _USE_ORCH)
     if _writes_startup_file(cmd, code):
         return Decision(False, _STARTUP_DENIED)

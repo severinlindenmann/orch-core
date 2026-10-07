@@ -220,6 +220,33 @@ def test_shell_tokenization_tricks_stay_denied(ws, cmd):
     _check(ws, cmd, False)
 
 
+MESSAGE_NOT_ALONE = [
+    "gh issue create --body 'orch approve L-1'; gh issue view 1 --json body -q .body | $0",
+    "orch log L-1 -m 'orch approve L-1'; $(orch show L-1)",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | awk '{system($0)}'",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 > x.sh; ./x.sh",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | tclsh",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | ed",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | sed e",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | rbash",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | mksh",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | pypy3",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | csh",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | ${SHELL}",
+    "orch log L-1 -m 'orch approve L-1'; orch show L-1 | $(which sh)",
+    "gh issue view 1 --json body -q .body > x.sh; ./x.sh; gh issue comment 1 --body 'orch approve L-1'",
+    "gh issue comment 1 --body 'orch approve L-1' && ./run.sh",
+    "gh issue comment 1 --body 'orch approve L-1' > out.sh",
+    "gh issue comment 1 --body 'orch approve L-1' &",
+    "gh issue comment 1 --body 'orch approve L-1'\n./run.sh",
+]
+
+
+@pytest.mark.parametrize("cmd", MESSAGE_NOT_ALONE)
+def test_message_text_counts_only_when_the_message_command_is_alone(ws, cmd):
+    _check(ws, cmd, False)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

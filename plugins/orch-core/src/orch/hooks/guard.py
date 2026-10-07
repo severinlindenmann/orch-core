@@ -694,17 +694,20 @@ _FEEDS = re.compile(r"(?:ba|da|k|z|fi|a)?sh|python[0-9.]*|node|deno|bun|perl|rub
 
 
 def _message_exempt(cmd: str) -> bool:
-    """Quoted message text may be treated as text only when nothing on the line can run it: no command word is a shell,
-    an interpreter, xargs, source/eval/exec or a wrapper (so no pipe, here-string or written script feeds one), and
-    no `<<<` here-string or process substitution reads it."""
-    if "<<<" in cmd or "<(" in cmd:
+    """Quoted message text may be treated as text only when the message command is the whole command line: one simple
+    command, no `;`, `|`, `&&`, `||`, `&` or newline, no `$(` or backtick anywhere, no redirect to a file, no here-string
+    or process substitution, and no heredoc that is not plain data. Anything else on the line could run, store or
+    forward the text, so the quoted words stay in view."""
+    if "<<<" in cmd or "<(" in cmd or ">(" in cmd or "$(" in cmd or "`" in cmd or "${" in cmd:
         return False
-    for seg in _command_segments(cmd):
-        words, _ = _command(seg)
-        if words and _FEEDS.fullmatch(os.path.basename(words[0])):
-            return False
-        if any(_FEEDS.fullmatch(os.path.basename(w)) for w in words[1:2]) and words[0] in _WRAPPERS:
-            return False
+    main, docs = _split_heredocs(cmd)
+    if any(not _is_data_heredoc(main, d) for d in docs):
+        return False
+    if len(_segment_spans(main)) != 1 or len(_command_segments(cmd)) != 1:
+        return False
+    plain = _unquoted(main)
+    if re.search(r"(?<![&>])&(?![&>])", plain) or _ANY_REDIRECT.search(plain.replace("2>&1", "")):
+        return False
     return True
 
 

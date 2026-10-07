@@ -376,6 +376,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],
+            "checked": span(min(c.get("age", 0.0) for c in checks)) if checks else None,
             "cap": factory_runner.concurrency(ws),
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
 

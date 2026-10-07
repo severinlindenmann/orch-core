@@ -578,10 +578,26 @@ def readiness_blocker(ws, settings) -> str | None:
 
 
 def readiness_report(ws) -> list[dict] | None:
-    """The failing checks of the last readiness run (blocking and warnings), without running anything; None when none
-    ran yet in this process."""
-    checks = _READY.get(str(Path(ws.root).resolve()), (0.0, None, None))[1]
-    return None if checks is None else [c for c in checks if not c["ok"]]
+    """The failing checks of the last readiness run (blocking and warnings), each with its `age` (seconds since the
+    run), without running anything; None when none ran yet in this process, or the run is older than READY_TTL (the
+    runner runs them again before anything starts: a view never shows an old result as the current one)."""
+    import time
+    at, checks, _ = _READY.get(str(Path(ws.root).resolve()), (0.0, None, None))
+    age = time.monotonic() - at
+    if checks is None or age > READY_TTL:
+        return None
+    return [{**c, "age": age} for c in checks if not c["ok"]]
+
+
+def readiness_current(ws, settings) -> bool:
+    """Whether the kept readiness result is still the one a launch may rely on: run within READY_TTL seconds, for the
+    programs and hook commands the runner would use now (_fingerprint, read again; nothing is run)."""
+    import time
+    at, checks, seen = _READY.get(str(Path(ws.root).resolve()), (0.0, None, None))
+    try:
+        return checks is not None and time.monotonic() - at <= READY_TTL and seen == _fingerprint(ws, settings)
+    except Exception:
+        return False
 
 
 def _orch_words(cmd) -> list[str]:
@@ -1082,6 +1098,10 @@ def _start(ws, actor, launcher, settings, epic, d, t, token, lines, ready: tuple
     to a trusted absolute path, under `env -i` with a fixed PATH and the allowlisted variables."""
     prompt, cwd, claude, env_bin, bins = ready
     if not _gate(ws, epic.id, d["id"]):  # once more, right before the start
+        return None
+    if not readiness_current(ws, settings):  # the programs or hooks changed since the checks ran: never unchecked
+        lines.append(f"{t.id} not started: the programs or hook commands changed since the readiness checks ran (or "
+                     "the result is too old); they run again in the next round")
         return None
     command = settings["factory_command"]
     if t.id == epic.id:  # the planner: the human's planner_model, when factory-command.json names one

@@ -450,7 +450,8 @@ these checks under the sessions' exact environment (`env -i`, the session PATH, 
 the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
 fails it starts nothing. A result is kept for at most 60 seconds, and only while the programs it probed and the hook
 commands it ran are still the ones the runner would use (checked again, without running anything, right before a
-launch); all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
+launch: a change since then starts nothing until the next round's checks); the run view says when the checks ran
+("checked ... ago") and shows no result older than 60 seconds as the current one; all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
 as failed), and at most 64 KB of each one's output is kept. An error inside the checks is a blocking failure with its
 reason, never a silent pass. The hook programs run with the words Claude Code would run them with, but never through a
 shell, in an empty folder of the runner's own, and a plugin's hook with `CLAUDE_PLUGIN_DATA` pointing at the runner's

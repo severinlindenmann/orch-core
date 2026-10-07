@@ -10,6 +10,7 @@ from orch.core.artifacts import doc_items
 from orch.dashboard.markdown import render_markdown
 from orch.errors import UsageError
 from orch.hooks.guard import evaluate
+from conftest import init_repo
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ def test_a_receipt_names_the_checkout_it_ran_in(tmp_path):
     from orch.core.receipts import run_steps
     repo = tmp_path / "my-app"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    init_repo(repo)
     assert run_steps([{"name": "v", "run": "true"}], repo, timeout=30, max_bytes=1000).record()["repo"] == "my-app"
     outside = tmp_path / "nowhere"
     outside.mkdir()

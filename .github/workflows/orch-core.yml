@@ -6,19 +6,37 @@ on:
     branches: [main]
 permissions:
   contents: read
+concurrency:  # a newer push to the same PR cancels the run still going
+  group: orch-core-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    working-directory: plugins/orch-core
 jobs:
-  orch-core:
+  tests:
+    name: core tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: plugins/orch-core
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: plugins/orch-core/uv.lock
       - run: uv sync --locked --extra dev --extra dashboard
-      - run: uv run pytest -q
+      - run: uv run pytest -q -n auto --dist loadfile
+
+  addons:
+    name: addons
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: plugins/orch-core/uv.lock
+      - run: uv sync --locked --extra dev --extra dashboard
       - name: Addon template passes orch addon check --strict and its own tests
         run: |
           uv run orch addon check addon-template --strict
@@ -35,3 +53,14 @@ jobs:
             if [ -d "$dir/tests" ]; then uv run pytest -q "$dir/tests"; fi
           done
           echo "checked $n default addon(s)"
+
+  # The check name branch protection uses (`orch-core`, as before the split): green only when every job above is.
+  orch-core:
+    if: always()
+    needs: [tests, addons]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All orch-core jobs passed
+        working-directory: .
+        run: |
+          [ "${{ needs.tests.result }}" = success ] && [ "${{ needs.addons.result }}" = success ]

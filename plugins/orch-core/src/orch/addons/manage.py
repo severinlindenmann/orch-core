@@ -356,9 +356,12 @@ def run_contract(folder: Path) -> list[str]:
     """`orch addon check --json` in a child process: the contract imports the addon and patches subprocess/socket
     globally while it runs, and none of that may happen inside a running `orch serve`."""
     import json
+    import os
     import sys
+    # The contract builds a throwaway workspace; an inherited ORCH_HOME must not point it at the real one.
+    env = {k: v for k, v in os.environ.items() if k != "ORCH_HOME"}
     try:
-        r = subprocess.run([sys.executable, "-c", _CHECK, "addon", "check", "--json", str(folder)], capture_output=True,
+        r = subprocess.run([sys.executable, "-c", _CHECK, "addon", "check", "--json", str(folder)], capture_output=True, env=env,
                            text=True, encoding="utf-8", timeout=300, stdin=subprocess.DEVNULL, check=False)
     except (OSError, subprocess.TimeoutExpired) as e:
         return [f"the contract run failed ({e})"]

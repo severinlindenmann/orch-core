@@ -110,12 +110,12 @@ def test_a_request_runs_once_and_its_replay_is_the_stored_outcome(host, clock):
     assert again.result == "replay" and again.outcome["status"] == 200 and again.body == b'{"moved":true}'
 
 
-def test_a_body_over_64_kib_is_not_stored_and_the_record_keeps_no_outcome(host):
+def test_a_body_over_64_kib_keeps_only_its_head_and_a_replay_is_already_done_with_the_status(host):
     e = env(KEY_A, http("/"), seq=1)
     run = host.authorize(send(host, e))
-    with pytest.raises(ValueError):
-        host.finish(run.answer_rids, {"status": 200}, bytes(64 * 1024 + 1))
-    assert send(host, e).code == "already_done"
+    assert host.finish(run.answer_rids, {"status": 201}, bytes(64 * 1024 + 1)) is True
+    again = send(host, e)
+    assert (again.result, again.code, again.fields) == ("refuse", "already_done", {"status": 201})
 
 
 def test_route_scope_is_checked_and_the_refusal_replaces_the_record(host, clock):
@@ -401,7 +401,7 @@ def test_pairing_registration_and_approval(host, clock):
     assert dev.scope == "look" and dev.credential.pub == pub(AUTH) and dev.credential.sign_count == 0
     assert host.registry.get(did(NEW)).label == "My phone"
     v = host.authorize(send(host, env(NEW, {"op": "pair_status"}, seq=1)))
-    assert v.result == "pair_status" and v.fields == {"state": "approved"}
+    assert v.result == "pair_status" and v.fields == {"state": "approved", "scope": "look"}
 
 
 @pytest.mark.parametrize("bad", ["no_uv", "no_at", "other_alg", "other_cid", "get_type", "other_origin", "replayed"])
@@ -684,9 +684,8 @@ def test_a_device_over_its_quota_is_refused_busy_and_another_device_is_not(tmp_p
     assert got["refusal"] and got["meta"] == {"refusal": "busy"}
 
 
-def test_past_the_busy_allowance_a_device_is_dropped_and_others_still_run(tmp_path, clock, monkeypatch):
-    monkeypatch.setattr(RS, "BUSY_ALLOWANCE", 2)
-    host = make_host(tmp_path, clock, per_device=2)
+def test_past_the_busy_allowance_a_device_is_dropped_and_others_still_run(tmp_path, clock):
+    host = make_host(tmp_path, clock, per_device=2, busy_allowance=2)
     codes = [send(host, env(KEY_A, http("/"), seq=s)) for s in range(1, 6)]
     assert [c.code or c.result for c in codes] == ["accept", "accept", "busy", "busy", "drop"]
     assert codes[-1].why == "busy_unrecordable"
@@ -819,3 +818,51 @@ def test_a_resend_with_another_key_under_the_pending_device_id_is_pairing_closed
             "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, other).hex()}
     v = send(host, env(AUTH, meta, seq=2, device=did(NEW)))  # the pending device's id, another key
     assert (v.result, v.code) == ("refuse", "pairing_closed")  # not a resend: the offer is used
+
+
+# -- rules the mutation check found nothing else pinning ----------------------------------------------------------------
+
+def test_damaged_files_count_against_the_total_cap(tmp_path, clock):
+    first = make_host(tmp_path, clock, max_records=3)
+    for n in range(2):
+        (first.store.dir / (f"{n:02x}" * 16 + ".json")).write_text("not a record", encoding="utf-8")
+    host = make_host(tmp_path, clock, max_records=3)  # reopened: the two damaged files are known
+    assert host.store.damaged and send(host, env(KEY_A, http("/"), seq=1)).result == "accept"
+    v = send(host, env(KEY_A, http("/"), seq=2))
+    assert v.result == "drop" and "StoreFull" in v.why
+
+
+def test_a_request_with_the_refusal_flag_is_dropped(host):
+    assert send(host, env(KEY_A, http("/"), seq=1, flags=E.F_REFUSAL)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1, flags=E.F_LAST)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1)).result == "accept"  # neither consumed the seq
+
+
+def test_a_revoked_devices_refusal_spends_the_host_wide_budget(host, clock):
+    host.registry.revoke(did(KEY_B), NOW)
+    assert send(host, env(KEY_B, http("/"), seq=1)).code == "revoked"
+    host.budget.entries = [NOW] * 10
+    assert send(host, env(KEY_B, http("/"), seq=2)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1)).result == "accept"  # a verified signature is never dropped
+
+
+def test_a_bad_signature_pair_refusal_counts_against_the_offers_own_budget(tmp_path):
+    case = next(c for c in V.VEC["host_cases"] if c["name"] == "pair_request_device_id_not_of_pub")
+    st = case["steps"][0] if "steps" in case else case
+    clock = V.Clock(st["now_ms"])
+    host = V.host_from_state(tmp_path, case["state"], clock)
+    e, mb = bytes.fromhex(st["envelope"]), st["mailbox_id"]
+    host.budget.entries = [clock.now] * 10  # the host-wide budget is spent: an open offer is not starved by it
+    assert host.check(e, mb).code == "bad_signature"
+    offer = next(iter(host.pairing.offers.values()))
+    offer.budget.entries = [clock.now] * 5  # its own budget is spent too
+    assert host.check(e, mb).result == "drop"
+
+
+def test_a_result_is_stored_once_and_only_for_a_running_record(host):
+    run = host.authorize(send(host, env(KEY_A, http("/"), seq=1)))
+    undecided = send(host, env(KEY_A, http("/"), seq=2))  # recorded, never authorised: not running
+    assert host.finish(undecided.rid and (undecided.rid,), {"status": 200}) is False
+    assert host.finish(run.answer_rids, {"status": 200}, b"one") is True
+    assert host.finish(run.answer_rids, {"status": 500}, b"two") is False
+    assert host.store.get(run.rid, NOW).outcome == {"status": 200}

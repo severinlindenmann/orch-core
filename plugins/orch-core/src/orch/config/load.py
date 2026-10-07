@@ -134,8 +134,10 @@ def check_prefix(prefix: object) -> None:
         raise ValidationError(f"id prefix must match [A-Z][A-Z0-9]*, got {prefix!r}")
 
 
-def find_home(start: Path | None = None) -> Path:
-    env = os.environ.get("ORCH_HOME")
+def find_home(start: Path | None = None, *, use_env: bool = True) -> Path:
+    """The workspace home. ORCH_HOME wins over `start` (the guard and permit hooks rely on it); `use_env=False`
+    is for callers that name a workspace explicitly, such as a throwaway one in a test."""
+    env = os.environ.get("ORCH_HOME") if use_env else None
     if env:
         home = Path(env).expanduser().resolve()
         if not (home / CONFIG_NAME).is_file():

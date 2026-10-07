@@ -63,7 +63,7 @@ def fake_workspace(path, *, customer: str = "acme", prefix: str = "DEMO", ticket
            "git": {"repos": dict(repos or {})}, "suggested_addons": list(suggested_addons),
            "external_trackers": [dict(t) for t in trackers]}
     (home / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    ws = Workspace.open(root)
+    ws = Workspace.open(root, use_env=False)  # never the workspace ORCH_HOME names
     ids = []
     for spec in tickets:
         t = new_ticket(next_id(ws), spec["title"], type=spec.get("type", "feature"), priority=spec.get("priority", "normal"),

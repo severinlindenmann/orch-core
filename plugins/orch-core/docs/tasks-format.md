@@ -92,7 +92,9 @@ check looks at that literal path only.
   waits for and checks that the question or task exists.
 - Done and skipped tasks are closed; they cannot be edited until they are reopened.
 - Tasks change only while the ticket is in progress or waiting. An agent needs its own unexpired
-  claim for every task write.
+  claim for every task write. A claim runs out `claims.ttl_hours` after its holder's last sign of life
+  (the claim, or an event its own session wrote on the ticket; the human's events and other sessions' do not count), never while the ticket is waiting on the human; when yours ran
+  out and nobody took it over, `orch claim <id>` renews it.
 - `owner: human` tasks belong to the human: an agent may not start, tick, skip, block, reopen or
   edit them, and only the human changes an owner. The human may skip (with a reason) or reopen an
   agent's task but never tick it done, in the CLI, the dashboard and raw file edits alike.
@@ -143,6 +145,8 @@ line itself, in the directory the agent stands in, and keeps what happened:
 Nothing runs before the claim, the plan approval and the task's own rules allow `orch task done`.
 
 ## Input file (orch task add --file)
+
+The same YAML can sit under a `## Tasks` heading in the `--body-file` of `orch new` (bare or inside one ```yaml fence); it is validated like `task add --file` before the ticket gets an ID.
 
 ```yaml
 tasks:

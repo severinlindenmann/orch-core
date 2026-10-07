@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from orch.core import store
@@ -47,8 +48,93 @@ def subject_regex(cfg: dict, quick_on: bool = False) -> re.Pattern:
     return re.compile(pattern)
 
 
-def check_message(ws, text: str, cwd: Path | None = None) -> list[str]:
-    """Problems with this commit message; `cwd` is where git runs the hook, to read which paths are staged."""
+CHECK_MODES = ("enforce", "warn", "off")
+
+
+def _repo_spec(cfg: dict, repo: str | None) -> dict:
+    git = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    repos = git.get("repos") if isinstance(git.get("repos"), dict) else {}
+    spec = repos.get(repo) if repo is not None else None
+    return spec if isinstance(spec, dict) else {}
+
+
+def commit_check_mode(cfg: dict, repo: str | None) -> str:
+    """`git.repos.<repo>.commit_check` (#170): enforce (default), warn or off. Anything else, and a repo that is
+    not listed, is enforce: the strict check is the one a typo must not switch off."""
+    mode = _repo_spec(cfg, repo).get("commit_check")
+    return mode if mode in CHECK_MODES else "enforce"
+
+
+def _skip_entries(cfg: dict, repo: str | None) -> list[tuple[str, object]]:
+    commit = cfg.get("commit") if isinstance(cfg.get("commit"), dict) else {}
+    out = [(f"commit.skip[{i}]", p) for i, p in enumerate(commit.get("skip") or [])] if isinstance(commit.get("skip"), list) else []
+    spec = _repo_spec(cfg, repo)
+    if isinstance(spec.get("commit_skip"), list):
+        out += [(f"git.repos.{repo}.commit_skip[{i}]", p) for i, p in enumerate(spec["commit_skip"])]
+    return out
+
+
+def commit_skip_patterns(cfg: dict, repo: str | None) -> list[re.Pattern]:
+    """The allowed subject patterns of a repo: the global `commit.skip` and its own `commit_skip`. A pattern that is
+    not a valid regex matches nothing (`commit_skip_problems` reports it)."""
+    out = []
+    for _, p in _skip_entries(cfg, repo):
+        try:
+            out.append(re.compile(p))
+        except (re.error, TypeError):
+            continue
+    return out
+
+
+def commit_skip_problems(cfg: dict) -> list[str]:
+    """One message per allowed pattern (global and per repo) that is not a valid regular expression."""
+    git = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    repos = git.get("repos") if isinstance(git.get("repos"), dict) else {}
+    seen, out = set(), []
+    for repo in (None, *repos):
+        for where, p in _skip_entries(cfg, repo):
+            if where in seen or not isinstance(p, str):
+                continue  # the schema reports a non-string
+            seen.add(where)
+            try:
+                re.compile(p)
+            except re.error as e:
+                out.append(f"{where}: {p!r} is not a valid regular expression ({e})")
+    return out
+
+
+def repo_name_for(ws, cwd: Path) -> str | None:
+    """The git.repos name of the repository `cwd` is in (its working tree, or a linked worktree of it), or None."""
+    from orch.hooks.install import configured_repos
+    here = cwd.resolve()
+    names = list((ws.config["git"].get("repos") or {}))
+    for name, path in zip(names, configured_repos(ws)):
+        if here == path or here.is_relative_to(path):
+            return name
+    try:
+        common = subprocess.run(["git", "-C", str(here), "rev-parse", "--git-common-dir"], capture_output=True,
+                                text=True, encoding="utf-8", timeout=15, check=False).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not common:
+        return None
+    mine = (here / common).resolve()
+    for name, path in zip(names, configured_repos(ws)):
+        if (path / ".git").resolve() == mine:
+            return name
+    return None
+
+
+def effective_mode(ws, repo: str | None) -> str:
+    """The mode that applies to this commit: an agent's commit is always enforced (#170), so a relaxed repo relaxes
+    only what a human or a tool commits."""
+    from orch.actor import agent_harness
+    return "enforce" if agent_harness() else commit_check_mode(ws.config, repo)
+
+
+def check_message(ws, text: str, cwd: Path | None = None, repo: str | None = None) -> list[str]:
+    """Problems with this commit message; `cwd` is where git runs the hook, to read which paths are staged, and
+    `repo` the git.repos name whose allowed patterns (commit_skip) also let a subject through."""
     cfg = ws.config
     msg = clean_message(text)
     if not msg:
@@ -62,6 +148,9 @@ def check_message(ws, text: str, cwd: Path | None = None) -> list[str]:
     subject, _, rest = msg.partition("\n")
     if _SKIP_FORMAT.match(subject):
         return problems
+    from orch.actor import agent_harness
+    if not agent_harness() and any(rx.search(subject) for rx in commit_skip_patterns(cfg, repo)):
+        return problems  # #170: a known tool-generated subject; an agent's commit always needs the full format
     # #168: a commit of nothing but orch's own records is bookkeeping, not code: no plan gate
     if _RECORDS.fullmatch(subject):
         if not records_only(ws, cwd or Path.cwd()):

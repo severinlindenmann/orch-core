@@ -116,6 +116,15 @@ def configured_repos(ws) -> list[Path]:
     return [(ws.root / ((r or {}).get("path") or name)).resolve() for name, r in repos.items()]
 
 
+def check_off_repos(ws) -> set[Path]:
+    """Repos whose `git.repos.<name>.commit_check` is `off` (#170). They still get the hook: it exits 0 for a human
+    there and keeps enforcing an agent's commit, so `off` can never be a way around the agent rule."""
+    from orch.hooks.commit_msg import commit_check_mode
+    repos = ws.config["git"].get("repos") or {}
+    return {(ws.root / ((r or {}).get("path") or name)).resolve()
+            for name, r in repos.items() if commit_check_mode(ws.config, name) == "off"}
+
+
 def _config_value(repo: Path, *scope: str) -> tuple[str | None, str | None]:
     """(value, error) of core.hooksPath; git exits 1 when the key is simply not set."""
     r = _git(repo, "config", *scope, "--get", "core.hooksPath")

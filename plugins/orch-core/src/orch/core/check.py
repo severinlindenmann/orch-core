@@ -33,6 +33,7 @@ def run_checks(ws, *, emit_events: bool = True) -> list[Finding]:
     findings = [Finding("error", "config", None, m) for m in validate_schema(ws.config)]
     findings += _check_addons(ws)
     findings += _check_artifact_mode(ws)
+    findings += _check_commit_skip(ws)
     findings += _check_trackers(ws)
     findings += _check_migration(ws)
     entries = store.scan(ws)
@@ -181,6 +182,11 @@ def _check_artifact_mode(ws) -> list[Finding]:
     if mode != "local":
         return [Finding("warning", "artifact-mode", None, f"artifacts.mode {mode!r} is ignored; artifacts are stored locally")]
     return []
+
+
+def _check_commit_skip(ws) -> list[Finding]:
+    from orch.hooks.commit_msg import commit_skip_problems
+    return [Finding("error", "commit-skip", None, m) for m in commit_skip_problems(ws.config)]
 
 
 def _check_trackers(ws) -> list[Finding]:

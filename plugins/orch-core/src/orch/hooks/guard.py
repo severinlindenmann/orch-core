@@ -219,13 +219,23 @@ def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> li
 
 _ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 _KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
-_SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
-              "factory-release*", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans*", "launch.json")
+# The one list of what agents never touch in the orch config dir: the names in the dir itself, and the runner's records
+# in its permits folder. Every rule below derives from these two (tests/test_guard_spellings.py reads them too).
+def _REMOTE_NAME(n: str) -> bool:
+    return n.startswith("remote" + "-")
+
+
+CONFIG_TOP = ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "launch.json", "remote-humans.json", "permits")
+PERMIT_NAMES = ("sessions", "armed", "runs", "children", "requests", "used", "factory-command.json",
+                "factory-release.json", "factory-release.json.lock", "release-records", "release-repos", "child-clones",
+                "nudges", "early-ends", "tmux", "tmux.name")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
-_SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
-                    "ledger.head", "ledger.lock", "factory-command.json", "factory-release.json",
-                    "factory-release.json.lock", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans.json",
-                    "launch.json")
+_SENSITIVE_NAMES = tuple(dict.fromkeys(CONFIG_TOP + PERMIT_NAMES))
+# a plain word that is, or can stand for, one of them (a name with an extension by its stem: `ledger.key.bak` too)
+_SENSITIVE = tuple(dict.fromkeys(n.split(".", 1)[0] + "*" if "." in n else n for n in _SENSITIVE_NAMES))
+# the phone pairing keys have rules and a message of their own (_REMOTE_KEYS)
+_STEMS = "|".join(sorted({re.escape(n.split(".", 1)[0]) for n in _SENSITIVE_NAMES if not _REMOTE_NAME(n)},
+                         key=len, reverse=True))
 _READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
             "bat", "wc", "xargs", "dir", "vdir"}
 _UNKNOWN_DENIED = ("after a cd to a place the guard cannot work out, this command names something that may be in the "
@@ -658,13 +668,12 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # agent, any of them would write a record as the human would. One list for the guard's module rule.
 _RECORD_MODULES = ("ledger|permits|dark_profile|factory_release|factory_clones|factory_close|factory_sessions"
                    "|factory_runner")
-_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release"
-                     r"|release-records|release-repos|child-clones|nudges|early-ends|tmux)\b"
+_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:" + _STEMS + r")\b|ORCH_STATE_DIR\}?[/\\]+(?:"
+                     + _STEMS + r")\b|\bpermits[/\\]+(?:" + _STEMS + r")\b"
                      r"|\borch\.(?:core|dashboard)\.(?:" + _RECORD_MODULES + r")\b"
                      r"|\bfrom\s+orch\.(?:core|dashboard)\s+import\b[^;\n]*\b(?:" + _RECORD_MODULES + r")\b")
-_LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
-                  "decisions; agents do not read or write them")
+_LEDGER_DENIED = ("the approval ledger, its key, the permit records beside it and the launch settings are the human's "
+                  "signed record of decisions and what the dashboard runs; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
@@ -673,7 +682,12 @@ _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereferen
 _GLOB = re.compile(r"[*?\[]")
 _REVIEW = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b")
 _STATE_PATH = r"orchestrator[/\\]tickets\b|(?:orchestrator[/\\])?(?:tickets[/\\](?:backlog|open|in-progress|waiting|testing|done|INDEX\.md)|\.state)\b"
-_STATE = re.compile(_STATE_PATH)
+_STATE = re.compile(_STATE_PATH, re.I)  # APFS and NTFS ignore case: ORCHESTRATOR/.STATE is the same folder
+# The workspace config in shell text (a clone's copy or the workspace's own): agents change it with their file tools,
+# whose result the guard can check (_config_edit), never with a shell write.
+_CONFIG_FILE = re.compile(r"(?i)(?:^|[\s'\"=/~])orchestrator/+config\.json\b")
+_CONFIG_SHELL_DENIED = ("orchestrator/config.json changes only through your file tools (Edit or Write), which keep it "
+                        "one JSON object and its factory settings the human's; a shell write is refused")
 # `cd DIR`, `cd -- DIR`, `cd -P DIR`, `pushd DIR`: options before the target are skipped.
 _CD = re.compile(r'\b(?:cd|pushd)\s+(?:-\S*\s+)*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 _WRITE_TOOL = re.compile(r"(?:^|[\s;&|(`'\"])(?:mv|rm|cp|tee|truncate|touch|git\s+mv|git\s+rm|sed\s+(?:-\w*i|--in-place)|perl\s+-\w*i)\b")
@@ -1195,7 +1209,11 @@ def _paths_text(text: str) -> str:
     t = re.sub(r"[/\\]+", "/", text)
     while "/./" in t:
         t = t.replace("/./", "/")
-    return t
+    while True:  # `dir/../` steps back (as written: a symlinked dir is judged by the resolution rules)
+        u = re.sub(r"/(?!\.\.(?:/|$))[^/\s'\";&|()<>]+/\.\.(?=/|$)", "", t)
+        if u == t:
+            return t
+        t = u
 
 
 def _word(tok: str) -> str | None:
@@ -1292,7 +1310,7 @@ def _sets_git_exec_config(seg: str, plain: str) -> bool:
 def _cd_targets_state(cmd: str) -> bool:
     for m in _CD.finditer(cmd):
         target = next(g for g in m.groups() if g is not None)
-        parts = re.split(r"[/\\]", target)
+        parts = [x.casefold() for x in re.split(r"[/\\]", target)]
         if "tickets" in parts or ".state" in parts:
             return True
     return False
@@ -1608,13 +1626,22 @@ def _ledger_path(raw: str, cwd=None) -> bool:
         for start in {str(cwd) if cwd else os.getcwd(), os.getcwd()}:  # the hook's cwd and this process's own
             full = text if os.path.isabs(text) else os.path.join(start, text)
             p = _real(full)
-            if _link_into(full, base, _Budget()) or p in (
-                    base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE
-            ) or p == base / "permits" or (base / "permits") in p.parents:
+            if _link_into(full, base, _Budget()) or _config_record(p, base) or _config_record(
+                    Path(os.path.normpath(full)), base):
                 return True
     except (OSError, RuntimeError, ValueError, _Bound):
         return True
-    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
+    return False
+
+
+def _config_record(p: Path, base: Path) -> bool:
+    """Whether `p` is, or lies below, a name of CONFIG_TOP in the config dir `base`, compared in the one folded form
+    (any case: APFS and NTFS ignore it)."""
+    f, b = _fold(p), _fold(base).rstrip("/")
+    if not f.startswith(b + "/"):
+        return False
+    first = f[len(b) + 1:].split("/", 1)[0]
+    return first in {_fold(n) for n in CONFIG_TOP if not _REMOTE_NAME(n)}  # the pairing keys: _REMOTE rules
 
 
 def _ledger_path_closed(raw: str, cwd=None) -> bool:
@@ -1639,7 +1666,7 @@ def _filter_could_reach_ledger(pattern: str) -> bool:
 
 def _bash_reaches_ledger(cmd: str) -> bool:
     from orch.core import ledger
-    if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
+    if any(_LEDGER.search(c) or _LEDGER.search(_paths_text(c)) for c in _key_check_candidates(cmd)):
         return True
     base = str(ledger.base_dir())
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
@@ -1729,6 +1756,8 @@ def evaluate(ws, payload: dict) -> Decision:
             return Decision(False, why)
     if tool == "NotebookEdit" and _is_config(ws, str(tool_input.get("notebook_path") or "")):
         return Decision(False, _CONFIG_SHAPE_DENIED)
+    if tool == "NotebookEdit" and _orch_records(ws, str(tool_input.get("notebook_path") or ""), cwd):
+        return Decision(False, _USE_ORCH)
     if tool in ("Edit", "Write", "MultiEdit"):
         return _edit(ws, tool, tool_input, payload.get("session_id"))
     return ALLOW
@@ -1757,13 +1786,11 @@ def _clone_file(raw: str, cwd, ws) -> str | None:
         home = always_sensitive(ws)[0].strip("/").casefold()
     except Exception:
         return _CLONE_UNKNOWN_DENIED
-    for f in forms:
-        for r in roots:
-            try:
-                rest = f.relative_to(r).parts[3:]  # <workspace id>/<child>/repo/...
-            except ValueError:
+    for f in {_fold(x) for x in forms}:
+        for r in {_fold(x) for x in roots}:
+            if not f.startswith(r.rstrip("/") + "/"):
                 continue
-            text = "/".join(rest).casefold()
+            text = "/".join(f[len(r.rstrip("/")) + 1:].split("/")[3:])  # <workspace id>/<child>/repo/...
             if (text in (f"{home}/config.json", f"{home}/tickets", f"{home}/.state")
                     or text.startswith((f"{home}/tickets/", f"{home}/.state/"))):
                 return _CLONE_TICKETS_DENIED
@@ -1787,6 +1814,32 @@ def _path_forms(raw: str, cwd, ws) -> set[Path]:
     if not p.is_absolute():
         p = Path(str(cwd)) / p if cwd else Path(ws.root) / p
     return {Path(os.path.normpath(p)), p.resolve()}
+
+
+def _fold(p) -> str:
+    """The one form every file-tool path rule compares: case folded and NFC (APFS and NTFS ignore case, APFS ignores
+    Unicode normalisation), `/` separators. `_path_forms` already collapsed `//`, `/./`, `..` and links."""
+    import unicodedata
+    return unicodedata.normalize("NFC", str(p)).casefold()
+
+
+def _folded_forms(raw: str, cwd, ws) -> set[str]:
+    return {_fold(f) for f in _path_forms(raw, cwd, ws)}
+
+
+def _folded_bases(*paths: Path) -> set[str]:
+    out = set()
+    for b in paths:
+        out.add(_fold(os.path.normpath(b)))
+        try:
+            out.add(_fold(b.resolve()))
+        except (OSError, RuntimeError):
+            pass
+    return out
+
+
+def _folded_under(forms: set[str], bases: set[str]) -> bool:
+    return any(f == b or f.startswith(b.rstrip("/") + "/") for f in forms for b in bases)
 
 
 def _global_git_config(raw: str, cwd, ws) -> bool:
@@ -1827,17 +1880,12 @@ def _in_git_dir(raw: str, cwd, ws) -> bool:
 def _cwd_in_state(ws, cwd) -> bool:
     if not cwd:
         return False
-    try:
-        p = Path(str(cwd))
-        p = (p if p.is_absolute() else ws.root / p).resolve()
-    except (OSError, ValueError):
-        return False
-    return _under(p, ws.tickets_dir.resolve()) or _under(p, ws.state_dir.resolve())
+    return _orch_records(ws, str(cwd), None)
 
 
 def _ticket_file_re(ws) -> re.Pattern:
     prefix = re.escape(str(ws.config["id"]["prefix"]))
-    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b")
+    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b", re.I)
 
 
 def _touches_state(ws, cmd: str, cwd) -> bool:
@@ -1958,6 +2006,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _touches_state(ws, code, cwd) and _is_write(cmd):
         return Decision(False, _USE_ORCH)
+    if _CONFIG_FILE.search(_paths_text(code)) and _is_git_write(cmd):
+        return Decision(False, _CONFIG_SHELL_DENIED)
     if _STARTUP_FILE.search(code) and _is_write(cmd):
         return Decision(False, _STARTUP_DENIED)
     if _GIT_INTERNAL_PATH.search(_paths_text(code)) and _is_git_write(cmd):
@@ -2060,8 +2110,20 @@ def unreadable_workspace(payload: dict, start: Path, why: str) -> Decision:
 def _is_config(ws, raw: str) -> bool:
     if not raw:
         return False
-    path = Path(raw)
-    return (path if path.is_absolute() else ws.root / path).resolve() == (ws.home / "config.json").resolve()
+    try:
+        return bool(_folded_forms(raw, None, ws) & _folded_bases(ws.home / "config.json"))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def _orch_records(ws, raw: str, cwd) -> bool:
+    """Whether a path is in the workspace's tickets or state folder (any case, as written or after links)."""
+    if not raw:
+        return False
+    try:
+        return _folded_under(_folded_forms(raw, cwd, ws), _folded_bases(ws.state_dir, ws.tickets_dir))
+    except (OSError, RuntimeError, ValueError):
+        return True
 
 
 def _edit(ws, tool: str, tool_input: dict, session=None) -> Decision:
@@ -2070,15 +2132,19 @@ def _edit(ws, tool: str, tool_input: dict, session=None) -> Decision:
         return ALLOW
     path = Path(raw)
     path = (path if path.is_absolute() else ws.root / path).resolve()
+    try:
+        forms = _folded_forms(raw, None, ws)
+    except (OSError, RuntimeError, ValueError):
+        return Decision(False, _USE_ORCH)
     if _is_user_addon_file(path):
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _STARTUP_FILE.search(str(path)) or _STARTUP_FILE.search(raw):
         return Decision(False, _STARTUP_DENIED)
-    if _under(path, ws.state_dir.resolve()):
+    if _folded_under(forms, _folded_bases(ws.state_dir)):
         return Decision(False, _USE_ORCH)
-    if path == (ws.home / "config.json").resolve():
+    if forms & _folded_bases(ws.home / "config.json"):
         return _config_edit(ws, tool, tool_input, path, session)
-    if not _under(path, ws.tickets_dir.resolve()):
+    if not _folded_under(forms, _folded_bases(ws.tickets_dir)):
         return ALLOW
     if path.name == "INDEX.md":
         return Decision(False, "tickets/INDEX.md is generated by `orch index`")

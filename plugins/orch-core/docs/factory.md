@@ -561,7 +561,17 @@ The guard's part is a text check, not a shell. It refuses a command run from ins
 must be an absolute, literal path with no `..`, outside the config dir (relative ones are refused, because the
 working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
-the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
+the config dir is refused as written, never trusted because of where it points today. Paths are compared in one form
+(`~`, `$HOME` and `${HOME}` expanded, `//`, `/./` and `dir/..` collapsed, links followed, case and Unicode
+normalisation folded, as APFS ignores both): `ORCHESTRATOR/.STATE`, `~/.config/ORCH-CLONES/...` and
+`.config/orch/./launch.json` are the same places as their plain spellings, for every file tool (Edit, Write, MultiEdit
+and NotebookEdit alike) and the shell. The names guarded in the config dir are one list in the guard (`CONFIG_TOP`,
+`PERMIT_NAMES`, which includes `launch.json`, whose commands Start agent runs: agents do not write it); every rule
+derives from it. A shell write naming `orchestrator/config.json` (a clone's or the workspace's) is refused: agents
+change it with their file tools. A homoglyph or percent-escaped spelling names another file and is not refused for
+that reason; `tests/test_guard_spellings.py` is the corpus of what each spelling decides. Not covered: a path built at
+run time inside an interpreter (`open("led" + "ger.key")`); in a factory session no interpreter runs without your
+card. The rules are bounded (command
 length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny, and so is any other internal error of the guard inside a
 workspace (logged to `orchestrator/.state/guard-errors.log`). When the workspace cannot be opened at all (a broken or
 missing `orchestrator/config.json`) the guard refuses every tool for a session the runner may have bound, and inside

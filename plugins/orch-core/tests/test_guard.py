@@ -501,7 +501,8 @@ def test_guard_denies_editing_user_addon_files(ws):
                    config_dir() / "addons" / "hello" / "hello" / "__init__.py"):
         d = evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(target), "content": "{}"}})
         assert not d.allow and "human's" in d.reason, target
-    assert evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(config_dir() / "launch.json"), "content": "{}"}}).allow
+    # launch.json holds the commands Start agent runs in the human's terminal: the human's, like the ledger
+    assert not evaluate(ws, {"tool_name": "Write", "tool_input": {"file_path": str(config_dir() / "launch.json"), "content": "{}"}}).allow
 
 
 def test_rules_name_addon_admin_as_human_only(ws):

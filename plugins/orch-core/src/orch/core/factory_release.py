@@ -1100,8 +1100,8 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
         named = "; ".join(f"{_text(c, 40)}: " + ", ".join(_text(p, 120) for p in (ps or [])[:10])
                           for c, ps in list(hits.items())[:10]) or "the record cannot be read"
         out.append({"code": "sensitive", "label": "Sensitive path touched",
-                    "text": f"a child branch changes a path the release recipe marks sensitive ({named}); nothing was "
-                            "merged"})
+                    "text": f"a child branch changes a path the release recipe marks sensitive, or a submodule "
+                            f"({named}); nothing was merged"})
     for s in stages:
         for u in s["units"]:
             rb = u.get("rollback") if u["state"] == "failed" else None
@@ -1547,26 +1547,42 @@ def child_branch(ws, t) -> tuple[str | None, str]:
     return b, ""
 
 
-def changed_paths(ws, rec, sha: str) -> list[str] | None:
-    """Every path the commit brings in against the remote base, in the release repository: the net diff and each commit's own
-    changes (merges against each parent), renames as both paths, submodules included. None when git fails or the
-    list is too long to check."""
+def changed_paths(ws, rec, sha: str) -> tuple[list[str], list[str]] | None:
+    """(every path the commit brings in against the remote base, the gitlinks among them), in the release repository:
+    the net diff and each commit's own changes (merges against each parent), renames as both paths, submodules
+    included. A gitlink is a path whose mode is 160000 before or after any of those changes (a submodule added,
+    changed or removed). None when git fails or the list is too long to check."""
     base = f"refs/remotes/release/{rec['base']}"
-    common = ("--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--name-only", "-z")
+    common = ("--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--raw", "-z")
     out: list[str] = []
+    links: list[str] = []
     for args in (("diff", *common, f"{base}...{sha}"),
                  ("log", *common, "-m", "--format=", f"{base}..{sha}")):
         r = _git(ws, rec, *args, limit=GIT_OUT)
         if r.get("code") != 0 or r.get("out_size", 0) > GIT_OUT:
             return None
-        out += [p for p in (r.get("out") or "").split("\x00") if p.strip()]
-    return sorted(set(out))
+        words = [w.strip("\n") for w in (r.get("out") or "").split("\x00")]
+        i = 0
+        while i < len(words):  # ":<old mode> <new mode> <old> <new> <status>", then the path (--no-renames: one)
+            meta = words[i]
+            if not meta.startswith(":"):
+                i += 1
+                continue
+            path = words[i + 1] if i + 1 < len(words) else ""
+            if not path:
+                return None
+            out.append(path)
+            if "160000" in meta[1:].split()[:2]:
+                links.append(path)
+            i += 2
+    return sorted(set(out)), sorted(set(links))
 
 
 # What the release treats as sensitive in every repository, whatever the recipe says (patterns as in sensitive_paths):
 # the harness's settings, hooks, skills and MCP servers, the instructions agents read, and CI. A child that changes
 # any of them changes what runs agents or code later, so a human merges that by hand.
-HARNESS_SENSITIVE = ("**/.claude", "**/.mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", ".github")
+HARNESS_SENSITIVE = ("**/.claude", "**/.mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", ".github",
+                     "**/.gitmodules")
 
 
 def always_sensitive(ws) -> list[str]:
@@ -1637,11 +1653,15 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if own.get("code") != 0 or (own.get("out") or "").strip() in ("", "0"):
             errors[t.id] = f"{t.id}: the child's branch has no commits of its own"
             continue
-        paths = changed_paths(ws, rec, sha)
-        if paths is None:
+        got = changed_paths(ws, rec, sha)
+        if got is None:
             errors[t.id] = f"the changes of {t.id}'s branch could not be listed"
             continue
-        bad = [p for p in paths if sensitive(p, [*rec["sensitive_paths"], *always_sensitive(ws)])]
+        paths, links = got
+        # a submodule (a gitlink, or .gitmodules, always sensitive) is never merged by itself: its content is another
+        # repository's, which the release never inspects
+        bad = [f"{p} (a submodule)" for p in links]
+        bad += [p for p in paths if p not in links and sensitive(p, [*rec["sensitive_paths"], *always_sensitive(ws)])]
         if bad:
             hits[t.id] = bad[:20]
         why = None if bad else message_refusal(ws, rec, sha)  # a sensitive hit stops the release anyway

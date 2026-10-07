@@ -349,6 +349,10 @@ def move_refusal(ws, t) -> str | None:
         paths = ", ".join(permits.shown(ln[3:])[:80] for ln in st["lines"][:5])
         return (f"your clone has work that is not committed ({paths}): commit it (git add, then git commit, as two "
                 "commands) or delete what does not belong, then move again")
+    if st["submodules"]:
+        subs = ", ".join(permits.shown(x)[:80] for x in st["submodules"][:5])
+        return (f"your clone holds a submodule ({subs}), which the release does not merge: remove it (git rm --cached "
+                "<path>, then git commit, as two commands) and use plain files, then move again")
     sha, _, why = child_tree(ws, t)
     if sha is None:
         return f"orch could not read your branch ({permits.shown(why)[:120]}): try the move again in a moment"

@@ -132,3 +132,34 @@ def test_a_doubting_evidence_line_keeps_production_from_starting(fws, prod, fa, 
     assert _deploys(fake) == 1 and "waits" not in next(
         s for s in fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))[
             "stages"] if s["name"] == "production")
+
+
+# -- submodules are never merged by themselves --------------------------------------------------------------------
+
+def test_a_child_branch_adding_a_submodule_stops_before_the_merge(fws, ready, human):
+    from test_factory_release import _g, _msg, _wt
+    eid, (c,), _ = ready()
+    wt = fws.root / _wt(f"feat/{c.lower()}-work")
+    _g(wt, "update-index", "--add", "--cacheinfo", f"160000,{_g(wt, 'rev-parse', 'HEAD')},vendor/lib")
+    _g(wt, "commit", "-q", *_msg(f"feat/{c.lower()}-work"))
+    fake = Fake()
+    lines = fr.tick(fws, human, fake)
+    assert fake.calls == [] and "sensitive path" in lines[-1]
+    assert _stopped(fws, eid) == ["sensitive"]
+    st = fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))
+    assert "vendor/lib (a submodule)" in st["reasons"][0]["text"]
+
+
+def test_gitmodules_is_always_sensitive():
+    assert fr.sensitive(".gitmodules", fr.HARNESS_SENSITIVE) and fr.sensitive("a/.gitmodules", fr.HARNESS_SENSITIVE)
+
+
+def test_a_move_to_testing_with_a_submodule_in_the_clone_is_refused(fws, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.core import factory_built as fb, factory_clones as fc
+    with monkeypatch.context() as m:
+        m.setattr(fc, "record", lambda ws, cid: {"branch": "b"})
+        m.setattr(fb, "uncommitted", lambda ws, cid: {"ok": True, "lines": [], "submodules": ["vendor/lib"]})
+        why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
+    assert why and "submodule (vendor/lib)" in why and "does not merge" in why

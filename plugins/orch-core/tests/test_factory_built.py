@@ -7,11 +7,19 @@ import pytest
 
 from orch.core import epics, factory_built as fb, factory_close, factory_release as fr, factory_report, \
     factory_sessions as fs, store
-from test_factory_clones import _g, _msg, _programs, _recipe, _refine, _to_testing, fa, fh, fws, remote, bin_dir  # noqa: F401,E501
+from test_factory_clones import _g, _msg, _programs, _recipe, _refine, fa, fh, fws, remote, bin_dir  # noqa: F401,E501
 from test_factory_release import Fake, _not_stopping  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 ASKED = "One page elephants.html that reads elephants.json"
+
+
+def _to_testing(fa, cid, close_tasks):
+    """In testing with evidence the strict rules accept (the release starts no stage on less)."""
+    fa.claim(cid)
+    close_tasks(fa, cid)
+    fa.set_section(cid, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
+    fa.move(cid, "testing")
 
 
 @pytest.fixture(autouse=True)

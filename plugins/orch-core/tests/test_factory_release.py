@@ -599,7 +599,7 @@ def test_a_gitlink_hidden_by_ignore_submodules_is_seen(fws, ready, human, remote
     rec = fr.load(fws)[0]
     rec = {**rec, "sensitive_paths": ["vendor/deploy"]}
     found, hits, errors = fr.classify(fws, rec, [store.load(fws, c)[1]])
-    assert errors == {} and hits == {c: ["vendor/deploy"]}
+    assert errors == {} and hits == {c: ["vendor/deploy (a submodule)", ".gitmodules"]}
 
 
 def test_a_replace_ref_in_the_workspace_hides_nothing(fws, ready, human, remote):

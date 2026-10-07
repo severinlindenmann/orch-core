@@ -131,3 +131,31 @@ held elsewhere, up to 10 s) delays pages for that moment.
 The host never replaces a damaged host key or registry silently: that would unpin or drop every paired device. A
 start with a damaged host key refuses; a damaged registry is shown at start and answers nothing. Pairing again from
 scratch is the owner's decision, made in the Remote tab.
+
+## Terminals over the bridge
+
+Terminals work from a paired device on the same routes as at the desk, each tagged in the remote gate's table:
+
+- Watching (the list, a session, its stream and its JSON snapshot) needs Operate: live output can hold secrets.
+  Look and Decide devices cannot watch.
+- Typing needs Type and a typing lease: sending keys, resizing, ending or starting a session, and Start agent on a
+  ticket or a quick task. The host asks the device for a fresh platform-authenticator assertion (Face ID, Touch ID,
+  Windows Hello or a PIN), checks it with the host library, and binds the lease to that device for 15 minutes of
+  idleness. The lease covers only input sent on a stream the device itself opened; a revoke or a change of scope
+  ends it, and so does a restart. A device with no platform authenticator never gets one, so it can watch but not type.
+- Key posts carry `seq` (the keys, in order) and `n`, a number that must rise with every post from that device. A
+  post whose `n` was already used or is older than one already taken answers 409 and types nothing, so a retry or a
+  late arrival never types twice. At most 64 items and 2048 characters of text per post, and 15 posts per 10
+  seconds per device (429, without using the number). A local browser is unaffected and sends no `n`.
+- The bridge carries about one request a second per device, so the page batches keystrokes when it runs through a
+  host (`window.orchHost.remote` is true): one post per 750 ms, in the order typed, one at a time. A post that did
+  not arrive, or was rate limited, is sent again unchanged with the same `n`. A host that serves the page sets
+  `remote: true` in its adapter.
+- If the stream is not open (it errored, or is reconnecting), the page shows a snapshot fetched every second from
+  `/terminals/<name>/snapshot` until the stream is back.
+- A revoke or a change of scope ends the device's terminal streams at once, with a sealed `revoked` or
+  `scope_changed` refusal.
+
+Sessions are matched to a workspace by directory: a session belongs to the workspace when its start folder is the
+workspace root or below it. Where one workspace sits inside another, the outer one lists the inner one's sessions as
+well (the inner one never lists the outer one's).

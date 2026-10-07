@@ -113,7 +113,9 @@ def route_hook(routes, ws=None):
     workspace's LIVE state and the request's own hashes, so the person approves exactly what will be written and a
     stale request gets no challenge (R13). Without `ws`, or for a fresh route with no subject builder, no assertion
     is asked for and the gate refuses it (no origin is fresh). The gate decides every route again on the request
-    as received, so this can only refuse more than the gate, never less."""
+    as received, so this can only refuse more than the gate, never less. A Type route that is not fresh (terminal
+    keys, size, end, new, Start agent) asks the library for the typing lease instead: a platform-authenticator
+    assertion bound to the device, 15 minutes idle, given only to input sent on a stream the device itself opened."""
     from orch.dashboard.factory_remote import subject
     from orch.dashboard.remote_gate import factory_need, match_route, tag_for
 
@@ -131,8 +133,10 @@ def route_hook(routes, ws=None):
         tag = tag_for(routes, scope, params)
         if tag is None or tag.scope is None:
             return None
+        lease = tag.scope is Scope.TYPE and not tag.fresh
+        plain = Requirement(tag.scope.name.lower(), "lease" if lease else "none")
         if ws is None:
-            return Requirement(tag.scope.name.lower())
+            return plain
         route = match_route(routes, scope)
         route_path = route.path if route is not None else None
         pp = route.matches(scope)[1].get("path_params", {}) if route is not None else {}
@@ -143,7 +147,7 @@ def route_hook(routes, ws=None):
         if n is not None:
             needed, kind = n
         if kind is None:
-            return Requirement(tag.scope.name.lower())
+            return plain
         body = data if isinstance(data, bytes) else b""
         return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body))
     return hook

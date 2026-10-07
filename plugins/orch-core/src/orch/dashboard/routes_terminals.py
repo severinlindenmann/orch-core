@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
@@ -22,7 +24,9 @@ from orch.dashboard import agentinfo, launch, terminals
 from orch.dashboard.auth import strict_same_origin
 from orch.dashboard.data import agent_start
 from orch.dashboard.views import back, confirm_page, error_text, page
+from orch.dashboard.reach import remote_origin
 from orch.errors import OrchError, ValidationError
+from orch.remote.bridge_host.budgets import SlidingLimit
 
 router = APIRouter()
 
@@ -206,6 +210,21 @@ def view(request: Request, name: str):
                 started=launch.launch_notes(ws).get(s.name, ""))
 
 
+@router.get("/terminals/{name}/snapshot")
+async def view_snapshot(request: Request, name: str):
+    """The screen and summary once, as JSON: what a device polls when its stream misbehaves."""
+    s = _found(request, name)
+    if s is None:
+        return PlainTextResponse("no such terminal", status_code=404)
+    ws = request.app.state.ws
+    screen = await asyncio.to_thread(terminals.capture, name)
+    if screen is None:
+        return PlainTextResponse("no such terminal", status_code=404)
+    live = _live(s, await asyncio.to_thread(_info, ws, s, screen), ws)
+    return Response(json.dumps({"screen": screen, "info": live}), media_type="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
 @router.get("/terminals/{name}/stream")
 async def view_stream(request: Request, name: str):
     s = _found(request, name)
@@ -259,6 +278,35 @@ async def _json(request: Request):
         raise ValidationError("body is not JSON") from e
 
 
+# Key posts from a paired device. The bridge carries about 1 request a second per device, so a device batches its
+# keystrokes (the page sends one post per 750 ms) and numbers the posts: `n` must rise with every post, so one that
+# arrives twice or late never types twice. Local requests are unchanged.
+REMOTE_POSTS, REMOTE_WINDOW_MS = 15, 10_000  # posts per device per window
+REMOTE_MAX_ITEMS, REMOTE_MAX_CHARS = 64, 2048  # one device post: items, and characters of text
+_DEVICE_LOCK = threading.Lock()
+_DEVICE_LAST: dict[str, int] = {}  # device -> the highest post number taken
+_DEVICE_RATE: dict[str, SlidingLimit] = {}
+
+
+def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
+    """(status, text) when a device's key post must not run; otherwise its post number is taken and None returned."""
+    seq = data.get("seq") if isinstance(data, dict) else None
+    n = data.get("n") if isinstance(data, dict) else None
+    if type(n) is not int or n < 1:
+        return 400, "key posts from a device carry a post number n"
+    if not isinstance(seq, list) or len(seq) > REMOTE_MAX_ITEMS or sum(
+            len(i["text"]) for i in seq if isinstance(i, dict) and isinstance(i.get("text"), str)) > REMOTE_MAX_CHARS:
+        return 413, "too many keys in one post"
+    with _DEVICE_LOCK:
+        if n <= _DEVICE_LAST.get(device, 0):
+            return 409, "post number already used"
+        if not _DEVICE_RATE.setdefault(device, SlidingLimit(REMOTE_POSTS, REMOTE_WINDOW_MS)).take(
+                time.monotonic_ns() // 1_000_000):
+            return 429, "too many key posts: batch the keys"
+        _DEVICE_LAST[device] = n
+    return None
+
+
 @router.post("/terminals/{name}/keys")
 async def keys(request: Request, name: str):
     if not strict_same_origin(request):
@@ -267,6 +315,9 @@ async def keys(request: Request, name: str):
         return PlainTextResponse("no such terminal", status_code=404)
     try:
         data = await _json(request)
+        origin = remote_origin(request)
+        if origin is not None and (refusal := _device_keys_refusal(origin.device, data)) is not None:
+            return PlainTextResponse(refusal[1], status_code=refusal[0])
         await asyncio.to_thread(terminals.send, name, data.get("seq") if isinstance(data, dict) else None)
     except OrchError as e:
         return PlainTextResponse(error_text(e), status_code=400)

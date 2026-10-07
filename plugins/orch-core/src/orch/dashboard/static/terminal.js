@@ -33,20 +33,78 @@
 
   // A live stream that rests while the tab is hidden: closed on hide (the server stops polling tmux for it), opened
   // again on show, where the first event brings the screen up to date. stop() ends it for good (the session ended).
-  const live = (url, handlers) => {
+  // Through the bridge (host.remote) a stream can stall or drop: when `snapshot` is given and the stream is
+  // not open (it errored, or is reconnecting), the same handlers are fed from a JSON snapshot fetched once a second
+  // until it is open again. A quiet but open stream is not a bad one.
+  const live = (url, handlers, snapshot) => {
     let es = null;
     let stopped = false;
+    let bad = false;  // the stream errored or is reconnecting
     const open = () => {
       if (es || stopped || document.hidden) return;
       es = new EventSource(url);
       for (const [name, fn] of Object.entries(handlers)) es.addEventListener(name, fn);
+      es.onopen = () => { bad = false; };
+      es.onerror = () => { bad = true; };
     };
     const close = () => { if (es) { es.close(); es = null; } };
     document.addEventListener("visibilitychange", () => (document.hidden ? close() : open()));
     window.addEventListener("pagehide", close);
     open();
+    if (snapshot && host.remote) {
+      let busy = false;
+      setInterval(async () => {
+        if (stopped || document.hidden || busy || !bad) return;
+        busy = true;
+        try {
+          const r = await fetch(snapshot, { credentials: "same-origin" });
+          if (r.ok) {
+            const d = await r.json();
+            if (handlers.screen) handlers.screen({ data: JSON.stringify(d.screen) });
+            if (handlers.info) handlers.info({ data: JSON.stringify(d.info) });
+          } else if (r.status === 404 && handlers.gone) handlers.gone();
+        } catch (_) { /* the next second tries again */ } finally { busy = false; }
+      }, 1000);
+    }
     return { stop() { stopped = true; close(); } };
   };
+
+  // Through the bridge a device may send about one request a second, so keys are batched: one post per `ms`, in the
+  // order typed, one in flight at a time, each numbered (`n`, rising, also across page loads) so the host never types
+  // a post twice. A post that failed to arrive (status 0) or was rate limited (429) is sent again with the same
+  // number before anything newer; any other answer ends it. `send(items, n)` resolves to the HTTP status.
+  // batcher:begin
+  const makeBatcher = ({ send, ms, now = Date.now, timer = setTimeout }) => {
+    const queue = [];
+    let pending = null;  // the post being sent (or sent again): its items and number never change
+    let busy = false;
+    let armed = false;
+    let n = 0;
+    const arm = () => { if (!armed) { armed = true; timer(flush, ms); } };
+    const flush = async () => {
+      armed = false;
+      if (busy) return;
+      if (!pending) {
+        if (!queue.length) return;
+        n = Math.max(n + 1, now());
+        pending = { items: queue.splice(0), n };
+      }
+      busy = true;
+      let status = 0;
+      try { status = await send(pending.items, pending.n); } catch (_) { status = 0; }
+      busy = false;
+      if (status !== 0 && status !== 429) pending = null;
+      if (pending || queue.length) arm();
+    };
+    const push = (item) => {
+      const last = queue[queue.length - 1];
+      if (item.text && last && last.text) last.text += item.text;
+      else queue.push(item);
+      arm();
+    };
+    return { push, flush };
+  };
+  // batcher:end
 
   // ---- sizes: "whole" scales the whole tmux window into its box; "readable" keeps a chosen font and follows the bottom
   const metrics = {};
@@ -260,14 +318,20 @@
     stream.stop();
     term.dataset.mode = "gone";
     stateText.textContent = "ended";
-  } });
+  } }, base + "/snapshot");
 
-  // Keys go out in order, batched: consecutive characters become one text item. Type mode only.
+  // Keys go out in order, batched: consecutive characters become one text item. Type mode only. Through the bridge
+  // (host.remote) one post per 750 ms, numbered and one at a time (makeBatcher); locally one per 15 ms, as ever.
   let queue = [];
   let timer = null;
   const flush = () => { timer = null; if (queue.length) post("/keys", { seq: queue.splice(0) }); };
+  const batcher = host.remote ? makeBatcher({ ms: 750, send: (items, n) => fetch(base + "/keys", {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ seq: items, n }),
+  }).then((r) => { if (!r.ok && r.status !== 429 && r.status !== 409) r.text().then((t) => { stateText.textContent = t; }); return r.status; }) }) : null;
   const push = (item) => {
     if (!typing()) return;
+    if (batcher) return batcher.push(item);
     const last = queue[queue.length - 1];
     if (item.text && last && last.text) last.text += item.text;
     else queue.push(item);

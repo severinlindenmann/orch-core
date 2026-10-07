@@ -70,7 +70,8 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
     # one-time token and deletes the file, so it counts as a change
     ("GET", "/terminals"): OPERATE, ("GET", "/terminals/stream"): OPERATE, ("GET", "/terminals/{name}"): OPERATE,
-    ("GET", "/terminals/{name}/stream"): OPERATE, ("GET", "/addons/{name}/files/{token}"): OPERATE,
+    ("GET", "/terminals/{name}/stream"): OPERATE,
+    ("GET", "/terminals/{name}/snapshot"): OPERATE, ("GET", "/addons/{name}/files/{token}"): OPERATE,
     # -- the human decisions (a phone switch also applies where the signed phone path has one)
     ("POST", "/t/{ref}/approve"): _approve,
     ("POST", "/t/{ref}/approve-together"): _t(Scope.DECIDE, kind="approve"),

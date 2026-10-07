@@ -375,7 +375,7 @@ def ansi_to_html(text: str) -> str:
 
 # ---- a pane's last lines as plain text (the run view), and what a session is doing by fixed patterns --------------
 
-_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_SCREEN_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # not _CTRL: that is the C-a..C-z key pattern above
 _BORDER = re.compile(r"^[\s─-╿|>❯]*$")  # a box border, or the input box's empty line
 _SPINNER = re.compile(r"^\s*[·*✢✳✶✻✽]\s*(?:\S.*….*)?$")  # "✻ Thinking… (12s)"
 
@@ -397,7 +397,7 @@ def clean_screen(text, n: int = 12, *, record: bool = False) -> str:
             except ValueError:
                 pass  # not an escaped line: shown as it is
         for part in _OTHER_ESC.sub("", _SGR.sub("", ln)).splitlines():
-            part = _CTRL.sub("", part.replace("\x1b", "")).rstrip()
+            part = _SCREEN_CTRL.sub("", part.replace("\x1b", "")).rstrip()
             if part.strip() and not _BORDER.match(part) and not _spinner(part):
                 lines.append(part[:200])
     return "\n".join(lines[-n:])

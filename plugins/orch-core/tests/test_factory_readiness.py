@@ -140,14 +140,42 @@ def test_trust_compares_real_paths_and_says_when_the_file_is_too_big(ws, env, tm
     assert "too big for orch to read" in _failing(ws)["trust"]["why"]
 
 
-def test_skills_and_outward_tools_only_warn(ws, env):
+def test_skills_only_warn_and_missing_outward_denials_block(ws, env):
     import shutil
     shutil.rmtree(env["dir"] / "skills")
+    _write(env, permissions={"defaultMode": "acceptEdits", "deny": ["Artifact", "WebFetch", "WebSearch"]})
+    assert _failing(ws)["skills"]["level"] == "warn"
+    assert fr.readiness_blocker(ws, SETTINGS) is None  # warnings start things
     _write(env, permissions={"defaultMode": "acceptEdits", "deny": ["WebFetch(domain:x.com)"]})
     f = _failing(ws)
-    assert f["skills"]["level"] == f["outward tools"]["level"] == "warn"
-    assert "Artifact, WebFetch, WebSearch" in f["outward tools"]["why"] and "never reach" in f["outward tools"]["why"]
-    assert fr.readiness_blocker(ws, SETTINGS) is None  # warnings start things
+    assert f["permission mode"]["level"] == "block"
+    assert "Artifact, WebFetch, WebSearch" in f["permission mode"]["why"] and "never reach" in f["permission mode"]["why"]
+
+
+DENY = ["Artifact", "WebFetch", "WebSearch"]
+
+
+@pytest.mark.parametrize("over, dark, blocked", [
+    ({"permissions": {"defaultMode": "acceptEdits", "deny": DENY}}, True, False),
+    ({"permissions": {"defaultMode": "bypassPermissions", "deny": DENY}}, False, True),
+    ({"permissions": {"defaultMode": "acceptEdits", "deny": DENY}, "skipDangerousModePermissionPrompt": True}, False,
+     True),
+    ({"permissions": {"defaultMode": "auto", "deny": DENY}}, False, False),
+    ({"permissions": {"defaultMode": "auto", "deny": DENY}}, True, True),
+    ({"permissions": {"defaultMode": "acceptEdits", "deny": DENY, "allow": ["Bash(npm test:*)"]}}, False, True),
+    ({"permissions": {"defaultMode": "acceptEdits", "deny": DENY, "allow": ["Bash"]}}, False, True),
+    ({"permissions": {"defaultMode": "acceptEdits", "deny": DENY, "allow": ["Read(./src/**)"]}}, False, False),
+])
+def test_settings_that_skip_the_hook_block_the_runner(ws, env, human, over, dark, blocked):
+    if dark:
+        from conftest import sign_factory
+        from orch.core.ops import Ops
+        ws.config.setdefault("factory", {})["enabled"] = True
+        sign_factory(ws)
+        Ops(ws, human).set_factory_dark(True)
+    _write(env, **over)
+    fr._READY.clear()
+    assert ("permission mode" in _failing(ws)) is blocked, over
 
 
 def _plugin(tmp_path, where, hooks=None):

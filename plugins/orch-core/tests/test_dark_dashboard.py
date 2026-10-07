@@ -901,7 +901,7 @@ def test_edits_blocked_reads_the_user_permission_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "none"))
     assert factory_runner.edits_blocked()  # no settings: edits prompt
     for mode, blocked in (("default", True), ("plan", True), ("acceptEdits", False), ("auto", False),
-                          ("bypassPermissions", False), (None, True)):
+                          ("bypassPermissions", True), (None, True)):  # bypass: no request reaches the hook
         _user_settings(monkeypatch, tmp_path, {"permissions": {"defaultMode": mode}} if mode else {})
         assert factory_runner.edits_blocked() is blocked, mode
     (tmp_path / "claude-user" / "settings.json").write_text("{", encoding="utf-8")

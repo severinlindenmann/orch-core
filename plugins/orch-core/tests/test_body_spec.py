@@ -92,6 +92,21 @@ def test_new_writes_sections_and_tasks(ws, aops, ):
     assert all(not (g or {}).get("approved") for g in (on_disk.meta.get("gates") or {}).values())
 
 
+def test_new_emits_one_task_added_event_per_task(ws, aops):
+    from orch.core.events import read_events
+    from orch.core.ops_tasks import used_numbers
+    ask, parts = split_body(SPEC, names=BODY_SECTIONS)
+    t = aops.new("Faster export", ask=ask, sections=parts)
+    evs = read_events(ws, t.id)
+    added = [e for e in evs if e.kind == "task.added"]
+    assert [e.data for e in added] == [{"tasks": ["T1"], "after_approval": False},
+                                       {"tasks": ["T2"], "after_approval": False}]
+    assert evs[0].kind == "ticket.created" and evs[0].data["tasks"] == ["T1", "T2"]
+    assert used_numbers(ws, t.id) == {1, 2}
+    plain = aops.new("no tasks")
+    assert not [e for e in read_events(ws, plain.id) if e.kind == "task.added"]
+
+
 def test_new_refuses_bad_tasks_before_allocating_an_id(ws, aops):
     bad = {"Tasks": "tasks:\n  - text: a\n    needs: [T9]\n"}
     with pytest.raises(ValidationError):

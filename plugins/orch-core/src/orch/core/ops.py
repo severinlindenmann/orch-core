@@ -331,6 +331,8 @@ class Ops(TaskOpsMixin):
                                            **({"labels": labels} if labels else {}),
                                            **({"tasks": [n.id for n in new_tasks]} if new_tasks else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
+        for n in new_tasks or []:  # one task.added per task, shaped as `orch task add` records it (#216)
+            self._emit(tid, "task.added", {"tasks": [n.id], "after_approval": False})
         if source:
             def link_back(t: Ticket) -> dict:
                 t.meta.setdefault("follow_ups", []).append(tid)

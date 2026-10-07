@@ -85,12 +85,14 @@ def available() -> bool:
 
 
 def _tmux(args: list[str], timeout: float = 10) -> subprocess.CompletedProcess:
-    """One tmux command on the factory socket, by the resolved program, with the fixed environment. Tests replace it."""
+    """One tmux command on the factory socket, by the resolved program, with the fixed environment, never reading a
+    tmux config (`-f /dev/null`: ~/.tmux.conf is a file agents can write, and the server that starts with it would run
+    its commands as you). Tests replace it."""
     tmux = factory_runner.resolve_bin("tmux")
     if tmux is None:
         raise UsageError("tmux was not found at a trusted path")
     env = {"PATH": factory_runner.child_path(tmux), "LC_ALL": "C"}
-    return subprocess.run([tmux, "-S", str(socket_path()), *args], capture_output=True, text=True, timeout=timeout,
+    return subprocess.run([tmux, "-S", str(socket_path()), "-f", "/dev/null", *args], capture_output=True, text=True, timeout=timeout,
                           stdin=subprocess.DEVNULL, env=env)
 
 
@@ -173,10 +175,23 @@ class TmuxLauncher:
             return None
         return r.stdout if r.returncode == 0 else None
 
+    def _width(self, name: str) -> int | None:
+        """The pane's width in columns, or None when tmux does not say."""
+        try:
+            r = _tmux(["display-message", "-p", "-t", f"={name}:", "#{pane_width}"])
+            return int(r.stdout.strip()) if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, UsageError, ValueError):
+            return None
+
     def _clear_own(self, name: str, screen) -> bool:
-        """Clear the input box with C-u only while `screen` (the pane as just read) shows the runner's own nudge text
-        in it (never the human's or the agent's), then read it again: True when the box is empty now."""
+        """Clear the input box with C-u only while the pane, read again right now, shows the runner's own nudge text
+        in it and nothing more (factory_runner.leftover: a prefix of one of its lines; never the human's or the
+        agent's text, never a nudge's words with more after them) and the human typed nothing from the browser; then
+        read it again: True when the box is empty now. `screen`, the read that led here, must show it too. C-u that
+        leaves text (the cursor was moved) sends nothing more."""
         if human_typed(name) or factory_runner.leftover(screen) is None:
+            return False
+        if factory_runner.leftover(self.capture(name)) is None or human_typed(name):
             return False
         _tmux(["send-keys", "-t", f"={name}:", "C-u"])
         _sleep(TYPE_POLL_SECONDS)
@@ -185,22 +200,28 @@ class TmuxLauncher:
     def type(self, name: str, text: str):
         """Type one of the runner's built-in nudges into the pane: only onto an empty input box (a nudge an earlier
         attempt left there is cleared first), then read the pane again a few times over about a second (tmux redraws
-        asynchronously) and press Enter only when the text sits in the input box itself and nothing Enter would
-        answer instead is on screen (typed_ok; only the box and the busy markers count, not the status bar). True
+        asynchronously) and press Enter only when the input box holds exactly the typed text, nothing more, and
+        nothing Enter would answer instead is on screen (typed_ok, on the screen read right before Enter; only the box
+        and the busy markers count, not the status bar), and the human typed nothing from the browser meanwhile. True
         when Enter was pressed; "cleaned" when it did not land as it should and the box held only the runner's text,
-        which was cleared again (C-u), so nothing is left behind; False otherwise. Never Enter on anything else, and
-        nothing else is ever typed."""
+        which was cleared again (C-u), so nothing is left behind; "narrow" when the pane is narrower than
+        factory_runner.MIN_COLUMNS (nothing is typed: its box wraps too much to be read back safely); False otherwise.
+        Never Enter on anything else, and nothing else is ever typed."""
         if not factory_runner.nudge_ok(text):
             raise UsageError("the runner types only its built-in nudges")
+        width = self._width(name)
+        if width is None or width < factory_runner.MIN_COLUMNS:
+            return "narrow"
         screen = self.capture(name)
         line = factory_runner.input_line(screen)
+        if line is None:
+            return False
         if line and not self._clear_own(name, screen):
             return False  # someone else's text, or our leftover that would not clear: touch nothing more
-        if line is None:
+        if human_typed(name):
             return False
         if _tmux(["send-keys", "-t", f"={name}:", "-l", "--", text]).returncode != 0:
             raise UsageError(f"could not type into {name}")
-        screen = None
         for _ in range(TYPE_POLLS):
             _sleep(TYPE_POLL_SECONDS)
             if human_typed(name):
@@ -216,7 +237,9 @@ class TmuxLauncher:
         # argv already starts with `env -i ...`: the session's shell command holds nothing of the server's environment.
         # remain-on-exit is set (server-wide, in the same tmux call, before the session exists) so a session that ends
         # right away leaves its last screen and exit status for reap().
+        # default-shell /bin/sh: the session's command never runs through the user's login shell and its rc files
         r = _tmux(["start-server", ";", "set-option", "-g", "-w", "remain-on-exit", "on", ";",
+                   "set-option", "-g", "default-shell", "/bin/sh", ";",
                    "new-session", "-d", "-s", name, "-c", launch.tmux_arg(cwd), "-x", "160", "-y", "45",
                    launch.tmux_arg(shlex.join(argv))])
         if r.returncode != 0:

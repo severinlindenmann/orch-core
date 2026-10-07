@@ -190,8 +190,12 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
-           "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished")}
-NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled")
+           "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished"),
+           "asks": ("you", 0, "Question in its pane"), "hung": ("warn", 0, "Busy, screen unchanged"),
+           "parked": ("you", 0, "Session ended"), "launches": ("warn", 0, "Launches used up"),
+           "children": ("warn", 0, "Children limit")}
+NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children")
+BUSY_MINUTES = 20  # a session busy this long with an unchanged screen (its spinner aside) gets a warning
 
 
 def span(seconds) -> str:
@@ -280,7 +284,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     look_dark = dark and permits.dark_on(ws)  # a Dark charter with the switch off runs (and looks) as an AI Factory
     name = "Dark AI Factory" if look_dark else "AI Factory"
     running = [b for b in bound if b["delegation"] == d["id"] and str(b["epic"]).upper() == eid]
-    early = None
+    early, asks, hung = None, [], []
     planner_on = any(factory_sessions.is_planner(b) for b in running)
     clones = _clone_failures(ws, kids)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
@@ -300,6 +304,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "changed", "The epic's text changed since you started it"
     elif trusting := [b for b in running if factory_sessions.at_trust_question(b["session"])]:
         state, headline = "trust", "; ".join(factory_runner.trust_line(b) for b in trusting)
+    elif asks := _showing(running, "ask", factory_runner.IDLE_SECONDS):
+        state, headline = "asks", "; ".join(f"{a['child']} waits at a question in its pane" for a in asks)
     elif any(s["state"] == "running" for s in rel_stages):
         state, headline = "releasing", "The runner is releasing the work with your recipe"
     elif held and not mine["requests"] and not mine["budget"]:
@@ -313,11 +319,15 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     elif stalled := _stalled(running, kids):
         state, headline = "stalled", "; ".join(f"{s['child']} is idle and still {s['status']}: its agent stopped "
                                                "without finishing" for s in stalled)
+    elif hung := _showing(running, "busy", BUSY_MINUTES * 60):
+        state, headline = "hung", "; ".join(f"{h['child']} has been busy for over {BUSY_MINUTES} minutes with an "
+                                            "unchanged screen" for h in hung)
     elif not factory_sessions.armed(ws, d["id"]):
         state, headline = "unarmed", ("The dashboard's start did not arm it (for example, it was approved in a "
                                       "terminal)")
-    elif blocker or any(c["level"] == "block" for c in checks or []):
+    elif blocker or any(c["level"] == "block" for c in checks or []) or factory_runner.release_commit_blocker(ws, d):
         state, headline = "blocked", "The runner starts nothing"
+        blocker = blocker or factory_runner.release_commit_blocker(ws, d)
     elif running and _all_idle(running):
         state, headline = "asleep", "Sessions are waiting at their prompt: nothing is running"
     elif any(not factory_sessions.is_planner(b) for b in running):
@@ -330,8 +340,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "noclone", "The runner could not make a child's clone of the repository"
     elif not kids:
         state, headline = "nokids", "Waiting for children"
-    elif any(factory_runner._launchable(ws, epic, d, t, signed) for _, t in kids):
-        state, headline = "slot", "Waiting for a session slot"
+    elif held := _held(ws, epic, d, kids, signed, bound):
+        state, headline = held
     else:
         state, headline = "idle", "No child can start now"
     role, rank, chip = _STATES[state]
@@ -343,7 +353,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
                    and _at(e.at)), default=end)
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
-    here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
+    here = {"asks": "wait", "parked": "wait", "hung": "now", "working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
             "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
@@ -357,7 +367,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         planner = ("spent" if used >= factory_sessions.PLANNER_LAUNCHES else "parked" if used else "next")
     return {"epic": epic.id, "title": epic.title, "dark": dark, "look_dark": look_dark, "name": name,
             "early": early[0] if state == "early" else None, "nudged": factory_sessions.nudges(d["id"]),
-            "clones": clones, "stalled": stalled if state == "stalled" else [],
+            "clones": clones, "stalled": stalled if state == "stalled" else [], "asks": asks if state == "asks" else [],
+            "hung": hung if state == "hung" else [], "max_launches": factory_sessions.MAX_LAUNCHES,
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
@@ -366,6 +377,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],
+            "checked": span(min(c.get("age", 0.0) for c in checks)) if checks else None,
             "cap": factory_runner.concurrency(ws),
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
 
@@ -441,6 +453,50 @@ def _stalled(running, kids) -> list[dict]:
             out.append({"child": b["child"], "status": status[b["child"]], "name": b["name"],
                         "nudges": rec["count"], "spent": rec["count"] >= factory_runner.MAX_NUDGES})
     return out
+
+
+def _showing(running, what: str, seconds: float) -> list[dict]:
+    """The sessions whose pane the runner last read as `what` (factory_runner.reading: "ask", "busy") with the screen
+    unchanged for at least `seconds`: [{child, name}] ("Planner" for a planner); unknown is never counted."""
+    from orch.core import factory_sessions
+    out = []
+    for b in running:
+        try:
+            since = factory_sessions.shows_since(b["session"], what)
+            if since is None or (clock.now() - since).total_seconds() < seconds:
+                continue
+        except Exception:
+            continue
+        out.append({"child": "Planner" if factory_sessions.is_planner(b) else b["child"], "name": b["name"]})
+    return out
+
+
+def _held(ws, epic, d, kids, signed, bound) -> tuple[str, str] | None:
+    """(state, headline) for a run whose sessions are not running although a child could start: the runner's own rule
+    (factory_runner.held_back) for each launchable child with no session, then the slots. None when no child can."""
+    from orch.core import factory_runner, factory_sessions
+    try:
+        gone, marks = factory_sessions.ended(ws), factory_runner.dark_marks(ws, signed)
+        why = {t.id: factory_runner.held_back(ws, epic, d, t, signed, gone, marks) for _, t in kids
+               if not any(b["child"] == t.id for b in bound) and factory_runner._launchable(ws, epic, d, t, signed)}
+    except Exception:
+        return None
+    if not why:
+        return None
+    if any(w is None for w in why.values()):
+        if len(bound) >= factory_runner.concurrency(ws):
+            return "slot", "Waiting for a session slot"
+        return "slot", "A child's session starts in the runner's next round"
+    by = {code: [k for k, w in why.items() if w == code] for code in factory_runner.HELD}
+    if by["parked"]:
+        return "parked", (f"{', '.join(by['parked'])}: its session ended and nothing it waits for changed since"
+                          if len(by["parked"]) == 1 else
+                          f"{', '.join(by['parked'])}: their sessions ended and nothing they wait for changed since")
+    if by["launches"]:
+        return "launches", (f"{', '.join(by['launches'])} was started {factory_sessions.MAX_LAUNCHES} times, the most "
+                            "one child is started under a charter")
+    return "children", (f"The charter's limit of {d['max_children']} children is reached: "
+                        f"{', '.join(by['children'])} cannot start")
 
 
 def _all_idle(running) -> bool:

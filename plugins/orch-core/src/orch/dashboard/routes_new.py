@@ -186,8 +186,7 @@ def create(
     factory = mode in ("factory", "dark")
     values = {"title": title, "type": "epic" if factory else type_, "size": size, "priority": priority,
               "external": external, "ask": ask, "mode": mode, "done_when": done_when or DONE_WHEN, "release": release}
-    release = release if mode == "dark" else ""  # the field shows only in Dark mode; another mode signs no release
-    # a rollback or a close posted outside Dark mode is refused, never silently dropped (_mode_problem)
+    # a release, a rollback or a close posted outside Dark mode is refused, never silently dropped (_mode_problem)
     roll = rollback in ("1", "on", "true")
     shut = close in ("1", "on", "true")  # the auto-close: shown only in Dark mode
     problem = _mode_problem(ws, mode, title, ask, done_when, confirm_dark, release, roll, confirm_production, shut)

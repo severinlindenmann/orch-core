@@ -157,9 +157,18 @@ def test_send_refuses_anything_else(fake, seq):
 def test_tmux_launcher_runs_detached_on_orchs_socket():
     from orch.dashboard.launch import argv_for
     a = argv_for("tmux", cwd="/w", command_argv=["claude", "x y"], name="DEMO-1", script_path=None, custom=[])
-    assert a[:7] == ["tmux", "-L", "orch", "new-session", "-d", "-s", "DEMO-1"]
+    assert a[:9] == ["tmux", "-L", "orch", "-f", "/dev/null", "new-session", "-d", "-s", "DEMO-1"]
     # inside the session a plain `tmux` must not reach orch's server: the agent runs without $TMUX
     assert a[-1] == "env -u TMUX -u TMUX_PANE claude 'x y'"
+
+
+def test_orchs_tmux_server_never_reads_a_tmux_config(monkeypatch):
+    """~/.tmux.conf is a file agents can write: the server orch talks to is never started with it."""
+    from orch.dashboard import terminals as t
+    seen = []
+    monkeypatch.setattr(t.subprocess, "run", lambda argv, **k: seen.append(argv))
+    t.tmux(["list-sessions"])
+    assert seen[0][:5] == ["tmux", "-L", t.SOCKET, "-f", "/dev/null"]
 
 
 def test_a_trailing_semicolon_survives_tmuxs_parser(fake):

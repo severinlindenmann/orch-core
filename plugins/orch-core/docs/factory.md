@@ -247,15 +247,29 @@ and only when the input box's border is right above it: a prompt echoed in the t
 interrupt"), a permission, trust or other menu ("Do you want", "1.", "(y/n)"), and the screen stayed exactly the same
 for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. It reads the pane once more right
 before typing and types nothing unless the input line is still empty; after typing it reads the pane up to five times
-over about a second (tmux redraws asynchronously) and presses Enter only when the line sits on the input line itself
-and no menu, permission or trust prompt or running command is on screen (Enter would answer that instead); otherwise
-it clears the input line (Ctrl-U), presses nothing more, and counts the attempt.
+over about a second (tmux redraws asynchronously) and presses Enter only when the input box holds exactly the typed
+line, nothing more or less (compared with all whitespace removed, so a box that wraps inside a word reads the same),
+no menu, permission or trust prompt or running command is on screen (Enter would answer that instead), and you typed
+nothing into it from the browser meanwhile (checked again right before Enter and right before Ctrl-U); otherwise it
+clears the input line (Ctrl-U), presses nothing more, and counts the attempt. Ctrl-U is sent only while the box,
+read again right then, holds a prefix of one of the runner's own lines and nothing more: a box with the start of a
+nudge and your words after it is yours (no Ctrl-U, no keys; the runner logs "left alone: the input box holds text
+that is not the runner's"), and when Ctrl-U leaves text behind (the cursor was moved) nothing more is sent. The input
+box is the last bordered box on screen (a box printed in the transcript above it, or any border line below it, means
+nothing is read), only in prompt mode (`>`: a box in bash `!` or memory `#` mode, or vim's NORMAL mode, is never typed
+into), and a pane narrower than 60 columns is never typed into (the runner logs it and tries again after the gap).
 
 The same readings tell the run view whether anything runs: when every live session of a run has shown the empty
 prompt, unchanged, for 3 minutes and no card is open, the run view says "Sessions are waiting at their prompt: nothing
 is running" (chip "Idle at prompt") instead of "Sessions are running on its children" (in the live run's second round
 all three sessions sat idle for minutes under "Working"). A session the runner has no reading of (no record, a damaged
-one, a pane it cannot read) counts as working: the view never claims more than it read. Anything else, or a record or pane
+one, a pane it cannot read) counts as working: the view never claims more than it read. "Unchanged" means the screen
+down to the input box's bottom border, without the spinner's line: Claude's footer, a status line or a clock under the
+box never keeps a session from counting as idle (3 minutes) or stopped (10 minutes). A session whose pane shows no
+input box at the bottom (a permission prompt, a menu, an AskUserQuestion list, anything else) unchanged for 45 seconds
+needs you: "<child> waits at a question in its pane", with its last 3 lines (escaped, only to a browser on this
+machine) and what you can do (type into it on Terminals, or Stop). One busy ("esc to interrupt") for over 20 minutes
+with an unchanged screen gets a warning: "<child> has been busy for over 20 minutes with an unchanged screen". Anything else, or a record or pane
 it cannot read, types nothing. The run view says how often it nudged. What it cannot tell: a session that waits at a
 prompt Claude Code draws differently from these markers (a future version) is never nudged, and an idle session that
 was not waiting for that answer still gets the line (it is idle anyway). The runner keeps a small record per session
@@ -265,7 +279,8 @@ was not waiting for that answer still gets the line (it is idle anyway). The run
 (`remain-on-exit`), so the runner reads its exit status and last screen, then ends it. A session that ended within 90
 seconds of its start is recorded (`permits/early-ends/`: the exit status and the last 15 non-empty lines, each cut to
 200 characters, everything outside printable ASCII escaped; one record per child, the latest), and the run view says
-"A session ended right after it started" with those lines, instead of "Waiting for children", until that child (or the
+"A session ended right after it started" with those lines (only to a browser on this machine, like every screen's
+lines on the run view, the readiness checks' output included), instead of "Waiting for children", until that child (or the
 planner) is started again. Such a session is parked like any that ended: fix the cause, then answer a card in the epic,
 change the Dark profile, or approve the epic again.
 
@@ -330,7 +345,10 @@ Only such a session is told to commit, on that branch: `git add FILES` and a `gi
 format, rendered at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when
 `commit.rollback` is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why:
 ..." -m "Risk: ..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config
-whose subject or labels are not plain words gets no commit instruction. A session in its clone is told that its folder
+whose subject or labels are not plain words, or a workspace whose `git.agent_may.commit` is false (the default:
+the guard refuses agents' commits), gets no commit instruction; and since a release takes the children's commits, the
+runner starts nothing for a charter that signs a release while `git.agent_may.commit` is false (the run view says so
+and how to fix it: set it to true, or approve the epic again without a release). A session in its clone is told that its folder
 is a separate clone made for the child, to commit there in that format, never to push, that its tickets live in the
 workspace (orch commands work on them as usual), and to write the files it hands orch under the workspace's
 `orchestrator/temporary`, named by its absolute path (orch reads a bound session's files only inside the workspace).
@@ -435,7 +453,8 @@ these checks under the sessions' exact environment (`env -i`, the session PATH, 
 the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
 fails it starts nothing. A result is kept for at most 60 seconds, and only while the programs it probed and the hook
 commands it ran are still the ones the runner would use (checked again, without running anything, right before a
-launch); all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
+launch: a change since then starts nothing until the next round's checks); the run view says when the checks ran
+("checked ... ago") and shows no result older than 60 seconds as the current one; all the programs of one run share a budget of 20 seconds (a program still running then is killed and counts
 as failed), and at most 64 KB of each one's output is kept. An error inside the checks is a blocking failure with its
 reason, never a silent pass. The hook programs run with the words Claude Code would run them with, but never through a
 shell, in an empty folder of the runner's own, and a plugin's hook with `CLAUDE_PLUGIN_DATA` pointing at the runner's
@@ -508,7 +527,9 @@ the one the runner recorded, so a copied id gets no factory treatment (and the b
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
 private folder), not on the Terminals' socket; Mission Control's Terminals page shows them in a group of their own
-("Watching the sessions", below). The
+("Watching the sessions", below). Every tmux call of the runner, and of orch's own Terminals server, passes
+`-f /dev/null`: no tmux server orch starts reads `~/.tmux.conf`, a file agents can write, and the runner's server runs
+the session's command through `/bin/sh` (`default-shell`), never your login shell. The
 programs it starts (`tmux`, `env`, `claude`) are looked up on the dashboard's absolute PATH entries and used by absolute
 path only when trusted: the file owned by you or root and not writable by group or others, its folder owned by you
 or root and not writable by everyone (Homebrew's group-writable `/opt/homebrew/bin` is fine; `/tmp` is not). That keeps
@@ -667,7 +688,12 @@ never start.
 used or copied (the test suite plants a hooks path, fsmonitor, filters, a textconv, aliases, an include, an ssh
 command and `uploadpack.packObjectsHook` in the workspace, all of which leave a marker if run, and checks that none
 runs and none reaches the clone). The tree that is checked out is agent-written: a `.gitattributes` names filters and
-drivers that are not configured, so none runs; `.gitmodules` is never read (no submodules); symlinks are checked out
+drivers that are not configured, so none runs; and every git call orch makes in a clone reads no attributes at all
+(`GIT_ATTR_SOURCE` set to the empty tree, which needs git 2.40 or later: an older git is refused), with every protocol
+but local paths off, because it reaches the clone by path after the descriptor checks and a folder swapped in between
+could carry a config of its own (git cannot use the pinned descriptor itself: macOS's `/dev/fd` does not open a
+directory for it). The cost: a clone's checkout applies no `.gitattributes`, such as end-of-line conversion. Removing
+a clone checks on the open descriptor that its tombstone is still the pinned folder; `.gitmodules` is never read (no submodules); symlinks are checked out
 as symlinks (the guard judges file tool paths after links, as in the workspace). Git LFS pointers stay pointers: the
 user's LFS filter is in the git config the runner does not use. Whether the file system ignores case is probed in a
 temporary folder of the runner's own, never in the clone. When the release fetches from the clone, `upload-pack` runs
@@ -1024,8 +1050,11 @@ refusal of a process under an agent harness, as for every approval).
   Ready report: every criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state,
   said once as a chip (a word or two) and a headline (the reason, never the chip again): working (a session runs on
   a child), planning (the planner runs; Understand still needs a child), waiting for a session slot (a child can start
-  but no session runs on one yet: the runner's next round, or every slot of `factory.max_concurrency`, at most 3, is
-  taken), needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
+  but no session runs on one yet: every slot of `factory.max_concurrency`, at most 3, is taken, or else "A child's
+  session starts in the runner's next round"). A child that cannot start says why, by the same rule the runner uses:
+  its session ended and nothing it waits for changed since (needs you: answer a card, change its text or the Dark
+  profile), its 5 launches under this charter are used up, or the charter's children limit is reached; a blocking
+  readiness check or a clone that could not be made says so itself. Then needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
   armed) or finished. Motion only while it works (working or planning); a Dark run's working chip is mint, an AI
   Factory's blue. The Dark core glows stronger only with real build evidence: a task a child closed (a running session
   is not evidence). Then the time: "Running for ... since you signed the start" while it works (there is no estimate),
@@ -1462,7 +1491,8 @@ Nothing (the default), Merge, Dev or Production. Each is disabled, with a line n
 (Production: merge, dev and production). Production shows a checkbox "Roll back production by itself if its check
 fails" (disabled while the recipe's production stage has no rollback) and a field for the word production, which the
 server requires in addition to dark. The server checks all of it again before anything is created or signed, and the
-confirm says what will run. For a charter that signs a release, the run view's ring gets Merge (and Dev, and
+confirm says what will run. A release choice posted with an AI Factory (not Dark) start, from either page, is refused
+("Only a Dark AI Factory signs a release: nothing was created", or "... nothing was signed"), never silently dropped. For a charter that signs a release, the run view's ring gets Merge (and Dev, and
 Production, whose step is lit by its live check) after Evidence, lit only from proven stage records (a failed, unknown,
 out-of-date or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage and unit
 as waiting, running, proven, failed, outcome unknown or out of date, the rollback's state, the escaped output tails

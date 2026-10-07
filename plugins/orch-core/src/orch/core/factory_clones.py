@@ -181,11 +181,14 @@ def _read_at(dfd: int, name: str, limit: int = 1 << 16) -> bytes | None:
         os.close(fd)
 
 
-def _rmtree_fd(dfd: int, name: str, dev: int) -> None:
+def _rmtree_fd(dfd: int, name: str, dev: int, inode: str | None = None) -> None:
     """Remove folder `name` of folder `dfd` and everything in it, by descriptor: links are unlinked, never followed,
-    and a folder on another device (a mount point inside) stops the removal with an error."""
+    and a folder on another device (a mount point inside) stops the removal with an error. `inode`: the folder opened
+    must be exactly that one (checked on the open descriptor, so a swap after an earlier check removes nothing)."""
     fd = os.open(name, _DIR_FLAGS, dir_fd=dfd)
     try:
+        if inode is not None and _ino(os.fstat(fd)) != inode:
+            raise OSError(f"{name} is not the pinned folder any more: nothing was removed")
         if os.fstat(fd).st_dev != dev:
             raise OSError(f"{name} is a mount point inside the clone: nothing below it is removed")
         with os.scandir(fd) as it:
@@ -241,7 +244,7 @@ def _remove(ws, child: str, inode: str) -> None:
             os.rename(tomb, "repo", src_dir_fd=pfd, dst_dir_fd=pfd)
             raise CloneError(f"the clone of {child} was swapped while it was removed: nothing was removed")
         try:
-            _rmtree_fd(pfd, tomb, st.st_dev)
+            _rmtree_fd(pfd, tomb, st.st_dev, inode)
         except OSError as e:
             raise CloneError(f"the clone of {child} was only partly removed ({e}); what is left is in {tomb} next "
                              "to it: remove it by hand") from None
@@ -466,8 +469,36 @@ def _git(git: str, ws, *args: str, cwd: str, timeout: float) -> dict:
     # filter), print a submodule summary, or trust an untracked cache the agent could have written
     flags = [*fr._git_flags({}), "-c", "core.protectHFS=true", "-c", "core.protectNTFS=true",
              "-c", "submodule.recurse=false", "-c", "status.submoduleSummary=false", "-c", "core.untrackedCache=false",
-             "-c", "diff.ignoreSubmodules=all", "-c", "fetch.recurseSubmodules=false"]
-    return fr.run_command([git, *flags, *args], cwd, fr._git_env(ws, git), max(1, int(timeout)))
+             "-c", "diff.ignoreSubmodules=all", "-c", "fetch.recurseSubmodules=false",
+             "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"]
+    # git goes to the clone by path, after the descriptor checks: a folder swapped in between could carry a config
+    # naming filter or diff drivers. git cannot open a directory through /dev/fd on macOS (tried: "not a git
+    # repository"), so instead no attributes are read from the work tree or index at all (GIT_ATTR_SOURCE: the empty
+    # tree; git 2.40 and later), so no driver is ever named, and the -c flags above switch off hooks, fsmonitor and
+    # every protocol but local paths. Cost: a checkout applies no .gitattributes (no eol conversion) in a clone.
+    if not _attr_source_ok(git):
+        return {"code": None, "out": "", "out_size": 0, "timed_out": False,
+                "err": f"{git} is older than git 2.40, which cannot keep a clone's attributes from naming a filter"}
+    env = {**fr._git_env(ws, git), "GIT_ATTR_SOURCE": EMPTY_TREE}
+    return fr.run_command([git, *flags, *args], cwd, env, max(1, int(timeout)))
+
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree (sha1 repositories)
+_ATTR_OK: dict[str, bool] = {}
+
+
+def _attr_source_ok(git: str) -> bool:
+    """Whether `git` is 2.40 or later (it honours GIT_ATTR_SOURCE); asked once per program, any doubt is a no."""
+    if git not in _ATTR_OK:
+        import subprocess
+        try:
+            out = subprocess.run([git, "--version"], capture_output=True, text=True, timeout=10,
+                                 stdin=subprocess.DEVNULL, env={"PATH": "/usr/bin:/bin"}).stdout
+            m = re.search(r"(\d+)\.(\d+)", out)
+            _ATTR_OK[git] = bool(m) and (int(m.group(1)), int(m.group(2))) >= (2, 40)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return _ATTR_OK[git]
 
 
 def _failed(r: dict, what: str, budget: float) -> str | None:

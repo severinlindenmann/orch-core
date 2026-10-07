@@ -338,7 +338,9 @@ def test_an_agent_cannot_make_or_remove_a_clone(fws, run, agent):
 
 def test_the_clone_prompt_names_the_same_orch_commands_as_the_worktree_prompt(fws):
     import re
+    fws.config["git"]["agent_may"]["commit"] = True
     form = factory_runner.commit_form(fws, "L-0002")
+    assert form
     clone = factory_runner.factory_work_prompt("L-0002", form, clone_tmp="/abs/ws/orchestrator/temporary")
     tree = factory_runner.factory_work_prompt("L-0002", form)
     assert set(re.findall(r"`([^`]+)`", clone)) == set(re.findall(r"`([^`]+)`", tree))
@@ -695,3 +697,50 @@ def test_a_chained_git_add_and_commit_is_denied_with_how_to_run_them(fws, run, c
     guard, hook = _both(fws, b, cmd, clone)
     msg = (hook or {}).get("hookSpecificOutput", {}).get("decision", {}).get("message", "")
     assert _behavior(hook) == "deny" and "run git add and git commit as two separate commands" in msg, msg
+
+
+def _evil_repo(path, marker):
+    """A repository an agent could swap in for a clone's folder: its own config names a filter driver that leaves
+    `marker`, and its .gitattributes puts every file through it."""
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    (path / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+    (path / "a.txt").write_text("one\n", encoding="utf-8")
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(path), "GIT_CONFIG_NOSYSTEM": "1"}
+    for args in (["add", "-A"], ["-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "i"]):
+        subprocess.run(["git", "-C", str(path), *args], check=True, env=env)
+    for k, v in (("filter.evil.clean", f"touch {marker}; cat"), ("filter.evil.smudge", f"touch {marker}; cat"),
+                 ("filter.evil.required", "true")):
+        subprocess.run(["git", "-C", str(path), "config", k, v], check=True)
+    (path / "a.txt").write_text("two\n", encoding="utf-8")  # dirty: status and checkout read it through the filter
+
+
+def test_a_folder_swapped_in_before_git_starts_runs_no_filter_of_its_own(fws, tmp_path):
+    """git reaches a clone by path after the descriptor checks: a repository swapped in at that moment, with a planted
+    filter driver and .gitattributes, must run nothing (the second review)."""
+    git = shutil.which("git")
+    evil, marker = tmp_path / "swapped", tmp_path / "MARKER"
+    _evil_repo(evil, marker)
+    # the same calls without the attribute source do run the planted driver: the test can see it
+    plain = fr.run_command([git, *fr._git_flags({}), "-C", str(evil), "status", "--porcelain"], str(evil),
+                           fr._git_env(fws, git), 30)
+    assert plain["code"] == 0 and marker.exists()
+    marker.unlink()
+    for args in (["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"],
+                 ["checkout", "--", "a.txt"], ["diff"], ["ls-files", "-s", "-z"]):
+        r = fc._git(git, fws, "-C", str(evil), *args, cwd=str(evil), timeout=30)
+        assert r["code"] == 0, r
+        assert not marker.exists(), args
+
+
+def test_a_tombstone_swapped_after_its_check_is_not_removed(tmp_path):
+    keep = tmp_path / "other"
+    keep.mkdir()
+    (keep / "precious").write_text("x", encoding="utf-8")
+    pinned = fc._ino(os.stat(tmp_path))  # some other folder's inode: what the runner pinned
+    pfd = os.open(tmp_path, os.O_RDONLY)
+    try:
+        with pytest.raises(OSError, match="not the pinned folder"):
+            fc._rmtree_fd(pfd, "other", os.stat(keep).st_dev, pinned)
+    finally:
+        os.close(pfd)
+    assert (keep / "precious").exists()

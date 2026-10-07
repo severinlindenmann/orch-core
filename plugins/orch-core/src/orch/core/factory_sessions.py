@@ -373,9 +373,15 @@ def at_trust_question(session: str) -> bool:
 def idle_since(session: str):
     """Since when the runner last saw this session's pane idle at its prompt and unchanged (a datetime), or None: not
     idle, not watched, or a record that does not read back (unknown is never idle)."""
+    return shows_since(session, "1")
+
+
+def shows_since(session: str, what: str):
+    """Since when the runner last saw this session's pane showing `what` (its reading: "1", "ask", "busy", ...) with
+    the screen unchanged (a datetime), or None (something else, not watched, or a record that does not read back)."""
     from orch import clock
     b = nudge_record(session)
-    if b is None or b["idle"] != "1" or not b["pane_at"]:
+    if b is None or b["idle"] != what or not b["pane_at"]:
         return None
     try:
         return clock.parse_stamp(b["pane_at"])

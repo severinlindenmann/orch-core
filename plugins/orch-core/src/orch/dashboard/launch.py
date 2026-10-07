@@ -303,7 +303,8 @@ def argv_for(terminal: str, *, cwd: str, command_argv: list[str], name: str, scr
     if terminal == "tmux":  # orch's own server, detached: shown in Mission Control's Terminals (issue #40)
         # `env -u TMUX`: inside the session, a plain `tmux` must not reach orch's server (and the other sessions)
         command = shlex.join(["env", "-u", "TMUX", "-u", "TMUX_PANE", *command_argv])
-        return ["tmux", "-L", "orch", "new-session", "-d", "-s", name, "-c", tmux_arg(cwd), "-x", "160", "-y", "45",
+        # `-f /dev/null`: the server never reads ~/.tmux.conf, which agents can write
+        return ["tmux", "-L", "orch", "-f", "/dev/null", "new-session", "-d", "-s", name, "-c", tmux_arg(cwd), "-x", "160", "-y", "45",
                 tmux_arg(command)]
     if terminal == "custom":
         script = script_path or ""

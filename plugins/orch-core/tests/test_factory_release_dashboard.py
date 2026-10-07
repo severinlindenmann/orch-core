@@ -127,7 +127,7 @@ def test_new_ticket_signs_the_release_only_with_a_recipe(fws, human, recipe):
     r = _new(c, release="dev")
     assert r.status_code == 422 and "No release can be signed" in r.text and len(list(store.scan(fws))) == n
     r = _new(c, mode="factory", release="merge")
-    assert r.status_code == 303 or "err=" not in _loc(r)
+    assert r.status_code == 422 and "Only a Dark AI Factory signs a release" in r.text
     fr.set_recipe(fws, human, recipe)
     r = _new(c, release="dev")
     eid = _loc(r).split("/factory/")[1].split("?")[0]
@@ -137,9 +137,26 @@ def test_new_ticket_signs_the_release_only_with_a_recipe(fws, human, recipe):
 def test_a_plain_factory_start_from_new_ticket_signs_no_release(fws, human, recipe):
     fr.set_recipe(fws, human, recipe)
     c = _client(fws)
-    r = _new(c, mode="factory", release="dev")
+    n = len(list(store.scan(fws)))
+    r = _new(c, mode="factory", release="dev")  # posted in AI Factory mode: refused, never silently dropped
+    assert r.status_code == 422 and "Only a Dark AI Factory signs a release: nothing was created." in r.text
+    assert len(list(store.scan(fws))) == n
+    r = _new(c, mode="factory", release="none")
     eid = _loc(r).split("/factory/")[1].split("?")[0]
     assert "release" not in epics.delegation(fws, store.load(fws, eid)[1])
+
+
+def test_an_epic_page_ai_factory_start_refuses_a_posted_release(fws, fa, human, recipe):
+    fr.set_recipe(fws, human, recipe)
+    e = fa.new("Epic", type="epic")
+    _refine(fa, e.id, plan=None)
+    c = _client(fws)
+    seen = epics.charter(fws, store.load(fws, e.id)[1])["content_hash"]
+    r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, start="factory", release="dev")
+    assert "only+a+Dark+AI+Factory+signs+a+release" in _loc(r).replace("%20", "+")
+    assert epics.delegation(fws, store.load(fws, e.id)[1]) is None
+    r = _post(c, f"/t/{e.id}/approve", gate="requirements", seen=seen, start="factory", release="none")
+    assert "err=" not in _loc(r) and "release" not in epics.delegation(fws, store.load(fws, e.id)[1])
 
 
 def test_epic_page_dark_start_signs_the_release_choice(fws, fa, human, recipe):

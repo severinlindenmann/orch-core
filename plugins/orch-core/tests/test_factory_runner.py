@@ -1455,3 +1455,63 @@ def test_the_new_guard_rules_deny_nothing_a_set_of_everyday_commands_gets_withou
         without = {c: _bash(ws, c).allow for c in cmds}
     differ = [c for c in cmds if with_rules[c] != without[c]]
     assert differ == []
+
+
+# -- the second review: a readiness result is shown with its age and never relied on when stale -----------------------
+
+def test_a_launch_rechecks_the_readiness_fingerprint_right_before_it_starts(fws, fa, fh, human, fake, monkeypatch):
+    def checked(ws, settings):  # the checks ran for the programs as they were then
+        factory_runner._READY[str(Path(ws.root).resolve())] = (__import__("time").monotonic(), [], "then")
+        return None
+    monkeypatch.setattr(factory_runner, "readiness_blocker", checked)
+    monkeypatch.setattr(factory_runner, "_fingerprint", lambda ws, settings, environ=None: "now")  # changed since
+    _started(fws, fa, fh)
+    lines = _tick(fws, human, fake)
+    assert not fake.started and fs.bindings(fws) == []
+    assert any("changed since the readiness checks ran" in x for x in lines)
+    monkeypatch.setattr(factory_runner, "_fingerprint", lambda ws, settings, environ=None: "then")
+    assert factory_runner.readiness_current(fws, launch.load_settings())
+
+
+def test_an_old_readiness_result_ages_out_of_the_views_and_shows_its_age(fws, fa, fh, human, fake):
+    import time
+    from orch.dashboard.data import factory as data
+    eid, kids, d = _started(fws, fa, fh)
+    key = str(Path(fws.root).resolve())
+    check = factory_runner._check("trust", False, "no trust recorded")
+    factory_runner._READY[key] = (time.monotonic() - 5, [check], None)
+    try:
+        (got,) = factory_runner.readiness_report(fws)
+        assert got["name"] == "trust" and 4 <= got["age"] < 60
+        r = data.run_view(fws, store.load(fws, eid)[1])
+        assert r["state"] == "blocked" and r["checked"] == "less than a minute"
+        from test_dark_dashboard import _client
+        assert "checked less than a minute ago" in _client(fws).get(f"/factory/{eid}").text
+        factory_runner._READY[key] = (time.monotonic() - factory_runner.READY_TTL - 1, [check], None)
+        assert factory_runner.readiness_report(fws) is None and factory_runner.runner_blocker(fws) is None
+        assert data.run_view(fws, store.load(fws, eid)[1])["state"] != "blocked"
+    finally:
+        factory_runner._READY.clear()
+
+
+def test_agent_may_commit_false_means_no_commit_prompt_and_no_release_run(fws, fa, fh, human, fake, monkeypatch):
+    """git.agent_may.commit is false by default and the guard then refuses agents' commits: the prompt never tells a
+    worker to commit, and a charter that signs a release (it takes the children's commits) starts nothing."""
+    from orch.dashboard.data import factory as data
+    assert factory_runner.commit_form(fws, "L-0002") is None
+    fws.config["git"]["agent_may"]["commit"] = True
+    assert factory_runner.commit_form(fws, "L-0002").startswith('git commit -m "L-0002')
+    fws.config["git"]["agent_may"]["commit"] = False
+    eid, kids, d = _started(fws, fa, fh)
+    assert factory_runner.release_commit_blocker(fws, d) is None  # no release signed: it runs (and does not commit)
+    signed = {**d, "release": "merge"}
+    why = factory_runner.release_commit_blocker(fws, signed)
+    assert "git.agent_may.commit is false" in why and "approve the epic again without a release" in why
+    real = permits.factory_delegation  # the charter as if it signed a release up to merge
+    monkeypatch.setattr(permits, "factory_delegation",
+                        lambda *a, **k: (lambda x: x and {**x, "release": "merge"})(real(*a, **k)))
+    lines = _tick(fws, human, fake)
+    assert not fake.started and any(f"not starting anything for {eid}: its charter signs a release" in x
+                                    for x in lines)
+    r = data.run_view(fws, store.load(fws, eid)[1])
+    assert r["state"] == "blocked" and "git.agent_may.commit is false" in r["blocker"]

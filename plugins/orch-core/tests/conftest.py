@@ -116,8 +116,19 @@ def configure(ws_root):
     def _configure(**over):
         from orch.core.workspace import Workspace
         (ws_root / "orchestrator" / "config.json").write_text(json.dumps(make_config(**over)), encoding="utf-8")
-        return Workspace.open(ws_root)
+        w = Workspace.open(ws_root)
+        if (over.get("factory") or {}).get("enabled") is True:
+            sign_factory(w)
+        return w
     return _configure
+
+
+def sign_factory(w, on=True):
+    """The human's signed `orch factory on` that the config's factory.enabled needs (orch.core.permits.enabled)."""
+    from orch.core import ledger
+    from orch.core.events import Actor
+    from orch.core.permits import FACTORY_SETTING
+    ledger.record_setting(w, FACTORY_SETTING, on, Actor("human", "you", "tty"), None)
 
 
 @pytest.fixture

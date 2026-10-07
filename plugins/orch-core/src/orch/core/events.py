@@ -29,6 +29,12 @@ EVENT_KINDS = frozenset({
 })
 
 
+def short_session(session) -> str | None:
+    """The only form of a harness session id orch stores or shows (tickets, events, views): its first 8 characters.
+    The full id stays in the harness; readers compare short forms, so records written before this keep matching."""
+    return str(session)[:8] if session else None
+
+
 @dataclass(frozen=True)
 class Actor:
     kind: str  # "human" | "agent"
@@ -54,7 +60,7 @@ class Actor:
     def to_str(self) -> str:
         if self.is_human:
             return "human:you"
-        return f"agent:{self.name}" + (f":{self.session[:8]}" if self.session else "")
+        return f"agent:{self.name}" + (f":{short_session(self.session)}" if self.session else "")
 
 
 @dataclass(frozen=True)

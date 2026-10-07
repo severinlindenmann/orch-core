@@ -23,7 +23,7 @@ CI uses Python 3.11 and Node 24, so avoid syntax that needs a newer Python. CI a
 
 - One topic per pull request, with tests for the behaviour you change.
 - Commit messages and PR descriptions are plain, imperative English.
-- Tests never touch the real `~/.config/orch`, real workspaces or `~/.claude`, and make no network calls; the test fixtures isolate the config directories.
+- Tests never touch the real `~/.config/orch`, real workspaces or `~/.claude`, and make no network calls; the test fixtures isolate the config directories. Patch with `with monkeypatch.context() as m:`, never `monkeypatch.undo()`, which also drops that isolation (`tests/test_suite_isolation.py` refuses it).
 - Never weaken the human-only rules: approvals, answers, verdicts and closes come from a human, signed into their ledger.
 
 ## Security

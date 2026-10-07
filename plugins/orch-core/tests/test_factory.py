@@ -362,6 +362,8 @@ def test_once_grant_is_used_up_for_every_checkout(fws, fa, fh, human, ws_root, t
     shutil.copytree(ws_root, copy)  # another checkout of the same workspace, before the grant is used
     assert _behavior(permits.hook_decision(fws, _payload("make e2e"))) == "allow"
     other = Workspace.open(copy)
+    from conftest import sign_factory
+    sign_factory(other)  # the copy's own factory switch (signed per checkout): the use still counts there
     assert _behavior(permits.hook_decision(other, _payload("make e2e"))) == "deny"
 
 

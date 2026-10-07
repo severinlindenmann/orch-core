@@ -68,7 +68,8 @@ def finished(ws, t, signed, events) -> str | None:
         return None
     moves = [e for e in events if e.ticket == t.id and e.kind == "ticket.moved"]
     claim = t.meta.get("claim") if isinstance(t.meta.get("claim"), dict) else {}
-    session = str(claim.get("session") or "")[:8]
+    from orch.core.events import short_session
+    session = short_session(claim.get("session")) or ""
     if not moves or moves[-1].data.get("to") != "testing" or not session:
         return None
     if not str(moves[-1].actor).startswith("agent:") or not str(moves[-1].actor).endswith(":" + session):

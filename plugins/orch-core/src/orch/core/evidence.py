@@ -134,6 +134,9 @@ def ticked_without_evidence(ticket, *, before=None) -> list[int]:
 #   backticks, a test name (`test_x`, `name.test.ts`, `pytest path::name`), a URL, a path or file with a known
 #   extension, or a number next to a unit (`12 passed`, `3 rows`, `40 ms`).
 # A ticket with no criteria has nothing strict evidence could prove: it is missing.
+# An artifact receipt is the strongest form: `- AC1: artifact <name>` (more text may follow) counts as concrete when
+# <name> is a file `orch artifact add` recorded for this very ticket, its recorded sha256 matches the bytes on disk and
+# the file is not empty; a line that claims an artifact that does not resolve so proves nothing, whatever else it says.
 # Doubt words are not looked for inside backticks or inside hyphenated identifiers (`grep -rn TODO src`, the
 # `unverified-verdict` finding). Limits, stated plainly: the list is fixed English, so other languages and other
 # phrasing pass; a doubt word in plain prose blocks even when the sentence means the opposite ("returns 403 when access
@@ -164,8 +167,40 @@ def _doubt(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def strict_why(text: str) -> str | None:
-    """Why an evidence text does not meet the strict rules, or None when it does."""
+_RECEIPT = re.compile(r"^artifact\s+`?([^\s`]+)`?", re.IGNORECASE)
+
+
+def receipt_why(ws, ticket, name: str) -> str | None:
+    """Why `artifact <name>` is not a receipt of `ticket`, or None when it is (see above)."""
+    from orch.core import artifacts
+    e = artifacts.find(ticket, name)
+    sha = e.get("sha256") if e else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+        return f"artifact {name} is not a file orch recorded for {ticket.id} (`orch artifact add`)"
+    p = artifacts.ticket_dir(ws, ticket.id) / name
+    try:
+        if p.is_symlink() or not p.is_file() or p.stat().st_size == 0:
+            return f"artifact {name} is missing or empty"
+    except OSError:
+        return f"artifact {name} cannot be read"
+    if artifacts.file_sha256(p) != sha:
+        return f"artifact {name} changed since orch recorded it"
+    return None
+
+
+def strict_why(text: str, ws=None, ticket=None) -> str | None:
+    """Why an evidence text does not meet the strict rules, or None when it does. A text that starts with
+    `artifact <name>` is judged as a receipt: it must resolve against `ticket` in `ws` (receipt_why), and is then
+    concrete; without them it proves nothing."""
+    r = _RECEIPT.match(text.strip())
+    if r:
+        if ws is None or ticket is None:
+            return "an artifact receipt can be checked only against its ticket"
+        why = receipt_why(ws, ticket, r.group(1))
+        if why:
+            return why
+        word = _doubt(text)
+        return f"it says {word!r}" if word else None
     if not substantial(text):
         return "it says too little"
     word = _doubt(text)
@@ -177,9 +212,9 @@ def strict_why(text: str) -> str | None:
     return None
 
 
-def strict_missing(ticket) -> list[tuple[int, str]]:
+def strict_missing(ticket, ws=None) -> list[tuple[int, str]]:
     """[(criterion number, why)] for every criterion of `ticket` without strict evidence; [] when each has it. A ticket
-    without criteria gives [(0, why)]."""
+    without criteria gives [(0, why)]. `ws` lets artifact receipts be checked (without it they prove nothing)."""
     total = len(_criteria_lines(ticket.section("Acceptance criteria")))
     if total == 0:
         return [(0, "the ticket has no acceptance criteria")]
@@ -200,7 +235,7 @@ def strict_missing(ticket) -> list[tuple[int, str]]:
         if not m or p is None or p.group(0) != m.group(0):
             continue  # no prefix, or a prefix citing more than one criterion
         n = int(m.group(1))
-        why = strict_why(line[m.end():] + ("\n" + rest if rest else ""))
+        why = strict_why(line[m.end():] + ("\n" + rest if rest else ""), ws, ticket)
         if why is None:
             ok.add(n)
         else:

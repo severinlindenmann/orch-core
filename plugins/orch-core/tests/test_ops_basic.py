@@ -42,7 +42,7 @@ def test_new_from_links_both(ws, aops):
 def test_claim_moves_open_to_in_progress(ws, aops, put):
     tid = put("open")
     t = aops.claim(tid)
-    assert t.status == "in-progress" and t.meta["claim"]["session"] == "7f3c9a21-0000"
+    assert t.status == "in-progress" and t.meta["claim"]["session"] == "7f3c9a21"  # the short form only
     assert t.meta["sessions"][0]["harness"] == "claude-code"
     assert store.resolve(ws, tid).status == "in-progress"
 
@@ -148,15 +148,15 @@ def test_artifact_add_failure_leaves_nothing(ws, aops, put, tmp_path, monkeypatc
     def boom(*a, **kw):
         raise OSError("disk full")
 
-    monkeypatch.setattr(ops_module.shutil, "copy2", boom)
-    with pytest.raises(OSError):
-        aops.artifact_add(tid, src, name="report.html")
+    with monkeypatch.context() as m:
+        m.setattr(ops_module.shutil, "copy2", boom)
+        with pytest.raises(OSError):
+            aops.artifact_add(tid, src, name="report.html")
     dest_dir = ws.artifacts_dir / tid
     dest = dest_dir / "report.html"
     assert not dest.exists()
     assert not dest_dir.exists() or list(dest_dir.iterdir()) == []
 
-    monkeypatch.undo()
     assert aops.artifact_add(tid, src, name="report.html") == dest
     assert dest.read_text(encoding="utf-8") == "<p>x</p>"
 

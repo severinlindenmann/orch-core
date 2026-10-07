@@ -135,6 +135,8 @@ def runner_blocker(ws, settings=None) -> str | None:
     """The runner's current reason to start nothing, or None: a program it needs (program_blocker), the user-scope
     settings (user_settings_blocker), or the last readiness run's first blocking check (never run here). One function
     for the runner round and every view, so nothing fails silently."""
+    if permits.config_enabled(ws) and not permits.enabled(ws):
+        return permits.UNSIGNED
     why = program_blocker(settings)
     if why:
         return why
@@ -198,7 +200,10 @@ def user_settings_blocker(environ=None) -> str | None:
     return None if has("PreToolUse", "guard") and has("PermissionRequest", "permit", "hook") else why
 
 
-EDIT_MODES = ("acceptEdits", "auto", "bypassPermissions")  # permission modes that let file edits through
+# Permission modes that let file edits through and still send every other prompt to orch's hook. bypassPermissions is
+# not one: under it no permission request reaches the hook at all (Read, Write, WebFetch, MCP, ...). auto is one only
+# outside Dark runs (hook_skip_why): its classifier allows actions without asking the hook.
+EDIT_MODES = ("acceptEdits", "auto")
 
 
 def _user_dir(environ) -> Path:
@@ -236,6 +241,9 @@ def edits_why(environ=None, command=None) -> str | None:
     data = _user_settings(environ)
     perms = data.get("permissions") if isinstance(data, dict) else None
     mode = perms.get("defaultMode") if isinstance(perms, dict) else None
+    if mode == "bypassPermissions":
+        return ("permissions.defaultMode is bypassPermissions, under which no permission request reaches orch's hook: "
+                "set it to acceptEdits")
     if mode not in EDIT_MODES:
         return "permissions.defaultMode in your user-scope Claude settings is not acceptEdits"
     if mode == "auto":
@@ -246,6 +254,35 @@ def edits_why(environ=None, command=None) -> str | None:
         if "haiku" in model.casefold():
             return (f"permissions.defaultMode is auto, which the model {permits.shown(model)} cannot use, so file "
                     "edits prompt: set it to acceptEdits")
+    return None
+
+
+def hook_skip_why(ws, data) -> str | None:
+    """Why the user-scope settings `data` (the only settings a runner session reads: the launch command keeps
+    --setting-sources user and --strict-mcp-config, so no project, local or MCP config is loaded) would let a session
+    act without orch's permission hook, or None: bypassPermissions or its skip flag; auto while Dark is on (the
+    classifier answers in the hook's place); an allow rule for shell commands (it never prompts); outward tools that do
+    not prompt (OUTWARD_TOOLS) missing from permissions.deny. Fails closed: settings that cannot be read are a reason."""
+    if not isinstance(data, dict):
+        return "your user-scope Claude settings cannot be read"
+    perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+    mode = perms.get("defaultMode")
+    if mode == "bypassPermissions" or data.get("skipDangerousModePermissionPrompt") is True:
+        return ("your user-scope settings allow bypassPermissions (defaultMode or skipDangerousModePermissionPrompt): "
+                "no permission request would reach orch's hook. Use acceptEdits")
+    if mode == "auto" and permits.dark_on(ws):
+        return ("permissions.defaultMode is auto, whose classifier allows actions without asking orch's hook, and Dark "
+                "is on: a Dark run needs acceptEdits")
+    allow = perms.get("allow")
+    bash = [str(r) for r in (allow if isinstance(allow, list) else []) if str(r).split("(", 1)[0].strip() == "Bash"]
+    if bash:
+        return (f"your user-scope settings allow shell commands without a prompt ({permits.shown(', '.join(bash[:5]))}"
+                "): those never reach orch's permission hook. Remove them from permissions.allow")
+    deny = perms.get("deny")
+    lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
+    if lacking:
+        return (f"your user-scope settings do not deny {', '.join(lacking)} (permissions.deny): tools that do not "
+                "prompt never reach orch's permission hook, so a session could use them unasked")
     return None
 
 
@@ -562,13 +599,8 @@ def readiness(ws, settings, environ=None) -> list[dict]:
                           + ". A child's session waits at the question until you accept it in its pane (the run view "
                             "says so; the runner never answers it), or run `orch factory clones trust` in your "
                             "terminal for what to add", level="warn"))
-    deny = ((data or {}).get("permissions") or {}).get("deny") if isinstance((data or {}).get("permissions"), dict) \
-        else None
-    lacking = [t for t in OUTWARD_TOOLS if not (isinstance(deny, list) and t in deny)]
-    out.append(_check("outward tools", not lacking,
-                      f"your user-scope settings do not deny {', '.join(lacking)} (permissions.deny): tools that do "
-                      "not prompt never reach orch's permission hook, so a session can use them unasked",
-                      level="warn"))
+    skip = hook_skip_why(ws, data)
+    out.append(_check("permission mode", skip is None, skip or ""))
     scratch.cleanup()
     return out
 

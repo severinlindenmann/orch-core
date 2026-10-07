@@ -46,8 +46,33 @@ _NONCE = re.compile(r"^[0-9a-f]{16}$")
 
 # -- the factory switch and factory epics ---------------------------------------------------------------------------
 
-def enabled(ws) -> bool:
+FACTORY_SETTING = "factory.enabled"
+UNSIGNED = ("factory.enabled is on in orchestrator/config.json but not signed, so AI Factory stays off: run "
+            "`orch factory on` in your own terminal")
+
+
+def config_enabled(ws) -> bool:
+    """What `orchestrator/config.json` asks for. An agent can edit that file: it never switches the factory on alone."""
     return bool((ws.config.get("factory") or {}).get("enabled"))
+
+
+def enabled(ws, checkout: str | None = None) -> bool:
+    """The factory switch: the config asks for it and this checkout's newest signed `factory.enabled` setting says on
+    (`orch factory on`, human only; anyone may sign it off). Fails closed: any error is off. A cut ledger leaves it
+    on so the views can say the ledger was cut; everything that adds power checks ledger.head_ok() itself."""
+    if not config_enabled(ws):
+        return False
+    from orch.core import ledger
+    try:
+        return ledger.signed_setting(ws, FACTORY_SETTING, checkout=checkout, cut_ok=True) is True  # cut: every use checks head_ok
+    except Exception:
+        return False
+
+
+def off_reason(ws) -> str:
+    """Why the factory is off, in one line: the config's switch is off, or it is on but not signed (the migration from
+    a plain config value)."""
+    return UNSIGNED if config_enabled(ws) else "AI Factory is switched off in this workspace"
 
 
 def enabled_at(start) -> bool:
@@ -71,7 +96,7 @@ DARK_SETTING = "factory.dark"
 
 
 def dark_on(ws, checkout: str | None = None) -> bool:
-    """Dark AI Factory (phase 5): `factory.enabled` is on and the newest signed Dark setting of this checkout (or of
+    """Dark AI Factory (phase 5): the factory is on (signed, `enabled`) and the newest signed Dark setting of this checkout (or of
     `checkout`, the id a session binding recorded) says on (`orch factory dark on`, human only; anyone may sign it
     off). Not a config value: an agent can edit the config."""
     if not enabled(ws):
@@ -227,10 +252,13 @@ def _sweep_targets(ws, words: list[str]) -> bool:
     return False
 
 
-def never_grantable(ws, command) -> str | None:
+def never_grantable(ws, command, cwd=None) -> str | None:
     """Why `command` can never be granted, or None. The guard's own denials come first (P4: a grant never overrides
     the guard); the rest is coarse on purpose and errs towards refusing. The patterns run over the text as written
-    and as the shell would split it (quotes and escapes resolved); text the shell cannot split is refused."""
+    and as the shell would split it (quotes and escapes resolved); text the shell cannot split is refused.
+    The guard pass judges the command from `cwd` (the hook passes the session's real folder), else from the workspace
+    root: a grant or a rule is stored for the text alone, so what depends on the folder (a relative path, `cd ..`) is
+    decided again by the live guard (PreToolUse) for every run, from the folder it really runs in."""
     if not isinstance(command, str) or not command.strip():
         return "not a command"
     if any(not (32 <= ord(c) < 127) for c in command):
@@ -240,7 +268,7 @@ def never_grantable(ws, command) -> str | None:
     except ValueError:
         return "the text cannot be split the way a shell would"
     from orch.hooks.guard import evaluate
-    decision = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ws.root)})
+    decision = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd or ws.root)})
     if not decision.allow:
         return f"the guard denies it ({decision.reason})"
     joined = " ".join(words)
@@ -554,7 +582,7 @@ def _session_ticket(ws, session: str | None):  # (ticket, the trusted binding) o
     if b is None:
         return None
     t = store.read_ticket(store.resolve(ws, b["child"]).path)
-    epic = factory_epic(ws, t)
+    epic = charter_epic(ws, t) if enabled(ws, b["checkout"]) else None  # the switch of the checkout it was bound in
     d = factory_delegation(ws, epic) if epic is not None else None
     if epic is None or epic.id != b["epic"] or d is None or d["id"] != b["delegation"]:
         return None
@@ -574,13 +602,27 @@ def _decision(behavior: str, message: str | None = None) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": d}}
 
 
+def deny_unreadable() -> dict:
+    return _decision("deny", "AI Factory is off for this session (switched off, not signed, or its binding or the "
+                             "workspace config cannot be read); nothing was allowed. Stop and ask the human.")
+
+
 def hook_decision(ws, payload: dict) -> dict | None:
     """The hook's answer to one PermissionRequest payload: None (no opinion: the harness asks as usual) outside a
     factory session or with the factory off; else `allow` from a live signed grant, or `deny` with the request to
-    wait for. Never `allow` on an error."""
-    if not enabled(ws):
+    wait for. Never `allow` on an error. A session the runner may have bound is denied, never left to the harness,
+    when the factory is off (the switch of the checkout its binding names) or its binding cannot be read."""
+    from orch.core import factory_sessions, ledger
+    sid = payload.get("session_id")
+    try:
+        b = factory_sessions.binding(ws, sid)
+        on = enabled(ws, b["checkout"] if b else None)
+    except Exception:
+        b, on = None, False
+    if not on:
+        if b is not None or factory_sessions.recorded(sid):
+            return deny_unreadable()
         return None
-    from orch.core import ledger
     if not ledger.head_ok() and _bound(ws, payload.get("session_id")):
         return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
                                  "grant counts; nothing was allowed. Stop and ask the human to look at it.")
@@ -638,6 +680,11 @@ _VERBS = {
                       "--"),
     "ls-tree": _spec("-r -t -d --name-only --name-status -l --long --full-tree --full-name --", "", "revs"),
     "blame": _spec("-w -s -e --", "-L", "revs"),
+    # read-only additions: counting commits, and printing one object of the repository (no --textconv, --filters or
+    # --batch: they run filters or read requests from stdin)
+    "rev-list": _spec("--count --first-parent --no-merges --merges --reverse", "-n --max-count --since --until "
+                      "--after --before", "revs", value_paths=False),
+    "cat-file": _spec("-p -t -s -e", "", "revs"),
     "branch": _spec(" ".join(_READ_BRANCH), "", "none"),
     "add": _spec("-v --verbose -N --intent-to-add --"),
     "commit": _spec("-q --quiet -v --verbose -a --all --allow-empty -s --signoff", "-m --message", "paths",
@@ -920,8 +967,7 @@ def _own_place(ws, b: dict, cwd) -> tuple[str | None, str | None]:
     return (None, own) if own else ("the session's own branch cannot be read", None)
 
 
-_ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add and commit, each "
-                 "with its listed options")
+_ALLOWED_TEXT = ", ".join(v if v != "branch" else "branch listing" for v in _VERBS) + ", each with its listed options"
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:
@@ -1071,13 +1117,13 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
     """The answer for a session whose binding `b` the caller verified (_session_ticket: factory_sessions.trusted, the
     record the guard's session_state trusts too)."""
     from orch.core.events import Actor
-    epic = factory_epic(ws, ticket)
+    epic = charter_epic(ws, ticket)  # the caller checked the switch of the checkout the binding names
     if payload.get("tool_name") != "Bash":
         return _decision("deny", "in a factory epic only shell commands can be granted (this tool is not one); do "
                                  "without it and record why in the ticket")
     ti = payload.get("tool_input")
     command = ti.get("command") if isinstance(ti, dict) else None
-    why = never_grantable(ws, command) if isinstance(command, str) else None
+    why = never_grantable(ws, command, payload.get("cwd")) if isinstance(command, str) else None
     if why:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")

@@ -57,19 +57,27 @@ _QUOTED_ADDON_ADMIN = re.compile(r"""['"]\s*(?:[^'"\n]*/)?orch['"]\s+(?:-\S+\s+)
 _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rolling back or removing addons is the "
                        "human's; ask the user to do it in their own terminal or in Workspace & addons")
 # Human-only orch commands (#19): approve, answer, verdict, request-changes, reopen, close, `epic pause`, `permit
-# grant|deny|revoke` (AI Factory), `dark profile add|remove|prune`, `factory dark on` and `factory release ...` (Dark AI
+# grant|deny|revoke` (AI Factory), `dark profile add|remove|prune`, `factory on`, `factory dark on` and `factory release ...` (Dark AI
 # Factory), and moves to a
 # status only
 # the human moves to. Agents never run them, in any spelling: `uv run orch`, `python -m orch.cli`, a wrapper path,
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
-_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
-                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
-                  r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                  r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
-                  r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
-                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
+# The one table of human-only subcommands (each word, `a|b` alternatives, or `*` for any word): the text, argv, app()
+# and token checks below all derive from it, so a new human-only command is added once.
+HUMAN_SUBCOMMANDS = (("epic", "pause"), ("permit", "grant|deny|revoke"), ("dark", "profile", "add|remove|prune"),
+                     ("factory", "on"), ("factory", "dark", "on"), ("factory", "release", "*"),
+                     ("factory", "clones", "*"), ("widget", "html", "on"), ("update",))
+
+
+def _sub_word(w: str, any_word: str) -> str:
+    return any_word if w == "*" else f"(?:{w})"
+
+
+_SUB_RE = "|".join(r"\s+(?:-\S+\s+)*".join(_sub_word(w, r"[^\s;&|()<>]+") for w in path)
+                   for path in HUMAN_SUBCOMMANDS)
+_HUMAN_VERB_RE = r"(?:" + "|".join(_HUMAN_VERBS) + "|" + _SUB_RE + r")(?![\w-])"
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -78,7 +86,7 @@ _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?o
 # the command, or a human Actor built by hand.
 _ORCH_WORD = re.compile(r"(?<![\w-])orch(?:\.cli)?(?![\w.-])")
 _HUMAN_VERB_WORD = re.compile(r"(?<![\w-])(?:approve|answer|verdict|request[-_]changes|reopen|ledger_adopt|ledger_repair|epic_pause"
-                              r"|permit_(?:grant|deny|revoke)|add_from_request|set_factory_dark|set_recipe|clear_recipe)(?![\w-])")
+                              r"|permit_(?:grant|deny|revoke)|add_from_request|set_factory_dark|set_factory|set_recipe|clear_recipe)(?![\w-])")
 _HUMAN_PY = re.compile(r"""\bActor\s*\(\s*(?:kind\s*=\s*)?['"]human['"]|\bhuman_actor\b|\brecord_approval\b""")
 # Programs that give a command a pseudo-terminal (the TTY check of human-only actions) or type it into a terminal
 # outside the agent's process tree.
@@ -219,13 +227,23 @@ def _resolved(cur: str, raw: str, bud: _Budget, extra: dict | None = None) -> li
 
 _ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
 _KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "!", "time", "{", "}", "(", ")", "&&", "||"}
-_SENSITIVE = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger*", "factory-command*",
-              "factory-release*", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans*", "launch.json")
+# The one list of what agents never touch in the orch config dir: the names in the dir itself, and the runner's records
+# in its permits folder. Every rule below derives from these two (tests/test_guard_spellings.py reads them too).
+def _REMOTE_NAME(n: str) -> bool:
+    return n.startswith("remote" + "-")
+
+
+CONFIG_TOP = ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "launch.json", "remote-humans.json", "permits")
+PERMIT_NAMES = ("sessions", "armed", "runs", "children", "requests", "used", "factory-command.json",
+                "factory-release.json", "factory-release.json.lock", "release-records", "release-repos", "child-clones",
+                "nudges", "early-ends", "tmux", "tmux.name", "durations")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
-_SENSITIVE_NAMES = ("permits", "sessions", "armed", "runs", "children", "requests", "used", "ledger.key", "ledger.jsonl",
-                    "ledger.head", "ledger.lock", "factory-command.json", "factory-release.json",
-                    "factory-release.json.lock", "release-records", "release-repos", "child-clones", "nudges", "early-ends", "tmux", "tmux.name", "remote-humans.json",
-                    "launch.json")
+_SENSITIVE_NAMES = tuple(dict.fromkeys(CONFIG_TOP + PERMIT_NAMES))
+# a plain word that is, or can stand for, one of them (a name with an extension by its stem: `ledger.key.bak` too)
+_SENSITIVE = tuple(dict.fromkeys(n.split(".", 1)[0] + "*" if "." in n else n for n in _SENSITIVE_NAMES))
+# the phone pairing keys have rules and a message of their own (_REMOTE_KEYS)
+_STEMS = "|".join(sorted({re.escape(n.split(".", 1)[0]) for n in _SENSITIVE_NAMES if not _REMOTE_NAME(n)},
+                         key=len, reverse=True))
 _READERS = {"cat", "less", "more", "head", "tail", "cp", "mv", "tar", "zip", "rsync", "ls", "find", "rg", "du", "tree",
             "bat", "wc", "xargs", "dir", "vdir"}
 _UNKNOWN_DENIED = ("after a cd to a place the guard cannot work out, this command names something that may be in the "
@@ -524,17 +542,9 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
 _ORCH_MODULE = re.compile(r"(?<![\w-])orch\.(?:cli|core)\b")
 _Q = r"""['"]"""
 _APP_HUMAN = re.compile(
-    _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
-    + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove|prune)" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"clones" + _Q
-    + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
-_HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
-                         r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                         r"|factory\s+(?:-\S+\s+)*dark\s+(?:-\S+\s+)*on"
-                         r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
-                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
+    "|".join(r"\s*,\s*".join(_Q + _sub_word(w, r"[^'\"]+") + _Q for w in path) for path in HUMAN_SUBCOMMANDS)
+    + r"|\[\s*" + _Q + r"(?:" + "|".join(_HUMAN_VERBS) + r")" + _Q)
+_HUMAN_ARGV = re.compile(r"(?:^|\s)(?:" + "|".join(_HUMAN_VERBS) + "|" + _SUB_RE + r")(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, changing the Dark profile or the release recipe and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
@@ -568,15 +578,8 @@ def _human_only_tokens(seg: str) -> bool:
         rest = [w for w in words[k + 1:] if not w.startswith("-")]
         if rest and rest[0] in _HUMAN_VERBS:
             return True
-        if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
-            return True
-        if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
-            return True
-        if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove", "prune"):
-            return True
-        if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
-            return True
-        if len(rest) >= 2 and rest[0] == "factory" and rest[1] in ("release", "clones"):
+        if any(len(rest) >= len(path) and all(w == "*" or rest[i] in w.split("|") for i, w in enumerate(path))
+               for path in HUMAN_SUBCOMMANDS):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True
@@ -655,13 +658,12 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # agent, any of them would write a record as the human would. One list for the guard's module rule.
 _RECORD_MODULES = ("ledger|permits|dark_profile|factory_release|factory_clones|factory_close|factory_sessions"
                    "|factory_runner")
-_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
-                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release"
-                     r"|release-records|release-repos|child-clones|nudges|early-ends|tmux)\b"
+_LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:" + _STEMS + r")\b|ORCH_STATE_DIR\}?[/\\]+(?:"
+                     + _STEMS + r")\b|\bpermits[/\\]+(?:" + _STEMS + r")\b"
                      r"|\borch\.(?:core|dashboard)\.(?:" + _RECORD_MODULES + r")\b"
                      r"|\bfrom\s+orch\.(?:core|dashboard)\s+import\b[^;\n]*\b(?:" + _RECORD_MODULES + r")\b")
-_LEDGER_DENIED = ("the approval ledger, its key and the permit records beside it are the human's signed record of "
-                  "decisions; agents do not read or write them")
+_LEDGER_DENIED = ("the approval ledger, its key, the permit records beside it and the launch settings are the human's "
+                  "signed record of decisions and what the dashboard runs; agents do not read or write them")
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
@@ -670,7 +672,12 @@ _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereferen
 _GLOB = re.compile(r"[*?\[]")
 _REVIEW = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b")
 _STATE_PATH = r"orchestrator[/\\]tickets\b|(?:orchestrator[/\\])?(?:tickets[/\\](?:backlog|open|in-progress|waiting|testing|done|INDEX\.md)|\.state)\b"
-_STATE = re.compile(_STATE_PATH)
+_STATE = re.compile(_STATE_PATH, re.I)  # APFS and NTFS ignore case: ORCHESTRATOR/.STATE is the same folder
+# The workspace config in shell text (a clone's copy or the workspace's own): agents change it with their file tools,
+# whose result the guard can check (_config_edit), never with a shell write.
+_CONFIG_FILE = re.compile(r"(?i)(?:^|[\s'\"=/~])orchestrator/+config\.json\b")
+_CONFIG_SHELL_DENIED = ("orchestrator/config.json changes only through your file tools (Edit or Write), which keep it "
+                        "one JSON object and its factory settings the human's; a shell write is refused")
 # `cd DIR`, `cd -- DIR`, `cd -P DIR`, `pushd DIR`: options before the target are skipped.
 _CD = re.compile(r'\b(?:cd|pushd)\s+(?:-\S*\s+)*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 _WRITE_TOOL = re.compile(r"(?:^|[\s;&|(`'\"])(?:mv|rm|cp|tee|truncate|touch|git\s+mv|git\s+rm|sed\s+(?:-\w*i|--in-place)|perl\s+-\w*i)\b")
@@ -1192,7 +1199,11 @@ def _paths_text(text: str) -> str:
     t = re.sub(r"[/\\]+", "/", text)
     while "/./" in t:
         t = t.replace("/./", "/")
-    return t
+    while True:  # `dir/../` steps back (as written: a symlinked dir is judged by the resolution rules)
+        u = re.sub(r"/(?!\.\.(?:/|$))[^/\s'\";&|()<>]+/\.\.(?=/|$)", "", t)
+        if u == t:
+            return t
+        t = u
 
 
 def _word(tok: str) -> str | None:
@@ -1289,7 +1300,7 @@ def _sets_git_exec_config(seg: str, plain: str) -> bool:
 def _cd_targets_state(cmd: str) -> bool:
     for m in _CD.finditer(cmd):
         target = next(g for g in m.groups() if g is not None)
-        parts = re.split(r"[/\\]", target)
+        parts = [x.casefold() for x in re.split(r"[/\\]", target)]
         if "tickets" in parts or ".state" in parts:
             return True
     return False
@@ -1605,13 +1616,22 @@ def _ledger_path(raw: str, cwd=None) -> bool:
         for start in {str(cwd) if cwd else os.getcwd(), os.getcwd()}:  # the hook's cwd and this process's own
             full = text if os.path.isabs(text) else os.path.join(start, text)
             p = _real(full)
-            if _link_into(full, base, _Budget()) or p in (
-                    base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE
-            ) or p == base / "permits" or (base / "permits") in p.parents:
+            if _link_into(full, base, _Budget()) or _config_record(p, base) or _config_record(
+                    Path(os.path.normpath(full)), base):
                 return True
     except (OSError, RuntimeError, ValueError, _Bound):
         return True
-    return p in (base / ledger.KEY_NAME, base / ledger.LEDGER_FILE, base / ledger.HEAD_FILE, base / ledger.LOCK_FILE) or p == base / "permits" or (base / "permits") in p.parents
+    return False
+
+
+def _config_record(p: Path, base: Path) -> bool:
+    """Whether `p` is, or lies below, a name of CONFIG_TOP in the config dir `base`, compared in the one folded form
+    (any case: APFS and NTFS ignore it)."""
+    f, b = _fold(p), _fold(base).rstrip("/")
+    if not f.startswith(b + "/"):
+        return False
+    first = f[len(b) + 1:].split("/", 1)[0]
+    return first in {_fold(n) for n in CONFIG_TOP if not _REMOTE_NAME(n)}  # the pairing keys: _REMOTE rules
 
 
 def _ledger_path_closed(raw: str, cwd=None) -> bool:
@@ -1636,7 +1656,7 @@ def _filter_could_reach_ledger(pattern: str) -> bool:
 
 def _bash_reaches_ledger(cmd: str) -> bool:
     from orch.core import ledger
-    if any(_LEDGER.search(c) for c in _key_check_candidates(cmd)):
+    if any(_LEDGER.search(c) or _LEDGER.search(_paths_text(c)) for c in _key_check_candidates(cmd)):
         return True
     base = str(ledger.base_dir())
     return any(f"{base}{sep}{name}" in cmd for sep in ("/", "\\") for name in (ledger.KEY_NAME, ledger.LEDGER_FILE, ledger.HEAD_FILE, ledger.LOCK_FILE, "permits"))
@@ -1724,8 +1744,12 @@ def evaluate(ws, payload: dict) -> Decision:
         why = _clone_file(str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws)
         if why:
             return Decision(False, why)
+    if tool == "NotebookEdit" and _is_config(ws, str(tool_input.get("notebook_path") or "")):
+        return Decision(False, _CONFIG_SHAPE_DENIED)
+    if tool == "NotebookEdit" and _orch_records(ws, str(tool_input.get("notebook_path") or ""), cwd):
+        return Decision(False, _USE_ORCH)
     if tool in ("Edit", "Write", "MultiEdit"):
-        return _edit(ws, tool, tool_input)
+        return _edit(ws, tool, tool_input, payload.get("session_id"))
     return ALLOW
 
 
@@ -1752,13 +1776,11 @@ def _clone_file(raw: str, cwd, ws) -> str | None:
         home = always_sensitive(ws)[0].strip("/").casefold()
     except Exception:
         return _CLONE_UNKNOWN_DENIED
-    for f in forms:
-        for r in roots:
-            try:
-                rest = f.relative_to(r).parts[3:]  # <workspace id>/<child>/repo/...
-            except ValueError:
+    for f in {_fold(x) for x in forms}:
+        for r in {_fold(x) for x in roots}:
+            if not f.startswith(r.rstrip("/") + "/"):
                 continue
-            text = "/".join(rest).casefold()
+            text = "/".join(f[len(r.rstrip("/")) + 1:].split("/")[3:])  # <workspace id>/<child>/repo/...
             if (text in (f"{home}/config.json", f"{home}/tickets", f"{home}/.state")
                     or text.startswith((f"{home}/tickets/", f"{home}/.state/"))):
                 return _CLONE_TICKETS_DENIED
@@ -1782,6 +1804,32 @@ def _path_forms(raw: str, cwd, ws) -> set[Path]:
     if not p.is_absolute():
         p = Path(str(cwd)) / p if cwd else Path(ws.root) / p
     return {Path(os.path.normpath(p)), p.resolve()}
+
+
+def _fold(p) -> str:
+    """The one form every file-tool path rule compares: case folded and NFC (APFS and NTFS ignore case, APFS ignores
+    Unicode normalisation), `/` separators. `_path_forms` already collapsed `//`, `/./`, `..` and links."""
+    import unicodedata
+    return unicodedata.normalize("NFC", str(p)).casefold()
+
+
+def _folded_forms(raw: str, cwd, ws) -> set[str]:
+    return {_fold(f) for f in _path_forms(raw, cwd, ws)}
+
+
+def _folded_bases(*paths: Path) -> set[str]:
+    out = set()
+    for b in paths:
+        out.add(_fold(os.path.normpath(b)))
+        try:
+            out.add(_fold(b.resolve()))
+        except (OSError, RuntimeError):
+            pass
+    return out
+
+
+def _folded_under(forms: set[str], bases: set[str]) -> bool:
+    return any(f == b or f.startswith(b.rstrip("/") + "/") for f in forms for b in bases)
 
 
 def _global_git_config(raw: str, cwd, ws) -> bool:
@@ -1822,17 +1870,12 @@ def _in_git_dir(raw: str, cwd, ws) -> bool:
 def _cwd_in_state(ws, cwd) -> bool:
     if not cwd:
         return False
-    try:
-        p = Path(str(cwd))
-        p = (p if p.is_absolute() else ws.root / p).resolve()
-    except (OSError, ValueError):
-        return False
-    return _under(p, ws.tickets_dir.resolve()) or _under(p, ws.state_dir.resolve())
+    return _orch_records(ws, str(cwd), None)
 
 
 def _ticket_file_re(ws) -> re.Pattern:
     prefix = re.escape(str(ws.config["id"]["prefix"]))
-    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b")
+    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b", re.I)
 
 
 def _touches_state(ws, cmd: str, cwd) -> bool:
@@ -1953,6 +1996,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _touches_state(ws, code, cwd) and _is_write(cmd):
         return Decision(False, _USE_ORCH)
+    if _CONFIG_FILE.search(_paths_text(code)) and _is_git_write(cmd):
+        return Decision(False, _CONFIG_SHELL_DENIED)
     if _STARTUP_FILE.search(code) and _is_write(cmd):
         return Decision(False, _STARTUP_DENIED)
     if _GIT_INTERNAL_PATH.search(_paths_text(code)) and _is_git_write(cmd):
@@ -2000,21 +2045,96 @@ def _proposed(tool: str, tool_input: dict, text: str) -> str | None:
     return text
 
 
-def _edit(ws, tool: str, tool_input: dict) -> Decision:
+def closed_without_workspace(payload: dict, start: Path) -> bool:
+    """Whether the guard must refuse when the workspace cannot be opened: ORCH_HOME names one, the start folder or an
+    ancestor holds an `orchestrator` folder, or the session id may belong to a factory binding (needs only the state
+    dir, not the config). False only outside every workspace for a session the runner never bound."""
+    if os.environ.get("ORCH_HOME"):
+        return True
+    try:
+        here = Path(start).resolve()
+        if any(d.name == "orchestrator" or (d / "orchestrator").is_dir() for d in (here, *here.parents)):
+            return True
+    except Exception:
+        return True
+    try:
+        from orch.core import factory_sessions
+        return factory_sessions.recorded(payload.get("session_id"))
+    except Exception:
+        return True
+
+
+def unreadable_workspace(payload: dict, start: Path, why: str) -> Decision:
+    """The answer while the workspace cannot be opened (closed_without_workspace held): every tool is refused, except
+    that a session the runner never bound may read the workspace config and write it back as one JSON object (the
+    repair). A bound session gets nothing."""
+    import json
+    deny = Decision(False, f"the workspace cannot be read ({why}), so nothing is allowed; ask the human to repair "
+                           "orchestrator/config.json")
+    tool, ti = payload.get("tool_name"), payload.get("tool_input")
+    try:
+        from orch.core import factory_sessions
+        if factory_sessions.recorded(payload.get("session_id")):
+            return deny
+    except Exception:
+        return deny
+    if tool not in ("Read", "Write", "Edit") or not isinstance(ti, dict):
+        return deny
+    raw = str(ti.get("file_path") or "")
+    try:
+        path = Path(raw) if Path(raw).is_absolute() else Path(start) / raw
+        target, home = path.resolve(), os.environ.get("ORCH_HOME")
+        here = Path(start).resolve()
+        homes = [Path(home).expanduser().resolve()] if home else [d / "orchestrator" for d in (here, *here.parents)]
+        if target.name != "config.json" or target.parent not in homes or path.is_symlink():
+            return deny
+        if tool == "Read":
+            return ALLOW
+        old = target.read_text(encoding="utf-8") if target.exists() else ""
+        new = _proposed(tool, ti, old)
+        return ALLOW if new is not None and isinstance(json.loads(new), dict) else deny
+    except Exception:
+        return deny
+
+
+def _is_config(ws, raw: str) -> bool:
+    if not raw:
+        return False
+    try:
+        return bool(_folded_forms(raw, None, ws) & _folded_bases(ws.home / "config.json"))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def _orch_records(ws, raw: str, cwd) -> bool:
+    """Whether a path is in the workspace's tickets or state folder (any case, as written or after links)."""
+    if not raw:
+        return False
+    try:
+        return _folded_under(_folded_forms(raw, cwd, ws), _folded_bases(ws.state_dir, ws.tickets_dir))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def _edit(ws, tool: str, tool_input: dict, session=None) -> Decision:
     raw = str(tool_input.get("file_path") or "")
     if not raw:
         return ALLOW
     path = Path(raw)
     path = (path if path.is_absolute() else ws.root / path).resolve()
+    try:
+        forms = _folded_forms(raw, None, ws)
+    except (OSError, RuntimeError, ValueError):
+        return Decision(False, _USE_ORCH)
     if _is_user_addon_file(path):
         return Decision(False, _ADDON_ADMIN_DENIED)
     if _STARTUP_FILE.search(str(path)) or _STARTUP_FILE.search(raw):
         return Decision(False, _STARTUP_DENIED)
-    if _under(path, ws.state_dir.resolve()):
+    if _folded_under(forms, _folded_bases(ws.state_dir)):
         return Decision(False, _USE_ORCH)
-    if path == (ws.home / "config.json").resolve():
-        return _config_edit(tool, tool_input, path)
-    if not _under(path, ws.tickets_dir.resolve()):
+    if forms & _folded_bases(ws.home / "config.json"):
+        return _config_edit(ws, tool, tool_input, path, session)
+    if not _folded_under(forms, _folded_bases(ws.tickets_dir)):
         return ALLOW
     if path.name == "INDEX.md":
         return Decision(False, "tickets/INDEX.md is generated by `orch index`")
@@ -2067,15 +2187,49 @@ def _widgets_html(text: str):
     return widgets.get("html", False) if isinstance(widgets, dict) else (False if isinstance(cfg, dict) else None)
 
 
-def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:
-    """The workspace config is the agent's to edit (repos, prompts, ...), except `widgets.html`: whether agent-written
-    HTML runs in ticket widgets is the human's call, like trusting an addon."""
+_CONFIG_SHAPE_DENIED = ("this edit would leave orchestrator/config.json unreadable (not one JSON object): orch would "
+                        "then judge nothing. Write the whole file as valid JSON")
+_CONFIG_FACTORY_DENIED = ("the factory settings in orchestrator/config.json are the human's (`orch factory on|off` in "
+                          "their own terminal); leave the factory key as it is")
+_CONFIG_BOUND_DENIED = ("an AI Factory session never edits orchestrator/config.json; record what should change with "
+                        "`orch log`")
+
+
+def _config_edit(ws, tool: str, tool_input: dict, path: Path, session=None) -> Decision:
+    """The workspace config is the agent's to edit (repos, prompts, ...), except: a session the runner may have bound
+    never edits it; the result must stay one JSON object (a broken config would leave orch unable to judge anything);
+    the `factory` settings are the human's; and `widgets.html` (whether agent-written HTML runs in ticket widgets) is
+    the human's call, like trusting an addon."""
+    import json
+    try:
+        from orch.core import factory_sessions
+        state = factory_sessions.session_state(ws, session)[0]
+    except Exception:
+        state = "unknown"
+    if state != "none":
+        return Decision(False, _CONFIG_BOUND_DENIED)
     try:
         old_text = path.read_text(encoding="utf-8")
     except OSError:
-        return ALLOW
-    new_text = _proposed(tool, tool_input, old_text)
-    before, after = _widgets_html(old_text), (None if new_text is None else _widgets_html(new_text))
+        old_text = None
+    if old_text is None and tool != "Write":
+        return ALLOW  # nothing to edit: the tool reports that itself
+    new_text = _proposed(tool, tool_input, old_text or "")
+    if new_text is None:
+        return ALLOW  # the edit does not apply; the tool reports that itself
+    try:
+        new = json.loads(new_text)
+    except ValueError:
+        return Decision(False, _CONFIG_SHAPE_DENIED)
+    if not isinstance(new, dict):
+        return Decision(False, _CONFIG_SHAPE_DENIED)
+    try:
+        old = json.loads(old_text or "{}")
+    except ValueError:
+        old = {}
+    if (old.get("factory") if isinstance(old, dict) else None) != new.get("factory"):
+        return Decision(False, _CONFIG_FACTORY_DENIED)
+    before, after = _widgets_html(old_text or "{}"), _widgets_html(new_text)
     if before is not None and after is not None and before != after:
         return Decision(False, _WIDGETS_DENIED)
     return ALLOW

@@ -138,11 +138,46 @@ def revoke(grant_id: str, json_out: JsonOpt = False) -> None:
 factory_app = typer.Typer(no_args_is_help=True, help="AI Factory switches that are signed, not config values.")
 
 
+@factory_app.command("on")
+def factory_on(json_out: JsonOpt = False) -> None:
+    """Switch AI Factory on in this checkout: signed into the approval ledger and written to factory.enabled. Human
+    only (your own terminal, typed confirmation): the config value alone switches nothing on."""
+    from orch.actor import confirm_typed, require_human_terminal
+    cli, ws = _ctx()
+    require_human_terminal("turning on AI Factory")
+    typer.echo("AI Factory: epics you start as a factory are split, approved and built by agents within the "
+               "charter you sign.", err=json_out)
+    cli._ops(ws, confirm_typed("FACTORY")).set_factory(True)
+    _factory_said(cli, ws, json_out)
+
+
+@factory_app.command("off")
+def factory_off(json_out: JsonOpt = False) -> None:
+    """Switch AI Factory off in this checkout. Anyone may: it only takes power away."""
+    cli, ws = _ctx()
+    cli._ops(ws).set_factory(False)
+    _factory_said(cli, ws, json_out)
+
+
+@factory_app.command("status")
+def factory_status(json_out: JsonOpt = False) -> None:
+    """Whether AI Factory is on in this checkout (signed), and why not."""
+    cli, ws = _ctx()
+    _factory_said(cli, ws, json_out)
+
+
+def _factory_said(cli, ws, json_out) -> None:
+    from orch.core import permits
+    on = permits.enabled(ws)
+    cli._out({"factory": on, "config": permits.config_enabled(ws), "dark": permits.dark_on(ws)}, json_out,
+             "AI Factory is on (signed)" if on else permits.off_reason(ws))
+
+
 @factory_app.command("dark")
 def factory_dark(state: Annotated[str, typer.Argument(help="on | off | status")] = "status",
                  json_out: JsonOpt = False) -> None:
     """Dark AI Factory in this checkout. `on` is the human's decision, signed into the approval ledger (run it in
-    your own terminal); `off` anyone may run. It counts only while factory.enabled is on."""
+    your own terminal); `off` anyone may run. It counts only while AI Factory is on (`orch factory on`)."""
     from orch.core import permits
     from orch.errors import UsageError
     cli, ws = _ctx()
@@ -159,7 +194,7 @@ def factory_dark(state: Annotated[str, typer.Argument(help="on | off | status")]
     on = permits.dark_on(ws)
     cli._out({"dark": on, "factory": permits.enabled(ws)}, json_out,
              "Dark AI Factory is on (signed)" if on else "Dark AI Factory is off"
-             + ("" if permits.enabled(ws) else " (factory.enabled is off)"))
+             + ("" if permits.enabled(ws) else f" ({permits.off_reason(ws)})"))
 
 
 release_app = typer.Typer(no_args_is_help=True, help="Dark AI Factory's release recipe on this machine (human only).")
@@ -463,16 +498,23 @@ def hook() -> None:
     import os
     from orch.core import permits
     from orch.core.workspace import Workspace
+    from orch.core import factory_sessions
+    payload = None
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):
             return
         start = Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-        if not permits.enabled_at(start):
-            return  # fast path: the factory is off (read without opening the workspace)
-        ws = Workspace.open(start)
+        ws = Workspace.open(start) if permits.enabled_at(start) else None  # fast path: off, read without opening
     except Exception:
-        return  # not an orch workspace, or unreadable: no opinion, the harness asks as usual (never an allow)
+        ws = None
+    if ws is None:
+        # The factory is off or the workspace unreadable: no opinion (the harness asks as usual), except for a session
+        # the runner may have bound, which is denied: an agent that broke the config must not get the harness's prompt
+        # in place of the factory's rules.
+        if isinstance(payload, dict) and factory_sessions.recorded(payload.get("session_id")):
+            typer.echo(json.dumps(permits.deny_unreadable()))
+        return
     decision = permits.hook_decision(ws, payload)
     if decision is not None:
         typer.echo(json.dumps(decision))

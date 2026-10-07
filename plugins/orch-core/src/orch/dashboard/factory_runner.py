@@ -259,11 +259,16 @@ def run_once(ws, launcher=None) -> list[str]:
     """One runner round. When the runner cannot start anything (factory_runner.runner_blocker: a program, the user
     settings, readiness), that is said on the terminal once per change, and every view shows the same reason."""
     from orch.core import factory_sessions, permits
-    if not (permits.enabled(ws) or factory_sessions.bindings(ws)):
+    on = permits.enabled(ws)
+    key = str(ws.root)
+    if not on and permits.config_enabled(ws):  # the config asks, nothing signed it: say how to migrate, start nothing
+        if _SAID.get(key) != permits.UNSIGNED:
+            _SAID[key] = permits.UNSIGNED
+            log.warning("factory runner starts nothing: %s", permits.UNSIGNED)
+    if not (on or factory_sessions.bindings(ws)):
         return []
     settings = launch.load_settings()
-    why = factory_runner.program_blocker(settings)
-    key = str(ws.root)
+    why = factory_runner.program_blocker(settings) if on else None
     if why != _SAID.get(key):
         _SAID[key] = why
         if why:
@@ -289,10 +294,10 @@ def release_once(ws, run=None) -> list[str]:
     """One release round (phase 6, orch.core.factory_release): Ready Dark epics whose charter signs a release go
     through the human's recipe; then Dark epics whose charter signs `close` and whose every condition holds are closed
     by the charter (orch.core.factory_close). Needs no tmux; nothing unless the factory is on."""
-    from orch.core import factory_close, factory_release, permits
+    from orch.core import factory_close, factory_estimates, factory_release, permits
     if not permits.enabled(ws):
         return []
-    return factory_release.tick(ws, HUMAN, run) + factory_close.tick(ws, HUMAN)
+    return factory_release.tick(ws, HUMAN, run) + factory_close.tick(ws, HUMAN) + factory_estimates.tick(ws, HUMAN)
 
 
 async def _release_loop(ws, seconds: float) -> None:

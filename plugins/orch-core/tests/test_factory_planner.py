@@ -710,8 +710,9 @@ def test_a_plan_on_the_epic_itself_is_refused(fws, fa, fh):
 
 def test_a_claim_records_the_bound_session_id_in_the_ticket_and_that_grants_nothing(fws, fa, fh, human, fake,
                                                                                      monkeypatch):
-    """Pins today's behaviour (docs/factory.md, "Session binding"): the runner writes the id nowhere, but the agent's
-    own claim puts the full id into the ticket's frontmatter; a process outside the session's tree gets nothing."""
+    """Pins today's behaviour (docs/factory.md, "Session binding"): the runner writes the id nowhere, the agent's own
+    claim puts only its short form into the ticket's frontmatter; a process outside the session's tree gets nothing,
+    even holding the full id."""
     eid, d = _epic(fws, fa, fh)
     cid = _child(fa, eid)
     _tick(fws, human, fake)
@@ -720,7 +721,9 @@ def test_a_claim_records_the_bound_session_id_in_the_ticket_and_that_grants_noth
     assert b["session"] not in path.read_text(encoding="utf-8")  # the runner wrote it nowhere
     _session_ops(fws, b).claim(cid)
     t = store.load(fws, cid)[1]
-    assert t.meta["claim"]["session"] == b["session"] and any(s["id"] == b["session"] for s in t.meta["sessions"])
+    short = b["session"][:8]
+    assert t.meta["claim"]["session"] == short and any(s["id"] == short for s in t.meta["sessions"])
+    assert b["session"] not in store.load(fws, cid)[0].read_text(encoding="utf-8")
     assert permits.hook_decision(fws, _payload(b["session"])) is not None  # inside the session's process tree
     monkeypatch.setattr(fs, "chain_pids", lambda: {1})  # the id copied into another process
     assert permits.hook_decision(fws, _payload(b["session"])) is None

@@ -89,9 +89,9 @@ def test_a_files_digest_is_hashed_once_per_version(tmp_path, monkeypatch):
     f = tmp_path / "a.bin"
     f.write_bytes(b"one")
     first = artifacts.sha256(f)
-    monkeypatch.setattr(hashlib, "sha256", lambda *a: (_ for _ in ()).throw(AssertionError("hashed again")))
-    assert artifacts.sha256(f) == first
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(hashlib, "sha256", lambda *a: (_ for _ in ()).throw(AssertionError("hashed again")))
+        assert artifacts.sha256(f) == first
     f.write_bytes(b"two!")
     assert artifacts.sha256(f) != first
 

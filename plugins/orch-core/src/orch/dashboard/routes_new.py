@@ -118,7 +118,7 @@ def _mode_problem(ws, mode: str, title: str, ask: str, done_when: str, confirm: 
     if mode == "ticket":
         return None
     if not permits.enabled(ws):
-        return "AI Factory is switched off in this workspace: nothing was created."
+        return permits.off_reason(ws) + ": nothing was created."
     if mode == "dark":
         if not permits.dark_on(ws):
             return ("Dark AI Factory is off in this checkout: nothing was created. Turn it on in a terminal with "

@@ -10,7 +10,7 @@ from typing import Callable
 from orch.clock import now, parse_stamp, stamp
 from orch.core import evidence, store, trackers
 from orch.core.constants import PRIORITIES, SECTIONS, SIZES, STATUSES, TYPES
-from orch.core.events import Actor, Event, append_event, log_line
+from orch.core.events import Actor, Event, append_event, log_line, short_session
 from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, clear_gate, gate_hash, gate_state, human_questions_in,
                              record_approval)
 from orch.core.ids import next_id
@@ -129,7 +129,9 @@ class Ops(TaskOpsMixin):
 
     @property
     def _session(self) -> str:
-        return self.actor.session or "local"
+        """This actor's session as tickets and events store it (events.short_session), "local" without one."""
+        from orch.core.events import short_session
+        return short_session(self.actor.session) or "local"
 
     def _binding(self) -> dict | None:
         """The runner's binding of this agent session (the same trusted binding the permission hook uses: runner-written,
@@ -353,9 +355,9 @@ class Ops(TaskOpsMixin):
             if t.status not in ("open", "in-progress"):
                 raise TransitionError(f"{t.id} is {t.status}; only open or in-progress tickets can be claimed")
             current = t.meta.get("claim") or {}
-            if current.get("session") and current["session"] != session and not claim_expired(current, ttl):
+            if current.get("session") and short_session(current["session"]) != session and not claim_expired(current, ttl):
                 raise ClaimError(
-                    f"{t.id} is claimed by {current.get('harness')} (session {str(current['session'])[:8]}) since {current.get('at')}",
+                    f"{t.id} is claimed by {current.get('harness')} (session {short_session(current['session'])}) since {current.get('at')}",
                     hint=f"claims expire after {ttl:g} h; the holder can run `orch release {t.id}`",
                 )
             frm = t.status
@@ -370,7 +372,7 @@ class Ops(TaskOpsMixin):
                 t.meta["status"] = "in-progress"
             t.meta["claim"] = {"session": session, "harness": self.actor.name, "at": stamp()}
             sessions = t.meta.setdefault("sessions", [])
-            if not any(s.get("id") == session for s in sessions):
+            if not any(short_session(s.get("id")) == session for s in sessions if isinstance(s, dict)):
                 sessions.append({"id": session, "harness": self.actor.name,
                                  "model": os.environ.get("ORCH_MODEL"), "started": stamp()})
             self._log(t, "claimed" + (" (open → in-progress)" if frm == "open" else ""))
@@ -385,11 +387,11 @@ class Ops(TaskOpsMixin):
             current = t.meta.get("claim") or {}
             if not current.get("session"):
                 raise ValidationError(f"{t.id} is not claimed")
-            if current["session"] != session and not self.actor.is_human:
-                raise ClaimError(f"{t.id} is claimed by another session ({str(current['session'])[:8]})")
+            if short_session(current["session"]) != session and not self.actor.is_human:
+                raise ClaimError(f"{t.id} is claimed by another session ({short_session(current['session'])})")
             t.meta["claim"] = dict(_EMPTY_CLAIM)
             self._log(t, "released claim")
-            return {"session": current["session"]}
+            return {"session": short_session(current["session"])}
 
         return self._mutate(ref, "claim.released", fn)
 
@@ -1014,10 +1016,10 @@ class Ops(TaskOpsMixin):
             raise UsageError(f"{eid} is an epic: it has only the requirements gate (its children have plans)",
                              hint=f"orch approve {eid} requirements")
         if isinstance(delegate, dict) and delegate.get("factory"):
-            from orch.core.permits import enabled
+            from orch.core.permits import enabled, off_reason
             if not enabled(self.ws):
-                raise UsageError("AI Factory is switched off in this workspace",
-                                 hint="set factory.enabled to true in orchestrator/config.json (docs/factory.md)")
+                raise UsageError(off_reason(self.ws),
+                                 hint="the human runs `orch factory on` in their own terminal (docs/factory.md)")
         if isinstance(delegate, dict) and delegate.get("dark"):
             from orch.core.permits import dark_on
             if delegate.get("factory") and not dark_on(self.ws):
@@ -1285,6 +1287,29 @@ class Ops(TaskOpsMixin):
             atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
         self.ws.config.setdefault("widgets", {})["html"] = on
         self._emit(None, "setting.changed", {"setting": ledger.WIDGETS_HTML, "value": on})
+
+    def set_factory(self, on: bool) -> None:
+        """AI Factory's switch for this checkout: a signed setting (orch.core.permits.enabled) and `factory.enabled` in
+        the config, written together. On is the human's decision; off takes power away, so anyone may sign it."""
+        import json
+        from orch.actor import process_evidence
+        from orch.config.load import CONFIG_NAME
+        from orch.core import ledger
+        from orch.core.fsutil import atomic_write_text
+        from orch.core.permits import FACTORY_SETTING
+        if on:
+            require_human(self.actor, "turning on AI Factory")
+        if self.dry_run:
+            return
+        path = self.ws.home / CONFIG_NAME
+        with lock(self.ws, "config"):
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            ledger.record_setting(self.ws, FACTORY_SETTING, on, self.actor, process_evidence())
+            factory = raw.get("factory") if isinstance(raw.get("factory"), dict) else {}
+            raw["factory"] = {**factory, "enabled": on}
+            atomic_write_text(path, json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        self.ws.config.setdefault("factory", {})["enabled"] = on
+        self._emit(None, "setting.changed", {"setting": FACTORY_SETTING, "value": on})
 
     def set_factory_dark(self, on: bool) -> None:
         """Dark AI Factory's switch for this checkout, a signed setting (orch.core.permits.dark_on), never a config

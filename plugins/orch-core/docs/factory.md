@@ -12,8 +12,23 @@ described below.
 
 ## Switching it on
 
-Set `factory.enabled` to `true` in `orchestrator/config.json`. That alone changes nothing: a factory epic needs
-your signed start, and switching the factory off again turns its epics back into ordinary delegated epics.
+In your own terminal:
+
+```bash
+orch factory on       # human only: typed confirmation (FACTORY); refused to agents and under an agent harness
+orch factory status   # anyone
+orch factory off      # anyone: it only takes power away
+```
+
+`orch factory on` signs a setting into the approval ledger, bound to this checkout (as the Dark switch below), and
+sets `factory.enabled` to `true` in `orchestrator/config.json`. The factory is on only while both hold: the config
+value alone is a file an agent can edit, so it switches nothing on. A workspace whose config says `factory.enabled`
+but has no signed switch (one from before the switch was signed, or a hand or agent edit) stays off, and the runner,
+the readiness line, `orch factory status` and a refused `--factory` start all say the same one line: "factory.enabled
+is on in orchestrator/config.json but not signed, so AI Factory stays off: run `orch factory on` in your own
+terminal". A session the runner bound is denied (never left to the harness) while the switch is off. Switching on
+alone changes nothing else: a factory epic needs your signed start, and switching the factory off again turns its
+epics back into ordinary delegated epics.
 
 ## Starting a factory epic (you only)
 
@@ -63,8 +78,11 @@ session:
   for permission P-n", so that child parks and the others go on;
 - an error, an unreadable ledger or anything unexpected never answers `allow`;
 - prompts for anything other than a shell command are denied, so run factory sessions in a permission mode that
-  does not prompt for file edits (accept edits; auto mode only for a model that has it, not Haiku);
-- tools that never prompt in that mode never reach the hook at all (see "outward tools" under "Readiness checks").
+  does not prompt for file edits (accept edits; auto mode only outside Dark and for a model that has it, not Haiku;
+  never bypassPermissions, under which no request reaches the hook: the runner refuses to start under it);
+- tools that never prompt in that mode never reach the hook at all (see "permission mode" under "Readiness checks");
+- a session the runner bound is denied (never left to the harness's prompt) while the factory is off for it or its
+  binding or the workspace config cannot be read.
 
 A request's command text and reason are kept beside the ledger in your orch config dir, not in the repository; the
 event log only records that a request with that id and command hash was filed. A once grant's use is recorded there
@@ -82,7 +100,7 @@ orch permit revoke <grant id>        # an action already running finishes; the n
 ```
 
 Each answer prints the full command and needs the typed request id. Grants, denials and revocations are signed
-ledger entries; agents cannot write them (the commands are human-only in orch itself, and the guard denies them).
+ledger entries; agents cannot write them (the commands are human-only in orch itself, and the guard denies them; the guard's human-only commands are one table, `HUMAN_SUBCOMMANDS`, which a test checks against every CLI command that asks your terminal).
 A grant binds the epic, the delegation it was given under, the exact command text and its sha256. There are no
 wildcards. A grant for the epic ends when the epic is done, paused, changed or approved again, or when the budget
 is used up.
@@ -92,7 +110,10 @@ anything the guard denies, orch's permission commands, starting the dashboard, t
 plugins, orch's config, state and ledger, the variables that decide where orch keeps its records, elevated rights,
 merging pull requests, force pushes, deleting remote branches, sweeping recursive removals, a shell running a
 substituted command, permission changes on orch's config dir, and any
-command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped.
+command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped. "Anything
+the guard denies" is judged from the session's real folder when the hook answers, else from the workspace root (when
+a card or a rule is made): a grant and a rule hold the text alone, so whatever depends on the folder is decided again
+by the live guard, from the folder each run really starts in.
 
 ## Harness settings and auto mode
 
@@ -395,8 +416,11 @@ Allowed git, each verb only with the options listed for it in orch (exact names,
 is refused; `--color`, `--word-diff` and `--decorate` may carry their usual values) and no path outside the
 repository (absolute, `~` or `..`) and no pathspec magic (`:/`, `:(top)`, `:!`) as an operand or option value:
 
-- reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, and `branch` that
-  only lists; never `--output`, `--ext-diff`, `--textconv`, `--no-index` or the like;
+- reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, `branch` that
+  only lists (`--show-current`), `rev-list` (`--count`, `-n`, `--first-parent`, `--no-merges`, `--merges`,
+  `--reverse`, `--since`/`--until`; no `--all`, `--stdin` or `--objects`) and `cat-file` (`-p`, `-t`, `-s`, `-e` of one
+  object; no `--batch`, `--textconv`, `--filters` or `--path`); never `--output`, `--ext-diff`, `--textconv`,
+  `--no-index` or the like;
 - `add` (paths only: no `-A`, `--all`, `-u`), from the folder the runner started the session in or below it;
 - `commit` with its message given by `-m`/`--message` (no editor is opened), and `-a`, `-q`, `-v`, `-s`,
   `--allow-empty` (no `--amend`, `--no-verify`, `-n`, `-F`, `-C`, `-c`, `--fixup`, `--author`, `--template`, ...),
@@ -437,7 +461,7 @@ orch's own commands only: ticket files are plain files in the repository, so a p
 (`pytest`, `make`, `npm run ...`) can change any ticket file without orch. Prefer exact rules (see "A prefix rule
 trusts the repository").
 
-The runner never approves, grants, signs or starts a factory by itself. It does nothing unless `factory.enabled` is on,
+The runner never approves, grants, signs or starts a factory by itself. It does nothing unless the factory is on (signed, `orch factory on`),
 the epic's signed charter is a factory one and still active, and you started it from the dashboard (the terminal's
 `orch approve --factory` signs the charter but does not arm the runner). It runs only in a process that is not under an
 agent harness, like the dashboard's other human actions.
@@ -490,9 +514,14 @@ folder depending on where it starts.
   Claude once in the folder and accept it.
 - *skills* (warns): the orch skills at user scope (the plugin, or `skills/orch-work-on-ticket` in the user config
   dir). Without them the built-in prompts still name every command a session needs.
-- *outward tools* (warns): `permissions.deny` in your user-scope settings should list `Artifact`, `WebFetch` and
-  `WebSearch`. Tools that do not prompt (under accept-edits, for example) never reach orch's permission hook, so
-  nothing else stops a session from using them: in the live run a child published a Claude artifact on its own.
+- *permission mode* (blocks): nothing in your user-scope settings may let a session act without orch's permission
+  hook: `permissions.defaultMode` `bypassPermissions` or `skipDangerousModePermissionPrompt`; `auto` while Dark is on
+  (its classifier allows actions in the hook's place; a Dark run needs `acceptEdits`); any `Bash` rule in
+  `permissions.allow` (such a command never prompts); and `permissions.deny` must list `Artifact`, `WebFetch` and
+  `WebSearch` (tools that do not prompt under accept-edits never reach the hook: in the live run a child published a
+  Claude artifact on its own). Only the user-scope file counts because the launch command keeps `--setting-sources
+  user` and `--strict-mcp-config`: no project, local or MCP configuration is loaded. Known gap: tools a claude.ai
+  login brings (connectors) are not enumerated here.
 
 The session PATH is the folders of the resolved `claude`, `orch` and `uv` (each found on the dashboard's PATH and
 trusted as below, none inside the workspace), then the system's. The guard keeps agents from writing what decides how every session is guarded: the user-scope `settings.json`,
@@ -522,9 +551,10 @@ permission hook trusts only this record to decide which epic's grants apply, and
 process the runner recorded for that session (same pid and same start time): a copied session id gets nothing
 elsewhere. An ended or stopped session loses the record at once. Only a human process writes it: agent processes are
 refused, and the guard keeps agents away from the folder. Session ids are random; the runner itself writes them to
-no event, ticket, log line or page. The agent's own orch commands do record its session: a claim writes the full
-session id into the claimed ticket (its `claim` and `sessions` entries in the frontmatter), and the event log names the
-agent with the first 8 characters of it. That grants nothing: the hook trusts the id only for a process running under
+no event, ticket, log line or page. The agent's own orch commands record only the first 8 characters of its session id
+(`events.short_session`): in the claimed ticket's `claim` and `sessions` entries, in the claim events and in the
+actor the event log names; views show the same. Tickets an older orch wrote with the full id still match (readers
+compare the short form). Even a full id grants nothing: the hook trusts the id only for a process running under
 the one the runner recorded, so a copied id gets no factory treatment (and the binding is gone once the session ends).
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a
@@ -557,9 +587,23 @@ The guard's part is a text check, not a shell. It refuses a command run from ins
 must be an absolute, literal path with no `..`, outside the config dir (relative ones are refused, because the
 working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
-the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
-length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
-hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
+the config dir is refused as written, never trusted because of where it points today. Paths are compared in one form
+(`~`, `$HOME` and `${HOME}` expanded, `//`, `/./` and `dir/..` collapsed, links followed, case and Unicode
+normalisation folded, as APFS ignores both): `ORCHESTRATOR/.STATE`, `~/.config/ORCH-CLONES/...` and
+`.config/orch/./launch.json` are the same places as their plain spellings, for every file tool (Edit, Write, MultiEdit
+and NotebookEdit alike) and the shell. The names guarded in the config dir are one list in the guard (`CONFIG_TOP`,
+`PERMIT_NAMES`, which includes `launch.json`, whose commands Start agent runs: agents do not write it); every rule
+derives from it. A shell write naming `orchestrator/config.json` (a clone's or the workspace's) is refused: agents
+change it with their file tools. A homoglyph or percent-escaped spelling names another file and is not refused for
+that reason; `tests/test_guard_spellings.py` is the corpus of what each spelling decides. Not covered: a path built at
+run time inside an interpreter (`open("led" + "ger.key")`); in a factory session no interpreter runs without your
+card. The rules are bounded (command
+length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny, and so is any other internal error of the guard inside a
+workspace (logged to `orchestrator/.state/guard-errors.log`). When the workspace cannot be opened at all (a broken or
+missing `orchestrator/config.json`) the guard refuses every tool for a session the runner may have bound, and inside
+any folder with an `orchestrator` folder above it refuses everything but reading the config and writing it back as one
+JSON object; only outside every workspace does it stay silent. Agents' Edit and Write of the config must leave one
+JSON object, may not change its `factory` settings, and a bound session never edits it. Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
 a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed,
 but the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
 in the config dir (permits, sessions, ledger*, tmux, ...) is refused with its own message, and so is a bare `*` handed
@@ -817,8 +861,7 @@ commands Dark runs in this checkout may run.
 runner. A Dark charter you sign with `orch approve --dark` in the terminal is not armed, so no agent session is
 launched for it.
 
-**Switching it on (you only).** Set `factory.enabled` to `true` in `orchestrator/config.json`, then in your own
-terminal:
+**Switching it on (you only).** Switch the factory on (`orch factory on`, above), then in your own terminal:
 
 ```bash
 orch factory dark on       # human only: typed confirmation; refused to agents and under an agent harness
@@ -832,10 +875,7 @@ behaves as an ordinary factory epic: the profile is ignored and every prompt is 
 off, nothing here does anything.
 
 **The brakes.** `orch factory dark off` (anyone, signed) turns every Dark epic of this checkout back into an ordinary
-factory epic at once; `orch epic pause <epic>` (yours, signed) stops one epic. Known limitation: `factory.enabled`
-itself is still a plain config value an agent can edit (as since phase 1). Switching it off only takes power away;
-switching it on still needs your signed Dark setting and a signed Dark charter before the profile answers anything. A
-signed factory switch is a follow-up.
+factory epic at once; `orch epic pause <epic>` (yours, signed) stops one epic. `orch factory off` (anyone, signed) stops the whole factory.
 
 **Starting a Dark epic (you only).**
 
@@ -885,7 +925,7 @@ status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, the read-on
 `git rev-parse`, and the exact rule `git branch --show-current`
 (`git branch` is never a prefix rule). Nothing that reaches out, rewrites or configures: `git push`, `fetch`,
 `reset`, `clean`, `checkout`, `switch`, `rebase`, `config`, `stash`, `git -c …` and `git -C …` stay out, and the
-argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). For any git command a prefix
+argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). One exception to the single-letter shapes: `git ls-files -o` (exactly that word, `--others`) matches. For any git command a prefix
 rule also refuses what reads files outside the repository or rewrites other commits: `--no-index`,
 `--pathspec-from-file`, `--template`, `--orderfile`, `--amend`, `--fixup`, `--squash`, `--file` (and every
 abbreviation git accepts), a short option word holding `F` or `t`, and any argument (or the value after `=` or `:`)
@@ -1042,7 +1082,8 @@ refusal of a process under an agent harness, as for every approval).
 - **Sessions cannot write files under a prompting permission mode.** A runner session's file-edit prompt is denied
   without a card (only shell commands are answered), and the launch command may not set a permission mode that skips
   prompts. So unless your user-scope Claude settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
-  `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits`, `auto` or `bypassPermissions`, no agent
+  `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits` or `auto` (`bypassPermissions` counts as blocked: no request
+  would reach the hook), no agent
   of the run can write a file and the planner cannot create children. `auto` does not count for a Haiku model (the
   launch command's `--model`, else the settings' `model`): Claude Code offers Haiku no auto mode, so its edits prompt
   (in the live run Claude's first-run offer had switched the mode to `auto`). Use `acceptEdits`. The run view and New ticket's factory modes say
@@ -1065,7 +1106,8 @@ refusal of a process under an agent harness, as for every approval).
   readiness check or a clone that could not be made says so itself. Then needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
   armed) or finished. Motion only while it works (working or planning); a Dark run's working chip is mint, an AI
   Factory's blue. The Dark core glows stronger only with real build evidence: a task a child closed (a running session
-  is not evidence). Then the time: "Running for ... since you signed the start" while it works (there is no estimate),
+  is not evidence). Then the time: "Running for ... since you signed the start" while it works, preceded by "About N minutes left (from M
+  earlier runs)" only when an estimate exists (see "Estimates" below; otherwise "No estimate yet."),
   "Started ... ago" otherwise, and for a finished run the duration once, in its summary; what waits for you (the same cards as
   elsewhere), a read-only log in plain words (time, ticket, who and a fixed phrase per event kind; no command text,
   hashes or session ids) and "Stop the run…", which is the epic's pause. A finished epic shows a summary from the
@@ -1627,6 +1669,11 @@ in testing:
   in backticks, a test name (`test_x`, `name.test.ts`, `pytest path::name`), a URL, a path or file with a known
   extension, or a number next to a unit (`12 passed`, `3 rows`, `40 ms`). A bare number or a slash in prose is not
   concrete.
+- **Artifact receipts.** The strongest proof is a file orch itself recorded: `- AC2: artifact <name>` (more text may
+  follow) counts as concrete when `<name>` is an artifact of that child added with `orch artifact add`, its recorded
+  sha256 still matches the bytes on disk and the file is not empty, whatever its extension. A line that claims an
+  artifact that does not resolve so (another ticket's, a changed, empty or missing file) proves nothing, even when its
+  name looks like a file; doubt words still block it.
 - A child with no acceptance criteria never closes by itself.
 
 It closes on what the agents wrote under these rules: **nothing is executed or verified by the factory** (and with no
@@ -1674,6 +1721,18 @@ gets run as you could write the records.
 A safe local live test of the release and the close, with a bare repository as the remote and example scripts that
 record what they were told: [factory-release-live-test.md](factory-release-live-test.md).
 
+## Estimates
+
+The runner keeps a record of every finished run of an armed factory epic, once, beside the ledger
+(`permits/durations/`, guarded like the rest of the permits folder; written only by the dashboard's process): the
+whole run (from your signed start to the epic's last event), the planner's time (to the first child), each child's
+time with its size (its first claim to its move into testing) and each release stage's time (to its proven record),
+all read from orch's own event log. The run view shows "About N minutes left (from M earlier runs)" only when at least
+three finished runs with the same release target are recorded and the median of their whole runs is still ahead of
+the running one; with fewer runs, or a run already longer than that median, it keeps "No estimate yet." A record that
+does not read back whole is left out. The per-step times are recorded for later use; only the whole run is estimated
+today.
+
 ## Coming in later phases
 
 - A notification when a release stops; runner-side proof of tests and review (and ring steps for them).
@@ -1681,7 +1740,6 @@ record what they were told: [factory-release-live-test.md](factory-release-live-
   coverage block are tested with stand-ins only).
 - Removing a child's clone once its work is released.
 - The Dark switch on the dashboard.
-- A signed `factory.enabled` switch (today a plain config value).
 - Phone cards through the signed phone-decision flow.
 - Runner status on the epic page, and a runner limit signed into the charter.
 - `factory.ask`: actions the harness would allow that you still want asked.

@@ -167,7 +167,7 @@ def _evidence_blockers(ws, rep) -> list[dict]:
         if row["status"] != "testing":
             continue
         t = store.read_ticket(store.resolve(ws, row["id"]).path)
-        for n, why in evidence.strict_missing(t):
+        for n, why in evidence.strict_missing(t, ws):
             out.append(_b("evidence", f"the evidence of {row['id']}"
                                       + (f" for AC{n}" if n else "") + " does not meet the close rules: "
                                       + _text(why, 160)))

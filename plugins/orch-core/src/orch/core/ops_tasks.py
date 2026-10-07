@@ -106,7 +106,8 @@ class TaskOpsMixin:
             return
         from orch.core.ops import claim_expired
         claim = t.meta.get("claim") or {}
-        if claim.get("session") != self._session or claim_expired(claim, float(self.ws.config["claims"]["ttl_hours"])):
+        from orch.core.events import short_session
+        if short_session(claim.get("session")) != self._session or claim_expired(claim, float(self.ws.config["claims"]["ttl_hours"])):
             raise ClaimError(f"{t.id} is not claimed by this session", hint=f"orch claim {t.id}")
 
     def _plan_approved_for_agent(self, t) -> None:

@@ -87,7 +87,7 @@ def agent_rows(ws, *, now: datetime | None = None, events: list | None = None,
             ticket=e.id,
             title=e.meta.get("title") or "",
             harness=str(claim.get("harness") or ""),
-            session=str(claim.get("session") or ""),
+            session=events_mod.short_session(claim.get("session")) or "",
             status=status,
             claimed_at=claimed_at,
             last_at=last_at,
@@ -103,11 +103,11 @@ def recent_sessions(ws, *, limit: int = 10, events: list | None = None) -> list[
     sessions: list[dict] = []
     for ev in sorted(all_events, key=lambda e: e.seq):
         if ev.kind == "claim.taken":
-            latest_taken[(ev.ticket, ev.data.get("session"))] = ev
+            latest_taken[(ev.ticket, events_mod.short_session(ev.data.get("session")))] = ev
             continue
         if ev.kind != "claim.released":
             continue
-        rel, rel_session = ev, ev.data.get("session")
+        rel, rel_session = ev, events_mod.short_session(ev.data.get("session"))
         taken_ev = latest_taken.get((rel.ticket, rel_session))
         if taken_ev is None:
             continue

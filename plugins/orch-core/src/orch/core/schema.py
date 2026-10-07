@@ -152,7 +152,8 @@ def ticket_document(ws, ticket, *, entries=None) -> dict:
                     else [] if key in _LIST_KEYS else {} if key == "branches" else None)
     claim = m.get("claim") if isinstance(m.get("claim"), dict) else {}
     doc["sprint"] = str(m["sprint"]) if isinstance(m.get("sprint"), (str, int)) and str(m["sprint"]) else None
-    doc["claim"] = {"session": claim.get("session"), "harness": claim.get("harness"), "at": claim.get("at")}
+    from orch.core.events import short_session
+    doc["claim"] = {"session": short_session(claim.get("session")), "harness": claim.get("harness"), "at": claim.get("at")}
     verify = (m.get("gates") or {}).get("verify") or {}
     doc["gates"] = {"requirements": _gate(ticket, "requirements"), "plan": _gate(ticket, "plan"),
                     "verify": {"verdict": verify.get("verdict"), "at": verify.get("at"), "via": verify.get("via"),

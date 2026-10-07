@@ -107,3 +107,44 @@ def test_no_criteria_is_missing_and_out_of_range_citations_count_for_nothing():
     assert evidence.strict_missing(_t("- AC1: ran `make test`", "## Acceptance criteria\n\n")) == [
         (0, "the ticket has no acceptance criteria")]
     assert _missing("- AC0: ran `make a` on src/a.py\n- AC99: ran `make b` on src/b.py") == [1, 2]
+
+
+# -- artifact receipts: `- AC1: artifact <name>` resolving to a file orch recorded for the ticket --------------------
+
+def _receipt_ticket(ws, aops, put, tmp_path, verification, content="12 rows\n", name="out.csv"):
+    tid = put("in-progress", sections={"Acceptance criteria": "- [ ] one"})
+    src = tmp_path / name
+    src.write_text(content, encoding="utf-8")
+    if content is not None:
+        aops.artifact_add(tid, src, name=name)
+    t = store.load(ws, tid)[1]
+    t.set_section("Verification", verification)
+    return t
+
+
+def test_an_artifact_receipt_counts_only_when_it_resolves(ws, aops, put, tmp_path):
+    t = _receipt_ticket(ws, aops, put, tmp_path, "- AC1: artifact out.csv")
+    assert evidence.strict_missing(t, ws) == []
+    assert evidence.strict_missing(t) != []  # without the workspace a receipt proves nothing
+    t = _receipt_ticket(ws, aops, put, tmp_path, "- AC1: artifact report")  # no extension: first class all the same
+    assert dict(evidence.strict_missing(t, ws))[1].startswith("artifact report is not a file orch recorded")
+    t2 = _receipt_ticket(ws, aops, put, tmp_path, "- AC1: artifact report", name="report")
+    assert evidence.strict_missing(t2, ws) == []
+
+
+@pytest.mark.parametrize("verification", ["- AC1: artifact elsewhere.csv", "- AC1: artifact out.csv, probably fine"])
+def test_a_receipt_that_does_not_resolve_or_doubts_proves_nothing(ws, aops, put, tmp_path, verification):
+    t = _receipt_ticket(ws, aops, put, tmp_path, verification)
+    assert [n for n, _ in evidence.strict_missing(t, ws)] == [1]
+
+
+def test_a_changed_or_emptied_artifact_is_no_receipt(ws, aops, put, tmp_path):
+    from orch.core import artifacts
+    t = _receipt_ticket(ws, aops, put, tmp_path, "- AC1: artifact out.csv")
+    p = artifacts.ticket_dir(ws, t.id) / "out.csv"
+    p.write_text("forged\n", encoding="utf-8")
+    assert "changed since orch recorded it" in dict(evidence.strict_missing(t, ws))[1]
+    p.write_text("", encoding="utf-8")
+    assert "missing or empty" in dict(evidence.strict_missing(t, ws))[1]
+    p.unlink()
+    assert "missing or empty" in dict(evidence.strict_missing(t, ws))[1]

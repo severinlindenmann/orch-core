@@ -1492,3 +1492,26 @@ def test_an_old_readiness_result_ages_out_of_the_views_and_shows_its_age(fws, fa
         assert data.run_view(fws, store.load(fws, eid)[1])["state"] != "blocked"
     finally:
         factory_runner._READY.clear()
+
+
+def test_agent_may_commit_false_means_no_commit_prompt_and_no_release_run(fws, fa, fh, human, fake, monkeypatch):
+    """git.agent_may.commit is false by default and the guard then refuses agents' commits: the prompt never tells a
+    worker to commit, and a charter that signs a release (it takes the children's commits) starts nothing."""
+    from orch.dashboard.data import factory as data
+    assert factory_runner.commit_form(fws, "L-0002") is None
+    fws.config["git"]["agent_may"]["commit"] = True
+    assert factory_runner.commit_form(fws, "L-0002").startswith('git commit -m "L-0002')
+    fws.config["git"]["agent_may"]["commit"] = False
+    eid, kids, d = _started(fws, fa, fh)
+    assert factory_runner.release_commit_blocker(fws, d) is None  # no release signed: it runs (and does not commit)
+    signed = {**d, "release": "merge"}
+    why = factory_runner.release_commit_blocker(fws, signed)
+    assert "git.agent_may.commit is false" in why and "approve the epic again without a release" in why
+    real = permits.factory_delegation  # the charter as if it signed a release up to merge
+    monkeypatch.setattr(permits, "factory_delegation",
+                        lambda *a, **k: (lambda x: x and {**x, "release": "merge"})(real(*a, **k)))
+    lines = _tick(fws, human, fake)
+    assert not fake.started and any(f"not starting anything for {eid}: its charter signs a release" in x
+                                    for x in lines)
+    r = data.run_view(fws, store.load(fws, eid)[1])
+    assert r["state"] == "blocked" and "git.agent_may.commit is false" in r["blocker"]

@@ -338,7 +338,9 @@ def test_an_agent_cannot_make_or_remove_a_clone(fws, run, agent):
 
 def test_the_clone_prompt_names_the_same_orch_commands_as_the_worktree_prompt(fws):
     import re
+    fws.config["git"]["agent_may"]["commit"] = True
     form = factory_runner.commit_form(fws, "L-0002")
+    assert form
     clone = factory_runner.factory_work_prompt("L-0002", form, clone_tmp="/abs/ws/orchestrator/temporary")
     tree = factory_runner.factory_work_prompt("L-0002", form)
     assert set(re.findall(r"`([^`]+)`", clone)) == set(re.findall(r"`([^`]+)`", tree))

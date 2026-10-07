@@ -345,7 +345,10 @@ Only such a session is told to commit, on that branch: `git add FILES` and a `gi
 format, rendered at launch from `commit.subject` and the required body lines of `commit.body` (plus `Rollback` when
 `commit.rollback` is on), one `-m` each, for example `git commit -m "<child> short summary" -m "What: ..." -m "Why:
 ..." -m "Risk: ..."`, so the message passes orch's commit-msg check (the test suite runs that check on it). A config
-whose subject or labels are not plain words gets no commit instruction. A session in its clone is told that its folder
+whose subject or labels are not plain words, or a workspace whose `git.agent_may.commit` is false (the default:
+the guard refuses agents' commits), gets no commit instruction; and since a release takes the children's commits, the
+runner starts nothing for a charter that signs a release while `git.agent_may.commit` is false (the run view says so
+and how to fix it: set it to true, or approve the epic again without a release). A session in its clone is told that its folder
 is a separate clone made for the child, to commit there in that format, never to push, that its tickets live in the
 workspace (orch commands work on them as usual), and to write the files it hands orch under the workspace's
 `orchestrator/temporary`, named by its absolute path (orch reads a bound session's files only inside the workspace).

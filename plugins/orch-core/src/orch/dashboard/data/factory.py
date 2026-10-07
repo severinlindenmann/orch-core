@@ -325,8 +325,9 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     elif not factory_sessions.armed(ws, d["id"]):
         state, headline = "unarmed", ("The dashboard's start did not arm it (for example, it was approved in a "
                                       "terminal)")
-    elif blocker or any(c["level"] == "block" for c in checks or []):
+    elif blocker or any(c["level"] == "block" for c in checks or []) or factory_runner.release_commit_blocker(ws, d):
         state, headline = "blocked", "The runner starts nothing"
+        blocker = blocker or factory_runner.release_commit_blocker(ws, d)
     elif running and _all_idle(running):
         state, headline = "asleep", "Sessions are waiting at their prompt: nothing is running"
     elif any(not factory_sessions.is_planner(b) for b in running):

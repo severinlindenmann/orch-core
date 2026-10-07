@@ -536,6 +536,7 @@ def test_every_orch_command_the_skills_and_hook_name_is_one_plain_command_the_ba
 
 
 def test_the_worker_prompt_is_built_in_and_says_the_plain_rules(ws):
+    ws.config["git"]["agent_may"]["commit"] = True  # the guard lets agents commit here
     p = factory_runner.factory_work_prompt("L-0002", factory_runner.commit_form(ws, "L-0002"))
     assert p.startswith("You work on L-0002, a child of an AI Factory epic.") and "orch-work-on-ticket" in p
     for words in ("one plain command per tool call", "`&&`", "`2>&1`", "`|| true`", "actually denied with a request id",
@@ -1007,6 +1008,8 @@ def test_the_prompts_commit_passes_the_real_commit_msg_check(fws, fa, fh):
     from orch.hooks.commit_msg import check_message
     eid, d = _epic(fws, fa, fh)
     cid = _child(fa, eid)
+    assert factory_runner.commit_form(fws, cid) is None  # agents may not commit here (the default): no commit form
+    fws.config["git"]["agent_may"]["commit"] = True
     form = factory_runner.commit_form(fws, cid)
     assert form.startswith(f'git commit -m "{cid} short summary" -m "What: ..."')
     assert check_message(fws, _commit_message(form)) == []
@@ -1015,13 +1018,15 @@ def test_the_prompts_commit_passes_the_real_commit_msg_check(fws, fa, fh):
 
 def test_the_commit_form_follows_the_workspace_config_and_refuses_odd_text(configure):
     from orch.hooks.commit_msg import check_message
-    ws = configure(commit={"subject": "[{key}] {summary}", "body": ["Why", "Tests"], "rollback": True})
+    ws = configure(commit={"subject": "[{key}] {summary}", "body": ["Why", "Tests"], "rollback": True},
+                   git={"agent_may": {"commit": True}})
     form = factory_runner.commit_form(ws, "L-0002")
     assert form == 'git commit -m "[L-0002] short summary" -m "Why: ..." -m "Tests: ..." -m "Rollback: ..."'
     assert not [p for p in check_message(ws, _commit_message(form)) if "body" in p or "subject" in p]
     for bad in ({"subject": '{key} "{summary}"'}, {"subject": "{key} $(x) {summary}"}, {"subject": "{summary}"},
                 {"body": ["What`x`"]}, {"body": ["a\nb"]}):
-        assert factory_runner.commit_form(configure(commit=bad), "L-0002") is None, bad
+        assert factory_runner.commit_form(configure(commit=bad, git={"agent_may": {"commit": True}}),
+                                          "L-0002") is None, bad
 
 
 # -- the evidence format: what the planner writes and what the workers prove, read by orch's own parser ----------------

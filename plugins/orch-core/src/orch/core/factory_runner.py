@@ -116,6 +116,21 @@ def program_blocker(settings=None) -> str | None:
     return None
 
 
+def release_commit_blocker(ws, d) -> str | None:
+    """Why the runner starts nothing for factory delegation `d`: its charter signs a release, which merges the
+    children's commits from their clones, while git.agent_may.commit is false (the guard refuses agents' commits, so
+    no child could ever have a commit to release). None otherwise."""
+    try:
+        may = ws.config["git"]["agent_may"]["commit"] is True
+    except (KeyError, TypeError):
+        may = False
+    if not (d or {}).get("release") or may:
+        return None
+    return ("its charter signs a release, which takes the children's commits, but this workspace does not let agents "
+            "commit (git.agent_may.commit is false in orchestrator/config.json). Set it to true, or approve the epic "
+            "again without a release")
+
+
 def runner_blocker(ws, settings=None) -> str | None:
     """The runner's current reason to start nothing, or None: a program it needs (program_blocker), the user-scope
     settings (user_settings_blocker), or the last readiness run's first blocking check (never run here). One function
@@ -703,8 +718,8 @@ CLONE_COMMIT = ("Your working folder is a separate clone of the repository that 
                 "sentences). Never push: the runner takes the commits from this clone. "
                 + _HERE)
 CLONE_NO_COMMIT = ("Your working folder is a separate clone of the repository that the runner made for {key}. Do not "
-                   "commit: the workspace's commit format is not plain words. Leave your changes in this clone's "
-                   "working tree and say so with `orch log {key} -m \"...\"`. " + _HERE)
+                   "commit: this workspace does not let agents commit, or its commit format is not plain words. Leave "
+                   "your changes in this clone's working tree and say so with `orch log {key} -m \"...\"`. " + _HERE)
 _TMP = "under orchestrator/temporary"  # the folder the worker writes its Verification file in (see the prompt)
 _SUBJECT_OK = re.compile(r"[A-Za-z0-9 \[\]()#:.,_/-]{1,100}")
 _LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
@@ -712,11 +727,14 @@ _LABEL_OK = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,30}")
 
 def commit_form(ws, key: str) -> str | None:
     """The `git commit` a worker runs, from the workspace's commit format (its subject with the key and a summary,
-    and one -m per required body line), or None when the config does not give plain words (then the prompt does not
-    tell the worker to commit)."""
+    and one -m per required body line), or None when agents may not commit here (git.agent_may.commit is false: the
+    guard refuses their commits) or the config does not give plain words; then the prompt does not tell the worker to
+    commit."""
     from orch.instructions.render import body_names
     try:
         cfg = ws.config
+        if cfg["git"]["agent_may"]["commit"] is not True:
+            return None
         subject = str(cfg["commit"]["subject"])
         labels = [str(x) for x in body_names(cfg)]
     except (KeyError, TypeError):
@@ -1637,6 +1655,10 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
         epic = _ticket(ws, entry.id)
         d = permits.factory_delegation(ws, epic, signed) if epic is not None else None
         if d is None or not d["active"] or not fs.armed(ws, d["id"]):
+            continue
+        why = release_commit_blocker(ws, d)
+        if why:
+            lines.append(f"not starting anything for {epic.id}: {why}")
             continue
         kids = epics.children(ws, epic.id)
         if not kids:  # nothing splits the epic yet: one planner session does, within its own launch cap

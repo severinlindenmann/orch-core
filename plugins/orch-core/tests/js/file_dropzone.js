@@ -65,6 +65,8 @@ const ev = ask.dispatch("paste", { clipboardData: { files: [shot] } });
 assert.ok(ev.defaultPrevented);
 assert.ok(/^screenshot-\d{8}-\d{6}\.png$/.test(names()[0]), names()[0]);
 assert.strictEqual(input.files[0].type, "image/png");
+const status = () => zone.children.find((c) => c.className.startsWith("dz-msg")).textContent;
+assert.ok(/^Pasted screenshot-\d{8}-\d{6}\.png\. 1 file attached\.$/.test(status()), status());
 assert.strictEqual(ask.dispatch("paste", { clipboardData: { files: [] } }).defaultPrevented, false);
 // the list: thumbnail (a data: URL, CSP allows no blob:), name, size, a Remove button named for its file
 const item = list.children[0];
@@ -79,6 +81,9 @@ assert.ok(zone.dispatch("drop", { dataTransfer: { files: [pdf, huge] } }).defaul
 assert.deepStrictEqual(names().slice(1), ["spec.pdf"]);
 const msg = zone.children.find((c) => c.className.startsWith("dz-msg"));
 assert.ok(msg.className.includes("is-bad") && msg.textContent.includes("video.mov (61 MB)") && msg.textContent.includes("50 MB per file"), msg.textContent);
+assert.ok(msg.textContent.endsWith("2 files attached."), msg.textContent);
+zone.dispatch("drop", { dataTransfer: { files: [] } });  // nothing dropped: the line stays as it was
+assert.ok(msg.textContent.endsWith("2 files attached."));
 assert.strictEqual(list.children[1].children[0].textContent, "PDF");  // no thumbnail for a non-image
 assert.ok(zone.dispatch("dragover").defaultPrevented);
 
@@ -87,10 +92,12 @@ const picked = new FakeFile([], "notes.txt", { type: "text/plain", size: 10 });
 input.files = [picked];
 input.dispatch("change");
 assert.strictEqual(names().length, 3); assert.strictEqual(names()[2], "notes.txt");
+assert.strictEqual(status(), "3 files attached.", "the total, not the size of the last pick");
 
 // 4. Remove takes exactly that file out of the input and moves focus to the next Remove
 list.children[1].children[3].click();
 assert.deepStrictEqual(names().slice(1), ["notes.txt"]);
+assert.strictEqual(status(), "spec.pdf removed. 2 files attached.");
 assert.strictEqual(active, list.children[1].children[3]);
 list.children[1].children[3].click(); list.children[0].children[3].click();
 assert.deepStrictEqual(names(), []); assert.strictEqual(active, choose, "with nothing left, focus goes back to Choose files");

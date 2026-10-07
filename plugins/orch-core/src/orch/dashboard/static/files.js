@@ -48,6 +48,8 @@
     input.after(zone);
 
     const say = (text, bad) => { msg.textContent = text; msg.className = "dz-msg" + (bad ? " is-bad" : ""); };
+    // the live line always ends on the total the form will send, never on the size of the last step
+    const total = () => (files.length ? files.length + (files.length === 1 ? " file" : " files") + " attached." : "No files attached.");
     const render = () => {
       list.textContent = "";
       files.forEach((f, i) => {
@@ -69,7 +71,7 @@
         remove.addEventListener("click", () => {
           files.splice(i, 1);
           sync();
-          say(f.name + " removed.");
+          say(f.name + " removed. " + total());
           const next = list.querySelectorAll(".dz-remove")[Math.min(i, files.length - 1)];
           (next || choose).focus();
         });
@@ -90,15 +92,15 @@
         else files.push(f);
       });
       sync();
-      if (refused.length) say("Not added, over the limit of " + size(max) + " per file: " + refused.join(", ") + ".", true);
-      else say(note || "");
+      if (refused.length) say("Not added, over the limit of " + size(max) + " per file: " + refused.join(", ") + ". " + total(), true);
+      else if (incoming.length) say((note ? note + " " : "") + total());
     };
 
     choose.addEventListener("click", () => input.click());
     // the native picker replaces the input's files with the new pick: keep what was listed and add it
     input.addEventListener("change", () => {
       const picked = [...input.files].filter((f) => !files.includes(f));
-      add(picked, picked.length ? picked.length + (picked.length === 1 ? " file" : " files") + " added." : "");
+      add(picked);
     });
     zone.addEventListener("dragover", (event) => { event.preventDefault(); zone.classList.add("is-over"); });
     zone.addEventListener("dragleave", () => zone.classList.remove("is-over"));
@@ -106,7 +108,7 @@
       event.preventDefault();
       zone.classList.remove("is-over");
       const dropped = event.dataTransfer ? event.dataTransfer.files : [];
-      if (dropped.length) add(dropped, dropped.length + (dropped.length === 1 ? " file" : " files") + " added.");
+      if (dropped.length) add(dropped);
     });
     if (paste) {
       paste.addEventListener("paste", (event) => {
@@ -115,7 +117,7 @@
         event.preventDefault();
         const at = Date.now();
         const named = images.map((f, n) => new window.File([f], screenshotName(f.type, at, n), { type: f.type }));
-        add(named, "Pasted " + named.map((f) => f.name).join(", ") + ": attached below.");
+        add(named, "Pasted " + named.map((f) => f.name).join(", ") + ".");
       });
     }
     render();

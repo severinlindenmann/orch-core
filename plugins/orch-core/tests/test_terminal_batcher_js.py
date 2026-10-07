@@ -14,3 +14,4 @@ def test_terminal_key_batcher():
                         str(ROOT / "src" / "orch" / "dashboard" / "static" / "terminal.js")],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip().endswith("ok"), r.stdout + r.stderr  # a promise that never settles exits 0 silently

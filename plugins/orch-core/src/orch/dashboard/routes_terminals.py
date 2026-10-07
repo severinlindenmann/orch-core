@@ -278,12 +278,14 @@ async def _json(request: Request):
 
 
 # Key posts from a paired device. The bridge carries about 1 request a second per device, so a device batches its
-# keystrokes (the page sends one post per 750 ms) and numbers the posts: `n` must rise with every post, so one that
-# arrives twice or late never types twice. Local requests are unchanged.
-REMOTE_POSTS, REMOTE_WINDOW_MS = 15, 10_000  # posts per device per window
+# keystrokes (the page sends one post per second) and numbers the posts: `n` must rise with every post of a page
+# (`page` names it, so two tabs of one device count apart), so one that arrives twice or late never types twice. Local requests are unchanged.
+REMOTE_POSTS, REMOTE_WINDOW_MS = 11, 10_000  # posts per device per window: 1.1 a second, as the page's 1 a second plus a retry
 REMOTE_MAX_ITEMS, REMOTE_MAX_CHARS = 64, 2048  # one device post: items, and characters of text
+_PAGE = re.compile(r"[A-Za-z0-9_-]{4,64}")
 _DEVICE_LOCK = threading.Lock()
-_DEVICE_LAST: dict[str, int] = {}  # device -> the highest post number taken
+MAX_PAGES = 256  # page counters kept; the oldest are forgotten first
+_DEVICE_LAST: dict[tuple, int] = {}  # (device, page) -> the highest post number taken
 _DEVICE_RATE: dict = {}  # device -> its SlidingLimit
 
 
@@ -291,19 +293,23 @@ def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
     """(status, text) when a device's key post must not run; otherwise its post number is taken and None returned."""
     seq = data.get("seq") if isinstance(data, dict) else None
     n = data.get("n") if isinstance(data, dict) else None
-    if type(n) is not int or n < 1:
-        return 400, "key posts from a device carry a post number n"
+    page = data.get("page") if isinstance(data, dict) else None
+    if type(n) is not int or n < 1 or not isinstance(page, str) or not _PAGE.fullmatch(page):
+        return 400, "key posts from a device carry a post number n and a page name"
     if not isinstance(seq, list) or len(seq) > REMOTE_MAX_ITEMS or sum(
             len(i["text"]) for i in seq if isinstance(i, dict) and isinstance(i.get("text"), str)) > REMOTE_MAX_CHARS:
         return 413, "too many keys in one post"
     from orch.remote.bridge_host.budgets import SlidingLimit  # a bridged request only: a local run never loads it
     with _DEVICE_LOCK:
-        if n <= _DEVICE_LAST.get(device, 0):
+        if n <= _DEVICE_LAST.get((device, page), 0):
             return 409, "post number already used"
         if not _DEVICE_RATE.setdefault(device, SlidingLimit(REMOTE_POSTS, REMOTE_WINDOW_MS)).take(
                 time.monotonic_ns() // 1_000_000):
             return 429, "too many key posts: batch the keys"
-        _DEVICE_LAST[device] = n
+        _DEVICE_LAST.pop((device, page), None)  # re-inserted last: the oldest go first
+        _DEVICE_LAST[(device, page)] = n
+        while len(_DEVICE_LAST) > MAX_PAGES:
+            del _DEVICE_LAST[next(iter(_DEVICE_LAST))]
     return None
 
 

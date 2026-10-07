@@ -140,19 +140,26 @@ Terminals work from a paired device on the same routes as at the desk, each tagg
   Look and Decide devices cannot watch.
 - Typing needs Type and a typing lease: sending keys, resizing, ending or starting a session, and Start agent on a
   ticket or a quick task. The host asks the device for a fresh platform-authenticator assertion (Face ID, Touch ID,
-  Windows Hello or a PIN), checks it with the host library, and binds the lease to that device for 15 minutes of
-  idleness. The lease covers only input sent on a stream the device itself opened; a revoke or a change of scope
-  ends it, and so does a restart. A device with no platform authenticator never gets one, so it can watch but not type.
-- Key posts carry `seq` (the keys, in order) and `n`, a number that must rise with every post from that device. A
-  post whose `n` was already used or is older than one already taken answers 409 and types nothing, so a retry or a
-  late arrival never types twice. At most 64 items and 2048 characters of text per post, and 15 posts per 10
-  seconds per device (429, without using the number). A local browser is unaffected and sends no `n`.
-- The bridge carries about one request a second per device, so the page batches keystrokes when it runs through a
-  host (`window.orchHost.remote` is true): one post per 750 ms, in the order typed, one at a time. A post that did
-  not arrive, or was rate limited, is sent again unchanged with the same `n`. A host that serves the page sets
-  `remote: true` in its adapter.
-- If the stream is not open (it errored, or is reconnecting), the page shows a snapshot fetched every second from
-  `/terminals/<name>/snapshot` until the stream is back.
+  Windows Hello or a PIN), checks it with the host library, and binds the lease to that device. The lease ends 15
+  minutes from the unlock: a key post inside it does not extend it. When it ends the host answers `lease_required`
+  and the device client must ask the person for the assertion again. The lease covers only input sent on a stream
+  the device itself opened; a revoke or a change of scope ends it, and so does a restart. A device with no platform
+  authenticator never gets one, so it can watch but not type. Other Type routes (a schedule's Run now, an addon
+  action) are unchanged: Type alone.
+- Key posts carry `seq` (the keys, in order), `page` (a name the page picks for itself) and `n`, a number that must
+  rise with every post of that page. A post whose `n` was already used or is older than one already taken answers
+  409 and types nothing, so a retry or a late arrival never types twice; two tabs of one device count apart. At
+  most 64 items and 2048 characters of text per post (a longer paste is cut into several posts by the page), and 11
+  posts per 10 seconds per device (429, without using the number).
+- The bridge host keeps at most 1024 request records per device for 900 seconds, so a device can sustain about 1.14
+  requests a second. The page therefore sends at most one key post a second (`window.orchHost.remote` is true when a
+  host serves the page; the batch interval is 1000 ms), one at a time and in the order typed; a post that did not
+  arrive, or was rate limited, is sent again unchanged with the same `n`. Polling the snapshot adds to the count, so
+  it runs only while the stream is not open, at most every 2 seconds, and never while keys are waiting or out: the
+  sustained rate stays under 1.1 a second either way. A host that serves the page sets `remote: true` in its adapter.
+- If the stream is not open (it errored, or is reconnecting), the page shows a snapshot from
+  `/terminals/<name>/snapshot`. Each poll's answer holds the screen (up to 64 KiB) and is written to the host's
+  on-disk replay store for 15 minutes.
 - A revoke or a change of scope ends the device's terminal streams at once, with a sealed `revoked` or
   `scope_changed` refusal.
 

@@ -84,7 +84,7 @@ def app(ws):
 
 # -- the scope ladder, at the dispatcher -----------------------------------------------------------------------------
 
-TYPING = [("POST", "/terminals/DEMO-1/keys", {"seq": [{"text": "x"}], "n": 1}),
+TYPING = [("POST", "/terminals/DEMO-1/keys", {"seq": [{"text": "x"}], "n": 1, "page": "pageone"}),
           ("POST", "/terminals/DEMO-1/size", {"cols": 80, "rows": 24}),
           ("POST", "/terminals/DEMO-1/end", None), ("POST", "/terminals/new", None)]
 WATCHING = [("GET", "/terminals"), ("GET", "/terminals/DEMO-1"), ("GET", "/terminals/DEMO-1/snapshot")]
@@ -108,7 +108,7 @@ def test_an_operate_device_can_watch_but_not_type(app, tmux):
 
 
 def test_a_type_device_types_and_a_local_post_needs_no_number(app, tmux, ws):
-    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "ls"}, {"key": "Enter"}], "n": 7})[0] == 204
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "ls"}, {"key": "Enter"}], "n": 7, "page": "pageone"})[0] == 204
     assert tmux.typed == ["ls", "Enter"]
     from fastapi.testclient import TestClient
     c = TestClient(app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000))
@@ -119,8 +119,8 @@ def test_a_type_device_types_and_a_local_post_needs_no_number(app, tmux, ws):
 
 # -- post numbers, rate limit, size ----------------------------------------------------------------------------------
 
-def keys(app, n, text="a", device_scope=Scope.TYPE):
-    body = {"seq": [{"text": text}]}
+def keys(app, n, text="a", device_scope=Scope.TYPE, page="pageone"):
+    body = {"seq": [{"text": text}], "page": page}
     if n is not None:
         body["n"] = n
     return call(app, "POST", "/terminals/DEMO-1/keys", device_scope, body)[0]
@@ -134,17 +134,32 @@ def test_a_post_that_arrives_twice_or_late_never_types_twice(app, tmux):
     assert tmux.typed == ["one", "two"]
 
 
+def test_two_tabs_of_one_device_count_apart(app, tmux):
+    assert keys(app, 500, "tab one", page="tabone") == 204
+    assert keys(app, 20, "tab two", page="tabtwo") == 204  # a lower number from another page is not a duplicate
+    assert keys(app, 20, "tab two again", page="tabtwo") == 409
+    assert keys(app, 500, "dup", page="tabone") == 409
+    assert tmux.typed == ["tab one", "tab two"]
+
+
+def test_a_device_post_without_a_page_name_is_refused(app, tmux):
+    body = {"seq": [{"text": "a"}], "n": 1}
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, body)[0] == 400
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {**body, "page": "bad name!"})[0] == 400
+    assert tmux.typed == []
+
+
 def test_a_device_post_without_a_number_is_refused(app, tmux):
     assert keys(app, None) == 400
-    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "a"}], "n": "5"})[0] == 400
-    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "a"}], "n": True})[0] == 400
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "a"}], "n": "5", "page": "pageone"})[0] == 400
+    assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE, {"seq": [{"text": "a"}], "n": True, "page": "pageone"})[0] == 400
     assert tmux.typed == []
 
 
 def test_numbers_are_kept_per_device(app, tmux):
     async def one(device, n):
         req = BridgeRequest("POST", "/terminals/DEMO-1/keys", {"content-type": "application/json"},
-                            json.dumps({"seq": [{"text": "k"}], "n": n}).encode())
+                            json.dumps({"seq": [{"text": "k"}], "n": n, "page": "pageone"}).encode())
         return [e.status async for e in dispatch(app, req, origin(Scope.TYPE, device), still_authorized=lambda: True)
                 if isinstance(e, Start)][0]
     assert asyncio.run(one("dev_a", 5)) == 204
@@ -165,9 +180,9 @@ def test_the_rate_limit_counts_per_device_and_a_refused_post_keeps_its_number(ap
 
 def test_a_post_over_the_size_cap_is_refused(app, tmux):
     assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE,
-                {"seq": [{"text": "x" * 513}] * 5, "n": 1})[0] == 413  # 2565 characters
+                {"seq": [{"text": "x" * 513}] * 5, "n": 1, "page": "pageone"})[0] == 413  # 2565 characters
     assert call(app, "POST", "/terminals/DEMO-1/keys", Scope.TYPE,
-                {"seq": [{"key": "Up"}] * 65, "n": 2})[0] == 413
+                {"seq": [{"key": "Up"}] * 65, "n": 2, "page": "pageone"})[0] == 413
     assert keys(app, 3) == 204  # a refused post took no number
     assert tmux.typed == ["a"]
 
@@ -189,6 +204,10 @@ def test_the_hook_asks_for_the_lease_on_every_typing_route_and_for_nothing_on_wa
     for p in ("/terminals", "/terminals/stream", "/terminals/DEMO-1", "/terminals/DEMO-1/stream",
               "/terminals/DEMO-1/snapshot"):
         assert need("GET", p) == Requirement("operate", "none"), p
+    assert need("POST", "/quick/q1/agent/start") == Requirement("type", "lease")
+    # every other Type route is as on main: Type alone (whether they should need the lease is a separate decision)
+    assert need("POST", "/schedules/s1/run") == Requirement("type", "none")
+    assert need("POST", "/addons/x/actions/y") == Requirement("type", "none")
     assert need("POST", "/schedules/x/arm") == Requirement("type", "none")  # a fresh route stays the gate's to refuse
     assert need("POST", "/workspace/tidy") is None
 

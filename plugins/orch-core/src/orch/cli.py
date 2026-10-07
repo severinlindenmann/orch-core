@@ -622,7 +622,9 @@ def _keys(ws, raw: str | None) -> list[str]:
 
 
 @app.command()
-def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan | plans (an epic's children)")],
+def approve(ref: str, gate: Annotated[Optional[str], typer.Argument(
+                help="requirements | plan | plans (an epic's children) | all. Without it (or with `all`) every "
+                     "pending gate of the ticket is approved after one confirmation.")] = None,
             despite_open_question: Annotated[bool, typer.Option(
                 "--despite-open-question",
                 help="Approve although a line reads as an open question for you (you read it; it is not one). "
@@ -647,7 +649,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     On an epic this approves its charter: the epic's requirements and every child that is not done (in any status),
     its requirements and its plan, all printed before the typed confirmation; the approval binds exactly what was
     printed. `orch approve <epic> plans` approves only the children's plans that wait for approval (in progress or
-    waiting), each printed with its hash, after one typed confirmation of the epic's key."""
+    waiting), each printed with its hash, after one typed confirmation of the epic's key.
+
+    Without a gate (or with `all`) a backlog ticket whose requirements and plan are both waiting gets both approved in
+    one confirmation (both texts and both hashes printed first, each approval bound to its own hash); otherwise the
+    one gate that waits is approved."""
     from orch.core import epics, store
     ws = _ws()
     delegate = delegate or factory
@@ -657,6 +663,18 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if factory:
         limits["factory"] = True
     target = store.resolve(ws, ref)
+    if gate == "all":
+        gate = None
+    if gate is None and epics.is_epic(target.meta or {}):
+        gate = "requirements"
+    if gate is None:
+        if delegate or only is not None or despite_on is not None:
+            raise UsageError("--delegate, --only and --despite-open-question-on go with an epic or `plans`")
+        cur = store.load(ws, target.id)[1]
+        pending = _pending_gates(ws, cur)
+        if len(pending) == 2:
+            return _approve_both(ws, ref, cur, despite_open_question, dry_run, json_out)
+        gate = pending[0]
     if gate == "plans":
         if delegate:
             raise UsageError("delegation is given when approving an epic's requirements")
@@ -691,10 +709,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         raise UsageError("gate must be requirements or plan")
     cur = store.load(ws, target.id)[1]
     gh = gate_hash(cur, gate)  # what is printed below, read once
+    changes = _changes_text(ws, cur, gate)  # a re-approval: what changed since the approved text, then the full text
     t = _human_op(ws, ref, lambda ops, kw: ops.approve(ref, gate, despite_open_question=despite_open_question, **kw),
-                  lambda p: "\n".join(_gated_text(cur, gate)
+                  lambda p: "\n".join(changes + _gated_text(cur, gate)
                                       + [f"{p.id}: approve the {gate} exactly as shown ({_short(gh)});"
-                                         f" status then {p.status}"]),
+                                         f" status then {p.status}" + (" (kept)" if changes else "")]),
                   bound={"expected_hash": gh}, dry_run=dry_run, json_out=json_out)
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would approve the {gate} ({_short(t.meta['gates'][gate]['hash'])}),"
@@ -705,6 +724,60 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if more:  # the routine case on an epic: one confirmation for the rest
         text += f"\n{len(more)} more plan(s) in epic {parent.id} wait: orch approve {parent.id} plans"
     _out(_view(ws, t), json_out, text)
+
+
+def _changes_text(ws, t, gate: str) -> list[str]:
+    """For a gate approved earlier whose text changed since (state invalidated): the diff against the approved
+    snapshot, hidden characters escaped. Empty otherwise, or when no snapshot was kept."""
+    import difflib
+
+    from orch.core.gates import approved_snapshot, gate_state, normalized_text, snapshot_matches
+    from orch.textsafe import lines
+    if gate_state(t, gate) != "invalidated":
+        return []
+    old = approved_snapshot(ws, t.id, gate)
+    if old is None or not snapshot_matches(t, gate, old):
+        return [f"The {gate} of {t.id} changed since you approved it (no trustworthy snapshot of the approved text: "
+                "no diff is shown)", ""] + ["The full text now:"]
+    diff = [x for x in difflib.unified_diff(old.rstrip("\n").split("\n"), normalized_text(t, gate).rstrip("\n").split("\n"),
+                                           lineterm="", n=2) if not x.startswith(("---", "+++"))]
+    return ([f"Changed since you approved the {gate} of {t.id}:"] + [f"  {y}" for x in diff for y in lines(x)]
+            + ["", "The full text now:"])
+
+
+def _pending_gates(ws, t) -> list[str]:
+    """The gates `orch approve <id>` (no gate) approves: both in backlog when the plan is drafted and its gate exists,
+    else the one that waits (requirements first)."""
+    from orch.core.gates import REAPPROVE_IN_PLACE, gate_state, plan_required
+    from orch.errors import ValidationError
+    rs, ps = gate_state(t, "requirements"), gate_state(t, "plan")
+    drafted = plan_required(ws, t) and bool(t.section("Plan").strip())
+    if rs == "pending" and ps == "pending" and drafted and t.status == "backlog":
+        return ["requirements", "plan"]
+    req = rs == "pending" or (rs == "invalidated" and (t.status == "backlog" or t.status in REAPPROVE_IN_PLACE))
+    plan = (ps == "pending" and drafted) or (ps == "invalidated" and t.status in ("in-progress", "waiting"))
+    if req:
+        return ["requirements"]
+    if plan:
+        return ["plan"]
+    raise ValidationError(f"no gate of {t.id} waits for approval",
+                          hint=f"`orch show {t.id}` shows the gates; name one to approve it: orch approve {t.id} <gate>")
+
+
+def _approve_both(ws, ref: str, cur, despite_open_question: bool, dry_run: bool, json_out: bool) -> None:
+    """One typed confirmation for requirements and plan (Ops.approve_together): both texts and both short hashes are
+    printed first, and each approval is bound to the hash of its own text."""
+    from orch.core.gates import gate_hash
+    rh, ph = gate_hash(cur, "requirements"), gate_hash(cur, "plan")
+    t = _human_op(ws, ref, lambda ops, kw: ops.approve_together(ref, despite_open_question=despite_open_question, **kw),
+                  lambda p: "\n".join(_gated_text(cur, "requirements") + _gated_text(cur, "plan")
+                                      + [f"{p.id}: approve the requirements ({_short(rh)}) and the plan ({_short(ph)}) "
+                                         f"exactly as shown; status then {p.status}"]),
+                  bound={"requirements_hash": rh, "plan_hash": ph}, dry_run=dry_run, json_out=json_out)
+    if dry_run:
+        return _dry(ws, t, json_out, f"{t.id}: would approve the requirements ({_short(rh)}) and the plan "
+                                     f"({_short(ph)}), status then {t.status}")
+    _out(_view(ws, t), json_out, f"{t.id}: requirements and plan approved (status {t.status})")
 
 
 def _approve_plans(ws, target, despite: str | None, only: str | None, dry_run: bool, json_out: bool) -> None:

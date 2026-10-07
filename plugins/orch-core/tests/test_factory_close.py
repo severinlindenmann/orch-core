@@ -94,7 +94,8 @@ def test_it_closes_after_merge_dev_and_production_are_proven(fws, closing, human
     eid, _, _ = closing(release="prod", recipe=_prod_recipe(remote))
     fake = ProdFake()
     lines = release_once(fws, run=fake)
-    assert lines[-1].startswith(f"{eid}: closed by itself") and lines[-2].endswith("production of " + eid + " proven")
+    assert lines[-1] == f"{eid}: run durations recorded"  # the finished run's record, in the same round
+    assert lines[-2].startswith(f"{eid}: closed by itself") and lines[-3].endswith("production of " + eid + " proven")
     assert _states(fws, eid) == {"merge": "proven", "dev": "proven", "production": "proven"}
     assert _epic(fws, eid).status == "done"
 

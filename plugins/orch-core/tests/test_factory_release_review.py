@@ -262,3 +262,29 @@ def test_the_move_double_add_check_fails_closed(fws, monkeypatch):
         m.setattr(fb, "adds", lambda *a, **k: None)
         why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
     assert why and "could not list what your branch adds" in why
+
+
+# -- a merge record without a commit of its own is not proven for any reader --------------------------------------
+
+@pytest.mark.parametrize("forge", ["the-base", "no-base"])
+def test_an_old_merge_record_is_not_proven_for_any_reader(fws, ready, fh, human, forge):
+    import json
+
+    from orch.core.check import run_checks
+    eid, (c,), _ = ready()
+    fr.tick(fws, human, Fake())
+    us = fr.unit_state(fws, eid, "merge", c)
+    p = fr._dir(fws, eid) / fr._name("merge", c, us["attempt"], "outcome")
+    body = json.loads(p.read_text(encoding="utf-8"))
+    if forge == "the-base":
+        body["base_sha"] = body["sha"]
+    else:
+        del body["base_sha"]
+    p.write_text(json.dumps(body), encoding="utf-8")
+    assert fr.unit_state(fws, eid, "merge", c)["state"] == "unknown"
+    assert fr.unreleased(fws, store.load(fws, eid)[1]) == ["merge", "dev"]
+    assert "release-unknown" in _stopped(fws, eid)
+    from orch.core import epics
+    seen = epics.verdict_hash(epics.open_children(fws, store.load(fws, eid)[1]), fws)
+    fh.verdict(eid, "done", expected_hash=seen, skip_release="by hand")
+    assert any(f.code == "closed-without-release" and f.ticket == eid for f in run_checks(fws, emit_events=False))

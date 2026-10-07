@@ -607,6 +607,9 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     if out.get("proven") is True:
         if retried:
             return {**info, "state": "waiting"}  # the human asked for it to run again (it went stale)
+        if stage == "merge" and not own_merge(info):  # for every reader, not only the close
+            return {**info, "state": "unknown", "why": "its record names no commit of its own (no base it was checked "
+                                                       "against, or the base itself)"}
         if os.path.lexists(d / _name(stage, unit, n, "stale")):
             why = (_read(d / _name(stage, unit, n, "stale")) or {}).get("why")
             return {**info, "state": "stale", "why": str(why) if why else "its branch changed after it was merged"}
@@ -1761,11 +1764,12 @@ def _write(p: Path, body: dict) -> bool:
     return fs._create(p, body)
 
 
-def stage_hold(ws, epic) -> list[str]:
-    """Why no release stage (merge, dev or production) may start now though the epic is Ready: what an unattended
-    close refuses too, read fresh. For every child in testing: evidence that does not meet the strict rules
-    (evidence.strict_missing), work not committed in its clone, a submodule in its clone, or a clone whose state cannot
-    be read. [] when nothing holds. (Two children adding the same file is checked before the merge, release_doubles.)"""
+def stage_hold(ws, epic, stage: str) -> list[str]:
+    """Why release stage `stage` (merge, dev or production) may not start now though the epic is Ready: what an
+    unattended close refuses too, read fresh. For every child in testing: evidence that does not meet the strict rules
+    (evidence.strict_missing); before the merge also work not committed in its clone, a submodule in its clone, or a
+    clone whose state cannot be read (after the merge the merged commit is fixed: dev and production never read a
+    clone). [] when nothing holds. (Two children adding the same file is checked before the merge, release_doubles.)"""
     from orch.core import epics, evidence, factory_built
     from orch.core.factory_report import _text
     out = []
@@ -1779,7 +1783,7 @@ def stage_hold(ws, epic) -> list[str]:
         for n, why in evidence.strict_missing(t):
             out.append(f"the evidence of {t.id}" + (f" for AC{n}" if n else "") + " does not meet the close rules: "
                        + _text(why, 160))
-        st = factory_built.uncommitted(ws, t.id)
+        st = factory_built.uncommitted(ws, t.id) if stage == "merge" else None
         if st is not None and not st["ok"]:
             out.append(f"the state of {t.id}'s clone could not be read")
         elif st is not None:
@@ -1941,7 +1945,7 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
                                                   or unresolved_production(ws, epic.id)):
                     return lines  # waiting, not stopped: the run view shows when it opens or what holds it
             # an irreversible stage starts only on what an unattended close would accept (stage_hold)
-            hold = stage_hold(ws, epic)
+            hold = stage_hold(ws, epic, s["name"])
             _set_waits(ws, epic.id, s["name"] if hold else None, hold)
             if hold:
                 return lines + [f"{epic.id}: {s['name']} waits: {hold[0]}"]

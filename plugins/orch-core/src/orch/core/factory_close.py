@@ -122,11 +122,6 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
             else:
                 if st["sensitive"] is not None:
                     out.append(_b("release", "a child branch touches a sensitive path"))
-                if any(s["name"] == "merge" for s in st["stages"]):
-                    for k in fr._units(ws, epic):
-                        us = fr.unit_state(ws, epic.id, "merge", k)
-                        if us["state"] == "proven" and not fr.own_merge(us):
-                            out.append(_b("release", f"the merge of {k} records no commit of its own"))
                 for s in st["stages"]:
                     if s.get("held"):
                         out.append(_b("release", "production is held: another epic's production is unresolved ("

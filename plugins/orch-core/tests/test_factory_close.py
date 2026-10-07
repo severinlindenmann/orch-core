@@ -114,7 +114,9 @@ def test_a_merge_that_records_no_commit_of_its_own_never_closes(fws, closing, hu
         del body["base_sha"]
     p.write_text(json.dumps(body), encoding="utf-8")
     assert fc.tick(fws, human) == [] and _epic(fws, eid).status == "open"
-    assert any(f"the merge of {c} records no commit of its own" == b["text"] for b in _view(fws, eid)["blockers"])
+    # every reader demotes it (fr.unit_state), so the close says the merge stage is not proven
+    assert fr.unit_state(fws, eid, "merge", c)["state"] == "unknown"
+    assert any("the merge stage is unknown" == b["text"] for b in _view(fws, eid)["blockers"])
 
 
 def test_it_waits_for_every_signed_release_stage(fws, closing, human, remote):

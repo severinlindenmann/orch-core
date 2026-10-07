@@ -1310,8 +1310,9 @@ the workspace's commit format, each commit listed by its id and its message read
 object (no separator a message could contain decides where it ends; more than 500 commits is refused); a message it
 refuses fails the merge stage of that child, naming the commit. A branch that brings in no commit of its own (its
 commit is the base or already on it: the worker never committed) fails its merge stage with "the child's branch has
-no commits of its own", and the merge record names the base it was classified against, so a close by itself also
-requires every child's merge to record a commit that is not that base. Because every commit counts, a later commit
+no commits of its own", and the merge record names the base it was classified against: a proven merge record without
+that base, or whose commit is that base, reads as "outcome unknown" everywhere (the release, the close, `orch check`,
+the run view), so it never counts as released. Because every commit counts, a later commit
 that removes the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release on the
 merge stage. For a child with a runner-made clone the runner takes the branch and clone of its own record (never a
 ticket field); otherwise, for a child with a worktree of its own, the one branch a child names (`orch link
@@ -1347,9 +1348,9 @@ every command: the factory and Dark switched on, the ledger whole, the charter a
 budget not used up), the epic Ready (every child in testing or done, every criterion cited, nothing unverifiable), no
 open permission request of the epic, and no Stopped reason other than the release's own. Before each stage (merge,
 dev and production, all irreversible) starts, the runner also checks what an unattended close checks, read fresh: every
-child in testing has evidence that meets the strict close rules ("Closing by itself"), no work left uncommitted in its
-clone, no submodule in its clone, and a clone whose state can be read (two children adding the same file is checked
-before the merge). While one fails, that stage waits and nothing runs: the run view says "Release waits" (among those
+child in testing has evidence that meets the strict close rules ("Closing by itself"), and before the merge also no
+work left uncommitted in its clone, no submodule in its clone, and a clone whose state can be read (two children adding
+the same file is checked before the merge too; dev and production run on the merged commit and never read a clone). While one fails, that stage waits and nothing runs: the run view says "Release waits" (among those
 that need you) and names the stage and each reason; send the child back or fix it, and the next round checks again. A process under an agent
 harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round.
 Known limit: an epic that used exactly its child budget counts as Stopped ("Budget used up", as since phase 3), so it

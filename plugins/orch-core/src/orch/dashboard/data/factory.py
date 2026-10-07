@@ -293,9 +293,11 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     from orch.core import factory_close
     auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
     if lit[-1]:
+        how = _last_close(signed, eid)
+        said = "You closed it" if how.get("kind") == "close" else "You gave the verdict"
         state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
-                                       else "You gave the verdict: closed without release"
-                                       if _release_skipped(signed, eid) else "You gave the verdict")
+                                       else f"{said}: closed without release" if how.get("release_skipped")
+                                       else said)
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
@@ -411,11 +413,11 @@ def _epic_events(events, ids, charter_closed=frozenset()) -> list[dict]:
     return rows[::-1][:200]
 
 
-def _release_skipped(signed, eid: str) -> bool:
-    """Whether the epic's last signed verdict or close closed it without its signed release (release_skipped)."""
-    last = next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
-                 and e.get("kind") in ("verdict", "close")), None)
-    return bool(last and last.get("release_skipped"))
+def _last_close(signed, eid: str) -> dict:
+    """The epic's last signed verdict or close entry ({} when none): its kind, and release_skipped when it closed
+    without its signed release."""
+    return next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
+                 and e.get("kind") in ("verdict", "close")), None) or {}
 
 
 def _unreleased(ws, epic):

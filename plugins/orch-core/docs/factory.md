@@ -1167,9 +1167,11 @@ it" and offer "Close without releasing" with a reason you type, and `orch verdic
 `--skip-release REASON`. The epic's signed verdict entry records the reason (`release_skipped`) and the stages not
 proven (`skipped_stages`), and the run view's Finished summary says "You gave the verdict: closed without release".
 The same holds for the run view's "Close the epic" (after a Reopen, with every child done): it asks for the skip
-reason too, and the signed close entry records it. While a release round holds the workspace's release lock, such a
-verdict or close is refused ("a release is running"); otherwise it holds the lock while it closes, so no stage starts
-meanwhile. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
+reason too, and the signed close entry records it (its summary then says "You closed it: closed without release").
+For every epic whose charter signs a release, your verdict or close reads which stages are not proven and writes its
+entry under the workspace's release lock, even when nothing is skipped, so no stage starts in between: while a release
+round holds the lock, it is refused ("a release is running"). The charter's own close records, per stage and unit, the
+attempt, state and commits it closed on. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
 reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased"). A child's own
 verdict card says that accepting the child alone releases nothing while its epic's release has not run. A verdict
 or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in

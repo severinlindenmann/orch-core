@@ -193,3 +193,20 @@ def test_a_failed_production_command_says_look_at_production(fws, prod, human):
     fr.tick(fws, human, fake)
     (r,) = _reasons(fws, eid)
     assert r["code"] == "production-failed" and "half-deployed" in r["text"] and "exit code 3" in r["text"]
+
+
+# -- the close: its record says what it closed on ------------------------------------------------------------------
+
+def test_the_close_record_snapshots_each_stages_attempt_state_and_commit(fws, ready, human, remote):
+    from orch.core import epics, factory_close as fc
+    from orch.dashboard.factory_runner import release_once
+    eid, (c,), _ = ready(release="prod", recipe=_prod_recipe(remote), charter={"close": True})
+    release_once(fws, run=ProdFake())
+    assert store.load(fws, eid)[1].status == "done"
+    d = epics.delegation(fws, store.load(fws, eid)[1])
+    stages = {s["name"]: s for s in fc.record(fws, eid, d["id"])["stages"]}
+    assert set(stages) == {"merge", "dev", "production"} and all(s["state"] == "proven" for s in stages.values())
+    (m,) = stages["merge"]["units"]
+    assert m["unit"] == c and m["attempt"] == 1 and len(m["sha"]) == 40 and m["sha"] != m["base_sha"]
+    (p,) = stages["production"]["units"]
+    assert p["base_sha"] == stages["dev"]["units"][0]["base_sha"]

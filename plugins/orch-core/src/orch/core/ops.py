@@ -625,10 +625,8 @@ class Ops(TaskOpsMixin):
             raise UsageError("closing a ticket needs a reason")
         from orch.core import epics, factory_release
         entry = store.resolve(self.ws, ref)
-        skipped = (factory_release.skip_fields(self.ws, store.load(self.ws, entry.id)[1], skip_release,
-                                               "Close without releasing, with a reason")
-                   if epics.is_epic(entry.meta or {}) else {})
-        release = skipped
+        epic = store.load(self.ws, entry.id)[1] if epics.is_epic(entry.meta or {}) else None
+        release: dict = {}
 
         def fn(t: Ticket) -> dict:
             _refuse_hidden("ticket title", t.title)
@@ -641,7 +639,12 @@ class Ops(TaskOpsMixin):
                       + (f" (closed without release: {release['release_skipped']})" if release else ""))
             return {"reason": reason, "command": "close", **({"tasks_skipped": skipped} if skipped else {})}
 
-        with factory_release.quiet(self.ws, entry.id, bool(release)):  # no stage runs while it closes without one
+        # under the release lock whenever a release is signed: what is not released is read, and the close written,
+        # while no stage can run
+        with factory_release.quiet(self.ws, entry.id, epic is not None and factory_release.signs_release(self.ws, epic)):
+            if epic is not None:
+                release.update(factory_release.skip_fields(self.ws, epic, skip_release,
+                                                           "Close without releasing, with a reason"))
             return self._mutate(ref, "ticket.moved", fn)
 
     def reopen(self, ref: str, reason: str) -> Ticket:
@@ -1313,10 +1316,12 @@ class Ops(TaskOpsMixin):
                                   + (f" (not yet: {', '.join(waiting)})" if waiting else " (it has none)"))
         tickets = [store.load(self.ws, e.id)[1] for e in kids]
         from orch.core import factory_release
-        # the human's verdict; the charter's own close runs only once every stage is proven
-        skipped = {} if charter is not None else factory_release.skip_fields(
-            self.ws, store.load(self.ws, eid)[1], skip_release)
-        with factory_release.quiet(self.ws, eid, bool(skipped)):  # no stage runs while it closes without one
+        # the human's verdict; the charter's own close runs only once every stage is proven (and holds the lock
+        # itself). Whenever a release is signed, what is not released is read, and the verdict written, under the
+        # release lock, so no stage runs in between
+        epic = store.load(self.ws, eid)[1]
+        with factory_release.quiet(self.ws, eid, charter is None and factory_release.signs_release(self.ws, epic)):
+            skipped = {} if charter is not None else factory_release.skip_fields(self.ws, epic, skip_release)
             return self._epic_verdict_now(eid, kids, tickets, message, expected_hash, charter, skipped)
 
     def _epic_verdict_now(self, eid, kids, tickets, message, expected_hash, charter, skipped) -> Ticket:

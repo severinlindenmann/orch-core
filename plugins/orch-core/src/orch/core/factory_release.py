@@ -695,6 +695,13 @@ def skip_fields(ws, epic, skip_release, how: str = "orch verdict <epic> done --s
     return {"release_skipped": why, "skipped_stages": left}
 
 
+def signs_release(ws, epic) -> bool:
+    """Whether the epic's live factory charter signs a release (then a human close or verdict holds the lock)."""
+    from orch.core import permits
+    d = permits.factory_delegation(ws, epic)
+    return bool(d and d.get("release"))
+
+
 @contextlib.contextmanager
 def quiet(ws, epic_id: str, needed: bool):
     """Hold the workspace's release lock while a human closes `epic_id` without its release (`needed`), so no stage

@@ -336,16 +336,13 @@ def _repo_checks(ws, hook_states: dict[Path, str] | None = None) -> list[Check]:
     checks = [Check("repos", True, f"{len(repos)} repo(s) configured")]
     known = hook_states or {}
     from orch.hooks.install import check_off_repos
-    off = check_off_repos(ws)  # #170: commit_check off is a decision, not an open item
-    missing = [p.name for p in repos if p not in off and (known[p] if p in known else hook_state(p)) != "installed"]
-    off_note = f" ({', '.join(p.name for p in repos if p in off)}: commit_check is off)" if off else ""
+    off = check_off_repos(ws)  # #170: the hook is installed here too; `off` only relaxes humans at hook time
+    missing = [p.name for p in repos if (known[p] if p in known else hook_state(p)) != "installed"]
     if missing:
-        checks.append(Check("hooks", False, f"no orch commit-message check in: {', '.join(missing)}" + off_note,
-                            "orch hooks install"))
-    elif off:
-        checks.append(Check("hooks", True, "commit-message check installed in every repo that has it on" + off_note))
+        checks.append(Check("hooks", False, f"no orch commit-message check in: {', '.join(missing)}", "orch hooks install"))
     else:
-        checks.append(Check("hooks", True, "commit-message check installed in every configured repo"))
+        note = f" ({', '.join(p.name for p in repos if p in off)}: commit_check is off for humans)" if off else ""
+        checks.append(Check("hooks", True, "commit-message check installed in every configured repo" + note))
     broken = [(p, d) for p in repos if (d := missing_hooks_path(p)) is not None]
     if broken:
         checks.append(Check("hooks-path", False,

@@ -117,7 +117,8 @@ def configured_repos(ws) -> list[Path]:
 
 
 def check_off_repos(ws) -> set[Path]:
-    """Repos whose `git.repos.<name>.commit_check` is `off` (#170): no hook goes there, on purpose."""
+    """Repos whose `git.repos.<name>.commit_check` is `off` (#170). They still get the hook: it exits 0 for a human
+    there and keeps enforcing an agent's commit, so `off` can never be a way around the agent rule."""
     from orch.hooks.commit_msg import commit_check_mode
     repos = ws.config["git"].get("repos") or {}
     return {(ws.root / ((r or {}).get("path") or name)).resolve()
@@ -547,11 +548,7 @@ def install_hooks(ws, repos: list[Path] | None = None, *, force: bool = False, s
                      "repository)")
     pre_commit = pre_commit_script(ws, orch_path) if stage_records else None
     rows = []
-    off = check_off_repos(ws)
     for repo in targets:
-        if repo in off:
-            rows.append((repo, "skipped: commit_check is off for this repo (git.repos.<name>.commit_check)"))
-            continue
         if untracked or untracked_active(repo):
             action = _install_untracked(repo, ws, orch_path, stage_records)
         else:

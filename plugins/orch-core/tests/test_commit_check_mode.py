@@ -188,16 +188,12 @@ def test_hook_pattern_end_to_end(configure, ws_root, monkeypatch, tmp_path):
 # -- install and doctor -----------------------------------------------------------------------------------------
 
 @needs_git
-def test_install_skips_a_repo_whose_check_is_off(configure, ws_root):
+def test_install_still_installs_into_a_repo_whose_check_is_off(configure, ws_root):
     _init(ws_root / "Work")
-    _init(ws_root / "Code")
-    ws = configure(git={"repos": {"Work": {"commit_check": "off"}, "Code": {}}})
-    got = {p.name: a for p, a in install_hooks(ws)}
-    assert got["Code"] == "installed"
-    assert got["Work"].startswith("skipped: commit_check is off")
-    assert hook_state(ws_root / "Work") == "missing"
-    explicit = {p.name: a for p, a in install_hooks(ws, [ws_root / "Work"])}
-    assert explicit["Work"].startswith("skipped: commit_check is off")
+    ws = configure(git={"repos": {"Work": {"commit_check": "off"}}})
+    assert {p.name: a for p, a in install_hooks(ws)}["Work"] == "installed"
+    assert hook_state(ws_root / "Work") == "installed"
+    assert {p.name: a for p, a in install_hooks(ws, [ws_root / "Work"])}["Work"] == "unchanged"
 
 
 @needs_git
@@ -208,15 +204,27 @@ def test_warn_repo_still_gets_the_hook(configure, ws_root):
 
 
 @needs_git
-def test_doctor_treats_off_as_intentional(configure, ws_root):
+def test_doctor_counts_off_as_installed_and_notes_it(configure, ws_root):
     _init(ws_root / "Work")
-    configure(git={"repos": {"Work": {"commit_check": "off"}}})
+    ws = configure(git={"repos": {"Work": {"commit_check": "off"}}})
+    checks = {c.code: c for c in doctor(ws_root)}
+    assert checks["hooks"].ok is False  # not installed yet: off is no exemption
+    install_hooks(ws)
     checks = {c.code: c for c in doctor(ws_root)}
     assert checks["hooks"].ok is True and "Work" in checks["hooks"].message and "off" in checks["hooks"].message
-    _init(ws_root / "Code")
-    ws = configure(git={"repos": {"Work": {"commit_check": "off"}, "Code": {}}})
-    checks = {c.code: c for c in doctor(ws_root)}
-    assert checks["hooks"].ok is False
-    assert checks["hooks"].message.startswith("no orch commit-message check in: Code")  # Work is not missing
+
+
+@needs_git
+def test_agent_commit_in_off_repo_is_rejected_by_the_installed_hook(configure, ws_root, monkeypatch, tmp_path, capsys):
+    repo = _init(ws_root / "Work")
+    ws = configure(git={"repos": {"Work": {"commit_check": "off"}}})
     install_hooks(ws)
-    assert {c.code: c.ok for c in doctor(ws_root)}["hooks"] is True
+    hook = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-path", "hooks/commit-msg"],
+                          capture_output=True, text=True).stdout.strip()
+    assert "hook commit-msg" in (repo / hook).read_text(encoding="utf-8")
+    monkeypatch.setenv("ORCH_HOME", str(ws.home))
+    monkeypatch.chdir(repo)
+    assert run(["hook", "commit-msg", _msg(tmp_path, "update\n")]) == 0  # a human
+    monkeypatch.setenv("ORCH_HARNESS", "claude-code")
+    assert run(["hook", "commit-msg", _msg(tmp_path, "update\n")]) == 1  # an agent
+    assert "orch: commit rejected" in capsys.readouterr().err

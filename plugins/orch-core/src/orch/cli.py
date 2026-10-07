@@ -306,6 +306,16 @@ def show(ref: str, json_out: JsonOpt = False,
 
 
 @app.command()
+def status(ref: str, json_out: JsonOpt = False) -> None:
+    """A compact view of one ticket: move, gates, questions and answers, claim and expiry, tasks, wait cursor."""
+    from orch.core import store
+    from orch.core.status_view import render_text, status_document
+    ws = _ws()
+    s = status_document(ws, store.load(ws, ref)[1])
+    _out(s, json_out, render_text(s))
+
+
+@app.command()
 def search(text: str, summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
     """Full-text search over ticket files."""
     from orch.core import query

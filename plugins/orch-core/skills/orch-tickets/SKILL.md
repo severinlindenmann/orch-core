@@ -20,6 +20,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | What should I work on? | `orch next` · `orch list --status open` · `orch list --mine` |
 | What else touches this code? | `orch related <id> [--path src/x] [--json]`: done tickets that changed those files (their decisions), open tickets in the same files, files usually changed with them, linked tickets |
 | Read a ticket | `orch show <id>` (ID, number or external key); with `--json` its `move` says whose turn it is (`who`: you, agent or nobody) |
+| Check where a ticket stands | `orch status <id> [--json]` — the compact view: `move`, `gates` (state, approved, the `changes_requested` message), `questions` (id, text, answer, note, answered), `claim` (held, `expired`, `expires`, never while waiting), `tasks` (summary, doing, next) and `cursor` (the latest human decision: pass it to `orch wait --after`). Use it instead of parsing `orch show --json` with python, sed or awk |
 | Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (`## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Summary` in the body file go into those sections) |
 | Follow-up | `orch new --from <id> --title "..."` |
 | Epic | `orch new --type epic --title "..."` · child: `orch new --epic <epic> --title "..."` · `orch link <id> --epic <epic>` / `--no-epic` · `orch epic show <epic>` |

@@ -1064,8 +1064,12 @@ refusal of a process under an agent harness, as for every approval).
 - **New ticket** has a Mode choice: Ticket (as before), AI Factory, and Dark AI Factory while Dark is on (otherwise a
   line says how to turn it on in a terminal). A factory mode makes an epic whose Requirements are your ask, word for
   word, and whose Acceptance criteria are the "Done when" text; nothing else is written for you. Creating it is also the
-  start: the same signed charter approval and runner arming as the epic page's start, behind the same inline confirm,
-  which names the limits you sign. Dark needs the word dark typed. The server checks the switches, the typed word, and
+  start: the same signed charter approval and runner arming as the epic page's start, behind the same confirm dialog.
+  The button says only "Start AI Factory" or "Start Dark AI Factory"; the dialog lists what will happen, built from
+  what you chose (the limits you sign, Release up to, the rollback, Close the epic by itself), with Production, the
+  rollback and the auto-close as calm amber rows and a specific primary ("Start and release to production"). Cancel
+  has focus first. Dark still needs the word dark (and production for Release up to Production): the dialog fills them
+  in only after you confirm; without JavaScript the form shows the old typed-word fields instead. The server checks the switches, the word, and
   the text for what the start would refuse (a line that reads as a question still open for you, hidden or control
   characters) before anything is created, so a refused start creates nothing; it checks that the stored Requirements
   and Acceptance criteria are byte for byte what you sent before it signs. Each rendered form carries a one-time token,

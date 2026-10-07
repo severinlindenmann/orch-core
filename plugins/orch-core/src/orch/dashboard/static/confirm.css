@@ -24,6 +24,13 @@ dialog.confirm-dialog { padding: 0; margin: auto; border: 1px solid var(--line);
   .confirm-dialog .cd-acts .btn { width: 100%; }
 }
 
+/* The epic's approve button names the start picked above it, in a few words (the dialog lists the rest). */
+.charter-form .lbl-factory, .charter-form .lbl-dark { display: none; }
+.charter-form:has(input[name=start][value=factory]:checked) .lbl-factory,
+.charter-form:has(input[name=start][value=dark]:checked) .lbl-dark { display: inline; }
+.charter-form:has(input[name=start][value=factory]:checked) .lbl-approve,
+.charter-form:has(input[name=start][value=dark]:checked) .lbl-approve { display: none; }
+
 /* A long explanation folded under one short line ("What does this do?"). */
 .what-does details { margin-top: 4px; }
 .what-does summary { cursor: pointer; font-size: .9em; }

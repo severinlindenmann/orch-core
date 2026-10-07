@@ -173,8 +173,9 @@ def test_charter_confirm_label_names_the_delegation(dash, ws, aops, epic):
     eid, _ = epic
     page = dash.get(f"/t/{eid}").text
     form = page.split('id="epic-approve"', 1)[1]
-    assert 'data-charter-confirm="Confirm · epic ' in form and "· no delegation" in form
-    assert 'autocomplete="off" data-charter-confirm' in form  # the browser does not restore the delegation fields
+    # the dialog (confirm.js) is built from the fields when pressed: the epic and its hash are named in the form
+    assert 'data-confirm-build="start" data-confirm-epic="epic ' in form and "inline-confirm=" not in form.split("</form>", 1)[0]
+    assert 'autocomplete="off" data-confirm-build' in form  # the browser does not restore the delegation fields
 
 
 def test_today_fyi_counts_and_links_the_rest(dash, ws, aops, hops, epic):

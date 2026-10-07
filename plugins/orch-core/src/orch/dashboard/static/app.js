@@ -384,58 +384,16 @@
     armed.set(form, state);
     button.focus();
   };
-  const FACTORY_START = "start the AI Factory: ";
-  const DARK_START = "start the Dark AI Factory, only commands in the Dark profile run: ";
-  // "Release up to" (phase 6), part of a Dark start: the confirm says what will run, and that nothing goes further
-  const releaseText = (form) => {
-    if (!form.querySelector || !form.querySelector("[data-release-choice]")) return "";  // no choice offered here
-    const r = form.querySelector("input[name=release]:checked");
-    const v = r ? r.value : "none";
-    if (v === "merge") return " · releases up to merge using the recipe on this machine; nothing releases to production";
-    if (v === "dev") return " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production";
-    if (v === "prod") {
-      const rb = form.querySelector("input[name=rollback]");
-      return " · releases to production by itself (merge, dev, then production) using the recipe on this machine, after its release window"
-        + (rb && rb.checked ? "; runs the recipe's rollback if the production check fails" : "; no rollback by itself");
-    }
-    return " · releases nothing";
-  };
-  // the opt-in auto-close of a Dark start: the confirm says plainly that it replaces the human verdict
-  const closeText = (form) => {
-    const c = form.querySelector && form.querySelector("input[name=close]");
-    if (!(c && c.checked)) return "";
-    const r = form.querySelector("input[name=release]:checked");
-    const none = !r || r.value === "none";
-    return " · closes the epic by itself when everything is proven, on what the agents wrote under the close rules:"
-      + " nothing is executed or verified by the factory; coverage is checked as text mentions only, and an epic that names no file is not closed by itself" + (none ? ", and with no release nothing is deployed or run" : "")
-      + "; this replaces your verdict for this run; Reopen stays yours";
-  };
-  // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
-  // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
-  const charterLabel = (form) => {
+  // The epic's approve form (data-confirm-epic): the fieldset's data-start follows the Start radios (None / AI
+  // Factory / Dark), so the Dark fields show without :has(); confirm.js builds the dialog from the fields when pressed.
+  const startOf = (form) => {
     const f = form.elements;
-    const on = f.delegate && f.delegate.checked;
-    // the Start radios (None / AI Factory / Dark); the fieldset's data-start shows the typed-word field for Dark
-    const start = (f.start && f.start.value) || "";
     const box = form.querySelector && form.querySelector(".charter-factory");
-    if (box) box.dataset.start = start;
-    if (start === "dark") {
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm
-        + releaseText(form) + closeText(form);
-      return;
-    }
-    if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + FACTORY_START + form.dataset.factoryConfirm;
-      return;
-    }
-    form.dataset.inlineConfirm = form.dataset.charterConfirm + (on
-      ? ` · delegation on: up to ${f.max_children.value} children, size ≤ ${f.max_size.value}` : " · no delegation");
+    if (box) box.dataset.start = (f.start && f.start.value) || "";
   };
   document.addEventListener("change", (event) => {
-    const form = event.target.closest && event.target.closest("form[data-charter-confirm]");
-    if (!form) return;
-    if (armed.has(form)) disarm(form, false);
-    charterLabel(form);
+    const form = event.target.closest && event.target.closest("form[data-confirm-epic]");
+    if (form) startOf(form);
   });
   const armedFormOf = (target) => target && target.closest && target.closest("form[data-armed]");
   const confirmInPlace = (form, button) => {
@@ -467,10 +425,9 @@
     const button = event.submitter || form.querySelector("button[type=submit]");
     if (button) arm(form, button);
   });
-  // New ticket (phase 5): the Mode radios keep data-mode on the page in step (the CSS shows each mode's fields by it),
-  // and a factory mode gets the inline confirm naming the limits it signs; Ticket mode posts at once, as before. A
-  // factory start is sent once: its button is disabled after the confirmed submit (the server's one-time token
-  // refuses a second one anyway).
+  // New ticket (phase 5): the Mode radios keep data-mode on the page in step (the CSS shows each mode's fields by it);
+  // a factory mode asks in the confirm dialog (confirm.js), Ticket mode posts at once, as before. A factory start is
+  // sent once: its button is disabled after the confirmed submit (the server's one-time token refuses a second one).
   const modeOf = (form) => {
     const checked = form.querySelector("input[name=mode]:checked");
     return checked ? checked.value : "ticket";
@@ -479,11 +436,6 @@
     const mode = modeOf(form);
     const box = form.closest("[data-mode]");
     if (box) box.dataset.mode = mode;
-    if (armed.has(form)) disarm(form, false);
-    if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form)
-      + closeText(form);
-    else delete form.dataset.inlineConfirm;
   };
   // A choice that hides a field also clears it, so a hidden box is never sent ticked (the server refuses it anyway):
   // the rollback outside Production, the rollback and the close outside a Dark start.
@@ -496,7 +448,7 @@
     });
   }, true);
   document.addEventListener("change", (event) => {
-    const form = ["mode", "release", "rollback", "close"].includes(event.target.name) && event.target.closest
+    const form = event.target.name === "mode" && event.target.closest
       && event.target.closest("form[data-new-form]");
     if (form) newMode(form);
   });
@@ -524,7 +476,7 @@
   // A reload or Back can restore the delegation fields the human had set: the label must follow them, at start and on
   // every pageshow (the charter form also has autocomplete="off").
   const charterLabels = () => {
-    document.querySelectorAll("form[data-charter-confirm]").forEach(charterLabel);
+    document.querySelectorAll("form[data-confirm-epic]").forEach(startOf);
     document.querySelectorAll("form[data-new-form]").forEach(newMode);
   };
   charterLabels();

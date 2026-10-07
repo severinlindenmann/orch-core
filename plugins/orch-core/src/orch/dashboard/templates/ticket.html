@@ -142,9 +142,9 @@
   {% else %}
   <p class="muted">No open children yet: approving covers the epic only. Children added later need your approval.</p>
   {% endfor %}
-  {% set base = "Confirm · epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
-  {#- app.js rewrites the label when the delegation fields change, so the confirm always says what is signed. -#}
-  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}"{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %} data-inline-confirm="{{ base }} · no delegation">
+  {% set base = "epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
+  {#- confirm.js builds the dialog from the fields as they are when pressed, so it always says what is signed. -#}
+  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form charter-form" autocomplete="off" data-confirm-build="start" data-confirm-epic="{{ base }}"{% if e.approved %} data-confirm-reapprove{% endif %}{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %}>
     <input type="hidden" name="gate" value="requirements">
     <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
     {% if e.factory %}
@@ -159,9 +159,9 @@
       </div>
       <p class="muted">AI Factory: agents split, specify, approve and build the children; you answer the commands they need on cards, and you give the verdict. Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. It replaces the delegation choice below.</p>
       {% if e.factory.dark_on %}
-      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. Release up to Merge, Dev or Production runs the recipe on this machine once the epic is Ready; production only when you choose it and type production, never before its release window opens. Nothing is closed by itself unless you tick Close the epic by itself, which replaces your verdict for this run (Reopen stays yours); otherwise you read the Ready report and give the verdict.</p>
-      <label class="field-col start-dark-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
-        <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false"></label>
+      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. Release up to Merge, Dev or Production runs the recipe on this machine once the epic is Ready; production only when you choose it and confirm production, never before its release window opens. Nothing is closed by itself unless you tick Close the epic by itself, which replaces your verdict for this run (Reopen stays yours); otherwise you read the Ready report and give the verdict.</p>
+      <label class="field-col start-dark-only nojs-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
+        <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false" data-confirm-word="dark"></label>
       <div class="start-dark-only">{{ fx.release_choice(t.id, e.factory) }}</div>
       <div class="start-dark-only">{{ fx.close_choice(t.id) }}</div>
       {% endif %}
@@ -182,7 +182,7 @@
       I read it: &ldquo;{{ questions[0][:80] }}&rdquo; is not a question for me</label>
     {% endif %}
     {% if e.unready %}<p class="hint" id="epic-approve-why">Cannot approve yet: {{ e.unready|join("; ") }}.</p>{% endif %}
-    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}>{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</button>
+    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}><span class="lbl-approve">{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</span>{% if e.factory %}<span class="lbl-factory">Start AI Factory</span><span class="lbl-dark">Start Dark AI Factory</span>{% endif %}</button>
   </form>
   {{ changes_form("requirements") }}
 </section>

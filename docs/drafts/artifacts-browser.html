@@ -325,6 +325,7 @@ const A = [
 A.forEach((a, i) => { a.id = "a" + i; a.display = a.name || (a.static ? a.static.split("/").pop() : a.label);
   a.sha = a.url ? null : Array.from({ length: 64 }, (_, j) => "0123456789abcdef"[(i * 7 + j * 13 + j * j) % 16]).join(""); });
 
+const ROOT = "/home/dev/acme-web";  // the workspace root; the real page reads it from the server
 const KINDS = { screenshot: ["Screenshots", "i-image"], report: ["Reports", "i-doc"], dataset: ["Datasets", "i-table"],
   log: ["Logs", "i-log"], receipt: ["Receipts", "i-receipt"], diagram: ["Diagrams", "i-diagram"], build: ["Links", "i-link"] };
 const $ = (s, r = document) => r.querySelector(s);
@@ -454,6 +455,8 @@ function drawTree() {
 // ── Preview ──
 function previewFile(a) {
   const t = T[a.t], st = stateOf(a), r = render(a), k = KINDS[a.kind];
+  const rel = a.url ? null : a.static ? "orchestrator/static/" + a.static : `orchestrator/artifacts/${a.t}/${a.name}`;
+  const full = rel && ROOT + "/" + rel;
   const path = a.url ? "frontmatter · artifacts:" : a.static ? "orchestrator/static/" + a.static : `orchestrator/artifacts/${a.t}/${a.name}`;
   const warn = a.unlinked ? `<p class="note warn">This file sits in the ticket's folder but the ticket does not link it, so it proves nothing yet. <code>orch artifact scan ${a.t}</code> links it.</p>`
     : a.state === "changed" ? `<p class="note warn">The file changed after it was linked. The ticket and any verdict still pin the old hash; the agent re-adds it with <code>orch artifact add</code>.</p>` : "";
@@ -466,12 +469,13 @@ function previewFile(a) {
       <a class="btn btn-primary" href="#">Open ${a.t}</a>
       ${a.url ? "" : `<a class="btn" href="#">Open file ${ic("i-ext", "i i-sm")}</a>`}
       <button class="btn" type="button" data-copy="${esc(a.url ? a.url : a.static ? "static:" + a.static : "artifact:" + a.name)}">${ic("i-copy", "i i-sm")}Copy ref</button>
+      ${full ? `<button class="btn" type="button" data-copy="${esc(full)}" title="${esc(full)}">${ic("i-copy", "i i-sm")}Copy full path</button>` : ""}
     </div></div>
     <div class="pv-body">
       <div class="stage"><div class="stage-bar"><span>${r.bar}</span><span>${fsize(a.size)}</span></div><div class="stage-in">${r.html}</div></div>
       <aside class="facts">${warn}
         <div><h3>File</h3><dl><dt>Kind</dt><dd>${a.kind}</dd><dt>Size</dt><dd>${fsize(a.size)}</dd><dt>Added</dt><dd>${ago(a.added)}</dd>
-          <dt>Path</dt><dd class="mono">${esc(path)}</dd>${a.sha ? `<dt>sha256</dt><dd class="mono" title="${a.sha}">${a.sha.slice(0, 12)}…</dd>` : ""}</dl></div>
+          <dt>Path</dt><dd class="mono">${esc(full || path)}</dd>${a.sha ? `<dt>sha256</dt><dd class="mono" title="${a.sha}">${a.sha.slice(0, 12)}…</dd>` : ""}</dl></div>
         <div><h3>Ticket</h3><dl><dt>Key</dt><dd><a href="#">${a.t}</a></dd><dt>Title</dt><dd>${esc(t.title)}</dd><dt>Status</dt><dd>${pill(t.status[0], t.status[1])}</dd>
           ${t.epic ? `<dt>Epic</dt><dd>${esc(t.epic)}</dd>` : ""}</dl></div>
       </aside>
@@ -515,7 +519,7 @@ document.addEventListener("click", e => {
   else if (go) { e.preventDefault(); group = "ticket"; sel = go.dataset.folderGo; open.add(sel); draw(); }
   else if (g) { group = g.dataset.group; try { localStorage.setItem("art-group", group); } catch (_) {} draw(); }
   else if (k) { filter = k.dataset.kind || null; draw(); }
-  else if (cp) { const t = cp.dataset.copy, done = () => { cp.lastChild.textContent = "Copied"; setTimeout(() => cp.lastChild.textContent = "Copy ref", 1400); };
+  else if (cp) { const t = cp.dataset.copy, done = () => { const lbl = cp.lastChild, was = lbl.textContent; if (was === "Copied") return; lbl.textContent = "Copied"; setTimeout(() => lbl.textContent = was, 1400); };
     navigator.clipboard?.writeText(t).then(done, done) ?? done(); }
   else if (e.target.closest('a[href="#"]')) e.preventDefault();
 });

@@ -12,7 +12,7 @@
     <h1>{{ run.title }}</h1>
   </div>
 </div>
-<section class="card ring-panel{{ ' is-dark' if run.look_dark }}{{ ' is-live' if run.live }}{{ ' hot' if run.hot }}" aria-labelledby="run-status">
+<section id="run-head" class="card ring-panel{{ ' is-dark' if run.look_dark }}{{ ' is-live' if run.live }}{{ ' hot' if run.hot }}" aria-labelledby="run-status">
   {{ fx.ring(run, steps) }}
   <div class="ring-side">
     <div role="status" id="run-status"><h2>{{ ui.status(run.role, run.chip) }} {{ run.headline }}</h2></div>
@@ -87,7 +87,7 @@
 
 {% if run.release %}{% set rel = run.release %}
 {% set WORDS = {"waiting": "waiting", "running": "running", "proven": "proven", "failed": "failed", "unknown": "outcome unknown", "stale": "out of date"} %}
-<section class="card run-release" aria-labelledby="run-release-h" data-release>
+<section class="card run-release" id="run-release" aria-labelledby="run-release-h" data-release>
   <h2 id="run-release-h">Release up to {{ rel.target }}</h2>
   <p class="muted permit-meta">Once the epic is Ready, the runner runs the stages of the release recipe on this machine, in order, in its own repository: each child's branch at the commit it checked, dev at the base fetched from the recipe's remote{% if rel.target == "production" %}, production at the commit dev was proven on, never before its release window opens{% endif %}. A stage is proven only by its check.{% if rel.target != "production" %} Nothing releases to production.{% endif %} Nothing is closed by the release{% if run.auto %}; your charter signs closing the epic by itself (above), in place of your verdict for this run{% else %}: the verdict stays yours{% endif %}.</p>
   {% if run.window and not run.window.open %}<p data-window>Production waits for its release window: {% if run.window.opens %}it opens at <time datetime="{{ run.window.opens }}">{{ run.window.opens|local }}</time> ({{ run.window.hours }} hours after the last production attempt in this workspace began or ended, at <time datetime="{{ run.window.last }}">{{ run.window.last|local }}</time>){% else %}{{ run.window.why }}{% endif %}. Nothing runs until then; the runner checks again each round.{% if run.window.budget_ends %} The wait uses this run's time budget, which ends at <time datetime="{{ run.window.budget_ends }}">{{ run.window.budget_ends|local }}</time>{% if run.window.after_budget %}: the window opens after that, so production will not run under this charter. Approve the epic again for a new budget, or release by hand{% endif %}.{% endif %}</p>{% endif %}
@@ -99,7 +99,7 @@
     <div data-release-stage="{{ s.name }}">
       <h3>{{ s.name|capitalize }}: {{ WORDS[s.state] }}</h3>
       {% for u in s.units %}
-      <div class="release-unit" data-release-unit="{{ s.name }} {{ u.unit }}" data-state="{{ u.state }}">
+      <div class="release-unit" id="rel-{{ s.name }}-{{ u.unit }}" data-release-unit="{{ s.name }} {{ u.unit }}" data-state="{{ u.state }}">
         <span><a class="lnk key" href="/t/{{ u.unit }}">{{ u.unit }}</a> · {{ WORDS[u.state] }}{% if u.why %} · {{ u.why }}{% endif %}</span>
         {% if u.state in ("failed", "unknown", "stale") %}
         <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · run the {{ s.name }} stage of {{ u.unit }} once more">
@@ -118,7 +118,7 @@
     {% endfor %}
   </div>
   {% if rel.sensitive %}
-  <div class="release-unit" data-release-sensitive>
+  <div class="release-unit" id="rel-sensitive" data-release-sensitive>
     <span>A child branch touches a sensitive path: nothing was merged.</span>
     <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · check the branches again before the merge">
       <input type="hidden" name="stage" value="merge">
@@ -128,7 +128,7 @@
   </div>
   {% endif %}
   {% if rel.blocked %}
-  <div class="release-unit" data-release-blocked>
+  <div class="release-unit" id="rel-blocked" data-release-blocked>
     <span>The {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} could not start: {{ rel.blocked.why }}. Nothing ran.</span>
     <form method="post" action="/factory/{{ run.epic }}/release/retry" class="inline-confirm-form" data-inline-confirm="Confirm · try the {{ rel.blocked.stage }} stage of {{ rel.blocked.unit }} again in the next round">
       <input type="hidden" name="stage" value="{{ rel.blocked.stage }}">
@@ -139,7 +139,7 @@
   {% endif %}
   {% set prod = rel.stages|selectattr("name", "equalto", "production")|first %}
   {% if prod and prod.state in ("failed", "unknown") and not prod.resolved %}
-  <div class="release-unit" data-release-resolve>
+  <div class="release-unit" id="rel-resolve" data-release-resolve>
     <span>While this production is unresolved, no other epic's production runs in this workspace.</span>
     <form method="post" action="/factory/{{ run.epic }}/release/resolve" class="inline-confirm-form" data-inline-confirm="Confirm · lift the hold on other epics; this production does not run again">
       <label class="field-col" for="resolve-reason"><span>Why the hold can be lifted (for example: production checked by hand)</span><input id="resolve-reason" name="reason" required autocomplete="off"></label>
@@ -153,7 +153,7 @@
 
 {% set p = run.permits %}
 {% if p.requests or p.ready or p.stopped or p.budget or p.suspect %}
-<section class="run-waiting" aria-labelledby="run-waiting-h">
+<section class="run-waiting" id="run-waiting" aria-labelledby="run-waiting-h">
   <h2 id="run-waiting-h">Your cards</h2>
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
@@ -164,7 +164,7 @@
 {% endif %}
 
 {% if run.summary %}{% set s = run.summary %}
-<section class="card run-summary" aria-labelledby="run-summary-h">
+<section class="card run-summary" id="run-summary" aria-labelledby="run-summary-h">
   <h2 id="run-summary-h">Summary</h2>
   <ul class="plain">
     <li>{{ s.children }} {{ "child" if s.children == 1 else "children" }}, {{ s.tasks }} {{ "task" if s.tasks == 1 else "tasks" }} done, as the agents report it</li>

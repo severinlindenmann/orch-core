@@ -335,7 +335,7 @@
 {% if t.status != "done" %}
 {% set human = move.kind == "human" %}
 {% set a = move.action or {} %}
-<section class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
+<section id="status-card" class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
   <p class="status-label" id="status-title">{% if human %}{{ tc.move_chip(card.move) }}{% elif stale %}{{ ui.status("warn", "No activity") }}{% else %}{{ ui.icon("neu") }} Agent's move{% endif %}</p>
   <p class="ym-text">{{ move.text }}</p>
   {% if not human and card.agent %}<p class="muted">{{ tc.agent_line(card) }}</p>{% endif %}

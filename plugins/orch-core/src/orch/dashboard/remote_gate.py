@@ -296,8 +296,10 @@ class RemoteGate:
         return None, {}
 
 
-# Under a running factory epic these stay as tagged: reading, commenting, and pausing (Decide: it only stops work).
-FACTORY_OPEN = ("/t/{ref}/comment", "/t/{ref}/epic/pause")
+# Under a running factory epic only pausing stays as tagged (Decide: it only stops work, and it is how a device
+# stops the factory). Everything else, a comment included, needs a fresh assertion as on main; a comment keeps its
+# own scope (Operate), an edit needs Type.
+FACTORY_OPEN = ("/t/{ref}/epic/pause",)
 
 
 def is_factory_epic(ws, ref) -> bool:
@@ -336,7 +338,8 @@ def factory_need(ws, method, route_path, pp, tag):
         return Scope.TYPE, "verdict"
     if tag is not None and tag.scope is not None and factory_guarded(ws, ref):
         kind = "verdict" if route_path == "/t/{ref}/verdict" else "action"
-        return (Scope.TYPE if tag.scope >= Scope.OPERATE else tag.scope), kind
+        typed = tag.scope >= Scope.OPERATE and route_path != "/t/{ref}/comment"
+        return (Scope.TYPE if typed else tag.scope), kind
     return None
 
 

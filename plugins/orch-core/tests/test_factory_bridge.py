@@ -134,7 +134,7 @@ def test_allow_runs_only_after_an_assertion_over_the_exact_request_and_names_the
     refusal, r1 = bridge.post(KEY_A, path, _grant_body(r, "epic"))
     assert refusal.code == "assertion_required"
     sub = refusal.fields["subject"]
-    assert sub["kind"] == "permission" and sub["digest"] == r["sha"].removeprefix("sha256:")
+    assert sub["kind"] == "permission" and re.fullmatch("[0-9a-f]{64}", sub["digest"])
     assert permits.shown(CMD) in sub["shown"] and "for the whole epic" in sub["shown"] and r["id"] in sub["shown"]
     assert not [e for e in ledger.entries(fws) if e["kind"] == "grant"]  # nothing written before the assertion
     run, _ = bridge.answer(KEY_A, refusal, r1)
@@ -251,7 +251,7 @@ def test_start_from_a_device_signs_the_charter_arms_the_runner_and_records_the_d
     v, e = bridge.post(KEY_B, f"/t/{eid}/approve", body)
     assert v.code == "forbidden_scope"  # Decide cannot Start
     refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{eid}/approve", body)
-    assert refusal.fields["subject"]["kind"] == "charter" and refusal.fields["subject"]["digest"] == seen.removeprefix("sha256:")
+    assert refusal.fields["subject"]["kind"] == "charter" and re.fullmatch("[0-9a-f]{64}", refusal.fields["subject"]["digest"])
     assert eid in refusal.fields["subject"]["shown"] and "max_children 25" in refusal.fields["subject"]["shown"]
     assert status == 303 and "err=" not in loc
     d = epics.delegation(fws, store.load(fws, eid)[1])
@@ -286,16 +286,15 @@ def test_start_whose_epic_changed_after_the_assertion_writes_nothing(bridge, fws
 
 # -- editing under a running epic ------------------------------------------------------------------------------------------
 
-def test_editing_under_a_running_epic_needs_type_and_an_assertion_but_commenting_does_not(bridge, fws, running):
+def test_editing_under_a_running_epic_needs_type_and_an_assertion_and_commenting_an_assertion_at_operate(bridge, fws, running):
     eid, cid, r = running
     v, _ = bridge.post(NEW, f"/t/{cid}/edit", "text=x")
     assert v.code == "forbidden_scope"  # Operate is below Type here
     refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{cid}/task/add", "text=new+step")
     assert refusal.fields["subject"]["kind"] == "action" and "text=new+step" in refusal.fields["subject"]["shown"]
     assert run.result == "run" and status != 403
-    v, _ = bridge.post(NEW, f"/t/{cid}/comment", "text=hello")  # Operate: no assertion
-    assert v.result == "run"
-    assert bridge.run(v)[0] == 303
+    refusal, run, status, loc = bridge.fresh(NEW, f"/t/{cid}/comment", "text=hello")  # Operate scope, with an assertion
+    assert refusal.code == "assertion_required" and status == 303
     v, _ = bridge.post(NEW, f"/t/{cid}/epic/pause")
     assert v.result == "run"  # pausing is Decide: an Operate device may, with no assertion
 
@@ -310,7 +309,7 @@ def test_the_epic_verdict_needs_type_and_an_assertion_over_the_hash_the_ready_re
     assert v.code == "forbidden_scope"  # Decide may not sign an epic's verdict
     refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{eid}/verdict", body)
     sub = refusal.fields["subject"]
-    assert sub["kind"] == "verdict" and sub["digest"] == seen.removeprefix("sha256:") and cid in sub["shown"]
+    assert sub["kind"] == "verdict" and re.fullmatch("[0-9a-f]{64}", sub["digest"]) and cid in sub["shown"]
     assert status == 303 and "err=" not in loc
     assert store.load(fws, eid)[1].status == "done" and store.load(fws, cid)[1].status == "done"
     verdicts = [e for e in ledger.entries(fws) if e["kind"] == "verdict" and e["ticket"] in (eid, cid)]
@@ -423,3 +422,80 @@ def test_a_subject_always_carries_a_digest():
     from orch.dashboard.factory_remote import _subject
     assert _subject("verdict", "x", "") is None and _subject("verdict", "x", "AB" * 32) is None
     assert _subject("verdict", "x", "a" * 64)["digest"] == "a" * 64
+
+
+# -- the subject covers every field that changes what the action does ------------------------------------------------------
+
+def _subj(bridge, key, path, body):
+    v, _ = bridge.post(key, path, body)
+    assert v.code == "assertion_required", (path, body, v.code)
+    return v.fields["subject"]
+
+
+def test_every_field_of_an_allow_changes_the_subject(bridge, fws, fa, running):
+    eid, cid, r = running
+    r2 = permits.request(fws, fa.actor, store.load(fws, cid)[1], "make other", reason="x")
+    base = _subj(bridge, KEY_A, f"/permits/{r['id']}/grant", _grant_body(r, "once"))
+    for other in (_subj(bridge, KEY_A, f"/permits/{r['id']}/grant", _grant_body(r, "epic")),  # duration
+                  _subj(bridge, KEY_A, f"/permits/{r2['id']}/grant", _grant_body(r2, "once"))):  # request / command
+        assert other["digest"] != base["digest"] and other["shown"] != base["shown"]
+
+
+def test_every_field_of_a_start_changes_the_subject(bridge, fws, fa):
+    e1, e2 = _epic(fws, fa), _epic(fws, fa)
+    body = lambda e, extra="": f"gate=requirements&seen={_seen_charter(fws, e)}{extra}"
+    base = _subj(bridge, KEY_A, f"/t/{e1}/approve", body(e1, "&factory=1"))
+    others = [_subj(bridge, KEY_A, f"/t/{e2}/approve", body(e2, "&factory=1")),  # the epic
+              _subj(bridge, KEY_A, f"/t/{e1}/approve", body(e1, "&delegate=1&max_children=3")),  # the limits
+              _subj(bridge, KEY_A, f"/t/{e1}/approve", body(e1, "&delegate=1&max_children=4")),
+              _subj(bridge, KEY_A, f"/t/{e1}/approve", body(e1, "&factory=yes"))]  # no delegation at all
+    assert len({o["digest"] for o in others + [base]}) == 5
+    fa.set_section(e1, "Requirements", "other text")  # the epic text moved: no challenge for the old hash
+    v, _ = bridge.post(KEY_A, f"/t/{e1}/approve", body(e1, "&factory=1").replace(_seen_charter(fws, e1), OTHER_SHA))
+    assert v.code == "assertion_failed"
+
+
+def test_every_field_of_a_verdict_changes_the_subject(bridge, fws, fd, ready_epic):
+    eid, cid = ready_epic
+    seen = _seen(fd)
+    base = _subj(bridge, KEY_A, f"/t/{eid}/verdict", f"verdict=done&seen={seen}")
+    noted = _subj(bridge, KEY_A, f"/t/{eid}/verdict", f"verdict=done&seen={seen}&message=hello")
+    assert noted["digest"] != base["digest"] and noted["shown"] != base["shown"]
+    single = _subj(bridge, KEY_B if False else KEY_A, f"/t/{cid}/verdict", f"verdict=done&seen={epics.verdict_hash([store.load(fws, cid)[1]], fws)}")
+    assert single["digest"] != base["digest"] and cid in single["shown"]
+
+
+# -- the gate is at least as strict as main for every route that existed ----------------------------------------------------
+
+def test_the_tags_table_is_at_least_as_strict_as_mains():
+    import subprocess
+    from pathlib import Path
+    from orch.dashboard import remote_gate
+    here = Path(remote_gate.__file__)
+    top = subprocess.run(["git", "-C", str(here.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode:
+        pytest.skip("not a git checkout")
+    rel = here.resolve().relative_to(Path(top.stdout.strip()).resolve())
+    old = subprocess.run(["git", "-C", top.stdout.strip(), "show", f"origin/main:{rel}"], capture_output=True, text=True)
+    if old.returncode:
+        pytest.skip("no origin/main to compare with")
+    import sys
+    import types
+    mod = types.ModuleType("main_remote_gate")
+    sys.modules["main_remote_gate"] = mod
+    try:
+        exec(compile(old.stdout, "main_remote_gate.py", "exec"), mod.__dict__)  # noqa: S102 - the repo's own file at main
+    finally:
+        del sys.modules["main_remote_gate"]
+    ns = mod.__dict__
+    probes = [{}, None, {"factory": ["1"]}, {"delegate": ["1"]}, {"max_children": ["3"]}, {"max_size": ["s"]}]
+    for key, was in ns["TAGS"].items():
+        assert key in remote_gate.TAGS, f"{key} was tagged on main"
+        now = remote_gate.TAGS[key]
+        for params in (probes if callable(was) or callable(now) else [None]):
+            a = was(params) if callable(was) else was
+            b = now(params) if callable(now) else now
+            if a.scope is None:
+                assert b.scope is None, (key, params)  # never remote stays never remote
+            else:
+                assert b.scope is not None and b.scope >= a.scope and (b.fresh or not a.fresh) and b.kind == a.kind, (key, params)

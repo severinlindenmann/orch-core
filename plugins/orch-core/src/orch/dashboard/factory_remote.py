@@ -39,6 +39,12 @@ def _all(params, key) -> list[str]:
     return [x for x in (params or {}).get(key, ()) if isinstance(x, str)]
 
 
+def _bound(**fields) -> str:
+    """The digest of every field that changes what the action does, built once from the values that are shown."""
+    from orch.core.canonical import canonical_json
+    return hashlib.sha256(canonical_json(fields)).hexdigest()
+
+
 def _subject(kind: str, shown: str, digest: str) -> dict | None:
     if len(shown) > MAX_SHOWN or not _hex(digest) or digest != _hex(digest):
         return None
@@ -64,7 +70,8 @@ def _permission(ws, route_path, pp, params, method, target, body):
         return None
     what = "for the whole epic" if scope == "epic" else "once"
     return _subject("permission", f"Allow {what} request {r['id']} on epic {r['epic']}: {permits.shown(r['command'])}",
-                    _hex(r["sha"]))
+                    _bound(kind="permission", request=r["id"], epic=str(r["epic"]), ticket=str(r["ticket"]),
+                           scope=scope, sha=r["sha"]))
 
 
 def _ticket(ws, ref):
@@ -79,8 +86,7 @@ def _charter(ws, route_path, pp, params, method, target, body):
     if not epics.is_epic(t.meta) or not seen or _one(params, "gate") != "requirements":
         return None
     kids = epics.open_children(ws, t)  # read once: hashed and counted from the same objects
-    ch = epics.charter(ws, t, None, tickets=kids)
-    if seen != ch["content_hash"]:
+    if seen != epics.charter(ws, t, None, tickets=kids)["content_hash"]:
         return None
     # exactly the route's reading: factory wins over delegate; anything else is an ordinary approval
     if _one(params, "factory") in _ON:
@@ -91,9 +97,12 @@ def _charter(ws, route_path, pp, params, method, target, body):
         head = "Delegate to agents on"
     else:
         limits, head = None, "Approve the requirements, with no delegation, of"
+    full = epics.charter(ws, t, limits, tickets=kids)  # binds the epic, its children and the delegation
     text = ", ".join(f"{k} {v}" for k, v in sorted((limits or {}).items()))
     return _subject("charter", f"{head} epic {t.id} {permits.shown(t.title)} with {len(kids)} open children."
-                    + (f" Limits: {text}" if limits else ""), _hex(seen))
+                    + (f" Limits: {text}" if limits else ""),
+                    _bound(kind="charter", epic=t.id, gate="requirements", seen=seen, charter=full["hash"],
+                           children=[k.id for k in kids]))
 
 
 def _verdict(ws, route_path, pp, params, method, target, body):
@@ -110,13 +119,16 @@ def _verdict(ws, route_path, pp, params, method, target, body):
         if not tickets or seen != epics.verdict_hash(tickets, ws):
             return None
         return _subject("verdict", f"Accept epic {t.id} {permits.shown(t.title)}: mark done "
-                        + ", ".join(x.id for x in tickets) + tail, _hex(seen))
+                        + ", ".join(x.id for x in tickets) + tail,
+                        _bound(kind="verdict", ticket=t.id, verdict=verdict, seen=seen, message=note,
+                               children=[x.id for x in tickets]))
     if seen != epics.verdict_hash([t], ws):
         return None
     acs = f" (criteria {', '.join(permits.shown(a) for a in _all(params, 'acs'))})" \
         if verdict == "follow-up" and _all(params, "acs") else ""
     return _subject("verdict", f"Verdict {permits.shown(verdict)} on {t.id} {permits.shown(t.title)}{acs}{tail}",
-                    _hex(seen))
+                    _bound(kind="verdict", ticket=t.id, verdict=verdict, seen=seen, message=note,
+                           acs=_all(params, "acs") if verdict == "follow-up" else []))
 
 
 def _action(ws, route_path, pp, params, method, target, body):

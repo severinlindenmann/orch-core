@@ -622,7 +622,7 @@ FACTORY_POSTS = (("approve", b"gate=requirements&seen=x"), ("move", b"to=backlog
 def test_changes_under_a_running_factory_epic_need_a_fresh_assertion(factory):
     fws, epic, child, other = factory
     app = create_app(fws, "tok")
-    open_ = ("comment", "epic/pause")  # reading and commenting stay at Operate, pausing at Decide
+    open_ = ("epic/pause",)  # pausing stays at Decide with no assertion; a comment needs one, at Operate
     for ref in (epic, child):  # refused without the assertion; nothing ran, so the delegation is still active
         for action, body in FACTORY_POSTS:
             path = f"/t/{ref}/{action}"
@@ -633,7 +633,9 @@ def test_changes_under_a_running_factory_epic_need_a_fresh_assertion(factory):
                 assert call(app, "POST", path, remote=origin(Scope.OPERATE, fresh=True), body=body,
                             headers=FORM)[0] == 403, path
     for ref in (epic, child):
-        assert call(app, "POST", f"/t/{ref}/comment", remote=origin(Scope.OPERATE), body=b"text=x", headers=FORM)[0] == 303
+        assert call(app, "POST", f"/t/{ref}/comment", remote=origin(Scope.OPERATE), body=b"text=x", headers=FORM)[0] == 403
+        assert call(app, "POST", f"/t/{ref}/comment", remote=origin(Scope.OPERATE, fresh=True), body=b"text=x",
+                    headers=FORM)[0] == 303
     assert call(app, "POST", f"/t/{epic}/epic/pause", remote=origin(Scope.DECIDE), headers=FORM)[0] != 403
     for action, body in FACTORY_POSTS:  # with it they reach the handler (the child first: these really run)
         assert call(app, "POST", f"/t/{child}/{action}", remote=origin(Scope.TYPE, fresh=True), body=body,

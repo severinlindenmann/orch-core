@@ -79,9 +79,20 @@ Limits:
 - a response is sent in chunks of at most 256 KiB, a stream's frames at most 4 per second (the latest frame wins)
   with a keepalive after 20 s of silence; a stream ends after 120 s, and the device opens it again;
 - an answer of up to 64 KiB is stored for a retry; a larger one is not, and a retry of it reads "outcome unknown";
-- anything that needs a fresh confirmation on the device (Face ID, Touch ID, Windows Hello or a PIN) is refused
-  until the AI Factory change adds those confirmations; that includes every change to a ticket under a running
-  AI Factory epic.
+- anything that needs a fresh confirmation on the device (Face ID, Touch ID, Windows Hello or a PIN) shows the exact
+  text first and is signed over it; see the next section.
+
+### The AI Factory from a device
+
+Deny, Revoke and Pause (which is also Stop) need Decide. Allow once, Allow for the epic, Start (the approve route
+carrying the factory limits), signing an epic's done verdict and any change to a ticket under a running AI Factory
+epic need Type and a fresh confirmation over the exact thing: the permission request, the charter hash, the verdict
+hash the Ready report carries, or the request itself. The host builds that text from the workspace's live state when
+the request arrives: if the hash the request carries is not the current one, the request is answered already, the
+form names a field twice, or the text is too long to show in full, no confirmation is asked for and nothing is
+written. The write is the dashboard's own signed ledger write, run after the confirmation, which checks the same
+hash again; the paired device is named in the ledger entry and, for a Start, in the armed marker. Nothing waits
+while the computer is away. Reading and commenting stay at Operate; a typing lease never covers these.
 
 ## The limits of the protection
 

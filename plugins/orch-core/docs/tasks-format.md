@@ -144,6 +144,8 @@ Nothing runs before the claim, the plan approval and the task's own rules allow 
 
 ## Input file (orch task add --file)
 
+The same YAML can sit under a `## Tasks` heading in the `--body-file` of `orch new` (bare or inside one ```yaml fence); it is validated like `task add --file` before the ticket gets an ID.
+
 ```yaml
 tasks:
   - text: Inventory the 14 jobs and their cluster settings

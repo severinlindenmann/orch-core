@@ -216,8 +216,9 @@ def new(
         "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
         "--body-file", exists=True, dir_okay=False,
-        help="Markdown for the Ask. Its `## Requirements`, `## Acceptance criteria`, `## Out of scope` and "
-             "`## Summary` parts (also `###`) go into those sections.")] = None,
+        help="Markdown for the Ask. A heading naming a section (`## Summary`, `## Requirements`, `## Acceptance "
+             "criteria`, `## Out of scope`, `## Context`, `## Plan`, `## Verification`, ...; also `###`) puts that "
+             "part into the section; `## Tasks` holds the YAML of `orch task add --file`.")] = None,
     requirements_file: Annotated[Optional[Path], typer.Option(
         "--requirements-file", exists=True, dir_okay=False, help="Markdown for the Requirements section.")] = None,
     acceptance_file: Annotated[Optional[Path], typer.Option(
@@ -234,9 +235,10 @@ def new(
     The requirements gate refuses to approve while Requirements or Acceptance criteria are empty: give them here
     (headings in --body-file, or their own files) or later with `orch section set <id> Requirements --file …`.
     The Ask is the request in the requester's words."""
-    from orch.core.body import split_body
+    from orch.core.body import BODY_SECTIONS, split_body
     ws = _ws()
-    ask, sections = split_body(body_file.read_text(encoding="utf-8")) if body_file else ("", {})
+    ask, sections = (split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+                     if body_file else ("", {}))
     for name, f in (("Requirements", requirements_file), ("Acceptance criteria", acceptance_file),
                     ("Out of scope", out_of_scope_file), ("Summary", summary_file)):
         if f is None:
@@ -445,14 +447,41 @@ def state(ref: str, message: MessageOpt = None, file: FileOpt = None, json_out: 
 
 
 @section_app.command("set")
-def section_set(ref: str, name: str, message: MessageOpt = None, file: FileOpt = None, json_out: JsonOpt = False) -> None:
-    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`."""
+def section_set(ref: str,
+                name: Annotated[Optional[str], typer.Argument(help="The section (not with --body-file).")] = None,
+                message: MessageOpt = None, file: FileOpt = None,
+                body_file: Annotated[Optional[Path], typer.Option(
+                    "--body-file", exists=True, dir_okay=False,
+                    help="Markdown whose `## <Section>` headings (Summary, Requirements, Plan, Verification, ...) "
+                         "each replace that section, all in one write: everything or nothing.")] = None,
+                json_out: JsonOpt = False) -> None:
+    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`, or several at once with
+    `orch section set L-0042 --body-file sections.md`."""
     ws = _ws()
     ops = _ops(ws)
-    t = ops.set_section(ref, name, _text(message, file))
+    if body_file is not None:
+        from orch.core.body import BODY_SECTIONS, split_body
+        if name is not None or message is not None or file is not None:
+            raise UsageError("--body-file replaces the section name and -m/--file", hint="use one or the other")
+        loose, parts = split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+        if loose:
+            raise UsageError("the body file has text before its first section heading; that would be the Ask",
+                             hint="put every part under a `## <Section>` heading")
+        if "Tasks" in parts:
+            raise UsageError("a `## Tasks` part is not written by `section set`",
+                             hint="orch task add <id> --file tasks.yaml")
+        if not parts:
+            raise UsageError("the body file names no section", hint="start each part with `## Plan`, `## Requirements`, ...")
+        t = ops.set_sections(ref, parts)
+        label = ", ".join(parts)
+    else:
+        if name is None:
+            raise UsageError("pass the section name, or --body-file")
+        t = ops.set_section(ref, name, _text(message, file))
+        label = name
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
-         f"{t.id}: {name} updated")
+         f"{t.id}: {label} updated")
 
 
 @app.command()

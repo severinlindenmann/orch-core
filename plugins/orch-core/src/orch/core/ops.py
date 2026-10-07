@@ -254,7 +254,7 @@ class Ops(TaskOpsMixin):
         section left empty. `from_ref` with `epic` (#213): `parent` is the epic, the source keeps its `follow_ups`
         back-link; `from_ref` alone joins the source's epic (not done, new type not epic) unless `no_epic`, and
         says so in `self.notices`."""
-        from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
+        from orch.core.body import BODY_SECTIONS, empty_gate_warnings, tasks_from_block
         self.warnings = []
         self.notices = []
         title = " ".join(title.split())
@@ -279,9 +279,21 @@ class Ops(TaskOpsMixin):
             due = checked_due(due)
         labels = check_labels(labels or [])
         sections = sections or {}
-        unknown = [n for n in sections if n not in SPLIT_SECTIONS]
+        unknown = [n for n in sections if n not in BODY_SECTIONS]
         if unknown:
-            raise UsageError(f"orch new does not fill {unknown[0]!r}", hint="one of: " + ", ".join(SPLIT_SECTIONS))
+            raise UsageError(f"orch new does not fill {unknown[0]!r}", hint="one of: " + ", ".join(BODY_SECTIONS))
+        sections = dict(sections)
+        raw_tasks = sections.pop("Tasks", None)  # YAML, as `orch task add --file` reads it (#216)
+        new_tasks = None
+        if raw_tasks is not None:
+            if not raw_tasks.strip():
+                raw_tasks = None
+            else:
+                from orch.core import tasks as tk
+                new_tasks = tk.build(tasks_from_block(raw_tasks), 1)
+                self._check_needs(new_tasks, {n.id for n in new_tasks})
+        if sections.get("Plan") and type == "epic":
+            raise UsageError("an epic has no plan of its own", hint="its children have plans")
         for name, text in [("Ask", ask), *sections.items()]:
             _check_section_text(name, text)
         unproven = evidence.ticked_without_evidence(Ticket(meta={}, sections=dict(sections)))
@@ -293,6 +305,9 @@ class Ops(TaskOpsMixin):
         ticket.set_section("Ask", ask)
         for name, text in sections.items():
             ticket.set_section(name, text)
+        if new_tasks:
+            from orch.core import tasks as tk
+            ticket.set_section("Tasks", tk.render(new_tasks))
         if external:
             ticket.meta["external"].append(self._external(external))
         if source:
@@ -314,6 +329,7 @@ class Ops(TaskOpsMixin):
                                            **({"epic": parent_epic.id} if parent_epic else {}),
                                            **({"due": due} if due else {}),
                                            **({"labels": labels} if labels else {}),
+                                           **({"tasks": [n.id for n in new_tasks]} if new_tasks else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
         if source:
             def link_back(t: Ticket) -> dict:
@@ -424,7 +440,7 @@ class Ops(TaskOpsMixin):
         with the same rules and event as `set_section`."""
         return self._write_section(ref, name, lambda current: f"{current}\n\n{text}" if current.strip() else text)
 
-    def _write_section(self, ref: str, name: str, compose) -> Ticket:
+    def _section_name(self, name: str) -> str:
         canonical = {s.lower(): s for s in SECTIONS}.get(name.strip().lower())
         if canonical is None:
             raise UsageError(f"unknown section {name!r}", hint="one of: " + ", ".join(SECTIONS))
@@ -433,17 +449,26 @@ class Ops(TaskOpsMixin):
         if canonical == "Tasks":
             raise UsageError("the Tasks section changes only through `orch task`",
                              hint="orch task add | edit | start | done | skip | block | reopen")
+        return canonical
+
+    def _put_section(self, t: Ticket, canonical: str, text: str) -> None:
+        """The rules of every section write, shared by one section and several: text that reads back as one
+        section, the Ask's human-only rule (#24), no plan on an epic."""
+        _check_section_text(canonical, text)
+        if canonical == "Ask" and (self.actor.is_human or not agent_wrote_ask(self.ws, t)):  # #24
+            require_human(self.actor, "editing the Ask section")
+        if canonical == "Plan" and t.meta.get("type") == "epic":
+            raise UsageError(f"{t.id} is an epic: it has no plan of its own", hint="its children have plans")
+        t.set_section(canonical, text)
+
+    def _write_section(self, ref: str, name: str, compose) -> Ticket:
+        canonical = self._section_name(name)
         self.warnings = []
 
         def fn(t: Ticket) -> dict:
             text = compose(t.section(canonical))
-            _check_section_text(canonical, text)
-            if canonical == "Ask" and (self.actor.is_human or not agent_wrote_ask(self.ws, t)):  # #24
-                require_human(self.actor, "editing the Ask section")
-            if canonical == "Plan" and t.meta.get("type") == "epic":
-                raise UsageError(f"{t.id} is an epic: it has no plan of its own", hint="its children have plans")
             before = Ticket(meta=t.meta, sections=dict(t.sections))
-            t.set_section(canonical, text)
+            self._put_section(t, canonical, text)
             if canonical == "Acceptance criteria":
                 unproven = evidence.ticked_without_evidence(t, before=before)
                 if unproven:
@@ -455,6 +480,38 @@ class Ops(TaskOpsMixin):
                 from orch.core.body import empty_gate_warnings
                 self.warnings = empty_gate_warnings(t)
             return {"section": canonical}
+
+        return self._mutate(ref, "ticket.edited", fn)
+
+    def set_sections(self, ref: str, sections: dict[str, str]) -> Ticket:
+        """Replace several sections in one locked write (#216), with the rules of `set_section` for each: either all
+        are written, with one Log line and one event, or none is. Evidence written in the same call counts for a
+        ticked criterion. No gate is touched: a changed section only invalidates, as a single write does."""
+        if not sections:
+            raise UsageError("no section given")
+        names: dict[str, str] = {}
+        for raw, text in sections.items():
+            canonical = self._section_name(raw)
+            if canonical in names:
+                raise UsageError(f"{canonical} is given twice")
+            names[canonical] = text
+        self.warnings = []
+
+        def fn(t: Ticket) -> dict:
+            before = Ticket(meta=t.meta, sections=dict(t.sections))
+            for canonical, text in names.items():
+                self._put_section(t, canonical, text)
+            if "Acceptance criteria" in names:
+                unproven = evidence.ticked_without_evidence(t, before=before)
+                if unproven:
+                    raise ValidationError(
+                        "cannot tick " + ", ".join(f"AC{n}" for n in unproven) + " without evidence",
+                        hint="add a line such as `- AC1: <what proved it> (<command or link>)` to Verification first")
+            self._log(t, "updated " + ", ".join(names))
+            if t.status == "backlog" and requirements_required(self.ws, t):
+                from orch.core.body import empty_gate_warnings
+                self.warnings = empty_gate_warnings(t)
+            return {"section": ", ".join(names), "sections": list(names)}
 
         return self._mutate(ref, "ticket.edited", fn)
 

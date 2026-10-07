@@ -1727,8 +1727,10 @@ def evaluate(ws, payload: dict) -> Decision:
         why = _clone_file(str(tool_input.get("file_path") or tool_input.get("notebook_path") or ""), cwd, ws)
         if why:
             return Decision(False, why)
+    if tool == "NotebookEdit" and _is_config(ws, str(tool_input.get("notebook_path") or "")):
+        return Decision(False, _CONFIG_SHAPE_DENIED)
     if tool in ("Edit", "Write", "MultiEdit"):
-        return _edit(ws, tool, tool_input)
+        return _edit(ws, tool, tool_input, payload.get("session_id"))
     return ALLOW
 
 
@@ -2003,7 +2005,66 @@ def _proposed(tool: str, tool_input: dict, text: str) -> str | None:
     return text
 
 
-def _edit(ws, tool: str, tool_input: dict) -> Decision:
+def closed_without_workspace(payload: dict, start: Path) -> bool:
+    """Whether the guard must refuse when the workspace cannot be opened: ORCH_HOME names one, the start folder or an
+    ancestor holds an `orchestrator` folder, or the session id may belong to a factory binding (needs only the state
+    dir, not the config). False only outside every workspace for a session the runner never bound."""
+    if os.environ.get("ORCH_HOME"):
+        return True
+    try:
+        here = Path(start).resolve()
+        if any(d.name == "orchestrator" or (d / "orchestrator").is_dir() for d in (here, *here.parents)):
+            return True
+    except Exception:
+        return True
+    try:
+        from orch.core import factory_sessions
+        return factory_sessions.recorded(payload.get("session_id"))
+    except Exception:
+        return True
+
+
+def unreadable_workspace(payload: dict, start: Path, why: str) -> Decision:
+    """The answer while the workspace cannot be opened (closed_without_workspace held): every tool is refused, except
+    that a session the runner never bound may read the workspace config and write it back as one JSON object (the
+    repair). A bound session gets nothing."""
+    import json
+    deny = Decision(False, f"the workspace cannot be read ({why}), so nothing is allowed; ask the human to repair "
+                           "orchestrator/config.json")
+    tool, ti = payload.get("tool_name"), payload.get("tool_input")
+    try:
+        from orch.core import factory_sessions
+        if factory_sessions.recorded(payload.get("session_id")):
+            return deny
+    except Exception:
+        return deny
+    if tool not in ("Read", "Write", "Edit") or not isinstance(ti, dict):
+        return deny
+    raw = str(ti.get("file_path") or "")
+    try:
+        path = Path(raw) if Path(raw).is_absolute() else Path(start) / raw
+        target, home = path.resolve(), os.environ.get("ORCH_HOME")
+        here = Path(start).resolve()
+        homes = [Path(home).expanduser().resolve()] if home else [d / "orchestrator" for d in (here, *here.parents)]
+        if target.name != "config.json" or target.parent not in homes or path.is_symlink():
+            return deny
+        if tool == "Read":
+            return ALLOW
+        old = target.read_text(encoding="utf-8") if target.exists() else ""
+        new = _proposed(tool, ti, old)
+        return ALLOW if new is not None and isinstance(json.loads(new), dict) else deny
+    except Exception:
+        return deny
+
+
+def _is_config(ws, raw: str) -> bool:
+    if not raw:
+        return False
+    path = Path(raw)
+    return (path if path.is_absolute() else ws.root / path).resolve() == (ws.home / "config.json").resolve()
+
+
+def _edit(ws, tool: str, tool_input: dict, session=None) -> Decision:
     raw = str(tool_input.get("file_path") or "")
     if not raw:
         return ALLOW
@@ -2016,7 +2077,7 @@ def _edit(ws, tool: str, tool_input: dict) -> Decision:
     if _under(path, ws.state_dir.resolve()):
         return Decision(False, _USE_ORCH)
     if path == (ws.home / "config.json").resolve():
-        return _config_edit(tool, tool_input, path)
+        return _config_edit(ws, tool, tool_input, path, session)
     if not _under(path, ws.tickets_dir.resolve()):
         return ALLOW
     if path.name == "INDEX.md":
@@ -2070,15 +2131,49 @@ def _widgets_html(text: str):
     return widgets.get("html", False) if isinstance(widgets, dict) else (False if isinstance(cfg, dict) else None)
 
 
-def _config_edit(tool: str, tool_input: dict, path: Path) -> Decision:
-    """The workspace config is the agent's to edit (repos, prompts, ...), except `widgets.html`: whether agent-written
-    HTML runs in ticket widgets is the human's call, like trusting an addon."""
+_CONFIG_SHAPE_DENIED = ("this edit would leave orchestrator/config.json unreadable (not one JSON object): orch would "
+                        "then judge nothing. Write the whole file as valid JSON")
+_CONFIG_FACTORY_DENIED = ("the factory settings in orchestrator/config.json are the human's (`orch factory on|off` in "
+                          "their own terminal); leave the factory key as it is")
+_CONFIG_BOUND_DENIED = ("an AI Factory session never edits orchestrator/config.json; record what should change with "
+                        "`orch log`")
+
+
+def _config_edit(ws, tool: str, tool_input: dict, path: Path, session=None) -> Decision:
+    """The workspace config is the agent's to edit (repos, prompts, ...), except: a session the runner may have bound
+    never edits it; the result must stay one JSON object (a broken config would leave orch unable to judge anything);
+    the `factory` settings are the human's; and `widgets.html` (whether agent-written HTML runs in ticket widgets) is
+    the human's call, like trusting an addon."""
+    import json
+    try:
+        from orch.core import factory_sessions
+        state = factory_sessions.session_state(ws, session)[0]
+    except Exception:
+        state = "unknown"
+    if state != "none":
+        return Decision(False, _CONFIG_BOUND_DENIED)
     try:
         old_text = path.read_text(encoding="utf-8")
     except OSError:
-        return ALLOW
-    new_text = _proposed(tool, tool_input, old_text)
-    before, after = _widgets_html(old_text), (None if new_text is None else _widgets_html(new_text))
+        old_text = None
+    if old_text is None and tool != "Write":
+        return ALLOW  # nothing to edit: the tool reports that itself
+    new_text = _proposed(tool, tool_input, old_text or "")
+    if new_text is None:
+        return ALLOW  # the edit does not apply; the tool reports that itself
+    try:
+        new = json.loads(new_text)
+    except ValueError:
+        return Decision(False, _CONFIG_SHAPE_DENIED)
+    if not isinstance(new, dict):
+        return Decision(False, _CONFIG_SHAPE_DENIED)
+    try:
+        old = json.loads(old_text or "{}")
+    except ValueError:
+        old = {}
+    if (old.get("factory") if isinstance(old, dict) else None) != new.get("factory"):
+        return Decision(False, _CONFIG_FACTORY_DENIED)
+    before, after = _widgets_html(old_text or "{}"), _widgets_html(new_text)
     if before is not None and after is not None and before != after:
         return Decision(False, _WIDGETS_DENIED)
     return ALLOW

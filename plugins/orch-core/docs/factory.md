@@ -78,8 +78,11 @@ session:
   for permission P-n", so that child parks and the others go on;
 - an error, an unreadable ledger or anything unexpected never answers `allow`;
 - prompts for anything other than a shell command are denied, so run factory sessions in a permission mode that
-  does not prompt for file edits (accept edits; auto mode only for a model that has it, not Haiku);
-- tools that never prompt in that mode never reach the hook at all (see "outward tools" under "Readiness checks").
+  does not prompt for file edits (accept edits; auto mode only outside Dark and for a model that has it, not Haiku;
+  never bypassPermissions, under which no request reaches the hook: the runner refuses to start under it);
+- tools that never prompt in that mode never reach the hook at all (see "permission mode" under "Readiness checks");
+- a session the runner bound is denied (never left to the harness's prompt) while the factory is off for it or its
+  binding or the workspace config cannot be read.
 
 A request's command text and reason are kept beside the ledger in your orch config dir, not in the repository; the
 event log only records that a request with that id and command hash was filed. A once grant's use is recorded there
@@ -107,7 +110,10 @@ anything the guard denies, orch's permission commands, starting the dashboard, t
 plugins, orch's config, state and ledger, the variables that decide where orch keeps its records, elevated rights,
 merging pull requests, force pushes, deleting remote branches, sweeping recursive removals, a shell running a
 substituted command, permission changes on orch's config dir, and any
-command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped.
+command text outside printable ASCII or spanning several lines. Requests are shown with such characters escaped. "Anything
+the guard denies" is judged from the session's real folder when the hook answers, else from the workspace root (when
+a card or a rule is made): a grant and a rule hold the text alone, so whatever depends on the folder is decided again
+by the live guard, from the folder each run really starts in.
 
 ## Harness settings and auto mode
 
@@ -484,9 +490,14 @@ folder depending on where it starts.
   Claude once in the folder and accept it.
 - *skills* (warns): the orch skills at user scope (the plugin, or `skills/orch-work-on-ticket` in the user config
   dir). Without them the built-in prompts still name every command a session needs.
-- *outward tools* (warns): `permissions.deny` in your user-scope settings should list `Artifact`, `WebFetch` and
-  `WebSearch`. Tools that do not prompt (under accept-edits, for example) never reach orch's permission hook, so
-  nothing else stops a session from using them: in the live run a child published a Claude artifact on its own.
+- *permission mode* (blocks): nothing in your user-scope settings may let a session act without orch's permission
+  hook: `permissions.defaultMode` `bypassPermissions` or `skipDangerousModePermissionPrompt`; `auto` while Dark is on
+  (its classifier allows actions in the hook's place; a Dark run needs `acceptEdits`); any `Bash` rule in
+  `permissions.allow` (such a command never prompts); and `permissions.deny` must list `Artifact`, `WebFetch` and
+  `WebSearch` (tools that do not prompt under accept-edits never reach the hook: in the live run a child published a
+  Claude artifact on its own). Only the user-scope file counts because the launch command keeps `--setting-sources
+  user` and `--strict-mcp-config`: no project, local or MCP configuration is loaded. Known gap: tools a claude.ai
+  login brings (connectors) are not enumerated here.
 
 The session PATH is the folders of the resolved `claude`, `orch` and `uv` (each found on the dashboard's PATH and
 trusted as below, none inside the workspace), then the system's. The guard keeps agents from writing what decides how every session is guarded: the user-scope `settings.json`,
@@ -550,8 +561,12 @@ must be an absolute, literal path with no `..`, outside the config dir (relative
 working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
-length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
-hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
+length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny, and so is any other internal error of the guard inside a
+workspace (logged to `orchestrator/.state/guard-errors.log`). When the workspace cannot be opened at all (a broken or
+missing `orchestrator/config.json`) the guard refuses every tool for a session the runner may have bound, and inside
+any folder with an `orchestrator` folder above it refuses everything but reading the config and writing it back as one
+JSON object; only outside every workspace does it stay silent. Agents' Edit and Write of the config must leave one
+JSON object, may not change its `factory` settings, and a bound session never edits it. Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
 a heredoc body or quoted text is not. A `cd` the guard cannot work out (a substitution, a variable, `CDPATH`) is allowed,
 but the working directory is then unknown for the rest of the line: a relative word that is, or can stand for, a name
 in the config dir (permits, sessions, ledger*, tmux, ...) is refused with its own message, and so is a bare `*` handed
@@ -1019,7 +1034,8 @@ refusal of a process under an agent harness, as for every approval).
 - **Sessions cannot write files under a prompting permission mode.** A runner session's file-edit prompt is denied
   without a card (only shell commands are answered), and the launch command may not set a permission mode that skips
   prompts. So unless your user-scope Claude settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
-  `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits`, `auto` or `bypassPermissions`, no agent
+  `~/.claude/settings.json`) set `permissions.defaultMode` to `acceptEdits` or `auto` (`bypassPermissions` counts as blocked: no request
+  would reach the hook), no agent
   of the run can write a file and the planner cannot create children. `auto` does not count for a Haiku model (the
   launch command's `--model`, else the settings' `model`): Claude Code offers Haiku no auto mode, so its edits prompt
   (in the live run Claude's first-run offer had switched the mode to `auto`). Use `acceptEdits`. The run view and New ticket's factory modes say

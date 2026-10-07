@@ -498,16 +498,23 @@ def hook() -> None:
     import os
     from orch.core import permits
     from orch.core.workspace import Workspace
+    from orch.core import factory_sessions
+    payload = None
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):
             return
         start = Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
-        if not permits.enabled_at(start):
-            return  # fast path: the factory is off (read without opening the workspace)
-        ws = Workspace.open(start)
+        ws = Workspace.open(start) if permits.enabled_at(start) else None  # fast path: off, read without opening
     except Exception:
-        return  # not an orch workspace, or unreadable: no opinion, the harness asks as usual (never an allow)
+        ws = None
+    if ws is None:
+        # The factory is off or the workspace unreadable: no opinion (the harness asks as usual), except for a session
+        # the runner may have bound, which is denied: an agent that broke the config must not get the harness's prompt
+        # in place of the factory's rules.
+        if isinstance(payload, dict) and factory_sessions.recorded(payload.get("session_id")):
+            typer.echo(json.dumps(permits.deny_unreadable()))
+        return
     decision = permits.hook_decision(ws, payload)
     if decision is not None:
         typer.echo(json.dumps(decision))

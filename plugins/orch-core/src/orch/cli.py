@@ -1231,19 +1231,21 @@ def guard(
     start = Path(payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd())
     try:
         ws = Workspace.open(start)
-    except UsageError:
-        return  # not an orch workspace: nothing to guard
-    except OrchError as e:
-        typer.echo(f"orch guard: workspace config problem, allowing ({e.message})", err=True)
-        return
     except Exception as e:
-        typer.echo(f"orch guard: internal error, allowing ({type(e).__name__}: {e})", err=True)
-        return
-    try:
-        decision = guard_mod.evaluate(ws, payload)
-    except Exception:
-        _guard_error(ws)  # fail open, but leave a trace
-        return
+        # Fail closed inside a workspace or for a session the runner may have bound: a config an agent broke (or
+        # removed) must not switch the guard off. Outside any workspace there is nothing to guard.
+        if not guard_mod.closed_without_workspace(payload, start):
+            return
+        why = e.message if isinstance(e, OrchError) else f"{type(e).__name__}: {e}"
+        decision = guard_mod.unreadable_workspace(payload, start, why)
+    else:
+        try:
+            decision = guard_mod.evaluate(ws, payload)
+        except Exception as e:
+            _guard_error(ws)  # leave a trace, and refuse: the guard could not judge it
+            decision = guard_mod.Decision(False, f"the guard could not check this ({type(e).__name__}); nothing "
+                                                 "was allowed. Ask the human to look at orchestrator/.state/"
+                                                 "guard-errors.log")
     if not decision.allow:
         reason = f"orch guard: {decision.reason}"
         if hook_json:

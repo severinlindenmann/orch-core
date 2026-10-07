@@ -252,10 +252,13 @@ def _sweep_targets(ws, words: list[str]) -> bool:
     return False
 
 
-def never_grantable(ws, command) -> str | None:
+def never_grantable(ws, command, cwd=None) -> str | None:
     """Why `command` can never be granted, or None. The guard's own denials come first (P4: a grant never overrides
     the guard); the rest is coarse on purpose and errs towards refusing. The patterns run over the text as written
-    and as the shell would split it (quotes and escapes resolved); text the shell cannot split is refused."""
+    and as the shell would split it (quotes and escapes resolved); text the shell cannot split is refused.
+    The guard pass judges the command from `cwd` (the hook passes the session's real folder), else from the workspace
+    root: a grant or a rule is stored for the text alone, so what depends on the folder (a relative path, `cd ..`) is
+    decided again by the live guard (PreToolUse) for every run, from the folder it really runs in."""
     if not isinstance(command, str) or not command.strip():
         return "not a command"
     if any(not (32 <= ord(c) < 127) for c in command):
@@ -265,7 +268,7 @@ def never_grantable(ws, command) -> str | None:
     except ValueError:
         return "the text cannot be split the way a shell would"
     from orch.hooks.guard import evaluate
-    decision = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(ws.root)})
+    decision = evaluate(ws, {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd or ws.root)})
     if not decision.allow:
         return f"the guard denies it ({decision.reason})"
     joined = " ".join(words)
@@ -599,6 +602,11 @@ def _decision(behavior: str, message: str | None = None) -> dict:
     return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": d}}
 
 
+def deny_unreadable() -> dict:
+    return _decision("deny", "AI Factory is off for this session (switched off, not signed, or its binding or the "
+                             "workspace config cannot be read); nothing was allowed. Stop and ask the human.")
+
+
 def hook_decision(ws, payload: dict) -> dict | None:
     """The hook's answer to one PermissionRequest payload: None (no opinion: the harness asks as usual) outside a
     factory session or with the factory off; else `allow` from a live signed grant, or `deny` with the request to
@@ -613,9 +621,7 @@ def hook_decision(ws, payload: dict) -> dict | None:
         b, on = None, False
     if not on:
         if b is not None or factory_sessions.recorded(sid):
-            return _decision("deny", "AI Factory is off for this session (switched off, not signed, or its binding "
-                                     "or the workspace config cannot be read); nothing was allowed. Stop and ask "
-                                     "the human.")
+            return deny_unreadable()
         return None
     if not ledger.head_ok() and _bound(ws, payload.get("session_id")):
         return _decision("deny", "the approval ledger on this machine was cut (`orch check` reports ledger-cut), so no "
@@ -1113,7 +1119,7 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
                                  "without it and record why in the ticket")
     ti = payload.get("tool_input")
     command = ti.get("command") if isinstance(ti, dict) else None
-    why = never_grantable(ws, command) if isinstance(command, str) else None
+    why = never_grantable(ws, command, payload.get("cwd")) if isinstance(command, str) else None
     if why:
         return _decision("deny", f"never granted in a factory epic: {why}. Leave it out, record why in the ticket "
                                  "and list it as not done.")

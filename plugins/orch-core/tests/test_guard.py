@@ -189,27 +189,27 @@ def test_cli_guard_allows_outside_workspace_and_on_bad_json(tmp_path, monkeypatc
     assert _run_guard(monkeypatch, "not json") == 0
 
 
-def test_cli_guard_fails_open_and_logs(ws_root, ws, monkeypatch):
+def test_cli_guard_fails_closed_and_logs(ws_root, ws, monkeypatch):
     import orch.hooks.guard as guard
 
     def boom(ws, payload):
         raise RuntimeError("bug")
 
     monkeypatch.setattr(guard, "evaluate", boom)
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
+    assert _run_guard(monkeypatch, {**bash("ls"), "cwd": str(ws_root)}) == 2  # inside a workspace: refused
     assert "RuntimeError: bug" in (ws.state_dir / "guard-errors.log").read_text(encoding="utf-8")
 
 
-def test_cli_guard_allows_on_workspace_open_failure(ws_root, monkeypatch, capsys):
+def test_cli_guard_refuses_on_workspace_open_failure(ws_root, monkeypatch, capsys):
     import orch.core.workspace as workspace_mod
 
     def boom(start=None):
         raise OSError("disk fell off")
 
     monkeypatch.setattr(workspace_mod.Workspace, "open", staticmethod(boom))
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
+    assert _run_guard(monkeypatch, {**bash("ls"), "cwd": str(ws_root)}) == 2
     err = capsys.readouterr().err
-    assert "orch guard: internal error, allowing" in err and "OSError" in err
+    assert "the workspace cannot be read" in err and "OSError" in err
 
 
 # -- final review fixes ------------------------------------------------------------------
@@ -304,9 +304,9 @@ def test_bash_read_forms_near_state_allowed(ws, cmd):
 
 def test_cli_guard_reports_broken_config(ws_root, monkeypatch, capsys):
     (ws_root / "orchestrator" / "config.json").write_text("{not json", encoding="utf-8")
-    assert _run_guard(monkeypatch, {**bash("git push"), "cwd": str(ws_root)}) == 0
+    assert _run_guard(monkeypatch, {**bash("ls"), "cwd": str(ws_root)}) == 2
     err = capsys.readouterr().err
-    assert "orch guard: workspace config problem, allowing (" in err and "invalid JSON" in err
+    assert "the workspace cannot be read" in err and "invalid JSON" in err
 
 
 def test_cli_guard_silent_outside_workspace(tmp_path, monkeypatch, capsys):

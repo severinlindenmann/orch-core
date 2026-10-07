@@ -113,3 +113,30 @@ def test_a_human_move_is_never_held_by_the_precheck(fws, fa, fh, child, close_ta
     close_tasks(fa, cid)
     fa.set_section(cid, "Verification", "- AC1: ran the suite, green")
     fh.move(cid, "testing")  # the human decides; the release still checks
+
+
+def test_the_refusals_never_tell_the_agent_to_do_what_its_session_cannot(fws, fa, human, child, run):  # noqa: F811
+    """The e2e run: "Delete it with your file tools" was advice no session can follow (no file tool deletes, rm stops
+    for a card, git rm is refused by the gate). Both refusals now name only what runs: orch log, git add, git commit."""
+    from orch.core import dark_profile, store
+    from orch.hooks.guard import evaluate
+    eid, cid, clone = child
+    other = _child(fa, eid)
+    clone_b, _ = fc.ensure(fws, human, other)
+    (clone / "x.json").write_text("[]\n", encoding="utf-8")
+    dirty = fb.move_refusal(fws, store.load(fws, cid)[1])
+    for c, cl in ((cid, clone), (other, clone_b)):
+        (cl / "same.json").write_text(f"[{c}]\n", encoding="utf-8")
+        _g(cl, "add", "same.json")
+        _g(cl, "commit", "-q", *_msg(c))
+    (clone / "x.json").unlink()
+    double = fb.move_refusal(fws, store.load(fws, cid)[1])
+    assert "not committed" in dirty and "adds too" in double
+    for why in (dirty, double):
+        assert "delete" not in why.lower().replace("no file tool deletes", "") and "orch log" in why, why
+    dark_profile.add_baseline(fws, human)
+    assert dark_profile.match(fws, f'orch log {cid} -m "same.json is added by {other} too"') is not None
+    b = run["b"]
+    for cmd in ("git rm same.json", "git rm --cached same.json"):  # what "delete it" would have needed: refused
+        assert not evaluate(fws, {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": cmd},
+                                  "cwd": str(run["clone"])}).allow

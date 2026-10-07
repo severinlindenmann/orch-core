@@ -78,9 +78,12 @@ def test_not_ready_until_every_child_is_in_testing(fws, fa, epic, close_tasks):
     assert rep["proven"] == rep["total"] == 2 and rep["open"] == 2
 
 
-def test_not_ready_while_a_criterion_has_no_evidence(fws, fa, epic, close_tasks):
+def test_not_ready_while_a_criterion_has_no_evidence(fws, fa, fh, epic, close_tasks):
+    from orch.errors import ValidationError
     c = _child(fa, epic.id)
-    _to_testing(fa, c, close_tasks, proof="nothing numbered")
+    with pytest.raises(ValidationError, match="AC1 has no evidence yet"):  # the agent's move is refused ...
+        _to_testing(fa, c, close_tasks, proof="nothing numbered")
+    fh.move(c, "testing")  # ... a human's is not
     assert _ready(fws, epic.id) is None
 
 

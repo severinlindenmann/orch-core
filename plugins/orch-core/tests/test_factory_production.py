@@ -315,7 +315,7 @@ def test_a_stale_dev_never_lets_production_run(fws, prod, fa, human, close_tasks
     _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
     fa.claim(c.id)
     close_tasks(fa, c.id)
-    fa.set_section(c.id, "Verification", "- AC1: ok")
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
     fa.move(c.id, "testing")
     real = clock.now
     monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=30))

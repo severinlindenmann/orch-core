@@ -1237,7 +1237,10 @@ redirects); the nudge depends on Claude Code's current screen markers.
   <child> testing`, which a factory session's agent cannot pass while either holds (a fixed reason says what to
   do); a human's move is never held, and the Ready report, the release and the close still check. Sensitive paths:
   only at the release (the paths are the recipe's, which agents cannot read). Named files in a commit: at Ready and
-  the release (whether a child should hold a file is the epic's split, not the child's own knowledge).
+  the release (whether a child should hold a file is the epic's split, not the child's own knowledge). Evidence: at
+  `orch move <child> testing`, an agent's move of any factory child is refused while an acceptance criterion has no
+  Verification line in the Ready format (`- AC<n>: ...` saying something concrete), naming the criteria ("AC2 has no
+  evidence yet"); a child in testing without it would leave the epic never Ready (the seventh live run).
 
 ## Release recipe (phase 6)
 

@@ -573,6 +573,10 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     if any(os.path.lexists(d / _name(stage, unit, k, "intent")) for k in range(n + 2, MAX_ATTEMPTS + 1)):
         # an attempt's intent was removed while a later one remains: the records cannot be trusted (fail closed)
         return {"state": "unknown", "attempt": n, "why": "its attempt records have a gap"}
+    j = max(_journal_attempts(ws, epic_id, stage, unit), default=0)
+    if j > n:  # the journal remembers an attempt whose records are gone (removed, or a crash right after the line)
+        return {"state": "unknown", "attempt": n, "journal": j,
+                "why": f"the runner's journal records attempt {j}, but its records are missing"}
     if n == 0:
         return {"state": "waiting", "attempt": 0}
     out = _read(d / _name(stage, unit, n, "outcome"))
@@ -787,13 +791,26 @@ def _record_epics(ws, production: bool = True) -> set[str]:
     return out
 
 
-def _journal(ws) -> tuple[list[dict], bool]:
-    """(the journal's lines, whether it is missing while production records exist, or holds a line that cannot be read
-    after the human's last acknowledgement)."""
+def _journal_attempts(ws, epic_id: str, stage: str, unit: str) -> dict[int, str]:
+    """{attempt: when} of every attempt of `stage` for `unit` the journal records (lines that name both; a missing or
+    damaged journal is a block of its own, _blocked_record)."""
+    eid, u = str(epic_id).upper(), str(unit).upper()
+    lines = _journal_read(ws)
+    out = {}
+    for x in (lines[0] if lines else []):
+        if (x.get("kind") in ("intent", "production") and x.get("epic") == eid and x.get("stage") == stage
+                and str(x.get("unit") or "").upper() == u and isinstance(x.get("attempt"), int)):
+            out[x["attempt"]] = str(x.get("at") or "")
+    return out
+
+
+def _journal_read(ws) -> tuple[list[dict], bool] | None:
+    """(the journal's lines, whether a line cannot be read after the human's last acknowledgement), None when there is
+    no journal file."""
     from orch.core.artifacts import read_regular
     p = _index_path(ws)
     if not os.path.lexists(p):
-        return [], bool(_record_epics(ws, production=False))
+        return None
     raw = read_regular(p, 4 << 20, root=fs._root())
     if raw is None:
         return [], True
@@ -812,6 +829,13 @@ def _journal(ws) -> tuple[list[dict], bool]:
             bad_after = False  # the human acknowledged everything before it
         lines.append(line)
     return lines, bad_after
+
+
+def _journal(ws) -> tuple[list[dict], bool]:
+    """(the journal's lines, whether it is missing while production records exist, or holds a line that cannot be read
+    after the human's last acknowledgement)."""
+    got = _journal_read(ws)
+    return got if got is not None else ([], bool(_record_epics(ws, production=False)))
 
 
 def production_epics(ws) -> tuple[list[str], bool]:
@@ -841,18 +865,37 @@ def prod_charters(ws) -> list[tuple[str, int]]:
     return out
 
 
+def _voided(ws) -> tuple[set[str], bool]:
+    """(the production times the human's clear-window voided, whether the reset record cannot be read)."""
+    p = _reset_path(ws)
+    if not os.path.lexists(p):
+        return set(), False
+    body = _read(p, 64 * 1024)
+    got = (body or {}).get("voided")
+    if not isinstance(got, list) or not all(isinstance(x, str) for x in got):
+        return set(), True
+    return set(got), False
+
+
 def clear_window(ws, actor) -> str:
-    """Human only: record that every production time the records hold beyond now (a future-dated record) no longer
-    counts for the window. Times up to now still count; nothing is deleted from the guarded records."""
+    """Human only: record that the production times the records hold beyond now (future-dated ones) no longer count
+    for the window: exactly those times, listed in the reset record (with the ones voided before). Times up to now,
+    and every production recorded later, still count; nothing is deleted from the guarded records."""
+    from orch import clock
     fs.human_check(actor, "clearing a future-dated release window")
-    _atomic(_reset_path(ws), json.dumps({"at": _now(), "by": actor.to_str()}))
-    return "production times recorded beyond now no longer keep the window shut; earlier ones still count"
+    times, _ = _production_times(ws, voiding=False)
+    before, _ = _voided(ws)
+    now = clock.now()
+    voided = sorted(before | {clock.stamp_s(t) for t in times if t > now})
+    _atomic(_reset_path(ws), json.dumps({"at": _now(), "by": actor.to_str(), "voided": voided}))
+    return "production times recorded beyond now no longer keep the window shut; earlier and later ones still count"
 
 
-def _production_times(ws) -> tuple[list, str]:
+def _production_times(ws, voiding: bool = True) -> tuple[list, str]:
     """(every time a production attempt of this workspace began or ended, as the runner's records say, why one could
-    not be read). Sources: the runner's window record, and every epic's production intent and outcome records, so a
-    deleted window record does not open the window while an attempt's records remain."""
+    not be read). Sources: the runner's window record, the journal's production lines, and every epic's production
+    intent and outcome records, so a deleted window record or attempt record does not open the window while another
+    source remains. `voiding`: leave out the times the human's clear-window voided."""
     from orch import clock
     times, bad = [], ""
 
@@ -868,6 +911,9 @@ def _production_times(ws) -> tuple[list, str]:
     ids, damaged = production_epics(ws)
     if damaged:
         bad = "the runner's release journal"
+    for x in _journal(ws)[0]:
+        if x.get("kind", "production") == "production":
+            add(x.get("at"), "a production line of the runner's journal")
     for eid in ids:
         d = _dir(ws, eid)
         for n in range(1, MAX_ATTEMPTS + 1):
@@ -880,13 +926,11 @@ def _production_times(ws) -> tuple[list, str]:
                 out = _read(op)
                 if out is None or out.get("ended") is not None:
                     add((out or {}).get("ended"), f"a production outcome record of {eid}")
-    reset = _read(_reset_path(ws), 1024) if os.path.lexists(_reset_path(ws)) else None
-    if reset is not None:  # the human cleared future-dated times (clear_window): those beyond that moment do not count
-        try:
-            cut = clock.parse_stamp(str(reset.get("at")))
-            times = [t for t in times if t <= cut]
-        except (ValueError, OverflowError):
+    if voiding:  # the human cleared future-dated times (clear_window): exactly those do not count
+        voided, unreadable = _voided(ws)
+        if unreadable:
             bad = bad or "the window reset record"
+        times = [t for t in times if clock.stamp_s(t) not in voided]
     return times, bad
 
 
@@ -1740,7 +1784,7 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1
             body = {"stage": "merge", "unit": k, "epic": epic.id, "attempt": n, "started": _now()}
             if n <= MAX_ATTEMPTS:
-                _journal_add(ws, {"kind": "intent", "epic": epic.id, "stage": "merge"})
+                _journal_add(ws, {"kind": "intent", "epic": epic.id, "stage": "merge", "unit": k, "attempt": n})
             if n <= MAX_ATTEMPTS and _write(ddir / _name("merge", k, n, "intent"), body):
                 _write(ddir / _name("merge", k, n, "outcome"),
                        {**body, "codes": [], "check": None, "proven": False, "ended": _now(), "tail": "",
@@ -1908,7 +1952,8 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
               **extra}
     # with the intent, in the runner's journal: the hold, the window and the blocks never depend on ticket files, and a
     # journal that goes missing while records exist blocks every release
-    _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name})
+    _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name,
+                      "unit": unit, "attempt": n})
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
@@ -1991,6 +2036,13 @@ def retry(ws, actor, epic_id: str, stage: str, unit: str) -> str:
                               "stage is retried")
     if us["attempt"] >= MAX_ATTEMPTS:
         raise ValidationError("this stage was retried too often; release it by hand")
+    if us.get("journal"):  # the journal remembers attempts whose records are gone: put back what it says, as unknown
+        for k, at in sorted(_journal_attempts(ws, epic_id, stage, unit).items()):
+            if us["attempt"] < k <= us["journal"]:
+                _write(ddir / _name(stage, unit, k, "intent"), {"stage": stage, "unit": unit, "epic": epic_id,
+                                                                "attempt": k, "started": at or _now(),
+                                                                "why": "restored from the runner's journal"})
+        us = {**us, "attempt": us["journal"]}
     if us["state"] == "unknown":  # close the open attempt so the record reads as failed, then allow the next one
         _write(ddir / _name(stage, unit, us["attempt"], "outcome"),
                {"stage": stage, "unit": unit, "attempt": us["attempt"], "codes": [], "check": None, "proven": False,

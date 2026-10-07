@@ -1370,8 +1370,11 @@ first, and the attempt is recorded as failed).
 blocked: the journal missing while release records exist, or holding a line that cannot be read, blocks every release
 of the workspace ("Release could not start": check the records, then Retry release to acknowledge it, which appends
 an acknowledgement and lets the records decide again) and keeps the window shut; a block whose file was removed still
-holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; a window
-record that was deleted is replaced by the attempts' own records; a retry never runs out of slots. The one case left
+holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; so is
+an attempt the journal records (each intent line names the stage, unit and attempt) whose records are gone: deleting
+a production's intent, outcome and window records does not let it run again, and a Retry puts the journal's attempt
+back before it allows one more; a window record that was deleted is replaced by the attempts' own records and the
+journal's production lines; a retry never runs out of slots. The one case left
 open on purpose: a child branch deleted after its merge was proven does not make the merge out of date (cleaning up a
 merged branch is normal; the merged commit is recorded).
 
@@ -1414,7 +1417,10 @@ latest main" deploys whatever main is then).
   window while the attempts' records remain. Never an agent, a ticket or the recipe. No record means the window is open;
   a record it cannot read, or whose time lies in the future, keeps the window shut until you look at it. While the
   window is shut the epic is **waiting**, not Stopped (a time recorded in the future: run `orch factory release
-  clear-window` in your terminal, which makes times beyond that moment stop counting and deletes nothing): nothing runs, the run view says when the window opens and when
+  clear-window` in your terminal, which makes exactly the times recorded beyond that moment stop counting, lists them
+  in its reset record and deletes nothing; every production recorded later still counts, so the window keeps working
+  after a reset). A window shut by a record that cannot be read or lies in the future is not a plain wait: the run view
+  puts the epic among those that need you ("Window needs a look": clear-window or a look needed). Otherwise nothing runs, the run view says when the window opens and when
   the charter's time budget ends (a wait uses it; if the window opens after the budget ends, production does not run
   under that charter), and the runner checks again every round. A retry waits for the window too: it is never
   skipped.

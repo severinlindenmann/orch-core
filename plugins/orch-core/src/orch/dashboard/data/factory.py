@@ -187,11 +187,12 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
+           "windowlook": ("you", 0, "Window needs a look"),
            "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
            "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished")}
-NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled")
+NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "windowlook")
 
 
 def span(seconds) -> str:
@@ -304,6 +305,9 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "releasing", "The runner is releasing the work with your recipe"
     elif held and not mine["requests"] and not mine["budget"]:
         state, headline = "held", "Production is held: another epic's production is unresolved"
+    elif window and not window["open"] and window.get("why"):  # shut by a record that cannot be read or lies ahead
+        state, headline = "windowlook", ("Production's release window is shut by a record that cannot be read or lies "
+                                         "in the future: clear-window or a look needed")
     elif window and not window["open"] and not mine["requests"] and not mine["budget"]:
         state, headline = "window", "Production waits for its release window"
     elif auto and mine["ready"] and auto["pending"] and not mine["requests"] and not mine["budget"]:
@@ -345,7 +349,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
-            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait"}.get(state, "stop")
+            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait", "windowlook": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works

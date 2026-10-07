@@ -680,6 +680,11 @@ _VERBS = {
                       "--"),
     "ls-tree": _spec("-r -t -d --name-only --name-status -l --long --full-tree --full-name --", "", "revs"),
     "blame": _spec("-w -s -e --", "-L", "revs"),
+    # read-only additions: counting commits, and printing one object of the repository (no --textconv, --filters or
+    # --batch: they run filters or read requests from stdin)
+    "rev-list": _spec("--count --first-parent --no-merges --merges --reverse", "-n --max-count --since --until "
+                      "--after --before", "revs", value_paths=False),
+    "cat-file": _spec("-p -t -s -e", "", "revs"),
     "branch": _spec(" ".join(_READ_BRANCH), "", "none"),
     "add": _spec("-v --verbose -N --intent-to-add --"),
     "commit": _spec("-q --quiet -v --verbose -a --all --allow-empty -s --signoff", "-m --message", "paths",
@@ -962,8 +967,7 @@ def _own_place(ws, b: dict, cwd) -> tuple[str | None, str | None]:
     return (None, own) if own else ("the session's own branch cannot be read", None)
 
 
-_ALLOWED_TEXT = ("status, diff, log, show, rev-parse, ls-files, ls-tree, blame, branch listing, add and commit, each "
-                 "with its listed options")
+_ALLOWED_TEXT = ", ".join(v if v != "branch" else "branch listing" for v in _VERBS) + ", each with its listed options"
 
 
 def commit_refusal(ws, b: dict, cwd, command: str = "") -> str | None:

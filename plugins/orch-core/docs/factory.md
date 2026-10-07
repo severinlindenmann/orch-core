@@ -396,8 +396,11 @@ Allowed git, each verb only with the options listed for it in orch (exact names,
 is refused; `--color`, `--word-diff` and `--decorate` may carry their usual values) and no path outside the
 repository (absolute, `~` or `..`) and no pathspec magic (`:/`, `:(top)`, `:!`) as an operand or option value:
 
-- reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, and `branch` that
-  only lists; never `--output`, `--ext-diff`, `--textconv`, `--no-index` or the like;
+- reads, from anywhere: `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files`, `ls-tree`, `blame`, `branch` that
+  only lists (`--show-current`), `rev-list` (`--count`, `-n`, `--first-parent`, `--no-merges`, `--merges`,
+  `--reverse`, `--since`/`--until`; no `--all`, `--stdin` or `--objects`) and `cat-file` (`-p`, `-t`, `-s`, `-e` of one
+  object; no `--batch`, `--textconv`, `--filters` or `--path`); never `--output`, `--ext-diff`, `--textconv`,
+  `--no-index` or the like;
 - `add` (paths only: no `-A`, `--all`, `-u`), from the folder the runner started the session in or below it;
 - `commit` with its message given by `-m`/`--message` (no editor is opened), and `-a`, `-q`, `-v`, `-s`,
   `--allow-empty` (no `--amend`, `--no-verify`, `-n`, `-F`, `-C`, `-c`, `--fixup`, `--author`, `--template`, ...),

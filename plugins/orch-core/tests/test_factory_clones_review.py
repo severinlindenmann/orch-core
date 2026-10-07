@@ -422,6 +422,9 @@ def test_a_message_cannot_hide_behind_a_separator(fws, fa, fh, human, close_task
     "git restore --source=main a.txt", "git status --untracked-files=../x", "git blame -L 1,2 /etc/hosts",
     "git branch -D other", "git branch --set-upstream-to=x", "git ls-files --with-tree=x",
     "git log --pretty=%h --exec=x", "git diff --stat=10", "git rev-parse --git-path x",
+    "git rev-list --all", "git rev-list --stdin", "git rev-list --count HEAD -- /etc", "git rev-list --objects HEAD",
+    "git cat-file --textconv HEAD:a.txt", "git cat-file --filters HEAD:a.txt", "git cat-file --batch",
+    "git cat-file --batch-check", "git cat-file -p /etc/passwd", "git cat-file --path=x -p HEAD",
 ])
 def test_an_allowed_verb_with_an_argument_that_changes_it_is_refused(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower())
@@ -436,6 +439,9 @@ def test_an_allowed_verb_with_an_argument_that_changes_it_is_refused(fws, run, c
     'git commit -m "{C} Fix the /api path" -m "What: y" -m "Why: z" -m "Risk: low"', 'git commit -m"{C} short" -m "What: y" -m "Why: z" -m "Risk: low"',
     "git add src/a.py docs/",
     "git ls-tree -r HEAD", "git blame -L 1,2 a.txt", "git --no-pager log",
+    "git rev-list --count HEAD", "git rev-list --count main..HEAD", "git rev-list -n 5 HEAD", "git cat-file -p HEAD",
+    "git cat-file -t HEAD", 'git cat-file -p "HEAD:a.txt"', "git diff --stat", "git log --oneline",
+    "git branch --show-current",
 ])
 def test_an_allowed_verb_with_its_listed_options_passes(fws, run, cmd):
     cmd = cmd.replace("{c}", run["cid"].lower()).replace("{C}", run["cid"])

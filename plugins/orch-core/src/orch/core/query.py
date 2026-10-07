@@ -263,6 +263,27 @@ def claim_last_at(claim: dict, ticket_events) -> datetime | None:
     return last
 
 
+def claim_expiry(ws, ticket_id: str, status: str, claim: dict, events=None) -> tuple[bool, datetime | None]:
+    """(expired, last sign of life) of a ticket's claim: the one rule `claims.ttl_hours` is measured by (#217).
+    It runs from the holder's last sign of life (`claim_last_at`: the claim, then the ticket's events), not from
+    `claim.at`, and never ends while the ticket is waiting on the human (the agent is parked, not gone). No claim
+    is expired. `events`: the ticket's events when the caller already holds them."""
+    if not claim.get("session"):
+        return True, None
+    if events is None:
+        from orch.core.events import read_events
+        events = read_events(ws, ticket_id)
+    last = claim_last_at(claim, events)
+    if status == "waiting":
+        return False, last
+    ttl = float(ws.config["claims"]["ttl_hours"])
+    return last is None or (clock_now() - last).total_seconds() > ttl * 3600, last
+
+
+def claim_is_expired(ws, ticket_id: str, status: str, claim: dict, events=None) -> bool:
+    return claim_expiry(ws, ticket_id, status, claim, events)[0]
+
+
 def is_silent(ws, last_at: datetime | None, now: datetime) -> bool:
     """A claim with no sign of life for `dashboard.stale_minutes` (the Activity page's "Stale")."""
     return last_at is None or last_at < now - timedelta(minutes=int(ws.config["dashboard"]["stale_minutes"]))

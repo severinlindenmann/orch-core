@@ -10,7 +10,7 @@ MISSING_AFTER_MINUTES = 30
 def task_findings(ws, t, status: str, entries) -> list[tuple[str, str, str]]:
     from orch.clock import now, parse_stamp
     from orch.core.gates import gate_state, plan_required
-    from orch.core.ops import claim_expired
+    from orch.core.query import claim_is_expired
     from orch.core.tasks_view import resolve_ref
 
     try:
@@ -38,7 +38,7 @@ def task_findings(ws, t, status: str, entries) -> list[tuple[str, str, str]]:
             if r.kind in _REF_KINDS_CHECKED and not resolve_ref(ws, t, r, entries)["exists"]:
                 out.append(("warning", "task-ref-missing", f"{x.id} ref {r.kind}:{r.target} does not exist"))
     claim = t.meta.get("claim") or {}
-    expired = not claim.get("session") or claim_expired(claim, float(ws.config["claims"]["ttl_hours"]))
+    expired = not claim.get("session") or claim_is_expired(ws, t.id, status, claim)
     if doing and status in ("in-progress", "waiting") and expired:
         out.append(("warning", "task-doing-stale", f"{doing[0]} was in progress when the claim expired"))
     if status == "in-progress" and not items and claim.get("session") and not expired \

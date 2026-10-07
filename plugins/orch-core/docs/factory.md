@@ -100,7 +100,7 @@ orch permit revoke <grant id>        # an action already running finishes; the n
 ```
 
 Each answer prints the full command and needs the typed request id. Grants, denials and revocations are signed
-ledger entries; agents cannot write them (the commands are human-only in orch itself, and the guard denies them).
+ledger entries; agents cannot write them (the commands are human-only in orch itself, and the guard denies them; the guard's human-only commands are one table, `HUMAN_SUBCOMMANDS`, which a test checks against every CLI command that asks your terminal).
 A grant binds the epic, the delegation it was given under, the exact command text and its sha256. There are no
 wildcards. A grant for the epic ends when the epic is done, paused, changed or approved again, or when the budget
 is used up.

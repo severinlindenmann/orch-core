@@ -547,12 +547,14 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     """Interpreter or pty-wrapped code that runs a human-only orch command, or builds a human actor. The orch word
     and the verb must sit in one simple command, one shell payload or one heredoc body that is code, so a test run
     such as `python -m pytest -k approve && orch show L-1` is not mistaken for it."""
-    if not (_HUMAN_INTERP.search(code) or _pty_wrapped(code)):
+    shown = _without_message_text(code)  # a gh --body or git commit -m that mentions python is text, not code
+    if not (_HUMAN_INTERP.search(shown) or _pty_wrapped(shown)):
         return False
     if _HUMAN_PY.search(code):
         return True
     main, docs = _split_heredocs(cmd)
-    units = _command_segments(cmd) + [d.body for d in docs if not _is_data_heredoc(main, d)]
+    segs = _command_segments(cmd)
+    units = [_prose_view(u, len(segs) == 1) for u in segs] + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, reopening or dropping quick tasks, arming schedules and filing their "
@@ -636,8 +638,21 @@ _ENV_UNEXPORT = re.compile(r"\bexport\s+(?:-\w*\s+)*-\w*n\w*\s+(?:\S+\s+)*?" + _
                            r"|(?<![\w-])exec\s+(?:-\w*\s+)*-\w*c\w*(?=\s|$)")
 
 
-def _runs_human_only(seg: str, plain: str) -> bool:
-    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(seg) or _human_only_tokens(seg)
+def _prose_view(seg: str, sole: bool = False) -> str:
+    """`seg` with the quoted text that is only a message blanked: the message argument of a known command (git commit
+    -m, gh --body/--title, orch log -m, ...), and, when `seg` is the whole command, the arguments of a plain echo or
+    printf (which prints and runs nothing). A quoted `orch approve` handed to anything else (script -c, ssh, bash -c,
+    watch, expect) stays visible."""
+    out = _without_message_text(seg)
+    if sole:
+        words, _ = _command(out)
+        if words and words[0] in ("echo", "printf") and not re.search(r"[$`]", _unquoted(out)):
+            out = _unquoted(out)
+    return out
+
+
+def _runs_human_only(seg: str, plain: str, sole: bool = False) -> bool:
+    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole)) or _human_only_tokens(seg)
                 or _ORCH_DYNAMIC.search(seg))
 
 
@@ -1496,6 +1511,9 @@ _GIT_MESSAGE_CMD = re.compile(r"git(?:\s+-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+))*\s+
 _GIT_MESSAGE_ARG = re.compile(r"""((?:^|\s)(?:-[A-Za-z]*m|--message)(?:=|\s*))('[^']*'|"[^"$`\\]*")""")
 _GH_TEXT_CMD = re.compile(r"gh\s+(?:pr|issue|release)\s+(?:create|edit|comment)\b")
 _GH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-t|--title|-b|--body)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
+# `orch log|section|task|new|ask … -m TEXT` (and --message/--title/--body/--description): text someone will read.
+_ORCH_TEXT_CMD = re.compile(r"(?:uv\s+run\s+)?orch(?:\.cli)?\s+(?:-\S+\s+)*(?:log|section|task|new|ask)\b")
+_ORCH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-m|-t|--message|--title|--body|--description)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
 
 
 def _without_data_text(cmd: str, heredocs: bool = True) -> str:
@@ -1511,6 +1529,8 @@ def _without_data_text(cmd: str, heredocs: bool = True) -> str:
             seg = _GIT_MESSAGE_ARG.sub(r"\1''", seg)
         elif _GH_TEXT_CMD.match(head):
             seg = _GH_TEXT_ARG.sub(r"\1''", seg)
+        elif _ORCH_TEXT_CMD.match(head):
+            seg = _ORCH_TEXT_ARG.sub(r"\1''", seg)
         out += [code[last:a], seg]
         last = b
     return "".join(out) + code[last:]
@@ -2093,7 +2113,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _ORCH_TMUX_DENIED if named else _MUX_DENIED)
     may = ws.config["git"]["agent_may"]
     term = ws.config["git"]["review_term"]
-    for seg in _command_segments(cmd):
+    all_segs = _command_segments(cmd)
+    for seg in all_segs:
         # git checks look at the command with quoted text blanked out, so a commit message or an
         # echo that mentions `git push` or `-n` is not mistaken for the command itself.
         plain = _unquoted(seg)
@@ -2101,7 +2122,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
             return Decision(False, _SERVE_DENIED)
         if _ORCH_TMUX.search(seg.replace("'", "").replace('"', "")):  # quotes removed: -L "orch" is -L orch
             return Decision(False, _ORCH_TMUX_DENIED)
-        if _runs_human_only(seg, plain):
+        if _runs_human_only(seg, plain, len(all_segs) == 1):
             return Decision(False, _HUMAN_ONLY_DENIED)
         if _strips_harness_env(seg, plain):
             return Decision(False, _ENV_DENIED)

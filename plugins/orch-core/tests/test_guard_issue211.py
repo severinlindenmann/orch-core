@@ -50,3 +50,46 @@ MUX_DENIED = [
 @pytest.mark.parametrize("cmd", MUX_DENIED)
 def test_real_mux_use_stays_denied(ws, cmd):
     _check(ws, cmd, False)
+
+
+# --- 2. human verbs only mentioned in quoted message text ---------------------------------------------------------
+TEXT_ALLOWED = [
+    "echo 'orch approve L-1'",
+    'echo "run orch approve L-1 yourself"',
+    "gh issue create --title t --body \"the guard blocks python scripts that run orch approve L-1\"",
+    "gh issue create --title 'orch approve is human-only' --body 'node and python mention orch verdict'",
+    "gh issue comment 3 --body 'a python heredoc << that calls orch approve was denied'",
+    "orch log L-0001 -m 'tried python to orch approve L-1; denied'",
+    "orch log L-0001 --message \"python: orch answer L-1 is the human's\"",
+    "orch section set L-0001 Plan -m 'never run orch approve in perl'",
+]
+
+
+@pytest.mark.parametrize("cmd", TEXT_ALLOWED)
+def test_verb_only_in_message_text_is_allowed(ws, cmd):
+    _check(ws, cmd, True)
+
+
+TEXT_DENIED = [
+    'script -c "orch approve L-1" /dev/null',
+    "script -q /dev/null orch approve L-1",
+    "expect -c 'spawn orch approve L-1; interact'",
+    "watch \"orch approve L-1\"",
+    "watch -n1 'orch approve L-1'",
+    "ssh host \"orch approve L-1\"",
+    "bash -c \"orch approve L-1\"",
+    "sh -c 'orch verdict L-1 pass'",
+    "echo 'orch approve L-1' | sh",
+    "echo 'orch approve L-1'; orch show L-1 | sh",
+    "echo \"$(orch approve L-1)\"",
+    "orch approve L-1 -m 'x'",
+    "gh issue create --body x; python3 -c \"import os; os.system('orch approve L-1')\"",
+    "gh issue create --body \"$(orch approve L-1)\"",
+    "orch log L-0001 -m x && python3 -c 'import os; os.system(\"orch approve L-1\")'",
+    "python3 - <<EOF\nimport os\nos.system('orch approve L-1')\nEOF",
+]
+
+
+@pytest.mark.parametrize("cmd", TEXT_DENIED)
+def test_quoted_verb_run_by_anything_stays_denied(ws, cmd):
+    _check(ws, cmd, False)

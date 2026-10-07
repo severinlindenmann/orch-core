@@ -140,7 +140,9 @@ You get a quick task when the human starts you on one, when `orch next` lists on
 
 ## Follow-ups instead of scope creep
 
-When you notice something outside the approved scope, add it to `## Findings`, file it with `orch new --from <id> --title "..." --type bug`, and mention it in your report. Don't fix it now.
+When you notice something outside the approved scope, add it to `## Findings`, file it with `orch new --from <id> --title "..." --type bug`, and mention it in your report. Don't fix it now. A follow-up ticket is for a separate deliverable only.
+
+Points from the human's send-back note (the ticket returns from testing) are not follow-ups: they become tasks on the same ticket (`orch task add`, one per point), as the orch-work-on-ticket skill says. The approved Requirements stay as they are; if a point would change them, say so and ask the human instead of filing a ticket.
 
 ## Widgets
 

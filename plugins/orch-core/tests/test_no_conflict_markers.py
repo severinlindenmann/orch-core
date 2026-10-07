@@ -2,11 +2,14 @@
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 MARKER = re.compile(r"^(<{7}|={7}|>{7})( |$)", re.M)
 SKIP = {".venv", "node_modules", ".git", "__pycache__", "vendor"}
 
 
+@pytest.mark.slow
 def test_no_file_carries_a_conflict_marker():
     hits = []
     for path in ROOT.rglob("*"):

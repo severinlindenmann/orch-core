@@ -2107,7 +2107,7 @@ def _scratch_line_safe(cmd: str, cwd) -> bool:
                 if assigns or not target or (len(target) == 1 and os.path.realpath(os.path.expanduser(target[0])) != here):
                     return False
                 continue  # (`cd a b` fails in bash and changes nothing)
-            if not (_seg_state_safe(seg) or _pure_python(words)):
+            if assigns or not _seg_state_safe(seg):  # no assignment (FOO=1, PATH=…, PYTHONPATH=…), no interpreter, not even a one-liner
                 return False
         return True
     except (OSError, ValueError, RuntimeError):
@@ -2196,24 +2196,6 @@ def _state_words_safe(cmd: str) -> bool:
     to a variable that changes how commands or paths resolve, no process substitution, no `cp` option that copies
     links or recursively, no `printf -v`."""
     return all(_seg_state_safe(seg) for seg in _command_segments(cmd))
-
-
-# A python one-liner that can only compute on its input: a few pure modules, no file, process or dynamic-code names.
-_PY_PURE_IMPORT = re.compile(r"import\s+(?:json|sys|re|collections|itertools|textwrap|math|datetime|csv)"
-                             r"(?:\s*,\s*(?:json|sys|re|collections|itertools|textwrap|math|datetime|csv))*(?=\s*(?:;|$))")
-_PY_IMPURE = re.compile(r"\bopen\b|__|\b(?:eval|exec|compile|getattr|setattr|globals|locals|input|breakpoint|system|popen|"
-                        r"rename|replace|symlink|link|remove|unlink|rmdir|write|mkdir|chdir|spawn|fork|run|call)\b")
-
-
-def _pure_python(words: list[str]) -> bool:
-    """`python3 -c 'import json,sys; print(json.load(sys.stdin)["x"])'`: -c code that imports only pure modules and
-    names nothing that touches files, processes or the interpreter itself."""
-    if not words or not re.fullmatch(r"python[0-9.]*", os.path.basename(words[0])) or len(words) != 3 or words[1] != "-c":
-        return False
-    code = words[2]
-    stmts = [x.strip() for x in code.split(";") if x.strip()]
-    return all(_PY_PURE_IMPORT.fullmatch(x) or not x.startswith(("import", "from")) for x in stmts) and not _PY_IMPURE.search(
-        code) and not re.search(r"\bfrom\b", code)
 
 
 def _seg_state_safe(seg: str) -> bool:

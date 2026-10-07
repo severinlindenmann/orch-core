@@ -18,9 +18,9 @@ ALLOWED = [
     "cd {ws} && mkdir -p orchestrator/temporary && cat > orchestrator/temporary/L-0004-plan.md <<'EOF'\n# plan\nEOF\n"
     "&& orch section set L-0004 Plan --file orchestrator/temporary/L-0004-plan.md && orch task add L-0004 'x'",
     # 2. ticket file named as an argument of a read-only command in the same call
-    "orch section set L-0004 \"Acceptance criteria\" --file orchestrator/temporary/L-0004-ac.md\n"
+    # (the scratch note plus `python3 -c` on ONE line moved to test_scratch_note_with_an_interpreter_on_the_line below)
     "orch show L-0004 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"gates\"])'",
-    "orch section set L-0004 AC --file orchestrator/temporary/L-0004-ac.md && orch show L-0004 --json | python3 -c 'import sys; print(1)'",
+    "orch section set L-0004 \"Acceptance criteria\" --file orchestrator/temporary/L-0004-ac.md",
     # 3. pairing file name only mentioned in text
     "gh issue create --repo a/b --title t --body \"the guard denied remote-humans.json for a mention\"",
     "gh issue create --repo a/b --title t --body 'denied: the orch config dir holds remote-humans.json'",
@@ -106,4 +106,19 @@ BYPASSES = [
 
 @pytest.mark.parametrize("cmd", BYPASSES)
 def test_relaxations_do_not_open_bypasses(ws, cmd):
+    assert not _bash(ws, cmd).allow, cmd
+
+
+# Trade-off (#211): a scratch note written on a line that also runs ANY interpreter is refused. A python one-liner can
+# relink orchestrator/temporary to the tickets before the note is written, and no text check can tell a harmless
+# one-liner from one that does (vars(sys.modules['os'])['sy'+'mlink'](...)). Run the two commands as separate calls.
+SCRATCH_WITH_INTERPRETER = [
+    "orch section set L-0004 \"Acceptance criteria\" --file orchestrator/temporary/L-0004-ac.md\n"
+    "orch show L-0004 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"gates\"])'",
+    "orch section set L-0004 AC --file orchestrator/temporary/L-0004-ac.md && orch show L-0004 --json | python3 -c 'import sys; print(1)'",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCH_WITH_INTERPRETER)
+def test_scratch_note_with_an_interpreter_on_the_line(ws, cmd):
     assert not _bash(ws, cmd).allow, cmd

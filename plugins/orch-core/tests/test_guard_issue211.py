@@ -615,6 +615,42 @@ def test_scratch_exemption_needs_a_line_that_cannot_relink_it(ws, cmd):
     _check(ws, cmd, False)
 
 
+_R1 = "import sys; vars(sys.modules['os'])['ren'+'ame']('orchestrator/temporary','orchestrator/t0')"
+_R2 = "import sys; vars(sys.modules['os'])['sy'+'mlink']('tickets','orchestrator/temporary')"
+NOTE = "echo x > orchestrator/temporary/L-0001-a.md"
+INTERPRETER_AND_NOTE_DENIED = [
+    f"PYTHONPATH=/tmp/evil python3 -c 'import json'; {NOTE}",
+    f"PATH=/tmp/evil:$PATH python3 -c 'import json'; {NOTE}",
+    f"FOO=1 python3 -c 'import json'; {NOTE}",
+    f"FOO=1; {NOTE}",
+    f"FOO=1 echo hi; {NOTE}",
+    f'python3 -c "{_R1}"; python3 -c "{_R2}"; echo PWNED > orchestrator/temporary/L-0001-a.md',
+    f"python3 -c '{_R1}'; python3 -c '{_R2}'; echo PWNED > orchestrator/temporary/L-0001-a.md",
+    f'python3 -c "$CODE"; {NOTE}',
+    f"python3 -c 'import json'; {NOTE}",
+    f"{NOTE}; python3 -c 'import json'",
+    f"cat x.json | python3 -c 'import json,sys; print(1)' && {NOTE}",
+    f"node -e '1'; {NOTE}",
+    f"ruby -e '1'; {NOTE}",
+    f"perl -e '1'; {NOTE}",
+    f"sh -c 'true'; {NOTE}",
+    f"python3 script.py; {NOTE}",
+]
+
+
+@pytest.mark.parametrize("cmd", INTERPRETER_AND_NOTE_DENIED)
+def test_no_interpreter_or_assignment_on_a_scratch_note_line(ws, cmd):
+    (ws.root / "orchestrator" / "temporary").mkdir(parents=True, exist_ok=True)
+    _check(ws, cmd, False)
+
+
+def test_the_same_commands_as_separate_calls_are_each_allowed(ws):
+    (ws.root / "orchestrator" / "temporary").mkdir(parents=True, exist_ok=True)
+    _check(ws, NOTE, True)
+    _check(ws, "orch show L-0004 --json | python3 -c 'import json,sys; print(json.load(sys.stdin))'", True)
+    _check(ws, "python3 -c 'import json'", True)
+
+
 def test_a_hard_linked_note_is_not_a_scratch_note(ws):
     import os
     tickets_open = ws.tickets_dir / "open"

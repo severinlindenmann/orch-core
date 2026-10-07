@@ -84,9 +84,10 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
     "sensitive": "Look at the named paths. Every commit the branch brings in counts, so a later commit that removes "
                  "the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release "
                  "on the merge stage to check the branches again.",
-    "release-conflict": "Two children changed the same file, so the merge cannot go in by itself and Retry runs into "
-                        "the same conflict. Send one child back (say in its text that it does not create that file), "
-                        "or merge by hand, then Retry release on the merge stage.",
+    "release-conflict": "Two changes touched the same file (two children, when the reason names them, or this child "
+                        "and what reached the base since), so the merge cannot go in by itself and Retry runs into the "
+                        "same conflict. Send a child back (say in its text that it does not create that file, or that "
+                        "it brings its branch up to date), or merge by hand, then Retry release on the merge stage.",
     "release-failed": "Read the stage's output on the run view, fix the cause, then Retry release: the stage runs once "
                       "more.",
     "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy; for "

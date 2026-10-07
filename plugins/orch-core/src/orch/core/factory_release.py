@@ -590,6 +590,7 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
             "ended": out.get("ended"), "check": out.get("check"), "sha": out.get("sha"),
             "base_sha": out.get("base_sha"), "failed_at": out.get("failed_at"),
             "conflicts": out.get("conflicts") if isinstance(out.get("conflicts"), list) else [],
+            "doubles": out.get("doubles") if isinstance(out.get("doubles"), list) else [],
             "children": out.get("children") if isinstance(out.get("children"), dict) else None}
     if os.path.lexists(d / _name(stage, unit, n, "rollback-intent")):  # production only: the signed rollback ran
         rb = _read(d / _name(stage, unit, n, "rollback"))
@@ -649,7 +650,8 @@ def _blocked_record(ws, epic_id: str) -> dict | None:
     if last is not None and last["kind"] == "block":
         return {"code": str(last.get("code") or "release-blocked"), "stage": str(last.get("stage") or "?"),
                 "unit": str(last.get("unit") or eid),
-                "why": str(last.get("why") or "") + " (its record was removed; the runner's journal still holds it)"}
+                "why": str(last.get("why") or "") + " (the runner's journal still holds it; its file is missing: "
+                       "removed, or never written because the runner stopped right after the journal line)"}
     return None
 
 
@@ -1170,11 +1172,16 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                                     + _text(u.get("why") or "not proven", 200) + "): look at production now; it may be "
                                     "half-deployed; nothing was rolled back"})
             elif u["state"] == "failed" and s["name"] == "merge" and u.get("conflicts"):
+                dbl = [x for x in u.get("doubles") or [] if isinstance(x, dict)]
+                who = ("; ".join(f"{' and '.join(_text(c, 40) for c in (x.get('children') or []))} both add "
+                                 f"{_text(x.get('path'), 120)}" for x in dbl[:5])
+                       + ": two children changed the same file; send one child back") if dbl else (
+                    "two changes touched the same file (this child's and one that reached the base since, such as "
+                    "another child's merge); send the child back to bring its branch up to date, or merge by hand")
                 out.append({"code": "release-conflict", "label": "Merge conflict",
                             "text": f"the merge of {_text(u['unit'], 40)} conflicts in "
                                     + ", ".join(_text(c, 120) for c in u["conflicts"][:10])
-                                    + ": two children changed the same file; this will not go away on Retry; send one "
-                                      "child back"})
+                                    + f": {who}; this will not go away on Retry"})
             elif u["state"] == "failed":
                 codes = [c for c in (u.get("codes") or []) if c != 0] or [u.get("check")]
                 code = codes[0] if codes else None
@@ -2116,9 +2123,11 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     moved = (lambda: fetch_child(ws, rec, ctx["branch"], src, unit) != ctx["sha"]) if child else None
     r = _run_steps(ws, epic, d, s, steps, run, env, cwd, moved)
     proven = r["proven"]
+    conf = conflicts(r["tail"]) if not proven and name == "merge" else []
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),
                "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"],
-               "interrupted": r["interrupted"], **({"conflicts": conflicts(r["tail"])} if not proven and name == "merge" else {})}
+               "interrupted": r["interrupted"], **({"conflicts": conf} if not proven and name == "merge" else {}),
+               **({"doubles": _conflict_doubles(ws, rec, epic, kids, found, conf)} if conf else {})}
     _write(ddir / _name(name, unit, n, "outcome"), outcome)
     bad = next((c for c in r["codes"] if c != 0), r["check"])
     _event(ws, actor, epic.id, "release.stage", {"stage": name, "child": unit, "proven": proven,
@@ -2127,6 +2136,18 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     if rollback and not proven and r["failed_at"] == "check":
         line += "; " + _rollback(ws, actor, epic, d, s, unit, n, rb_steps, run, env, cwd)
     return line, proven
+
+
+def _conflict_doubles(ws, rec, epic, kids, found, conf: list[str]) -> list[dict]:
+    """The conflicting paths that two children add ([{path, children}], factory_built.double_adds): only then does
+    the reason say two children changed the same file. [] when none, or when it cannot be told."""
+    from orch.core import factory_built
+    try:
+        dups, why = factory_built.release_doubles(ws, rec, epic, kids, found)
+    except Exception:
+        return []
+    paths = {c.rsplit(" (", 1)[0] for c in conf}
+    return [] if why else [x for x in dups if x["path"] in paths][:10]
 
 
 def _rollback(ws, actor, epic, d, s, unit, n, steps, run, env, cwd) -> str:

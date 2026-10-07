@@ -1128,8 +1128,11 @@ redirects); the nudge depends on Claude Code's current screen markers.
   card ("T-0002 and T-0003 both add elefant.json: the release will conflict"), keeps the epic from closing by
   itself, and stops the release before any merge ("Release could not start: ... remove it from one child (send it
   back) and Retry"), also for a child that joins after the other was merged. A merge stage that fails with git's
-  `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths: two
-  children changed the same file, and Retry will not make that go away; send one child back.
+  `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths. It says
+  "two children changed the same file" only when two children add a conflicting path (the same double-add check);
+  otherwise "two changes touched the same file" (this child's and one that reached the base since). Retry will not
+  make that go away; send a child back, or merge by hand. A block whose file is missing while the journal holds it
+  says so without claiming the file was removed (the runner may have stopped right after the journal line).
 - *A nudge left in the input box, and chained git (the fourth run).* The runner typed its nudge, re-read the screen,
   saw it "changed" (Claude's status bar and an "Update available!" line change by themselves) and gave up without
   Enter, leaving its text in the box; the session then waited behind it. The runner now reads only the input box

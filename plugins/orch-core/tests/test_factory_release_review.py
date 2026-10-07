@@ -288,3 +288,22 @@ def test_an_old_merge_record_is_not_proven_for_any_reader(fws, ready, fh, human,
     seen = epics.verdict_hash(epics.open_children(fws, store.load(fws, eid)[1]), fws)
     fh.verdict(eid, "done", expected_hash=seen, skip_release="by hand")
     assert any(f.code == "closed-without-release" and f.ticket == eid for f in run_checks(fws, emit_events=False))
+
+
+# -- the texts say what is known -----------------------------------------------------------------------------------
+
+def test_a_conflict_names_two_children_only_when_two_children_add_the_path(fws, ready, human):
+    rows = [{"name": "merge", "units": [{"unit": "L-0002", "state": "failed", "conflicts": ["a.json (add/add)"],
+                                          "doubles": dbl}]} for dbl in ([], [{"path": "a.json",
+                                                                              "children": ["L-0002", "L-0003"]}])]
+    plain, two = (fr._reasons([r], None)[0]["text"] for r in rows)
+    assert "two changes touched the same file" in plain and "two children" not in plain
+    assert "L-0002 and L-0003 both add a.json: two children changed the same file" in two
+
+
+def test_a_journal_only_block_does_not_claim_its_file_was_removed(fws, ready, human):
+    eid, (c,), _ = ready()
+    fr._journal_add(fws, {"kind": "block", "code": "release-blocked", "stage": "merge", "unit": c, "why": "x",
+                          "epic": eid})
+    why = fr._blocked_record(fws, eid)["why"]
+    assert "removed" in why and "its record was removed" not in why and "runner stopped" in why

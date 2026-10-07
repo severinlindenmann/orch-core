@@ -499,3 +499,9 @@ def test_the_tags_table_is_at_least_as_strict_as_mains():
                 assert b.scope is None, (key, params)  # never remote stays never remote
             else:
                 assert b.scope is not None and b.scope >= a.scope and (b.fresh or not a.fresh) and b.kind == a.kind, (key, params)
+
+
+def test_the_gate_itself_refuses_an_operate_origin_an_edit_even_with_a_fresh_assertion(bridge, fws, running):
+    eid, cid, r = running
+    assert bridge.raw(Scope.OPERATE, True, "POST", f"/t/{cid}/edit", "text=x")[0] == 403
+    assert bridge.raw(Scope.TYPE, True, "POST", f"/t/{cid}/edit", "text=x")[0] != 403

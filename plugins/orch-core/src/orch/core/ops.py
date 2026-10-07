@@ -1177,17 +1177,21 @@ class Ops(TaskOpsMixin):
 
     def _cover_child(self, c: dict, eid: str, charter_hash: str) -> None:
         """Write the epic approval into one covered child: its gates (with `epic`), backlog → open, one
-        `gate.approved` event per gate. A child that changed since the charter was computed is left as it is
-        (it is then simply not covered)."""
+        `gate.approved` event per gate that was newly recorded. A gate already approved for that hash is not
+        stamped again (no event, no log line), and a child in testing or done is left as it is. A child that
+        changed since the charter was computed is left as it is (it is then simply not covered)."""
         def fn(t: Ticket) -> list:
+            if t.status in ("testing", "done"):
+                return []
             records = []
             for gate in ("requirements", "plan"):
                 h = c.get(gate)
                 if not h or gate_hash(t, gate) != h:
                     continue
                 g = (t.meta.get("gates") or {}).get(gate) or {}
-                if not (g.get("approved") and g.get("hash") == h):
-                    record_approval(self.ws, t, gate, self.actor, snapshot=not self.dry_run, epic=eid)
+                if g.get("approved") and g.get("hash") == h:
+                    continue
+                record_approval(self.ws, t, gate, self.actor, snapshot=not self.dry_run, epic=eid)
                 records.append(("gate.approved", {"gate": gate, "hash": h, "hash_v": HASH_VERSION, "epic": eid,
                                                   "charter": charter_hash}))
             if records and t.status == "backlog" and gate_state(t, "requirements") == "approved":

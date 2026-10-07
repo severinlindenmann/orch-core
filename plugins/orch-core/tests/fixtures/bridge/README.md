@@ -4,8 +4,8 @@
 `tests/bridge_vectors.json` in severinlindenmann/orch-tix, where the specification
 (`docs/bridge-protocol.md`) and the reference implementation that generates the file live.
 
-- Source commit: `fde1e898b76a609117629744e6aec8110dc1362c` (severinlindenmann/orch-tix)
-- sha256: `d23716c6ffe83faffa96c89f33d8b96a55bcbe62904f123c5f0f5ac75d575587`
+- Source commit: `85991ced1ed290ad49a70e6f6c407765900fdc8e` (severinlindenmann/orch-tix)
+- sha256: `11abcbd4b981ba85628f30778a351b288128e4ba2b494ecb3d8b56badfe6372d`
 
 `tests/test_bridge_host_vectors.py` checks the sha256 above before it runs a single case, and runs every case
 in the file against `orch.remote.bridge_host`. Every key in the file is fake (SHA-256 of a public label).

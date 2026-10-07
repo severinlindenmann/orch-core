@@ -11,8 +11,8 @@ One request, in order:
    dispatcher asks Host.still_authorized(run) immediately before the app runs, before the first event and before
    every body event; the remote gate decides the route again, with the request as received.
 4. A page: the whole response is collected, stored with Host.finish() BEFORE it is sent, and sent in sealed chunks of
-   at most 256 KiB. finish() False: the stored refusal is sent instead (Host.end_run). A body over 64 KiB is not
-   stored (a retry is answered already_done/unknown), and still_authorized() is asked once more before it is sent.
+   at most 256 KiB. finish() False: the stored refusal is sent instead (Host.end_run). A body over 64 KiB is stored as its head
+   only (a replay is answered already_done with its status).
 5. A stream (the STREAM flag): chunk 0 carries the status, then frames coalesced to the latest one, at most one per
    `frame_s` (4 per second), a keepalive after `keepalive_s` of silence, and a LAST chunk. still_authorized() is asked
    before EVERY chunk is sealed; on False the stream ends with the record's stored refusal. Cancel, revocation,
@@ -386,12 +386,11 @@ class HostLoop:
     def _store(self, run, head: dict, body: bytes) -> bool:
         """Store the outcome before anything of it is sent; False when the run may not be answered with it. A body
         too large to store is not stored, and is answered only while still_authorized() holds."""
-        if len(body) <= MAX_REPLAY_BODY:
-            try:
-                return self.host.finish(run.answer_rids, head, body)
-            except ValueError:
-                pass
-        return self.host.still_authorized(run)
+        try:
+            stored = self.host.finish(run.answer_rids, head, body)
+        except ValueError:  # a head too large to store
+            return self.host.still_authorized(run)
+        return stored and (len(body) <= MAX_REPLAY_BODY or self.host.still_authorized(run))
 
     async def _page(self, run, req, origin) -> None:
         start, parts, reason = None, [], None

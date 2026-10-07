@@ -247,15 +247,29 @@ and only when the input box's border is right above it: a prompt echoed in the t
 interrupt"), a permission, trust or other menu ("Do you want", "1.", "(y/n)"), and the screen stayed exactly the same
 for 45 seconds over two rounds; at most 3 times per session and 5 minutes apart. It reads the pane once more right
 before typing and types nothing unless the input line is still empty; after typing it reads the pane up to five times
-over about a second (tmux redraws asynchronously) and presses Enter only when the line sits on the input line itself
-and no menu, permission or trust prompt or running command is on screen (Enter would answer that instead); otherwise
-it clears the input line (Ctrl-U), presses nothing more, and counts the attempt.
+over about a second (tmux redraws asynchronously) and presses Enter only when the input box holds exactly the typed
+line, nothing more or less (compared with all whitespace removed, so a box that wraps inside a word reads the same),
+no menu, permission or trust prompt or running command is on screen (Enter would answer that instead), and you typed
+nothing into it from the browser meanwhile (checked again right before Enter and right before Ctrl-U); otherwise it
+clears the input line (Ctrl-U), presses nothing more, and counts the attempt. Ctrl-U is sent only while the box,
+read again right then, holds a prefix of one of the runner's own lines and nothing more: a box with the start of a
+nudge and your words after it is yours (no Ctrl-U, no keys; the runner logs "left alone: the input box holds text
+that is not the runner's"), and when Ctrl-U leaves text behind (the cursor was moved) nothing more is sent. The input
+box is the last bordered box on screen (a box printed in the transcript above it, or any border line below it, means
+nothing is read), only in prompt mode (`>`: a box in bash `!` or memory `#` mode, or vim's NORMAL mode, is never typed
+into), and a pane narrower than 60 columns is never typed into (the runner logs it and tries again after the gap).
 
 The same readings tell the run view whether anything runs: when every live session of a run has shown the empty
 prompt, unchanged, for 3 minutes and no card is open, the run view says "Sessions are waiting at their prompt: nothing
 is running" (chip "Idle at prompt") instead of "Sessions are running on its children" (in the live run's second round
 all three sessions sat idle for minutes under "Working"). A session the runner has no reading of (no record, a damaged
-one, a pane it cannot read) counts as working: the view never claims more than it read. Anything else, or a record or pane
+one, a pane it cannot read) counts as working: the view never claims more than it read. "Unchanged" means the screen
+down to the input box's bottom border, without the spinner's line: Claude's footer, a status line or a clock under the
+box never keeps a session from counting as idle (3 minutes) or stopped (10 minutes). A session whose pane shows no
+input box at the bottom (a permission prompt, a menu, an AskUserQuestion list, anything else) unchanged for 45 seconds
+needs you: "<child> waits at a question in its pane", with its last 3 lines (escaped, only to a browser on this
+machine) and what you can do (type into it on Terminals, or Stop). One busy ("esc to interrupt") for over 20 minutes
+with an unchanged screen gets a warning: "<child> has been busy for over 20 minutes with an unchanged screen". Anything else, or a record or pane
 it cannot read, types nothing. The run view says how often it nudged. What it cannot tell: a session that waits at a
 prompt Claude Code draws differently from these markers (a future version) is never nudged, and an idle session that
 was not waiting for that answer still gets the line (it is idle anyway). The runner keeps a small record per session
@@ -265,7 +279,8 @@ was not waiting for that answer still gets the line (it is idle anyway). The run
 (`remain-on-exit`), so the runner reads its exit status and last screen, then ends it. A session that ended within 90
 seconds of its start is recorded (`permits/early-ends/`: the exit status and the last 15 non-empty lines, each cut to
 200 characters, everything outside printable ASCII escaped; one record per child, the latest), and the run view says
-"A session ended right after it started" with those lines, instead of "Waiting for children", until that child (or the
+"A session ended right after it started" with those lines (only to a browser on this machine, like every screen's
+lines on the run view, the readiness checks' output included), instead of "Waiting for children", until that child (or the
 planner) is started again. Such a session is parked like any that ended: fix the cause, then answer a card in the epic,
 change the Dark profile, or approve the epic again.
 
@@ -1026,8 +1041,11 @@ refusal of a process under an agent harness, as for every approval).
   Ready report: every criterion of every child in testing cites evidence), Done (the epic's signed verdict). The state,
   said once as a chip (a word or two) and a headline (the reason, never the chip again): working (a session runs on
   a child), planning (the planner runs; Understand still needs a child), waiting for a session slot (a child can start
-  but no session runs on one yet: the runner's next round, or every slot of `factory.max_concurrency`, at most 3, is
-  taken), needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
+  but no session runs on one yet: every slot of `factory.max_concurrency`, at most 3, is taken, or else "A child's
+  session starts in the runner's next round"). A child that cannot start says why, by the same rule the runner uses:
+  its session ended and nothing it waits for changed since (needs you: answer a card, change its text or the Dark
+  profile), its 5 launches under this charter are used up, or the charter's children limit is reached; a blocking
+  readiness check or a clone that could not be made says so itself. Then needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
   armed) or finished. Motion only while it works (working or planning); a Dark run's working chip is mint, an AI
   Factory's blue. The Dark core glows stronger only with real build evidence: a task a child closed (a running session
   is not evidence). Then the time: "Running for ... since you signed the start" while it works (there is no estimate),

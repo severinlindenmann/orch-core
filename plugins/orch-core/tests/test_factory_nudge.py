@@ -188,7 +188,9 @@ def test_a_launcher_that_cannot_read_panes_types_nothing(fws, fa, fh, human, at)
     _tick(fws, human, plain)
     (b,) = fs.bindings(fws)
     _ask_and_answer(fws, human, b)
-    _run_until_idle(fws, human, plain, at)  # no capture or type: nothing to do, nothing breaks
+    lines = _run_until_idle(fws, human, plain, at)  # no capture or type: nothing to do, nothing breaks
+    assert not any("nudge" in x for x in lines) and fs.nudge_record(b["session"])["count"] == 0
+    assert [x["name"] for x in fs.bindings(fws)] == [b["name"]] and len(plain.started) == 1
 
 
 def test_the_nudge_text_is_never_from_tickets_or_config(fws, fa, fh, human, pane, at):
@@ -214,8 +216,13 @@ def test_pane_idle(text, idle):
     assert fr.pane_idle(text) is idle
 
 
-def _typed_screen(text):
-    return IDLE.replace("\u2502 >" + " " * 38, "\u2502 > " + text[:60])
+def _typed_screen(text, width=40):
+    """An idle screen whose input box holds `text`, wrapped as Claude's box wraps it: by characters, inside words too."""
+    inner = width - 4
+    chunks = [text[i:i + inner] for i in range(0, len(text), inner)] or [""]
+    body = "".join(("\u2502 > " if i == 0 else "\u2502   ") + c.ljust(inner) + "\u2502\n" for i, c in enumerate(chunks))
+    return ("\u2733 Done: the export is written.\n\n\u256d" + "\u2500" * width + "\u256e\n" + body + "\u2570"
+            + "\u2500" * width + "\u256f\n  \u23f5\u23f5 accept edits on (shift+tab to cycle)\n")
 
 
 UPDATE_BAR = "  Update available! Run: brew upgrade claude-code · 14:02\n"
@@ -238,10 +245,19 @@ def _busy_typed(text):
     # the fourth live run: a status bar that changes by itself under the box never stops the nudge
     (IDLE + UPDATE_BAR, ["typed+bar"], True, ["Enter"]),
     # the text landed, but a spinner appeared: never Enter; our text is cleared again, so nothing is left behind
-    (IDLE, ["busy+typed"] * 5 + [BUSY], "cleaned", ["C-u"]),
-    (IDLE, ["busy+typed"] * 6, False, ["C-u"]),  # C-u did not empty the box: not called cleaned, nothing more sent
+    # (the box is read once more right before C-u)
+    (IDLE, ["busy+typed"] * 6 + [BUSY], "cleaned", ["C-u"]),
+    (IDLE, ["busy+typed"] * 7, False, ["C-u"]),  # C-u did not empty the box: not called cleaned, nothing more sent
     # a nudge left in the box by an earlier attempt is cleared first, then the new one is typed and sent
-    ("leftover", [IDLE, "typed"], True, ["C-u", "TYPE", "Enter"]),
+    ("leftover", ["leftover", IDLE, "typed"], True, ["C-u", "TYPE", "Enter"]),
+    # the second review: the start of a nudge with the human's words after it is theirs: no C-u, nothing typed
+    ("head+more", ["head+more"] * 3, False, None),
+    # the box held our leftover, but the human added words before C-u: nothing is cleared, nothing typed
+    ("leftover", ["head+more"] * 3, False, None),
+    # the typed nudge shows up with more after it (the human typed into the box meanwhile): never Enter
+    (IDLE, ["typed+more"] * 6, False, []),
+    # C-u removed only part of our text (the cursor had been moved): not cleaned, and nothing more is sent
+    (IDLE, ["busy+typed"] * 6 + ["part"], False, ["C-u"]),
 ])
 def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch, before, after, result, keys):
     from orch.dashboard import factory_runner as dash
@@ -250,12 +266,16 @@ def test_the_tmux_launcher_presses_enter_only_where_the_text_landed(monkeypatch,
     nudge = fr.NUDGES["answered"]
     named = {"typed": _typed_screen(nudge), "menu": _typed_screen(nudge) + ASKING, "echo": _echoed(nudge),
              "typed+bar": _typed_screen(nudge) + UPDATE_BAR.replace("14:02", "14:03"),
-             "busy+typed": _busy_typed(nudge), "leftover": _typed_screen(fr.NUDGES["denied"])}
+             "busy+typed": _busy_typed(nudge), "leftover": _typed_screen(fr.NUDGES["denied"]),
+             "head+more": _typed_screen(fr.NUDGES["denied"] + " and also delete the tests"),
+             "typed+more": _typed_screen(nudge + " no wait"), "part": _typed_screen(nudge[40:])}
     screens = [named.get(before, before), *(named.get(x, x) if isinstance(x, str) else x for x in after)]
     seen, slept = [], []
 
     def tmux(args, timeout=10):
         seen.append(args)
+        if args[0] == "display-message":
+            return _Run(0, "160\n")
         if args[0] == "capture-pane":
             screen = screens.pop(0) if len(screens) > 1 else screens[0]
             return _Run(0 if screen is not None else 1, screen or "")
@@ -283,7 +303,9 @@ def test_the_input_box_is_read_across_its_wrapped_lines_and_ignores_the_status_b
            "│   request: P-0123ABCD granted. Retry a      │\n╰" + "─" * 40 + "╯\n" + UPDATE_BAR)
     assert fr.input_line(box) == "A person answered your permission request: P-0123ABCD granted. Retry a"
     assert fr.leftover(box) is not None and fr.leftover(IDLE) is None and fr.leftover(TYPED) is None
-    assert fr.typed_ok(box, fr.outcome_nudge([("P-0123ABCD", "granted")]))
+    full = fr.outcome_nudge([("P-0123ABCD", "granted")])
+    assert not fr.typed_ok(box, full)  # only part of what was typed: never Enter
+    assert fr.typed_ok(_typed_screen(full) + UPDATE_BAR, full)
 
 
 @pytest.mark.parametrize("text,line", [
@@ -686,3 +708,289 @@ def test_a_nudge_left_in_the_box_counts_as_idle_so_it_gets_cleared():
     left = _typed_screen(fr.NUDGES["answered"])
     assert not fr.pane_idle(left) and fr.leftover(left)
     assert fr.leftover(left.replace("accept edits on (shift+tab to cycle)", "Running… (esc to interrupt)"))
+
+
+# -- the second review of the runner: whose text is in the box, what the pane waits at, narrow panes -------------------
+
+def _box_pane(monkeypatch):
+    """The fake launcher whose type() is the real TmuxLauncher.type over a model of Claude's input box: send-keys -l
+    types into it, C-u empties it, Enter submits it. So tick tests exercise _clear_own as it runs."""
+    from orch.dashboard import factory_runner as dash
+    from test_factory_runner import _Run
+    p = Pane()
+    p.box, p.sent, p.busy = {}, [], False
+
+    def capture(name):
+        if name in p.screen:
+            return p.screen[name]
+        text = _typed_screen(p.box.get(name, ""))
+        return text.replace("accept edits on (shift+tab to cycle)", "Running… (esc to interrupt)") if p.busy else text
+
+    def tmux(args, timeout=10):
+        name = args[args.index("-t") + 1].strip("=:")
+        if args[0] == "display-message":
+            return _Run(0, "160\n")
+        if args[0] == "capture-pane":
+            return _Run(0, capture(name))
+        if args[0] == "send-keys":
+            if args[-2] == "--":
+                p.sent.append("TYPE")
+                p.box[name] = p.box.get(name, "") + args[-1]
+                p.busy = p.busy_after_type
+            else:
+                p.sent.append(args[-1])
+                p.box[name] = ""
+        return _Run(0)
+    monkeypatch.setattr(dash, "_tmux", tmux)
+    monkeypatch.setattr(dash, "_sleep", lambda s: None)
+    dash.HUMAN_KEYS.clear()
+    real = dash.TmuxLauncher()
+    real.capture = capture
+    p.capture, p.type, p.busy_after_type = capture, real.type, False
+    return p
+
+
+def test_a_tick_clears_the_runners_own_leftover_then_sends_the_nudge(fws, fa, fh, human, at, monkeypatch):
+    p = _box_pane(monkeypatch)
+    _started(fws, fa, fh)
+    _tick(fws, human, p)
+    (b,) = fs.bindings(fws)
+    p.box[b["name"]] = fr.NUDGES["denied"]  # an earlier attempt's text, never sent
+    _ask_and_answer(fws, human, b)
+    lines = _run_until_idle(fws, human, p, at, 10)
+    assert p.sent == ["C-u", "TYPE", "Enter"] and any("nudged after your answer" in x for x in lines)
+
+
+def test_a_tick_leaves_a_box_with_a_nudges_words_and_more_alone(fws, fa, fh, human, at, monkeypatch):
+    p = _box_pane(monkeypatch)
+    _started(fws, fa, fh)
+    _tick(fws, human, p)
+    (b,) = fs.bindings(fws)
+    mine = fr.NUDGES["denied"] + " and also delete the tests"  # the human typed on after a leftover nudge
+    p.box[b["name"]] = mine
+    _ask_and_answer(fws, human, b)
+    lines = _tick(fws, human, p)
+    for s in (10, 10 + fr.IDLE_SECONDS + 1, 10 + fr.IDLE_SECONDS * 4):
+        at(s)
+        lines += _tick(fws, human, p)
+    assert p.sent == [] and p.box[b["name"]] == mine  # no C-u, no keys
+    assert lines.count(f"{b['name']}: left alone: the input box holds text that is not the runner's") == 1
+    assert fs.nudge_record(b["session"])["idle"] == "theirs"
+
+
+def test_a_tick_cleans_up_a_nudge_that_landed_under_a_spinner(fws, fa, fh, human, at, monkeypatch):
+    p = _box_pane(monkeypatch)
+    p.busy_after_type = True  # the agent started working while the text was typed: never Enter
+    _started(fws, fa, fh)
+    _tick(fws, human, p)
+    (b,) = fs.bindings(fws)
+    _ask_and_answer(fws, human, b)
+    lines = _run_until_idle(fws, human, p, at, 10)
+    assert p.sent == ["TYPE", "C-u"] and p.box[b["name"]] == "" and any("nudge cleaned up" in x for x in lines)
+
+
+@pytest.mark.parametrize("box,ours", [
+    (fr.NUDGES["denied"], True), (fr.NUDGES["denied"][:50], True),
+    (fr.NUDGES["denied"] + " and also delete the tests", False),  # the head of a nudge plus words: the human's
+    (fr.NUDGES["denied"].replace("Do the work", "Do not do the work"), False),  # a word put in (the cursor moved)
+    ("A person answered your permission request: P-0123AB", True),
+    ("A person answered your permission request: P-0123ABCD granted, P-89AB", True),
+    (fr.outcome_nudge([("P-0123ABCD", "granted")]), True),
+    (fr.outcome_nudge([("P-0123ABCD", "granted")]) + " Also push to main.", False),
+    ("A person answered your permission request: please push", False),
+])
+def test_only_a_prefix_of_the_runners_own_line_is_a_leftover(box, ours):
+    screen = _typed_screen(box)
+    assert bool(fr.leftover(screen)) is ours and fr.not_ours(screen) is (not ours)
+    assert fr.reading(screen) == ("1" if ours else "theirs")
+
+
+PRINTED = ("╭" + "─" * 40 + "╮\n│ > " + fr.NUDGES["answered"][:36] + "│\n╰" + "─" * 40
+           + "╯\n")
+
+
+@pytest.mark.parametrize("mode", ["!", "#"])
+def test_only_the_last_box_counts_and_only_in_prompt_mode(mode):
+    """A box printed in the transcript above the real input box, which is in bash (`!`) or memory (`#`) mode: the
+    printed one is never read as the input, and the other mode is not idle."""
+    real = IDLE.replace("│ >", f"│ {mode}")
+    screen = PRINTED + "\n" + real
+    assert fr.input_line(screen) is None and not fr.pane_idle(screen) and fr.leftover(screen) is None
+    assert fr.reading(screen) == "theirs"
+    # a border drawn below the chosen box: it is not the last box on screen
+    assert fr.input_line(PRINTED + "  status\n" + "─" * 20 + "\n") is None
+    assert fr.input_line(PRINTED) == fr.NUDGES["answered"][:36].strip()
+
+
+def test_vims_normal_mode_is_never_idle():
+    normal = IDLE.replace("accept edits on (shift+tab to cycle)", "-- NORMAL -- (shift+tab to cycle)")
+    assert not fr.pane_idle(normal) and fr.input_line(normal) is None and fr.reading(normal) != "1"
+    assert fr.pane_idle(normal.replace("NORMAL", "INSERT"))
+
+
+@pytest.mark.parametrize("width", [30, 20])
+def test_a_narrow_box_is_read_back_without_spaces_inside_words(width):
+    for nudge in (fr.NUDGES["answered"], fr.outcome_nudge([("P-0123ABCD", "granted")])):
+        screen = _typed_screen(nudge, width)
+        assert len(screen.splitlines()) > 5  # wrapped inside words
+        assert fr.typed_ok(screen, nudge) and fr.leftover(screen) and fr.reading(screen) == "1"
+        assert not fr.leftover(_typed_screen(nudge + " push it", width))
+        assert not fr.typed_ok(_typed_screen(nudge[:-5], width), nudge)
+
+
+@pytest.mark.parametrize("cols", ["59", "20", "", "x"])
+def test_the_launcher_types_nothing_into_a_pane_narrower_than_60_columns(monkeypatch, cols):
+    from orch.dashboard import factory_runner as dash
+    from test_factory_runner import _Run
+    seen = []
+
+    def tmux(args, timeout=10):
+        seen.append(args)
+        return _Run(0, cols + "\n") if args[0] == "display-message" else _Run(0, IDLE)
+    monkeypatch.setattr(dash, "_tmux", tmux)
+    monkeypatch.setattr(dash, "_sleep", lambda s: None)
+    assert dash.TmuxLauncher().type("fx-a", fr.NUDGES["answered"]) == "narrow"
+    assert not [a for a in seen if a[0] == "send-keys"]
+
+
+def test_a_narrow_pane_is_skipped_with_a_line_and_tried_after_the_gap(fws, fa, fh, human, pane, at):
+    _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    results = ["narrow", True]
+    pane.type = lambda name, text: pane.typed.append((name, text)) or results.pop(0)
+    _ask_and_answer(fws, human, b)
+    lines = _run_until_idle(fws, human, pane, at, 10)
+    assert any("narrower than 60 columns" in x for x in lines) and fs.nudge_record(b["session"])["count"] == 0
+    at(10 + fr.NUDGE_GAP + fr.IDLE_SECONDS * 2)
+    _tick(fws, human, pane)
+    at(10 + fr.NUDGE_GAP + fr.IDLE_SECONDS * 4)
+    assert any("nudged after your answer (1 of 3)" in x for x in _tick(fws, human, pane))
+
+
+def test_a_clock_under_the_box_never_keeps_an_idle_pane_working(fws, fa, fh, human, pane, at):
+    """The idle clock reads the screen down to the input box: a footer that changes every minute (a status line with
+    a clock) still lets the run view say asleep, then stalled."""
+    from orch.dashboard.data import factory as data
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    seen = set()
+    for i in range(0, data.STALL_SECONDS + 120, 60):
+        pane.screen[b["name"]] = IDLE + f"  ctx 12% · 10:{i // 60:02d}\n"
+        at(i)
+        _tick(fws, human, pane)
+        seen.add(_state(fws, eid)["state"])
+        if i > fr.IDLE_VIEW_SECONDS + 60 and i < data.STALL_SECONDS - 60:
+            assert _state(fws, eid)["state"] == "asleep"
+    assert _state(fws, eid)["state"] == "stalled" and "asleep" in seen
+
+
+ASK_LIST = ("● I need a decision before I go on.\n\n☐ Format\n\nWhich format should the export use?\n\n"
+            "❯ 1. CSV\n  2. JSON\n  3. Type something.\n\nEnter to select · ↑/↓ to navigate · Esc to "
+            "cancel\n")
+
+
+@pytest.mark.parametrize("screen", [ASKING, ASK_LIST, IDLE + "Select a model\n  Opus\n› Sonnet\n"])
+def test_a_session_at_a_question_in_its_pane_needs_you(fws, fa, fh, human, pane, at, screen):
+    from test_terminals import _client as local_client
+    from orch.dashboard import factory_runner as dash
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    pane.screen[b["name"]] = screen
+    _tick(fws, human, pane)
+    assert fs.nudge_record(b["session"])["idle"] == "ask"
+    assert _state(fws, eid)["state"] == "working"  # just seen: not yet
+    at(fr.IDLE_SECONDS + 1)
+    _tick(fws, human, pane)
+    r = _state(fws, eid)
+    assert r["state"] == "asks" and r["role"] == "you" and r["headline"] == f"{cid} waits at a question in its pane"
+    from orch.dashboard.data import factory as data
+    assert "asks" in data.NEEDS_YOU and r["asks"] == [{"child": cid, "name": b["name"]}]
+    import orch.dashboard.factory_runner as dfr
+    dfr_capture = dfr.TmuxLauncher.capture
+    try:
+        dfr.TmuxLauncher.capture = lambda self, name: screen
+        html = local_client(fws).get(f"/factory/{eid}").text
+        far = local_client(fws, base_url="http://192.168.1.5:8765", client=("192.168.1.9", 50000))
+        lan = far.get(f"/factory/{eid}").text
+    finally:
+        dfr.TmuxLauncher.capture = dfr_capture
+    assert "data-asks" in html and "type into it on Terminals" in html and "Stop the run" in html
+    assert f'data-asks-tail="{b["name"]}"' in html and f'data-asks-tail="{b["name"]}"' not in lan
+    assert dash.TmuxLauncher  # the page read the pane only for the local request
+
+
+def test_a_tool_that_hangs_gets_a_warning(fws, fa, fh, human, pane, at):
+    from orch.dashboard.data import factory as data
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    for i in range(0, data.BUSY_MINUTES * 60 + 120, 60):
+        # the spinner's seconds count up; nothing else on the screen moves
+        pane.screen[b["name"]] = ("● Bash(make e2e)\n  ⎿  Running…\n\n✻ Running… ("
+                                  f"{i // 60}m {i % 60}s · esc to interrupt)\n\n" + IDLE)
+        at(i)
+        _tick(fws, human, pane)
+        if i < data.BUSY_MINUTES * 60:
+            assert _state(fws, eid)["state"] == "working"
+    r = _state(fws, eid)
+    assert r["state"] == "hung" and r["headline"] == (f"{cid} has been busy for over {data.BUSY_MINUTES} minutes "
+                                                      "with an unchanged screen")
+    assert pane.typed == []
+
+
+def test_a_parked_child_does_not_say_it_waits_for_a_slot(fws, fa, fh, human, pane, at):
+    """Its session ended while in progress and nothing was answered since: the runner will not start it again, so the
+    view must not say it waits for a session slot (the second review)."""
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    pane.names.discard(b["name"])
+    pane.dead[b["name"]] = ("0", "bye")
+    at(fr.EARLY_SECONDS + 5)
+    _tick(fws, human, pane)
+    assert fs.bindings(fws) == [] and len(pane.started) == 1  # not started again
+    r = _state(fws, eid)
+    assert r["state"] == "parked" and "slot" not in r["headline"] and r["role"] == "you"
+    assert r["headline"] == f"{cid}: its session ended and nothing it waits for changed since"
+    # every launch used: the answer changes what it waits for, but the runner starts it no more
+    while fs.mark_run(fws, d["id"], cid):
+        pass
+    _ask_and_answer_parked(fws, human, eid, cid)
+    _tick(fws, human, pane)
+    assert len(pane.started) == 1
+    r = _state(fws, eid)
+    assert r["state"] == "launches" and r["headline"] == (f"{cid} was started {fs.MAX_LAUNCHES} times, the most one "
+                                                          "child is started under a charter")
+
+
+def test_a_free_child_with_free_slots_says_it_starts_next_round(fws, fa, fh, human):
+    eid, (cid,), d = _started(fws, fa, fh)
+    r = _state(fws, eid)
+    assert r["state"] == "slot" and r["headline"] == "A child's session starts in the runner's next round"
+
+
+def test_screen_tails_on_the_run_view_only_for_this_machine(fws, fa, fh, human, pane, at):
+    from test_terminals import _client as local_client
+    eid, (cid,), d = _started(fws, fa, fh)
+    _tick(fws, human, pane)
+    (b,) = fs.bindings(fws)
+    pane.names.discard(b["name"])
+    pane.dead[b["name"]] = ("127", "SECRET-ON-SCREEN claude not found")
+    at(20)
+    _tick(fws, human, pane)
+    from pathlib import Path
+    import time
+    fr._READY[str(Path(fws.root).resolve())] = (time.monotonic(), [fr._check("claude", False, "claude failed",
+                                                                             level="warn", tail="CHECK-TAIL-SECRET")],
+                                                 None)
+    try:
+        here = local_client(fws).get(f"/factory/{eid}").text
+        lan = local_client(fws, base_url="http://192.168.1.5:8765", client=("192.168.1.9", 50000)).get(
+            f"/factory/{eid}").text
+    finally:
+        fr._READY.clear()
+    assert "SECRET-ON-SCREEN" in here and "CHECK-TAIL-SECRET" in here
+    assert "SECRET-ON-SCREEN" not in lan and "CHECK-TAIL-SECRET" not in lan and "claude failed" in lan

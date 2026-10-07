@@ -989,6 +989,32 @@ def stop_reason(ws, b: dict, signed, cut: bool, blocker: str | None = None) -> s
     return None
 
 
+def dark_marks(ws, signed) -> list:
+    """The MACs of this checkout's signed Dark profile entries (what wake_token takes)."""
+    cid = ledger.checkout_id(ws)
+    return [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+
+
+HELD = ("parked", "launches", "children")
+
+
+def held_back(ws, epic, d, t, signed, gone, marks) -> str | None:
+    """Why launchable child `t` (_launchable) gets no session although a slot is free and readiness passes: the one
+    rule the runner (tick) and the run view share. "parked": its session ended and nothing it waits for changed since
+    (wake_token; `gone`: factory_sessions.ended); "launches": it was started MAX_LAUNCHES times under this charter;
+    "children": the charter's max_children other children were started. None: it starts in the runner's next round
+    with a free slot (the readiness checks, one clone per round and the slots are said apart)."""
+    token = wake_token(epic, t, signed, marks)
+    if any(g["child"] == t.id and g["delegation"] == d["id"] and g["wake"] == token for g in gone):
+        return "parked"
+    used = fs.runs(ws, d["id"], t.id)
+    if used >= fs.MAX_LAUNCHES:
+        return "launches"
+    if used == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
+        return "children"
+    return None
+
+
 def _launchable(ws, epic, d, t, signed) -> bool:
     try:
         permits.require_budget(ws, t)  # the same budget refusal an agent's claim meets
@@ -1179,21 +1205,23 @@ IDLE_SECONDS = 45  # the pane must show the same idle prompt this long
 _BUSY = ("esc to interrupt", "do you want", "don't ask again", "❯ 1.", "> 1.", "(y/n)", "yes, proceed",
          "trust the files", "press enter", "interrupted")
 _IDLE = ("? for shortcuts", "shift+tab to cycle")
-_PROMPT = re.compile(r"^[\s\u2502|]*[>\u276f](?=\s|$)")
+_PROMPT = re.compile(r"^[\s\u2502|]*([>\u276f!#])(?=\s|$)")  # `!` bash mode, `#` memory mode: not Claude's input
 IDLE_VIEW_SECONDS = 180  # the run view says the sessions wait at their prompt after this long
 
 
 _MENU_LINE = re.compile(r"^[\s\u2502|]*(?:[\u276f\u203a>]|\d+\.\s)")  # a picker's or menu's option line
-MAX_WRAP = 10  # lines a typed input may wrap over inside the box
+_BORDER = ("\u2500", "\u256d", "\u2570")  # what a box's border lines are drawn with
+MAX_WRAP = 20  # lines a typed input may wrap over inside the box
+MIN_COLUMNS = 60  # the runner never types into a narrower pane: its box wraps too much to be read back safely
 
 
-def input_line(text) -> str | None:
-    """The text in Claude Code's input box: the last prompt line (`>` or `\u276f`) of the pane whose line above is the
-    box's top border (a line of \u2500), with the lines it wraps onto inside the box, up to the box's bottom border,
-    side bars stripped and joined by single spaces. None when there is no such box (a prompt echoed in the transcript
-    has no border above it), no bottom border, or a picker or menu drawn under the box (an option line). Anything
-    else under the box (Claude's footer, a status bar, "Update available!", a clock) is not the input and is ignored:
-    it changes by itself."""
+def _box(text) -> tuple[str, list[str], int, list[str]] | None:
+    """Claude Code's input box: (its prompt character, the text lines inside it, the index of its bottom border, the
+    screen's lines), or None. The box is the last prompt line of the pane (`>`, `\u276f`, or `!`/`#` of another mode)
+    whose line above is a top border (a line of \u2500), up to the bottom border within MAX_WRAP lines. None when
+    there is no such box (a prompt echoed in the transcript has no border above it), no bottom border, any border
+    line below it (it must be the last box on screen: a box printed in the transcript is not the input), or a picker
+    or menu drawn under it (an option line)."""
     if not isinstance(text, str):
         return None
     lines = text.splitlines()
@@ -1204,29 +1232,86 @@ def input_line(text) -> str | None:
         above = [ln for ln in lines[max(0, i - 2):i] if ln.strip()]
         if not above or "\u2500" not in above[-1]:
             return None
-        parts = [lines[i][m.end():]]
         bottom = next((j for j in range(i + 1, min(len(lines), i + 2 + MAX_WRAP)) if "\u2500" in lines[j]), None)
         if bottom is None:
             return None
-        parts += lines[i + 1:bottom]
-        if any(_MENU_LINE.match(ln) for ln in lines[bottom + 1:] if ln.strip()):
+        below = [ln for ln in lines[bottom + 1:] if ln.strip()]
+        if any(c in ln for ln in below for c in _BORDER) or any(_MENU_LINE.match(ln) for ln in below):
             return None
-        return " ".join(" ".join(p.strip().strip("\u2502|").split()) for p in parts if p.strip("\u2502| ")).strip()
+        return m.group(1), [lines[i][m.end():], *lines[i + 1:bottom]], bottom, lines
     return None
+
+
+def _vim_normal(text) -> bool:
+    """Whether Claude Code's footer says its vim NORMAL mode: typed letters would be commands, not text."""
+    return isinstance(text, str) and any("-- normal --" in ln.casefold() for ln in text.splitlines()[-8:])
+
+
+def input_line(text) -> str | None:
+    """The text in Claude Code's input box (_box), side bars stripped and joined by single spaces. None when there is
+    no such box, its prompt is in another mode (bash `!`, memory `#`: what is typed there is not a message to the
+    agent), or the footer shows vim's NORMAL mode. Anything else under the box (Claude's footer, a status bar, "Update
+    available!", a clock) is not the input and is ignored: it changes by itself."""
+    box = _box(text)
+    if box is None or box[0] not in (">", "\u276f") or _vim_normal(text):
+        return None
+    return " ".join(" ".join(p.strip().strip("\u2502|").split()) for p in box[1] if p.strip("\u2502| ")).strip()
 
 
 def _norm(s: str) -> str:
     return " ".join(str(s).split())
 
 
+def _squash(s: str) -> str:
+    """`s` without any whitespace: how box text is compared, so a line wrapped inside a word (a narrow pane) and one
+    wrapped at a space read the same."""
+    return "".join(str(s).split())
+
+
+_ANSWER_SQ = r"P-[0-9A-F]{8}(?:granted|denied)"
+
+
+def _ours(line: str) -> bool:
+    """Whether box text `line` is a prefix of one of the runner's own lines (a fixed nudge, or the outcome template
+    with valid answers), never longer: a box holding a nudge's words plus anything else is someone else's."""
+    sq = _squash(line)
+    if not sq or any(_squash(n).startswith(sq) for n in NUDGES.values()):
+        return bool(sq)
+    head, tail = (_squash(x) for x in OUTCOME.split("{answers}"))
+    if head.startswith(sq):
+        return True
+    if not sq.startswith(head):
+        return False
+    rest = sq[len(head):]
+    m = re.match(_ANSWER_SQ + r"(?:," + _ANSWER_SQ + r"){0,%d}" % (MAX_OUTCOMES - 1), rest)
+    if m is None:  # not one whole answer yet: what is there is the start of one
+        return any(w.startswith(re.sub(r"[0-9A-F]", "0", rest)) for w in ("P-00000000granted", "P-00000000denied"))
+    rest = rest[m.end():]
+    part = re.sub(r"[0-9A-F]", "0", rest[1:]) if rest.startswith(",") else None
+    return tail.startswith(rest) or (part is not None and any(
+        w.startswith(part) for w in ("P-00000000granted", "P-00000000denied")))
+
+
 def leftover(text) -> str | None:
     """The runner's own nudge left in the input box by an attempt that was not submitted (its text, or what of it the
-    box shows), or None: the input line starts with the first words of one of the runner's lines."""
+    box shows), or None. Only a box whose text is a prefix of one of the runner's lines (_ours), at least 30
+    characters long, counts: a box with the start of a nudge and more words after it is the human's."""
     line = input_line(text)
-    if not line:
+    if not line or len(_norm(line)) < 30:
         return None
-    heads = [*NUDGES.values(), OUTCOME.split("{answers}")[0]]
-    return line if any(_norm(line)[:30] == _norm(h)[:30] for h in heads if len(_norm(line)) >= 30) else None
+    return line if _ours(line) else None
+
+
+def not_ours(text) -> bool:
+    """Whether the input box holds text that is not the runner's (the human's, or a nudge's words with more after
+    them), or a prompt in another mode: the runner leaves it alone."""
+    box = _box(text)
+    if box is None or _vim_normal(text):
+        return False
+    if box[0] not in (">", "\u276f"):
+        return True
+    line = input_line(text)
+    return bool(line) and leftover(text) is None
 
 
 # Claude Code's folder-trust question, as it draws it. The runner never answers it: trusting a folder is the human's.
@@ -1268,13 +1353,14 @@ def _busy(text: str) -> bool:
 
 
 def typed_ok(text, nudge: str) -> bool:
-    """Whether a pane read after typing `nudge` shows it on the input line itself (never on an earlier echo of it in
+    """Whether a pane read after typing `nudge` shows exactly it (whitespace aside), nothing more or less, on the
+    input line itself (never on an earlier echo of it in
     the transcript) and nothing that Enter would answer instead (a menu, a permission or trust prompt, a running
     command): only then is Enter pressed."""
     if not isinstance(text, str) or _busy(text):
         return False
     line = input_line(text)
-    return bool(line) and _norm(line).startswith(_norm(nudge)[:40])
+    return bool(line) and _squash(line) == _squash(nudge)
 
 
 def pane_idle(text) -> bool:
@@ -1304,19 +1390,47 @@ def _nudge_base(b: dict, now_answers: dict) -> dict:
             "count": 0, "last": "", "pane": "", "pane_at": "", "idle": ""}
 
 
-def _observe(actor, capture, b: dict, rec: dict) -> tuple[dict, str | None]:
-    """Read the session's pane and keep in its record what it shows: a hash of the screen, since when it is unchanged
-    (`pane_at`), and whether it is idle at its prompt (`idle`). Written only when that changes."""
-    import hashlib as _h
+def screen_key(text: str) -> str:
+    """A hash of what a pane shows that only the session changes: the screen down to the input box's bottom border
+    (_box), so Claude's footer, a status bar or a clock under the box never resets the idle clock, and without the
+    spinner's line ("esc to interrupt", whose seconds count up by themselves). With no box, the whole screen."""
+    box = _box(text)
+    lines = box[3][:box[2] + 1] if box else text.splitlines()
+    keep = [ln for ln in lines if "esc to interrupt" not in ln.casefold()]
+    return hashlib.sha256("\n".join(keep).encode("utf-8", "replace")).hexdigest()
+
+
+def reading(text: str) -> str:
+    """What a pane shows, as the runner keeps it (`idle` of its record): "trust" (Claude's folder-trust question),
+    "1" (idle at an empty prompt, or holding a nudge of the runner's own an attempt left there), "busy" (a command or
+    tool runs: "esc to interrupt"), "theirs" (the input box holds text that is not the runner's, or a prompt in
+    another mode), "ask" (no input box at the bottom: a permission prompt, a menu, a question list, anything else),
+    or "" (nothing on screen yet, or a box orch does not recognise)."""
+    if trust_question(text):
+        return "trust"
+    if pane_idle(text) or (leftover(text) and not _busy(text)):
+        return "1"
+    if any("esc to interrupt" in ln.casefold() for ln in [x for x in text.splitlines() if x.strip()][-12:]):
+        return "busy"
+    if not_ours(text):
+        return "theirs"
+    if text.strip() and input_line(text) is None:
+        return "ask"
+    return ""
+
+
+def _observe(actor, capture, b: dict, rec: dict, lines: list | None = None) -> tuple[dict, str | None]:
+    """Read the session's pane and keep in its record what it shows: a hash of the screen (screen_key), since when it
+    is unchanged (`pane_at`), and what it shows (`idle`: reading). Written only when that changes."""
     from orch import clock
     text = capture(b["name"])
     if not isinstance(text, str):
         return rec, None
-    pane = _h.sha256(text.encode("utf-8", "replace")).hexdigest()
-    # "trust": waits at that question; a nudge left in the box by an attempt that was not sent counts as idle (the
-    # next attempt clears it first), or the session would wait behind it forever (the fourth live run)
-    idle = "trust" if trust_question(text) else "1" if pane_idle(text) or (leftover(text) and not _busy(text)) else ""
+    pane = screen_key(text)
+    idle = reading(text)
     if pane != rec["pane"] or idle != rec["idle"]:
+        if idle == "theirs" and rec["idle"] != "theirs" and lines is not None:
+            lines.append(f"{b['name']}: left alone: the input box holds text that is not the runner's")
         rec = {**rec, "pane": pane, "pane_at": clock.stamp_s(), "idle": idle}
         fs.write_nudge_record(actor, rec)
     return rec, text
@@ -1334,7 +1448,7 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         return
     try:
         was = rec["idle"]
-        rec, text = _observe(actor, capture, b, rec)
+        rec, text = _observe(actor, capture, b, rec, lines)
         if rec["idle"] == "trust" and was != "trust":  # said once, when the session reaches the question
             lines.append(trust_line(b))
         typed = getattr(launcher, "human_typed", None)
@@ -1358,6 +1472,11 @@ def _nudge(ws, actor, launcher, b: dict, now_answers: dict, lines: list) -> None
         sent = type_(b["name"], text)
         if sent is True:
             lines.append(f"{b['name']}: nudged after your answer ({rec['count'] + 1} of {MAX_NUDGES})")
+        elif sent == "narrow":  # nothing typed: not an attempt, tried again after the gap
+            fs.write_nudge_record(actor, {**rec, "answers": old, "last": clock.stamp_s(), "pane": "", "pane_at": "",
+                                          "idle": ""})
+            lines.append(f"{b['name']}: nudge not sent: its pane is narrower than {MIN_COLUMNS} columns; tried again "
+                         f"in {NUDGE_GAP // 60} minutes")
         elif sent == "cleaned":  # typed, not sent, and cleared again: the same answer is tried in the next round
             fs.write_nudge_record(actor, {**rec, "answers": old, "count": rec["count"] + 1, "last": "",
                                           "pane": "", "pane_at": "", "idle": ""})
@@ -1475,7 +1594,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
     cap = concurrency(ws)
     gone = fs.ended(ws)
     cid = ledger.checkout_id(ws)
-    dark_marks = [e.get("mac") for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid]
+    marks = dark_marks(ws, signed)
     dark_adds = sum(1 for e in signed if e.get("kind") == "dark_profile" and e.get("checkout") == cid
                     and e.get("op") == "add")
     checked: list = []
@@ -1505,7 +1624,7 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 return lines
             if any(fs.is_planner(b) and b["epic"] == epic.id for b in keep) or permits.budget_reason(ws, epic, d):
                 continue
-            token = wake_token(epic, epic, signed, dark_marks)
+            token = wake_token(epic, epic, signed, marks)
             if any(fs.is_planner(g) and g["epic"] == epic.id and g["delegation"] == d["id"] and g["wake"] == token
                    for g in gone):
                 continue  # it ended without children and nothing it waits for changed since
@@ -1533,13 +1652,12 @@ def tick(ws, actor, launcher: Launcher, *, settings: dict) -> list[str]:
                 continue
             if any(b["child"] == t.id for b in keep):
                 continue
-            token = wake_token(epic, t, signed, dark_marks)
-            if any(g["child"] == t.id and g["delegation"] == d["id"] and g["wake"] == token for g in gone):
-                continue  # parked: nothing it waits for changed since it last started
+            if held_back(ws, epic, d, t, signed, gone, marks):
+                continue  # parked, launches or children used up (the run view says which); the cap is checked
+                # again under the lock: here so no clone is made for a child that cannot start
+            token = wake_token(epic, t, signed, marks)
             if not_ready():
                 return lines
-            if fs.runs(ws, d["id"], t.id) == 0 and fs.runs(ws, d["id"]) >= d["max_children"]:
-                continue  # checked again under the lock; here so no clone is made for a child that cannot start
             ready = _ready(ws, settings, epic, d, t, lines, actor=actor, new_clones=new_clones)
             if ready is None:
                 continue  # checked before its marker: a refused launch uses up none of its launches

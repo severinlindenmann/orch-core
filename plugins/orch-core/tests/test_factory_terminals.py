@@ -166,13 +166,14 @@ def test_the_nudge_never_presses_enter_or_clears_after_a_human_key(monkeypatch, 
             return IDLE_SCREEN
         if when == "before Enter":  # the nudge sits on the input line, and the human types in that very moment
             factory_runner.note_human_keys("fx-a")
-            return IDLE_SCREEN.replace("│ >" + " " * 38, "│ > " + nudge[:30])
+            return IDLE_SCREEN.replace("│ >" + " " * 38, "│ > " + nudge)
         if screens["n"] == 1 + factory_runner.TYPE_POLLS:  # the last poll: then the human types, before C-u
             factory_runner.note_human_keys("fx-a")
         return "busy"
     monkeypatch.setattr(factory_runner.TmuxLauncher, "capture", capture)
     monkeypatch.setattr(factory_runner, "_tmux", lambda args, timeout=10: sent.append(args) or
-                        __import__("subprocess").CompletedProcess(args, 0, "", ""))
+                        __import__("subprocess").CompletedProcess(args, 0, "160" if args[0] == "display-message"
+                                                                  else "", ""))
     monkeypatch.setattr(factory_runner, "_sleep", lambda s: None)
     assert factory_runner.TmuxLauncher().type("fx-a", nudge) is False
     assert [a for a in sent if a[-1] in ("Enter", "C-u")] == []  # only the nudge text itself went in

@@ -41,21 +41,34 @@ def factory_run(request: Request, ref: str):
         return _not_found(request, f"{epic.id} is not an AI Factory epic, or AI Factory is switched off")
     return page(request, "factory_run.html", nav="factory", title=f"{run['name']} {epic.id}", run=run,
                 steps=factory_data.STEPS, watch=_watch(request, ws, epic.id),
-                stalled_tails=_stalled_tails(request, run))
+                stalled_tails=_stalled_tails(request, run), local=_local(request),
+                busy_minutes=factory_data.BUSY_MINUTES)
+
+
+def _local(request: Request) -> bool:
+    """Whether a screen's lines (an early end's tail, a readiness check's output) may be shown: a request from this
+    machine only (terminals.local_request: never to another machine on the network)."""
+    from orch.dashboard import terminals
+    try:
+        return terminals.local_request(request)
+    except Exception:
+        return False
 
 
 STALLED_LINES = 3
 
 
 def _stalled_tails(request: Request, run: dict) -> dict:
-    """The last STALLED_LINES lines (escaped) of each session that stopped working, for a request from this machine
-    only (a screen is never shown over the network)."""
+    """The last STALLED_LINES lines (escaped) of each session that stopped working, waits at a question in its pane
+    or is busy with an unchanged screen, for a request from this machine only (a screen is never shown over the
+    network)."""
     from orch.core import factory_runner as core_runner
     from orch.dashboard import factory_runner, terminals
-    if not run.get("stalled") or not terminals.local_request(request):
+    shown = [*(run.get("stalled") or []), *(run.get("asks") or []), *(run.get("hung") or [])]
+    if not shown or not terminals.local_request(request):
         return {}
     out = {}
-    for s in run["stalled"]:
+    for s in shown:
         try:
             out[s["name"]] = core_runner.escaped_tail(factory_runner.TmuxLauncher().capture(s["name"]) or "",
                                                       STALLED_LINES)

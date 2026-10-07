@@ -1184,7 +1184,8 @@ def _tail_of(f, limit: int) -> tuple[str, int]:
     return f.read().decode("utf-8", "replace"), size
 
 
-def run_command(argv: list[str], cwd: str, env: dict, timeout: int, *, limit: int = TAIL, started=None) -> dict:
+def run_command(argv: list[str], cwd: str | None, env: dict, timeout: int, *, limit: int = TAIL, started=None,
+                preexec=None, pass_fds=()) -> dict:
     """Run one command: no shell, stdin closed, its own process group (killed whole on timeout, or terminated when
     the dashboard stops: terminate_all), output to unlinked temporary files of which only the last `limit` bytes are
     kept. `started(pgid)` is told the process group once it runs. {code, out, out_size, err, timed_out}."""
@@ -1193,7 +1194,7 @@ def run_command(argv: list[str], cwd: str, env: dict, timeout: int, *, limit: in
             return {"code": None, "out": "", "out_size": 0, "err": "the dashboard is stopping", "timed_out": False}
         try:
             p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
-                                 start_new_session=True)
+                                 start_new_session=True, preexec_fn=preexec, pass_fds=pass_fds)
         except OSError as e:
             return {"code": None, "out": "", "out_size": 0, "err": f"could not start: {e.strerror or e}",
                     "timed_out": False}

@@ -62,8 +62,9 @@ def uncommitted(ws, child: str) -> dict | None:
     20], submodules: [gitlink paths, never inspected]}; UNREADABLE ({ok: False}) when it has a clone record but its
     state cannot be read (never taken as clean); None when the runner made no clone for it.
 
-    No program of the clone's runs: no attributes are read from the clone (factory_clones._git sets GIT_ATTR_SOURCE to
-    the empty tree, so even a folder swapped in after the checks names no filter or diff driver), `git status` with `--ignore-submodules=all` (git never enters a gitlink, whose own
+    No program of the clone's runs, except in the instant docs/factory.md names: factory_clones._git runs git pinned
+    (the clone's folder and `.git` checked by descriptor, its config written again and its info and hooks removed right
+    before git starts in that very folder) and reads no attributes from the work tree or index, `git status` with `--ignore-submodules=all` (git never enters a gitlink, whose own
     config and attributes could name a filter), submodule recursion, the submodule summary and the untracked cache
     off (factory_clones._git adds these to the release isolation), under the clone's lock with its config written
     again first (factory_clones.fetch_from). Gitlinks are listed from the index (`ls-files -s`, mode 160000)."""

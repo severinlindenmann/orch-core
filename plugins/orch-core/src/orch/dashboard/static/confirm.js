@@ -125,6 +125,7 @@
     d.showModal();
     // on a phone the dialog scrolls and Cancel sits last: focus it without scrolling, so the question is read first
     (field || cancel).focus({ preventScroll: true });
+    d.scrollTop = 0;  // showModal's own focusing already scrolled a tall dialog down to its first button
   });
 
   // ---------- The Dark / AI Factory start, built from the form's choices ----------

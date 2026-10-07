@@ -1299,14 +1299,23 @@ app.add_typer(hooks_app, name="hooks")
 
 @hook_app.command("commit-msg")
 def hook_commit_msg(file: Annotated[Path, typer.Argument(exists=True, dir_okay=False)]) -> None:
-    """git commit-msg hook: exit 1 with reasons if the message breaks this workspace's rules."""
-    from orch.hooks.commit_msg import check_message
-    problems = check_message(_ws(), file.read_text(encoding="utf-8-sig"))
+    """git commit-msg hook: exit 1 with reasons if the message breaks this workspace's rules (git.repos.<name>.commit_check
+    sets enforce, warn or off per repo)."""
+    from orch.hooks.commit_msg import check_message, effective_mode, repo_name_for
+    ws = _ws()
+    repo = repo_name_for(ws, Path.cwd())
+    mode = effective_mode(ws, repo)  # #170: per-repo enforce | warn | off; an agent's commit is always enforced
+    if mode == "off":
+        return
+    problems = check_message(ws, file.read_text(encoding="utf-8-sig"), repo=repo)
     if problems:
-        typer.echo("orch: commit rejected", err=True)
+        typer.echo("orch: commit rejected" if mode == "enforce"
+                   else f"orch: commit message warning (commit_check is {mode!r} for this repo, the commit goes ahead)",
+                   err=True)
         for p in problems:
             typer.echo(f"  - {p}", err=True)
-        raise typer.Exit(1)
+        if mode == "enforce":
+            raise typer.Exit(1)
 
 
 @hook_app.command("pre-commit")

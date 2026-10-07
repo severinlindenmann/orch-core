@@ -473,7 +473,8 @@ class Ops(TaskOpsMixin):
             raise UsageError("pass --epic or --no-epic (--sprint or --no-sprint), not both")
         sprint_id = self._sprint(sprint) if sprint else None
         if (branch or worktree) and not repo:
-            raise UsageError("--repo is required with --branch or --worktree")
+            from orch.core import prlink
+            repo = prlink.repo_of(self.ws, None).name  # the only repo; several are refused with their names (#214)
         if pr:
             from orch.core import prlink
             number = prlink.pr_number(pr)
@@ -673,7 +674,9 @@ class Ops(TaskOpsMixin):
         git = self.ws.config.get("git") if isinstance(self.ws.config.get("git"), dict) else {}
         has_repos = bool(git.get("repos")) or (self.ws.root / ".git").exists()
         if has_repos and not t.meta.get("prs") and not t.meta.get("branches"):
-            out.append(f"no branch or PR is linked; link the work with `orch link {t.id} --pr <number>` "
+            from orch.addons.api import workspace_repos
+            where = " --repo <name>" if len(workspace_repos(self.ws)) > 1 else ""
+            out.append(f"no branch or PR is linked; link the work with `orch link {t.id}{where} --pr <number>` "
                        f"or `--branch <name>` so the human finds it")
         return out
 

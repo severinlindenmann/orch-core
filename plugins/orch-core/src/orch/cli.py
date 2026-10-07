@@ -458,7 +458,9 @@ def section_set(ref: str, name: str, message: MessageOpt = None, file: FileOpt =
 @app.command()
 def link(
     ref: str,
-    repo: Annotated[Optional[str], typer.Option("--repo")] = None,
+    repo: Annotated[Optional[str], typer.Option(
+        "--repo", help="Repo name; optional when the workspace has one repo, required with --branch or "
+                       "--worktree when it has several.")] = None,
     pr: Annotated[Optional[str], typer.Option("--pr", help="PR/MR URL, or its number in --repo (default: the workspace repo).")] = None,
     branch: Annotated[Optional[str], typer.Option("--branch")] = None,
     worktree: Annotated[Optional[str], typer.Option("--worktree")] = None,

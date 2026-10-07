@@ -240,6 +240,15 @@ def probe(port: int, timeout: float = PROBE_TIMEOUT):
     return data if isinstance(data, dict) else GONE
 
 
+def serves(ws, port: int) -> bool:
+    """This workspace's own dashboard answers on 127.0.0.1:`port` (for `orch serve --link`)."""
+    try:
+        got = probe(port, timeout=1.0)
+        return isinstance(got, dict) and got.get("service") == SERVICE and got.get("workspace_id") == workspace_id(ws)
+    except Exception:
+        return False
+
+
 def _count(value) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 

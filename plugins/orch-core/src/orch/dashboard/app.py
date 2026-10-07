@@ -17,7 +17,7 @@ from orch.clock import stamp
 from orch.dashboard import factory_runner, schedules
 from orch.dashboard.addon_files import DOWNLOAD_TTL, MAX_UPLOAD, OneTimeStore, sweep_addon_io
 from orch.dashboard.assets import AssetFiles
-from orch.dashboard.auth import auth_middleware
+from orch.dashboard.auth import auth_middleware, cookie_name
 from orch.dashboard import remote_gate
 from orch.dashboard.reach import SCOPE_KEY
 from orch.dashboard.remote_gate import RemoteGate
@@ -308,6 +308,7 @@ def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastA
     app.exception_handler(RequestValidationError)(form_error)
     app.state.ws = ws
     app.state.token = token
+    app.state.cookie = cookie_name(port)
     app.state.started = stamp()  # for /__orch/status
     app.state.scheduler = Scheduler(ws, live=lambda: routes_live.subscriber_count(ws) > 0)
     app.state.outbox = OutboxPump(ws)

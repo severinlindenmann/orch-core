@@ -110,7 +110,7 @@ In your own terminal, `orch feedback list` and `orch feedback show <id>` show th
 
 ## Mission Control (the dashboard)
 
-`orch serve` (in your own terminal) prints a link with a one-time token and opens **Mission Control** in the browser. Everything is served locally, fonts and logos included, and every write goes through the same rules as the CLI.
+`orch serve` (in your own terminal) prints a link with a token and opens **Mission Control** in the browser. The link signs the browser in to that dashboard for 30 days, and the token is kept per workspace in the orch config dir (where the guard keeps agents out), so restarting `orch serve` keeps open tabs and artifact links working. Each port has its own sign-in, so dashboards of several workspaces never sign each other out. If a page says *Locked*, run `orch serve --link` to print the sign-in link of the running dashboard again; `orch serve --new-token` signs every browser out. With `--lan` the token is for that run only. Everything is served locally, fonts and logos included, and every write goes through the same rules as the CLI.
 
 | Page | What it shows |
 |---|---|

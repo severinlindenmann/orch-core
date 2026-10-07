@@ -20,14 +20,14 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | What should I work on? | `orch next` · `orch list --status open` · `orch list --mine` |
 | What else touches this code? | `orch related <id> [--path src/x] [--json]`: done tickets that changed those files (their decisions), open tickets in the same files, files usually changed with them, linked tickets |
 | Read a ticket | `orch show <id>` (ID, number or external key); with `--json` its `move` says whose turn it is (`who`: you, agent or nobody) |
-| Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (`## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Summary` in the body file go into those sections) |
-| Follow-up | `orch new --from <id> --title "..."` |
+| Create | `orch new --title "..." --type bug --size s [--external ABC-123] [--body-file ask.md] [--requirements-file r.md] [--acceptance-file ac.md] [--out-of-scope-file o.md] [--summary-file s.md]` (a heading naming a section in the body file, `## Summary`, `## Requirements`, `## Acceptance criteria`, `## Out of scope`, `## Context`, `## Plan`, `## Verification`, ..., puts that part into the section; a `## Tasks` heading holds the YAML of `orch task add --file`; everything is validated before the ticket gets an ID; ticked criteria need evidence and no gate is approved) |
+| Follow-up | `orch new --from <id> --title "..."` (joins the source's epic, and says so; `--no-epic` opts out, `--epic <e>` picks another) |
 | Epic | `orch new --type epic --title "..."` · child: `orch new --epic <epic> --title "..."` · `orch link <id> --epic <epic>` / `--no-epic` · `orch epic show <epic>` |
 | Labels | `orch new --label customer:acme --label admin ...` · `orch label add <id> customer:acme admin` · `orch label remove <id> admin` · `orch list --label admin` (one word each: no spaces or commas) |
 | Sprint | `orch sprint list` · `orch sprint current` · `orch new --sprint S1 ...` · `orch link <id> --sprint S1` / `--no-sprint` |
 | Due date | `orch new --due 2026-10-31 ...` · `orch due <id> 2026-10-31` · `orch due <id> --clear` (YYYY-MM-DD; overdue and due-soon tickets come first within their priority in `orch next`) |
 | Claim / release | `orch claim <id>` · `orch release <id>` |
-| Write a section | `orch section set <id> Plan --file plan.md` (or `-m "..."`) |
+| Write a section | `orch section set <id> Plan --file plan.md` (or `-m "..."`) · several at once, all or nothing: `orch section set <id> --body-file sections.md` (`## Requirements`, `## Plan`, ... headings; no Ask, Tasks or Log) |
 | Task list | `orch task list <id> [--json]` (where you are, `next`, refs) |
 | Create tasks | `orch task add <id> --file tasks.yaml` · `orch task add <id> "text" --ref file:repo/path --verify "cmd" --needs T2` |
 | Work a task | `orch task start <id> T3` · `orch task done <id> T3 -m "evidence"` |
@@ -39,7 +39,7 @@ Only the human may: approve, request changes, answer, give verdicts, tick `owner
 | Wait for the human | `orch wait <id> [--timeout S] --json` — block until the human answers, approves, requests changes or gives a verdict (agents may run it). A send-back or change request returns `message`, `acs` (the criteria it names) and `attachments` (`name`, `path` from the workspace root, `sha256`): the human's pasted screenshots. Open them before you change anything |
 | Link work | `orch link <id> --repo hub` (the ticket touches that repo) · `--repo hub --branch feature/x` · `--pr 22` (a number resolves in `--repo`, default the workspace repo) or `--pr <url>` · `--external TIX-17` |
 | Worktree | `orch worktree add <id> --repo hub [--base develop]` (branch from `git.branch_pattern`, worktree at `.claude/worktrees/hub/<slug>`, both linked, harness files linked in) · `orch worktree remove <id> --repo hub` (keeps the branch; refuses uncommitted changes) |
-| Evidence (files) | `orch artifact add <id> shot.png --ac 2 --inline --label "Login after the fix"` · `orch artifact add <id> report.html --task T3` (`--kind` screenshot, report, log, dataset, build, diagram, other; guessed when left out) |
+| Evidence (files) | `orch artifact add <id> shot.png --ac 2 --inline --label "Login after the fix"` · `orch artifact add <id> a.png b.png --ac 2` (several files, all or nothing, one Log line; no `--name`/`--inline`) · `orch artifact add <id> report.html --task T3` (`--kind` screenshot, report, log, dataset, build, diagram, other; guessed when left out) |
 | Evidence (links) | `orch artifact add <id> --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"` (http/https only; never fetched) |
 | Loose files | `orch artifact list <id>` shows what is linked and what is not · `orch artifact scan <id>` links files written straight into `orchestrator/artifacts/<id>/` |
 | Hand over | `orch move <id> testing` (warns when a criterion has no evidence or no branch/PR is linked) |

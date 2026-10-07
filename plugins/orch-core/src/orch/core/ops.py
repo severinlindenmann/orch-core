@@ -139,6 +139,7 @@ class Ops(TaskOpsMixin):
     def __init__(self, ws, actor: Actor, *, dry_run: bool = False):
         self.ws = ws
         self._actor = actor
+        self.notices: list[str] = []  # what the last operation chose for the caller (`new --from` joining an epic)
         self.warnings: list[str] = []  # what the last operation allowed but the caller should hear about
         # dry_run (#7): every check runs as usual on the loaded ticket and the method returns the ticket as it would
         # be, but nothing is written: no lock file, no save, no event, no ledger entry, no gate snapshot.
@@ -247,31 +248,52 @@ class Ops(TaskOpsMixin):
     def new(self, title: str, *, type: str = "feature", priority: str = "normal", size: str = "m",
             ask: str = "", external: str | None = None, from_ref: str | None = None, epic: str | None = None,
             sprint: str | None = None, sections: dict[str, str] | None = None, due: str | None = None,
-            labels: list[str] | None = None) -> Ticket:
+            labels: list[str] | None = None, no_epic: bool = False) -> Ticket:
         """`sections` (#24): Summary, Requirements, Acceptance criteria and Out of scope written at creation, with the
         same rules as `orch section set`. `labels` (#173): checked by `check_labels`. `self.warnings` names a gated
-        section left empty."""
-        from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
+        section left empty. `from_ref` with `epic` (#213): `parent` is the epic, the source keeps its `follow_ups`
+        back-link; `from_ref` alone joins the source's epic (not done, new type not epic) unless `no_epic`, and
+        says so in `self.notices`."""
+        from orch.core.body import BODY_SECTIONS, empty_gate_warnings, tasks_from_block
         self.warnings = []
+        self.notices = []
         title = " ".join(title.split())
         if not title:
             raise UsageError("title must not be empty")
         _choice("type", type, TYPES)
         _choice("priority", priority, PRIORITIES)
         _choice("size", size, SIZES)
-        if epic and from_ref:
-            raise UsageError("pass --epic or --from, not both")
+        if epic and no_epic:
+            raise UsageError("pass --epic or --no-epic, not both")
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
+        if source and not epic and not no_epic and type != "epic":
+            from orch.core.epics import parent_epic as epic_of
+            inherited = epic_of(self.ws, source)
+            if inherited is not None and inherited.status != "done":
+                parent_epic = store.resolve(self.ws, inherited.id)
+                self.notices.append(f"created in epic {parent_epic.id} (from {source.id}'s epic)")
         sprint_id = self._sprint(sprint) if sprint else None
         if due is not None:
             from orch.core.due import checked_due
             due = checked_due(due)
         labels = check_labels(labels or [])
         sections = sections or {}
-        unknown = [n for n in sections if n not in SPLIT_SECTIONS]
+        unknown = [n for n in sections if n not in BODY_SECTIONS]
         if unknown:
-            raise UsageError(f"orch new does not fill {unknown[0]!r}", hint="one of: " + ", ".join(SPLIT_SECTIONS))
+            raise UsageError(f"orch new does not fill {unknown[0]!r}", hint="one of: " + ", ".join(BODY_SECTIONS))
+        sections = dict(sections)
+        raw_tasks = sections.pop("Tasks", None)  # YAML, as `orch task add --file` reads it (#216)
+        new_tasks = None
+        if raw_tasks is not None:
+            if not raw_tasks.strip():
+                raw_tasks = None
+            else:
+                from orch.core import tasks as tk
+                new_tasks = tk.build(tasks_from_block(raw_tasks), 1)
+                self._check_needs(new_tasks, {n.id for n in new_tasks})
+        if sections.get("Plan") and type == "epic":
+            raise UsageError("an epic has no plan of its own", hint="its children have plans")
         for name, text in [("Ask", ask), *sections.items()]:
             _check_section_text(name, text)
         unproven = evidence.ticked_without_evidence(Ticket(meta={}, sections=dict(sections)))
@@ -283,6 +305,9 @@ class Ops(TaskOpsMixin):
         ticket.set_section("Ask", ask)
         for name, text in sections.items():
             ticket.set_section(name, text)
+        if new_tasks:
+            from orch.core import tasks as tk
+            ticket.set_section("Tasks", tk.render(new_tasks))
         if external:
             ticket.meta["external"].append(self._external(external))
         if source:
@@ -304,7 +329,10 @@ class Ops(TaskOpsMixin):
                                            **({"epic": parent_epic.id} if parent_epic else {}),
                                            **({"due": due} if due else {}),
                                            **({"labels": labels} if labels else {}),
+                                           **({"tasks": [n.id for n in new_tasks]} if new_tasks else {}),
                                            **({"external": ticket.meta["external"][0]["key"]} if external else {})})
+        for n in new_tasks or []:  # one task.added per task, shaped as `orch task add` records it (#216)
+            self._emit(tid, "task.added", {"tasks": [n.id], "after_approval": False})
         if source:
             def link_back(t: Ticket) -> dict:
                 t.meta.setdefault("follow_ups", []).append(tid)
@@ -414,7 +442,7 @@ class Ops(TaskOpsMixin):
         with the same rules and event as `set_section`."""
         return self._write_section(ref, name, lambda current: f"{current}\n\n{text}" if current.strip() else text)
 
-    def _write_section(self, ref: str, name: str, compose) -> Ticket:
+    def _section_name(self, name: str) -> str:
         canonical = {s.lower(): s for s in SECTIONS}.get(name.strip().lower())
         if canonical is None:
             raise UsageError(f"unknown section {name!r}", hint="one of: " + ", ".join(SECTIONS))
@@ -423,17 +451,26 @@ class Ops(TaskOpsMixin):
         if canonical == "Tasks":
             raise UsageError("the Tasks section changes only through `orch task`",
                              hint="orch task add | edit | start | done | skip | block | reopen")
+        return canonical
+
+    def _put_section(self, t: Ticket, canonical: str, text: str) -> None:
+        """The rules of every section write, shared by one section and several: text that reads back as one
+        section, the Ask's human-only rule (#24), no plan on an epic."""
+        _check_section_text(canonical, text)
+        if canonical == "Ask" and (self.actor.is_human or not agent_wrote_ask(self.ws, t)):  # #24
+            require_human(self.actor, "editing the Ask section")
+        if canonical == "Plan" and t.meta.get("type") == "epic":
+            raise UsageError(f"{t.id} is an epic: it has no plan of its own", hint="its children have plans")
+        t.set_section(canonical, text)
+
+    def _write_section(self, ref: str, name: str, compose) -> Ticket:
+        canonical = self._section_name(name)
         self.warnings = []
 
         def fn(t: Ticket) -> dict:
             text = compose(t.section(canonical))
-            _check_section_text(canonical, text)
-            if canonical == "Ask" and (self.actor.is_human or not agent_wrote_ask(self.ws, t)):  # #24
-                require_human(self.actor, "editing the Ask section")
-            if canonical == "Plan" and t.meta.get("type") == "epic":
-                raise UsageError(f"{t.id} is an epic: it has no plan of its own", hint="its children have plans")
             before = Ticket(meta=t.meta, sections=dict(t.sections))
-            t.set_section(canonical, text)
+            self._put_section(t, canonical, text)
             if canonical == "Acceptance criteria":
                 unproven = evidence.ticked_without_evidence(t, before=before)
                 if unproven:
@@ -445,6 +482,38 @@ class Ops(TaskOpsMixin):
                 from orch.core.body import empty_gate_warnings
                 self.warnings = empty_gate_warnings(t)
             return {"section": canonical}
+
+        return self._mutate(ref, "ticket.edited", fn)
+
+    def set_sections(self, ref: str, sections: dict[str, str]) -> Ticket:
+        """Replace several sections in one locked write (#216), with the rules of `set_section` for each: either all
+        are written, with one Log line and one event, or none is. Evidence written in the same call counts for a
+        ticked criterion. No gate is touched: a changed section only invalidates, as a single write does."""
+        if not sections:
+            raise UsageError("no section given")
+        names: dict[str, str] = {}
+        for raw, text in sections.items():
+            canonical = self._section_name(raw)
+            if canonical in names:
+                raise UsageError(f"{canonical} is given twice")
+            names[canonical] = text
+        self.warnings = []
+
+        def fn(t: Ticket) -> dict:
+            before = Ticket(meta=t.meta, sections=dict(t.sections))
+            for canonical, text in names.items():
+                self._put_section(t, canonical, text)
+            if "Acceptance criteria" in names:
+                unproven = evidence.ticked_without_evidence(t, before=before)
+                if unproven:
+                    raise ValidationError(
+                        "cannot tick " + ", ".join(f"AC{n}" for n in unproven) + " without evidence",
+                        hint="add a line such as `- AC1: <what proved it> (<command or link>)` to Verification first")
+            self._log(t, "updated " + ", ".join(names))
+            if t.status == "backlog" and requirements_required(self.ws, t):
+                from orch.core.body import empty_gate_warnings
+                self.warnings = empty_gate_warnings(t)
+            return {"section": ", ".join(names), "sections": list(names)}
 
         return self._mutate(ref, "ticket.edited", fn)
 
@@ -463,7 +532,8 @@ class Ops(TaskOpsMixin):
             raise UsageError("pass --epic or --no-epic (--sprint or --no-sprint), not both")
         sprint_id = self._sprint(sprint) if sprint else None
         if (branch or worktree) and not repo:
-            raise UsageError("--repo is required with --branch or --worktree")
+            from orch.core import prlink
+            repo = prlink.repo_of(self.ws, None).name  # the only repo; several are refused with their names (#214)
         if pr:
             from orch.core import prlink
             number = prlink.pr_number(pr)
@@ -663,7 +733,9 @@ class Ops(TaskOpsMixin):
         git = self.ws.config.get("git") if isinstance(self.ws.config.get("git"), dict) else {}
         has_repos = bool(git.get("repos")) or (self.ws.root / ".git").exists()
         if has_repos and not t.meta.get("prs") and not t.meta.get("branches"):
-            out.append(f"no branch or PR is linked; link the work with `orch link {t.id} --pr <number>` "
+            from orch.addons.api import workspace_repos
+            where = " --repo <name>" if len(workspace_repos(self.ws)) > 1 else ""
+            out.append(f"no branch or PR is linked; link the work with `orch link {t.id}{where} --pr <number>` "
                        f"or `--branch <name>` so the human finds it")
         return out
 
@@ -789,6 +861,94 @@ class Ops(TaskOpsMixin):
 
         self._mutate(ref, "artifact.added", fn)
         return dest
+
+    def artifact_add_many(self, ref: str, files: list[Path], *, name: str | None = None, context: bool = False,
+                          kind: str | None = None, label: str | None = None, task: str | None = None,
+                          ac: int | None = None, inline: bool = False, replace: bool = False) -> list[Path]:
+        """Add every file in `files` as `artifact_add` does, all or nothing (#215): each file, name, size and target
+        is checked first, then the files are copied and linked in one `_mutate`, so the call either fully succeeds
+        or leaves the ticket and its artifact folder as they were. One Log line and one event name them all.
+        `name` and `inline` take exactly one file; `replace` applies to every file."""
+        from orch.core import artifacts as art
+        files = [Path(f) for f in files]
+        if not files:
+            raise UsageError("no file given")
+        if len(files) > 1 and (name or inline):
+            raise UsageError("--name and --inline take exactly one file", hint="add the files one by one")
+        if len(files) == 1:
+            return [self.artifact_add(ref, files[0], name, context=context, kind=kind, label=label, task=task,
+                                      ac=ac, inline=inline, replace=replace)]
+        entry = store.resolve(self.ws, ref)
+        base = self.ws.artifacts_dir / entry.id
+        label = _artifact_label(label)
+        limit = art.max_bytes(self.ws)
+        plan: list[tuple[Path, str, str, bool]] = []  # (source, stored name, kind, already in the folder)
+        for src in files:
+            if src.is_symlink() or not src.is_file():
+                raise UsageError(f"not a file: {src}")
+            in_place = _inside(src, base)
+            fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(src.name)
+            if not art.safe_name(fname):
+                raise UsageError(f"invalid artifact name {src.name!r}")
+            if any(fname == p[1] for p in plan):
+                raise UsageError(f"{fname} is given twice", hint="rename one of the files; names are unique per ticket")
+            k = _artifact_kind(kind, art.guess_kind(fname))
+            if k == "feedback":
+                require_human(self.actor, "attaching feedback")
+            if src.stat().st_size > limit:
+                raise ValidationError(f"{src.name} is larger than the artifact limit of {limit} bytes",
+                                      hint="attach a smaller excerpt, or link where the full file lives with --url")
+            plan.append((src, fname, k, in_place))
+
+        def fn(t: Ticket) -> dict:
+            _check_artifact_targets(t, task, ac)
+            for _, fname, _, in_place in plan:
+                known = art.find(t, fname)
+                if isinstance(known, dict) and known.get("kind") == "receipt":
+                    raise UsageError(f"{fname} is a receipt: only `orch task done --run` writes it",
+                                     hint="attach your file under another name")
+                if not in_place and (base / fname).exists() and not replace:
+                    raise ValidationError(f"artifact {entry.id}/{fname} already exists",
+                                          hint="rename the file, or pass --replace")
+            created: list[Path] = []
+            backups: list[tuple[Path, Path]] = []  # (dest, where the replaced file waits)
+            items: list[dict] = []
+            try:
+                for src, fname, k, in_place in plan:
+                    dest = base / fname
+                    if not in_place and not self.dry_run:
+                        if dest.exists():
+                            backup = dest.with_name(f".{dest.name}.{os.getpid()}.bak")
+                            os.replace(dest, backup)
+                            backups.append((dest, backup))
+                        else:
+                            created.append(dest)
+                        _copy_capped(src, None, dest, limit)
+                    item = {"name": fname, "kind": k}
+                    if not self.dry_run:
+                        item.update(sha256=art.file_sha256(dest), size=dest.stat().st_size)
+                    item["added"] = stamp()
+                    item["by"] = self.actor.to_str()
+                    item.update(_artifact_extras(label, task, ac, context))
+                    items.append(item)
+            except BaseException:
+                for dest in created:
+                    dest.unlink(missing_ok=True)
+                for dest, backup in backups:
+                    os.replace(backup, dest)
+                raise
+            for _, backup in backups:
+                backup.unlink(missing_ok=True)
+            replaced = [p[1] for p in plan if art.find(t, p[1])]
+            for item in items:
+                _put_entry(t, item, lambda e, n=item["name"]: e.get("name") == n)
+            names = [p[1] for p in plan]
+            self._log(t, f"added {len(names)} artifacts {', '.join(names)}" + _for(task, ac)
+                      + (f" (replaced {', '.join(replaced)})" if replaced else ""))
+            return {"name": ", ".join(names), "names": names, **_artifact_extras(label, task, ac, context)}
+
+        self._mutate(ref, "artifact.added", fn)
+        return [base / p[1] for p in plan]
 
     def artifact_link(self, ref: str, url: str, *, label: str | None = None, kind: str | None = None,
                       task: str | None = None, ac: int | None = None, inline: bool = False,

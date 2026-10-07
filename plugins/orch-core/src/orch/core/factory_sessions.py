@@ -197,7 +197,8 @@ def _key(ws, *parts: str) -> str:
 def arm(ws, actor, delegation: str) -> None:
     """Human only: the human started this factory delegation from the dashboard, so the runner may work for it."""
     human_check(actor, "arming the factory runner")
-    _create(_root() / "armed" / _key(ws, delegation))
+    device = getattr(actor, "device", None)  # a Start from a paired device names it in the marker
+    _create(_root() / "armed" / _key(ws, delegation), {"device": device} if device else None)
 
 
 def armed(ws, delegation: str) -> bool:

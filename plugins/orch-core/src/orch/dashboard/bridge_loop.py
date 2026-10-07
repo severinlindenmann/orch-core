@@ -83,14 +83,39 @@ _ERRORS = {"bad_request": (400, b"This request cannot be read."), "too_large": (
            "timeout": (504, b"This took too long."), "error": (500, b"Something went wrong on the computer.")}
 
 
-def route_hook(routes):
-    """The host library's route hook: the scope the remote gate's own table gives the route this request matches,
-    so a device below it is refused early with a sealed forbidden_scope; None (never remote) for a route without a
-    tag. A tag that depends on the form is read at its lowest scope (no parameters): the gate decides it again on the
-    request as received, so this can only refuse more than the gate, never less. No route here asks the library for
-    an assertion: building the subject a person approves is the AI Factory ticket's (R13); until then a route the
-    gate tags `fresh` is refused by the gate, because no origin is ever fresh."""
-    from orch.dashboard.remote_gate import tag_for
+def _form(meta, data, query: str):
+    """The parameters the gate would read for this request: the query and, for an urlencoded body, the form. None
+    when the body is not an urlencoded form (as in the gate: multipart, no content type), is over the peek limit, or
+    holds a ";" or a non-ASCII byte (the route's form parser reads those differently from a plain split), so the
+    gate's strictest tag applies and no subject is built."""
+    from urllib.parse import parse_qs, parse_qsl
+
+    from orch.dashboard.remote_gate import MAX_PEEK
+    headers = meta.get("headers")
+    ctype = next((str(v) for k, v in (headers.items() if isinstance(headers, dict) else ())
+                  if isinstance(k, str) and k.lower() == "content-type"), "")
+    if ctype.lower().split(";")[0].strip() != "application/x-www-form-urlencoded":
+        return None
+    if not isinstance(data, bytes) or len(data) > MAX_PEEK or b";" in data or not data.isascii():
+        return None
+    params: dict = {}
+    for k, v in parse_qsl(query.replace(";", "&"), keep_blank_values=True):
+        params.setdefault(k, []).append(v)
+    for k, v in parse_qs(data.decode("ascii"), keep_blank_values=True).items():
+        params.setdefault(k, []).extend(v)
+    return params
+
+
+def route_hook(routes, ws=None):
+    """The host library's route hook: what the remote gate's own table needs for the route this request matches.
+    A route that needs a fresh assertion (a permission to allow, the Start of a factory epic, the epic's verdict, a
+    change under a running factory epic) gets Requirement(scope, "fresh", subject): the subject is built from the
+    workspace's LIVE state and the request's own hashes, so the person approves exactly what will be written and a
+    stale request gets no challenge (R13). Without `ws`, or for a fresh route with no subject builder, no assertion
+    is asked for and the gate refuses it (no origin is fresh). The gate decides every route again on the request
+    as received, so this can only refuse more than the gate, never less."""
+    from orch.dashboard.factory_remote import subject
+    from orch.dashboard.remote_gate import factory_need, match_route, tag_for
 
     def hook(meta, data):
         method, target = meta.get("method"), meta.get("path")
@@ -100,11 +125,34 @@ def route_hook(routes):
         path = unquote(raw, errors="strict")
         scope = {"type": "http", "method": method, "path": path, "raw_path": raw.encode("ascii"),
                  "query_string": query.encode("ascii"), "root_path": "", "headers": []}
-        tag = tag_for(routes, scope, {})
+        params = _form(meta, data, query) if ws is not None else {}
+        if ws is None:
+            params = {}
+        tag = tag_for(routes, scope, params)
         if tag is None or tag.scope is None:
             return None
-        return Requirement(tag.scope.name.lower())
+        if ws is None:
+            return Requirement(tag.scope.name.lower())
+        route = match_route(routes, scope)
+        route_path = route.path if route is not None else None
+        pp = route.matches(scope)[1].get("path_params", {}) if route is not None else {}
+        needed, kind = tag.scope, None
+        if route_path == "/permits/{rid}/grant":
+            kind = "permission"
+        n = factory_need(ws, method, route_path, pp, tag)
+        if n is not None:
+            needed, kind = n
+        if kind is None:
+            return Requirement(tag.scope.name.lower())
+        body = data if isinstance(data, bytes) else b""
+        return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body))
     return hook
+
+
+def origin_for(run) -> RemoteOrigin:
+    """The origin the dashboard sees for an authorised run: device, scope and `fresh` from the host's decision only."""
+    return RemoteOrigin(run.device, Scope[run.scope.upper()], str(getattr(run.entry, "label", "") or ""),
+                        run.fresh is True)
 
 
 class RemoteLink:
@@ -363,8 +411,7 @@ class HostLoop:
             return
         self._busy[key] = self._busy.get(key, 0) + 1
         try:
-            origin = RemoteOrigin(run.device, Scope[run.scope.upper()], str(getattr(run.entry, "label", "") or ""),
-                                  run.fresh is True)
+            origin = origin_for(run)
             m = run.meta or {}
             req = BridgeRequest(m.get("method"), m.get("path"), m.get("headers", {}), run.data)
             await (self._stream(run, req, origin) if stream else self._page(run, req, origin))

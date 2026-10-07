@@ -45,6 +45,7 @@
   {% elif not c.rows %}
   <p class="muted">No tasks yet. The agent writes the task list right after claiming the ticket.</p>
   {% else %}
+  {% if c.all_added_since %}<p class="muted tasks-added">All {{ c.rows|length }} tasks were added after the plan approval.</p>{% endif %}
   <ol class="tasks" aria-label="Tasks">
     {% for r in c.rows %}
     <li class="task task-{{ r.state }}" id="task-{{ r.id }}"{% if r.state == "doing" %} aria-current="step"{% endif %}>
@@ -54,21 +55,23 @@
           <span class="task-text">{{ r.text|md_inline|safe }}</span>
           {%- if r.chip %} {% if r.chip.url %}<a class="chip chip-{{ r.chip.role }}" href="{{ r.chip.url }}"><span aria-hidden="true">{{ r.chip.icon }}</span> {{ r.chip.text }}</a>{% else %}{{ ui.status(r.chip.role, r.chip.text) }}{% endif %}{% endif %}
           {%- if r.owner == "human" %} <span class="chip chip-neu task-tag">human task</span>{% endif %}
-          {%- if r.added_after_approval %} <span class="chip chip-neu task-tag">added after approval</span>{% endif %}
-          {%- for i in (arts or {}).get(r.id, []) %} <a class="chip chip-neu task-art" href="{{ i.href if i.href else '#artifacts' }}"{% if i.href %} target="_blank" rel="noopener{{ ' noreferrer' if i.source == 'url' }}"{% endif %}><span aria-hidden="true">{{ "▦" if i.image else ("↗" if i.source == "url" else "▤") }}</span> {{ i.label }}{% if i.ac %} → AC{{ i.ac }}{% endif %}</a>{% endfor %}</p>
+          {%- if r.added_after_approval and not c.all_added_since %} <span class="chip chip-neu task-tag">added after approval</span>{% endif %}
+          {%- for i in (arts or {}).get(r.id, []) %} <a class="chip chip-neu task-art"{% if i.view %} href="{{ i.view }}" data-viewer{% else %} href="{{ i.href if i.href else '#artifacts' }}"{% if i.href %} target="_blank" rel="noopener{{ ' noreferrer' if i.source == 'url' }}"{% endif %}{% endif %}><span class="fi fi-{{ i.icon }}" aria-hidden="true">{{ "↗" if i.icon == "link" else i.badge }}</span> {{ i.label }}{% if i.ac %} → AC{{ i.ac }}{% endif %}</a>{% endfor %}</p>
         {% if r.why %}<p class="task-why muted">{{ "Reason" if r.state == "skipped" else "Why" }}: {{ r.why }}</p>{% endif %}
         {% if r.state == "todo" and r.needs_open %}<p class="muted">waits for {{ r.needs_open|join(", ") }}</p>{% endif %}
         {% if r.refs %}
         <ul class="task-refs">
           {% for ref in r.refs %}
-          <li>{% if ref.url %}<a class="chip chip-link task-ref" href="{{ ref.url }}"{% if ref.external %} target="_blank" rel="noopener"{% endif %}><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.text }}</a>
+          <li>{% if ref.url %}<a class="chip chip-link task-ref" href="{{ ref.url }}"{% if ref.external %} target="_blank" rel="noopener"{% endif %}{% if ref.short != ref.text %} title="{{ ref.text }}"{% endif %}><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.short }}</a>
+            {%- elif ref.kind == "ac" %}<a class="chip chip-neu task-ref" href="#proven" title="{{ ref.text }}"><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.short }}<span class="sr-only">: {{ ref.text }}</span></a>
             {%- else %}<span class="chip chip-neu task-ref"><span aria-hidden="true">{{ ref.icon }}</span> {{ ref.text }}</span>{% endif %}
             {%- if ref.missing %} {{ ui.status("warn", "missing") }}{% endif %}</li>
           {% endfor %}
         </ul>
         {% endif %}
         {% if r.verify and not r.closed %}<p class="task-verify"><span class="task-label">Verify</span> {{ r.verify|md_inline|safe }}</p>{% endif %}
-        {% if r.note %}<p class="task-note muted">{{ "Last note" if r.state == "doing" else "Note" }}: {{ r.note }}</p>{% endif %}
+        {% if r.note and r.closed %}<details class="task-note"><summary class="muted">Note</summary><p class="muted">{{ r.note }}</p></details>
+        {% elif r.note %}<p class="task-note muted">{{ "Last note" if r.state == "doing" else "Note" }}: {{ r.note }}</p>{% endif %}
         {% if r.actions %}
         <details class="task-menu">
           <summary class="btn">Actions<span class="sr-only"> for {{ r.id }}</span></summary>

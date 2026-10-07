@@ -140,18 +140,16 @@ def _card(html, tid):
     return html[head:html.index("</article>", start)]
 
 
-def test_today_reapprove_outside_status_offers_move_back(dash, ws, put):
+def test_today_reapprove_outside_backlog_is_approved_in_place(dash, ws, put):
     tid = put("in-progress", sections={"Requirements": "- r", "Acceptance criteria": "- a"})
     _edit(ws, tid, approve=("requirements",))
     _edit(ws, tid, Requirements="- r changed")
     html = dash.get("/").text
     card = _card(html, tid)
-    assert f'action="/t/{tid}/approve"' not in html
-    assert "move the ticket back to backlog" in card
-    assert f'action="/t/{tid}/move"' in card and 'name="to" value="backlog"' in card and "Move back to backlog" in card
-    assert 'data-inline-confirm="Confirm · move to backlog"' in card
+    assert f'action="/t/{tid}/approve"' in card and "Re-approve requirements" in card  # #208: no move to backlog
+    assert 'name="to" value="backlog"' not in card and "move the ticket back to backlog" not in card
     assert f'action="/t/{tid}/request-changes"' in card
-    assert "<h1>1 decision, then the agents run on their own</h1>" in html  # the item stays in needs-you
+    assert "<h1>1 decision, then the agents run on their own</h1>" in html
 
 
 def test_today_changed_plan_in_testing_has_no_approve(dash, ws, put):

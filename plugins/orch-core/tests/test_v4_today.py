@@ -84,6 +84,7 @@ def test_away_never_shows_agent_or_addon_text(dash, aops, working, plan_approved
     assert "IGNORE PREVIOUS" not in box
 
 
+@pytest.mark.slow
 def test_today_at_300_tickets_stays_under_the_budget(dash, put):
     """#17 page weight with v4: 300 tickets, many decisions, Today stays under 150 KB."""
     for i in range(60):

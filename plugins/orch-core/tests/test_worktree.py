@@ -5,6 +5,7 @@ import subprocess
 import pytest
 
 from orch.errors import UsageError, ValidationError
+from conftest import init_repo
 
 
 def git(cwd, *args):
@@ -14,7 +15,7 @@ def git(cwd, *args):
 
 def make_repo(path):
     path.mkdir(parents=True, exist_ok=True)
-    git(path, "init", "-q", "-b", "main")
+    init_repo(path, "main")
     (path / "README.md").write_text("hub\n", encoding="utf-8")
     git(path, "add", "README.md")
     git(path, "commit", "-q", "-m", "init")

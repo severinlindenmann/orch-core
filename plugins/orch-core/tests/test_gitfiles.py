@@ -6,6 +6,7 @@ import pytest
 
 from orch.cli import run
 from orch.core import gitfiles
+from conftest import init_repo
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -15,9 +16,7 @@ def _git(root, *args):
 
 
 def _git_init(root):
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@example.com")
-    _git(root, "config", "user.name", "t")
+    init_repo(root, identity=True)
 
 
 def _touch(path, text="x"):

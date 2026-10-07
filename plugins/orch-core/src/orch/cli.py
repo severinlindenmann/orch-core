@@ -202,17 +202,23 @@ def new(
     type_: Annotated[str, typer.Option("--type", help="feature|bug|chore|spike|investigation|epic")] = "feature",
     priority: Annotated[str, typer.Option("--priority", help="low|normal|high|urgent")] = "normal",
     size: Annotated[str, typer.Option("--size", help="xs|s|m|l (xs skips the plan gate)")] = "m",
-    from_: Annotated[Optional[str], typer.Option("--from", help="Create as follow-up of this ticket.")] = None,
+    from_: Annotated[Optional[str], typer.Option(
+        "--from", help="Create as follow-up of this ticket. Joins that ticket's epic unless --epic or --no-epic "
+                       "says otherwise; the ticket keeps the follow-up link either way.")] = None,
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
-    epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
+    epic: Annotated[Optional[str], typer.Option(
+        "--epic", help="Create as a child of this epic (also with --from).")] = None,
+    no_epic: Annotated[bool, typer.Option(
+        "--no-epic", help="With --from: do not join the source ticket's epic.")] = False,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
     due: Annotated[Optional[str], typer.Option("--due", help="Due date, YYYY-MM-DD (optional).")] = None,
     label: Annotated[Optional[list[str]], typer.Option(
         "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
         "--body-file", exists=True, dir_okay=False,
-        help="Markdown for the Ask. Its `## Requirements`, `## Acceptance criteria`, `## Out of scope` and "
-             "`## Summary` parts (also `###`) go into those sections.")] = None,
+        help="Markdown for the Ask. A heading naming a section (`## Summary`, `## Requirements`, `## Acceptance "
+             "criteria`, `## Out of scope`, `## Context`, `## Plan`, `## Verification`, ...; also `###`) puts that "
+             "part into the section; `## Tasks` holds the YAML of `orch task add --file`.")] = None,
     requirements_file: Annotated[Optional[Path], typer.Option(
         "--requirements-file", exists=True, dir_okay=False, help="Markdown for the Requirements section.")] = None,
     acceptance_file: Annotated[Optional[Path], typer.Option(
@@ -229,9 +235,10 @@ def new(
     The requirements gate refuses to approve while Requirements or Acceptance criteria are empty: give them here
     (headings in --body-file, or their own files) or later with `orch section set <id> Requirements --file …`.
     The Ask is the request in the requester's words."""
-    from orch.core.body import split_body
+    from orch.core.body import BODY_SECTIONS, split_body
     ws = _ws()
-    ask, sections = split_body(body_file.read_text(encoding="utf-8")) if body_file else ("", {})
+    ask, sections = (split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+                     if body_file else ("", {}))
     for name, f in (("Requirements", requirements_file), ("Acceptance criteria", acceptance_file),
                     ("Out of scope", out_of_scope_file), ("Summary", summary_file)):
         if f is None:
@@ -241,7 +248,9 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections, labels=label, due=due)
+                epic=epic, sprint=sprint, sections=sections, labels=label, due=due, no_epic=no_epic)
+    for notice in ops.notices:
+        typer.echo(notice, err=True)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")
@@ -466,20 +475,49 @@ def state(ref: str, message: MessageOpt = None, file: FileOpt = None, json_out: 
 
 
 @section_app.command("set")
-def section_set(ref: str, name: str, message: MessageOpt = None, file: FileOpt = None, json_out: JsonOpt = False) -> None:
-    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`."""
+def section_set(ref: str,
+                name: Annotated[Optional[str], typer.Argument(help="The section (not with --body-file).")] = None,
+                message: MessageOpt = None, file: FileOpt = None,
+                body_file: Annotated[Optional[Path], typer.Option(
+                    "--body-file", exists=True, dir_okay=False,
+                    help="Markdown whose `## <Section>` headings (Summary, Requirements, Plan, Verification, ...) "
+                         "each replace that section, all in one write: everything or nothing.")] = None,
+                json_out: JsonOpt = False) -> None:
+    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`, or several at once with
+    `orch section set L-0042 --body-file sections.md`."""
     ws = _ws()
     ops = _ops(ws)
-    t = ops.set_section(ref, name, _text(message, file))
+    if body_file is not None:
+        from orch.core.body import BODY_SECTIONS, split_body
+        if name is not None or message is not None or file is not None:
+            raise UsageError("--body-file replaces the section name and -m/--file", hint="use one or the other")
+        loose, parts = split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+        if loose:
+            raise UsageError("the body file has text before its first section heading; that would be the Ask",
+                             hint="put every part under a `## <Section>` heading")
+        if "Tasks" in parts:
+            raise UsageError("a `## Tasks` part is not written by `section set`",
+                             hint="orch task add <id> --file tasks.yaml")
+        if not parts:
+            raise UsageError("the body file names no section", hint="start each part with `## Plan`, `## Requirements`, ...")
+        t = ops.set_sections(ref, parts)
+        label = ", ".join(parts)
+    else:
+        if name is None:
+            raise UsageError("pass the section name, or --body-file")
+        t = ops.set_section(ref, name, _text(message, file))
+        label = name
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
-         f"{t.id}: {name} updated")
+         f"{t.id}: {label} updated")
 
 
 @app.command()
 def link(
     ref: str,
-    repo: Annotated[Optional[str], typer.Option("--repo")] = None,
+    repo: Annotated[Optional[str], typer.Option(
+        "--repo", help="Repo name; optional when the workspace has one repo, required with --branch or "
+                       "--worktree when it has several.")] = None,
     pr: Annotated[Optional[str], typer.Option("--pr", help="PR/MR URL, or its number in --repo (default: the workspace repo).")] = None,
     branch: Annotated[Optional[str], typer.Option("--branch")] = None,
     worktree: Annotated[Optional[str], typer.Option("--worktree")] = None,
@@ -650,7 +688,9 @@ def _keys(ws, raw: str | None) -> list[str]:
 
 
 @app.command()
-def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan | plans (an epic's children)")],
+def approve(ref: str, gate: Annotated[Optional[str], typer.Argument(
+                help="requirements | plan | plans (an epic's children) | all. Without it (or with `all`) every "
+                     "pending gate of the ticket is approved after one confirmation.")] = None,
             despite_open_question: Annotated[bool, typer.Option(
                 "--despite-open-question",
                 help="Approve although a line reads as an open question for you (you read it; it is not one). "
@@ -675,7 +715,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     On an epic this approves its charter: the epic's requirements and every child that is not done (in any status),
     its requirements and its plan, all printed before the typed confirmation; the approval binds exactly what was
     printed. `orch approve <epic> plans` approves only the children's plans that wait for approval (in progress or
-    waiting), each printed with its hash, after one typed confirmation of the epic's key."""
+    waiting), each printed with its hash, after one typed confirmation of the epic's key.
+
+    Without a gate (or with `all`) a backlog ticket whose requirements and plan are both waiting gets both approved in
+    one confirmation (both texts and both hashes printed first, each approval bound to its own hash); otherwise the
+    one gate that waits is approved."""
     from orch.core import epics, store
     ws = _ws()
     delegate = delegate or factory
@@ -685,6 +729,18 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if factory:
         limits["factory"] = True
     target = store.resolve(ws, ref)
+    if gate == "all":
+        gate = None
+    if gate is None and epics.is_epic(target.meta or {}):
+        gate = "requirements"
+    if gate is None:
+        if delegate or only is not None or despite_on is not None:
+            raise UsageError("--delegate, --only and --despite-open-question-on go with an epic or `plans`")
+        cur = store.load(ws, target.id)[1]
+        pending = _pending_gates(ws, cur)
+        if len(pending) == 2:
+            return _approve_both(ws, ref, cur, despite_open_question, dry_run, json_out)
+        gate = pending[0]
     if gate == "plans":
         if delegate:
             raise UsageError("delegation is given when approving an epic's requirements")
@@ -719,10 +775,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         raise UsageError("gate must be requirements or plan")
     cur = store.load(ws, target.id)[1]
     gh = gate_hash(cur, gate)  # what is printed below, read once
+    changes = _changes_text(ws, cur, gate)  # a re-approval: what changed since the approved text, then the full text
     t = _human_op(ws, ref, lambda ops, kw: ops.approve(ref, gate, despite_open_question=despite_open_question, **kw),
-                  lambda p: "\n".join(_gated_text(cur, gate)
+                  lambda p: "\n".join(changes + _gated_text(cur, gate)
                                       + [f"{p.id}: approve the {gate} exactly as shown ({_short(gh)});"
-                                         f" status then {p.status}"]),
+                                         f" status then {p.status}" + (" (kept)" if changes else "")]),
                   bound={"expected_hash": gh}, dry_run=dry_run, json_out=json_out)
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would approve the {gate} ({_short(t.meta['gates'][gate]['hash'])}),"
@@ -733,6 +790,60 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if more:  # the routine case on an epic: one confirmation for the rest
         text += f"\n{len(more)} more plan(s) in epic {parent.id} wait: orch approve {parent.id} plans"
     _out(_view(ws, t), json_out, text)
+
+
+def _changes_text(ws, t, gate: str) -> list[str]:
+    """For a gate approved earlier whose text changed since (state invalidated): the diff against the approved
+    snapshot, hidden characters escaped. Empty otherwise, or when no snapshot was kept."""
+    import difflib
+
+    from orch.core.gates import approved_snapshot, gate_state, normalized_text, snapshot_matches
+    from orch.textsafe import lines
+    if gate_state(t, gate) != "invalidated":
+        return []
+    old = approved_snapshot(ws, t.id, gate)
+    if old is None or not snapshot_matches(t, gate, old):
+        return [f"The {gate} of {t.id} changed since you approved it (no trustworthy snapshot of the approved text: "
+                "no diff is shown)", ""] + ["The full text now:"]
+    diff = [x for x in difflib.unified_diff(old.rstrip("\n").split("\n"), normalized_text(t, gate).rstrip("\n").split("\n"),
+                                           lineterm="", n=2) if not x.startswith(("---", "+++"))]
+    return ([f"Changed since you approved the {gate} of {t.id}:"] + [f"  {y}" for x in diff for y in lines(x)]
+            + ["", "The full text now:"])
+
+
+def _pending_gates(ws, t) -> list[str]:
+    """The gates `orch approve <id>` (no gate) approves: both in backlog when the plan is drafted and its gate exists,
+    else the one that waits (requirements first)."""
+    from orch.core.gates import REAPPROVE_IN_PLACE, gate_state, plan_required
+    from orch.errors import ValidationError
+    rs, ps = gate_state(t, "requirements"), gate_state(t, "plan")
+    drafted = plan_required(ws, t) and bool(t.section("Plan").strip())
+    if rs == "pending" and ps == "pending" and drafted and t.status == "backlog":
+        return ["requirements", "plan"]
+    req = rs == "pending" or (rs == "invalidated" and (t.status == "backlog" or t.status in REAPPROVE_IN_PLACE))
+    plan = (ps == "pending" and drafted) or (ps == "invalidated" and t.status in ("in-progress", "waiting"))
+    if req:
+        return ["requirements"]
+    if plan:
+        return ["plan"]
+    raise ValidationError(f"no gate of {t.id} waits for approval",
+                          hint=f"`orch show {t.id}` shows the gates; name one to approve it: orch approve {t.id} <gate>")
+
+
+def _approve_both(ws, ref: str, cur, despite_open_question: bool, dry_run: bool, json_out: bool) -> None:
+    """One typed confirmation for requirements and plan (Ops.approve_together): both texts and both short hashes are
+    printed first, and each approval is bound to the hash of its own text."""
+    from orch.core.gates import gate_hash
+    rh, ph = gate_hash(cur, "requirements"), gate_hash(cur, "plan")
+    t = _human_op(ws, ref, lambda ops, kw: ops.approve_together(ref, despite_open_question=despite_open_question, **kw),
+                  lambda p: "\n".join(_gated_text(cur, "requirements") + _gated_text(cur, "plan")
+                                      + [f"{p.id}: approve the requirements ({_short(rh)}) and the plan ({_short(ph)}) "
+                                         f"exactly as shown; status then {p.status}"]),
+                  bound={"requirements_hash": rh, "plan_hash": ph}, dry_run=dry_run, json_out=json_out)
+    if dry_run:
+        return _dry(ws, t, json_out, f"{t.id}: would approve the requirements ({_short(rh)}) and the plan "
+                                     f"({_short(ph)}), status then {t.status}")
+    _out(_view(ws, t), json_out, f"{t.id}: requirements and plan approved (status {t.status})")
 
 
 def _approve_plans(ws, target, despite: str | None, only: str | None, dry_run: bool, json_out: bool) -> None:
@@ -1136,16 +1247,18 @@ def ledger_repair() -> None:
 
 @artifact_app.command("add")
 def artifact_add(ref: str,
-                 file: Annotated[Optional[Path], typer.Argument(exists=True, dir_okay=False,
-                                                                help="The file to add (or pass --url).")] = None,
+                 file: Annotated[Optional[list[Path]], typer.Argument(
+                     exists=True, dir_okay=False,
+                     help="The file(s) to add (or pass --url). Several files are added all or nothing.")] = None,
                  url: Annotated[Optional[str], typer.Option("--url", help="Link a web page instead: CI run, dashboard, PR check, report (http/https only).")] = None,
                  label: Annotated[Optional[str], typer.Option("--label", help="What it shows, in a few words.")] = None,
                  kind: Annotated[Optional[str], typer.Option("--kind", help="screenshot, report, log, link, dataset, build, diagram or other (guessed when left out).")] = None,
                  task: Annotated[Optional[str], typer.Option("--task", help="The task it belongs to, e.g. T3.")] = None,
                  ac: Annotated[Optional[int], typer.Option("--ac", help="The acceptance criterion it proves, e.g. 2.")] = None,
                  inline: Annotated[bool, typer.Option("--inline", help="Also write a Verification line for --ac that shows it.")] = False,
-                 name: Annotated[Optional[str], typer.Option("--name")] = None,
-                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite a file of the same name.")] = False,
+                 name: Annotated[Optional[str], typer.Option(
+                     "--name", help="Store the file under this name (one file only).")] = None,
+                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite files of the same name.")] = False,
                  context: Annotated[bool, typer.Option("--context", help="Send it along wherever the ticket is synced (for example to the phone).")] = False,
                  json_out: JsonOpt = False) -> None:
     """Link a file or a URL in the ticket: every screenshot, report, log, dashboard or PR check you produce for it.
@@ -1153,8 +1266,11 @@ def artifact_add(ref: str,
     A file is copied into artifacts/<ticket>/ (a file already there is linked in place); a URL is linked, never
     fetched. Examples:
       orch artifact add L-0042 /tmp/login.png --ac 2 --inline --label "Login after the fix"
+      orch artifact add L-0042 shots/a.png shots/b.png --ac 2   (all files or none; one Log line)
       orch artifact add L-0042 --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"
     """
+    if not file:
+        file = None
     if (file is None) == (url is None):
         raise typer.BadParameter("pass a file or --url (one of them)")
     ws = _ws()
@@ -1163,10 +1279,11 @@ def artifact_add(ref: str,
         item = ops.artifact_link(ref, url, label=label, kind=kind, task=task, ac=ac, inline=inline, context=context)
         _out(item, json_out, f"linked {item['kind']} {item['url']}")
         return
-    dest = ops.artifact_add(ref, file, name, context=context, kind=kind, label=label, task=task, ac=ac,
-                            inline=inline, replace=replace)
-    rel = dest.relative_to(ws.artifacts_dir).as_posix()
-    _out({"artifact": rel}, json_out, f"added artifacts/{rel}")
+    dests = ops.artifact_add_many(ref, file, name=name, context=context, kind=kind, label=label, task=task, ac=ac,
+                                  inline=inline, replace=replace)
+    rels = [d.relative_to(ws.artifacts_dir).as_posix() for d in dests]
+    payload = {"artifact": rels[0]} if len(rels) == 1 else {"artifacts": rels}
+    _out(payload, json_out, "added " + ", ".join(f"artifacts/{r}" for r in rels))
 
 
 @artifact_app.command("list")

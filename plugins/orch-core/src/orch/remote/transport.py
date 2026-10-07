@@ -18,6 +18,7 @@ import os
 LINE_LIMIT = 32 << 20  # one answer line: a poll may carry several sealed requests of up to 1 MiB each
 READY_TIMEOUT = 30.0
 CALL_TIMEOUT = 30.0
+EOF_WAIT = 35.0  # after stdin EOF the relay waits up to 30 s for a poll in flight before its last release
 CODES = frozenset({"host_taken", "lease_lost", "not_owner", "unauthorized", "pending", "rate_limited", "too_large",
                    "bad_request", "no_space", "network", "server", "protocol"})
 
@@ -81,6 +82,12 @@ class Child:
                 if msg.get("event") == "ready" and not self._ready.done():
                     self._ready.set_result(msg)
                     continue
+                if msg.get("ok") is False and msg.get("code") == "protocol" and not isinstance(msg.get("id"), str):
+                    for fut in self._waiting.values():  # an id-less protocol answer: the link is out of step
+                        if not fut.done():
+                            fut.set_exception(TransportError("protocol"))
+                    self._waiting.clear()
+                    break
                 fut = self._waiting.pop(msg.get("id"), None) if isinstance(msg.get("id"), str) else None
                 if fut is not None and not fut.done():
                     fut.set_result(msg)
@@ -116,9 +123,10 @@ class Child:
         code = msg.get("code")
         raise TransportError(code if code in CODES else "protocol")
 
-    async def close(self, timeout: float = 5.0) -> None:
-        """End the child: close its stdin (it releases the lease and exits), then terminate, then kill; only this
-        child's own process."""
+    async def close(self, timeout: float = EOF_WAIT) -> None:
+        """End the child: close its stdin (it releases the lease and exits; with a poll in flight it takes up to
+        30 s, so wait that long, and a child with none exits at once), then terminate, then kill; only this child's
+        own process."""
         proc = self.proc
         if proc is None:
             return

@@ -9,7 +9,7 @@ Run the same steps CI runs, locally:
 ```bash
 cd plugins/orch-core
 uv sync --locked --extra dev --extra dashboard
-uv run pytest -q
+uv run pytest -q -n auto --dist loadfile   # parallel (pytest-xdist); drop -n auto to debug one test
 uv run orch addon check addon-template --strict && uv run pytest -q addon-template/tests
 for m in addons/*/orch-addon.json; do d=${m%/orch-addon.json}; uv run orch addon check "$d" --strict; [ -d "$d/tests" ] && uv run pytest -q "$d/tests"; done
 cd ../..

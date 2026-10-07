@@ -803,6 +803,94 @@ class Ops(TaskOpsMixin):
         self._mutate(ref, "artifact.added", fn)
         return dest
 
+    def artifact_add_many(self, ref: str, files: list[Path], *, name: str | None = None, context: bool = False,
+                          kind: str | None = None, label: str | None = None, task: str | None = None,
+                          ac: int | None = None, inline: bool = False, replace: bool = False) -> list[Path]:
+        """Add every file in `files` as `artifact_add` does, all or nothing (#215): each file, name, size and target
+        is checked first, then the files are copied and linked in one `_mutate`, so the call either fully succeeds
+        or leaves the ticket and its artifact folder as they were. One Log line and one event name them all.
+        `name` and `inline` take exactly one file; `replace` applies to every file."""
+        from orch.core import artifacts as art
+        files = [Path(f) for f in files]
+        if not files:
+            raise UsageError("no file given")
+        if len(files) > 1 and (name or inline):
+            raise UsageError("--name and --inline take exactly one file", hint="add the files one by one")
+        if len(files) == 1:
+            return [self.artifact_add(ref, files[0], name, context=context, kind=kind, label=label, task=task,
+                                      ac=ac, inline=inline, replace=replace)]
+        entry = store.resolve(self.ws, ref)
+        base = self.ws.artifacts_dir / entry.id
+        label = _artifact_label(label)
+        limit = art.max_bytes(self.ws)
+        plan: list[tuple[Path, str, str, bool]] = []  # (source, stored name, kind, already in the folder)
+        for src in files:
+            if src.is_symlink() or not src.is_file():
+                raise UsageError(f"not a file: {src}")
+            in_place = _inside(src, base)
+            fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(src.name)
+            if not art.safe_name(fname):
+                raise UsageError(f"invalid artifact name {src.name!r}")
+            if any(fname == p[1] for p in plan):
+                raise UsageError(f"{fname} is given twice", hint="rename one of the files; names are unique per ticket")
+            k = _artifact_kind(kind, art.guess_kind(fname))
+            if k == "feedback":
+                require_human(self.actor, "attaching feedback")
+            if src.stat().st_size > limit:
+                raise ValidationError(f"{src.name} is larger than the artifact limit of {limit} bytes",
+                                      hint="attach a smaller excerpt, or link where the full file lives with --url")
+            plan.append((src, fname, k, in_place))
+
+        def fn(t: Ticket) -> dict:
+            _check_artifact_targets(t, task, ac)
+            for _, fname, _, in_place in plan:
+                known = art.find(t, fname)
+                if isinstance(known, dict) and known.get("kind") == "receipt":
+                    raise UsageError(f"{fname} is a receipt: only `orch task done --run` writes it",
+                                     hint="attach your file under another name")
+                if not in_place and (base / fname).exists() and not replace:
+                    raise ValidationError(f"artifact {entry.id}/{fname} already exists",
+                                          hint="rename the file, or pass --replace")
+            created: list[Path] = []
+            backups: list[tuple[Path, Path]] = []  # (dest, where the replaced file waits)
+            items: list[dict] = []
+            try:
+                for src, fname, k, in_place in plan:
+                    dest = base / fname
+                    if not in_place and not self.dry_run:
+                        if dest.exists():
+                            backup = dest.with_name(f".{dest.name}.{os.getpid()}.bak")
+                            os.replace(dest, backup)
+                            backups.append((dest, backup))
+                        else:
+                            created.append(dest)
+                        _copy_capped(src, None, dest, limit)
+                    item = {"name": fname, "kind": k}
+                    if not self.dry_run:
+                        item.update(sha256=art.file_sha256(dest), size=dest.stat().st_size)
+                    item["added"] = stamp()
+                    item["by"] = self.actor.to_str()
+                    item.update(_artifact_extras(label, task, ac, context))
+                    items.append(item)
+            except BaseException:
+                for dest in created:
+                    dest.unlink(missing_ok=True)
+                for dest, backup in backups:
+                    os.replace(backup, dest)
+                raise
+            for _, backup in backups:
+                backup.unlink(missing_ok=True)
+            replaced = [p[1] for p in plan if art.find(t, p[1])]
+            for item in items:
+                _put_entry(t, item, lambda e, n=item["name"]: e.get("name") == n)
+            names = [p[1] for p in plan]
+            self._log(t, f"added {len(names)} artifacts {', '.join(names)}" + _for(task, ac)
+                      + (f" (replaced {', '.join(replaced)})" if replaced else ""))
+            return {"name": ", ".join(names), "names": names, **_artifact_extras(label, task, ac, context)}
+
+        self._mutate(ref, "artifact.added", fn)
+        return [base / p[1] for p in plan]
+
     def artifact_link(self, ref: str, url: str, *, label: str | None = None, kind: str | None = None,
                       task: str | None = None, ac: int | None = None, inline: bool = False,
                       context: bool = False) -> dict:

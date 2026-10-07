@@ -1045,16 +1045,18 @@ def ledger_repair() -> None:
 
 @artifact_app.command("add")
 def artifact_add(ref: str,
-                 file: Annotated[Optional[Path], typer.Argument(exists=True, dir_okay=False,
-                                                                help="The file to add (or pass --url).")] = None,
+                 file: Annotated[Optional[list[Path]], typer.Argument(
+                     exists=True, dir_okay=False,
+                     help="The file(s) to add (or pass --url). Several files are added all or nothing.")] = None,
                  url: Annotated[Optional[str], typer.Option("--url", help="Link a web page instead: CI run, dashboard, PR check, report (http/https only).")] = None,
                  label: Annotated[Optional[str], typer.Option("--label", help="What it shows, in a few words.")] = None,
                  kind: Annotated[Optional[str], typer.Option("--kind", help="screenshot, report, log, link, dataset, build, diagram or other (guessed when left out).")] = None,
                  task: Annotated[Optional[str], typer.Option("--task", help="The task it belongs to, e.g. T3.")] = None,
                  ac: Annotated[Optional[int], typer.Option("--ac", help="The acceptance criterion it proves, e.g. 2.")] = None,
                  inline: Annotated[bool, typer.Option("--inline", help="Also write a Verification line for --ac that shows it.")] = False,
-                 name: Annotated[Optional[str], typer.Option("--name")] = None,
-                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite a file of the same name.")] = False,
+                 name: Annotated[Optional[str], typer.Option(
+                     "--name", help="Store the file under this name (one file only).")] = None,
+                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite files of the same name.")] = False,
                  context: Annotated[bool, typer.Option("--context", help="Send it along wherever the ticket is synced (for example to the phone).")] = False,
                  json_out: JsonOpt = False) -> None:
     """Link a file or a URL in the ticket: every screenshot, report, log, dashboard or PR check you produce for it.
@@ -1062,8 +1064,11 @@ def artifact_add(ref: str,
     A file is copied into artifacts/<ticket>/ (a file already there is linked in place); a URL is linked, never
     fetched. Examples:
       orch artifact add L-0042 /tmp/login.png --ac 2 --inline --label "Login after the fix"
+      orch artifact add L-0042 shots/a.png shots/b.png --ac 2   (all files or none; one Log line)
       orch artifact add L-0042 --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"
     """
+    if not file:
+        file = None
     if (file is None) == (url is None):
         raise typer.BadParameter("pass a file or --url (one of them)")
     ws = _ws()
@@ -1072,10 +1077,11 @@ def artifact_add(ref: str,
         item = ops.artifact_link(ref, url, label=label, kind=kind, task=task, ac=ac, inline=inline, context=context)
         _out(item, json_out, f"linked {item['kind']} {item['url']}")
         return
-    dest = ops.artifact_add(ref, file, name, context=context, kind=kind, label=label, task=task, ac=ac,
-                            inline=inline, replace=replace)
-    rel = dest.relative_to(ws.artifacts_dir).as_posix()
-    _out({"artifact": rel}, json_out, f"added artifacts/{rel}")
+    dests = ops.artifact_add_many(ref, file, name=name, context=context, kind=kind, label=label, task=task, ac=ac,
+                                  inline=inline, replace=replace)
+    rels = [d.relative_to(ws.artifacts_dir).as_posix() for d in dests]
+    payload = {"artifact": rels[0]} if len(rels) == 1 else {"artifacts": rels}
+    _out(payload, json_out, "added " + ", ".join(f"artifacts/{r}" for r in rels))
 
 
 @artifact_app.command("list")

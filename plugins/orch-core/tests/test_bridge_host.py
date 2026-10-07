@@ -818,3 +818,51 @@ def test_a_resend_with_another_key_under_the_pending_device_id_is_pairing_closed
             "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, other).hex()}
     v = send(host, env(AUTH, meta, seq=2, device=did(NEW)))  # the pending device's id, another key
     assert (v.result, v.code) == ("refuse", "pairing_closed")  # not a resend: the offer is used
+
+
+# -- rules the mutation check found nothing else pinning ----------------------------------------------------------------
+
+def test_damaged_files_count_against_the_total_cap(tmp_path, clock):
+    first = make_host(tmp_path, clock, max_records=3)
+    for n in range(2):
+        (first.store.dir / (f"{n:02x}" * 16 + ".json")).write_text("not a record", encoding="utf-8")
+    host = make_host(tmp_path, clock, max_records=3)  # reopened: the two damaged files are known
+    assert host.store.damaged and send(host, env(KEY_A, http("/"), seq=1)).result == "accept"
+    v = send(host, env(KEY_A, http("/"), seq=2))
+    assert v.result == "drop" and "StoreFull" in v.why
+
+
+def test_a_request_with_the_refusal_flag_is_dropped(host):
+    assert send(host, env(KEY_A, http("/"), seq=1, flags=E.F_REFUSAL)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1, flags=E.F_LAST)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1)).result == "accept"  # neither consumed the seq
+
+
+def test_a_revoked_devices_refusal_spends_the_host_wide_budget(host, clock):
+    host.registry.revoke(did(KEY_B), NOW)
+    assert send(host, env(KEY_B, http("/"), seq=1)).code == "revoked"
+    host.budget.entries = [NOW] * 10
+    assert send(host, env(KEY_B, http("/"), seq=2)).result == "drop"
+    assert send(host, env(KEY_A, http("/"), seq=1)).result == "accept"  # a verified signature is never dropped
+
+
+def test_a_bad_signature_pair_refusal_counts_against_the_offers_own_budget(tmp_path):
+    case = next(c for c in V.VEC["host_cases"] if c["name"] == "pair_request_device_id_not_of_pub")
+    st = case["steps"][0] if "steps" in case else case
+    clock = V.Clock(st["now_ms"])
+    host = V.host_from_state(tmp_path, case["state"], clock)
+    e, mb = bytes.fromhex(st["envelope"]), st["mailbox_id"]
+    host.budget.entries = [clock.now] * 10  # the host-wide budget is spent: an open offer is not starved by it
+    assert host.check(e, mb).code == "bad_signature"
+    offer = next(iter(host.pairing.offers.values()))
+    offer.budget.entries = [clock.now] * 5  # its own budget is spent too
+    assert host.check(e, mb).result == "drop"
+
+
+def test_a_result_is_stored_once_and_only_for_a_running_record(host):
+    run = host.authorize(send(host, env(KEY_A, http("/"), seq=1)))
+    undecided = send(host, env(KEY_A, http("/"), seq=2))  # recorded, never authorised: not running
+    assert host.finish(undecided.rid and (undecided.rid,), {"status": 200}) is False
+    assert host.finish(run.answer_rids, {"status": 200}, b"one") is True
+    assert host.finish(run.answer_rids, {"status": 500}, b"two") is False
+    assert host.store.get(run.rid, NOW).outcome == {"status": 200}

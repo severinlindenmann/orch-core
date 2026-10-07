@@ -397,7 +397,7 @@ def test_open_with_edited_requirements_offers_move_back(dash, ws, put):
     bar = _bar(html)
     assert f'action="/t/{tid}/approve"' not in html
     assert f'action="/t/{tid}/move"' in bar and 'name="to" value="backlog"' in bar and "Move back to backlog" in bar
-    assert 'data-inline-confirm="Confirm · move to backlog"' in bar  # no browser popup
+    assert 'data-confirm-ok="Move to backlog"' in bar  # no browser popup
 
 
 def test_no_approve_while_changes_requested(dash, ws, put):

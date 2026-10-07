@@ -10,11 +10,11 @@
 <script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
 {#- The ticket as a story (#16): header (L card), status card, then Asked → Agreed → Doing → Proven → Left, the
     agent's notes, and an aside with the timeline (from events), links and files. Every gated text is shown in
-    full above its Approve button; Approve, Accept and moves confirm inline (app.js), and without JS the plain
+    full above its Approve button; Approve, Accept and moves ask in the confirm dialog (confirm.js), and without JS the plain
     POST is still checked by the server against the hash of the text shown. -#}
 
 {% macro approve_form(gv, label, primary=true) %}
-<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ gv.gate }} {{ gv.seen_short|replace('sha256 ', '') }}">
+<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" data-confirm-title="Approve the {{ gv.gate }} of {{ t.id }}?" data-confirm-body="You approve the {{ gv.gate }} exactly as shown above (its hash {{ gv.seen_short|replace('sha256 ', '') }})." data-confirm-ok="Approve {{ gv.gate }}">
   <input type="hidden" name="gate" value="{{ gv.gate }}">
   <input type="hidden" name="seen" value="{{ gv.seen }}">
   {% if gv.question %}
@@ -29,7 +29,7 @@
 {% macro together_form(req, plan) %}
 {#- F2: requirements and plan in one confirm; both texts are shown in full in their sections above, and each hash
     posted is the hash of the text shown. -#}
-<form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ req.seen_short|replace('sha256 ', '') }} + plan {{ plan.seen_short|replace('sha256 ', '') }}">
+<form method="post" action="/t/{{ t.id }}/approve-together" class="inline-confirm-form" data-confirm-title="Approve requirements and plan of {{ t.id }}?" data-confirm-body="Both exactly as shown above: requirements {{ req.seen_short|replace('sha256 ', '') }} and plan {{ plan.seen_short|replace('sha256 ', '') }}." data-confirm-ok="Approve both">
   <input type="hidden" name="seen" value="{{ req.seen }}">
   <input type="hidden" name="seen_plan" value="{{ plan.seen }}">
   {#- every open-question line of both gates: the one override box covers them all -#}
@@ -45,7 +45,7 @@
 {% endmacro %}
 
 {% macro move_form(to, label, primary=false) %}
-<form method="post" action="/t/{{ t.id }}/move" class="inline-confirm-form" data-inline-confirm="Confirm · move to {{ to }}">
+<form method="post" action="/t/{{ t.id }}/move" class="inline-confirm-form" data-confirm-title="Move {{ t.id }} to {{ to }}?" data-confirm-ok="Move to {{ to }}">
   <input type="hidden" name="to" value="{{ to }}">
   <button type="submit" class="btn{{ ' btn-primary' if primary }}">{{ label }}</button>
 </form>
@@ -73,7 +73,7 @@
 <div class="cluster story-actions">
   {% if factory_held %}
   {% elif actions.accept %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ t.id }} as done">
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form stack" data-confirm-title="{{ 'Close ' ~ t.id ~ ' without releasing?' if epic_unreleased else 'Close ' ~ t.id ~ ' as done?' }}" data-confirm-body="Your done verdict, bound to the criteria and evidence shown above{{ '; the release of ' ~ epic_unreleased[0] ~ ' that has not run is skipped for it' if epic_unreleased }}." data-confirm-ok="{{ 'Close without releasing' if epic_unreleased else 'Mark done' }}"{{ ' data-confirm-tone=care' if epic_unreleased }}>
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ verdict_seen }}">
     {% if epic_unreleased %}<label class="field-col" for="child-skip"><span>Why close it without releasing</span><textarea id="child-skip" name="skip_release" required maxlength="300" rows="2"></textarea></label>{% endif %}
     <button type="submit" class="btn btn-primary">{{ "Close without releasing" if epic_unreleased else "Accept, mark done" }}</button>
@@ -120,7 +120,7 @@
 {% endmacro %}
 
 {#- E2: an epic's approval is its charter: the epic's requirements (shown in the gate above) and, per child, its
-    requirements and plan as hashed. One inline confirm; the delegation checkbox sits inside the form. -#}
+    requirements and plan as hashed. One confirm dialog; the delegation checkbox sits inside the form. -#}
 {% macro gated_text(s) %}{% if s.raw %}<p class="muted">Shown as plain text: it has link definitions that formatted text would hide.</p><pre class="gate-raw">{{ s.text }}</pre>{% elif s.text.strip() %}{{ s.text|md|safe }}{% else %}<p class="muted">Empty.</p>{% endif %}{% endmacro %}
 
 {% macro charter_form(e, epic_question) %}
@@ -145,9 +145,9 @@
   {% else %}
   <p class="muted">No open children yet: approving covers the epic only. Children added later need your approval.</p>
   {% endfor %}
-  {% set base = "Confirm · epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
-  {#- app.js rewrites the label when the delegation fields change, so the confirm always says what is signed. -#}
-  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form" autocomplete="off" data-charter-confirm="{{ base }}"{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %} data-inline-confirm="{{ base }} · no delegation">
+  {% set base = "epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
+  {#- confirm.js builds the dialog from the fields as they are when pressed, so it always says what is signed. -#}
+  <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form charter-form" autocomplete="off" data-confirm-build="start" data-confirm-epic="{{ base }}"{% if e.approved %} data-confirm-reapprove{% endif %}{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %}>
     <input type="hidden" name="gate" value="requirements">
     <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
     {% if e.factory %}
@@ -162,9 +162,9 @@
       </div>
       <p class="muted">AI Factory: agents split, specify, approve and build the children; you answer the commands they need on cards, and you give the verdict. Up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, whichever comes first; children of size {{ e.factory.limits.max_size }} or smaller. It replaces the delegation choice below.</p>
       {% if e.factory.dark_on %}
-      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. Release up to Merge, Dev or Production runs the recipe on this machine once the epic is Ready; production only when you choose it and type production, never before its release window opens. Nothing is closed by itself unless you tick Close the epic by itself, which replaces your verdict for this run (Reopen stays yours); otherwise you read the Ready report and give the verdict.</p>
-      <label class="field-col start-dark-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
-        <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false"></label>
+      <p class="muted">Dark AI Factory: the same, and its sessions show no permission prompts. A command outside this checkout's Dark profile is denied and becomes a card here; you still answer cards, larger children and the verdict. Release up to Merge, Dev or Production runs the recipe on this machine once the epic is Ready; production only when you choose it and confirm production, never before its release window opens. Nothing is closed by itself unless you tick Close the epic by itself, which replaces your verdict for this run (Reopen stays yours); otherwise you read the Ready report and give the verdict.</p>
+      <label class="field-col start-dark-only nojs-only" for="confirm-dark-{{ t.id }}"><span>Type <b>dark</b> to confirm: you sign a Dark charter, and its sessions show no permission prompts.</span>
+        <input id="confirm-dark-{{ t.id }}" name="confirm_dark" autocomplete="off" spellcheck="false" data-confirm-word="dark"></label>
       <div class="start-dark-only">{{ fx.release_choice(t.id, e.factory) }}</div>
       <div class="start-dark-only">{{ fx.close_choice(t.id) }}</div>
       {% endif %}
@@ -185,7 +185,7 @@
       I read it: &ldquo;{{ questions[0][:80] }}&rdquo; is not a question for me</label>
     {% endif %}
     {% if e.unready %}<p class="hint" id="epic-approve-why">Cannot approve yet: {{ e.unready|join("; ") }}.</p>{% endif %}
-    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}>{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</button>
+    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}><span class="lbl-approve">{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</span>{% if e.factory %}<span class="lbl-factory">Start AI Factory</span><span class="lbl-dark">Start Dark AI Factory</span>{% endif %}</button>
   </form>
   {{ changes_form("requirements") }}
 </section>
@@ -230,7 +230,7 @@
   <p>{% if d.paused %}{{ ui.status("neu", "paused") }}{% elif d.epic_changed %}{{ ui.status("warn", "suspended: the epic changed") }}{% else %}{{ ui.status("info", "active") }}{% endif %}
     Agents may approve up to {{ d.max_children }} children they add, of size up to {{ d.max_size }}.</p>
   {% if d.active %}
-  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-inline-confirm="Confirm · pause the delegation">
+  <form method="post" action="/t/{{ t.id }}/epic/pause" class="inline-confirm-form" data-confirm-title="Pause the delegation?" data-confirm-body="Agents approve no more children of this epic. The ones approved so far stay approved." data-confirm-ok="Pause delegation">
     <button type="submit" class="btn">Pause delegation</button>
   </form>
   {% endif %}
@@ -261,7 +261,7 @@
   {% endfor %}
   {% if e.verdict_ready and e.unreleased %}{{ pm.skip_release_form(t.id, e.verdict_seen, "", e.unreleased) }}
   {% elif e.verdict_ready %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ t.id }} and {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}">
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-confirm-title="Accept {{ t.id }} and close {{ e.proof|length }} {{ 'child' if e.proof|length == 1 else 'children' }}?" data-confirm-body="Your done verdict for the epic, bound to these children and their evidence as shown above." data-confirm-ok="Accept and close">
     <input type="hidden" name="verdict" value="done">
     <input type="hidden" name="seen" value="{{ e.verdict_seen }}"><button type="submit" class="btn btn-primary">Accept the epic and close {{ e.proof|length }} {{ "child" if e.proof|length == 1 else "children" }}</button>
   </form>
@@ -298,7 +298,7 @@
         </form>
         {% endif %}
         {% if actions.release and not stale %}
-        <form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
+        <form method="post" action="/t/{{ t.id }}/release" data-confirm-title="Release {{ claim.get('harness') or 'the agent' }}'s claim on {{ t.id }}?" data-confirm-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>
         {% endif %}
         <form method="post" action="/t/{{ t.id }}/comment" class="stack" id="comment" data-delayed-send="Adding your comment to {{ t.id }}">
           <label for="comment-text">Comment for the agent</label>
@@ -307,7 +307,8 @@
         </form>
         <form method="post" action="/t/{{ t.id }}/artifacts" enctype="multipart/form-data" class="stack" id="upload">
           <label for="upload-files">Add files</label>
-          <input id="upload-files" type="file" name="files" multiple required>
+          <input id="upload-files" type="file" name="files" multiple required data-dropzone data-max-bytes="{{ upload_max }}">
+          <span class="muted nojs-files">Up to {{ (upload_max / 1048576)|round(1)|replace('.0', '') }} MB per file.</span>
           <button type="submit" class="btn">Upload</button>
         </form>
         {% if start_box and start_box.disabled %}
@@ -351,7 +352,7 @@
     {% if a.kind == "factory" %}<a class="btn" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
     {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
     {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
-    {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}
+    {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-confirm-title="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-confirm-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}
   </div>
   {% if card_qids %}{% for q in questions if q.id in card_qids %}{{ question_form(q) }}{% endfor %}{% endif %}
   {% for m in move.more %}

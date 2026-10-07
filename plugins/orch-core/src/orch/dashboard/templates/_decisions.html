@@ -1,8 +1,8 @@
 {#- Decision cards (design system DecisionCard), one macro per card so Today and the one-by-one groom view draw the
     same card. `card(d, back_to, kind_labels, addon_inline, card_anchor)` with `d` a data.decisions.Decision.
     Rules: the full gated text before any Approve, the hash posted is the hash shown, the open-question override
-    sits inside the same confirm; approve and verdict confirm inline (data-inline-confirm, app.js), release in a
-    dialog (data-dialog), answers and messages are sent after a 5 s Undo (data-delayed-send). No textarea is open
+    sits inside the same confirm; approve, verdict and release ask in the one confirm dialog
+    (data-confirm-*, confirm.js), answers and messages are sent after a 5 s Undo (data-delayed-send). No textarea is open
     by default: "Request changes…", "Send back…" and "Write another answer…" are folded. Everything posts as a
     plain form without JS. -#}
 {% import "_ui.html" as ui %}
@@ -97,9 +97,9 @@
 {% endif %}
 {% endmacro %}
 
-{#- The single-gate Approve, bound to the hash of the full text shown above it (`d.seen`); its own inline confirm. -#}
+{#- The single-gate Approve, bound to the hash of the full text shown above it (`d.seen`); its own confirm dialog. -#}
 {% macro approve_form(d, back_to, kind_labels) %}
-<form method="post" action="/t/{{ d.ticket }}/approve" class="inline-confirm-form" data-inline-confirm="Confirm · {{ d.gate }} {{ d.seen_short|replace('sha256 ', '') }}"
+<form method="post" action="/t/{{ d.ticket }}/approve" class="inline-confirm-form" data-confirm-title="Approve the {{ d.gate }} of {{ d.ticket }}?" data-confirm-body="You approve the {{ d.gate }} exactly as shown on this card (its hash {{ d.seen_short|replace('sha256 ', '') }})." data-confirm-ok="Approve {{ d.gate }}"
       data-receipt="{{ d.gate|capitalize }} of {{ d.ticket }} approved ({{ d.seen_short|replace('sha256 ', '') }})">
   <input type="hidden" name="gate" value="{{ d.gate }}">
   <input type="hidden" name="seen" value="{{ d.seen }}">
@@ -116,9 +116,9 @@
 <p class="muted" data-factory-held="{{ eid }}">{{ ui.status("neu", "In the factory") }} Part of <a class="lnk key" href="/factory/{{ eid }}">{{ eid }}</a>: the epic's release and verdict come first. Nothing for you to do yet.</p>
 {% endmacro %}
 
-{#- Accept (inline confirm) and the folded Send back, both bound to the verdict hash of what the card shows. -#}
+{#- Accept (confirm dialog) and the folded Send back, both bound to the verdict hash of what the card shows. -#}
 {% macro verdict_forms(d, back_to) %}
-<form method="post" action="/t/{{ d.ticket }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ d.ticket }} as done"
+<form method="post" action="/t/{{ d.ticket }}/verdict" class="inline-confirm-form" data-confirm-title="Close {{ d.ticket }} as done?" data-confirm-body="Your done verdict, bound to the criteria and evidence shown." data-confirm-ok="Mark done"
       data-receipt="{{ d.ticket }} accepted and done">
   <input type="hidden" name="next" value="{{ back_to }}"><input type="hidden" name="seen" value="{{ d.seen }}">
   <button type="submit" class="btn btn-primary" name="verdict" value="done" data-key-primary>Accept, mark done</button>
@@ -202,7 +202,7 @@
     <p class="hint">{{ d.hint.text }}</p>
     <div class="cluster dc-actions">
       {% if d.hint.action and d.hint.action.kind == "move" %}
-      <form method="post" action="/t/{{ d.ticket }}/move" class="inline-confirm-form" data-inline-confirm="Confirm · move to {{ d.hint.action.to }}">
+      <form method="post" action="/t/{{ d.ticket }}/move" class="inline-confirm-form" data-confirm-title="Move {{ d.ticket }} to {{ d.hint.action.to }}?" data-confirm-ok="Move to {{ d.hint.action.to }}">
         <input type="hidden" name="to" value="{{ d.hint.action.to }}">
         <input type="hidden" name="next" value="{{ back_to }}">
         <button type="submit" class="btn btn-primary" data-key-primary>{{ d.hint.action.label }}</button>
@@ -217,7 +217,7 @@
       {% if d.together %}
       {#- F2: both gates in one confirm, each bound to the hash of the text shown above. -#}
       {% set qs = d.together.questions %}
-      <form method="post" action="/t/{{ d.ticket }}/approve-together" class="inline-confirm-form" data-inline-confirm="Confirm · requirements {{ d.seen_short|replace('sha256 ', '') }} + plan {{ d.together.seen_short|replace('sha256 ', '') }}"
+      <form method="post" action="/t/{{ d.ticket }}/approve-together" class="inline-confirm-form" data-confirm-title="Approve requirements and plan of {{ d.ticket }}?" data-confirm-body="Both exactly as shown: requirements {{ d.seen_short|replace('sha256 ', '') }} and plan {{ d.together.seen_short|replace('sha256 ', '') }}." data-confirm-ok="Approve both"
             data-receipt="Requirements and plan of {{ d.ticket }} approved">
         <input type="hidden" name="seen" value="{{ d.seen }}">
         <input type="hidden" name="seen_plan" value="{{ d.together.seen }}">
@@ -289,8 +289,8 @@
     <p>{{ ui.status("warn", d.detail) }}</p>
     <p class="dc-ff muted">{{ d.feedforward }}</p>
     <div class="cluster dc-actions">
-      <form method="post" action="/t/{{ d.ticket }}/release" data-dialog="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?"
-            data-dialog-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim">
+      <form method="post" action="/t/{{ d.ticket }}/release" data-confirm-title="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?"
+            data-confirm-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim">
         <input type="hidden" name="ask" value="1">
         <input type="hidden" name="next" value="{{ back_to }}">
         <button type="submit" class="btn btn-primary" data-key-primary>Release claim…</button>

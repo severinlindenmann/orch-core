@@ -75,7 +75,7 @@
           <li class="dc-row" data-ticket="{{ d.ticket }}" data-kind="stale-claim">
             <a class="lnk key" href="/t/{{ d.ticket }}">{{ d.ticket }}</a> <span class="dc-row-title">{{ d.title }}</span>
             <span class="muted">{{ d.detail }}</span>
-            <form method="post" action="/t/{{ d.ticket }}/release" data-dialog="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?" data-dialog-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn-quiet">Release claim…</button></form>
+            <form method="post" action="/t/{{ d.ticket }}/release" data-confirm-title="Release {{ d.harness or 'the agent' }}'s claim on {{ d.ticket }}?" data-confirm-body="{{ d.ticket }} goes back to open and any agent can claim it. Branch and notes stay." data-confirm-ok="Release claim" data-confirm-cancel="Keep claim"><input type="hidden" name="ask" value="1"><input type="hidden" name="next" value="/"><button type="submit" class="btn btn-quiet">Release claim…</button></form>
           </li>
           {% endfor %}
         </ul>

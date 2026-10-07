@@ -127,8 +127,9 @@ def test_start_needs_the_hash_the_page_showed(fws, fa, fd):
 
 
 def test_confirm_label_says_it_starts_a_factory():
-    js = (__import__("pathlib").Path(__import__("orch").__file__).parent / "dashboard/static/app.js").read_text()
-    assert 'FACTORY_START = "start the AI Factory: "' in js  # string check; behaviour: tests/js/factory_forms.js
+    js = (__import__("pathlib").Path(__import__("orch").__file__).parent / "dashboard/static/confirm.js").read_text()
+    # string check; behaviour: tests/js/factory_forms.js and tests/js/confirm_dialog.js
+    assert 'title: dark ? "Start this Dark run?" : "Start this AI Factory run?"' in js and '"Start AI Factory"' in js
 
 
 # -- the cards -----------------------------------------------------------------------------------------------------

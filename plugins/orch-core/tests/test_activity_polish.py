@@ -62,7 +62,7 @@ def test_release_claim_is_quiet_and_the_action_column_never_clips(dash, put):
     tid = put("in-progress", claim={"harness": "claude-code", "session": "s1", "at": stamp(now() - timedelta(hours=9))})
     html = dash.get("/activity").text
     form = html.split(f'action="/t/{tid}/release"', 1)[1].split("</form>", 1)[0]
-    assert "data-dialog=" in html.split(f'action="/t/{tid}/release"', 1)[1][:200]
+    assert "data-confirm-title=" in html.split(f'action="/t/{tid}/release"', 1)[1][:200]
     assert f'<button class="btn btn-quiet" type="submit" aria-label="Release claim on {tid}">Release…</button>' in form
     assert '<td class="cell-action col-actions">' in html
     assert re.search(r"\.agents-table \.col-actions \{ width: 1%; white-space: nowrap; \}", CSS.read_text(encoding="utf-8"))

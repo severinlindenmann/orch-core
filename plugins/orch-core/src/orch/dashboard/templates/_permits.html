@@ -1,5 +1,5 @@
 {#- AI Factory (#2, phase 2): permission cards and standing grants. Every answer is a form of its own with the page's
-    inline confirm (no popups), bound to the sha256 of the command the card shows. Command and reason arrive escaped
+    confirm dialog (no popups) where it asks, bound to the sha256 of the command the card shows. Command and reason arrive escaped
     (permits.shown): nothing the agent wrote can hide in them. -#}
 {% import "_ui.html" as ui %}
 
@@ -13,7 +13,8 @@
   {% if r.source == "dark" %}<p class="permit-dark">This command is not in the Dark profile, so the Dark factory did not run it.{% if r.profile and not r.compound %} Add it, and this exact command runs from now on in Dark epics of this checkout.{% endif %}</p>{% endif %}
   <div class="actions">
     {% for label, scope, action in (("Grant once", "once", "grant"), ("Grant for this epic", "epic", "grant"), ("Deny", "", "deny")) %}
-    <form method="post" action="/permits/{{ r.id }}/{{ action }}" class="inline-confirm-form" data-inline-confirm="Confirm · {{ label|lower }} · {{ r.id }}">
+    {#- Grant once and Deny answer at once; a grant for the whole epic asks first. -#}
+    <form method="post" action="/permits/{{ r.id }}/{{ action }}" class="inline-confirm-form"{% if scope == "epic" %} data-confirm-title="Grant this command for the whole epic?" data-confirm-body="Agents in epic {{ r.epic }} may run this exact command from now on, until you revoke the grant." data-confirm-ok="Grant for this epic" data-confirm-tone="care" data-confirm-stays="Revoke, under Standing grants on the epic."{% endif %}>
       <input type="hidden" name="sha" value="{{ r.sha }}"><input type="hidden" name="next" value="{{ back }}">
       {% if scope %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
       <button type="submit" class="btn{{ ' btn-primary' if scope == 'once' }}">{{ label }}</button>
@@ -22,7 +23,7 @@
     {% if r.profile and r.compound %}
     <p class="muted permit-compound" data-compound>This command is not one plain command (it chains, pipes, redirects or substitutes), so no prefix rule ever matches it and an exact rule matches only this identical text, which agents rarely repeat: adding it would not help. Grant once or Deny.</p>
     {% elif r.profile %}
-    <form method="post" action="/permits/{{ r.id }}/profile" class="inline-confirm-form" data-inline-confirm="Confirm · add to the Dark profile · {{ r.id }}">
+    <form method="post" action="/permits/{{ r.id }}/profile" class="inline-confirm-form" data-confirm-title="Add this command to the Dark profile?" data-confirm-body="This exact command then runs without a card in every Dark epic of this checkout." data-confirm-ok="Add to profile" data-confirm-tone="care" data-confirm-stays="Removing it again, with orch dark profile in your terminal.">
       <input type="hidden" name="sha" value="{{ r.sha }}"><input type="hidden" name="next" value="{{ back }}">
       <button type="submit" class="btn">Add to the Dark profile</button>
     </form>
@@ -90,7 +91,7 @@
   {% elif r.auto %}<p data-auto-not>Not closed by itself: {{ (r.auto.blockers|rejectattr("pending")|first).text }}. You can accept it yourself.</p>{% endif %}
   <div class="actions">
     {% if r.unreleased %}{{ skip_release_form(r.epic, r.seen, back, r.unreleased) }}{% else %}
-    <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · accept {{ r.epic }} and {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}">
+    <form method="post" action="/t/{{ r.epic }}/verdict" class="inline-confirm-form" data-confirm-title="Accept {{ r.epic }} and close {{ r.open }} {{ 'child' if r.open == 1 else 'children' }}?" data-confirm-body="Your done verdict for the epic, bound to these children and their evidence as shown on this card." data-confirm-ok="Accept and close">
       <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ r.seen }}"><input type="hidden" name="next" value="{{ back }}">
       <button type="submit" class="btn btn-primary">Accept the epic and close {{ r.open }} {{ "child" if r.open == 1 else "children" }}</button>
     </form>{% endif %}
@@ -104,9 +105,9 @@
 {% macro skip_release_form(eid, seen, back, stages) %}
 <div class="stack" id="unrun-{{ eid }}" data-release-unrun="{{ eid }}">
   <p>{{ ui.status("warn", "Not released") }} The release has not run; closing now skips it ({{ stages|join(", ") }} not proven yet). The runner releases it once the epic is Ready; or close it yourself without releasing.</p>
-  <form method="post" action="/t/{{ eid }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ eid }} without releasing">
+  <form method="post" action="/t/{{ eid }}/verdict" class="inline-confirm-form stack" data-confirm-title="Close {{ eid }} without releasing?" data-confirm-body="The release that has not run ({{ stages|join(', ') }}) is skipped. Your reason is recorded with the verdict." data-confirm-items='[{"icon": "flag", "text": "The epic and its children close as done"}, {"icon": "up", "tone": "care", "text": "The release is skipped: nothing more is merged or deployed"}]' data-confirm-field="skip_release" data-confirm-field-label="Why close it without releasing (required)" data-confirm-tone="care" data-confirm-ok="Close without releasing" data-confirm-stays="Reopen, with a reason.">
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ seen }}">{% if back %}<input type="hidden" name="next" value="{{ back }}">{% endif %}
-    <label>Why close it without releasing <input name="skip_release" required maxlength="300" autocomplete="off"></label>
+    <label class="nojs-only">Why close it without releasing <input name="skip_release" required maxlength="300" autocomplete="off"></label>
     <button type="submit" class="btn">Close without releasing</button>
   </form>
 </div>
@@ -131,7 +132,7 @@
 
 {% macro grant_row(g, back) %}
 <li class="permit-grant" id="grant-{{ g.grant }}" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code> <span class="muted">{{ "for this epic" if g.scope == "epic" else "once, unused" }}</span>
-  <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-inline-confirm="Confirm · revoke this grant">
+  <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-confirm-title="Revoke this grant?" data-confirm-body="Agents can no longer run this command without a card." data-confirm-ok="Revoke grant">
     <input type="hidden" name="next" value="{{ back }}"><button type="submit" class="btn btn-quiet">Revoke</button>
   </form></li>
 {% endmacro %}

@@ -188,8 +188,8 @@ def test_decisions_page_scans_and_reads_once(dash, ws, put, aops, monkeypatch):
 def test_accept_asks_for_confirmation_like_the_ticket_page(dash, put):
     tid = put("testing", sections={"Verification": "ok"})
     html = dash.get("/").text
-    assert f'data-inline-confirm="Confirm · close {tid} as done"' in html and "data-confirm=" not in html
-    assert f'data-inline-confirm="Confirm · close {tid} as done"' in dash.get(f"/t/{tid}").text  # no browser popup
+    assert f'data-confirm-title="Close {tid} as done?"' in html and "data-confirm=" not in html
+    assert f'data-confirm-title="Close {tid} as done?"' in dash.get(f"/t/{tid}").text  # the dialog, no browser popup
 
 
 def test_other_answer_has_its_own_form(dash, put, aops):

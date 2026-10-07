@@ -210,6 +210,26 @@ def test_the_page_shows_the_ticket_view_without_has_or_js():
     assert "box.dataset.mode = mode" in js and "form[data-new-form]" in js
 
 
+def test_the_confirm_dialog_only_fills_words_the_server_still_requires(dws):
+    """With JS the confirm dialog (confirm.js) fills confirm_dark after the person confirms; without JS the same input
+    is typed into, shown in a .nojs-only block. Either way the server requires the word: a post without it (a forged
+    one, or a dialog that never ran) creates nothing."""
+    c = _client(dws)
+    html = c.get("/new").text
+    form = html.split('<form class="card form-card" method="post" action="/new"', 1)[1].split("</form>", 1)[0]
+    assert 'data-new-form data-confirm-build="start"' in form
+    word = form.split('<label class="field-col only-dark nojs-only" for="confirm_dark">', 1)[1].split("</label>", 1)[0]
+    assert re.search(r'<input id="confirm_dark" name="confirm_dark"[^>]*data-confirm-word="dark"', word)
+    assert not re.search(r'name="confirm_(dark|production)"[^>]*value=', form)  # never pre-filled: typed, or filled on confirm
+    before = len(list(dws.tickets_dir.rglob("*.md")))
+    for forged in ({"confirm_dark": ""}, {"confirm_dark": "yes"}, {"confirm_dark": "", "release": "none"}):
+        r = _new(c, "dark", **forged)
+        assert r.status_code == 422 and "Type dark to start a Dark AI Factory" in r.text
+    data = {"title": "x", "mode": "dark", "ask": ASK, "done_when": DONE, "once": _once(c)}  # no confirm_dark at all
+    assert _post(c, "/new", **data).status_code == 422
+    assert len(list(dws.tickets_dir.rglob("*.md"))) == before
+
+
 def test_a_refused_dark_post_keeps_the_dark_view(dws):
     r = _new(_client(dws), "dark", confirm_dark="")
     assert r.status_code == 422 and 'data-mode="dark"' in r.text and re.search(r'id="mode-dark"[^>]*checked', r.text)
@@ -360,8 +380,11 @@ def test_the_epic_page_offers_dark_only_while_dark_is_on_and_needs_the_word(fws,
     assert radios == ["", "factory", "dark"] and 'type="checkbox" name="dark"' not in page
     assert 'type="checkbox" name="factory"' not in page
     assert re.search(r'name="start" value=""\s+checked', page)  # None is the default
-    field = page.split('class="field-col start-dark-only"', 1)[1].split("</label>", 1)[0]
-    assert 'name="confirm_dark"' in field  # the typed word sits in the Dark-only field
+    field = page.split('class="field-col start-dark-only nojs-only"', 1)[1].split("</label>", 1)[0]
+    # the typed word sits in the Dark-only field, shown without JS; with JS the dialog fills it in after you confirm
+    assert 'name="confirm_dark"' in field and 'data-confirm-word="dark"' in field
+    form = page.split('action="/t/' + e.id + '/approve" class="inline-confirm-form charter-form"', 1)[1].split("</form>", 1)[0]
+    assert 'data-confirm-build="start"' in page and '<span class="lbl-dark">Start Dark AI Factory</span>' in form
     assert "its sessions show no permission prompts" in page and "you answer the commands they need on cards" in page
     for gone in ("nothing asks you", "without asking you", "no permission prompts in the session"):
         assert gone not in page
@@ -866,8 +889,8 @@ def test_the_new_page_shows_each_modes_fields_only(dws):
     html = _client(dws).get("/new").text
     css = (STATIC / "app.css").read_text()
     expect = {  # needle: the modes it is shown in
-        "Create ticket": {"ticket"}, "Create and start the AI Factory": {"factory"},
-        "Create and start the Dark AI Factory": {"dark"}, "Type dark to confirm": {"dark"},
+        "Create ticket": {"ticket"}, "Start AI Factory": {"factory"},
+        "Start Dark AI Factory": {"dark"}, "Type dark to confirm": {"dark"},
         "becomes the epic's Acceptance criteria": {"factory", "dark"},
         "Creates an epic and starts it at once.": {"factory", "dark"},
         "An agent turns the ask into requirements": {"ticket"},
@@ -884,8 +907,10 @@ def test_the_new_page_shows_each_modes_fields_only(dws):
 
 def test_the_empty_profile_note_sits_in_the_dark_field(dws):
     html = _client(dws).get("/new").text
-    field = html.split('<label class="field-col only-dark" for="confirm_dark">', 1)[1].split("</label>", 1)[0]
-    assert 'data-profile-empty' in field and '<p class="muted only-dark" data-profile-empty' not in html
+    # next to the Dark fields and outside the no-JS typed word, so it shows with JS too (the dialog asks the word)
+    word = html.split('<label class="field-col only-dark nojs-only" for="confirm_dark">', 1)[1].split("</label>", 1)
+    assert 'data-confirm-word="dark"' in word[0] and "data-profile-empty" not in word[0]
+    assert word[1].lstrip().startswith('<p class="field-col only-dark"><span class="muted" data-profile-empty')
 
 
 # -- the runner's sessions cannot write files under a prompting permission mode ----------------------------------------

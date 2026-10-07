@@ -161,7 +161,7 @@ def test_addon_page_renders_widgets_escaped_with_core_csp(client, ws):
     assert r.status_code == 200 and r.headers["content-security-policy"] == PAGE_CSP
     assert XSS not in r.text and "&lt;script&gt;alert(1)&lt;/script&gt;" in r.text
     assert "Branch" in r.text and "main" in r.text and "<h1>Demo status</h1>" in r.text
-    assert 'action="/addons/demo/actions/rerun"' in r.text and 'data-dialog="Rerun the failed checks?"' in r.text
+    assert 'action="/addons/demo/actions/rerun"' in r.text and 'data-confirm-title="Rerun the failed checks?"' in r.text
     assert 'action="/addons/demo/refresh"' in r.text
 
 

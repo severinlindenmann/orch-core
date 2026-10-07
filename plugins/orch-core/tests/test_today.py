@@ -149,7 +149,7 @@ def test_today_reapprove_outside_status_offers_move_back(dash, ws, put):
     assert f'action="/t/{tid}/approve"' not in html
     assert "move the ticket back to backlog" in card
     assert f'action="/t/{tid}/move"' in card and 'name="to" value="backlog"' in card and "Move back to backlog" in card
-    assert 'data-inline-confirm="Confirm · move to backlog"' in card
+    assert 'data-confirm-ok="Move to backlog"' in card
     assert f'action="/t/{tid}/request-changes"' in card
     assert "<h1>1 decision, then the agents run on their own</h1>" in html  # the item stays in needs-you
 

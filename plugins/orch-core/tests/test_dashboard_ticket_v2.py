@@ -141,7 +141,7 @@ def test_release_asks_and_times_are_local(dash, put):
     tid = put("open", claim={"harness": "claude-code", "session": "7f3a0000", "at": "2026-09-30T09:00Z"})
     html = dash.get(f"/t/{tid}").text
     # a stale claim: in the status card, confirmed in a dialog (careful tier), never a browser popup
-    assert f'data-dialog="Release claude-code\'s claim on {tid}?"' in html
+    assert f'data-confirm-title="Release claude-code\'s claim on {tid}?"' in html
     assert f'title="{local(parse_stamp("2026-09-30T09:00Z"))}"' in html
 
 

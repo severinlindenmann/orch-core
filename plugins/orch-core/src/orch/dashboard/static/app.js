@@ -264,213 +264,41 @@
     return { ok: response.ok && !url.searchParams.get("err"), msg: url.searchParams.get("msg"), err: url.searchParams.get("err"), url };
   };
 
-  // ---------- Careful tier: an in-page <dialog> (design system Dialog), never a browser popup ----------
-  // For forms with data-dialog (release, trust, revoke, tidy, addon actions). Focus starts on the safe button, Esc
-  // cancels, a click outside does nothing, focus returns to the opener. The form carries ask=1, so without JS the
-  // server shows a confirm page first; confirming here clears it and posts the form.
-  let dialogEl = null;
+  // ---------- Confirmations: the one confirm dialog in confirm.js (data-confirm-*), never a browser popup ----------
+  // confirm.js stops a form's first submit before this file sees it and sends it again once the person confirms. An
+  // open dialog means someone is deciding: no live swap and no shortcut fires meanwhile.
   const dialogOpen = () => Boolean(document.querySelector && document.querySelector("dialog[open]"));
-  const makeDialog = () => {
-    if (dialogEl) return dialogEl;
-    dialogEl = document.createElement("dialog");
-    dialogEl.className = "dialog-sheet overlay orch-dialog";
-    dialogEl.setAttribute("aria-labelledby", "orch-dialog-title");
-    const title = document.createElement("h2");
-    title.id = "orch-dialog-title";
-    const body = document.createElement("p");
-    body.className = "orch-dialog-body";
-    const row = document.createElement("div");
-    row.className = "cluster dialog-actions";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "btn";
-    const ok = document.createElement("button");
-    ok.type = "button";
-    row.append(cancel, ok);
-    dialogEl.append(title, body, row);
-    document.body.append(dialogEl);
-    return dialogEl;
-  };
-  const openDialog = (form, opener) => {
-    if (!window.HTMLDialogElement) return false;  // no <dialog>: the server's confirm page asks instead
-    const d = makeDialog();
-    const [cancel, ok] = d.querySelectorAll("button");
-    d.querySelector("h2").textContent = form.dataset.dialog;
-    const body = d.querySelector(".orch-dialog-body");
-    body.textContent = form.dataset.dialogBody || "";
-    body.hidden = !form.dataset.dialogBody;
-    cancel.textContent = form.dataset.dialogCancel || "Cancel";
-    ok.textContent = form.dataset.dialogConfirm || ((opener && opener.textContent) || "Confirm").replace(/…\s*$/, "").trim();
-    ok.className = "btn " + ("dialogDanger" in form.dataset ? "btn-danger" : "btn-primary");
-    const back = opener || form.querySelector("button[type=submit], button:not([type])");
-    const close = (confirmed) => {
-      d.close();
-      if (!confirmed) {
-        if (back && back.isConnected) back.focus();
-        return;
-      }
-      const ask = form.querySelector('input[name="ask"]');
-      if (ask) ask.value = "";
-      form.dataset.dialogConfirmed = "1";
-      if (form.requestSubmit) form.requestSubmit(opener && opener.form === form ? opener : undefined);
-      else form.submit();
-    };
-    cancel.onclick = () => close(false);
-    ok.onclick = () => close(true);
-    d.oncancel = (event) => { event.preventDefault(); close(false); };  // Esc
-    d.showModal();
-    cancel.focus();
-    return true;
-  };
+  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // A confirmed form inside a decision card (data-receipt) posts in the background and the card collapses into its
+  // receipt. Without JS the form posts as usual; the server still checks it (an approval carries the hash shown).
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (!form.matches || !form.matches("form[data-dialog]")) return;
-    if (form.dataset.dialogConfirmed) {
-      delete form.dataset.dialogConfirmed;
-      return;
-    }
-    if (openDialog(form, event.submitter)) event.preventDefault();
-  });
-
-  // ---------- Inline two-step confirm (design system "Inline confirm") ----------
-  // For forms with data-inline-confirm: the first press arms the button in place (its label names what it binds,
-  // e.g. "Confirm · plan ab1e…7f", and a Cancel appears), a second, separate press within 6 s submits. Esc, Cancel or
-  // the timeout reverts, and focus stays on the button. No popup, no undo. A held key or a double click never
-  // confirms: the confirming press must come after a key or pointer release that happened while armed, and at least
-  // 400 ms after arming. A confirmed form inside a decision card (data-receipt) posts in the background and the card
-  // collapses into its receipt. Without JS the form posts at once; the server still checks it (an approval carries
-  // the hash of the text shown).
-  const ARM_MS = 6000;
-  const DOUBLE_CLICK_MS = 400;
-  const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const armed = new WeakMap();  // form -> {at, released, timer}
-  const canConfirm = (state, now) => Boolean(state && state.released && now - state.at >= DOUBLE_CLICK_MS);
-  const disarm = (form, refocus) => {
-    const state = armed.get(form);
-    const button = form.querySelector("button[data-armed-label]");
-    if (state) clearTimeout(state.timer);
-    armed.delete(form);
-    delete form.dataset.armed;
-    form.querySelectorAll(".ic-cancel, .ic-live").forEach((el) => el.remove());
-    form.classList.remove("inline-confirm");
-    if (!button) return;
-    button.textContent = button.dataset.armedLabel;
-    delete button.dataset.armedLabel;
-    button.classList.remove("is-armed");
-    button.style.minWidth = "";
-    if (refocus) button.focus();
-  };
-  const arm = (form, button) => {
-    document.querySelectorAll("form[data-armed]").forEach((other) => disarm(other, false));
-    button.style.minWidth = button.offsetWidth + "px";  // nothing moves or shrinks when the label changes
-    button.dataset.armedLabel = button.textContent;
-    button.textContent = form.dataset.inlineConfirm;
-    button.classList.add("is-armed");
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "btn btn-quiet ic-cancel";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => disarm(form, true));
-    button.after(cancel);
-    const live = document.createElement("p");
-    live.className = "ic-live muted";
-    live.setAttribute("aria-live", "polite");
-    form.append(live);
-    live.textContent = "Press again to confirm" + (reduced ? " within 6 s" : "") + ". Esc cancels.";
-    form.classList.add("inline-confirm");
-    form.dataset.armed = "1";
-    const state = { at: Date.now(), released: false, timer: 0 };
-    state.timer = setTimeout(() => disarm(form, document.activeElement === button), ARM_MS);
-    armed.set(form, state);
-    button.focus();
-  };
-  const FACTORY_START = "start the AI Factory: ";
-  const DARK_START = "start the Dark AI Factory, only commands in the Dark profile run: ";
-  // "Release up to" (phase 6), part of a Dark start: the confirm says what will run, and that nothing goes further
-  const releaseText = (form) => {
-    if (!form.querySelector || !form.querySelector("[data-release-choice]")) return "";  // no choice offered here
-    const r = form.querySelector("input[name=release]:checked");
-    const v = r ? r.value : "none";
-    if (v === "merge") return " · releases up to merge using the recipe on this machine; nothing releases to production";
-    if (v === "dev") return " · releases up to dev (merge, then dev) using the recipe on this machine; nothing releases to production";
-    if (v === "prod") {
-      const rb = form.querySelector("input[name=rollback]");
-      return " · releases to production by itself (merge, dev, then production) using the recipe on this machine, after its release window"
-        + (rb && rb.checked ? "; runs the recipe's rollback if the production check fails" : "; no rollback by itself");
-    }
-    return " · releases nothing";
-  };
-  // the opt-in auto-close of a Dark start: the confirm says plainly that it replaces the human verdict
-  const closeText = (form) => {
-    const c = form.querySelector && form.querySelector("input[name=close]");
-    if (!(c && c.checked)) return "";
-    const r = form.querySelector("input[name=release]:checked");
-    const none = !r || r.value === "none";
-    return " · closes the epic by itself when everything is proven, on what the agents wrote under the close rules:"
-      + " nothing is executed or verified by the factory; coverage is checked as text mentions only, and an epic that names no file is not closed by itself" + (none ? ", and with no release nothing is deployed or run" : "")
-      + "; this replaces your verdict for this run; Reopen stays yours";
-  };
-  // An epic's approve form (data-charter-confirm): the confirm label says whether the delegation is on and its
-  // limits, as chosen in the form; changing them while armed disarms, so the label pressed is what is signed.
-  const charterLabel = (form) => {
-    const f = form.elements;
-    const on = f.delegate && f.delegate.checked;
-    // the Start radios (None / AI Factory / Dark); the fieldset's data-start shows the typed-word field for Dark
-    const start = (f.start && f.start.value) || "";
-    const box = form.querySelector && form.querySelector(".charter-factory");
-    if (box) box.dataset.start = start;
-    if (start === "dark") {
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + DARK_START + form.dataset.factoryConfirm
-        + releaseText(form) + closeText(form);
-      return;
-    }
-    if (start === "factory") {  // AI Factory: its own limits, whatever the delegation fields say
-      form.dataset.inlineConfirm = form.dataset.charterConfirm + " · " + FACTORY_START + form.dataset.factoryConfirm;
-      return;
-    }
-    form.dataset.inlineConfirm = form.dataset.charterConfirm + (on
-      ? ` · delegation on: up to ${f.max_children.value} children, size ≤ ${f.max_size.value}` : " · no delegation");
-  };
-  document.addEventListener("change", (event) => {
-    const form = event.target.closest && event.target.closest("form[data-charter-confirm]");
-    if (!form) return;
-    if (armed.has(form)) disarm(form, false);
-    charterLabel(form);
-  });
-  const armedFormOf = (target) => target && target.closest && target.closest("form[data-armed]");
-  const confirmInPlace = (form, button) => {
+    if (event.defaultPrevented || !form.matches || !form.matches("form[data-receipt]") || !window.fetch || !window.URLSearchParams) return;
     const card = form.closest("[data-decision]");
-    if (!card || !form.dataset.receipt || !window.fetch || !window.URLSearchParams) return false;
-    button.setAttribute("aria-busy", "true");
+    if (!card) return;
+    event.preventDefault();
+    const button = event.submitter || form.querySelector("button[type=submit]");
+    if (button) button.setAttribute("aria-busy", "true");
     post(form, encode(form, button)).then((response) => {
       const o = outcome(response);
       if (!o.ok) { storePlace(placeOf(card), o.url); window.location = o.url.href; return; }  // the server's message, on the page it chose
-      disarm(form, false);
       collapseInto(card, form.dataset.receipt);
     }).catch(() => form.submit());
-    return true;
-  };
-  document.addEventListener("submit", (event) => {
-    const form = event.target;
-    if (!form.matches || !form.matches("form[data-inline-confirm]")) return;
-    const state = armed.get(form);
-    if (state) {
-      if (!canConfirm(state, Date.now())) event.preventDefault();
-      else {
-        const button = form.querySelector("button[data-armed-label]");
-        if (button) button.setAttribute("aria-busy", "true");
-        if (button && confirmInPlace(form, button)) event.preventDefault();
-      }
-      return;
-    }
-    event.preventDefault();
-    const button = event.submitter || form.querySelector("button[type=submit]");
-    if (button) arm(form, button);
   });
-  // New ticket (phase 5): the Mode radios keep data-mode on the page in step (the CSS shows each mode's fields by it),
-  // and a factory mode gets the inline confirm naming the limits it signs; Ticket mode posts at once, as before. A
-  // factory start is sent once: its button is disabled after the confirmed submit (the server's one-time token
-  // refuses a second one anyway).
+  // The epic's approve form (data-confirm-epic): the fieldset's data-start follows the Start radios (None / AI
+  // Factory / Dark), so the Dark fields show without :has(); confirm.js builds the dialog from the fields when pressed.
+  const startOf = (form) => {
+    const f = form.elements;
+    const box = form.querySelector && form.querySelector(".charter-factory");
+    if (box) box.dataset.start = (f.start && f.start.value) || "";
+  };
+  document.addEventListener("change", (event) => {
+    const form = event.target.closest && event.target.closest("form[data-confirm-epic]");
+    if (form) startOf(form);
+  });
+  // New ticket (phase 5): the Mode radios keep data-mode on the page in step (the CSS shows each mode's fields by it);
+  // a factory mode asks in the confirm dialog (confirm.js), Ticket mode posts at once, as before. A factory start is
+  // sent once: its button is disabled after the confirmed submit (the server's one-time token refuses a second one).
   const modeOf = (form) => {
     const checked = form.querySelector("input[name=mode]:checked");
     return checked ? checked.value : "ticket";
@@ -479,11 +307,6 @@
     const mode = modeOf(form);
     const box = form.closest("[data-mode]");
     if (box) box.dataset.mode = mode;
-    if (armed.has(form)) disarm(form, false);
-    if (mode === "factory") form.dataset.inlineConfirm = "Confirm · " + FACTORY_START + form.dataset.factoryConfirm;
-    else if (mode === "dark") form.dataset.inlineConfirm = "Confirm · " + DARK_START + form.dataset.factoryConfirm + releaseText(form)
-      + closeText(form);
-    else delete form.dataset.inlineConfirm;
   };
   // A choice that hides a field also clears it, so a hidden box is never sent ticked (the server refuses it anyway):
   // the rollback outside Production, the rollback and the close outside a Dark start.
@@ -496,7 +319,7 @@
     });
   }, true);
   document.addEventListener("change", (event) => {
-    const form = ["mode", "release", "rollback", "close"].includes(event.target.name) && event.target.closest
+    const form = event.target.name === "mode" && event.target.closest
       && event.target.closest("form[data-new-form]");
     if (form) newMode(form);
   });
@@ -504,39 +327,24 @@
     const form = event.target;
     if (!form.matches || !form.matches("form[data-new-form]") || modeOf(form) === "ticket") return;
     if (form.dataset.sent) { event.preventDefault(); return; }
-    if (event.defaultPrevented) return;  // the first press only armed the confirm
+    if (event.defaultPrevented) return;
     form.dataset.sent = "1";
     setTimeout(() => form.querySelectorAll("button[type=submit]").forEach((b) => { b.disabled = true; }), 0);
   });
-  document.addEventListener("keydown", (event) => {
-    const form = armedFormOf(event.target);
-    if (!form) return;
-    if (event.key === "Escape") disarm(form, true);
-    else if (event.repeat) event.preventDefault();  // a held Enter or Space never reaches the button again
-  }, true);
-  const release = (event) => {
-    const state = armed.get(armedFormOf(event.target));
-    if (state) state.released = true;
-  };
-  document.addEventListener("keyup", release, true);
-  document.addEventListener("pointerup", release, true);
-  // Coming back with the browser's Back button must never find a button still armed.
-  // A reload or Back can restore the delegation fields the human had set: the label must follow them, at start and on
-  // every pageshow (the charter form also has autocomplete="off").
+  // A reload or Back can restore the Start and Mode radios: the fields they show follow them, at start and on every
+  // pageshow (the charter form also has autocomplete="off").
   const charterLabels = () => {
-    document.querySelectorAll("form[data-charter-confirm]").forEach(charterLabel);
+    document.querySelectorAll("form[data-confirm-epic]").forEach(startOf);
     document.querySelectorAll("form[data-new-form]").forEach(newMode);
   };
   charterLabels();
   window.addEventListener("pageshow", () => {
-    document.querySelectorAll("form[data-armed]").forEach((f) => disarm(f, false));
     document.querySelectorAll("form[data-new-form][data-sent]").forEach((f) => {
       delete f.dataset.sent;
       f.querySelectorAll("button[type=submit]").forEach((b) => { b.disabled = false; });
     });
     charterLabels();
   });
-  window.orchInlineConfirm = { canConfirm, DOUBLE_CLICK_MS };  // read by the unit test
 
   // ---------- Delayed send with Undo (answers and messages only; approvals and verdicts have none) ----------
   // A form with data-delayed-send is held for 5 s: the answered question (or the card, for a message) turns into
@@ -659,13 +467,13 @@
   });
   window.orchDelayedSend = { DELAY_MS, held, HELD_IN };  // read by the unit test
 
-  // ---------- Keyboard (design system ShortcutOverlay): moves and arms, never commits a gate ----------
-  // j/k move between decisions, 1–9 focus an answer option, a arms the primary (then Enter confirms), c opens
+  // ---------- Keyboard (design system ShortcutOverlay): moves and asks, never commits a gate ----------
+  // j/k move between decisions, 1–9 focus an answer option, a opens the primary's confirm dialog (you confirm there), c opens
   // "Request changes…"/"Send back…", o opens the ticket, z undoes a held send, g t/b/a go to Today/Board/Activity,
   // ? lists the keys, Ctrl+K or ⌘K opens the command palette. Nothing fires while typing in a field, inside a dialog,
   // or when the workspace turned shortcuts off (Workspace & addons).
   const SHORTCUTS = [
-    ["Next / previous decision", ["j", "k"]], ["Answer with option", ["1", "–", "9"]], ["Approve (then confirm)", ["a", "↵"]],
+    ["Next / previous decision", ["j", "k"]], ["Answer with option", ["1", "–", "9"]], ["Approve (opens the confirm)", ["a"]],
     ["Request changes or send back", ["c"]], ["Open ticket", ["o"]], ["Undo a held answer", ["z"]],
     ["Go to Today / Board / Activity", ["g", "t", "/", "b", "/", "a"]], ["Command palette", ["⌘K"]], ["This list", ["?"]],
   ];
@@ -698,7 +506,7 @@
     const button = card.querySelector("[data-key-primary]");
     if (!button) return;
     button.focus();
-    if (button.form && button.form.matches("form[data-inline-confirm]") && !button.form.dataset.armed) button.click();
+    if (button.form && button.form.matches("form[data-confirm-title], form[data-confirm-build]")) button.click();  // the dialog asks
     else say(button.textContent.trim() + ": press Enter");
   };
   const openChanges = (card) => {
@@ -784,7 +592,7 @@
       });
       const note = document.createElement("p");
       note.className = "muted";
-      note.textContent = "Never fires while typing in a field. 1–9 and a only arm; you confirm. Turn them off in Workspace & addons.";
+      note.textContent = "Never fires while typing in a field. 1–9 and a only ask; you confirm. Turn them off in Workspace & addons.";
       const close = document.createElement("button");
       close.type = "button";
       close.className = "btn";
@@ -983,21 +791,7 @@
     if (window.matchMedia && window.matchMedia("(min-width: 900px)").matches) {
       root.querySelectorAll("details[data-wide-open]").forEach((d) => { d.open = true; });
     }
-    // Paste screenshots into the new-ticket form.
-    const pasteArea = root.querySelector("[data-paste-target]");
-    if (pasteArea && window.DataTransfer) {
-      const input = document.getElementById(pasteArea.dataset.pasteTarget);
-      pasteArea.addEventListener("paste", (event) => {
-        const images = [...(event.clipboardData?.files || [])].filter((f) => f.type.startsWith("image/"));
-        if (!images.length || !input) return;
-        const all = new DataTransfer();
-        [...input.files, ...images].forEach((f) => all.items.add(f));
-        input.files = all.files;
-        event.preventDefault();
-        const note = document.getElementById("paste-count");
-        if (note) note.textContent = `${all.files.length} image(s) attached`;
-      });
-    }
+    // Pasting screenshots and dropping files: files.js (inputs marked data-dropzone).
     // <details data-remember="name">: closed by default (server-rendered); this browser remembers
     // whether it was opened. Storage may be off (private mode, blocked): then it just stays closed.
     root.querySelectorAll("details[data-remember]").forEach((details) => {
@@ -1012,7 +806,7 @@
       });
     });
     showKeptReceipts();
-    // A palette link from another page (/#d-<card>) lands on the card with its primary focused, never armed.
+    // A palette link from another page (/#d-<card>) lands on the card with its primary focused, nothing asked yet.
     const target = window.location && window.location.hash.startsWith("#d-") && document.getElementById(window.location.hash.slice(1));
     if (target && target.matches("[data-decision]")) {
       focusCard(target);
@@ -1112,7 +906,7 @@
       const active = document.activeElement;
       // Never swap the page under someone who is reading a decision (a selected or focused card): say so instead.
       const reading = currentCard() || document.querySelector("[data-decision].is-selected");
-      if (dirty || typing(active) || held.length || dialogOpen() || reading || document.querySelector("form[data-armed]")) {
+      if (dirty || typing(active) || held.length || dialogOpen() || reading) {
         document.body.classList.add("stale");
       }
       else if (window.DOMParser && window.fetch && SWAPPABLE.test(window.location.pathname)) {

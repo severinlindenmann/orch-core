@@ -1,0 +1,26 @@
+/* The file drop zone (files.js). Without JS the native file input shows instead and none of this applies. */
+.dz-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+.dropzone { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2); padding: var(--s-4);
+            border: 2px dashed var(--line2); border-radius: var(--r-lg, 12px); background: var(--surface2); min-width: 0; }
+.dropzone.is-over { border-color: var(--focus); }
+.dropzone p { margin: 0; overflow-wrap: anywhere; }
+.dz-limit { font: var(--type-meta); }
+.dz-list { display: grid; gap: var(--s-2); width: 100%; margin: 0; padding: 0; list-style: none; }
+.dz-list:empty { display: none; }
+.dz-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-2);
+           padding: 6px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.dz-thumb { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; display: flex; align-items: center; justify-content: center;
+            background: var(--surface2); font: var(--type-meta); color: var(--muted); }
+.dz-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dz-size { font: var(--type-meta); white-space: nowrap; }
+.dz-msg:empty { display: none; }
+.dz-msg.is-bad { color: var(--danger); }
+@media (max-width: 480px) {
+  .dz-item { grid-template-columns: 48px minmax(0, 1fr) auto; }
+  .dz-size { grid-column: 2; grid-row: 2; }
+  .dz-remove { grid-column: 3; grid-row: 1 / span 2; }
+}
+/* Paste hints need JS (files.js does the paste). */
+html:not(.js) .js-only { display: none; }
+/* files.js names the limit inside the zone; the plain line is for the native input. */
+.dropzone ~ .nojs-files, html.js .dz-input ~ .nojs-files { display: none; }

@@ -1,6 +1,6 @@
 {#- "Release up to" (phase 6), in a Dark start: Nothing by default; Merge, Dev and Production only while this workspace
     has a valid recipe with those stages (the server checks it again before anything is signed). Production needs the
-    word production typed as well, and may sign the recipe's rollback for a failed production check. -#}
+    word production as well (the dialog fills it in after you confirm; typed without JS), and may sign the recipe's rollback for a failed production check. -#}
 {% macro release_choice(sfx, o) %}
 {% set off = {"merge": o.release_off, "dev": o.release_off or o.dev_off, "prod": o.release_off or o.dev_off or o.prod_off} %}
 <fieldset class="seg release-choice" data-release-choice>
@@ -19,8 +19,8 @@
     <label><input type="checkbox" name="rollback" value="1"{{ ' disabled' if o.rollback_off }}> Roll back production by itself if its check fails</label>
     {% if o.rollback_off %}<p class="muted" data-rollback-off>The recipe's production stage has no rollback: add one to the recipe to offer this.</p>
     {% else %}<p class="muted">Runs the recipe's rollback commands and their check once, only after a failed production check; nothing else.</p>{% endif %}
-    <label class="field-col" for="confirm-production-{{ sfx }}"><span>Type <b>production</b> to confirm: the runner releases to production by itself with the recipe on this machine.</span>
-      <input id="confirm-production-{{ sfx }}" name="confirm_production" autocomplete="off" spellcheck="false"></label>
+    <label class="field-col nojs-only" for="confirm-production-{{ sfx }}"><span>Type <b>production</b> to confirm: the runner releases to production by itself with the recipe on this machine.</span>
+      <input id="confirm-production-{{ sfx }}" name="confirm_production" autocomplete="off" spellcheck="false" data-confirm-word="production"></label>
   </div>
 </fieldset>
 {% endmacro %}
@@ -29,7 +29,9 @@
 {% macro close_choice(sfx) %}
 <div class="close-choice" data-close-choice>
   <label for="close-{{ sfx }}"><input type="checkbox" id="close-{{ sfx }}" name="close" value="1"> Close the epic by itself when everything is proven</label>
-  <p class="muted">This replaces your verdict for this run: the runner gives the done verdict and closes the children once every child is Ready, every criterion has evidence that meets the close rules, every release stage you sign is proven by its check, no card is open and nothing stopped it. It closes on what the agents wrote under these rules: nothing is executed or verified by the factory, and with Release up to Nothing nothing is deployed or run either. Coverage is checked as text mentions only: every file the epic names must be named by a child, and an epic that names no file is not closed by itself. Reopen stays yours. Off: you read the Ready report and give the verdict.</p>
+  <p class="muted">Replaces your verdict for this run; Reopen stays yours.</p>
+  <details class="what-does"><summary class="lnk">What does this do?</summary>
+  <p class="muted">This replaces your verdict for this run: the runner gives the done verdict and closes the children once every child is Ready, every criterion has evidence that meets the close rules, every release stage you sign is proven by its check, no card is open and nothing stopped it. It closes on what the agents wrote under these rules: nothing is executed or verified by the factory, and with Release up to Nothing nothing is deployed or run either. Coverage is checked as text mentions only: every file the epic names must be named by a child, and an epic that names no file is not closed by itself. Reopen stays yours. Off: you read the Ready report and give the verdict.</p></details>
 </div>
 {% endmacro %}
 

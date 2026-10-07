@@ -595,13 +595,22 @@ def _dry(ws, t, json_out: bool, text: str) -> None:
 
 
 @app.command()
-def answer(ref: str, qid: str, value: str,
+def answer(ref: str, qid: Annotated[Optional[str], typer.Argument()] = None,
+           value: Annotated[Optional[str], typer.Argument()] = None,
            note: Annotated[Optional[str], typer.Option("--note")] = None, dry_run: DryRunOpt = False,
-           json_out: JsonOpt = False) -> None:
-    """Answer a question. Human only."""
+           json_out: JsonOpt = False,
+           all_: Annotated[bool, typer.Option("--all", help="Answer every open question in turn, then confirm "
+                                                            "once (type the ticket id). Terminal only.")] = False) -> None:
+    """Answer a question. Human only. `--all` prompts for each open question, then asks for one confirmation."""
     from orch.core import store
     from orch.core.questions import find_question, question_hash
     ws = _ws()
+    if all_:
+        if qid is not None or value is not None or note is not None:
+            raise UsageError("--all prompts for every answer: give no question id, answer or --note")
+        return _answer_all(ws, ref, dry_run, json_out)
+    if qid is None or value is None:
+        raise UsageError("give the question id and the answer, or --all to be asked for each open question")
     qh = question_hash(find_question(store.load(ws, store.resolve(ws, ref).id)[1], qid))
     t = _human_op(ws, ref, lambda ops, kw: ops.answer(ref, qid, value, note=note, **kw),
                   lambda p: "\n".join(_question_text(find_question(p, qid))
@@ -611,6 +620,60 @@ def answer(ref: str, qid: str, value: str,
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would answer {qid.upper()} (status then {t.status})")
     _out(_view(ws, t), json_out, f"{t.id}: answered {qid.upper()} (status {t.status})")
+
+
+def _answer_all(ws, ref: str, dry_run: bool, json_out: bool) -> None:
+    """`orch answer <id> --all` (#219): the human types an answer for each open question in turn (the question and
+    its options are shown first; an empty line leaves it open), then confirms once with the ticket id. Every answer
+    is bound to the `question_hash` of the question as shown, so one that changes meanwhile refuses the whole batch.
+    Nothing is drafted or pre-filled: the answers are typed here, by the human."""
+    import contextlib
+    import sys
+    from orch.actor import require_human_terminal
+    from orch.core import store
+    from orch.core.questions import question_hash, validate_answer
+    from orch.errors import ValidationError
+    from orch.textsafe import visible
+    require_human_terminal("answering questions")
+    t = store.load(ws, store.resolve(ws, ref).id)[1]
+    items = []
+    open_qs = [q for q in t.meta.get("questions") or [] if q.get("answer") in (None, "")]
+    if not open_qs:
+        return _out({"ticket": t.id, "answered": []}, json_out, f"{t.id}: no open questions")
+    for q in open_qs:
+        shown = dict(q, answer=None, note=None)
+        typer.echo("\n".join(_question_text(shown)[:-1]), err=True)
+        while True:
+            with contextlib.redirect_stdout(sys.stderr):
+                typed = input(f"{visible(q['id'])}: your answer (empty leaves it open): ").strip()
+            if not typed:
+                break
+            try:
+                validate_answer(q, typed)
+            except ValidationError as e:
+                typer.echo(f"  {e.message}" + (f" ({e.hint})" if getattr(e, "hint", None) else ""), err=True)
+                continue
+            items.append({"qid": q["id"], "value": typed, "expected_hash": question_hash(q)})
+            break
+    if not items:
+        return _out({"ticket": t.id, "answered": []}, json_out, f"{t.id}: nothing answered")
+    from orch.core.events import Actor
+    from orch.core.ops import Ops
+    from orch.core.questions import find_question
+    preview = Ops(ws, Actor("human", "you", "tty"), dry_run=True).answer_many(ref, items)
+    lines = []
+    for it in items:
+        lines += _question_text(find_question(preview, it["qid"])) + [f"  bound to {_short(it['expected_hash'])}"]
+    lines.append(f"{preview.id}: answer {len(items)} question(s) as shown; status then {preview.status}")
+    if dry_run:
+        return _out({"ticket": preview.id, "dry_run": True, "would_answer": [i["qid"] for i in items]}, json_out,
+                    "\n".join(lines + ["dry run: nothing was written"]))
+    from orch.actor import confirm_typed
+    typer.echo("\n".join(lines), err=json_out)
+    actor = confirm_typed(preview.id)
+    done = _ops(ws, actor).answer_many(ref, items)
+    _out(_view(ws, done), json_out, f"{done.id}: answered {', '.join(i['qid'].upper() for i in items)} "
+                                    f"(status {done.status})")
 
 
 _ALL = "\x00all"  # --despite-open-question given with `plans` (no keys)

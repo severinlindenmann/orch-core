@@ -123,7 +123,8 @@
     d.addEventListener("cancel", (event) => { event.preventDefault(); close(false); });  // Esc
     d.addEventListener("click", (event) => { if (event.target === d) close(false); });  // the backdrop (no padding on d)
     d.showModal();
-    (field || cancel).focus();
+    // on a phone the dialog scrolls and Cancel sits last: focus it without scrolling, so the question is read first
+    (field || cancel).focus({ preventScroll: true });
   });
 
   // ---------- The Dark / AI Factory start, built from the form's choices ----------

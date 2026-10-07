@@ -151,7 +151,7 @@ def test_the_ticket_page_never_asks_with_a_browser_popup(dash, put):
 def test_confirm_js_has_the_one_dialog():
     js = (STATIC / "confirm.js").read_text(encoding="utf-8")
     assert "form[data-confirm-title], form[data-confirm-build]" in js and "showModal()" in js and '"cancel"' in js
-    assert "(field || cancel).focus()" in js and "window.confirm" not in js  # no browser popup anywhere (#17)
+    assert "(field || cancel).focus({ preventScroll: true })" in js and "window.confirm" not in js  # no browser popup anywhere (#17)
     assert "window.confirm" not in (STATIC / "app.js").read_text(encoding="utf-8")
 
 

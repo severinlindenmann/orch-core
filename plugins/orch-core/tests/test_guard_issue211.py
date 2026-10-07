@@ -510,6 +510,42 @@ def test_ordinary_dollar_commands_stay_allowed(ws):
     _check(ws, "echo screen", True)
 
 
+WRITE_NOW_RUN_LATER_DENIED = [
+    "cat > x.sh <<'EOF'\norch approve L-1\nEOF",
+    "cat > notes.md <<'EOF'\n#!/bin/sh\norch approve L-1\nEOF",
+    "cat >> run.txt <<EOF\norch verdict L-1 pass\nEOF",
+    "tee x.sh <<'EOF'\norch approve L-1\nEOF",
+    "cat <<'EOF' | tee x.sh\norch approve L-1\nEOF",
+    "cat <<'EOF' > /tmp/anything\nuv run orch answer L-1 q1 yes\nEOF",
+    "echo 'orch approve L-1' > x.sh",
+    "echo 'orch approve L-1' >> x.sh",
+    "echo orch approve L-1 > x",
+    "printf 'orch approve L-1\\n' > x.sh",
+    "printf '%s\\n' 'orch close L-1' > /tmp/x",
+    "echo 'orch approve L-1' | tee x.sh",
+    "echo 'orch approve L-1' 1> x.sh",
+    "echo 'orch approve L-1' &> x.sh",
+    "tee x.sh <<< 'orch approve L-1'",
+    "cat > x.sh <<< 'orch approve L-1'",
+    "echo '#!/bin/sh' > x.sh; echo 'orch approve L-1' >> x.sh",
+    "echo 'orch move L-1 done' > x.sh",
+    "echo 'orch epic pause E-1' > x.sh",
+    "echo 'orch permit grant a b' > x.sh",
+]
+
+
+@pytest.mark.parametrize("cmd", WRITE_NOW_RUN_LATER_DENIED)
+def test_a_file_holding_a_human_command_is_not_written(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_writing_other_text_and_printing_a_mention_stay_allowed(ws):
+    _check(ws, "cat > x.sh <<'EOF'\norch show L-1\nEOF", True)
+    _check(ws, "echo 'orch show L-1' > x.sh", True)
+    _check(ws, "echo 'orch approve L-1'", True)
+    _check(ws, "cat > notes.md <<'EOF'\nplain notes\nEOF", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

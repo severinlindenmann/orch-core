@@ -2507,6 +2507,56 @@ def _join_continuations(cmd: str) -> str:
     return _CONTINUATION.sub(lambda m: m.group(0) if m.group(0) != "\\\n" else "", cmd)
 
 
+def _human_text(text: str) -> bool:
+    """`text` (a heredoc body, an echo's words) holds a human-only orch invocation, whatever runs it later."""
+    import shlex
+    for line in text.splitlines():
+        for seg in _command_segments(line):
+            try:
+                words = shlex.split(seg, comments=True, posix=True)
+            except ValueError:
+                words = seg.split()
+            while words and (words[0] in _ORCH_LEADERS or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])
+                             or re.fullmatch(r"python[0-9.]*|-m", words[0]) or words[0] == "$"):
+                words = words[1:]
+            # only a line that starts with the orch program is a command; prose that mentions one is not
+            if words and re.split(r"[/\\]", words[0])[-1] in ("orch", "orch.cli") and _runs_human_only(
+                    seg, _unquoted(seg), False, False):
+                return True
+    return False
+
+
+_SCRIPT_WRITERS = frozenset({"cat", "tee", "dd", "cp", "install"})
+
+
+def _writes_human_script(cmd: str) -> bool:
+    """The line writes a file (a redirect or tee) and the text it writes holds a human-only orch invocation: a
+    heredoc body, a here-string, or the words of echo/printf. Whatever the file is called, running it later is the
+    same as running the command, so it is refused now."""
+    segs = _command_segments(cmd)
+    writes_file = False
+    texts: list[str] = []
+    for seg in segs:
+        words, _ = _command(seg)
+        prog = os.path.basename(words[0]) if words else ""
+        if _OUTPUT_REDIRECT.search(_unquoted(seg)) or prog == "tee":
+            writes_file = True
+        if prog in ("echo", "printf"):
+            texts.append(" ".join(words[1:]))
+        for m in _HERE_STRING.finditer(seg):
+            texts.append(next(g for g in m.groups() if g is not None))
+    main, docs = _split_heredocs(cmd)
+    if any(os.path.basename((_command(seg)[0] or [""])[0]) in ("tee",) for seg in _segments(main)):
+        writes_file = True
+    for d in docs:
+        receiver = next((main[a:b] for a, b in _segment_spans(main) if a <= d.pos < b), "")
+        words, _ = _command(receiver)
+        prog = os.path.basename(words[0]) if words else ""
+        if prog in _SCRIPT_WRITERS:  # whether the line writes a file at all is judged by writes_file
+            texts.append(d.body)
+    return writes_file and any(_human_text(t) for t in texts)
+
+
 def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False) -> Decision:
     if not _joined and "\\\n" in cmd:
         joined = _join_continuations(cmd)
@@ -2577,6 +2627,8 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
             return Decision(False, "agents do not push in this workspace (git.agent_may.push is false)")
         if not may["open_review"] and _REVIEW.search(plain):
             return Decision(False, f"agents do not open {term}s in this workspace (git.agent_may.open_review is false)")
+    if _writes_human_script(cmd):
+        return Decision(False, _HUMAN_ONLY_DENIED)
     if _INTERPRETER.search(cmd) and _ADMIN_PY.search(cmd):
         return Decision(False, _ADDON_ADMIN_DENIED)
     code = _code_text(cmd)  # prose in a data heredoc is not code

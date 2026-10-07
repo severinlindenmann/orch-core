@@ -295,7 +295,7 @@ def test_odd_git_dirs_are_refused_in_the_source_and_in_the_clone(fws, fa, fh, hu
 def test_a_partial_removal_keeps_the_record_and_says_what_is_left(fws, run, human, monkeypatch):
     fs.end(fws, run["b"]["session"])
 
-    def fail(dfd, name, dev):
+    def fail(dfd, name, dev, inode=None):
         raise OSError("operation not permitted (an immutable file)")
     monkeypatch.setattr(fc, "_rmtree_fd", fail)
     with pytest.raises(ValidationError, match="only partly removed"):

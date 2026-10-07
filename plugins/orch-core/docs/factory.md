@@ -688,7 +688,12 @@ never start.
 used or copied (the test suite plants a hooks path, fsmonitor, filters, a textconv, aliases, an include, an ssh
 command and `uploadpack.packObjectsHook` in the workspace, all of which leave a marker if run, and checks that none
 runs and none reaches the clone). The tree that is checked out is agent-written: a `.gitattributes` names filters and
-drivers that are not configured, so none runs; `.gitmodules` is never read (no submodules); symlinks are checked out
+drivers that are not configured, so none runs; and every git call orch makes in a clone reads no attributes at all
+(`GIT_ATTR_SOURCE` set to the empty tree, which needs git 2.40 or later: an older git is refused), with every protocol
+but local paths off, because it reaches the clone by path after the descriptor checks and a folder swapped in between
+could carry a config of its own (git cannot use the pinned descriptor itself: macOS's `/dev/fd` does not open a
+directory for it). The cost: a clone's checkout applies no `.gitattributes`, such as end-of-line conversion. Removing
+a clone checks on the open descriptor that its tombstone is still the pinned folder; `.gitmodules` is never read (no submodules); symlinks are checked out
 as symlinks (the guard judges file tool paths after links, as in the workspace). Git LFS pointers stay pointers: the
 user's LFS filter is in the git config the runner does not use. Whether the file system ignores case is probed in a
 temporary folder of the runner's own, never in the clone. When the release fetches from the clone, `upload-pack` runs

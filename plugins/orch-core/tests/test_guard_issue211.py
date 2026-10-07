@@ -546,6 +546,49 @@ def test_writing_other_text_and_printing_a_mention_stay_allowed(ws):
     _check(ws, "cat > notes.md <<'EOF'\nplain notes\nEOF", True)
 
 
+QT = "orchestrator/tickets/open/L-0001-x.md"
+QS = "orchestrator/.state/ledger.json"
+QUOTED_TARGETS_DENIED = [
+    f"echo x > '{QT}'",
+    f'echo x > "{QS}"',
+    f"cat /etc/hosts > '{{ws}}/{QS}'",
+    f"cat > '{QT}' <<'EOF'\nx\nEOF",
+    f"printf x > '{QT}'",
+    f"head -1 /etc/hosts > '{QT}'",
+    f"grep a /etc/hosts > '{QS}'",
+    f"jq . /tmp/x.json > '{QS}'",
+    f"ls > '{QT}'",
+    f"wc -l /etc/hosts > '{QT}'",
+    f"diff a b > '{QT}'",
+    f"stat /etc/hosts > '{QS}'",
+    f"echo x >> '{QT}'",
+    f'echo x > "$PWD/{QS}"',
+    f"echo x 2> '{QS}'",
+    f"echo x 1> \"{QT}\"",
+    f"echo x &> '{QT}'",
+    f"echo x >| '{QT}'",
+    f"echo x > o'rchestrator'/tickets/open/L-0001-x.md",
+    "cat orchestrator/.state/x > ''",
+]
+
+
+@pytest.mark.parametrize("cmd", QUOTED_TARGETS_DENIED)
+def test_a_quoted_redirect_target_is_still_a_target(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_a_quoted_target_through_a_symlinked_alias_is_denied(ws, tmp_path):
+    alias = tmp_path / "alias"
+    alias.symlink_to(ws.root)
+    d = _bash(ws, f"echo x > '{alias}/orchestrator/tickets/open/L-0001-a.md'")
+    assert not d.allow, d.reason
+
+
+def test_a_quoted_target_outside_state_stays_allowed(ws):
+    _check(ws, "cat orchestrator/.state/x > '/tmp/out.txt'", True)
+    _check(ws, 'echo x > "/tmp/out.txt"', True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

@@ -2369,14 +2369,65 @@ def _jq_filter_blanked(seg: str) -> str:
 
 
 def _redirect_targets(seg: str) -> list[str]:
-    """Words after an output redirect in `seg` (quoted text aside)."""
-    flat = _unquoted(seg)
-    out = []
-    for m in re.finditer(r"(?:&>>?|(?<![>&<])(?:>>|>(?!>))\|?|<>)\s*(&?\s*[^\s;&|<>()]*)", flat):
-        target = m.group(1)
-        if re.fullmatch(r"&[0-9-]", target) or target == "/dev/null":
+    """The target word of every output redirect in `seg`, quotes and escapes resolved (`> 'a/b'` is `a/b`). An
+    operator with no readable target gives "" (callers treat that as touching anything). /dev/null and descriptor
+    copies (`>&2`, `2>&1`) are left out."""
+    out: list[str] = []
+    i, n, quote = 0, len(seg), None
+    while i < n:
+        c = seg[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
             continue
-        out.append(target)
+        if c == "\\":
+            i += 2
+            continue
+        if c in "'\"":
+            quote = c
+            i += 1
+            continue
+        if seg.startswith("$(", i):
+            i = _sub_end(seg, i + 2)
+            continue
+        if c == ">" or seg.startswith("<>", i):
+            j = i + (2 if seg.startswith("<>", i) else 1)
+            while j < n and seg[j] in "&>|":
+                j += 1
+            while j < n and seg[j] in " \t":
+                j += 1
+            if j < n and seg[j] == "(":
+                i = j  # `>(cmd)`: a process, judged as its own segment
+                continue
+            k, q = j, None
+            while k < n:
+                d = seg[k]
+                if q:
+                    if d == "\\" and q == '"':
+                        k += 2
+                        continue
+                    if d == q:
+                        q = None
+                elif d == "\\":
+                    k += 2
+                    continue
+                elif d in "'\"":
+                    q = d
+                elif d.isspace() or d in ";&|<>()":
+                    break
+                k += 1
+            word = _strip_quotes_and_escapes(seg[j:k])
+            i = max(k, i + 1)
+            if re.fullmatch(r"[0-9-]", word) and seg[j - 1:j] == "&":
+                continue
+            if word != "/dev/null":
+                out.append(word)
+            continue
+        i += 1
     return out
 
 
@@ -2404,14 +2455,14 @@ def _state_write(ws, cmd: str, code: str, cwd) -> bool:
             # path outside it is skipped.
             if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg):
                 return True
-            if any(re.search(r"[$`*?\[~]", t) or _touches_state(ws, t, cwd) for t in _redirect_targets(seg)):
+            if any(not t or re.search(r"[$`*?\[~]", t) or _touches_state(ws, t, cwd) for t in _redirect_targets(seg)):
                 return True
             continue
         prog = os.path.basename(words[0]) if words else ""
         if prog not in _STATE_READERS:
             return True  # not provably a reader: the old whole-line test (already true above)
         for target in _redirect_targets(seg):
-            if re.search(r"[$`*?\[~]", target) or _touches_state(ws, target, cwd):
+            if not target or re.search(r"[$`*?\[~]", target) or _touches_state(ws, target, cwd):
                 return True
         if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg) or _INTERP_WRITE.search(seg):
             return True

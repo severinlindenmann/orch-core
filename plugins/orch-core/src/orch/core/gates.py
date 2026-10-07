@@ -17,6 +17,9 @@ GATE_SECTIONS = {
 # inline artifacts v3 equals v2. The version is stored with each approval (`hash_v`, absent = 1), so older approvals
 # stay valid.
 HASH_VERSION = 3
+# Statuses where changed (invalidated) requirements are re-approved in place (#208): the ticket keeps its status and
+# its plan approval. A first approval is still given in backlog only.
+REAPPROVE_IN_PLACE = ("open", "in-progress", "waiting", "testing")
 _V2_META = {"requirements": ("size", "type"), "plan": ()}
 # A line in gated text that asks the human instead of stating a decision. Anchored to the start of a line (after an
 # optional list marker or bold): "Open question: …", "Open question for the human: …", "Question for you? …", or TBD

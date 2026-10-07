@@ -11,7 +11,7 @@ from orch.clock import now, parse_stamp, stamp
 from orch.core import evidence, store, trackers
 from orch.core.constants import PRIORITIES, RESOLUTIONS, SECTIONS, SIZES, STATUSES, SUCCEEDED, TYPES
 from orch.core.events import Actor, Event, append_event, log_line
-from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, clear_gate, gate_hash, gate_state, human_questions_in,
+from orch.core.gates import (GATE_SECTIONS, HASH_VERSION, REAPPROVE_IN_PLACE, clear_gate, gate_hash, gate_state, human_questions_in,
                              record_approval, requirements_required, requirements_skip_sizes)
 from orch.core.ids import next_id
 from orch.core.lifecycle import HUMAN_HINT, check_move, require_human, unanswered_blocking
@@ -94,7 +94,7 @@ def _refuse_changed_gates(t) -> None:
     changed = invalidated_gates(t)
     if changed:
         raise ValidationError(f"the {' and '.join(changed)} of {t.id} changed since approval: re-approve or send "
-                              "back first", hint=f"re-approve the {changed[0]}, or send {t.id} back with a follow-up")
+                              "back first", hint=f"re-approve it with `orch approve {t.id} {changed[0]}`, or send {t.id} back with a follow-up")
 
 
 def _check_section_text(name: str, text: str) -> None:
@@ -967,8 +967,11 @@ class Ops(TaskOpsMixin):
                 raise ValidationError("cannot approve: blocking questions open ("
                                       + ", ".join(str(q["id"]) for q in unanswered_blocking(t)) + ")")
             if gate == "requirements":
-                if t.status != "backlog":
-                    raise TransitionError(f"requirements are approved in backlog; {t.id} is {t.status}")
+                in_place = t.status in REAPPROVE_IN_PLACE and gate_state(t, gate) == "invalidated"
+                if t.status != "backlog" and not in_place:
+                    raise TransitionError(f"requirements are approved in backlog, or re-approved in place after they "
+                                          f"changed; {t.id} is {t.status} and its requirements are "
+                                          f"{gate_state(t, gate)}")
                 missing = [s for s in ("Requirements", "Acceptance criteria") if not t.section(s).strip()]
                 if missing:
                     raise ValidationError(f"cannot approve: {', '.join(missing)} empty", hint=f"refine {t.id} first")
@@ -977,8 +980,9 @@ class Ops(TaskOpsMixin):
                     raise ValidationError("cannot approve: blocking questions open (" + ", ".join(q["id"] for q in open_qs) + ")")
                 record_approval(self.ws, t, gate, self.actor, snapshot=not self.dry_run)
                 self._sign_approval(t, gate, bool(asks))
-                check_move(t, "open", self.actor, plan_skip_sizes=self._skip_sizes)
-                t.meta["status"] = moved_to = "open"
+                if not in_place:  # a re-approval in place keeps the status and the plan's approval
+                    check_move(t, "open", self.actor, plan_skip_sizes=self._skip_sizes)
+                    t.meta["status"] = moved_to = "open"
             else:
                 if t.status not in ("in-progress", "waiting"):
                     raise TransitionError(f"plans are approved while in progress; {t.id} is {t.status}")

@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 
 from orch.clock import parse_stamp
-from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state, human_questions_in, requirements_skipped
+from orch.core.gates import GATE_SECTIONS, REAPPROVE_IN_PLACE, changes_pending, gate_state, human_questions_in, requirements_skipped
 from orch.core.lifecycle import unanswered_blocking
 
 STEP_NAMES = ("Requirements", "Plan", "Work", "Testing", "Done")
@@ -161,7 +161,9 @@ def can_approve(ticket, gate: str, *, plan_skip_sizes=(), allow_override: bool =
     if state == "approved" or changes_pending(ticket, gate) or (human_questions_in(ticket, gate) and not allow_override):
         return False
     if gate == "requirements":
-        return (ticket.status == "backlog" and not unanswered_blocking(ticket)
+        # changed requirements are re-approved where the ticket stands (Ops.approve: invalidated only, #208)
+        placed = ticket.status == "backlog" or (state == "invalidated" and ticket.status in REAPPROVE_IN_PLACE)
+        return (placed and not unanswered_blocking(ticket)
                 and bool(ticket.section("Requirements").strip()) and bool(ticket.section("Acceptance criteria").strip()))
     if gate == "plan":
         needed = ticket.meta.get("size") not in tuple(plan_skip_sizes) or state == "invalidated"
@@ -179,9 +181,10 @@ def reapprove_hint(ticket, gate: str, moves) -> dict:
                         "Request changes so the agent asks it with `orch ask`, or, if it is not a question for you, "
                         "approve with the box ticked.",
                 "action": {"kind": "hint", "gate": gate}}
-    if gate == "requirements" and status != "backlog":
-        text = "Requirements changed after approval — move the ticket back to backlog to re-approve."
-        to, label = "backlog", "Move back to backlog"
+    if gate == "requirements" and status not in ("backlog",) + REAPPROVE_IN_PLACE:
+        return {"text": "Requirements changed after approval, and a ticket in this status cannot be re-approved: "
+                        "reopen it, or send it back, first.",
+                "action": {"kind": "hint", "gate": gate}}
     elif gate == "plan" and status == "testing":
         return {"text": "Plan changed after approval — send the work back to in progress to re-approve.",
                 "action": {"kind": "hint", "gate": gate}}

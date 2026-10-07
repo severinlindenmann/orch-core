@@ -64,12 +64,20 @@ _ADDON_ADMIN_DENIED = ("installing, updating, trusting, enabling, disabling, rol
 # `orch --json …`, inside `sh -c`/`eval`/heredocs (via _command_segments), or under a pty wrapper.
 _HUMAN_VERBS = ("approve", "answer", "verdict", "request-changes", "reopen", "close", "ledger")
 _HUMAN_TARGETS = ("backlog", "open", "in-progress", "done")
-_HUMAN_VERB_RE = (r"(?:approve|answer|verdict|request-changes|reopen|close|ledger|epic\s+(?:-\S+\s+)*pause"
-                  r"|permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
-                  r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                  r"|factory\s+(?:-\S+\s+)*(?:dark\s+(?:-\S+\s+)*)?on"
-                  r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
-                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
+# The one table of human-only subcommands (each word, `a|b` alternatives, or `*` for any word): the text, argv, app()
+# and token checks below all derive from it, so a new human-only command is added once.
+HUMAN_SUBCOMMANDS = (("epic", "pause"), ("permit", "grant|deny|revoke"), ("dark", "profile", "add|remove|prune"),
+                     ("factory", "on"), ("factory", "dark", "on"), ("factory", "release", "*"),
+                     ("factory", "clones", "*"), ("widget", "html", "on"), ("update",))
+
+
+def _sub_word(w: str, any_word: str) -> str:
+    return any_word if w == "*" else f"(?:{w})"
+
+
+_SUB_RE = "|".join(r"\s+(?:-\S+\s+)*".join(_sub_word(w, r"[^\s;&|()<>]+") for w in path)
+                   for path in HUMAN_SUBCOMMANDS)
+_HUMAN_VERB_RE = r"(?:" + "|".join(_HUMAN_VERBS) + "|" + _SUB_RE + r")(?![\w-])"
 _HUMAN_MOVE_RE = r"move\s+(?:-\S+\s+)*\S+\s+(?:-\S+\s+)*(?:backlog|open|in-progress|done)(?![\w-])"
 _HUMAN_CMD = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*(?:" + _HUMAN_VERB_RE + "|" + _HUMAN_MOVE_RE + ")")
 _QUOTED_HUMAN_CMD = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch(?:\.cli)?['"]?\s+(?:-\S+\s+)*(?:"""
@@ -534,18 +542,9 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
 _ORCH_MODULE = re.compile(r"(?<![\w-])orch\.(?:cli|core)\b")
 _Q = r"""['"]"""
 _APP_HUMAN = re.compile(
-    _Q + r"permit" + _Q + r"\s*,\s*" + _Q + r"(?:grant|deny|revoke)" + _Q
-    + r"|" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"profile" + _Q + r"\s*,\s*" + _Q + r"(?:add|remove|prune)" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"dark" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"on" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"release" + _Q
-    + r"|" + _Q + r"factory" + _Q + r"\s*,\s*" + _Q + r"clones" + _Q
-    + r"|\[\s*" + _Q + r"(?:approve|answer|verdict|request-changes|reopen|close|ledger)" + _Q)
-_HUMAN_ARGV = re.compile(r"(?:^|\s)(?:permit\s+(?:-\S+\s+)*(?:grant|deny|revoke)"
-                         r"|dark\s+(?:-\S+\s+)*profile\s+(?:-\S+\s+)*(?:add|remove|prune)"
-                         r"|factory\s+(?:-\S+\s+)*(?:dark\s+(?:-\S+\s+)*)?on"
-                         r"|factory\s+(?:-\S+\s+)*release\s+(?:-\S+\s+)*(?:set|show|clear|retry)"
-                  r"|factory\s+(?:-\S+\s+)*clones\s+(?:-\S+\s+)*(?:list|clean))(?![\w-])")
+    "|".join(r"\s*,\s*".join(_Q + _sub_word(w, r"[^'\"]+") + _Q for w in path) for path in HUMAN_SUBCOMMANDS)
+    + r"|\[\s*" + _Q + r"(?:" + "|".join(_HUMAN_VERBS) + r")" + _Q)
+_HUMAN_ARGV = re.compile(r"(?:^|\s)(?:" + "|".join(_HUMAN_VERBS) + "|" + _SUB_RE + r")(?![\w-])")
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, changing the Dark profile or the release recipe and moving a "
                       "ticket to backlog, open, in-progress or done are the human's: ask the user to do it in their own "
@@ -579,17 +578,8 @@ def _human_only_tokens(seg: str) -> bool:
         rest = [w for w in words[k + 1:] if not w.startswith("-")]
         if rest and rest[0] in _HUMAN_VERBS:
             return True
-        if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
-            return True
-        if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
-            return True
-        if len(rest) >= 3 and rest[0] == "dark" and rest[1] == "profile" and rest[2] in ("add", "remove", "prune"):
-            return True
-        if len(rest) >= 3 and rest[0] == "factory" and rest[1] == "dark" and rest[2] == "on":
-            return True
-        if len(rest) >= 2 and rest[0] == "factory" and rest[1] == "on":
-            return True
-        if len(rest) >= 2 and rest[0] == "factory" and rest[1] in ("release", "clones"):
+        if any(len(rest) >= len(path) and all(w == "*" or rest[i] in w.split("|") for i, w in enumerate(path))
+               for path in HUMAN_SUBCOMMANDS):
             return True
         if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
             return True

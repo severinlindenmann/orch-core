@@ -365,3 +365,22 @@ def test_wait_ignores_factory_state_for_an_ordinary_ticket(ws, aops):
     from orch.core.wait import wait_for_human
     t = aops.new("plain")
     assert wait_for_human(ws, t.id, timeout=0.1, poll=0.01) is None
+
+
+def test_the_run_view_says_why_the_epic_is_not_ready(fws, fa, fh, epic, close_tasks):
+    """The live run: T-0002 sat in testing with AC2 unproven, its session ended, and the run view said "Working"."""
+    from orch.dashboard.data import factory as data
+    c = fa.new("two criteria", epic=epic.id)
+    fa.set_section(c.id, "Requirements", "r")
+    fa.set_section(c.id, "Acceptance criteria", "- [ ] the page loads\n- [ ] the data is shown")
+    fa.set_section(c.id, "Plan", "1. do it")
+    fa.epic_auto_approve(c.id)
+    fa.claim(c.id)
+    close_tasks(fa, c.id)
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
+    fh.move(c.id, "testing")  # only a human's move gets it there now
+    assert _ready(fws, epic.id) is None
+    assert factory_report.unready(fws, store.load(fws, epic.id)[1]) == [{"child": c.id, "why": "AC2 has no evidence"}]
+    r = data.run_view(fws, store.load(fws, epic.id)[1])
+    assert (r["state"], r["role"], r["chip"]) == ("unready", "you", "Needs you")
+    assert r["headline"] == f"Not Ready: {c.id}: AC2 has no evidence"

@@ -210,7 +210,7 @@ def reopen(request: Request, ref: str, reason: Annotated[str, Form()] = ""):
 
 @router.post("/factory/{ref}/close")
 def close(request: Request, ref: str, reason: Annotated[str, Form()] = "",
-          skip_release: Annotated[str, Form()] = ""):
+          skip_release: Annotated[str, Form()] = "", skip_with_reason: Annotated[str, Form()] = ""):
     """Close an open factory epic whose children are all done (after a Reopen, there is no Ready report and no epic
     verdict to give): the existing close (Ops.close), yours only, signed, with your reason."""
     from orch.core import epics, permits, store
@@ -228,7 +228,8 @@ def close(request: Request, ref: str, reason: Annotated[str, Form()] = "",
         if epic.status != "open" or not kids or any(k.status != "done" for k in kids):
             raise UsageError("only an open epic whose children are all done is closed here; otherwise give the "
                              "verdict from the Ready report")
-        Ops(ws, HUMAN).close(epic.id, reason, skip_release=skip_release or None)
+        # the run view's one reason field says why it closes, and (skip_with_reason) why without releasing
+        Ops(ws, HUMAN).close(epic.id, reason, skip_release=skip_release or (reason if skip_with_reason else None))
     except OrchError as e:
         return back(url, err=error_text(e))
     return back(url, msg=f"closed {epic.id}")

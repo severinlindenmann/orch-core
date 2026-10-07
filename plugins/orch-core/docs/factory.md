@@ -1271,7 +1271,21 @@ to the run view, and Today does not count it as a decision. Send back stays on t
 A done verdict on such a child while the epic's signed release is not proven is refused everywhere ("This child
 belongs to <epic>, which still has to release it: accept the epic when it is Ready, or close this child without
 releasing with a reason."); `orch verdict <child> done --skip-release REASON` (or the reason field on the ticket page,
-once the charter is paused) closes it anyway and its verdict entry records `release_skipped`. A verdict
+once the charter is paused) closes it anyway and its verdict entry records `release_skipped`.
+
+When children were accepted before the release ran anyway (done, with no proven merge, while the signed release is not
+proven), the release has nothing of theirs to release: it counts children in testing, and done ones whose merge is
+proven. The run view says so ("T-0002 and T-0003 were accepted before the release ran, so nothing can be released for
+them"), as a Needs you state once every child is done, with one action: "Close the epic without releasing" (one reason
+field; the reason is recorded as `release_skipped`). To release such a child after all, reopen it and move it to
+testing, both as the human (`orch reopen <child> -m REASON`, `orch move <child> in-progress`, `orch move <child>
+testing`): the release counts it again from the next round.
+
+When every child is in testing or done but the epic is not Ready, the run view says why, per child, as a Needs you
+state ("Not Ready: T-0002: AC2 has no evidence"; a gate changed since approval; a status not backed by a record), with
+what you can do: type into the child's session on Terminals, or send the child back with a note from its ticket page.
+
+A verdict
 or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in
 a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
 

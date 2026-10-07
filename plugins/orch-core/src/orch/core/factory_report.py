@@ -116,6 +116,35 @@ def _ready_state(ws, epic, entries, signed, events):
             "total": sum(r["total"] for r in rows), "coverage": _coverage(ws, epic, entries, signed)}, []
 
 
+def unready(ws, epic, *, entries=None, signed=None, events=None) -> list[dict] | None:
+    """Why factory epic `epic` is not Ready although every child is in testing or done and one is in testing, by the
+    rules of _ready_state: [{child, why}] ("AC2 has no evidence", "its plan changed since approval", "its testing is
+    not backed by a record"); None when that is not the case (a child still works, nothing in testing, or Ready)."""
+    if not permits.enabled(ws) or epic.status != "open":
+        return None
+    d = permits.factory_delegation(ws, epic, signed)
+    kids = _kids(ws, epic, entries)
+    if d is None or d["epic_changed"] or not kids or any(e.status not in ("testing", "done") for e, _ in kids) \
+            or not any(e.status == "testing" for e, _ in kids):
+        return None
+    from orch.core.gates import invalidated_gates
+    events, signed = permits._events(ws, events), permits._signed(ws, signed)
+    out = []
+    for e, t in kids:  # one reason per child, the one to fix first
+        miss = [f"AC{n}" for n in evidence.missing(t)] if e.status == "testing" else []
+        if e.status == "testing" and not evidence.criteria(t):
+            out.append({"child": t.id, "why": "it has no acceptance criteria as checkboxes"})
+        elif miss:
+            out.append({"child": t.id, "why": ", ".join(miss) + (" has" if len(miss) == 1 else " have")
+                                              + " no evidence"})
+        elif e.status == "testing" and invalidated_gates(t):
+            out.append({"child": t.id, "why": f"its {' and '.join(invalidated_gates(t))} changed since approval"})
+        elif finished(ws, t, signed, events) is None:
+            out.append({"child": t.id, "why": f"its {e.status} is not backed by a record (a signed verdict, or its "
+                                             "own session's move into testing with its tasks closed)"})
+    return out or None
+
+
 def held_by(ws, t, signed=None) -> str | None:
     """The open factory epic whose run decides child `t` (its charter active: not paused, unchanged, in budget), else
     None. Such a child gets no verdict card of its own: the epic's release and verdict come first (the seventh live

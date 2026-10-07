@@ -189,11 +189,53 @@ def test_the_run_views_close_form_asks_for_the_skip_reason(fws, ready, fh):
     _all_done(fws, fh, eid)
     c = _client(fws)
     html = c.get(f"/factory/{eid}").text
-    assert f'data-release-unrun="{eid}"' in html and 'name="skip_release"' in html and "Close without releasing" in html
+    assert f'data-release-unrun="{eid}"' in html and "Close the epic without releasing</button>" in html
     r = c.post(f"/factory/{eid}/close", data={"reason": "done"}, follow_redirects=False)
     assert "err=" in r.headers.get("location", "") and store.load(fws, eid)[1].status == "open"
     c.post(f"/factory/{eid}/close", data={"reason": "done", "skip_release": "by hand"}, follow_redirects=False)
     assert store.load(fws, eid)[1].status == "done"
+
+
+def _close_block(html):
+    return html.split("<div data-all-done>", 1)[1].split("</div>", 1)[0]
+
+
+def test_the_close_block_is_one_form_one_labelled_reason_one_button(fws, ready, fh):
+    """The live run: two stacked forms, the labels "Why close it" and "Why close it without releasing" empty-looking,
+    an input without a label. Now: one form, one textarea with its label, the release sentence as its help text."""
+    eid, _, _ = ready(release="dev")
+    _all_done(fws, fh, eid)
+    c = _client(fws)
+    block = _close_block(c.get(f"/factory/{eid}").text)
+    assert block.count("<form") == 1 and block.count("<textarea") == 1 and block.count("<button") == 1
+    assert block.count("<label") == 1 and '<label for="close-reason">Why close it</label>' in block
+    assert 'id="close-reason"' in block and 'aria-describedby="close-help"' in block and 'id="close-help"' in block
+    assert re.findall(r"<input [^>]*>", block) == ['<input type="hidden" name="skip_with_reason" value="1">']
+    assert ">Close the epic without releasing</button>" in block
+    r = c.post(f"/factory/{eid}/close", data={"reason": "checked by hand", "skip_with_reason": "1"},
+               follow_redirects=False)
+    assert "err=" not in r.headers["location"] and store.load(fws, eid)[1].status == "done"
+    last = [e for e in ledger.entries(fws) if e.get("ticket") == eid and e.get("kind") == "close"][-1]
+    assert last["release_skipped"] == "checked by hand"
+
+
+def test_children_accepted_before_the_release_leave_one_clear_action(fws, ready, fh, human):
+    """The live run's end state: both children accepted alone, no proven merge, the release with nothing to release
+    and the run view saying "Idle". It now says what happened, needs you, and offers the one close."""
+    eid, (c0, c1), _ = ready(release="dev", kids=2)
+    _all_done(fws, fh, eid)
+    r = _run(fws, eid)
+    assert (r["state"], r["role"], r["chip"]) == ("accepted", "you", "Needs you")
+    assert r["headline"] == f"{c0} and {c1} were accepted before the release ran, so nothing can be released for them"
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert ">Close the epic without releasing</button>" in html and "reopen it and move it to testing" in html
+    # to release one after all: the human reopens it and moves it to testing; the release counts it again
+    assert fr._units(fws, store.load(fws, eid)[1]) == []
+    fh.reopen(c0, "release it after all")
+    fh.move(c0, "in-progress")
+    fh.move(c0, "testing")
+    assert fr._units(fws, store.load(fws, eid)[1]) == [c0]
+    assert _run(fws, eid)["state"] != "accepted"
 
 
 def test_orch_check_says_closed_without_release_and_warns_without_a_reason(fws, ready, fh, monkeypatch):

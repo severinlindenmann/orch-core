@@ -210,3 +210,25 @@ def test_the_close_record_snapshots_each_stages_attempt_state_and_commit(fws, re
     assert m["unit"] == c and m["attempt"] == 1 and len(m["sha"]) == 40 and m["sha"] != m["base_sha"]
     (p,) = stages["production"]["units"]
     assert p["base_sha"] == stages["dev"]["units"][0]["base_sha"]
+
+
+# -- a failed merge stays a reason when its child leaves the release -----------------------------------------------
+
+@pytest.mark.parametrize("leave", ["sent back", "deleted"])
+def test_a_failed_merge_of_a_child_that_left_stays_a_reason(fws, ready, fh, human, leave):
+    eid, (c,), _ = ready()
+    fake = Fake()
+    fake.results["pr merge"] = {"code": 1}
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid)["merge"] == "failed"
+    if leave == "sent back":
+        fh.verdict(c, "follow-up", "not yet")
+    else:
+        store.resolve(fws, c).path.unlink()
+    assert _states(fws, eid)["merge"] == "failed" and "release-failed" in _stopped(fws, eid)
+    assert fr.unreleased(fws, store.load(fws, eid)[1]) == ["merge", "dev"]
+    row = next(s for s in fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(
+        fws, store.load(fws, eid)[1]))["stages"] if s["name"] == "merge")["units"][0]
+    assert row["unit"] == c and row["uncounted"] and "no longer in the epic's release" in row["why"]
+    fr.retry(fws, human, eid, "merge", c)  # yours: after checking what its merge did
+    assert "release-failed" not in _stopped(fws, eid)

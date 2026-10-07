@@ -1382,7 +1382,10 @@ an acknowledgement and lets the records decide again) and keeps the window shut;
 holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; so is
 an attempt the journal records (each intent line names the stage, unit and attempt) whose records are gone: deleting
 a production's intent, outcome and window records does not let it run again, and a Retry puts the journal's attempt
-back before it allows one more; a window record that was deleted is replaced by the attempts' own records and the
+back before it allows one more; a child whose merge failed or whose outcome is
+unknown keeps that reason after it leaves the release (sent back, closed alone, moved or deleted), found from the
+merge records and the journal, until you Retry release on its merge; a window record that was deleted is replaced by
+the attempts' own records and the
 journal's production lines; a retry never runs out of slots. The one case left
 open on purpose: a child branch deleted after its merge was proven does not make the merge out of date (cleaning up a
 merged branch is normal; the merged commit is recorded).

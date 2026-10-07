@@ -748,6 +748,36 @@ def _units(ws, epic, entries=None) -> list[str]:
         e.status == "done" and unit_state(ws, epic.id, "merge", e.id)["state"] == "proven"))
 
 
+def _uncounted(ws, epic_id: str, kids: list[str], holder) -> list[dict]:
+    """The merge units of children no longer counted (sent back, closed alone, moved, retyped or deleted) whose merge
+    failed or whose outcome is unknown, found from the epic's own merge records and the journal, never from tickets:
+    such a failure stays a reason until the human retries it (the child going away does not undo a half merge)."""
+    eid = str(epic_id).upper()
+    d = _dir(ws, eid)
+    units = set()
+    try:
+        names = [x.name for x in d.iterdir() if x.name.startswith("merge.") and x.name.endswith(".intent")]
+    except OSError:
+        names = []
+    for name in names[:MAX_ATTEMPTS * 64]:
+        u = (_read(d / name) or {}).get("unit")
+        if isinstance(u, str) and KEY.fullmatch(u.upper()):
+            units.add(u.upper())
+    for x in (_journal_read(ws) or ([], False))[0]:
+        if x.get("kind") == "intent" and x.get("epic") == eid and x.get("stage") == "merge" \
+                and isinstance(x.get("unit"), str) and KEY.fullmatch(x["unit"].upper()):
+            units.add(x["unit"].upper())
+    rows = []
+    for u in sorted(units - {k.upper() for k in kids}):
+        us = unit_state(ws, eid, "merge", u, holder)
+        if us["state"] in ("failed", "unknown"):
+            why = us.get("why") or "not proven"
+            rows.append({"unit": u, **us, "uncounted": True,
+                         "why": f"{why}; {u} is no longer in the epic's release (sent back, closed alone, moved or "
+                                "deleted), so check by hand what its merge did"})
+    return rows
+
+
 def _window_path(ws) -> Path:
     """The runner's record of the last production attempt of this workspace, written when its commands begin,
     whatever comes of them (guarded, written only by the runner)."""
@@ -1055,6 +1085,8 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
     for name in names:
         units = kids if DEFAULT_PER[name] == "child" else [epic.id]
         rows = [{"unit": u, **unit_state(ws, epic.id, name, u, holder)} for u in units]
+        if name == "merge":
+            rows += _uncounted(ws, epic.id, kids, holder)
         stages.append({"name": name, "per": DEFAULT_PER[name], "units": rows})
     merged = {r["unit"]: r.get("sha") for r in stages[0]["units"] if r["state"] == "proven"}
     for k, s in enumerate(stages[1:], 1):

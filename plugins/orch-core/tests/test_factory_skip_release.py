@@ -131,8 +131,40 @@ def test_no_skip_while_a_release_holds_the_lock(fws, ready, fh):
     finally:
         fr.release_lock(fws)
     assert store.load(fws, eid)[1].status == "open"
-    fh.verdict(eid, "done", expected_hash=_seen(fws, eid), skip_release="now")
+    held = []
+    real = fr.skip_fields
+    from orch.core.ops import Ops
+    write = Ops._ledger
+
+    def watch(*a, **k):  # what is not released is read, and the verdict written, while the lock is held
+        held.append(fr.lock_holder(fws) is not None)
+        return real(*a, **k)
+
+    def ledger_watch(self, *a, **k):
+        held.append(fr.lock_holder(fws) is not None)
+        return write(self, *a, **k)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(fr, "skip_fields", watch)
+        m.setattr(Ops, "_ledger", ledger_watch)
+        fh.verdict(eid, "done", expected_hash=_seen(fws, eid), skip_release="now")
+    assert held and all(held), held
     assert fr.lock_holder(fws) is None  # the verdict let the lock go
+
+
+def test_the_lock_is_held_even_when_nothing_is_skipped(fws, ready, fh, human):
+    eid, _, _ = ready(release="dev")
+    fr.tick(fws, human, Fake())
+    assert fr.unreleased(fws, store.load(fws, eid)[1]) == []
+    held = []
+    real = fr.skip_fields
+
+    def watch(*a, **k):
+        held.append(fr.lock_holder(fws) is not None)
+        return real(*a, **k)
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(fr, "skip_fields", watch)
+        fh.verdict(eid, "done", expected_hash=_seen(fws, eid))
+    assert held == [True] and fr.lock_holder(fws) is None
 
 
 def _all_done(fws, fh, eid):
@@ -148,7 +180,7 @@ def test_the_epic_close_needs_the_skip_reason_too(fws, ready, fh):
     fh.close(eid, "all children are done", skip_release="released by hand")
     last = [e for e in ledger.entries(fws) if e.get("ticket") == eid and e.get("kind") == "close"][-1]
     assert last["release_skipped"] == "released by hand" and last["skipped_stages"] == ["merge", "dev"]
-    assert _run(fws, eid)["headline"] == "You gave the verdict: closed without release"
+    assert _run(fws, eid)["headline"] == "You closed it: closed without release"  # a close, not a verdict
 
 
 def test_the_run_views_close_form_asks_for_the_skip_reason(fws, ready, fh):

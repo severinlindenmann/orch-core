@@ -599,7 +599,7 @@ def test_a_gitlink_hidden_by_ignore_submodules_is_seen(fws, ready, human, remote
     rec = fr.load(fws)[0]
     rec = {**rec, "sensitive_paths": ["vendor/deploy"]}
     found, hits, errors = fr.classify(fws, rec, [store.load(fws, c)[1]])
-    assert errors == {} and hits == {c: ["vendor/deploy"]}
+    assert errors == {} and hits == {c: ["vendor/deploy (a submodule)", ".gitmodules"]}
 
 
 def test_a_replace_ref_in_the_workspace_hides_nothing(fws, ready, human, remote):
@@ -712,12 +712,13 @@ def test_check_exit_code_decides(fws, ready, human):
     assert _states(fws, eid) == {"merge": "failed"}
 
 
-def test_a_timeout_fails_the_stage(fws, ready, human):
+def test_a_timeout_leaves_the_stage_unknown(fws, ready, human):
     eid, _, _ = ready()
     fake = Fake()
     fake.results["pr create"] = {"code": None, "timed_out": True}
     assert "timed out after 60 seconds" in fr.tick(fws, human, fake)[0]
-    assert _states(fws, eid)["merge"] == "failed" and fake.calls[-1][3] == 60
+    assert _states(fws, eid)["merge"] == "unknown" and fake.calls[-1][3] == 60  # killed midway: it may have merged
+    assert _stopped(fws, eid) == ["release-unknown"]
 
 
 def test_a_crash_between_intent_and_outcome_is_unknown_and_never_rerun(fws, ready, human):

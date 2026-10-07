@@ -573,6 +573,10 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     if any(os.path.lexists(d / _name(stage, unit, k, "intent")) for k in range(n + 2, MAX_ATTEMPTS + 1)):
         # an attempt's intent was removed while a later one remains: the records cannot be trusted (fail closed)
         return {"state": "unknown", "attempt": n, "why": "its attempt records have a gap"}
+    j = max(_journal_attempts(ws, epic_id, stage, unit), default=0)
+    if j > n:  # the journal remembers an attempt whose records are gone (removed, or a crash right after the line)
+        return {"state": "unknown", "attempt": n, "journal": j,
+                "why": f"the runner's journal records attempt {j}, but its records are missing"}
     if n == 0:
         return {"state": "waiting", "attempt": 0}
     out = _read(d / _name(stage, unit, n, "outcome"))
@@ -586,6 +590,7 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
             "ended": out.get("ended"), "check": out.get("check"), "sha": out.get("sha"),
             "base_sha": out.get("base_sha"), "failed_at": out.get("failed_at"),
             "conflicts": out.get("conflicts") if isinstance(out.get("conflicts"), list) else [],
+            "doubles": out.get("doubles") if isinstance(out.get("doubles"), list) else [],
             "children": out.get("children") if isinstance(out.get("children"), dict) else None}
     if os.path.lexists(d / _name(stage, unit, n, "rollback-intent")):  # production only: the signed rollback ran
         rb = _read(d / _name(stage, unit, n, "rollback"))
@@ -603,11 +608,17 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
     if out.get("proven") is True:
         if retried:
             return {**info, "state": "waiting"}  # the human asked for it to run again (it went stale)
+        if stage == "merge" and not own_merge(info):  # for every reader, not only the close
+            return {**info, "state": "unknown", "why": "its record names no commit of its own (no base it was checked "
+                                                       "against, or the base itself)"}
         if os.path.lexists(d / _name(stage, unit, n, "stale")):
-            return {**info, "state": "stale", "why": "its branch changed after it was merged"}
+            why = (_read(d / _name(stage, unit, n, "stale")) or {}).get("why")
+            return {**info, "state": "stale", "why": str(why) if why else "its branch changed after it was merged"}
         return {**info, "state": "proven"}
     if retried:
         return {**info, "state": "waiting"}  # the human allowed one more attempt
+    if out.get("interrupted") is True:  # killed or timed out midway: what it changed is not known
+        return {**info, "state": "unknown", "why": info["why"] or "it was stopped while a command ran"}
     return {**info, "state": "failed"}
 
 
@@ -639,7 +650,8 @@ def _blocked_record(ws, epic_id: str) -> dict | None:
     if last is not None and last["kind"] == "block":
         return {"code": str(last.get("code") or "release-blocked"), "stage": str(last.get("stage") or "?"),
                 "unit": str(last.get("unit") or eid),
-                "why": str(last.get("why") or "") + " (its record was removed; the runner's journal still holds it)"}
+                "why": str(last.get("why") or "") + " (the runner's journal still holds it; its file is missing: "
+                       "removed, or never written because the runner stopped right after the journal line)"}
     return None
 
 
@@ -688,6 +700,13 @@ def skip_fields(ws, epic, skip_release, how: str = "orch verdict <epic> done --s
     return {"release_skipped": why, "skipped_stages": left}
 
 
+def signs_release(ws, epic) -> bool:
+    """Whether the epic's live factory charter signs a release (then a human close or verdict holds the lock)."""
+    from orch.core import permits
+    d = permits.factory_delegation(ws, epic)
+    return bool(d and d.get("release"))
+
+
 @contextlib.contextmanager
 def quiet(ws, epic_id: str, needed: bool):
     """Hold the workspace's release lock while a human closes `epic_id` without its release (`needed`), so no stage
@@ -732,6 +751,36 @@ def _units(ws, epic, entries=None) -> list[str]:
     from orch.core import epics
     return sorted(e.id for e in epics.children(ws, epic.id, entries) if e.status == "testing" or (
         e.status == "done" and unit_state(ws, epic.id, "merge", e.id)["state"] == "proven"))
+
+
+def _uncounted(ws, epic_id: str, kids: list[str], holder) -> list[dict]:
+    """The merge units of children no longer counted (sent back, closed alone, moved, retyped or deleted) whose merge
+    failed or whose outcome is unknown, found from the epic's own merge records and the journal, never from tickets:
+    such a failure stays a reason until the human retries it (the child going away does not undo a half merge)."""
+    eid = str(epic_id).upper()
+    d = _dir(ws, eid)
+    units = set()
+    try:
+        names = [x.name for x in d.iterdir() if x.name.startswith("merge.") and x.name.endswith(".intent")]
+    except OSError:
+        names = []
+    for name in names[:MAX_ATTEMPTS * 64]:
+        u = (_read(d / name) or {}).get("unit")
+        if isinstance(u, str) and KEY.fullmatch(u.upper()):
+            units.add(u.upper())
+    for x in (_journal_read(ws) or ([], False))[0]:
+        if x.get("kind") == "intent" and x.get("epic") == eid and x.get("stage") == "merge" \
+                and isinstance(x.get("unit"), str) and KEY.fullmatch(x["unit"].upper()):
+            units.add(x["unit"].upper())
+    rows = []
+    for u in sorted(units - {k.upper() for k in kids}):
+        us = unit_state(ws, eid, "merge", u, holder)
+        if us["state"] in ("failed", "unknown"):
+            why = us.get("why") or "not proven"
+            rows.append({"unit": u, **us, "uncounted": True,
+                         "why": f"{why}; {u} is no longer in the epic's release (sent back, closed alone, moved or "
+                                "deleted), so check by hand what its merge did"})
+    return rows
 
 
 def _window_path(ws) -> Path:
@@ -787,13 +836,26 @@ def _record_epics(ws, production: bool = True) -> set[str]:
     return out
 
 
-def _journal(ws) -> tuple[list[dict], bool]:
-    """(the journal's lines, whether it is missing while production records exist, or holds a line that cannot be read
-    after the human's last acknowledgement)."""
+def _journal_attempts(ws, epic_id: str, stage: str, unit: str) -> dict[int, str]:
+    """{attempt: when} of every attempt of `stage` for `unit` the journal records (lines that name both; a missing or
+    damaged journal is a block of its own, _blocked_record)."""
+    eid, u = str(epic_id).upper(), str(unit).upper()
+    lines = _journal_read(ws)
+    out = {}
+    for x in (lines[0] if lines else []):
+        if (x.get("kind") in ("intent", "production") and x.get("epic") == eid and x.get("stage") == stage
+                and str(x.get("unit") or "").upper() == u and isinstance(x.get("attempt"), int)):
+            out[x["attempt"]] = str(x.get("at") or "")
+    return out
+
+
+def _journal_read(ws) -> tuple[list[dict], bool] | None:
+    """(the journal's lines, whether a line cannot be read after the human's last acknowledgement), None when there is
+    no journal file."""
     from orch.core.artifacts import read_regular
     p = _index_path(ws)
     if not os.path.lexists(p):
-        return [], bool(_record_epics(ws, production=False))
+        return None
     raw = read_regular(p, 4 << 20, root=fs._root())
     if raw is None:
         return [], True
@@ -812,6 +874,13 @@ def _journal(ws) -> tuple[list[dict], bool]:
             bad_after = False  # the human acknowledged everything before it
         lines.append(line)
     return lines, bad_after
+
+
+def _journal(ws) -> tuple[list[dict], bool]:
+    """(the journal's lines, whether it is missing while production records exist, or holds a line that cannot be read
+    after the human's last acknowledgement)."""
+    got = _journal_read(ws)
+    return got if got is not None else ([], bool(_record_epics(ws, production=False)))
 
 
 def production_epics(ws) -> tuple[list[str], bool]:
@@ -841,18 +910,37 @@ def prod_charters(ws) -> list[tuple[str, int]]:
     return out
 
 
+def _voided(ws) -> tuple[set[str], bool]:
+    """(the production times the human's clear-window voided, whether the reset record cannot be read)."""
+    p = _reset_path(ws)
+    if not os.path.lexists(p):
+        return set(), False
+    body = _read(p, 64 * 1024)
+    got = (body or {}).get("voided")
+    if not isinstance(got, list) or not all(isinstance(x, str) for x in got):
+        return set(), True
+    return set(got), False
+
+
 def clear_window(ws, actor) -> str:
-    """Human only: record that every production time the records hold beyond now (a future-dated record) no longer
-    counts for the window. Times up to now still count; nothing is deleted from the guarded records."""
+    """Human only: record that the production times the records hold beyond now (future-dated ones) no longer count
+    for the window: exactly those times, listed in the reset record (with the ones voided before). Times up to now,
+    and every production recorded later, still count; nothing is deleted from the guarded records."""
+    from orch import clock
     fs.human_check(actor, "clearing a future-dated release window")
-    _atomic(_reset_path(ws), json.dumps({"at": _now(), "by": actor.to_str()}))
-    return "production times recorded beyond now no longer keep the window shut; earlier ones still count"
+    times, _ = _production_times(ws, voiding=False)
+    before, _ = _voided(ws)
+    now = clock.now()
+    voided = sorted(before | {clock.stamp_s(t) for t in times if t > now})
+    _atomic(_reset_path(ws), json.dumps({"at": _now(), "by": actor.to_str(), "voided": voided}))
+    return "production times recorded beyond now no longer keep the window shut; earlier and later ones still count"
 
 
-def _production_times(ws) -> tuple[list, str]:
+def _production_times(ws, voiding: bool = True) -> tuple[list, str]:
     """(every time a production attempt of this workspace began or ended, as the runner's records say, why one could
-    not be read). Sources: the runner's window record, and every epic's production intent and outcome records, so a
-    deleted window record does not open the window while an attempt's records remain."""
+    not be read). Sources: the runner's window record, the journal's production lines, and every epic's production
+    intent and outcome records, so a deleted window record or attempt record does not open the window while another
+    source remains. `voiding`: leave out the times the human's clear-window voided."""
     from orch import clock
     times, bad = [], ""
 
@@ -868,6 +956,9 @@ def _production_times(ws) -> tuple[list, str]:
     ids, damaged = production_epics(ws)
     if damaged:
         bad = "the runner's release journal"
+    for x in _journal(ws)[0]:
+        if x.get("kind", "production") == "production":
+            add(x.get("at"), "a production line of the runner's journal")
     for eid in ids:
         d = _dir(ws, eid)
         for n in range(1, MAX_ATTEMPTS + 1):
@@ -880,13 +971,11 @@ def _production_times(ws) -> tuple[list, str]:
                 out = _read(op)
                 if out is None or out.get("ended") is not None:
                     add((out or {}).get("ended"), f"a production outcome record of {eid}")
-    reset = _read(_reset_path(ws), 1024) if os.path.lexists(_reset_path(ws)) else None
-    if reset is not None:  # the human cleared future-dated times (clear_window): those beyond that moment do not count
-        try:
-            cut = clock.parse_stamp(str(reset.get("at")))
-            times = [t for t in times if t <= cut]
-        except (ValueError, OverflowError):
+    if voiding:  # the human cleared future-dated times (clear_window): exactly those do not count
+        voided, unreadable = _voided(ws)
+        if unreadable:
             bad = bad or "the window reset record"
+        times = [t for t in times if clock.stamp_s(t) not in voided]
     return times, bad
 
 
@@ -968,8 +1057,23 @@ def resolve(ws, actor, epic_id: str, reason: str) -> str:
             "it")
 
 
-def _record_production(ws, epic_id: str) -> None:
-    _atomic(_window_path(ws), json.dumps({"at": _now(), "epic": str(epic_id).upper()}))
+def _record_production(ws, epic_id: str, sha: str | None = None) -> None:
+    _atomic(_window_path(ws), json.dumps({"at": _now(), "epic": str(epic_id).upper(), "sha": sha}))
+
+
+def last_released(ws) -> str | None:
+    """The commit the workspace's last production attempt released (begun, whatever came of it), from the runner's
+    journal, else its window record; None when none names one."""
+    for x in reversed(_journal(ws)[0]):
+        if x.get("kind", "production") == "production" and isinstance(x.get("sha"), str) and _SHA.fullmatch(x["sha"]):
+            return x["sha"]
+    body = _read(_window_path(ws), 1024) if os.path.lexists(_window_path(ws)) else None
+    sha = (body or {}).get("sha")
+    return sha if isinstance(sha, str) and _SHA.fullmatch(sha) else None
+
+
+BASE_MOVED = ("the base moved since dev was proven: an earlier production released a commit this dev commit does not "
+              "contain; run dev again")
 
 
 def status(ws, epic, d: dict | None, entries=None) -> dict | None:
@@ -986,6 +1090,8 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
     for name in names:
         units = kids if DEFAULT_PER[name] == "child" else [epic.id]
         rows = [{"unit": u, **unit_state(ws, epic.id, name, u, holder)} for u in units]
+        if name == "merge":
+            rows += _uncounted(ws, epic.id, kids, holder)
         stages.append({"name": name, "per": DEFAULT_PER[name], "units": rows})
     merged = {r["unit"]: r.get("sha") for r in stages[0]["units"] if r["state"] == "proven"}
     for k, s in enumerate(stages[1:], 1):
@@ -1013,6 +1119,10 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
         if s["name"] == "production" and s["units"]:
             u = s["units"][0]
             s["resolved"] = os.path.lexists(_resolved_path(ws, epic.id, u.get("attempt") or 0))
+    waits = _read(_waits_path(ws, epic.id)) if os.path.lexists(_waits_path(ws, epic.id)) else None
+    for s in stages:  # the runner's last word on why the next stage waits (stage_hold), while it still waits
+        if waits and waits.get("stage") == s["name"] and s["state"] == "waiting":
+            s["waits"] = [str(x) for x in (waits.get("why") or [])][:10] or ["its record cannot be read"]
     sens = _sensitive_record(ws, epic.id)
     blocked = _blocked_record(ws, epic.id)
     return {"target": stages[-1]["name"], "recipe": rec is not None, "why": why, "stages": stages, "sensitive": sens,
@@ -1036,8 +1146,8 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
         named = "; ".join(f"{_text(c, 40)}: " + ", ".join(_text(p, 120) for p in (ps or [])[:10])
                           for c, ps in list(hits.items())[:10]) or "the record cannot be read"
         out.append({"code": "sensitive", "label": "Sensitive path touched",
-                    "text": f"a child branch changes a path the release recipe marks sensitive ({named}); nothing was "
-                            "merged"})
+                    "text": f"a child branch changes a path the release recipe marks sensitive, or a submodule "
+                            f"({named}); nothing was merged"})
     for s in stages:
         for u in s["units"]:
             rb = u.get("rollback") if u["state"] == "failed" else None
@@ -1056,12 +1166,22 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                 out.append({"code": "production-failed", "label": "Production check failed",
                             "text": "the production stage's commands ran, but its live check did not pass ("
                                     + _text(u.get("why") or "not proven", 200) + "); nothing was rolled back"})
+            elif u["state"] == "failed" and s["name"] == "production":
+                out.append({"code": "production-failed", "label": "Production stage failed",
+                            "text": "the production stage's commands did not all succeed ("
+                                    + _text(u.get("why") or "not proven", 200) + "): look at production now; it may be "
+                                    "half-deployed; nothing was rolled back"})
             elif u["state"] == "failed" and s["name"] == "merge" and u.get("conflicts"):
+                dbl = [x for x in u.get("doubles") or [] if isinstance(x, dict)]
+                who = ("; ".join(f"{' and '.join(_text(c, 40) for c in (x.get('children') or []))} both add "
+                                 f"{_text(x.get('path'), 120)}" for x in dbl[:5])
+                       + ": two children changed the same file; send one child back") if dbl else (
+                    "two changes touched the same file (this child's and one that reached the base since, such as "
+                    "another child's merge); send the child back to bring its branch up to date, or merge by hand")
                 out.append({"code": "release-conflict", "label": "Merge conflict",
                             "text": f"the merge of {_text(u['unit'], 40)} conflicts in "
                                     + ", ".join(_text(c, 120) for c in u["conflicts"][:10])
-                                    + ": two children changed the same file; this will not go away on Retry; send one "
-                                      "child back"})
+                                    + f": {who}; this will not go away on Retry"})
             elif u["state"] == "failed":
                 codes = [c for c in (u.get("codes") or []) if c != 0] or [u.get("check")]
                 code = codes[0] if codes else None
@@ -1071,12 +1191,15 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                                        else _text(u.get("why") or f"exit code {code}", 200)) + ")"})
             elif u["state"] == "unknown":
                 out.append({"code": "release-unknown", "label": "Release outcome unknown",
-                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and has no recorded "
-                                    "outcome (the runner stopped while it ran)"})
+                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and its outcome is "
+                                    "unknown "
+                                    f"({_text(u.get('why') or 'the runner stopped while it ran', 200)})"
+                                    + ("; look at production now: it may be half-deployed"
+                                       if s["name"] == "production" else "")})
             elif u["state"] == "stale":
                 out.append({"code": "release-stale", "label": "Release out of date",
                             "text": f"the {s['name']} stage of {_text(u['unit'], 40)} was proven, but "
-                                    f"{_text(u.get('why'), 120)}: children changed after the release stage was proven"})
+                                    f"{_text(u.get('why'), 200)}"})
     return out
 
 
@@ -1484,26 +1607,42 @@ def child_branch(ws, t) -> tuple[str | None, str]:
     return b, ""
 
 
-def changed_paths(ws, rec, sha: str) -> list[str] | None:
-    """Every path the commit brings in against the remote base, in the release repository: the net diff and each commit's own
-    changes (merges against each parent), renames as both paths, submodules included. None when git fails or the
-    list is too long to check."""
+def changed_paths(ws, rec, sha: str) -> tuple[list[str], list[str]] | None:
+    """(every path the commit brings in against the remote base, the gitlinks among them), in the release repository:
+    the net diff and each commit's own changes (merges against each parent), renames as both paths, submodules
+    included. A gitlink is a path whose mode is 160000 before or after any of those changes (a submodule added,
+    changed or removed). None when git fails or the list is too long to check."""
     base = f"refs/remotes/release/{rec['base']}"
-    common = ("--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--name-only", "-z")
+    common = ("--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--raw", "-z")
     out: list[str] = []
+    links: list[str] = []
     for args in (("diff", *common, f"{base}...{sha}"),
                  ("log", *common, "-m", "--format=", f"{base}..{sha}")):
         r = _git(ws, rec, *args, limit=GIT_OUT)
         if r.get("code") != 0 or r.get("out_size", 0) > GIT_OUT:
             return None
-        out += [p for p in (r.get("out") or "").split("\x00") if p.strip()]
-    return sorted(set(out))
+        words = [w.strip("\n") for w in (r.get("out") or "").split("\x00")]
+        i = 0
+        while i < len(words):  # ":<old mode> <new mode> <old> <new> <status>", then the path (--no-renames: one)
+            meta = words[i]
+            if not meta.startswith(":"):
+                i += 1
+                continue
+            path = words[i + 1] if i + 1 < len(words) else ""
+            if not path:
+                return None
+            out.append(path)
+            if "160000" in meta[1:].split()[:2]:
+                links.append(path)
+            i += 2
+    return sorted(set(out)), sorted(set(links))
 
 
 # What the release treats as sensitive in every repository, whatever the recipe says (patterns as in sensitive_paths):
 # the harness's settings, hooks, skills and MCP servers, the instructions agents read, and CI. A child that changes
 # any of them changes what runs agents or code later, so a human merges that by hand.
-HARNESS_SENSITIVE = ("**/.claude", "**/.mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", ".github")
+HARNESS_SENSITIVE = ("**/.claude", "**/.mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", ".github",
+                     "**/.gitmodules")
 
 
 def always_sensitive(ws) -> list[str]:
@@ -1574,11 +1713,15 @@ def classify(ws, rec: dict, kids: list) -> tuple[dict, dict, dict]:
         if own.get("code") != 0 or (own.get("out") or "").strip() in ("", "0"):
             errors[t.id] = f"{t.id}: the child's branch has no commits of its own"
             continue
-        paths = changed_paths(ws, rec, sha)
-        if paths is None:
+        got = changed_paths(ws, rec, sha)
+        if got is None:
             errors[t.id] = f"the changes of {t.id}'s branch could not be listed"
             continue
-        bad = [p for p in paths if sensitive(p, [*rec["sensitive_paths"], *always_sensitive(ws)])]
+        paths, links = got
+        # a submodule (a gitlink, or .gitmodules, always sensitive) is never merged by itself: its content is another
+        # repository's, which the release never inspects
+        bad = [f"{p} (a submodule)" for p in links]
+        bad += [p for p in paths if p not in links and sensitive(p, [*rec["sensitive_paths"], *always_sensitive(ws)])]
         if bad:
             hits[t.id] = bad[:20]
         why = None if bad else message_refusal(ws, rec, sha)  # a sensitive hit stops the release anyway
@@ -1628,6 +1771,51 @@ def gate(ws, epic_id: str, did: str | None = None):
 
 def _write(p: Path, body: dict) -> bool:
     return fs._create(p, body)
+
+
+def stage_hold(ws, epic, stage: str) -> list[str]:
+    """Why release stage `stage` (merge, dev or production) may not start now though the epic is Ready: what an
+    unattended close refuses too, read fresh. For every child in testing: evidence that does not meet the strict rules
+    (evidence.strict_missing); before the merge also work not committed in its clone, a submodule in its clone, or a
+    clone whose state cannot be read (after the merge the merged commit is fixed: dev and production never read a
+    clone). [] when nothing holds. (Two children adding the same file is checked before the merge, release_doubles.)"""
+    from orch.core import epics, evidence, factory_built
+    from orch.core.factory_report import _text
+    out = []
+    for e in epics.children(ws, epic.id):
+        if e.status != "testing":
+            continue
+        t = _ticket(ws, e.id)
+        if t is None:
+            out.append(f"{e.id} cannot be read")
+            continue
+        for n, why in evidence.strict_missing(t):
+            out.append(f"the evidence of {t.id}" + (f" for AC{n}" if n else "") + " does not meet the close rules: "
+                       + _text(why, 160))
+        st = factory_built.uncommitted(ws, t.id) if stage == "merge" else None
+        if st is not None and not st["ok"]:
+            out.append(f"the state of {t.id}'s clone could not be read")
+        elif st is not None:
+            if st["lines"]:
+                out.append(f"{t.id} has uncommitted work in its clone")
+            if st["submodules"]:
+                out.append(f"{t.id}'s clone holds a submodule ({', '.join(st['submodules'][:5])}), which the release "
+                           "does not merge")
+    return out
+
+
+def _waits_path(ws, epic_id: str) -> Path:
+    return _dir(ws, epic_id) / "waits.json"
+
+
+def _set_waits(ws, epic_id: str, stage: str | None, why: list[str]) -> None:
+    """The runner's record of why the next stage waits (stage_hold), or none (stage None)."""
+    p = _waits_path(ws, epic_id)
+    if stage is None:
+        with contextlib.suppress(FileNotFoundError):
+            p.unlink()
+        return
+    _atomic(p, json.dumps({"stage": stage, "why": why[:10], "at": _now()}))
 
 
 def _event(ws, actor, epic_id, kind, data) -> None:
@@ -1741,7 +1929,7 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
             n = unit_state(ws, epic.id, "merge", k, holder)["attempt"] + 1
             body = {"stage": "merge", "unit": k, "epic": epic.id, "attempt": n, "started": _now()}
             if n <= MAX_ATTEMPTS:
-                _journal_add(ws, {"kind": "intent", "epic": epic.id, "stage": "merge"})
+                _journal_add(ws, {"kind": "intent", "epic": epic.id, "stage": "merge", "unit": k, "attempt": n})
             if n <= MAX_ATTEMPTS and _write(ddir / _name("merge", k, n, "intent"), body):
                 _write(ddir / _name("merge", k, n, "outcome"),
                        {**body, "codes": [], "check": None, "proven": False, "ended": _now(), "tail": "",
@@ -1765,6 +1953,11 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
                 if s["name"] == "production" and (not window(ws, s["window_hours"])["open"]
                                                   or unresolved_production(ws, epic.id)):
                     return lines  # waiting, not stopped: the run view shows when it opens or what holds it
+            # an irreversible stage starts only on what an unattended close would accept (stage_hold)
+            hold = stage_hold(ws, epic, s["name"])
+            _set_waits(ws, epic.id, s["name"] if hold else None, hold)
+            if hold:
+                return lines + [f"{epic.id}: {s['name']} waits: {hold[0]}"]
             line, proven = _attempt(ws, actor, epic, d, rec, s, unit, us["attempt"] + 1, found, kids, wsid, run)
             lines.append(line)
             if not proven:
@@ -1801,7 +1994,7 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
     """Run `steps` in order, each only while the gate still holds (and `moved()` says nothing moved). {codes, tail,
     why, check, proven, failed_at}: failed_at is "check" only when every command ran and exited 0 and the check alone
     did not pass (the one case a signed rollback answers)."""
-    codes, tail, why, check_code, proven, failed_at = [], "", "", None, False, None
+    codes, tail, why, check_code, proven, failed_at, interrupted = [], "", "", None, False, None, False
     for kind, argv, expect in steps:
         if gate(ws, epic.id, d["id"]) is None:
             why = "stopped before the next command: the epic may no longer release (paused, edited, out of budget, " \
@@ -1819,6 +2012,8 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
             why = "the dashboard stopped while it ran"
         if r.get("timed_out"):
             why = f"timed out after {s['timeout']} seconds"
+        # a command killed midway may have done part of its work (a check only reads): its outcome is unknown
+        interrupted = interrupted or stopping or (bool(r.get("timed_out")) and kind != "check")
         out_ok = expect is None or (r.get("out_size", 0) <= TAIL and (r.get("out") or "").strip() == expect)
         if kind == "check":
             check_code = r.get("code")
@@ -1842,7 +2037,8 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
                 break
         if why:
             break
-    return {"codes": codes, "tail": tail, "why": why, "check": check_code, "proven": proven, "failed_at": failed_at}
+    return {"codes": codes, "tail": tail, "why": why, "check": check_code, "proven": proven, "failed_at": failed_at,
+            "interrupted": interrupted and not proven}
 
 
 def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tuple[str, bool]:
@@ -1874,6 +2070,15 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
                 base_sha = dev.get("base_sha") if dev["state"] == "proven" else None
                 if not isinstance(base_sha, str) or not _SHA.fullmatch(base_sha):
                     return block("no proven dev commit to release")
+                ensure_repo(ws, rec)
+                if fetch_base(ws, rec) is None:
+                    return block("the base could not be fetched from the recipe's remote")
+                last = last_released(ws)  # never release a commit older than what production already has
+                if last and last != base_sha and _git(ws, rec, "merge-base", "--is-ancestor", last,
+                                                       base_sha).get("code") != 0:
+                    _write(_dir(ws, epic.id) / _name("dev", epic.id, dev["attempt"], "stale"),
+                           {"why": BASE_MOVED, "was": base_sha, "released": last})
+                    return f"{epic.id}: production of {unit} not started: {BASE_MOVED}", False
                 extra.update(children=dict(dev.get("children") or {}))
             else:
                 base_sha = fetch_base(ws, rec)
@@ -1909,19 +2114,22 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
               **extra}
     # with the intent, in the runner's journal: the hold, the window and the blocks never depend on ticket files, and a
     # journal that goes missing while records exist blocks every release
-    _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name})
+    _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name,
+                      "unit": unit, "attempt": n, **({"sha": extra["base_sha"]} if name == "production" else {})})
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
-        _record_production(ws, epic.id)
+        _record_production(ws, epic.id, extra["base_sha"])
     env = command_env(ws, *progs.values())
     cwd = str(repo_dir(ws))
     moved = (lambda: fetch_child(ws, rec, ctx["branch"], src, unit) != ctx["sha"]) if child else None
     r = _run_steps(ws, epic, d, s, steps, run, env, cwd, moved)
     proven = r["proven"]
+    conf = conflicts(r["tail"]) if not proven and name == "merge" else []
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),
                "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"],
-               **({"conflicts": conflicts(r["tail"])} if not proven and name == "merge" else {})}
+               "interrupted": r["interrupted"], **({"conflicts": conf} if not proven and name == "merge" else {}),
+               **({"doubles": _conflict_doubles(ws, rec, epic, kids, found, conf)} if conf else {})}
     _write(ddir / _name(name, unit, n, "outcome"), outcome)
     bad = next((c for c in r["codes"] if c != 0), r["check"])
     _event(ws, actor, epic.id, "release.stage", {"stage": name, "child": unit, "proven": proven,
@@ -1930,6 +2138,18 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     if rollback and not proven and r["failed_at"] == "check":
         line += "; " + _rollback(ws, actor, epic, d, s, unit, n, rb_steps, run, env, cwd)
     return line, proven
+
+
+def _conflict_doubles(ws, rec, epic, kids, found, conf: list[str]) -> list[dict]:
+    """The conflicting paths that two children add ([{path, children}], factory_built.double_adds): only then does
+    the reason say two children changed the same file. [] when none, or when it cannot be told."""
+    from orch.core import factory_built
+    try:
+        dups, why = factory_built.release_doubles(ws, rec, epic, kids, found)
+    except Exception:
+        return []
+    paths = {c.rsplit(" (", 1)[0] for c in conf}
+    return [] if why else [x for x in dups if x["path"] in paths][:10]
 
 
 def _rollback(ws, actor, epic, d, s, unit, n, steps, run, env, cwd) -> str:
@@ -1992,6 +2212,13 @@ def retry(ws, actor, epic_id: str, stage: str, unit: str) -> str:
                               "stage is retried")
     if us["attempt"] >= MAX_ATTEMPTS:
         raise ValidationError("this stage was retried too often; release it by hand")
+    if us.get("journal"):  # the journal remembers attempts whose records are gone: put back what it says, as unknown
+        for k, at in sorted(_journal_attempts(ws, epic_id, stage, unit).items()):
+            if us["attempt"] < k <= us["journal"]:
+                _write(ddir / _name(stage, unit, k, "intent"), {"stage": stage, "unit": unit, "epic": epic_id,
+                                                                "attempt": k, "started": at or _now(),
+                                                                "why": "restored from the runner's journal"})
+        us = {**us, "attempt": us["journal"]}
     if us["state"] == "unknown":  # close the open attempt so the record reads as failed, then allow the next one
         _write(ddir / _name(stage, unit, us["attempt"], "outcome"),
                {"stage": stage, "unit": unit, "attempt": us["attempt"], "codes": [], "check": None, "proven": False,

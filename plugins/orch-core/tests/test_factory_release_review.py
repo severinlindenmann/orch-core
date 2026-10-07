@@ -1,0 +1,448 @@
+"""Dark AI Factory: the release, production, auto-close and audit review. Each test fails on the code before the fix
+(the window lost after one clear-window, production on an outdated base, irreversible stages on lenient evidence,
+submodules merged, a deleted production record run again, ...). As in test_factory_release.py, the runner's own git
+runs for real against temporary repositories and a fake stands in for the recipe's commands."""
+import pytest
+
+from orch.core import factory_release as fr, permits, store
+from test_factory_production import ProdFake, _at, _later, _prod_recipe, prod  # noqa: F401
+from test_factory_release import Fake, _states, _stopped
+from test_factory_release import (_not_stopping, bin_dir, fa, fh, fws, ready, recipe, remote,  # noqa: F401
+                                  switch)
+
+pytestmark = pytest.mark.skipif(not __import__("shutil").which("git"), reason="needs git")
+
+
+def _deploys(fake) -> int:
+    return sum("deploy-prod" in x for x in fake.ran())
+
+
+def _run(fws, eid):
+    from orch.dashboard.data import factory as data
+    return data.run_view(fws, store.load(fws, eid)[1])
+
+
+# -- the window and the journal -----------------------------------------------------------------------------------
+
+def test_after_clear_window_a_later_production_still_shuts_the_window(fws, human, monkeypatch):
+    _at(fws, -500)  # a record 500 hours ahead
+    fr.clear_window(fws, human)
+    assert fr.window(fws, 20)["open"]
+    _later(monkeypatch, 1)
+    fr._record_production(fws, "X-1")  # a production an hour after the reset
+    w = fr.window(fws, 20)
+    assert w["open"] is False and not w["why"]
+    _later(monkeypatch, 21)
+    assert fr.window(fws, 20)["open"]
+
+
+def test_a_deleted_production_record_with_the_journal_intact_never_runs_again(fws, prod, human, monkeypatch):
+    eid, _, _ = prod()
+    fake = ProdFake()
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid)["production"] == "proven" and _deploys(fake) == 1
+    d = fr._dir(fws, eid)
+    for kind in ("intent", "outcome"):
+        (d / fr._name("production", eid, 1, kind)).unlink()
+    fr._window_path(fws).unlink()
+    assert not fr.window(fws, 20)["open"]  # the journal still says when production ran
+    _later(monkeypatch, 21)
+    assert fr.tick(fws, human, fake) == [] and _deploys(fake) == 1
+    assert _states(fws, eid)["production"] == "unknown" and "release-unknown" in _stopped(fws, eid)
+    fr.retry(fws, human, eid, "production", eid)  # yours: the journal's attempt is put back, one more is allowed
+    _later(monkeypatch, 21)  # a retry waits for the window too
+    assert fr.tick(fws, human, fake) == [f"{eid}: production of {eid} proven"] and _deploys(fake) == 2
+
+
+def test_a_removed_merge_record_with_the_journal_intact_is_unknown(fws, ready, human):
+    eid, (c,), _ = ready()
+    fake = Fake()
+    fr.tick(fws, human, fake)
+    d = fr._dir(fws, eid)
+    for kind in ("intent", "outcome"):
+        (d / fr._name("merge", c, 1, kind)).unlink()
+    us = fr.unit_state(fws, eid, "merge", c)
+    assert us["state"] == "unknown" and "journal records attempt 1" in us["why"]
+    n = len(fake.calls)
+    assert fr.tick(fws, human, fake) == [] and len(fake.calls) == n
+
+
+def test_a_window_shut_by_a_future_record_needs_you(fws, prod, human):
+    pytest.importorskip("fastapi")
+    from orch.dashboard.data import factory as data
+    _at(fws, -500)
+    eid, _, _ = prod()
+    fr.tick(fws, human, ProdFake())
+    r = _run(fws, eid)
+    assert r["state"] == "windowlook" and r["state"] in data.NEEDS_YOU and "clear-window" in r["headline"]
+
+
+
+# -- production never releases a commit older than what production already has -------------------------------------
+
+def test_a_later_production_of_another_epic_makes_dev_out_of_date(fws, prod, human, remote, monkeypatch):
+    from test_factory_release import _main_commit
+    _at(fws, 1)  # the window is shut: A's merge and dev are proven, its production waits
+    a, _, _ = prod()
+    fake = ProdFake()
+    fr.tick(fws, human, fake)
+    assert _states(fws, a) == {"merge": "proven", "dev": "proven", "production": "waiting"}
+    _main_commit(fws.root, remote, {"later.txt": "x\n"})  # another epic's work reached the base since
+    b, _, _ = prod()
+    _later(monkeypatch, 21)
+    fr._release(fws, human, fr.gate(fws, b), fake)  # B alone: merge, dev and production on the later base
+    assert _states(fws, b)["production"] == "proven" and _deploys(fake) == 1
+    assert fr.last_released(fws) == fr.unit_state(fws, b, "dev", b)["base_sha"]
+    _later(monkeypatch, 21)
+    lines = fr.tick(fws, human, fake)
+    assert _deploys(fake) == 1, lines  # A's production would roll B's back: it does not run
+    assert _states(fws, a)["dev"] == "stale" and "release-stale" in _stopped(fws, a)
+    st = fr.status(fws, store.load(fws, a)[1], permits.factory_delegation(fws, store.load(fws, a)[1]))
+    assert any("the base moved since dev was proven" in r["text"] for r in st["reasons"])
+    fr.retry(fws, human, a, "dev", a)  # dev again, on the base as it is now; then production after the window
+    fr.tick(fws, human, fake)
+    _later(monkeypatch, 21)
+    fr.tick(fws, human, fake)
+    assert _states(fws, a)["production"] == "proven" and _deploys(fake) == 2
+
+
+# -- the irreversible stages start only on what an unattended close accepts ---------------------------------------
+
+def test_a_doubting_evidence_line_keeps_production_from_starting(fws, prod, fa, human, monkeypatch):
+    _at(fws, 1)
+    eid, (c,), _ = prod()
+    fake = ProdFake()
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid)["production"] == "waiting"
+    fa.set_section(c, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed\n"
+                                      "- AC1: the live path could not be tested")
+    _later(monkeypatch, 21)
+    lines = fr.tick(fws, human, fake)
+    assert _deploys(fake) == 0 and lines == [f"{eid}: production waits: the evidence of {c} for AC1 does not meet "
+                                             "the close rules: a line about it says 'could not'"]
+    p = next(s for s in fr.status(fws, store.load(fws, eid)[1],
+                                  permits.factory_delegation(fws, store.load(fws, eid)[1]))["stages"]
+             if s["name"] == "production")
+    assert p["state"] == "waiting" and "could not" in p["waits"][0]
+    pytest.importorskip("fastapi")
+    r = _run(fws, eid)
+    assert r["state"] == "relhold" and r["headline"].startswith("The production stage waits: the evidence of")
+    fa.set_section(c, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")
+    fr.tick(fws, human, fake)
+    assert _deploys(fake) == 1 and "waits" not in next(
+        s for s in fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))[
+            "stages"] if s["name"] == "production")
+
+
+# -- submodules are never merged by themselves --------------------------------------------------------------------
+
+def test_a_child_branch_adding_a_submodule_stops_before_the_merge(fws, ready, human):
+    from test_factory_release import _g, _msg, _wt
+    eid, (c,), _ = ready()
+    wt = fws.root / _wt(f"feat/{c.lower()}-work")
+    _g(wt, "update-index", "--add", "--cacheinfo", f"160000,{_g(wt, 'rev-parse', 'HEAD')},vendor/lib")
+    _g(wt, "commit", "-q", *_msg(f"feat/{c.lower()}-work"))
+    fake = Fake()
+    lines = fr.tick(fws, human, fake)
+    assert fake.calls == [] and "sensitive path" in lines[-1]
+    assert _stopped(fws, eid) == ["sensitive"]
+    st = fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))
+    assert "vendor/lib (a submodule)" in st["reasons"][0]["text"]
+
+
+def test_gitmodules_is_always_sensitive():
+    assert fr.sensitive(".gitmodules", fr.HARNESS_SENSITIVE) and fr.sensitive("a/.gitmodules", fr.HARNESS_SENSITIVE)
+
+
+def test_a_move_to_testing_with_a_submodule_in_the_clone_is_refused(fws, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.core import factory_built as fb, factory_clones as fc
+    with monkeypatch.context() as m:
+        m.setattr(fc, "record", lambda ws, cid: {"branch": "b"})
+        m.setattr(fb, "uncommitted", lambda ws, cid: {"ok": True, "lines": [], "submodules": ["vendor/lib"]})
+        why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
+    assert why and "submodule (vendor/lib)" in why and "does not merge" in why
+
+
+# -- a production attempt that did not prove itself says to look at production -----------------------------------
+
+def _reasons(fws, eid):
+    e = store.load(fws, eid)[1]
+    return fr.status(fws, e, permits.factory_delegation(fws, e))["reasons"]
+
+
+def test_a_production_command_killed_midway_is_unknown_and_says_look_at_production(fws, prod, human):
+    eid, _, _ = prod()
+    fake = ProdFake()
+    orig = fake.__call__
+
+    def call(argv, cwd, env, timeout, started=None):
+        r = orig(argv, cwd, env, timeout, started)
+        return {**r, "code": None, "timed_out": True} if "deploy-prod" in argv else r
+    fr.tick(fws, human, call)
+    assert _states(fws, eid)["production"] == "unknown"
+    (r,) = _reasons(fws, eid)
+    assert r["code"] == "release-unknown" and "timed out" in r["text"] and "half-deployed" in r["text"]
+
+
+def test_a_failed_production_command_says_look_at_production(fws, prod, human):
+    eid, _, _ = prod()
+    fake = ProdFake()
+    fake.codes["deploy-prod"] = 3
+    fr.tick(fws, human, fake)
+    (r,) = _reasons(fws, eid)
+    assert r["code"] == "production-failed" and "half-deployed" in r["text"] and "exit code 3" in r["text"]
+
+
+# -- the close: its record says what it closed on ------------------------------------------------------------------
+
+def test_the_close_record_snapshots_each_stages_attempt_state_and_commit(fws, ready, human, remote):
+    from orch.core import epics, factory_close as fc
+    from orch.dashboard.factory_runner import release_once
+    eid, (c,), _ = ready(release="prod", recipe=_prod_recipe(remote), charter={"close": True})
+    release_once(fws, run=ProdFake())
+    assert store.load(fws, eid)[1].status == "done"
+    d = epics.delegation(fws, store.load(fws, eid)[1])
+    stages = {s["name"]: s for s in fc.record(fws, eid, d["id"])["stages"]}
+    assert set(stages) == {"merge", "dev", "production"} and all(s["state"] == "proven" for s in stages.values())
+    (m,) = stages["merge"]["units"]
+    assert m["unit"] == c and m["attempt"] == 1 and len(m["sha"]) == 40 and m["sha"] != m["base_sha"]
+    (p,) = stages["production"]["units"]
+    assert p["base_sha"] == stages["dev"]["units"][0]["base_sha"]
+
+
+# -- a failed merge stays a reason when its child leaves the release -----------------------------------------------
+
+@pytest.mark.parametrize("leave", ["sent back", "deleted"])
+def test_a_failed_merge_of_a_child_that_left_stays_a_reason(fws, ready, fh, human, leave):
+    eid, (c,), _ = ready()
+    fake = Fake()
+    fake.results["pr merge"] = {"code": 1}
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid)["merge"] == "failed"
+    if leave == "sent back":
+        fh.verdict(c, "follow-up", "not yet")
+    else:
+        store.resolve(fws, c).path.unlink()
+    assert _states(fws, eid)["merge"] == "failed" and "release-failed" in _stopped(fws, eid)
+    assert fr.unreleased(fws, store.load(fws, eid)[1]) == ["merge", "dev"]
+    row = next(s for s in fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(
+        fws, store.load(fws, eid)[1]))["stages"] if s["name"] == "merge")["units"][0]
+    assert row["unit"] == c and row["uncounted"] and "no longer in the epic's release" in row["why"]
+    fr.retry(fws, human, eid, "merge", c)  # yours: after checking what its merge did
+    assert "release-failed" not in _stopped(fws, eid)
+
+
+# -- the double-add check fails closed -----------------------------------------------------------------------------
+
+def test_the_close_double_add_check_fails_closed(fws, ready, human, monkeypatch):
+    from orch.core import factory_built as fb
+    eid, kids, d = ready(kids=2)
+    fr.tick(fws, human, Fake())
+    epic = store.load(fws, eid)[1]
+    assert not [x for x in fb.close_blockers(fws, epic, d, kids, kids) if "could not be listed" in x]
+    with monkeypatch.context() as m:
+        m.setattr(fb, "adds", lambda *a, **k: None)
+        got = fb.close_blockers(fws, epic, d, kids, kids)
+    assert [f"what {k} adds could not be listed" for k in kids] == [x for x in got if "could not be listed" in x]
+
+
+def test_the_move_double_add_check_fails_closed(fws, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.core import factory_built as fb, factory_clones as fc
+    with monkeypatch.context() as m:
+        m.setattr(fc, "record", lambda ws, cid: {"branch": "b"})
+        m.setattr(fb, "uncommitted", lambda ws, cid: {"ok": True, "lines": [], "submodules": []})
+        m.setattr(fb, "child_tree", lambda ws, t: ("a" * 40, [], ""))
+        m.setattr(fb, "_git_rec", lambda ws: {"base": "main"})
+        m.setattr(fb, "_base_sha", lambda ws, rec: "b" * 40)
+        m.setattr(fr, "message_refusal", lambda *a: None)
+        m.setattr(fb, "adds", lambda *a, **k: None)
+        why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
+    assert why and "could not list what your branch adds" in why
+
+
+# -- a merge record without a commit of its own is not proven for any reader --------------------------------------
+
+@pytest.mark.parametrize("forge", ["the-base", "no-base"])
+def test_an_old_merge_record_is_not_proven_for_any_reader(fws, ready, fh, human, forge):
+    import json
+
+    from orch.core.check import run_checks
+    eid, (c,), _ = ready()
+    fr.tick(fws, human, Fake())
+    us = fr.unit_state(fws, eid, "merge", c)
+    p = fr._dir(fws, eid) / fr._name("merge", c, us["attempt"], "outcome")
+    body = json.loads(p.read_text(encoding="utf-8"))
+    if forge == "the-base":
+        body["base_sha"] = body["sha"]
+    else:
+        del body["base_sha"]
+    p.write_text(json.dumps(body), encoding="utf-8")
+    assert fr.unit_state(fws, eid, "merge", c)["state"] == "unknown"
+    assert fr.unreleased(fws, store.load(fws, eid)[1]) == ["merge", "dev"]
+    assert "release-unknown" in _stopped(fws, eid)
+    from orch.core import epics
+    seen = epics.verdict_hash(epics.open_children(fws, store.load(fws, eid)[1]), fws)
+    fh.verdict(eid, "done", expected_hash=seen, skip_release="by hand")
+    assert any(f.code == "closed-without-release" and f.ticket == eid for f in run_checks(fws, emit_events=False))
+
+
+# -- the texts say what is known -----------------------------------------------------------------------------------
+
+def test_a_conflict_names_two_children_only_when_two_children_add_the_path(fws, ready, human):
+    rows = [{"name": "merge", "units": [{"unit": "L-0002", "state": "failed", "conflicts": ["a.json (add/add)"],
+                                          "doubles": dbl}]} for dbl in ([], [{"path": "a.json",
+                                                                              "children": ["L-0002", "L-0003"]}])]
+    plain, two = (fr._reasons([r], None)[0]["text"] for r in rows)
+    assert "two changes touched the same file" in plain and "two children" not in plain
+    assert "L-0002 and L-0003 both add a.json: two children changed the same file" in two
+
+
+def test_a_journal_only_block_does_not_claim_its_file_was_removed(fws, ready, human):
+    eid, (c,), _ = ready()
+    fr._journal_add(fws, {"kind": "block", "code": "release-blocked", "stage": "merge", "unit": c, "why": "x",
+                          "epic": eid})
+    why = fr._blocked_record(fws, eid)["why"]
+    assert "removed" in why and "its record was removed" not in why and "runner stopped" in why
+
+
+# -- every reader agrees on whether the release is complete ---------------------------------------------------------
+# The combinations are derived, not listed: each release stage in each record state (with the others as the runner
+# left them), and for a production that waits, each window state; then the same with the charter paused, and with
+# the child deleted. For each, unreleased(), the close's release blockers, the run view's release steps and orch
+# check's closed-unreleased finding must say the same thing. Documented exceptions, asserted as such:
+# - the close's blockers stop at the charter (paused) before they read the release: not compared then;
+# - the run view lights a release step only once the epic is Ready (Evidence): with the child deleted it is not, so
+#   the run view says "not complete", which agrees because the others say so too (the merge has no unit left);
+# - the clone dimension (present, removed, swapped) is not enumerated: no reader of the release state reads a clone
+#   (status() reads records only; a clone counts for the stage gate before the merge and for the close's own
+#   "built" blockers, which test_factory_built and test_factory_clones_release cover); nor is "child done", which
+#   keeps a proven merge counted (test_factory_production's closed-after-merge test) or, with a failed merge, is
+#   test_a_failed_merge_of_a_child_that_left_stays_a_reason above.
+
+STAGE_STATES = ("proven", "stale", "failed", "unknown", "blocked", "running", "held", "waiting", "old")
+ONLY = {"held": "production", "old": "merge"}  # another epic's hold is production's; an old record is a merge's
+WINDOWS = ("open", "shut", "unreadable", "future")
+
+
+def _snapshot(fws, eid):
+    d = fr._dir(fws, eid)
+    files = {p.name: p.read_bytes() for p in d.iterdir() if p.is_file()}
+    return files, fr._index_path(fws).read_text(encoding="utf-8"), fr._window_path(fws).read_bytes()
+
+
+def _restore(fws, eid, snap):
+    import shutil
+    files, j, w = snap
+    fr.release_lock(fws)
+    d = fr._dir(fws, eid)
+    shutil.rmtree(d)
+    d.mkdir(mode=0o700)
+    for name, body in files.items():
+        (d / name).write_bytes(body)
+    fr._index_path(fws).write_text(j, encoding="utf-8")
+    fr._window_path(fws).write_bytes(w)
+    shutil.rmtree(fr._dir(fws, "X-9"), ignore_errors=True)
+
+
+def _apply(fws, eid, c, stage, state, window):
+    import json
+    d = fr._dir(fws, eid)
+    unit = c if stage == "merge" else eid
+    later = fr.STAGES[fr.STAGES.index(stage):]
+
+    def drop(stages):
+        for p in list(d.iterdir()):
+            if p.name.split(".")[0] in stages:
+                p.unlink()
+        lines = [x for x in fr._index_path(fws).read_text(encoding="utf-8").splitlines()
+                 if json.loads(x).get("stage") not in stages]
+        fr._index_path(fws).write_text("".join(x + "\n" for x in lines), encoding="utf-8")
+        if "production" in stages:
+            fr._window_path(fws).unlink()
+    out = d / fr._name(stage, unit, 1, "outcome")
+    if state == "stale":
+        fr._write(d / fr._name(stage, unit, 1, "stale"), {"why": "changed"})
+    elif state == "failed":
+        out.write_text(json.dumps({**json.loads(out.read_text(encoding="utf-8")), "proven": False}), encoding="utf-8")
+    elif state == "unknown":
+        out.unlink()
+    elif state == "old":  # a merge record from before the base it was checked against was recorded
+        body = json.loads(out.read_text(encoding="utf-8"))
+        body.pop("base_sha", None)
+        out.write_text(json.dumps(body), encoding="utf-8")
+    elif state == "running":
+        out.unlink()
+        assert fr.acquire(fws, eid, 60)
+    elif state == "blocked":
+        fr._write(d / "blocked.json", {"code": "release-blocked", "stage": stage, "unit": unit, "why": "x",
+                                       "epic": eid})
+    elif state in ("waiting", "held"):
+        drop(later)
+        if state == "held":  # another epic's production failed and is unresolved
+            x = fr._dir(fws, "X-9")
+            fr._write(x / fr._name("production", "X-9", 1, "intent"), {"epic": "X-9", "unit": "X-9",
+                                                                       "started": "2020-01-01T00:00:00Z"})
+            fr._write(x / fr._name("production", "X-9", 1, "outcome"),
+                      {"proven": False, "ended": "2020-01-01T00:00:00Z"})
+    if "production" in later and state in ("waiting", "held") and window != "open":
+        from orch import clock
+        at = {"shut": clock.stamp_s(), "unreadable": "nonsense", "future": "2999-01-01T00:00:00Z"}[window]
+        fr._atomic(fr._window_path(fws), json.dumps({"at": at}))
+
+
+def _readers(fws, eid):
+    from types import SimpleNamespace
+
+    from orch.core import factory_close
+    from orch.core.check import _check_release_skips
+    from orch.dashboard.data import factory as data
+    epic = store.load(fws, eid)[1]
+    d = permits.factory_delegation(fws, epic)
+    bl = factory_close.blockers(fws, epic, d)
+    close = None if any(b["code"] == "charter" for b in bl) else not any(b["code"] == "release" for b in bl)
+    run = data.run_view(fws, epic)
+    marks = dict(zip(run["names"], run["marks"]))
+    entry = next(e for e in store.scan(fws) if e.id == eid)
+    done = SimpleNamespace(status="done", meta=entry.meta, path=entry.path, id=eid)  # as if it were closed now
+    return {"unreleased": fr.unreleased(fws, epic) == [], "close": close,
+            "run view": all(marks[n] == "done" for n in ("Merge", "Dev", "Production")),
+            "orch check": not any(f.code == "closed-unreleased" for f in _check_release_skips(fws, [done]))}
+
+
+def test_every_reader_agrees_whether_the_release_is_complete(fws, ready, fh, human, remote):
+    import itertools
+    pytest.importorskip("fastapi")
+    eid, (c,), _ = ready(release="prod", recipe=_prod_recipe(remote), charter={"close": True})
+    fr.tick(fws, human, ProdFake())
+    assert _states(fws, eid) == {"merge": "proven", "dev": "proven", "production": "proven"}
+    snap = _snapshot(fws, eid)
+    combos = [(s, st, w) for s, st in itertools.product(fr.STAGES, STAGE_STATES) if ONLY.get(st, s) == s
+              for w in (WINDOWS if st in ("waiting", "held") else ("open",))]
+    assert len(combos) > 30
+    seen = set()
+    for phase in ("live", "paused", "deleted"):
+        if phase == "paused":
+            fh.epic_pause(eid)
+        elif phase == "deleted":
+            store.resolve(fws, c).path.unlink()
+        for stage, state, window in combos:
+            _restore(fws, eid, snap)
+            _apply(fws, eid, c, stage, state, window)
+            got = _readers(fws, eid)
+            fr.release_lock(fws)
+            want = got["unreleased"]
+            where = (phase, stage, state, window, got)
+            assert got["orch check"] == want, where
+            if got["close"] is not None:
+                assert got["close"] == want, where
+            else:
+                assert phase != "live", where  # only a stopped charter keeps the close from saying
+            assert got["run view"] == want, where
+            # complete exactly when every stage is proven: a block or another epic's hold changes nothing proven
+            assert want == (phase != "deleted" and state in ("proven", "blocked")), where
+            seen.add(want)
+    assert seen == {True, False}

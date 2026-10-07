@@ -122,11 +122,6 @@ def blockers(ws, epic, d, *, signed=None, rep=None) -> list[dict]:
             else:
                 if st["sensitive"] is not None:
                     out.append(_b("release", "a child branch touches a sensitive path"))
-                if any(s["name"] == "merge" for s in st["stages"]):
-                    for k in fr._units(ws, epic):
-                        us = fr.unit_state(ws, epic.id, "merge", k)
-                        if us["state"] == "proven" and not fr.own_merge(us):
-                            out.append(_b("release", f"the merge of {k} records no commit of its own"))
                 for s in st["stages"]:
                     if s.get("held"):
                         out.append(_b("release", "production is held: another epic's production is unresolved ("
@@ -235,7 +230,11 @@ def close_once(ws, epic_id: str, did: str) -> str | None:
         kids = [r["id"] for r in rep["children"] if r["status"] == "testing"]
         if not fs._create(_marker(ws, epic.id, did, "intent"), {"at": clock.stamp_s(), "seen": rep["seen"]}):
             return None  # another round or dashboard took it: never twice
-        stages = [s["name"] for s in (fr.status(ws, epic, d) or {}).get("stages", [])]
+        # what each stage was when it closed: its attempt, state and commits, per unit
+        stages = [{"name": s["name"], "state": s["state"],
+                   "units": [{k: u.get(k) for k in ("unit", "attempt", "state", "sha", "base_sha")}
+                             for u in s["units"]]}
+                  for s in (fr.status(ws, epic, d) or {}).get("stages", [])]
         try:
             Ops(ws, ACTOR).verdict(epic.id, "done", MESSAGE, expected_hash=rep["seen"], delegation=did)
         except OrchError as e:

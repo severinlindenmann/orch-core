@@ -7,11 +7,19 @@ import pytest
 
 from orch.core import epics, factory_built as fb, factory_close, factory_release as fr, factory_report, \
     factory_sessions as fs, store
-from test_factory_clones import _g, _msg, _programs, _recipe, _refine, _to_testing, fa, fh, fws, remote, bin_dir  # noqa: F401,E501
+from test_factory_clones import _g, _msg, _programs, _recipe, _refine, fa, fh, fws, remote, bin_dir  # noqa: F401,E501
 from test_factory_release import Fake, _not_stopping  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not shutil.which("git"), reason="needs git")
 ASKED = "One page elephants.html that reads elephants.json"
+
+
+def _to_testing(fa, cid, close_tasks):
+    """In testing with evidence the strict rules accept (the release starts no stage on less)."""
+    fa.claim(cid)
+    close_tasks(fa, cid)
+    fa.set_section(cid, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
+    fa.move(cid, "testing")
 
 
 @pytest.fixture(autouse=True)
@@ -245,8 +253,10 @@ def test_a_merge_conflict_names_its_paths_and_says_retry_will_not_help(fws, fa, 
     fr.tick(fws, human, fake)
     (r,) = factory_report.stopped(fws, store.load(fws, eid)[1])
     assert r["code"] == "release-conflict" and r["label"] == "Merge conflict"
-    assert f"the merge of {data} conflicts in elefant.json (add/add): two children changed the same file; this " \
-           "will not go away on Retry; send one child back" == r["text"]
+    # one child: the other change is on the base, so the reason never claims two children
+    assert r["text"].startswith(f"the merge of {data} conflicts in elefant.json (add/add): two changes touched the "
+                                "same file (this child's and one that reached the base since") and "two children" \
+        not in r["text"] and r["text"].endswith("this will not go away on Retry")
     assert fr.conflicts("CONFLICT (content): Merge conflict in a/b.txt\nCONFLICT (modify/delete): c.txt deleted "
                         "in HEAD and modified in x.") == ["a/b.txt (content)",
                                                          "c.txt deleted in HEAD and modified in x. (modify/delete)"]

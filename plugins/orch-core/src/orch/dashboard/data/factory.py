@@ -84,19 +84,24 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
     "sensitive": "Look at the named paths. Every commit the branch brings in counts, so a later commit that removes "
                  "the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release "
                  "on the merge stage to check the branches again.",
-    "release-conflict": "Two children changed the same file, so the merge cannot go in by itself and Retry runs into "
-                        "the same conflict. Send one child back (say in its text that it does not create that file), "
-                        "or merge by hand, then Retry release on the merge stage.",
+    "release-conflict": "Two changes touched the same file (two children, when the reason names them, or this child "
+                        "and what reached the base since), so the merge cannot go in by itself and Retry runs into the "
+                        "same conflict. Send a child back (say in its text that it does not create that file, or that "
+                        "it brings its branch up to date), or merge by hand, then Retry release on the merge stage.",
     "release-failed": "Read the stage's output on the run view, fix the cause, then Retry release: the stage runs once "
                       "more.",
-    "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy). Retry "
-                       "release only when running it again is safe; otherwise finish it by hand.",
-    "release-stale": "Look at what changed since the stage was proven. Retry release on the out-of-date stage to run it "
-                     "for the children as they are now (the merge, then dev, then production), or release the change "
-                     "by hand.",
-    "production-failed": "Look at production now: its commands ran and its check did not pass, and nothing was rolled "
-                         "back (the charter signs no rollback, or the recipe has none). Roll back or fix it by hand, "
-                         "then Retry release on production if running it again is safe.",
+    "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy; for "
+                       "production, look at production now: it may be half-deployed). Retry release only when running "
+                       "it again is safe; otherwise finish it by hand.",
+    "release-stale": "Look at what changed since the stage was proven (a child's branch, the children, or the base "
+                     "when another production released a later commit). Retry release on the out-of-date stage to "
+                     "run it for the children and the base as they are now (the merge, then dev, then production), or "
+                     "release the change by hand.",
+    "production-failed": "Look at production now: its commands ran, or began to, and did not prove themselves (a "
+                         "command failed, or its check did not pass), so it may be half-deployed, and nothing was "
+                         "rolled back (a rollback runs only after a failed check, and only when signed and in the "
+                         "recipe). Roll back or fix it by hand, then Retry release on production if running it again "
+                         "is safe.",
     "rolled-back": "Production is back where it was, as the rollback's check says. Read the output on the run view, fix "
                    "the cause, then Retry release on production: it runs once more, after its release window.",
     "release-blocked": "Fix what kept the stage from starting (it is named above: for example set the recipe again "
@@ -187,6 +192,7 @@ STEP_ARCS = tuple(_arc(i) for i in range(5))
 _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped"), "budget": ("warn", 0, "Budget used up"),
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
+           "windowlook": ("you", 0, "Window needs a look"), "relhold": ("you", 0, "Release waits"),
            "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
@@ -194,7 +200,8 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "asks": ("you", 0, "Question in its pane"), "hung": ("warn", 0, "Busy, screen unchanged"),
            "parked": ("you", 0, "Session ended"), "launches": ("warn", 0, "Launches used up"),
            "children": ("warn", 0, "Children limit")}
-NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children")
+NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children",
+             "windowlook", "relhold")
 BUSY_MINUTES = 20  # a session busy this long with an unchanged screen (its spinner aside) gets a warning
 
 
@@ -266,6 +273,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # production waiting only for its release window (a time the runner's own record decides; not a stop)
     window = next((dict(s["window"]) for s in rel_stages if s.get("window")), None)
     held = next((s["held"] for s in rel_stages if s.get("held")), None)  # another epic's production unresolved
+    hold = next((s for s in rel_stages if s.get("waits")), None)  # a stage that waits for what a close also needs
     if window and window.get("opens"):  # a wait for the window uses the charter's time budget
         ends = _at(d.get("at"))
         ends = ends + timedelta(hours=d["max_hours"]) if ends and d.get("max_hours") else None
@@ -291,9 +299,11 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     from orch.core import factory_close
     auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
     if lit[-1]:
+        how = _last_close(signed, eid)
+        said = "You closed it" if how.get("kind") == "close" else "You gave the verdict"
         state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
-                                       else "You gave the verdict: closed without release"
-                                       if _release_skipped(signed, eid) else "You gave the verdict")
+                                       else f"{said}: closed without release" if how.get("release_skipped")
+                                       else said)
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
@@ -308,8 +318,13 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "asks", "; ".join(f"{a['child']} waits at a question in its pane" for a in asks)
     elif any(s["state"] == "running" for s in rel_stages):
         state, headline = "releasing", "The runner is releasing the work with your recipe"
+    elif hold and not mine["requests"] and not mine["budget"]:
+        state, headline = "relhold", f"The {hold['name']} stage waits: {hold['waits'][0]}"
     elif held and not mine["requests"] and not mine["budget"]:
         state, headline = "held", "Production is held: another epic's production is unresolved"
+    elif window and not window["open"] and window.get("why"):  # shut by a record that cannot be read or lies ahead
+        state, headline = "windowlook", ("Production's release window is shut by a record that cannot be read or lies "
+                                         "in the future: clear-window or a look needed")
     elif window and not window["open"] and not mine["requests"] and not mine["budget"]:
         state, headline = "window", "Production waits for its release window"
     elif auto and mine["ready"] and auto["pending"] and not mine["requests"] and not mine["budget"]:
@@ -355,7 +370,8 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"asks": "wait", "parked": "wait", "hung": "now", "working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
-            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait"}.get(state, "stop")
+            "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait",
+            "windowlook": "wait", "relhold": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
@@ -412,11 +428,11 @@ def _epic_events(events, ids, charter_closed=frozenset()) -> list[dict]:
     return rows[::-1][:200]
 
 
-def _release_skipped(signed, eid: str) -> bool:
-    """Whether the epic's last signed verdict or close closed it without its signed release (release_skipped)."""
-    last = next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
-                 and e.get("kind") in ("verdict", "close")), None)
-    return bool(last and last.get("release_skipped"))
+def _last_close(signed, eid: str) -> dict:
+    """The epic's last signed verdict or close entry ({} when none): its kind, and release_skipped when it closed
+    without its signed release."""
+    return next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
+                 and e.get("kind") in ("verdict", "close")), None) or {}
 
 
 def _unreleased(ws, epic):

@@ -190,7 +190,9 @@ The same check is a condition: before the first merge command, a file the epic n
 start"), recorded on the child whose text names the file (else the first): Retry release works once a child commits
 it on its branch (or after you fix the epic); and the auto-close keeps the epic open while a named file is in no
 merged commit (no child's commit, without a signed release), a child in testing has uncommitted work in its clone,
-its clone holds a submodule, or its clone's state cannot be read. An epic that names no file has nothing to check here (and is not closed by itself, above).
+its clone holds a submodule, or its clone's state cannot be read, or what a child adds cannot be listed (two
+children adding one file conflict, so a list that cannot be read keeps it open; a move to testing is refused the same
+way). An epic that names no file has nothing to check here (and is not closed by itself, above).
 
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:
@@ -1161,8 +1163,11 @@ redirects); the nudge depends on Claude Code's current screen markers.
   card ("T-0002 and T-0003 both add elefant.json: the release will conflict"), keeps the epic from closing by
   itself, and stops the release before any merge ("Release could not start: ... remove it from one child (send it
   back) and Retry"), also for a child that joins after the other was merged. A merge stage that fails with git's
-  `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths: two
-  children changed the same file, and Retry will not make that go away; send one child back.
+  `CONFLICT` lines in its output (the runner's own capture) is Stopped as "Merge conflict", naming the paths. It says
+  "two children changed the same file" only when two children add a conflicting path (the same double-add check);
+  otherwise "two changes touched the same file" (this child's and one that reached the base since). Retry will not
+  make that go away; send a child back, or merge by hand. A block whose file is missing while the journal holds it
+  says so without claiming the file was removed (the runner may have stopped right after the journal line).
 - *A nudge left in the input box, and chained git (the fourth run).* The runner typed its nudge, re-read the screen,
   saw it "changed" (Claude's status bar and an "Update available!" line change by themselves) and gave up without
   Enter, leaving its text in the box; the session then waited behind it. The runner now reads only the input box
@@ -1202,9 +1207,11 @@ it" and offer "Close without releasing" with a reason you type, and `orch verdic
 `--skip-release REASON`. The epic's signed verdict entry records the reason (`release_skipped`) and the stages not
 proven (`skipped_stages`), and the run view's Finished summary says "You gave the verdict: closed without release".
 The same holds for the run view's "Close the epic" (after a Reopen, with every child done): it asks for the skip
-reason too, and the signed close entry records it. While a release round holds the workspace's release lock, such a
-verdict or close is refused ("a release is running"); otherwise it holds the lock while it closes, so no stage starts
-meanwhile. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
+reason too, and the signed close entry records it (its summary then says "You closed it: closed without release").
+For every epic whose charter signs a release, your verdict or close reads which stages are not proven and writes its
+entry under the workspace's release lock, even when nothing is skipped, so no stage starts in between: while a release
+round holds the lock, it is refused ("a release is running"). The charter's own close records, per stage and unit, the
+attempt, state and commits it closed on. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
 reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased"). A child's own
 verdict card says that accepting the child alone releases nothing while its epic's release has not run. A verdict
 or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in
@@ -1333,15 +1340,17 @@ with the remote base in the mirror: the net diff (`git diff <base>...<commit>`) 
 `--ignore-submodules=none` (a gitlink counts, whatever `.gitmodules` says), `--no-ext-diff` and `--no-textconv`. Any
 match of `sensitive_paths`, of the workspace's orch folder (normally `orchestrator`: tickets change only through orch),
 or of the harness and instruction files (`.claude/` at any depth, its settings, hooks and skills included; `.mcp.json`,
-`CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any depth; `.github` at the top), all sensitive whatever the recipe
-says, stops the release with "Sensitive path touched", naming the paths (escaped): nothing is merged. A child that
+`CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any depth; `.github` at the top; `.gitmodules` at any depth), and
+any submodule (a gitlink, mode 160000, added, changed or removed by any commit the branch brings in, named "(a
+submodule)"), all sensitive whatever the recipe says, stops the release with "Sensitive path touched", naming the paths (escaped): nothing is merged. A child that
 changes what runs agents or CI later is merged by hand. Then the message of every commit the branch brings in is checked with orch's commit-msg logic and
 the workspace's commit format, each commit listed by its id and its message read on its own from the raw commit
 object (no separator a message could contain decides where it ends; more than 500 commits is refused); a message it
 refuses fails the merge stage of that child, naming the commit. A branch that brings in no commit of its own (its
 commit is the base or already on it: the worker never committed) fails its merge stage with "the child's branch has
-no commits of its own", and the merge record names the base it was classified against, so a close by itself also
-requires every child's merge to record a commit that is not that base. Because every commit counts, a later commit
+no commits of its own", and the merge record names the base it was classified against: a proven merge record without
+that base, or whose commit is that base, reads as "outcome unknown" everywhere (the release, the close, `orch check`,
+the run view), so it never counts as released. Because every commit counts, a later commit
 that removes the change does not clear it: merge by hand, or rewrite the branch without it, then Retry release on the
 merge stage. For a child with a runner-made clone the runner takes the branch and clone of its own record (never a
 ticket field); otherwise, for a child with a worktree of its own, the one branch a child names (`orch link
@@ -1375,7 +1384,12 @@ production, the window and the rollback.
 **When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
 every command: the factory and Dark switched on, the ledger whole, the charter active (not paused, not edited, the
 budget not used up), the epic Ready (every child in testing or done, every criterion cited, nothing unverifiable), no
-open permission request of the epic, and no Stopped reason other than the release's own. A process under an agent
+open permission request of the epic, and no Stopped reason other than the release's own. Before each stage (merge,
+dev and production, all irreversible) starts, the runner also checks what an unattended close checks, read fresh: every
+child in testing has evidence that meets the strict close rules ("Closing by itself"), and before the merge also no
+work left uncommitted in its clone, no submodule in its clone, and a clone whose state can be read (two children adding
+the same file is checked before the merge too; dev and production run on the merged commit and never read a clone). While one fails, that stage waits and nothing runs: the run view says "Release waits" (among those
+that need you) and names the stage and each reason; send the child back or fix it, and the next round checks again. A process under an agent
 harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round.
 Known limit: an epic that used exactly its child budget counts as Stopped ("Budget used up", as since phase 3), so it
 does not release.
@@ -1385,8 +1399,9 @@ does not release.
 group of the command that runs. It is held across all stages of one epic, and it holds while that dashboard lives and
 its expiry has not passed, or while the recorded command's process group still runs: a dashboard that died does not
 let a new one start another epic's release beside a running command. When the dashboard stops, each running release
-command's process group gets SIGTERM and, five seconds later, SIGKILL; its attempt is recorded as failed ("the
-dashboard stopped while it ran").
+command's process group gets SIGTERM and, five seconds later, SIGKILL; its attempt is recorded with outcome
+**unknown** ("the dashboard stopped while it ran"), as is a command killed by its timeout: what a command killed midway
+changed is not known (a check that times out only fails the check).
 
 **Records and crash safety.** Each attempt of a stage for one unit (a child, or the epic) writes, in
 `permits/release-records/`, an intent record (stage, unit, attempt, a hash of the commands, start time, the commit)
@@ -1405,8 +1420,14 @@ first, and the attempt is recorded as failed).
 blocked: the journal missing while release records exist, or holding a line that cannot be read, blocks every release
 of the workspace ("Release could not start": check the records, then Retry release to acknowledge it, which appends
 an acknowledgement and lets the records decide again) and keeps the window shut; a block whose file was removed still
-holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; a window
-record that was deleted is replaced by the attempts' own records; a retry never runs out of slots. The one case left
+holds through the journal; an attempt whose intent is missing while a later one remains is "outcome unknown"; so is
+an attempt the journal records (each intent line names the stage, unit and attempt) whose records are gone: deleting
+a production's intent, outcome and window records does not let it run again, and a Retry puts the journal's attempt
+back before it allows one more; a child whose merge failed or whose outcome is
+unknown keeps that reason after it leaves the release (sent back, closed alone, moved or deleted), found from the
+merge records and the journal, until you Retry release on its merge; a window record that was deleted is replaced by
+the attempts' own records and the
+journal's production lines; a retry never runs out of slots. The one case left
 open on purpose: a child branch deleted after its merge was proven does not make the merge out of date (cleaning up a
 merged branch is normal; the merged commit is recorded).
 
@@ -1423,7 +1444,10 @@ then dev).
 
 **The production stage.** Production runs only for a charter that signs `--release prod`, after dev is proven and not
 out of date (a changed merge or a new child makes dev, and with it production, out of date; production never runs
-while dev is), on the commit dev was proven on, under the same lock, gate, intent-before-commands records and pinned
+while dev is), on the commit dev was proven on, and only when that commit contains the commit the workspace's last production
+released (recorded in the journal and the window record; the base is fetched first): a production of another epic
+since dev was proven makes dev out of date ("the base moved since dev was proven ... run dev again"), so production
+never rolls back what a later production released. It runs under the same lock, gate, intent-before-commands records and pinned
 programs as the other stages. It gets one automatic attempt: a failed or unknown production attempt stops the release,
 and only your Retry release allows one more. It checks out the base commit dev was proven on and fills `{sha}` with it;
 that commit is what production releases only when your recipe's commands use `{sha}` (a script that deploys "the
@@ -1449,7 +1473,10 @@ latest main" deploys whatever main is then).
   window while the attempts' records remain. Never an agent, a ticket or the recipe. No record means the window is open;
   a record it cannot read, or whose time lies in the future, keeps the window shut until you look at it. While the
   window is shut the epic is **waiting**, not Stopped (a time recorded in the future: run `orch factory release
-  clear-window` in your terminal, which makes times beyond that moment stop counting and deletes nothing): nothing runs, the run view says when the window opens and when
+  clear-window` in your terminal, which makes exactly the times recorded beyond that moment stop counting, lists them
+  in its reset record and deletes nothing; every production recorded later still counts, so the window keeps working
+  after a reset). A window shut by a record that cannot be read or lies in the future is not a plain wait: the run view
+  puts the epic among those that need you ("Window needs a look": clear-window or a look needed). Otherwise nothing runs, the run view says when the window opens and when
   the charter's time budget ends (a wait uses it; if the window opens after the budget ends, production does not run
   under that charter), and the runner checks again every round. A retry waits for the window too: it is never
   skipped.
@@ -1471,10 +1498,14 @@ latest main" deploys whatever main is then).
   then Retry release for that stage: it runs once more.
 - *Release outcome unknown*: check by hand whether the stage's commands ran (did the branch merge, did dev deploy).
   Retry release runs it once more, so retry only when running it again is safe; otherwise finish it by hand.
-- *Release out of date*: children changed after the release stage was proven; Retry release on that stage, or
-  release the change by hand.
+- *Release out of date*: children changed after the release stage was proven, or (dev) the base moved: another
+  production released a commit the dev commit does not contain; Retry release on that stage, or release the change by
+  hand.
 - *Production check failed*: production's commands ran and its live check did not pass, and nothing was rolled back
   (none signed, or none in the recipe). Look at production now; roll back or fix it by hand.
+- *Production stage failed*: a production command (or its precheck) failed: production may be half-deployed, and
+  nothing was rolled back. Look at production now. A production attempt killed or timed out midway is *Release outcome
+  unknown*, with the same "look at production now; it may be half-deployed".
 - *Production rolled back*: the live check failed and the signed rollback ran and its check passed. Fix the cause,
   then Retry release on production (after its window).
 - *Rollback failed*: the rollback's check did not pass, or its outcome is unknown: production may be broken. Fix it by

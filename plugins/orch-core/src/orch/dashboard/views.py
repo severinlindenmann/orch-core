@@ -205,6 +205,15 @@ def _via(value) -> str:
 TEMPLATES.env.filters["via"] = _via
 
 
+def _screen(value, n: int = 12, record: bool = True) -> str:
+    """A runner record's screen tail (an early end, a readiness check) as plain lines: terminals.clean_screen."""
+    from orch.dashboard.terminals import clean_screen
+    return clean_screen(value, n, record=record)
+
+
+TEMPLATES.env.filters["screen"] = _screen
+
+
 THEMES = ("light", "dark", "system")
 BRANDS = ("mission-control", "none")  # an unknown value falls back to "none"
 

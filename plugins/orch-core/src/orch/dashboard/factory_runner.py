@@ -116,11 +116,11 @@ def human_typed(name: str) -> bool:
 def watched(ws) -> list[dict]:
     """The factory sessions of this workspace the Terminals page shows: from the runner's own bindings of this
     workspace only (never a listing of the tmux server), each name checked by the Terminals' name rule:
-    [{name, epic, child, planner}], oldest first."""
+    [{name, epic, child, planner, session}], oldest first."""
     from orch.core import factory_sessions
     from orch.dashboard import terminals
     return [{"name": b["name"], "epic": str(b["epic"]).upper(), "child": b["child"],
-             "planner": factory_sessions.is_planner(b)}
+             "planner": factory_sessions.is_planner(b), "session": b.get("session")}
             for b in factory_sessions.bindings(ws)
             if isinstance(b.get("name"), str) and terminals.NAME.fullmatch(b["name"])]
 

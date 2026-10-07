@@ -476,7 +476,7 @@ what runs, and the epic page says why.
 with a non-blocking error in every session (the plugin's `bin/orch` needs `uv`, which was not on the session's PATH),
 so the guard and the permission hook silently did nothing. Before it starts a session, the runner therefore runs
 these checks under the sessions' exact environment (`env -i`, the session PATH, the allowlisted variables) and shows
-the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
+the failures on the run view (with the last lines of a failing program's output, cleaned and escaped). While a blocking check
 fails it starts nothing. A result is kept for at most 60 seconds, and only while the programs it probed and the hook
 commands it ran are still the ones the runner would use (checked again, without running anything, right before a
 launch: a change since then starts nothing until the next round's checks); the run view says when the checks ran
@@ -839,8 +839,13 @@ You can type into them as into orch's own sessions (for example to answer Claude
 same rules: the token cookie, a request from this machine with a loopback Host, a same-origin POST. There is no end
 from that page: the runner owns their lifecycle, so you stop them with Stop in the run view. While you type, the
 runner types no nudge into that session for 60 seconds (it records the time of your last browser key, in memory).
-With Terminals off (or tmux missing), the run view shows a read-only look at each session's last 12 lines,
-escaped, and says how to turn Terminals on. Both the link and the look are shown only to a request from this machine
+The run view shows one status line per running session: its ticket, what it is doing (from the runner's own reading
+of its pane: a trust question, a question in its pane, idle at its prompt, stopped working; for a busy pane only fixed
+patterns: thinking, reading, searching, editing, running a command, a hook waiting for a permission card; otherwise
+just "Working") and how long its screen has been unchanged by the runner's clock. A closed "Show screen" holds its
+last 12 lines, cleaned (escape sequences, box borders and spinner lines dropped, real characters, HTML-escaped once).
+With Terminals on, each line has a Watch link; with it off (or tmux missing), one line says how to turn it on.
+The status lines and screens are shown only to a request from this machine
 with a loopback Host, as Terminals itself (never over the dashboard's LAN mode). Watching a factory session never
 resizes its pane; Type and CLI do, never below 80x24, and that counts as you at it (no nudge). Agents reach none of this: the dashboard needs your token, the guard
 refuses `tmux -L orch` and anything naming the permits folder (where the runner's socket is).

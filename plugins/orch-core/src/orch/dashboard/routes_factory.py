@@ -40,7 +40,7 @@ def factory_run(request: Request, ref: str):
     if run is None:
         return _not_found(request, f"{epic.id} is not an AI Factory epic, or AI Factory is switched off")
     return page(request, "factory_run.html", nav="factory", title=f"{run['name']} {epic.id}", run=run,
-                steps=factory_data.STEPS, watch=_watch(request, ws, epic.id),
+                steps=factory_data.STEPS, watch=_watch(request, ws, epic.id, run),
                 stalled_tails=_stalled_tails(request, run), local=_local(request),
                 busy_minutes=factory_data.BUSY_MINUTES)
 
@@ -59,10 +59,9 @@ STALLED_LINES = 3
 
 
 def _stalled_tails(request: Request, run: dict) -> dict:
-    """The last STALLED_LINES lines (escaped) of each session that stopped working, waits at a question in its pane
-    or is busy with an unchanged screen, for a request from this machine only (a screen is never shown over the
-    network)."""
-    from orch.core import factory_runner as core_runner
+    """The last STALLED_LINES lines (terminals.clean_screen) of each session that stopped working, waits at a question
+    in its pane or is busy with an unchanged screen, for a request from this machine only (a screen is never shown over
+    the network)."""
     from orch.dashboard import factory_runner, terminals
     shown = [*(run.get("stalled") or []), *(run.get("asks") or []), *(run.get("hung") or [])]
     if not shown or not terminals.local_request(request):
@@ -70,8 +69,8 @@ def _stalled_tails(request: Request, run: dict) -> dict:
     out = {}
     for s in shown:
         try:
-            out[s["name"]] = core_runner.escaped_tail(factory_runner.TmuxLauncher().capture(s["name"]) or "",
-                                                      STALLED_LINES)
+            out[s["name"]] = terminals.clean_screen(factory_runner.TmuxLauncher().capture(s["name"]) or "",
+                                                    STALLED_LINES)
         except Exception:
             continue
     return out
@@ -80,11 +79,49 @@ def _stalled_tails(request: Request, run: dict) -> dict:
 PEEK_LINES = 12
 
 
-def _watch(request: Request, ws, eid: str) -> dict | None:
+def _ago(seconds: float) -> str:
+    """A short duration for the status line: "40 s", "4 min", "2 hours 5 minutes"."""
+    from orch.dashboard.data import factory as factory_data
+    s = int(max(0.0, seconds))
+    return f"{s} s" if s < 60 else f"{s // 60} min" if s < 3600 else factory_data.span(s)
+
+
+def doing(w: dict, text: str | None, run: dict | None = None) -> dict:
+    """One running session's status line: {doing, since}. `doing` from the runner's own reading of its pane (the nudge
+    record: trust, ask, idle, busy) and the run's state (stalled), and for a busy pane terminals.activity's fixed
+    patterns; `since` how long its screen has been unchanged, by the runner's own clock (never the pane's text, so a
+    spinner's seconds count for nothing). Nothing is guessed: no reading is "Working"."""
+    from orch import clock
+    from orch.core import factory_sessions
+    from orch.dashboard import terminals
+    rec = factory_sessions.nudge_record(w.get("session")) if w.get("session") else None
+    reading = rec["idle"] if rec else ""
+    since = None
+    if rec and rec["pane_at"]:
+        try:
+            since = _ago((clock.now() - clock.parse_stamp(rec["pane_at"])).total_seconds())
+        except (ValueError, TypeError):
+            since = None
+    if any(s.get("name") == w["name"] for s in (run or {}).get("stalled") or []):
+        what = "Stopped working"
+    elif reading == "trust":
+        what = "Trust question"
+    elif reading == "ask":
+        what = "At a question in its pane"
+    elif reading == "1":
+        what = "Idle at its prompt"
+    elif reading == "theirs":
+        what = "Text waits in its input box"
+    else:
+        what = terminals.activity(text) if text else "Working"
+    return {"doing": what, "since": since}
+
+
+def _watch(request: Request, ws, eid: str, run: dict | None = None) -> dict | None:
     """The run view's sessions box, only for a request from this machine (terminals.local_request: never over `orch
-    serve --lan`): with Terminals on, a link to watch and type into the epic's sessions there; otherwise a read-only
-    peek at each one's last lines (escaped), from the runner's own socket."""
-    from orch.core import factory_runner as core_runner
+    serve --lan`): per running session a status line (doing) and its last PEEK_LINES lines cleaned
+    (terminals.clean_screen, behind "Show screen"), from the runner's own socket; with Terminals on, a link to watch
+    and type into them there."""
     from orch.dashboard import factory_runner, terminals
     try:
         mine = [w for w in factory_runner.watched(ws) if w["epic"] == eid.upper()]
@@ -95,10 +132,15 @@ def _watch(request: Request, ws, eid: str) -> dict | None:
     if not terminals.local_request(request):
         return None  # a screen is shown only to a browser on this machine (as Terminals itself)
     on = terminals.enabled(ws, request)
-    peek = [] if on else [{"name": w["name"], "child": "Planner" if w["planner"] else w["child"],
-                           "tail": core_runner.escaped_tail(factory_runner.TmuxLauncher().capture(w["name"]) or "",
-                                                            PEEK_LINES)} for w in mine]
-    return {"on": on, "n": len(mine), "peek": peek}
+    sessions = []
+    for w in mine:
+        try:
+            text = factory_runner.TmuxLauncher().capture(w["name"])
+        except Exception:
+            text = None
+        sessions.append({"name": w["name"], "child": None if w["planner"] else w["child"],
+                         "screen": terminals.clean_screen(text or "", PEEK_LINES), **doing(w, text, run)})
+    return {"on": on, "n": len(mine), "sessions": sessions}
 
 
 @router.post("/factory/{ref}/release/retry")

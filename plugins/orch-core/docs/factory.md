@@ -1483,7 +1483,8 @@ Nothing (the default), Merge, Dev or Production. Each is disabled, with a line n
 (Production: merge, dev and production). Production shows a checkbox "Roll back production by itself if its check
 fails" (disabled while the recipe's production stage has no rollback) and a field for the word production, which the
 server requires in addition to dark. The server checks all of it again before anything is created or signed, and the
-confirm says what will run. For a charter that signs a release, the run view's ring gets Merge (and Dev, and
+confirm says what will run. A release choice posted with an AI Factory (not Dark) start, from either page, is refused
+("Only a Dark AI Factory signs a release: nothing was created", or "... nothing was signed"), never silently dropped. For a charter that signs a release, the run view's ring gets Merge (and Dev, and
 Production, whose step is lit by its live check) after Evidence, lit only from proven stage records (a failed, unknown,
 out-of-date or merely running stage lights nothing); Done stays your verdict. A Release panel shows each stage and unit
 as waiting, running, proven, failed, outcome unknown or out of date, the rollback's state, the escaped output tails

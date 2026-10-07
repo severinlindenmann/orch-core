@@ -376,6 +376,22 @@ def test_a_switched_off_kind_is_refused_by_the_gate(app, ws, put):
     assert call(app, "POST", f"/t/{tid}/answer", remote=origin(Scope.DECIDE), body=b"qid=q1&qhash=x", headers=FORM)[0] == 303
 
 
+def test_the_factory_lookup_runs_off_the_event_loop(app, ws, put, monkeypatch):
+    import threading
+    tid = put("backlog")
+    seen = []
+    real = remote_gate.factory_guarded
+
+    def spy(w, ref):
+        seen.append(threading.get_ident())
+        return real(w, ref)
+
+    monkeypatch.setattr(remote_gate, "factory_guarded", spy)
+    main = threading.get_ident()
+    status = call(app, "POST", f"/t/{tid}/comment", remote=origin(Scope.OPERATE), body=b"text=hi", headers=FORM)[0]
+    assert status == 303 and seen and main not in seen  # the scan and ticket reads must not block the loop
+
+
 def test_bridge_clock_window():
     now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
     assert bridge.BRIDGE_SKEW_S == 300

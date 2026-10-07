@@ -221,6 +221,8 @@ def test_a_factory_child_gets_no_verdict_card_of_its_own(fws, ready):
            "Nothing for you to do yet." in page
     today = _client(fws).get("/").text
     assert held in today and f'action="/t/{c}/verdict"' not in today
+    assert f"Part of {eid}" in _client(fws).get("/board").text  # the Board's move chip names the run, not a verdict
+    assert f'href="/factory/{eid}">Open the run</a>' in page  # the ticket's status card: the run's move
     items = query.waiting(fws)
     assert [i["scope"] for i in items if i["ticket"] == c] == ["later"]  # never counted as a decision
     assert not any(i["ticket"] == c for i in items if i.get("scope") == "blocking")

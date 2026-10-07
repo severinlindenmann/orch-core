@@ -348,6 +348,7 @@
     {% elif a.kind == "approve" %}<a class="btn" href="#gate-{{ a.gate }}">Read the {{ a.gate }} and approve below</a>{% endif %}
     {% if a.kind == "verdict" %}<a class="btn" href="#proven">Check the proof and give the verdict below</a>{% endif %}
     {% if a.kind in ("repair", "task") %}<a class="btn btn-primary" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
+    {% if a.kind == "factory" %}<a class="btn" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
     {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
     {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
     {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}

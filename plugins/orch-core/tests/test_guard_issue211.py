@@ -142,6 +142,84 @@ def test_message_text_does_not_hide_what_the_shell_runs(ws, cmd):
     _check(ws, cmd, False)
 
 
+FEEDS_AN_INTERPRETER = [
+    "echo 'orch approve L-1' | sh",
+    "echo 'orch approve L-1' | bash",
+    "echo 'orch approve L-1' | zsh",
+    "echo 'orch approve L-1' | dash",
+    "echo 'orch approve L-1' | ksh",
+    "echo 'orch approve L-1' | fish",
+    "echo 'orch approve L-1' | env sh",
+    "echo 'orch approve L-1' | sudo sh",
+    "echo 'orch approve L-1' | python3 -c 'import os,sys; os.system(sys.stdin.read())'",
+    "echo 'orch approve L-1' | node -e 'require(\"child_process\").execSync(require(\"fs\").readFileSync(0,\"utf8\"))'",
+    "echo 'orch approve L-1' | perl -e 'system(<STDIN>)'",
+    "echo 'orch approve L-1' | ruby -e 'system(STDIN.read)'",
+    "echo 'orch approve L-1' | xargs -I{} sh -c {}",
+    "echo 'orch approve L-1' | xargs -0 sh -c",
+    "echo 'orch approve L-1' | source /dev/stdin",
+    "echo 'orch approve L-1' | . /dev/stdin",
+    "echo 'orch approve L-1' | eval",
+    "printf '%s' \"orch approve L-1\" | sh",
+    "printf 'orch approve L-1\\n' | bash -s",
+    "gh issue create --body \"orch approve L-1\" ; gh issue view 1 --json body -q .body | sh",
+    "git commit -m \"orch approve L-1\" && git log -1 --format=%s | sh",
+    "cat <<EOF | sh\norch approve L-1\nEOF",
+    "cat <<'EOF' | bash\norch approve L-1\nEOF",
+    "tee x.sh <<< \"orch approve L-1\"; sh x.sh",
+    "tee x.sh <<< 'orch approve L-1'; bash x.sh",
+    "sh <<< \"orch approve L-1\"",
+    "bash <<< 'orch approve L-1'",
+    "python3 <<< \"import os; os.system('orch approve L-1')\"",
+    "bash -c \"$(echo orch approve L-1)\"",
+    "bash <(echo 'orch approve L-1')",
+    "echo 'orch approve L-1' > x.sh && sh x.sh",
+    "echo 'orch approve L-1' > x.sh; source x.sh",
+    "echo 'orch approve L-1' > x.sh; . ./x.sh",
+    "gh issue create --body 'x'; echo 'orch approve L-1' | sh",
+    "orch log L-1 -m 'x'; echo 'orch approve L-1' | sh",
+    "echo orch approve L-1 | sh",
+]
+
+
+@pytest.mark.parametrize("cmd", FEEDS_AN_INTERPRETER)
+def test_text_fed_to_an_interpreter_is_inspected(ws, cmd):
+    ws.config["git"]["agent_may"]["commit"] = True
+    _check(ws, cmd, False)
+
+
+SHELL_TOKENIZATION = [
+    "orch $'approve' L-1",
+    "orch $'\\x61pprove' L-1",
+    "or\\\nch approve L-1",
+    "orch \\\napprove L-1",
+    "echo x \\; orch approve L-1",
+    "echo x # c\norch approve L-1",
+    "echo 'a;b' ; orch approve L-1",
+    "echo \"a;b\"; orch approve L-1",
+    "echo '#' ; orch approve L-1",
+    "echo x;orch approve L-1",
+    "echo x&&orch approve L-1",
+    "echo x||orch approve L-1",
+    "{ orch approve L-1; }",
+    "(orch approve L-1)",
+    "echo $'orch\\x20approve L-1' | sh",
+    "eval $'orch\\x20approve L-1'",
+    "eval \"$(echo orch approve L-1)\"",
+    "o''rch approve L-1",
+    "\"orch\" approve L-1",
+    "'orch' 'approve' L-1",
+    "FOO=1 orch approve L-1",
+    "command orch approve L-1",
+]
+
+
+@pytest.mark.parametrize("cmd", SHELL_TOKENIZATION)
+def test_shell_tokenization_tricks_stay_denied(ws, cmd):
+    ws.config["git"]["agent_may"]["commit"] = True
+    _check(ws, cmd, False)
+
+
 def test_escaped_quotes_inside_one_message_are_still_one_message(ws):
     ws.config["git"]["agent_may"]["commit"] = True
     _check(ws, 'git commit -m "a\\" ; orch approve L-1 ; \\""', True)

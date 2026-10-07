@@ -547,14 +547,15 @@ def _drives_orch_as_human(cmd: str, code: str) -> bool:
     """Interpreter or pty-wrapped code that runs a human-only orch command, or builds a human actor. The orch word
     and the verb must sit in one simple command, one shell payload or one heredoc body that is code, so a test run
     such as `python -m pytest -k approve && orch show L-1` is not mistaken for it."""
-    shown = _without_message_text(code)  # a gh --body or git commit -m that mentions python is text, not code
+    msg = _message_exempt(cmd)
+    shown = _without_message_text(code) if msg else code  # a gh --body or git commit -m that mentions python is text, not code
     if not (_HUMAN_INTERP.search(shown) or _pty_wrapped(shown)):
         return False
     if _HUMAN_PY.search(code):
         return True
     main, docs = _split_heredocs(cmd)
     segs = _command_segments(cmd)
-    units = [_prose_view(u, len(segs) == 1) for u in segs] + [d.body for d in docs if not _is_data_heredoc(main, d)]
+    units = [_prose_view(u, len(segs) == 1, msg) for u in segs] + [d.body for d in docs if not _is_data_heredoc(main, d)]
     return any(_ORCH_WORD.search(u) and (_HUMAN_VERB_WORD.search(u) or _pty_wrapped(u)) for u in units)
 _HUMAN_ONLY_DENIED = ("approving, answering, giving verdicts, requesting changes, adopting into the ledger, granting "
                       "permissions, reopening or dropping quick tasks, arming schedules and filing their "
@@ -688,11 +689,32 @@ _ENV_UNEXPORT = re.compile(r"\bexport\s+(?:-\w*\s+)*-\w*n\w*\s+(?:\S+\s+)*?" + _
 _GIT_SHELL_ALIAS = re.compile(r"(?<![\w.-])alias\.[\w-]+\s*[=\s]\s*!")
 
 
-def _prose_view(seg: str, sole: bool = False) -> str:
+_FEEDS = re.compile(r"(?:ba|da|k|z|fi|a)?sh|python[0-9.]*|node|deno|bun|perl|ruby|php|lua|osascript|busybox|xargs|source|\.|eval|exec|env"
+                    r"|sudo|doas|nohup|command|builtin|time|nice|timeout|stdbuf|setsid|script|unbuffer|expect|socat|watch|ssh|parallel")
+
+
+def _message_exempt(cmd: str) -> bool:
+    """Quoted message text may be treated as text only when nothing on the line can run it: no command word is a shell,
+    an interpreter, xargs, source/eval/exec or a wrapper (so no pipe, here-string or written script feeds one), and
+    no `<<<` here-string or process substitution reads it."""
+    if "<<<" in cmd or "<(" in cmd:
+        return False
+    for seg in _command_segments(cmd):
+        words, _ = _command(seg)
+        if words and _FEEDS.fullmatch(os.path.basename(words[0])):
+            return False
+        if any(_FEEDS.fullmatch(os.path.basename(w)) for w in words[1:2]) and words[0] in _WRAPPERS:
+            return False
+    return True
+
+
+def _prose_view(seg: str, sole: bool = False, msg: bool = True) -> str:
     """`seg` with the quoted text that is only a message blanked: the message argument of a known command (git commit
     -m, gh --body/--title, orch log -m, ...), and, when `seg` is the whole command, the arguments of a plain echo or
     printf (which prints and runs nothing). A quoted `orch approve` handed to anything else (script -c, ssh, bash -c,
     watch, expect) stays visible."""
+    if not msg:
+        return seg
     out = _without_message_text(seg)
     if sole:
         words, _ = _command(out)
@@ -722,8 +744,8 @@ def _help_only(seg: str) -> bool:
     return " ".join(words[1:-1]) in _HELP_PATHS
 
 
-def _runs_human_only(seg: str, plain: str, sole: bool = False) -> bool:
-    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole)) or _human_only_tokens(seg)
+def _runs_human_only(seg: str, plain: str, sole: bool = False, msg: bool = True) -> bool:
+    return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole, msg)) or _human_only_tokens(seg)
                 or _ORCH_DYNAMIC.search(seg))
 
 
@@ -2227,7 +2249,26 @@ def _state_write(ws, cmd: str, code: str, cwd) -> bool:
     return False
 
 
-def _bash(ws, cmd: str, cwd=None) -> Decision:
+def _decode_ansi_c(cmd: str) -> str:
+    """`$'a\\x20b'` as the shell reads it (`a b`), every ANSI-C string of the command."""
+    import codecs
+
+    def one(m: re.Match) -> str:
+        try:
+            return codecs.decode(m.group(1).encode("latin-1", "replace"), "unicode_escape")
+        except (UnicodeDecodeError, ValueError):
+            return m.group(0)
+    return _ANSI_C.sub(one, cmd)
+
+
+def _bash(ws, cmd: str, cwd=None, _decoded: bool = False) -> Decision:
+    cmd = re.sub(r"\\\r?\n", "", cmd)  # a backslash-newline is nothing to the shell: `or\<nl>ch` is `orch`
+    if not _decoded and "$'" in cmd:
+        decoded = _decode_ansi_c(cmd)
+        if decoded != cmd:
+            d = _bash(ws, decoded, cwd, _decoded=True)  # judged as the shell would run it, too
+            if not d.allow:
+                return d
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
         return Decision(False, _REMOTE_DENIED if named else _CONFIG_SECRETS_DENIED)
@@ -2246,6 +2287,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     may = ws.config["git"]["agent_may"]
     term = ws.config["git"]["review_term"]
     all_segs = _command_segments(cmd)
+    msg_ok = _message_exempt(cmd)
     for seg in all_segs:
         if _help_only(seg) and not re.search(r"(?<!\|)\|(?!\|)", cmd):  # not piped on (`| sh` would run the text)
             continue
@@ -2259,7 +2301,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
             return Decision(False, _SERVE_DENIED)
         if _ORCH_TMUX.search(seg.replace("'", "").replace('"', "")):  # quotes removed: -L "orch" is -L orch
             return Decision(False, _ORCH_TMUX_DENIED)
-        if _runs_human_only(seg, plain, len(all_segs) == 1):
+        if _runs_human_only(seg, plain, len(all_segs) == 1, msg_ok):
             return Decision(False, _HUMAN_ONLY_DENIED)
         if _GIT_WORD.search(plain) and _GIT_SHELL_ALIAS.search(seg.replace("'", "").replace('"', "")):
             return Decision(False, "a git alias that starts with ! runs a shell command the guard cannot read: "

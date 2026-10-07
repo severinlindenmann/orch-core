@@ -17,7 +17,7 @@ uv run --project plugins/orch-core python plugins/orch-session/test/make_fixture
   && ORCH_SESSION_FIXTURES=/tmp/orch-session-fixtures node --test plugins/orch-session/test/*.spec.ts
 ```
 
-CI uses Python 3.11 and Node 24, so avoid syntax that needs a newer Python. CI also runs on every pull request to `main` and on `main` itself, but not on pushes to other branches.
+CI uses Python 3.11 and Node 24, so avoid syntax that needs a newer Python. The orch-core workflow runs the core tests and the addon checks as parallel jobs; the `orch-core` check is green when both are. CI also runs on every pull request to `main` and on `main` itself, but not on pushes to other branches.
 
 ## Pull requests
 

@@ -316,9 +316,10 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
         harness = item.get("harness") or (str(claim.get("harness")) if claim.get("session") else None)
         diff = approved_day = criteria = None
         if kind == "re-approve" and gate in GATE_SECTIONS:
-            from orch.core.gates import approved_snapshot, normalized_text
+            from orch.core.gates import approved_snapshot, normalized_text, snapshot_matches
             age = _invalidated_age(t, gate, by_ticket.get(tid, []), at_now)
-            diff = story_mod.diff(approved_snapshot(ws, t.id, gate), normalized_text(t, gate))
+            snap = approved_snapshot(ws, t.id, gate)
+            diff = story_mod.diff(snap, normalized_text(t, gate)) if snapshot_matches(t, gate, snap) else None
             approved_day = steps_mod.day(((t.meta.get("gates") or {}).get(gate) or {}).get("approved"))
         widgets = art_view = check_lines = None
         if kind == "verdict":

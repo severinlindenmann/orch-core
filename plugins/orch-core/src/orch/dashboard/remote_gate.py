@@ -10,6 +10,7 @@ any matching.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -258,8 +259,11 @@ class RemoteGate:
         if not bridge.allows(self.root, tag.kind, origin, tag.scope):
             return await _respond(send, 403, no)
         if (not origin.fresh and scope["method"] == "POST" and path.startswith("/t/")
-                and factory_guarded(self.ws, self._ref(scope))):
-            # a change under a running factory epic can start agents or alter a launched one's prompt
+                and await asyncio.to_thread(factory_guarded, self.ws, self._ref(scope))):
+            # a change under a running factory epic can start agents or alter a launched one's prompt. The lookup
+            # scans the workspace and reads tickets, so it runs in a thread: a large workspace never stalls the loop.
+            # It is a policy check made before the handler runs: an epic armed in the gap between the two is not
+            # seen (accepted, see the README).
             return await _respond(send, 403, FRESH)
         action = self._addon_action(scope)
         if action is not None and action_unlisted(Request(scope), *action):

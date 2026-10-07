@@ -9,7 +9,7 @@ import re
 
 from orch.core import evidence
 from orch.core.constants import AGENT_NOTES, SECTIONS
-from orch.core.gates import HASH_VERSION, gate_hash, gate_meta, gate_parts, normalized_text
+from orch.core.gates import HASH_VERSION, gate_hash, gate_meta, gate_parts, normalized_text, snapshot_matches
 from orch.dashboard.data.steps import CHANGES_REQUESTED, YOUR_TURN, day, when
 from orch.dashboard.data.timeline import describe, who
 
@@ -123,7 +123,8 @@ def gate_view(ws, t, gate: str, card: dict, *, can_approve: bool, seen: str, sna
         "hash": short_hash(g.get("hash")) if g.get("hash") else "", "seen": seen, "seen_short": short_hash(seen),
         "open": approving, "can_approve": approving, "question": question if approving else None,
         "unsigned": unsigned and shown == "approved",
-        "reapprove": reapprove, "diff": diff(snapshot, normalized_text(t, gate)) if reapprove else None,
+        "reapprove": reapprove, "diff": (diff(snapshot, normalized_text(t, gate)) if reapprove and snapshot_matches(t, gate, snapshot)
+                 else None),
         "changes": cr if cr and shown == "changes" else None,
     }
 

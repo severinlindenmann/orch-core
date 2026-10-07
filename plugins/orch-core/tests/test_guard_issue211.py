@@ -479,6 +479,37 @@ def test_plain_reads_with_those_tools_stay_allowed(ws):
     _check(ws, f"rg pattern {T}", True)
 
 
+MUX_DISGUISED_DENIED = [
+    "scr''een -S x -X stuff y",
+    'scr""een -S x -X stuff y',
+    "scr\\een -S x -X stuff y",
+    "t''mux -L orch send-keys x",
+    "/usr/bin/tm?x -L orch send-keys x",
+    "/usr/bin/tm*x -L orch ls",
+    "/usr/bin/scr?en -S x -X stuff y",
+    "/usr/bin/scr*n -ls",
+    "/usr/bin/t[m]ux ls",
+    "T=tm; ${T}ux -L orch ls",
+    "T=tmux; $T -L orch send-keys x",
+    "T=scr; ${T}een -S x -X stuff y",
+    "$(echo tmux) -L orch ls",
+    "`echo screen` -S x -X stuff y",
+    "T=tmux; $T send-keys -t x 'orch approve L-1' Enter",
+    "T=tmux; $T attach",
+]
+
+
+@pytest.mark.parametrize("cmd", MUX_DISGUISED_DENIED)
+def test_a_disguised_tmux_or_screen_is_refused(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_ordinary_dollar_commands_stay_allowed(ws):
+    _check(ws, "$HOME/bin/tool --flag", True)
+    _check(ws, "ls $D", True)
+    _check(ws, "echo screen", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

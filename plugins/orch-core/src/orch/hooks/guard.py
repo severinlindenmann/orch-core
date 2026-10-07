@@ -501,6 +501,28 @@ def _mux_in_interpreter_code(cmd: str) -> bool:
     return any(_MUX_WORD_BOUNDED.search(t) and _PROC_LAUNCH.search(t) for t in texts)
 
 
+_MUX_SUBCMD = re.compile(r"-[LS]\s*['\"]?\S|(?<![\w-])(?:send-keys|send-prefix|new-session|new-window|attach(?:-session)?|"
+                         r"kill-server|kill-session|capture-pane|paste-buffer|load-buffer|set-buffer|run-shell|pipe-pane|"
+                         r"list-sessions|list-panes|has-session|respawn-pane|source-file|-X\s+stuff|-X\s+eval)(?![\w-])")
+
+
+def _mux_program_disguised(flat: str) -> bool:
+    """A command word that is, or can expand to, tmux or screen without spelling it: a glob that matches the name
+    (`tm?x`, `/usr/bin/scr*`), or a word built by the shell (`${T}ux`, `$(echo tmux)`, a backtick) on a line that
+    also carries a tmux or screen socket option or subcommand. Conservative: such a line is refused."""
+    import fnmatch
+    for seg in _command_segments(flat):
+        words, _ = _command(seg)
+        if not words:
+            continue
+        base = os.path.basename(words[0])
+        if re.search(r"[*?\[]", base) and any(fnmatch.fnmatchcase(n, base) for n in ("tmux", "screen")):
+            return True
+        if re.search(r"[$`]", words[0]) and _MUX_SUBCMD.search(" ".join(words[1:])):
+            return True
+    return False
+
+
 def _mux_risky(cmd: str) -> bool:
     """A tmux or screen command the guard cannot show plain. Only the command word and its own arguments count: a
     `grep tmux`, a heredoc body, a quoted message or a `#` inside quotes is not one. Best effort."""
@@ -509,8 +531,11 @@ def _mux_risky(cmd: str) -> bool:
     flat = _prep(cmd)
     if _config_and_mux(flat):
         return True
-    whole = _MUX_WORD_BOUNDED.search(flat)
+    # The word as the shell reads it: `scr''een` and `t\mux` are the program, not text.
+    whole = _MUX_WORD_BOUNDED.search(flat) or _MUX_WORD_BOUNDED.search(re.sub(r"""['"\\]""", "", flat))
     if _MUX_ANSI_C.search(flat) and _MUX_FLAG.search(flat):
+        return True
+    if _mux_program_disguised(flat):
         return True
     if not whole:
         return False

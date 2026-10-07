@@ -135,3 +135,15 @@ def test_cli_without_a_gate_reapproves_the_changed_requirements(cli_human, ws, p
     assert run(["approve", tid]) == 0
     t = store.load(ws, tid)[1]
     assert t.status == "open" and gate_state(t, "requirements") == "approved"
+
+
+def test_cli_skips_the_diff_when_the_snapshot_does_not_match_the_signed_hash(cli_human, ws, put, capsys):
+    from orch.core.gates import snapshot_path
+    tid = _approved_then_edited(ws, put, "in-progress")
+    snapshot_path(ws, tid, "requirements").parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path(ws, tid, "requirements").write_text("## Requirements\n\nnot what was approved\n", encoding="utf-8")
+    TID[0] = tid
+    assert run(["approve", tid, "requirements"]) == 0
+    out = capsys.readouterr().out
+    assert "no diff is shown" in out and "not what was approved" not in out and "+- r2 decided in chat" not in out
+    assert "r2 decided in chat" in out  # the full text is still shown

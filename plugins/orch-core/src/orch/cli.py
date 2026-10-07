@@ -731,13 +731,14 @@ def _changes_text(ws, t, gate: str) -> list[str]:
     snapshot, hidden characters escaped. Empty otherwise, or when no snapshot was kept."""
     import difflib
 
-    from orch.core.gates import approved_snapshot, gate_state, normalized_text
+    from orch.core.gates import approved_snapshot, gate_state, normalized_text, snapshot_matches
     from orch.textsafe import lines
     if gate_state(t, gate) != "invalidated":
         return []
     old = approved_snapshot(ws, t.id, gate)
-    if old is None:
-        return [f"The {gate} of {t.id} changed since you approved it (no snapshot of the approved text was kept)", ""]
+    if old is None or not snapshot_matches(t, gate, old):
+        return [f"The {gate} of {t.id} changed since you approved it (no trustworthy snapshot of the approved text: "
+                "no diff is shown)", ""] + ["The full text now:"]
     diff = [x for x in difflib.unified_diff(old.rstrip("\n").split("\n"), normalized_text(t, gate).rstrip("\n").split("\n"),
                                            lineterm="", n=2) if not x.startswith(("---", "+++"))]
     return ([f"Changed since you approved the {gate} of {t.id}:"] + [f"  {y}" for x in diff for y in lines(x)]

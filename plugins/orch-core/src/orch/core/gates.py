@@ -147,6 +147,16 @@ def approved_snapshot(ws, ticket_id: str, gate: str) -> str | None:
     return p.read_text(encoding="utf-8") if p.exists() else None
 
 
+def snapshot_matches(ticket, gate: str, snapshot: str | None) -> bool:
+    """True when `snapshot` is the text the gate's recorded approval hash was computed over: a diff against it is only
+    shown then (a snapshot file edited or swapped after the approval would otherwise misstate what was approved)."""
+    if snapshot is None:
+        return False
+    recorded = _gate(ticket, gate).get("hash")
+    body = snapshot[:-1] if snapshot.endswith("\n") else snapshot
+    return bool(recorded) and recorded == "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def plan_required(ws, ticket) -> bool:
     if ticket.meta.get("type") == "epic":
         return False  # an epic has no plan of its own; its children do

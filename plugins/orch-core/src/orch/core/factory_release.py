@@ -1073,6 +1073,10 @@ def status(ws, epic, d: dict | None, entries=None) -> dict | None:
         if s["name"] == "production" and s["units"]:
             u = s["units"][0]
             s["resolved"] = os.path.lexists(_resolved_path(ws, epic.id, u.get("attempt") or 0))
+    waits = _read(_waits_path(ws, epic.id)) if os.path.lexists(_waits_path(ws, epic.id)) else None
+    for s in stages:  # the runner's last word on why the next stage waits (stage_hold), while it still waits
+        if waits and waits.get("stage") == s["name"] and s["state"] == "waiting":
+            s["waits"] = [str(x) for x in (waits.get("why") or [])][:10] or ["its record cannot be read"]
     sens = _sensitive_record(ws, epic.id)
     blocked = _blocked_record(ws, epic.id)
     return {"target": stages[-1]["name"], "recipe": rec is not None, "why": why, "stages": stages, "sensitive": sens,
@@ -1689,6 +1693,50 @@ def _write(p: Path, body: dict) -> bool:
     return fs._create(p, body)
 
 
+def stage_hold(ws, epic) -> list[str]:
+    """Why no release stage (merge, dev or production) may start now though the epic is Ready: what an unattended
+    close refuses too, read fresh. For every child in testing: evidence that does not meet the strict rules
+    (evidence.strict_missing), work not committed in its clone, a submodule in its clone, or a clone whose state cannot
+    be read. [] when nothing holds. (Two children adding the same file is checked before the merge, release_doubles.)"""
+    from orch.core import epics, evidence, factory_built
+    from orch.core.factory_report import _text
+    out = []
+    for e in epics.children(ws, epic.id):
+        if e.status != "testing":
+            continue
+        t = _ticket(ws, e.id)
+        if t is None:
+            out.append(f"{e.id} cannot be read")
+            continue
+        for n, why in evidence.strict_missing(t):
+            out.append(f"the evidence of {t.id}" + (f" for AC{n}" if n else "") + " does not meet the close rules: "
+                       + _text(why, 160))
+        st = factory_built.uncommitted(ws, t.id)
+        if st is not None and not st["ok"]:
+            out.append(f"the state of {t.id}'s clone could not be read")
+        elif st is not None:
+            if st["lines"]:
+                out.append(f"{t.id} has uncommitted work in its clone")
+            if st["submodules"]:
+                out.append(f"{t.id}'s clone holds a submodule ({', '.join(st['submodules'][:5])}), which the release "
+                           "does not merge")
+    return out
+
+
+def _waits_path(ws, epic_id: str) -> Path:
+    return _dir(ws, epic_id) / "waits.json"
+
+
+def _set_waits(ws, epic_id: str, stage: str | None, why: list[str]) -> None:
+    """The runner's record of why the next stage waits (stage_hold), or none (stage None)."""
+    p = _waits_path(ws, epic_id)
+    if stage is None:
+        with contextlib.suppress(FileNotFoundError):
+            p.unlink()
+        return
+    _atomic(p, json.dumps({"stage": stage, "why": why[:10], "at": _now()}))
+
+
 def _event(ws, actor, epic_id, kind, data) -> None:
     from orch.core.events import append_event
     append_event(ws, epic_id, kind, actor, data)
@@ -1824,6 +1872,11 @@ def _run_stages(ws, actor, epic, d, rec, stages, kids, wsid, run) -> list[str]:
                 if s["name"] == "production" and (not window(ws, s["window_hours"])["open"]
                                                   or unresolved_production(ws, epic.id)):
                     return lines  # waiting, not stopped: the run view shows when it opens or what holds it
+            # an irreversible stage starts only on what an unattended close would accept (stage_hold)
+            hold = stage_hold(ws, epic)
+            _set_waits(ws, epic.id, s["name"] if hold else None, hold)
+            if hold:
+                return lines + [f"{epic.id}: {s['name']} waits: {hold[0]}"]
             line, proven = _attempt(ws, actor, epic, d, rec, s, unit, us["attempt"] + 1, found, kids, wsid, run)
             lines.append(line)
             if not proven:

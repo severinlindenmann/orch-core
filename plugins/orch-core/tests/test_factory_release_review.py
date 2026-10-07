@@ -104,3 +104,31 @@ def test_a_later_production_of_another_epic_makes_dev_out_of_date(fws, prod, hum
     _later(monkeypatch, 21)
     fr.tick(fws, human, fake)
     assert _states(fws, a)["production"] == "proven" and _deploys(fake) == 2
+
+
+# -- the irreversible stages start only on what an unattended close accepts ---------------------------------------
+
+def test_a_doubting_evidence_line_keeps_production_from_starting(fws, prod, fa, human, monkeypatch):
+    _at(fws, 1)
+    eid, (c,), _ = prod()
+    fake = ProdFake()
+    fr.tick(fws, human, fake)
+    assert _states(fws, eid)["production"] == "waiting"
+    fa.set_section(c, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed\n"
+                                      "- AC1: the live path could not be tested")
+    _later(monkeypatch, 21)
+    lines = fr.tick(fws, human, fake)
+    assert _deploys(fake) == 0 and lines == [f"{eid}: production waits: the evidence of {c} for AC1 does not meet "
+                                             "the close rules: a line about it says 'could not'"]
+    p = next(s for s in fr.status(fws, store.load(fws, eid)[1],
+                                  permits.factory_delegation(fws, store.load(fws, eid)[1]))["stages"]
+             if s["name"] == "production")
+    assert p["state"] == "waiting" and "could not" in p["waits"][0]
+    pytest.importorskip("fastapi")
+    r = _run(fws, eid)
+    assert r["state"] == "relhold" and r["headline"].startswith("The production stage waits: the evidence of")
+    fa.set_section(c, "Verification", "- AC1: ran `pytest -q` on the branch, 12 passed")
+    fr.tick(fws, human, fake)
+    assert _deploys(fake) == 1 and "waits" not in next(
+        s for s in fr.status(fws, store.load(fws, eid)[1], permits.factory_delegation(fws, store.load(fws, eid)[1]))[
+            "stages"] if s["name"] == "production")

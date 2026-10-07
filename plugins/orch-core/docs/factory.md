@@ -1340,7 +1340,12 @@ production, the window and the rollback.
 **When it runs.** For each armed Dark epic whose charter signs a release, when all of this holds, read fresh before
 every command: the factory and Dark switched on, the ledger whole, the charter active (not paused, not edited, the
 budget not used up), the epic Ready (every child in testing or done, every criterion cited, nothing unverifiable), no
-open permission request of the epic, and no Stopped reason other than the release's own. A process under an agent
+open permission request of the epic, and no Stopped reason other than the release's own. Before each stage (merge,
+dev and production, all irreversible) starts, the runner also checks what an unattended close checks, read fresh: every
+child in testing has evidence that meets the strict close rules ("Closing by itself"), no work left uncommitted in its
+clone, no submodule in its clone, and a clone whose state can be read (two children adding the same file is checked
+before the merge). While one fails, that stage waits and nothing runs: the run view says "Release waits" (among those
+that need you) and names the stage and each reason; send the child back or fix it, and the next round checks again. A process under an agent
 harness is refused. Releases run in their own round of the dashboard (every 15 seconds), apart from the session round.
 Known limit: an epic that used exactly its child budget counts as Stopped ("Budget used up", as since phase 3), so it
 does not release.

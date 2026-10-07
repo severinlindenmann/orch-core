@@ -651,6 +651,27 @@ def _prose_view(seg: str, sole: bool = False) -> str:
     return out
 
 
+_HELP_PATHS = frozenset(
+    [*_HUMAN_VERBS, "move", "serve", "checks sign", "epic pause", "quick reopen", "quick drop"]
+    + [f"permit {v}" for v in ("grant", "deny", "revoke")] + [f"schedule {v}" for v in _HUMAN_SCHEDULE])
+
+
+def _help_only(seg: str) -> bool:
+    """The simple command is exactly `orch <verb path> --help`: no option or argument before or after, no quote,
+    expansion, redirect or glob. Typer prints the help and runs nothing, so a human verb or `serve` in it is fine.
+    `orch approve L-1 --help` and `orch approve L-1 --note --help` are not this: they carry another word."""
+    import shlex
+    if re.search(r"""[$`'"\\<>(){}*?~!&|;]""", seg):
+        return False
+    try:
+        words = shlex.split(seg, comments=False, posix=True)
+    except ValueError:
+        return False
+    if len(words) < 3 or words[0] != "orch" or words[-1] != "--help":
+        return False
+    return " ".join(words[1:-1]) in _HELP_PATHS
+
+
 def _runs_human_only(seg: str, plain: str, sole: bool = False) -> bool:
     return bool(_HUMAN_CMD.search(plain) or _QUOTED_HUMAN_CMD.search(_prose_view(seg, sole)) or _human_only_tokens(seg)
                 or _ORCH_DYNAMIC.search(seg))
@@ -2115,6 +2136,8 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
     term = ws.config["git"]["review_term"]
     all_segs = _command_segments(cmd)
     for seg in all_segs:
+        if _help_only(seg) and not re.search(r"(?<!\|)\|(?!\|)", cmd):  # not piped on (`| sh` would run the text)
+            continue
         # git checks look at the command with quoted text blanked out, so a commit message or an
         # echo that mentions `git push` or `-n` is not mistaken for the command itself.
         plain = _unquoted(seg)

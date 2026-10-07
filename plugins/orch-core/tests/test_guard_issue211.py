@@ -93,3 +93,51 @@ TEXT_DENIED = [
 @pytest.mark.parametrize("cmd", TEXT_DENIED)
 def test_quoted_verb_run_by_anything_stays_denied(ws, cmd):
     _check(ws, cmd, False)
+
+
+# --- 3. --help ----------------------------------------------------------------------------------------------------
+HELP_ALLOWED = [
+    "orch approve --help",
+    "orch verdict --help",
+    "orch request-changes --help",
+    "orch epic pause --help",
+    "orch permit grant --help",
+    "orch checks sign --help",
+    "orch schedule arm --help",
+    "orch quick drop --help",
+    "orch move --help",
+    "orch serve --help",
+    "orch approve --help; orch show L-0001",
+]
+
+
+@pytest.mark.parametrize("cmd", HELP_ALLOWED)
+def test_bare_help_is_allowed(ws, cmd):
+    _check(ws, cmd, True)
+
+
+HELP_DENIED = [
+    "orch approve L-1 --help",
+    "orch approve L-1 --note --help",
+    "orch approve --note --help",
+    "orch approve --help L-1",
+    "orch approve --help --note x",
+    "orch approve --help; orch approve L-1",
+    "orch approve --help && orch approve L-1",
+    "orch approve $X --help",
+    "orch approve `echo L-1` --help",
+    "orch approve --help $(orch approve L-1)",
+    "orch approve --help | sh",
+    "orch approve --help > f; orch approve L-1",
+    "orch serve --port 1 --help",
+    "orch serve --remote --help",
+    "env X=1 orch approve --help",
+    "orch approve -h L-1",
+    "orch approve L-1",
+    "orch serve",
+]
+
+
+@pytest.mark.parametrize("cmd", HELP_DENIED)
+def test_help_with_anything_else_stays_denied(ws, cmd):
+    _check(ws, cmd, False)

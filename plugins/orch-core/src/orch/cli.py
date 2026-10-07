@@ -399,34 +399,52 @@ def log(ref: str, message: Annotated[str, typer.Option("--message", "-m")], json
 def wait(ref: str,
          timeout: Annotated[float, typer.Option("--timeout", help="Give up after this many seconds (0 = never).")] = 0.0,
          after: Annotated[Optional[str], typer.Option("--after", help="Event seq or cursor to start after (default: your last event on the ticket).")] = None,
+         all_events: Annotated[bool, typer.Option("--all", help="Return every human decision since the cursor in one result, with the highest cursor to pass to --after.")] = False,
          json_out: JsonOpt = False) -> None:
     """Wait until the human answers, approves, requests changes or gives a verdict on a ticket. Agents may run it."""
     from dataclasses import asdict
 
     from orch.core import store
-    from orch.core.wait import wait_for_human
-    from orch.errors import WaitTimeout
+    from orch.core.wait import feedback, wait_for_human
+    from orch.errors import UsageError, WaitTimeout
 
     ws = _ws()
-    from orch.errors import UsageError
     try:
-        event = wait_for_human(ws, ref, after=after, timeout=timeout)
+        found = wait_for_human(ws, ref, after=after, timeout=timeout, all_events=all_events)
     except ValueError:
         raise UsageError("--after takes an event number or the cursor a previous wait printed") from None
-    if event is None:
+    if found is None:
         raise WaitTimeout(f"no human decision on {store.resolve(ws, ref).id} within {timeout:g} s",
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
+
+    def cursor_of(event):
+        return event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq
+
+    def lines(event, said, status):
+        who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
+        return (f"{event.ticket}: {event.kind} {who} (status {status})"
+                + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
+                                                       ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
+                                                       ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
+                          if v))
+
+    if all_events:
+        events = found
+        status = store.resolve(ws, events[0].ticket).status
+        items = []
+        for event in events:
+            said = feedback(ws, event)
+            items.append({"event": asdict(event), **said, "cursor": cursor_of(event), "text": lines(event, said, status)})
+        cursor = cursor_of(events[-1])
+        _out({"ticket": events[0].ticket, "status": status, "events": [{k: v for k, v in i.items() if k != "text"} for i in items],
+              "cursor": cursor}, json_out,
+             "\n".join(i["text"] for i in items) + f"\ncursor: {cursor}")
+        return
+    event = found
     status = store.resolve(ws, event.ticket).status
-    who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
-    from orch.core.wait import feedback
     said = feedback(ws, event)
-    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said,
-          "cursor": event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq}, json_out,
-         f"{event.ticket}: {event.kind} {who} (status {status})"
-         + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
-                                                 ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
-                                                 ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
-                   if v))
+    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said, "cursor": cursor_of(event)},
+         json_out, lines(event, said, status) + f"\ncursor: {cursor_of(event)}")
 
 
 @app.command()

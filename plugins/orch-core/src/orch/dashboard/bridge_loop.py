@@ -106,6 +106,13 @@ def _form(meta, data, query: str):
     return params
 
 
+# The routes that type into or start something on the host and so need the typing lease. Every other Type route
+# keeps what it had (Type alone, or a fresh assertion where the gate says so).
+LEASE_ROUTES = frozenset({("POST", "/terminals/new"), ("POST", "/terminals/{name}/keys"),
+                          ("POST", "/terminals/{name}/size"), ("POST", "/terminals/{name}/end"),
+                          ("POST", "/t/{ref}/agent/start"), ("POST", "/quick/{qid}/agent/start")})
+
+
 def route_hook(routes, ws=None):
     """The host library's route hook: what the remote gate's own table needs for the route this request matches.
     A route that needs a fresh assertion (a permission to allow, the Start of a factory epic, the epic's verdict, a
@@ -113,7 +120,10 @@ def route_hook(routes, ws=None):
     workspace's LIVE state and the request's own hashes, so the person approves exactly what will be written and a
     stale request gets no challenge (R13). Without `ws`, or for a fresh route with no subject builder, no assertion
     is asked for and the gate refuses it (no origin is fresh). The gate decides every route again on the request
-    as received, so this can only refuse more than the gate, never less."""
+    as received, so this can only refuse more than the gate, never less. A Type route that is not fresh and is one of
+    LEASE_ROUTES (terminal keys, size, end, new, Start agent) asks the library for the typing lease instead: a
+    platform-authenticator assertion bound to the device, valid 15 minutes from the unlock (a run inside it does not
+    extend it), given only to input sent on a stream the device itself opened. Other Type routes are as they were."""
     from orch.dashboard.factory_remote import subject
     from orch.dashboard.remote_gate import factory_need, match_route, tag_for
 
@@ -131,9 +141,12 @@ def route_hook(routes, ws=None):
         tag = tag_for(routes, scope, params)
         if tag is None or tag.scope is None:
             return None
-        if ws is None:
-            return Requirement(tag.scope.name.lower())
         route = match_route(routes, scope)
+        lease = tag.scope is Scope.TYPE and not tag.fresh and route is not None \
+            and (method, route.path) in LEASE_ROUTES
+        plain = Requirement(tag.scope.name.lower(), "lease" if lease else "none")
+        if ws is None:
+            return plain
         route_path = route.path if route is not None else None
         pp = route.matches(scope)[1].get("path_params", {}) if route is not None else {}
         needed, kind = tag.scope, None
@@ -143,7 +156,7 @@ def route_hook(routes, ws=None):
         if n is not None:
             needed, kind = n
         if kind is None:
-            return Requirement(tag.scope.name.lower())
+            return plain
         body = data if isinstance(data, bytes) else b""
         return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body))
     return hook

@@ -347,7 +347,7 @@ def test_routes_that_arm_or_launch_are_type():
 BELOW_TYPE = {
     ("GET", "/addons/{name}/files/{token}"): "OPERATE", ("GET", "/terminals"): "OPERATE",
     ("GET", "/terminals/stream"): "OPERATE", ("GET", "/terminals/{name}"): "OPERATE",
-    ("GET", "/terminals/{name}/stream"): "OPERATE",
+    ("GET", "/terminals/{name}/stream"): "OPERATE", ("GET", "/terminals/{name}/snapshot"): "OPERATE",  # read-only JSON
     ("POST", "/addons/{name}/decisions"): "OPERATE", ("POST", "/addons/{name}/refresh"): "OPERATE",
     ("POST", "/board/backlog"): "OPERATE", ("POST", "/new"): "OPERATE",
     ("POST", "/permits/grants/{gid}/revoke"): "DECIDE", ("POST", "/permits/{rid}/deny"): "DECIDE",

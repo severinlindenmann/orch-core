@@ -248,6 +248,10 @@ def send(name: str, seq: list) -> None:
             text = item["text"]
             if not isinstance(text, str) or not text or len(text) > MAX_TEXT:
                 raise ValidationError(f"text must be 1 to {MAX_TEXT} characters")
+            try:
+                text.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValidationError("text is not valid Unicode (a lone surrogate)") from None
             if any(ord(c) < 32 or ord(c) == 127 for c in text):
                 raise ValidationError("text holds a control character; send it as a key")
             calls.append(["send-keys", "-t", _target(name), "-l", "--", tmux_arg(text)])

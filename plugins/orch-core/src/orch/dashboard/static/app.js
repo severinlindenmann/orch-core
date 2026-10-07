@@ -56,6 +56,7 @@
     setTheme(value) {
       try { document.cookie = "orch_theme=" + value + "; Path=/; Max-Age=31536000; SameSite=Strict"; } catch (e) { /* this view only */ }
     },
+    remote: false,  // true when a host serves this page through the bridge: terminals batch keys and poll
     session: memoryStore("sessionStorage"),
     local: memoryStore("localStorage"),
     copy(text) {

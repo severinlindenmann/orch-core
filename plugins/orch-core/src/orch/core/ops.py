@@ -1046,6 +1046,34 @@ class Ops(TaskOpsMixin):
         ticket = self._mutate(ref, "question.asked", fn)
         return ticket, added
 
+    def _check_answer(self, t: Ticket, qid: str, value: str, expected_hash: str | None):
+        """Every refusal an answer can meet, nothing written: returns (question, the validated answer)."""
+        q = find_question(t, qid)
+        _refuse_hidden("question", t.title, q.get("text"), q.get("why"), value,
+                       *(f"{o.get('key')} {o.get('label')} {o.get('cost') or ''}" for o in q.get("options") or []
+                         if isinstance(o, dict)))
+        if expected_hash != question_hash(q):
+            raise ValidationError(f"the question changed since this answer was given ({q['id']}); nothing was applied")
+        if q.get("answer") not in (None, ""):
+            raise ValidationError(f"{q['id']} is already answered ({q['answer']})")
+        return q, validate_answer(q, value)
+
+    def _record_answer(self, q: dict, answer, note: str | None, t: Ticket) -> None:
+        q["answer"] = answer
+        q["note"] = note or None
+        q["answered"] = stamp()
+        q["via"] = self.actor.via
+        self._ledger(t, "answer", qid=q["id"], answer=q["answer"], question_hash=question_hash(q))
+
+    def _after_answers(self, t: Ticket) -> tuple[bool, str | None]:
+        """Once the last blocking question is answered: waiting -> in-progress, and restart the tasks it blocked."""
+        moved = False
+        if t.status == "waiting" and not unanswered_blocking(t):
+            check_move(t, "in-progress", self.actor, plan_skip_sizes=self._skip_sizes, command="auto")
+            t.meta["status"] = "in-progress"
+            moved = True
+        return moved, (None if unanswered_blocking(t) else restart_answered(t))
+
     def answer(self, ref: str, qid: str, value: str, note: str | None = None, *,
                expected_hash: str | None = None, attachments: list[str] | None = None) -> Ticket:
         """`expected_hash` (a `question_hash`, required) binds the answer to the question text and options the human
@@ -1054,25 +1082,9 @@ class Ops(TaskOpsMixin):
         _require_seen(expected_hash, "an answer")
 
         def fn(t: Ticket) -> dict:
-            q = find_question(t, qid)
-            _refuse_hidden("question", t.title, q.get("text"), q.get("why"), value,
-                           *(f"{o.get('key')} {o.get('label')} {o.get('cost') or ''}" for o in q.get("options") or []
-                             if isinstance(o, dict)))
-            if expected_hash != question_hash(q):
-                raise ValidationError(f"the question changed since this answer was given ({q['id']}); nothing was applied")
-            if q.get("answer") not in (None, ""):
-                raise ValidationError(f"{q['id']} is already answered ({q['answer']})")
-            q["answer"] = validate_answer(q, value)
-            q["note"] = note or None
-            q["answered"] = stamp()
-            q["via"] = self.actor.via
-            self._ledger(t, "answer", qid=q["id"], answer=q["answer"], question_hash=question_hash(q))
-            moved = False
-            if t.status == "waiting" and not unanswered_blocking(t):
-                check_move(t, "in-progress", self.actor, plan_skip_sizes=self._skip_sizes, command="auto")
-                t.meta["status"] = "in-progress"
-                moved = True
-            restarted = None if unanswered_blocking(t) else restart_answered(t)
+            q, answer = self._check_answer(t, qid, value, expected_hash)
+            self._record_answer(q, answer, note, t)
+            moved, restarted = self._after_answers(t)
             shown = ", ".join(q["answer"]) if isinstance(q["answer"], list) else q["answer"]
             extra = _feedback_extra(None, attachments)
             self._log(t, f"answered {q['id']}: {shown}" + (f" — {note}" if note else "") + _feedback_note(extra)
@@ -1085,6 +1097,46 @@ class Ops(TaskOpsMixin):
             return data
 
         return self._mutate(ref, "question.answered", fn)
+
+    def answer_many(self, ref: str, items: list[dict]) -> Ticket:
+        """#219: answer several questions of one ticket after one human confirmation, under one lock. Each item is
+        {"qid", "value", "expected_hash"[, "note"]}; every answer is bound to the `question_hash` of the question the
+        human was shown, exactly as `answer` is, with one signed ledger entry and one `question.answered` event per
+        question. All or nothing: if any question changed, is already answered or the answer is invalid, nothing is
+        written."""
+        require_human(self.actor, "answering questions")
+        if not items:
+            raise ValidationError("no answers given")
+        seen: set[str] = set()
+        for it in items:
+            key = str(it["qid"]).strip().upper()
+            if key in seen:
+                raise UsageError(f"{key} is listed more than once: one answer per question")
+            seen.add(key)
+            _require_seen(it.get("expected_hash"), "an answer")
+
+        def fn(t: Ticket) -> list:
+            checked = [(it, *self._check_answer(t, it["qid"], it["value"], it["expected_hash"])) for it in items]
+            records = []
+            for it, q, answer in checked:
+                self._record_answer(q, answer, it.get("note"), t)
+            moved, restarted = self._after_answers(t)
+            for n, (it, q, _answer) in enumerate(checked):
+                shown = ", ".join(q["answer"]) if isinstance(q["answer"], list) else q["answer"]
+                last = n == len(checked) - 1
+                note = it.get("note")
+                self._log(t, f"answered {q['id']}: {shown}" + (f" — {note}" if note else "")
+                          + (" → in-progress" if moved and last else "")
+                          + (f" · {restarted} restarted" if restarted and last else ""))
+                data = {"qid": q["id"], "answer": q["answer"]}
+                if note:
+                    data["note"] = note
+                if restarted and last:
+                    data["task_restarted"] = restarted
+                records.append(("question.answered", data))
+            return records
+
+        return self._mutate_events(ref, fn)
 
     # -- gates -----------------------------------------------------------------------
 

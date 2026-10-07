@@ -25,7 +25,7 @@ def test_chapters_in_story_order_and_the_current_one_open(dash, put):
     tid = put("backlog", sections=REQ)
     html = _page(dash, tid)
     keys = re.findall(r'<details class="chapter chapter-(\w+)', html)
-    assert keys == ["asked", "agreed", "doing", "proven", "left"]
+    assert keys == ["asked", "agreed", "doing", "proven"]  # what is left is a line in the status card
     assert re.search(r'<details class="chapter chapter-agreed chapter-current" id="agreed" open', html)
     assert not re.search(r'id="doing" open', html)
 
@@ -33,8 +33,8 @@ def test_chapters_in_story_order_and_the_current_one_open(dash, put):
 def test_open_all_opens_every_chapter(dash, put):
     tid = put("open", sections=REQ)
     html = _page(dash, tid, "?open=all")
-    assert len(re.findall(r'<details class="chapter[^>]*data-wide-open', html)) == 5
-    assert all(re.search(rf'id="{k}" open', html) for k in ("asked", "agreed", "doing", "proven", "left"))
+    assert len(re.findall(r'<details class="chapter[^>]*data-wide-open', html)) == 4
+    assert all(re.search(rf'id="{k}" open', html) for k in ("asked", "agreed", "doing", "proven"))
 
 
 RICH = {
@@ -204,7 +204,7 @@ def test_heading_outline_is_h1_h2_h3(dash, put):
     tid = put("backlog", sections={**REQ, "Context": "found it"})
     html = _page(dash, tid)
     story = html.split('class="story"', 1)[1].split("<aside", 1)[0]
-    assert re.findall(r'<h2 class="chapter-title">([^<]+)</h2>', story) == ["Asked", "What we agreed", "Doing", "Proof so far", "Left"]
+    assert re.findall(r'<h2 class="chapter-title">([^<]+)</h2>', story) == ["Asked", "What we agreed", "Doing", "Proof so far"]
     levels = [int(n) for n in re.findall(r"<h([1-6])[ >]", html.split("<main", 1)[1])]
     assert levels[0] == 1 and all(b - a <= 1 for a, b in zip(levels, levels[1:]))
 

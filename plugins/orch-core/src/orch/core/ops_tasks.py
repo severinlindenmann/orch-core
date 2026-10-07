@@ -9,6 +9,7 @@ from orch.clock import stamp
 from orch.core import tasks as tk
 from orch.core.events import read_events
 from orch.core.questions import find_question
+from orch.clock import stamp
 from orch.errors import ClaimError, HumanOnlyError, TransitionError, UsageError, ValidationError
 
 WORK_STATUSES = ("in-progress", "waiting")
@@ -113,10 +114,26 @@ class TaskOpsMixin:
             raise TransitionError(f"{t.id} is {t.status}; tasks change while it is in progress or waiting", hint=hint)
         if self.actor.is_human:
             return
-        from orch.core.ops import claim_expired
+        from orch.core.query import claim_expiry
         claim = t.meta.get("claim") or {}
-        if claim.get("session") != self._session or claim_expired(claim, float(self.ws.config["claims"]["ttl_hours"])):
-            raise ClaimError(f"{t.id} is not claimed by this session", hint=f"orch claim {t.id}")
+        expired, last = claim_expiry(self.ws, t.id, t.status, claim)
+        ttl = float(self.ws.config["claims"]["ttl_hours"])
+        who = claim.get("session")
+        if not who:
+            raise ClaimError(f"{t.id} is not claimed", hint=f"orch claim {t.id}")
+        if who == self._session and expired:
+            raise ClaimError(f"{t.id}: your claim from {claim.get('at')} expired after {ttl:g} h without activity"
+                             f"{f' (last sign of life {stamp(last)})' if last else ''}; nobody else holds it "
+                             f"— run `orch claim {t.id}` to renew",
+                             hint=f"orch claim {t.id}")
+        if who != self._session and expired:
+            raise ClaimError(f"{t.id}: the claim of {claim.get('harness')} (session {str(who)[:8]}) expired after "
+                             f"{ttl:g} h without activity; nobody holds it now",
+                             hint=f"orch claim {t.id}")
+        if who != self._session:
+            raise ClaimError(f"{t.id} is held by {claim.get('harness')} (session {str(who)[:8]}) since "
+                             f"{claim.get('at')}, not by this session",
+                             hint=f"the holder can run `orch release {t.id}`; a claim ends {ttl:g} h after its last sign of life")
 
     def _plan_approved_for_agent(self, t) -> None:
         """#9: an agent starts or finishes work only once the plan gate its ticket needs is approved, so the stop

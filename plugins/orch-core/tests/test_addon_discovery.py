@@ -73,6 +73,7 @@ def test_missing_folders_mean_nothing_found(monkeypatch, tmp_path):
     assert discovery.discover() == []
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 def test_wheel_install_finds_the_packaged_folder(tmp_path):
     subprocess.run(["uv", "build", "--wheel", "--out-dir", str(tmp_path)], cwd=PLUGIN_ROOT, check=True, capture_output=True)

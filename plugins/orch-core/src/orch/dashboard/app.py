@@ -24,6 +24,7 @@ from orch.dashboard.remote_gate import RemoteGate
 
 log = logging.getLogger("orch.dashboard")
 
+BRIDGE_STOP_S = 60.0  # the remote bridge clean stop may never hold the dashboard shutdown longer
 STATIC_DIR = Path(__file__).with_name("static")
 # Never compressed: the live stream (it must flush each frame), artifacts and addon downloads (served as stored,
 # with their own CSP; a PDF viewer may ask for byte ranges).
@@ -291,7 +292,7 @@ def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastA
         finally:
             if bridge is not None:  # streams end, a goodbye, the lease released, the child ended; before the cancels
                 with contextlib.suppress(Exception):
-                    await bridge.stop()
+                    await asyncio.wait_for(bridge.stop(), BRIDGE_STOP_S)  # bounded: 5+10 s calls, 35 s EOF wait, 2 s kill
             for task in tasks:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

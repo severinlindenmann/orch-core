@@ -17,8 +17,8 @@ class Workspace:
     addons_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     @classmethod
-    def open(cls, start: Path | None = None) -> "Workspace":
-        home = find_home(start)
+    def open(cls, start: Path | None = None, *, use_env: bool = True) -> "Workspace":
+        home = find_home(start, use_env=use_env)
         ws = cls(home=home, config=load_config(home))
         ws.ensure_layout()
         return ws

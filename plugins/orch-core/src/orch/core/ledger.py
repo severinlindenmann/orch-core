@@ -535,8 +535,9 @@ def require_signed(ws, ticket, gates=()) -> None:
     for gate in gates:
         if gate_state(ticket, gate) == "invalidated" or not _charter_current(ws, ticket, gate, signed):
             raise ValidationError(f"the {gate} of {ticket.id} changed since it was approved",
-                                  hint=f"stop and wait: the human approves the {gate} again (an epic's child: the "
-                                       f"epic) before the work goes on (`orch wait {ticket.id}`)")
+                                  hint=f"stop and wait: the human approves the {gate} again (`orch approve {ticket.id} "
+                                       f"{gate}`; an epic's child covered by the epic: the epic) before the work goes on "
+                                       f"(`orch wait {ticket.id}`)")
         if gate_verification(ws, ticket, gate, signed) == "unverified":
             raise ValidationError(f"the {gate} approval of {ticket.id} is not in the ledger on this machine",
                                   hint=NOT_SIGNED_HINT)

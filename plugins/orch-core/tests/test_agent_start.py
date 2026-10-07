@@ -471,7 +471,7 @@ def test_continue_mode_label_matches_spec():
     assert MODE_LABELS["continue"] == "Continue after feedback"
 
 
-def test_disabled_reason_for_a_move_back_is_not_an_approval(ws, put):
+def test_disabled_reason_for_changed_requirements_is_the_in_place_reapproval(ws, put):
     from orch.core import store
     from orch.core.gates import gate_hash
     tid = put("open", sections={"Requirements": "- r", "Acceptance criteria": "- a"})
@@ -481,8 +481,7 @@ def test_disabled_reason_for_a_move_back_is_not_an_approval(ws, put):
     t.set_section("Requirements", "- r changed")
     store.save(ws, t)
     reason = _suggest(ws, tid)["disabled"]
-    assert reason.startswith("Waiting for you: ") and "back to backlog" in reason
-    assert "Waiting for your requirements approval" not in reason
+    assert reason == "Waiting for your requirements approval"  # re-approved in place (#208): no move back to backlog
 
 
 def test_an_epic_is_never_offered_work_on_ticket(ws, aops, hops):

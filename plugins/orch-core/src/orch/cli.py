@@ -202,17 +202,23 @@ def new(
     type_: Annotated[str, typer.Option("--type", help="feature|bug|chore|spike|investigation|epic")] = "feature",
     priority: Annotated[str, typer.Option("--priority", help="low|normal|high|urgent")] = "normal",
     size: Annotated[str, typer.Option("--size", help="xs|s|m|l (xs skips the plan gate)")] = "m",
-    from_: Annotated[Optional[str], typer.Option("--from", help="Create as follow-up of this ticket.")] = None,
+    from_: Annotated[Optional[str], typer.Option(
+        "--from", help="Create as follow-up of this ticket. Joins that ticket's epic unless --epic or --no-epic "
+                       "says otherwise; the ticket keeps the follow-up link either way.")] = None,
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
-    epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
+    epic: Annotated[Optional[str], typer.Option(
+        "--epic", help="Create as a child of this epic (also with --from).")] = None,
+    no_epic: Annotated[bool, typer.Option(
+        "--no-epic", help="With --from: do not join the source ticket's epic.")] = False,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
     due: Annotated[Optional[str], typer.Option("--due", help="Due date, YYYY-MM-DD (optional).")] = None,
     label: Annotated[Optional[list[str]], typer.Option(
         "--label", help="A label, e.g. customer:arbonia (no spaces or commas); repeat for more.")] = None,
     body_file: Annotated[Optional[Path], typer.Option(
         "--body-file", exists=True, dir_okay=False,
-        help="Markdown for the Ask. Its `## Requirements`, `## Acceptance criteria`, `## Out of scope` and "
-             "`## Summary` parts (also `###`) go into those sections.")] = None,
+        help="Markdown for the Ask. A heading naming a section (`## Summary`, `## Requirements`, `## Acceptance "
+             "criteria`, `## Out of scope`, `## Context`, `## Plan`, `## Verification`, ...; also `###`) puts that "
+             "part into the section; `## Tasks` holds the YAML of `orch task add --file`.")] = None,
     requirements_file: Annotated[Optional[Path], typer.Option(
         "--requirements-file", exists=True, dir_okay=False, help="Markdown for the Requirements section.")] = None,
     acceptance_file: Annotated[Optional[Path], typer.Option(
@@ -229,9 +235,10 @@ def new(
     The requirements gate refuses to approve while Requirements or Acceptance criteria are empty: give them here
     (headings in --body-file, or their own files) or later with `orch section set <id> Requirements --file …`.
     The Ask is the request in the requester's words."""
-    from orch.core.body import split_body
+    from orch.core.body import BODY_SECTIONS, split_body
     ws = _ws()
-    ask, sections = split_body(body_file.read_text(encoding="utf-8")) if body_file else ("", {})
+    ask, sections = (split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+                     if body_file else ("", {}))
     for name, f in (("Requirements", requirements_file), ("Acceptance criteria", acceptance_file),
                     ("Out of scope", out_of_scope_file), ("Summary", summary_file)):
         if f is None:
@@ -241,7 +248,9 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections, labels=label, due=due)
+                epic=epic, sprint=sprint, sections=sections, labels=label, due=due, no_epic=no_epic)
+    for notice in ops.notices:
+        typer.echo(notice, err=True)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")
@@ -303,6 +312,16 @@ def show(ref: str, json_out: JsonOpt = False,
             from orch.widgets.render import annotate
             raw = annotate(raw, blocks, ctx)
         typer.echo(f"{path.relative_to(ws.home).as_posix()}\n\n{raw}")
+
+
+@app.command()
+def status(ref: str, json_out: JsonOpt = False) -> None:
+    """A compact view of one ticket: move, gates, questions and answers, claim and expiry, tasks, wait cursor."""
+    from orch.core import store
+    from orch.core.status_view import render_text, status_document
+    ws = _ws()
+    s = status_document(ws, store.load(ws, ref)[1])
+    _out(s, json_out, render_text(s))
 
 
 @app.command()
@@ -399,34 +418,52 @@ def log(ref: str, message: Annotated[str, typer.Option("--message", "-m")], json
 def wait(ref: str,
          timeout: Annotated[float, typer.Option("--timeout", help="Give up after this many seconds (0 = never).")] = 0.0,
          after: Annotated[Optional[str], typer.Option("--after", help="Event seq or cursor to start after (default: your last event on the ticket).")] = None,
+         all_events: Annotated[bool, typer.Option("--all", help="Return every human decision since the cursor in one result, with the highest cursor to pass to --after.")] = False,
          json_out: JsonOpt = False) -> None:
     """Wait until the human answers, approves, requests changes or gives a verdict on a ticket. Agents may run it."""
     from dataclasses import asdict
 
     from orch.core import store
-    from orch.core.wait import wait_for_human
-    from orch.errors import WaitTimeout
+    from orch.core.wait import feedback, wait_for_human
+    from orch.errors import UsageError, WaitTimeout
 
     ws = _ws()
-    from orch.errors import UsageError
     try:
-        event = wait_for_human(ws, ref, after=after, timeout=timeout)
+        found = wait_for_human(ws, ref, after=after, timeout=timeout, all_events=all_events)
     except ValueError:
         raise UsageError("--after takes an event number or the cursor a previous wait printed") from None
-    if event is None:
+    if found is None:
         raise WaitTimeout(f"no human decision on {store.resolve(ws, ref).id} within {timeout:g} s",
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
+
+    def cursor_of(event):
+        return event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq
+
+    def lines(event, said, status):
+        who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
+        return (f"{event.ticket}: {event.kind} {who} (status {status})"
+                + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
+                                                       ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
+                                                       ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
+                          if v))
+
+    if all_events:
+        events = found
+        status = store.resolve(ws, events[0].ticket).status
+        items = []
+        for event in events:
+            said = feedback(ws, event)
+            items.append({"event": asdict(event), **said, "cursor": cursor_of(event), "text": lines(event, said, status)})
+        cursor = cursor_of(events[-1])
+        _out({"ticket": events[0].ticket, "status": status, "events": [{k: v for k, v in i.items() if k != "text"} for i in items],
+              "cursor": cursor}, json_out,
+             "\n".join(i["text"] for i in items) + f"\ncursor: {cursor}")
+        return
+    event = found
     status = store.resolve(ws, event.ticket).status
-    who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
-    from orch.core.wait import feedback
     said = feedback(ws, event)
-    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said,
-          "cursor": event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq}, json_out,
-         f"{event.ticket}: {event.kind} {who} (status {status})"
-         + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
-                                                 ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
-                                                 ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
-                   if v))
+    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said, "cursor": cursor_of(event)},
+         json_out, lines(event, said, status) + f"\ncursor: {cursor_of(event)}")
 
 
 @app.command()
@@ -438,20 +475,49 @@ def state(ref: str, message: MessageOpt = None, file: FileOpt = None, json_out: 
 
 
 @section_app.command("set")
-def section_set(ref: str, name: str, message: MessageOpt = None, file: FileOpt = None, json_out: JsonOpt = False) -> None:
-    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`."""
+def section_set(ref: str,
+                name: Annotated[Optional[str], typer.Argument(help="The section (not with --body-file).")] = None,
+                message: MessageOpt = None, file: FileOpt = None,
+                body_file: Annotated[Optional[Path], typer.Option(
+                    "--body-file", exists=True, dir_okay=False,
+                    help="Markdown whose `## <Section>` headings (Summary, Requirements, Plan, Verification, ...) "
+                         "each replace that section, all in one write: everything or nothing.")] = None,
+                json_out: JsonOpt = False) -> None:
+    """Replace one section, e.g. `orch section set L-0042 Plan --file plan.md`, or several at once with
+    `orch section set L-0042 --body-file sections.md`."""
     ws = _ws()
     ops = _ops(ws)
-    t = ops.set_section(ref, name, _text(message, file))
+    if body_file is not None:
+        from orch.core.body import BODY_SECTIONS, split_body
+        if name is not None or message is not None or file is not None:
+            raise UsageError("--body-file replaces the section name and -m/--file", hint="use one or the other")
+        loose, parts = split_body(body_file.read_text(encoding="utf-8"), names=BODY_SECTIONS)
+        if loose:
+            raise UsageError("the body file has text before its first section heading; that would be the Ask",
+                             hint="put every part under a `## <Section>` heading")
+        if "Tasks" in parts:
+            raise UsageError("a `## Tasks` part is not written by `section set`",
+                             hint="orch task add <id> --file tasks.yaml")
+        if not parts:
+            raise UsageError("the body file names no section", hint="start each part with `## Plan`, `## Requirements`, ...")
+        t = ops.set_sections(ref, parts)
+        label = ", ".join(parts)
+    else:
+        if name is None:
+            raise UsageError("pass the section name, or --body-file")
+        t = ops.set_section(ref, name, _text(message, file))
+        label = name
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
-         f"{t.id}: {name} updated")
+         f"{t.id}: {label} updated")
 
 
 @app.command()
 def link(
     ref: str,
-    repo: Annotated[Optional[str], typer.Option("--repo")] = None,
+    repo: Annotated[Optional[str], typer.Option(
+        "--repo", help="Repo name; optional when the workspace has one repo, required with --branch or "
+                       "--worktree when it has several.")] = None,
     pr: Annotated[Optional[str], typer.Option("--pr", help="PR/MR URL, or its number in --repo (default: the workspace repo).")] = None,
     branch: Annotated[Optional[str], typer.Option("--branch")] = None,
     worktree: Annotated[Optional[str], typer.Option("--worktree")] = None,
@@ -595,13 +661,22 @@ def _dry(ws, t, json_out: bool, text: str) -> None:
 
 
 @app.command()
-def answer(ref: str, qid: str, value: str,
+def answer(ref: str, qid: Annotated[Optional[str], typer.Argument()] = None,
+           value: Annotated[Optional[str], typer.Argument()] = None,
            note: Annotated[Optional[str], typer.Option("--note")] = None, dry_run: DryRunOpt = False,
-           json_out: JsonOpt = False) -> None:
-    """Answer a question. Human only."""
+           json_out: JsonOpt = False,
+           all_: Annotated[bool, typer.Option("--all", help="Answer every open question in turn, then confirm "
+                                                            "once (type the ticket id). Terminal only.")] = False) -> None:
+    """Answer a question. Human only. `--all` prompts for each open question, then asks for one confirmation."""
     from orch.core import store
     from orch.core.questions import find_question, question_hash
     ws = _ws()
+    if all_:
+        if qid is not None or value is not None or note is not None:
+            raise UsageError("--all prompts for every answer: give no question id, answer or --note")
+        return _answer_all(ws, ref, dry_run, json_out)
+    if qid is None or value is None:
+        raise UsageError("give the question id and the answer, or --all to be asked for each open question")
     qh = question_hash(find_question(store.load(ws, store.resolve(ws, ref).id)[1], qid))
     t = _human_op(ws, ref, lambda ops, kw: ops.answer(ref, qid, value, note=note, **kw),
                   lambda p: "\n".join(_question_text(find_question(p, qid))
@@ -613,6 +688,60 @@ def answer(ref: str, qid: str, value: str,
     _out(_view(ws, t), json_out, f"{t.id}: answered {qid.upper()} (status {t.status})")
 
 
+def _answer_all(ws, ref: str, dry_run: bool, json_out: bool) -> None:
+    """`orch answer <id> --all` (#219): the human types an answer for each open question in turn (the question and
+    its options are shown first; an empty line leaves it open), then confirms once with the ticket id. Every answer
+    is bound to the `question_hash` of the question as shown, so one that changes meanwhile refuses the whole batch.
+    Nothing is drafted or pre-filled: the answers are typed here, by the human."""
+    import contextlib
+    import sys
+    from orch.actor import require_human_terminal
+    from orch.core import store
+    from orch.core.questions import question_hash, validate_answer
+    from orch.errors import ValidationError
+    from orch.textsafe import visible
+    require_human_terminal("answering questions")
+    t = store.load(ws, store.resolve(ws, ref).id)[1]
+    items = []
+    open_qs = [q for q in t.meta.get("questions") or [] if q.get("answer") in (None, "")]
+    if not open_qs:
+        return _out({"ticket": t.id, "answered": []}, json_out, f"{t.id}: no open questions")
+    for q in open_qs:
+        shown = dict(q, answer=None, note=None)
+        typer.echo("\n".join(_question_text(shown)[:-1]), err=True)
+        while True:
+            with contextlib.redirect_stdout(sys.stderr):
+                typed = input(f"{visible(q['id'])}: your answer (empty leaves it open): ").strip()
+            if not typed:
+                break
+            try:
+                validate_answer(q, typed)
+            except ValidationError as e:
+                typer.echo(f"  {e.message}" + (f" ({e.hint})" if getattr(e, "hint", None) else ""), err=True)
+                continue
+            items.append({"qid": q["id"], "value": typed, "expected_hash": question_hash(q)})
+            break
+    if not items:
+        return _out({"ticket": t.id, "answered": []}, json_out, f"{t.id}: nothing answered")
+    from orch.core.events import Actor
+    from orch.core.ops import Ops
+    from orch.core.questions import find_question
+    preview = Ops(ws, Actor("human", "you", "tty"), dry_run=True).answer_many(ref, items)
+    lines = []
+    for it in items:
+        lines += _question_text(find_question(preview, it["qid"])) + [f"  bound to {_short(it['expected_hash'])}"]
+    lines.append(f"{preview.id}: answer {len(items)} question(s) as shown; status then {preview.status}")
+    if dry_run:
+        return _out({"ticket": preview.id, "dry_run": True, "would_answer": [i["qid"] for i in items]}, json_out,
+                    "\n".join(lines + ["dry run: nothing was written"]))
+    from orch.actor import confirm_typed
+    typer.echo("\n".join(lines), err=json_out)
+    actor = confirm_typed(preview.id)
+    done = _ops(ws, actor).answer_many(ref, items)
+    _out(_view(ws, done), json_out, f"{done.id}: answered {', '.join(i['qid'].upper() for i in items)} "
+                                    f"(status {done.status})")
+
+
 _ALL = "\x00all"  # --despite-open-question given with `plans` (no keys)
 
 
@@ -622,7 +751,9 @@ def _keys(ws, raw: str | None) -> list[str]:
 
 
 @app.command()
-def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | plan | plans (an epic's children)")],
+def approve(ref: str, gate: Annotated[Optional[str], typer.Argument(
+                help="requirements | plan | plans (an epic's children) | all. Without it (or with `all`) every "
+                     "pending gate of the ticket is approved after one confirmation.")] = None,
             despite_open_question: Annotated[bool, typer.Option(
                 "--despite-open-question",
                 help="Approve although a line reads as an open question for you (you read it; it is not one). "
@@ -647,7 +778,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     On an epic this approves its charter: the epic's requirements and every child that is not done (in any status),
     its requirements and its plan, all printed before the typed confirmation; the approval binds exactly what was
     printed. `orch approve <epic> plans` approves only the children's plans that wait for approval (in progress or
-    waiting), each printed with its hash, after one typed confirmation of the epic's key."""
+    waiting), each printed with its hash, after one typed confirmation of the epic's key.
+
+    Without a gate (or with `all`) a backlog ticket whose requirements and plan are both waiting gets both approved in
+    one confirmation (both texts and both hashes printed first, each approval bound to its own hash); otherwise the
+    one gate that waits is approved."""
     from orch.core import epics, store
     ws = _ws()
     delegate = delegate or factory
@@ -657,6 +792,18 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if factory:
         limits["factory"] = True
     target = store.resolve(ws, ref)
+    if gate == "all":
+        gate = None
+    if gate is None and epics.is_epic(target.meta or {}):
+        gate = "requirements"
+    if gate is None:
+        if delegate or only is not None or despite_on is not None:
+            raise UsageError("--delegate, --only and --despite-open-question-on go with an epic or `plans`")
+        cur = store.load(ws, target.id)[1]
+        pending = _pending_gates(ws, cur)
+        if len(pending) == 2:
+            return _approve_both(ws, ref, cur, despite_open_question, dry_run, json_out)
+        gate = pending[0]
     if gate == "plans":
         if delegate:
             raise UsageError("delegation is given when approving an epic's requirements")
@@ -691,10 +838,11 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         raise UsageError("gate must be requirements or plan")
     cur = store.load(ws, target.id)[1]
     gh = gate_hash(cur, gate)  # what is printed below, read once
+    changes = _changes_text(ws, cur, gate)  # a re-approval: what changed since the approved text, then the full text
     t = _human_op(ws, ref, lambda ops, kw: ops.approve(ref, gate, despite_open_question=despite_open_question, **kw),
-                  lambda p: "\n".join(_gated_text(cur, gate)
+                  lambda p: "\n".join(changes + _gated_text(cur, gate)
                                       + [f"{p.id}: approve the {gate} exactly as shown ({_short(gh)});"
-                                         f" status then {p.status}"]),
+                                         f" status then {p.status}" + (" (kept)" if changes else "")]),
                   bound={"expected_hash": gh}, dry_run=dry_run, json_out=json_out)
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would approve the {gate} ({_short(t.meta['gates'][gate]['hash'])}),"
@@ -705,6 +853,60 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
     if more:  # the routine case on an epic: one confirmation for the rest
         text += f"\n{len(more)} more plan(s) in epic {parent.id} wait: orch approve {parent.id} plans"
     _out(_view(ws, t), json_out, text)
+
+
+def _changes_text(ws, t, gate: str) -> list[str]:
+    """For a gate approved earlier whose text changed since (state invalidated): the diff against the approved
+    snapshot, hidden characters escaped. Empty otherwise, or when no snapshot was kept."""
+    import difflib
+
+    from orch.core.gates import approved_snapshot, gate_state, normalized_text, snapshot_matches
+    from orch.textsafe import lines
+    if gate_state(t, gate) != "invalidated":
+        return []
+    old = approved_snapshot(ws, t.id, gate)
+    if old is None or not snapshot_matches(t, gate, old):
+        return [f"The {gate} of {t.id} changed since you approved it (no trustworthy snapshot of the approved text: "
+                "no diff is shown)", ""] + ["The full text now:"]
+    diff = [x for x in difflib.unified_diff(old.rstrip("\n").split("\n"), normalized_text(t, gate).rstrip("\n").split("\n"),
+                                           lineterm="", n=2) if not x.startswith(("---", "+++"))]
+    return ([f"Changed since you approved the {gate} of {t.id}:"] + [f"  {y}" for x in diff for y in lines(x)]
+            + ["", "The full text now:"])
+
+
+def _pending_gates(ws, t) -> list[str]:
+    """The gates `orch approve <id>` (no gate) approves: both in backlog when the plan is drafted and its gate exists,
+    else the one that waits (requirements first)."""
+    from orch.core.gates import REAPPROVE_IN_PLACE, gate_state, plan_required
+    from orch.errors import ValidationError
+    rs, ps = gate_state(t, "requirements"), gate_state(t, "plan")
+    drafted = plan_required(ws, t) and bool(t.section("Plan").strip())
+    if rs == "pending" and ps == "pending" and drafted and t.status == "backlog":
+        return ["requirements", "plan"]
+    req = rs == "pending" or (rs == "invalidated" and (t.status == "backlog" or t.status in REAPPROVE_IN_PLACE))
+    plan = (ps == "pending" and drafted) or (ps == "invalidated" and t.status in ("in-progress", "waiting"))
+    if req:
+        return ["requirements"]
+    if plan:
+        return ["plan"]
+    raise ValidationError(f"no gate of {t.id} waits for approval",
+                          hint=f"`orch show {t.id}` shows the gates; name one to approve it: orch approve {t.id} <gate>")
+
+
+def _approve_both(ws, ref: str, cur, despite_open_question: bool, dry_run: bool, json_out: bool) -> None:
+    """One typed confirmation for requirements and plan (Ops.approve_together): both texts and both short hashes are
+    printed first, and each approval is bound to the hash of its own text."""
+    from orch.core.gates import gate_hash
+    rh, ph = gate_hash(cur, "requirements"), gate_hash(cur, "plan")
+    t = _human_op(ws, ref, lambda ops, kw: ops.approve_together(ref, despite_open_question=despite_open_question, **kw),
+                  lambda p: "\n".join(_gated_text(cur, "requirements") + _gated_text(cur, "plan")
+                                      + [f"{p.id}: approve the requirements ({_short(rh)}) and the plan ({_short(ph)}) "
+                                         f"exactly as shown; status then {p.status}"]),
+                  bound={"requirements_hash": rh, "plan_hash": ph}, dry_run=dry_run, json_out=json_out)
+    if dry_run:
+        return _dry(ws, t, json_out, f"{t.id}: would approve the requirements ({_short(rh)}) and the plan "
+                                     f"({_short(ph)}), status then {t.status}")
+    _out(_view(ws, t), json_out, f"{t.id}: requirements and plan approved (status {t.status})")
 
 
 def _approve_plans(ws, target, despite: str | None, only: str | None, dry_run: bool, json_out: bool) -> None:
@@ -843,19 +1045,91 @@ def verdict(ref: str, result: Annotated[str, typer.Argument(metavar="done|follow
 
 
 @app.command()
-def close(ref: str,
+def close(refs: Annotated[list[str], typer.Argument(metavar="REF...", help="One or more tickets.")],
           as_: Annotated[str, typer.Option("--as", metavar="completed|wont-do|superseded|duplicate",
                                            help="Why it is closed.")] = "completed",
           by: Annotated[Optional[str], typer.Option("--by", help="The ticket that replaces it (superseded, duplicate).")] = None,
           message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
-    """Close a ticket from any status as done, saying why (-m). Human only."""
+    """Close one or more tickets from any status as done, saying why (-m). Human only. Several tickets are previewed
+    in a table and closed after one typed confirmation ("CLOSE 3"); a ticket that cannot be closed is skipped."""
     ws = _ws()
+    if len(refs) > 1:
+        return _close_many(ws, refs, as_, by, message or "", dry_run, json_out)
+    ref = refs[0]
     t = _human_op(ws, ref, lambda ops, kw: ops.close(ref, message or "", as_, by),
                   lambda p: f"{p.id}: close as {as_}" + (f" by {p.meta.get('superseded_by')}" if by else ""),
                   dry_run=dry_run, json_out=json_out, bind_file=True)
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would close as {as_}")
     _out(_view(ws, t), json_out, f"{t.id}: closed as {as_}")
+
+
+def _close_many(ws, refs: list[str], as_: str, by: str | None, message: str, dry_run: bool, json_out: bool) -> None:
+    """`orch close A B C` (#221): every ticket is previewed with the very same Ops.close as a dry run, a table lists
+    what would close and why the others are skipped, one typed confirmation ("CLOSE <n>") follows, and then each close
+    runs bound to its own ticket's file stamp as the preview read it: a ticket changed in between is skipped and
+    reported, the others are closed. --as, --by and -m apply to all."""
+    import contextlib
+    import sys
+
+    from orch.actor import require_human_terminal
+    from orch.core import store
+    from orch.core.events import Actor
+    from orch.core.lifecycle import require_human
+    from orch.core.ops import Ops, file_stamp
+    from orch.errors import HumanOnlyError, OrchError, ValidationError
+    from orch.textsafe import visible
+    require_human(Actor("human", "you", "tty"), "closing a ticket")  # an agent is refused here, dry run or not
+    if not dry_run:
+        require_human_terminal("human-only action")
+    entries, seen = [], set()
+    for ref in refs:
+        e = store.resolve(ws, ref)
+        if e.id not in seen:
+            seen.add(e.id)
+            entries.append(e)
+    stamps = {e.id: file_stamp(e.path) for e in entries}
+    status = {e.id: e.status for e in entries}
+    previews, skipped = [], []
+    for e in entries:
+        try:
+            previews.append(Ops(ws, Actor("human", "you", "tty"), dry_run=True).close(e.id, message, as_, by))
+        except HumanOnlyError:
+            raise
+        except OrchError as err:
+            skipped.append((e.id, err.message))
+    table = [f"{'key':<12} {'status':<12} title"] + [
+        f"{t.id:<12} {status[t.id]:<12} {visible(t.title)}" for t in previews]
+    table += [f"{sid}: skipped ({why})" for sid, why in skipped]
+    how = f"as {as_}" + (f" by {by}" if by else "")
+    if dry_run:
+        return _out({"dry_run": True, "would_close": [t.id for t in previews], "skipped": dict(skipped)}, json_out,
+                    "\n".join(table + [f"dry run: would close {len(previews)} ticket(s) {how}; nothing was written"]))
+    if not previews:
+        typer.echo("\n".join(table), err=json_out)
+        raise ValidationError("none of the tickets can be closed")
+    phrase = f"CLOSE {len(previews)}"
+    typer.echo("\n".join(table + [f"close the {len(previews)} ticket(s) above {how}: "
+                                  f"{visible(' '.join(message.split()))}"]), err=json_out)
+    with contextlib.redirect_stdout(sys.stderr):
+        typed = input(f'Type "{phrase}" to confirm: ').strip()
+    if typed != phrase:
+        raise HumanOnlyError("confirmation did not match; nothing changed")
+    actor_ = Actor("human", "you", "tty", None)
+    closed = []
+    for t in previews:
+        ops = _ops(ws, actor_)
+        ops.expected_stamp = stamps[t.id]  # this close is bound to the file the preview read
+        try:
+            ops.close(t.id, message, as_, by)
+            closed.append(t.id)
+        except HumanOnlyError:
+            raise
+        except OrchError as err:
+            skipped.append((t.id, err.message))
+    _out({"closed": closed, "skipped": dict(skipped)}, json_out,
+         "\n".join([f"{i}: closed {how}" for i in closed]
+                   + [f"{sid}: skipped, not closed ({why})" for sid, why in skipped]))
 
 
 @app.command()
@@ -1036,16 +1310,18 @@ def ledger_repair() -> None:
 
 @artifact_app.command("add")
 def artifact_add(ref: str,
-                 file: Annotated[Optional[Path], typer.Argument(exists=True, dir_okay=False,
-                                                                help="The file to add (or pass --url).")] = None,
+                 file: Annotated[Optional[list[Path]], typer.Argument(
+                     exists=True, dir_okay=False,
+                     help="The file(s) to add (or pass --url). Several files are added all or nothing.")] = None,
                  url: Annotated[Optional[str], typer.Option("--url", help="Link a web page instead: CI run, dashboard, PR check, report (http/https only).")] = None,
                  label: Annotated[Optional[str], typer.Option("--label", help="What it shows, in a few words.")] = None,
                  kind: Annotated[Optional[str], typer.Option("--kind", help="screenshot, report, log, link, dataset, build, diagram or other (guessed when left out).")] = None,
                  task: Annotated[Optional[str], typer.Option("--task", help="The task it belongs to, e.g. T3.")] = None,
                  ac: Annotated[Optional[int], typer.Option("--ac", help="The acceptance criterion it proves, e.g. 2.")] = None,
                  inline: Annotated[bool, typer.Option("--inline", help="Also write a Verification line for --ac that shows it.")] = False,
-                 name: Annotated[Optional[str], typer.Option("--name")] = None,
-                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite a file of the same name.")] = False,
+                 name: Annotated[Optional[str], typer.Option(
+                     "--name", help="Store the file under this name (one file only).")] = None,
+                 replace: Annotated[bool, typer.Option("--replace", help="Overwrite files of the same name.")] = False,
                  context: Annotated[bool, typer.Option("--context", help="Send it along wherever the ticket is synced (for example to the phone).")] = False,
                  json_out: JsonOpt = False) -> None:
     """Link a file or a URL in the ticket: every screenshot, report, log, dashboard or PR check you produce for it.
@@ -1053,8 +1329,11 @@ def artifact_add(ref: str,
     A file is copied into artifacts/<ticket>/ (a file already there is linked in place); a URL is linked, never
     fetched. Examples:
       orch artifact add L-0042 /tmp/login.png --ac 2 --inline --label "Login after the fix"
+      orch artifact add L-0042 shots/a.png shots/b.png --ac 2   (all files or none; one Log line)
       orch artifact add L-0042 --url https://github.com/acme/app/actions/runs/123 --kind build --label "CI run"
     """
+    if not file:
+        file = None
     if (file is None) == (url is None):
         raise typer.BadParameter("pass a file or --url (one of them)")
     ws = _ws()
@@ -1063,10 +1342,11 @@ def artifact_add(ref: str,
         item = ops.artifact_link(ref, url, label=label, kind=kind, task=task, ac=ac, inline=inline, context=context)
         _out(item, json_out, f"linked {item['kind']} {item['url']}")
         return
-    dest = ops.artifact_add(ref, file, name, context=context, kind=kind, label=label, task=task, ac=ac,
-                            inline=inline, replace=replace)
-    rel = dest.relative_to(ws.artifacts_dir).as_posix()
-    _out({"artifact": rel}, json_out, f"added artifacts/{rel}")
+    dests = ops.artifact_add_many(ref, file, name=name, context=context, kind=kind, label=label, task=task, ac=ac,
+                                  inline=inline, replace=replace)
+    rels = [d.relative_to(ws.artifacts_dir).as_posix() for d in dests]
+    payload = {"artifact": rels[0]} if len(rels) == 1 else {"artifacts": rels}
+    _out(payload, json_out, "added " + ", ".join(f"artifacts/{r}" for r in rels))
 
 
 @artifact_app.command("list")
@@ -1299,14 +1579,23 @@ app.add_typer(hooks_app, name="hooks")
 
 @hook_app.command("commit-msg")
 def hook_commit_msg(file: Annotated[Path, typer.Argument(exists=True, dir_okay=False)]) -> None:
-    """git commit-msg hook: exit 1 with reasons if the message breaks this workspace's rules."""
-    from orch.hooks.commit_msg import check_message
-    problems = check_message(_ws(), file.read_text(encoding="utf-8-sig"))
+    """git commit-msg hook: exit 1 with reasons if the message breaks this workspace's rules (git.repos.<name>.commit_check
+    sets enforce, warn or off per repo)."""
+    from orch.hooks.commit_msg import check_message, effective_mode, repo_name_for
+    ws = _ws()
+    repo = repo_name_for(ws, Path.cwd())
+    mode = effective_mode(ws, repo)  # #170: per-repo enforce | warn | off; an agent's commit is always enforced
+    if mode == "off":
+        return
+    problems = check_message(ws, file.read_text(encoding="utf-8-sig"), repo=repo)
     if problems:
-        typer.echo("orch: commit rejected", err=True)
+        typer.echo("orch: commit rejected" if mode == "enforce"
+                   else f"orch: commit message warning (commit_check is {mode!r} for this repo, the commit goes ahead)",
+                   err=True)
         for p in problems:
             typer.echo(f"  - {p}", err=True)
-        raise typer.Exit(1)
+        if mode == "enforce":
+            raise typer.Exit(1)
 
 
 @hook_app.command("pre-commit")
@@ -1653,8 +1942,9 @@ def feedback_add(
     if outcome == "off":
         typer.echo("orch feedback is turned off in this workspace; nothing saved. Carry on with your work.")
     elif outcome == "limit":
-        typer.echo(f"orch feedback: the daily limit ({feedback.DAILY_LIMIT} reports) is reached; nothing saved. "
-                   "Carry on with your work.")
+        typer.echo(f"orch feedback: the daily limit ({feedback.DAILY_LIMIT} reports) is reached; nothing saved; "
+                   "keep orchestrator/temporary/orch-feedback.md, do not delete it")
+        raise typer.Exit(1)
     else:
         word = "already reported; counted again" if outcome == "counted" else "saved"
         typer.echo(f"orch feedback {report['id']} {word} (on this machine only; the user reviews it with "

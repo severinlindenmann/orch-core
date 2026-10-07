@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verdict Flow Redesign</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@600;700;800&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#15171A;--surface:#1D2025;--surface2:#23272D;--overlay:#2A2F36;--chip:#2A2F36;
+  --line:#2B3038;--line2:#3A414A;--ctl:#6B7480;--text:#F2F3F5;--muted:#A3ABB5;--link:#5BE0B8;
+  --primary:#E6E8EB;--on-primary:#15171A;--mint:#00CC99;--scrim:rgba(0,0,0,.6);
+  --ok-bg:#0F3B30;--ok-fg:#A9F7C0;--ok-mark:#00CC99;--you-bg:#3A1F2E;--you-fg:#FF8FC4;--you-mark:#F84A9B;
+  --warn-bg:#3A2E14;--warn-fg:#F5B544;--err-bg:#3B1D1B;--err-fg:#FF8A80;--info-bg:#1B2A44;--info-fg:#9CC0FF;
+  --neu-bg:#2A2F36;--neu-fg:#A3ABB5;
+  --r-sm:6px;--r-md:10px;--r-lg:14px;
+  --fh:"Figtree",system-ui,sans-serif;--fb:"Manrope",system-ui,sans-serif;--fm:ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:400 14px/1.57 var(--fb)}
+h1,h2,h3{font-family:var(--fh);margin:0}
+.page{max-width:1240px;margin:0 auto;padding:40px 16px 80px}
+.lead{color:var(--muted);max-width:760px;margin:8px 0 0}
+.frame{margin-top:48px;border:1px solid var(--line);border-radius:18px;background:#111316;overflow:hidden}
+.frame-head{display:flex;gap:12px;align-items:baseline;padding:18px 24px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.frame-head .n{font:800 13px var(--fh);color:var(--on-primary);background:var(--mint);border-radius:999px;padding:2px 10px}
+.frame-head h2{font-size:20px}
+.frame-head p{color:var(--muted);margin:0;flex-basis:100%}
+.frame-body{padding:24px;position:relative}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+.tag{font:600 11px var(--fb);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:flex;gap:8px;align-items:center}
+.tag.before::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--err-fg)}
+.tag.after::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--mint)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:999px;font:600 12px var(--fb);background:var(--chip);color:var(--neu-fg);white-space:nowrap}
+.chip.you{background:var(--you-bg);color:var(--you-fg)}.chip.you::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--you-mark)}
+.chip.ok{background:var(--ok-bg);color:var(--ok-fg)}.chip.warn{background:var(--warn-bg);color:var(--warn-fg)}.chip.info{background:var(--info-bg);color:var(--info-fg)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:var(--r-md);border:1px solid var(--ctl);background:transparent;color:var(--text);font:600 14px var(--fb);cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary)}
+.btn.quiet{border-color:transparent;color:var(--muted)}
+.btn.sm{height:30px;padding:0 10px;font-size:13px}
+.muted{color:var(--muted)}
+.lnk{color:var(--link);text-decoration:none}
+.kbd{font:600 11px var(--fm);border:1px solid var(--line2);border-bottom-width:2px;border-radius:4px;padding:0 5px;color:var(--muted)}
+code{font:12px var(--fm);background:var(--chip);border-radius:4px;padding:1px 5px}
+
+/* ---- thumbs (fake renders) ---- */
+.th{border-radius:8px;overflow:hidden;position:relative;background:#0e1013;border:1px solid var(--line2)}
+.th.li{background:linear-gradient(#fff 0 18%,#f3f2ef 18%);}
+.th.li::before{content:"";position:absolute;left:10%;right:10%;top:24%;height:6%;background:#d0d6dc;border-radius:3px;box-shadow:0 10px 0 #e3e7eb,0 20px 0 #e3e7eb}
+.th.li::after{content:"";position:absolute;left:10%;right:10%;top:58%;bottom:8%;background:linear-gradient(135deg,#0b3b33,#00a37a);border-radius:4px}
+.th.lp{background:radial-gradient(120% 80% at 50% 0,#1f5c4e,#0d1f1b 70%)}
+.th.lp::before{content:"VOM EIGENEN PROMPT\A ZUR FACTORY FÜRS TEAM";white-space:pre;position:absolute;inset:18% 8% auto;text-align:center;font:800 9px/1.2 var(--fh);color:#e8fff7}
+.th.lp::after{content:"";position:absolute;left:38%;right:38%;top:50%;height:8%;background:#F84A9B;border-radius:99px}
+.th.doc{background:#fff}
+.th.doc::before{content:"";position:absolute;inset:12% 12% auto;height:50%;background:repeating-linear-gradient(#cfd4da 0 3px,transparent 3px 9px)}
+.th.doc::after{content:"";position:absolute;left:12%;width:30%;top:68%;height:10%;background:#e34948;border-radius:2px}
+.th.viz{background:linear-gradient(#20252b,#0f1215)}
+.th.viz::before{content:"";position:absolute;inset:30% 8%;background:repeating-linear-gradient(90deg,#2f7a68 0 14%,transparent 14% 17%);border-radius:3px;opacity:.9}
+.th.txt{background:#0e1013;display:grid;place-items:center;color:var(--muted);font:600 10px var(--fm)}
+.th .kind{position:absolute;right:6px;bottom:6px;font:700 10px var(--fb);background:rgba(0,0,0,.65);color:#fff;border-radius:4px;padding:1px 5px}
+
+/* ---- 1. board card + drawer ---- */
+.board{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;opacity:.55;filter:saturate(.7)}
+.ym{border-left:4px solid var(--you-mark);padding:16px 16px 18px}
+.ym-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.ym h3{font:650 15px/1.45 var(--fh);margin-bottom:12px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.tiles .th{aspect-ratio:4/3}
+.tiles .cap{font:700 11px var(--fb);color:var(--ok-fg);margin-top:3px;display:block}
+.prog{display:flex;gap:6px;align-items:center;font:600 12px var(--fb);color:var(--muted);margin-bottom:12px}
+.bar{flex:1;height:6px;border-radius:99px;background:var(--line2);overflow:hidden}.bar i{display:block;height:100%;background:var(--mint)}
+.scrim{position:absolute;inset:0;background:var(--scrim)}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:min(620px,92%);background:var(--surface);border-left:1px solid var(--line2);box-shadow:-24px 0 48px rgba(0,0,0,.4);display:flex;flex-direction:column}
+.dr-head{padding:18px 22px;border-bottom:1px solid var(--line)}
+.dr-head .row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.dr-head h3{font:700 18px/1.3 var(--fh);margin:8px 0 6px}
+.tabs{display:flex;gap:4px;margin-top:12px}
+.tabs span{padding:6px 12px;border-radius:999px;font:600 13px var(--fb);color:var(--muted)}
+.tabs span.on{background:var(--chip);color:var(--text)}
+.dr-body{flex:1;overflow:hidden;padding:16px 22px}
+.tldr{background:var(--surface2);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px}
+.tldr b{font:700 12px var(--fb);letter-spacing:.05em;text-transform:uppercase;color:var(--link)}
+.tldr ul{margin:6px 0 0;padding-left:18px}
+.acs{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.acs li{display:grid;grid-template-columns:22px 1fr 54px 22px;gap:10px;align-items:center;padding:10px 12px;border-top:1px solid var(--line)}
+.acs li:first-child{border-top:0}
+.acs .m{color:var(--ok-mark);font-weight:800}
+.acs .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acs .t b{font-family:var(--fh);margin-right:6px}
+.acs .th{height:36px}
+.acs .chev{color:var(--muted);text-align:center}
+.acs li.open{background:var(--surface2);grid-template-columns:22px 1fr 22px;align-items:start}
+.acs li.open .t{white-space:normal}
+.ev{margin-top:8px;padding-left:12px;border-left:2px solid var(--mint);color:var(--muted);font-size:13px}
+.ev .gal{display:flex;gap:6px;margin-top:8px}.ev .gal .th{width:84px;height:56px}
+.dr-foot{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;background:var(--surface)}
+.dr-foot .sp{flex:1}
+.callout{display:flex;gap:10px;align-items:flex-start;background:var(--info-bg);color:var(--info-fg);border-radius:var(--r-md);padding:10px 12px;font-size:13px;margin-top:14px}
+.anno{position:absolute;background:var(--mint);color:var(--on-primary);font:800 12px var(--fh);border-radius:999px;width:22px;height:22px;display:grid;place-items:center;box-shadow:0 0 0 4px rgba(0,204,153,.25)}
+.legend{list-style:none;padding:0;margin:20px 0 0;display:grid;grid-template-columns:repeat(2,1fr);gap:8px 24px}
+.legend li{display:flex;gap:10px;color:var(--muted);font-size:13px}
+.legend li>span{flex:none;background:var(--mint);color:var(--on-primary);font:800 11px var(--fh);border-radius:999px;width:20px;height:20px;display:grid;place-items:center}
+
+/* ---- 2. ticket sections ---- */
+.sec{padding:14px 0;border-top:1px solid var(--line)}
+.sec h4{font:700 16px var(--fh);margin:0 0 6px;display:flex;align-items:center;gap:8px}
+.repeat{color:var(--link);text-decoration:underline;font-weight:600}
+.strike{outline:2px dashed var(--err-fg);outline-offset:3px;border-radius:4px}
+.hov{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font:600 12px var(--fb);color:var(--muted);border:1px dashed var(--line2);border-radius:999px;padding:2px 10px}
+.foot-note{margin-top:14px;padding:10px 12px;border:1px dashed var(--line2);border-radius:var(--r-md);color:var(--muted);font-size:13px}
+
+/* ---- 3. send back composer ---- */
+.composer{background:var(--surface);border:1px solid var(--line2);border-radius:var(--r-lg);padding:16px}
+.composer .ta{min-height:96px;border:1px solid var(--ctl);border-radius:var(--r-md);padding:10px 12px;background:var(--surface2);line-height:1.6}
+.caret{display:inline-block;width:2px;height:16px;background:var(--mint);vertical-align:-3px}
+.att{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap}
+.att .item{position:relative;width:132px}
+.att .item .th{height:84px}
+.att .item .x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--overlay);border:1px solid var(--line2);display:grid;place-items:center;font-size:11px}
+.att .item small{display:block;color:var(--muted);font-size:11px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.att .drop{width:132px;height:84px;border:1.5px dashed var(--line2);border-radius:8px;display:grid;place-items:center;text-align:center;color:var(--muted);font-size:12px;padding:6px}
+.ac-pick{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.ac-pick .chip.sel{background:var(--warn-bg);color:var(--warn-fg);outline:1px solid var(--warn-fg)}
+.comp-foot{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.comp-foot .sp{flex:1}
+.toast{position:absolute;right:24px;top:24px;background:var(--overlay);border:1px solid var(--line2);border-radius:var(--r-md);padding:10px 14px;box-shadow:0 12px 32px rgba(0,0,0,.4);font-size:13px;display:flex;gap:10px;align-items:center}
+.toast .dot{width:8px;height:8px;border-radius:50%;background:var(--mint)}
+.log{font:12px/1.6 var(--fm);background:#0e1013;border:1px solid var(--line);border-radius:var(--r-md);padding:12px;color:var(--muted);white-space:pre-wrap}
+.log b{color:var(--ok-fg);font-weight:600}
+
+/* ---- 4. widgets ---- */
+.wgrid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:900px){.wgrid{grid-template-columns:1fr}}
+.wcard h3{font:700 16px var(--fh);display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.wcard .why{color:var(--muted);font-size:13px;margin:0 0 14px}
+.wcard pre{font:11.5px/1.5 var(--fm);background:#0e1013;border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;color:#c9d1d9;overflow:auto;margin:14px 0 0;white-space:pre-wrap}
+.gal4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.gal4 .th{aspect-ratio:4/3}
+.gal4 figure{margin:0}.gal4 figcaption{font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv{border:1px solid var(--line2);border-radius:var(--r-md);overflow:hidden}
+.pv-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface2);border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.pv-bar .dots{display:flex;gap:4px}.pv-bar .dots i{width:8px;height:8px;border-radius:50%;background:var(--line2)}
+.pv-bar .url{flex:1;background:var(--bg);border-radius:6px;padding:2px 8px;font-family:var(--fm);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seg{display:flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden}.seg span{padding:1px 8px}.seg span.on{background:var(--chip);color:var(--text)}
+.pv .th{height:170px;border:0;border-radius:0}
+.rv{list-style:none;padding:0;margin:0}
+.rv li{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.rv li:first-child{border-top:0}
+.rv .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rv .t b{font-family:var(--fh);margin-right:6px}
+.tri{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.tri span{padding:3px 10px;font:600 12px var(--fb);color:var(--muted);border-left:1px solid var(--line2)}
+.tri span:first-child{border-left:0}
+.tri span.ok{background:var(--ok-bg);color:var(--ok-fg)}.tri span.no{background:var(--err-bg);color:var(--err-fg)}
+.rv-sum{margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.sumw{background:linear-gradient(180deg,var(--surface2),var(--surface));border:1px solid var(--line2);border-radius:var(--r-md);padding:14px}
+.sumw .k{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;font-size:13px}
+.sumw .k dt{color:var(--muted);font-weight:600}.sumw .k dd{margin:0}
+.issue{margin-top:48px}
+.issue pre{font:13px/1.6 var(--fm);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:20px;white-space:pre-wrap;color:#d6dbe1}
+</style>
+</head>
+<body>
+<main class="page">
+  <span class="chip info">orch-core · feature proposal · dashboard 0.4.4</span>
+  <h1 style="font:800 30px/1.2 var(--fh);margin-top:12px">A verdict flow you can take in at a glance</h1>
+  <p class="lead">Four changes to Mission Control from reviewing four tickets in one sitting: compact proof in a drawer, fewer repeated meta links, a Send back that takes screenshots, and four new widgets for reviewing deliverables.</p>
+
+  <!-- =========================== 1 =========================== -->
+  <section class="frame" id="f1">
+    <div class="frame-head"><span class="n">1</span><h2>“Check the proof…” opens a drawer, not a 3-screen-long card</h2>
+      <p>Today the <code>&lt;details class="ym-proof"&gt;</code> expands inside the 300&nbsp;px card. The full Verification markdown wraps word by word, the board row stretches, and you lose your place. Proposal: open a side drawer with one line per criterion and a sticky verdict bar.</p></div>
+    <div class="frame-body" style="height:700px">
+      <div class="board">
+        <article class="card ym">
+          <div class="ym-top"><span class="chip you">Verdict</span><span class="muted">INT-0003</span></div>
+          <h3>10 LinkedIn-Post-Entwürfe mit Storyline</h3>
+          <div class="prog"><div class="bar"><i style="width:100%"></i></div>5/5 AC</div>
+          <div class="tiles"><div><div class="th li"></div></div><div><div class="th li"></div></div><div><div class="th txt">.md ×10</div></div><div><div class="th li"></div></div></div>
+          <button class="btn primary" style="outline:2px solid var(--mint);outline-offset:2px">Check the proof</button>
+        </article>
+        <article class="card ym">
+          <div class="ym-top"><span class="chip you">Verdict</span><span class="muted">INT-0004</span></div>
+          <h3>ALTYCA-Landingpage AI Factory: 2–3 modulare Drafts</h3>
+          <div class="prog"><div class="bar"><i style="width:100%"></i></div>5/5 AC</div>
+          <div class="tiles"><div class="th lp"></div><div class="th lp"></div><div class="th lp"></div><div class="th txt">+2</div></div>
+          <button class="btn primary">Check the proof</button>
+        </article>
+        <article class="card ym">
+          <div class="ym-top"><span class="chip you">Verdict</span><span class="muted">INT-0005</span></div>
+          <h3>severin.io: Konzept und Draft als Content-Hub</h3>
+          <div class="prog"><div class="bar"><i style="width:100%"></i></div>4/4 AC</div>
+          <div class="tiles"><div class="th doc"></div><div class="th doc"></div><div class="th viz"></div><div class="th txt">+1</div></div>
+          <button class="btn primary">Check the proof</button>
+        </article>
+      </div>
+      <div class="scrim"></div>
+      <aside class="drawer" aria-label="Proof for INT-0003">
+        <div class="dr-head">
+          <div class="row"><span class="chip you">Your verdict</span><span class="muted">INT-0003 · <a class="lnk" href="#">open ticket ↗</a> · <span class="kbd">Esc</span></span></div>
+          <h3>10 LinkedIn-Post-Entwürfe mit Storyline</h3>
+          <div class="row" style="justify-content:flex-start;gap:6px"><span class="chip ok">✓ 5/5 criteria have evidence</span><span class="chip">7 artifacts</span><span class="chip">claude-code · 2 h ago</span></div>
+          <div class="tabs"><span class="on">Criteria</span><span>Deliverables 7</span><span>Verification</span><span>Handoff</span></div>
+        </div>
+        <div class="dr-body">
+          <div class="tldr"><b>What to check</b>
+            <ul><li>Open the LinkedIn preview, mark posts with «Weiterverfolgen».</li><li>Landing-page URL in the first comment is a placeholder.</li><li>Helvetia sign-off needed before Post 01.</li></ul></div>
+          <ol class="acs">
+            <li class="open"><span class="m">✓</span>
+              <div><div class="t"><b>AC1</b>10 Entwürfe liegen vor, jeder mit Hook, Text, Visual, Quellen, CTA, Repost-Text und Hashtags.</div>
+                <div class="ev">10 drafts in <code>linkedin/post-01.md</code> … <code>post-10.md</code>; each has hook, text, visual from the library, sources in the frontmatter, CTA, repost text and hashtags.
+                  <div class="gal"><div class="th li"></div><div class="th li"></div><div class="th li"></div><div class="th txt">+7</div></div></div></div>
+              <span class="chev">▴</span></li>
+            <li><span class="m">✓</span><div class="t"><b>AC2</b>Storyline über 10 Wochen mit Bogen und Kadenz dokumentiert</div><div class="th doc"></div><span class="chev">▾</span></li>
+            <li><span class="m">✓</span><div class="t"><b>AC3</b>Jeder Post verweist auf mind. eine Quelle aus dem Register</div><div class="th txt">table</div><span class="chev">▾</span></li>
+            <li><span class="m">✓</span><div class="t"><b>AC4</b>Tonalität geprüft gegen Styleguide (DE, Du-Form)</div><div class="th txt">checks</div><span class="chev">▾</span></li>
+            <li><span class="m">✓</span><div class="t"><b>AC5</b>Interaktive Vorschau mit Visuals und Auswahl</div><div class="th li"></div><span class="chev">▾</span></li>
+          </ol>
+        </div>
+        <div class="dr-foot"><button class="btn primary">Accept, mark done</button><button class="btn">Send back…</button><span class="sp"></span><span class="muted" style="font-size:12px"><span class="kbd">J</span>/<span class="kbd">K</span> next ticket</span></div>
+      </aside>
+      <span class="anno" style="left:22px;top:150px">a</span>
+      <span class="anno" style="right:612px;top:30px">b</span>
+      <span class="anno" style="right:250px;top:150px">c</span>
+      <span class="anno" style="right:612px;top:258px">d</span>
+      <span class="anno" style="right:612px;top:380px">e</span>
+      <span class="anno" style="right:612px;bottom:30px">f</span>
+    </div>
+    <div style="padding:0 24px 24px">
+      <ul class="legend">
+        <li><span>a</span><div>Card tiles fall back to the AC's linked artifact (image or a snapshot of an HTML/URL artifact) when the evidence text carries no image. Today AC1–AC3 of INT-0003 show empty boxes.</div></li>
+        <li><span>b</span><div>Side drawer over the board (<code>?proof=INT-0003</code> deep link). Esc closes it; the board keeps its scroll position.</div></li>
+        <li><span>c</span><div>Tabs split what is now one long column: criteria, deliverables (gallery), the Verification widgets, the handoff note.</div></li>
+        <li><span>d</span><div>“What to check”: the agent's <code>orch state</code> / handoff, pinned on top so the human knows what to look at first.</div></li>
+        <li><span>e</span><div>One line per criterion, truncated, with a thumbnail. Click to expand only the evidence you want to read.</div></li>
+        <li><span>f</span><div>Sticky verdict bar, always visible. <span class="kbd">J</span>/<span class="kbd">K</span> steps through the next tickets in “Your move”.</div></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- =========================== 2 =========================== -->
+  <section class="frame" id="f2">
+    <div class="frame-head"><span class="n">2</span><h2>Drop the repeated “Widgets for this section” links</h2>
+      <p>The link shows under Proven, again in the Handoff heading, and again under Context, Current state and Findings (<code>ticket.html:632</code>, <code>:646</code>). For someone giving a verdict it is noise: it points at authoring docs, not at the ticket.</p></div>
+    <div class="frame-body">
+      <div class="cols">
+        <div>
+          <div class="tag before">Today</div>
+          <div class="card">
+            <div class="sec" style="border-top:0;padding-top:0"><h4>4 · Proven <span class="chip ok">AC 5/5</span></h4>
+              <p class="muted" style="margin:0">… evidence rows …</p>
+              <p style="margin:12px 0 0"><span class="repeat strike">Widgets for this section</span></p>
+              <p style="margin:14px 0 0;display:flex;gap:10px"><button class="btn primary sm">Accept, mark done</button><button class="btn quiet sm">Send back…</button></p></div>
+            <div class="sec"><h4>5 · Left</h4><p class="muted" style="margin:0">your verdict</p></div>
+            <div class="sec"><h4>Agent notes <span class="muted" style="font:600 13px var(--fb)">· Handoff</span></h4>
+              <p style="margin:0"><b>Handoff</b> <span class="muted">claude-code wrote 2 h ago</span> <span class="strike" style="font-weight:700">Widgets for this section</span></p>
+              <p class="muted" style="margin:6px 0 0;border-left:3px solid var(--line2);padding-left:10px">Zur Auswahl bereit: linkedin/index.html öffnen …</p></div>
+          </div>
+        </div>
+        <div>
+          <div class="tag after">Proposed</div>
+          <div class="card">
+            <div class="sec" style="border-top:0;padding-top:0"><h4>4 · Proven <span class="chip ok">AC 5/5</span></h4>
+              <p class="muted" style="margin:0">… evidence rows …</p>
+              <p style="margin:14px 0 0;display:flex;gap:10px"><button class="btn primary sm">Accept, mark done</button><button class="btn quiet sm">Send back…</button></p></div>
+            <div class="sec"><h4>5 · Left</h4><p class="muted" style="margin:0">your verdict</p></div>
+            <div class="sec"><h4>Agent notes <span class="muted" style="font:600 13px var(--fb)">· Handoff</span><span class="hov">ⓘ only with option A</span></h4>
+              <p style="margin:0"><b>Handoff</b> <span class="muted">claude-code wrote 2 h ago</span></p>
+              <p class="muted" style="margin:6px 0 0;border-left:3px solid var(--line2);padding-left:10px">Zur Auswahl bereit: linkedin/index.html öffnen …</p></div>
+          </div>
+          <div class="foot-note">Options, pick one: <b>(A)</b> show it only on hover as a small ⓘ icon next to the heading; <b>(B)</b> hide it unless a workspace setting <code>dashboard.authoring_hints</code> is on; <b>(C)</b> one link in the page footer, “Widgets you can use in a ticket”. Recommended: <b>B</b>. Verdict pages are for humans, and agents already get the list from <code>orch widget types</code>.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================== 3 =========================== -->
+  <section class="frame" id="f3">
+    <div class="frame-head"><span class="n">3</span><h2>Send back with text and screenshots pasted from the clipboard</h2>
+      <p>Today Send back is a one-line <code>&lt;input&gt;</code>. Feedback on visual work almost always needs a picture. Proposal: a multi-line composer that takes <span class="kbd">⌘V</span> / drag &amp; drop images, optionally tags the failing ACs, and stores each image as a ticket artifact so the agent can open it.</p></div>
+    <div class="frame-body">
+      <div class="cols">
+        <div>
+          <div class="tag before">Today</div>
+          <div class="card">
+            <p style="margin:0 0 10px">Not done yet? Tell the agent what is missing.</p>
+            <div style="height:40px;border:1px solid var(--ctl);border-radius:10px;padding:8px 12px;color:var(--muted)">What is missing?</div>
+            <button class="btn" style="margin-top:10px">Send back</button>
+          </div>
+          <div class="tag after" style="margin-top:28px">What the agent receives</div>
+          <div class="log"><b>orch wait INT-0003 --json</b>
+{ "event": "sent-back", "by": "human",
+  "message": "Post 03 visual is cropped, see image.\nHashtags too many on 05.",
+  "acs": [1, 5],
+  "attachments": [
+    "artifacts/INT-0003/sendback-1.png",
+    "artifacts/INT-0003/sendback-2.png" ] }</div>
+        </div>
+        <div>
+          <div class="tag after">Proposed</div>
+          <div class="composer">
+            <p style="margin:0 0 10px;font-weight:600">Not done yet? Tell the agent what is missing.</p>
+            <div class="ac-pick"><span class="muted" style="font-size:12px">Which criteria?</span><span class="chip sel">AC1 ✕</span><span class="chip">AC2</span><span class="chip">AC3</span><span class="chip">AC4</span><span class="chip sel">AC5 ✕</span></div>
+            <div class="ta">Post 03 visual is cropped, see image.<br>Hashtags too many on 05, keep it to 3.<span class="caret"></span></div>
+            <div class="att">
+              <div class="item"><div class="th li"></div><span class="x">✕</span><small>pasted · 1200×1350 · 214 kB</small></div>
+              <div class="item"><div class="th lp"></div><span class="x">✕</span><small>pasted · 1440×900 · 388 kB</small></div>
+              <div class="drop">Paste <span class="kbd">⌘V</span><br>or drop images</div>
+            </div>
+            <div class="comp-foot"><button class="btn primary">Send back to agent</button><span class="muted" style="font-size:12px"><span class="kbd">⌘</span><span class="kbd">↵</span> send</span><span class="sp"></span><span class="muted" style="font-size:12px">2 images become artifacts of INT-0003</span></div>
+          </div>
+          <div class="foot-note">Also works for <b>Request changes</b> on gates and for <b>orch ask</b> answers. Images are validated (PNG/JPEG/WebP/GIF, size limit), saved under <code>orchestrator/artifacts/&lt;id&gt;/</code> with sha256, linked via <code>orch artifact</code> with <code>kind: feedback</code>, and referenced in the Log entry. The append-only Log rule still holds.</div>
+        </div>
+      </div>
+      <div class="toast"><span class="dot"></span>Image pasted from clipboard · added as attachment 2</div>
+    </div>
+  </section>
+
+  <!-- =========================== 4 =========================== -->
+  <section class="frame" id="f4">
+    <div class="frame-head"><span class="n">4</span><h2>New widgets for reviewing deliverables</h2>
+      <p>The 28 core widgets cover code work well (diff, tests, gates, deploy). Content and design tickets produce pages, images and documents, and that is where the review stalls today. Four additions:</p></div>
+    <div class="frame-body">
+      <div class="wgrid">
+        <div class="card wcard">
+          <h3>gallery <span class="chip">review</span></h3>
+          <p class="why">Many outputs per AC (10 posts, 3 landing drafts, a visual library). Grid of thumbnails, click opens a lightbox with ← → and the label. HTML/URL artifacts get a server-side snapshot.</p>
+          <div class="gal4">
+            <figure><div class="th li"></div><figcaption>Post 01 · Hook</figcaption></figure>
+            <figure><div class="th li"></div><figcaption>Post 02 · Pain</figcaption></figure>
+            <figure><div class="th lp"><span class="kind">HTML</span></div><figcaption>Landing A</figcaption></figure>
+            <figure><div class="th viz"><span class="kind">PNG</span></div><figcaption>levels-landscape</figcaption></figure>
+          </div>
+<pre>{"type": "gallery", "ac": 1, "columns": 4,
+ "items": [{"label": "Post 01", "artifact": "post-01.png"},
+           {"label": "Landing A", "artifact": "landing-a.html", "as": "snapshot"}]}</pre>
+        </div>
+        <div class="card wcard">
+          <h3>preview <span class="chip">review</span></h3>
+          <p class="why">Today a local HTML artifact or a claude.ai artifact is a bare link (screenshot 3). Embed it in a sandboxed iframe with viewport toggles; external URLs fall back to a snapshot plus the link.</p>
+          <div class="pv">
+            <div class="pv-bar"><span class="dots"><i></i><i></i><i></i></span><span class="url">artifacts/INT-0004/landing-b/index.html</span><span class="seg"><span>390</span><span class="on">1280</span></span><span>↗</span></div>
+            <div class="th lp"></div>
+          </div>
+<pre>{"type": "preview", "artifact": "landing-b/index.html",
+ "viewports": [390, 1280], "height": 480, "sandbox": true}</pre>
+        </div>
+        <div class="card wcard">
+          <h3>review <span class="chip">verify</span></h3>
+          <p class="why">A verdict per criterion instead of one yes/no for the whole ticket. Each flagged AC pre-fills the Send back composer (frame 3), so partial acceptance is one step.</p>
+          <ul class="rv">
+            <li><span class="t"><b>AC1</b>10 Entwürfe mit Hook, Text, Visual …</span><span class="tri"><span class="ok">✓ ok</span><span>✕</span><span>?</span></span></li>
+            <li><span class="t"><b>AC2</b>Storyline über 10 Wochen</span><span class="tri"><span class="ok">✓ ok</span><span>✕</span><span>?</span></span></li>
+            <li><span class="t"><b>AC3</b>Quelle aus dem Register je Post</span><span class="tri"><span>✓</span><span class="no">✕ no</span><span>?</span></span></li>
+            <li><span class="t"><b>AC5</b>Interaktive Vorschau</span><span class="tri"><span>✓</span><span>✕</span><span>?</span></span></li>
+          </ul>
+          <div class="rv-sum"><span class="muted" style="font-size:12px">2 ok · 1 not met · 1 open</span><button class="btn sm">Send back AC3 with note…</button></div>
+        </div>
+        <div class="card wcard">
+          <h3>summary <span class="chip">understand</span></h3>
+          <p class="why">A short card the agent writes at handoff and the drawer pins on top. Structured fields instead of a paragraph in the Handoff note, with a hard length limit.</p>
+          <div class="sumw"><dl class="k">
+            <dt>Delivered</dt><dd>10 post drafts, preview page, storyline</dd>
+            <dt>Check first</dt><dd>Open <a class="lnk" href="#">linkedin/index.html</a>, mark posts to keep</dd>
+            <dt>Open points</dt><dd><span class="chip warn">placeholder URL</span> <span class="chip warn">Helvetia sign-off</span></dd>
+            <dt>Not done</dt><dd class="muted">Scheduling (out of scope)</dd></dl></div>
+<pre>{"type": "summary", "delivered": "10 post drafts, preview page, storyline",
+ "check_first": "Open linkedin/index.html, mark posts to keep",
+ "open": ["placeholder URL", "Helvetia sign-off"], "not_done": "Scheduling"}</pre>
+        </div>
+      </div>
+      <p class="muted" style="margin:20px 0 0;font-size:13px">Smaller ideas: an <code>annotate</code> mode in the lightbox (draw a box on a screenshot, it goes into Send back); <code>checks</code> rows that link to their artifact thumbnails; a <b>diff for text deliverables</b> (prose diff of <code>post-03.md</code> between two rounds of Send back).</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>

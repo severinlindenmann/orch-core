@@ -26,7 +26,6 @@ from orch.dashboard.data import agent_start
 from orch.dashboard.views import back, confirm_page, error_text, page
 from orch.dashboard.reach import remote_origin
 from orch.errors import OrchError, ValidationError
-from orch.remote.bridge_host.budgets import SlidingLimit
 
 router = APIRouter()
 
@@ -285,7 +284,7 @@ REMOTE_POSTS, REMOTE_WINDOW_MS = 15, 10_000  # posts per device per window
 REMOTE_MAX_ITEMS, REMOTE_MAX_CHARS = 64, 2048  # one device post: items, and characters of text
 _DEVICE_LOCK = threading.Lock()
 _DEVICE_LAST: dict[str, int] = {}  # device -> the highest post number taken
-_DEVICE_RATE: dict[str, SlidingLimit] = {}
+_DEVICE_RATE: dict = {}  # device -> its SlidingLimit
 
 
 def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
@@ -297,6 +296,7 @@ def _device_keys_refusal(device: str, data) -> tuple[int, str] | None:
     if not isinstance(seq, list) or len(seq) > REMOTE_MAX_ITEMS or sum(
             len(i["text"]) for i in seq if isinstance(i, dict) and isinstance(i.get("text"), str)) > REMOTE_MAX_CHARS:
         return 413, "too many keys in one post"
+    from orch.remote.bridge_host.budgets import SlidingLimit  # a bridged request only: a local run never loads it
     with _DEVICE_LOCK:
         if n <= _DEVICE_LAST.get(device, 0):
             return 409, "post number already used"

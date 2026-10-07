@@ -613,6 +613,8 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
         return {**info, "state": "proven"}
     if retried:
         return {**info, "state": "waiting"}  # the human allowed one more attempt
+    if out.get("interrupted") is True:  # killed or timed out midway: what it changed is not known
+        return {**info, "state": "unknown", "why": info["why"] or "it was stopped while a command ran"}
     return {**info, "state": "failed"}
 
 
@@ -1120,6 +1122,11 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                 out.append({"code": "production-failed", "label": "Production check failed",
                             "text": "the production stage's commands ran, but its live check did not pass ("
                                     + _text(u.get("why") or "not proven", 200) + "); nothing was rolled back"})
+            elif u["state"] == "failed" and s["name"] == "production":
+                out.append({"code": "production-failed", "label": "Production stage failed",
+                            "text": "the production stage's commands did not all succeed ("
+                                    + _text(u.get("why") or "not proven", 200) + "): look at production now; it may be "
+                                    "half-deployed; nothing was rolled back"})
             elif u["state"] == "failed" and s["name"] == "merge" and u.get("conflicts"):
                 out.append({"code": "release-conflict", "label": "Merge conflict",
                             "text": f"the merge of {_text(u['unit'], 40)} conflicts in "
@@ -1135,8 +1142,10 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
                                        else _text(u.get("why") or f"exit code {code}", 200)) + ")"})
             elif u["state"] == "unknown":
                 out.append({"code": "release-unknown", "label": "Release outcome unknown",
-                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and has no recorded "
-                                    "outcome (the runner stopped while it ran)"})
+                            "text": f"the {s['name']} stage of {_text(u['unit'], 40)} started and its outcome is unknown "
+                                    f"({_text(u.get('why') or 'the runner stopped while it ran', 200)})"
+                                    + ("; look at production now: it may be half-deployed"
+                                       if s["name"] == "production" else "")})
             elif u["state"] == "stale":
                 out.append({"code": "release-stale", "label": "Release out of date",
                             "text": f"the {s['name']} stage of {_text(u['unit'], 40)} was proven, but "
@@ -1933,7 +1942,7 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
     """Run `steps` in order, each only while the gate still holds (and `moved()` says nothing moved). {codes, tail,
     why, check, proven, failed_at}: failed_at is "check" only when every command ran and exited 0 and the check alone
     did not pass (the one case a signed rollback answers)."""
-    codes, tail, why, check_code, proven, failed_at = [], "", "", None, False, None
+    codes, tail, why, check_code, proven, failed_at, interrupted = [], "", "", None, False, None, False
     for kind, argv, expect in steps:
         if gate(ws, epic.id, d["id"]) is None:
             why = "stopped before the next command: the epic may no longer release (paused, edited, out of budget, " \
@@ -1951,6 +1960,8 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
             why = "the dashboard stopped while it ran"
         if r.get("timed_out"):
             why = f"timed out after {s['timeout']} seconds"
+        # a command killed midway may have done part of its work (a check only reads): its outcome is unknown
+        interrupted = interrupted or stopping or (bool(r.get("timed_out")) and kind != "check")
         out_ok = expect is None or (r.get("out_size", 0) <= TAIL and (r.get("out") or "").strip() == expect)
         if kind == "check":
             check_code = r.get("code")
@@ -1974,7 +1985,8 @@ def _run_steps(ws, epic, d, s, steps, run, env, cwd, moved=None) -> dict:
                 break
         if why:
             break
-    return {"codes": codes, "tail": tail, "why": why, "check": check_code, "proven": proven, "failed_at": failed_at}
+    return {"codes": codes, "tail": tail, "why": why, "check": check_code, "proven": proven, "failed_at": failed_at,
+            "interrupted": interrupted and not proven}
 
 
 def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tuple[str, bool]:
@@ -2063,7 +2075,7 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     proven = r["proven"]
     outcome = {**intent, "codes": r["codes"], "check": r["check"], "proven": proven, "ended": _now(),
                "tail": _full(r["tail"])[-TAIL:], "why": r["why"], "failed_at": r["failed_at"],
-               **({"conflicts": conflicts(r["tail"])} if not proven and name == "merge" else {})}
+               "interrupted": r["interrupted"], **({"conflicts": conflicts(r["tail"])} if not proven and name == "merge" else {})}
     _write(ddir / _name(name, unit, n, "outcome"), outcome)
     bad = next((c for c in r["codes"] if c != 0), r["check"])
     _event(ws, actor, epic.id, "release.stage", {"stage": name, "child": unit, "proven": proven,

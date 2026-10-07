@@ -1356,8 +1356,9 @@ does not release.
 group of the command that runs. It is held across all stages of one epic, and it holds while that dashboard lives and
 its expiry has not passed, or while the recorded command's process group still runs: a dashboard that died does not
 let a new one start another epic's release beside a running command. When the dashboard stops, each running release
-command's process group gets SIGTERM and, five seconds later, SIGKILL; its attempt is recorded as failed ("the
-dashboard stopped while it ran").
+command's process group gets SIGTERM and, five seconds later, SIGKILL; its attempt is recorded with outcome
+**unknown** ("the dashboard stopped while it ran"), as is a command killed by its timeout: what a command killed midway
+changed is not known (a check that times out only fails the check).
 
 **Records and crash safety.** Each attempt of a stage for one unit (a child, or the epic) writes, in
 `permits/release-records/`, an intent record (stage, unit, attempt, a hash of the commands, start time, the commit)
@@ -1456,6 +1457,9 @@ latest main" deploys whatever main is then).
   hand.
 - *Production check failed*: production's commands ran and its live check did not pass, and nothing was rolled back
   (none signed, or none in the recipe). Look at production now; roll back or fix it by hand.
+- *Production stage failed*: a production command (or its precheck) failed: production may be half-deployed, and
+  nothing was rolled back. Look at production now. A production attempt killed or timed out midway is *Release outcome
+  unknown*, with the same "look at production now; it may be half-deployed".
 - *Production rolled back*: the live check failed and the signed rollback ran and its check passed. Fix the cause,
   then Retry release on production (after its window).
 - *Rollback failed*: the rollback's check did not pass, or its outcome is unknown: production may be broken. Fix it by

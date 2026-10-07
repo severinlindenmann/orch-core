@@ -163,3 +163,33 @@ def test_a_move_to_testing_with_a_submodule_in_the_clone_is_refused(fws, monkeyp
         m.setattr(fb, "uncommitted", lambda ws, cid: {"ok": True, "lines": [], "submodules": ["vendor/lib"]})
         why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
     assert why and "submodule (vendor/lib)" in why and "does not merge" in why
+
+
+# -- a production attempt that did not prove itself says to look at production -----------------------------------
+
+def _reasons(fws, eid):
+    e = store.load(fws, eid)[1]
+    return fr.status(fws, e, permits.factory_delegation(fws, e))["reasons"]
+
+
+def test_a_production_command_killed_midway_is_unknown_and_says_look_at_production(fws, prod, human):
+    eid, _, _ = prod()
+    fake = ProdFake()
+    orig = fake.__call__
+
+    def call(argv, cwd, env, timeout, started=None):
+        r = orig(argv, cwd, env, timeout, started)
+        return {**r, "code": None, "timed_out": True} if "deploy-prod" in argv else r
+    fr.tick(fws, human, call)
+    assert _states(fws, eid)["production"] == "unknown"
+    (r,) = _reasons(fws, eid)
+    assert r["code"] == "release-unknown" and "timed out" in r["text"] and "half-deployed" in r["text"]
+
+
+def test_a_failed_production_command_says_look_at_production(fws, prod, human):
+    eid, _, _ = prod()
+    fake = ProdFake()
+    fake.codes["deploy-prod"] = 3
+    fr.tick(fws, human, fake)
+    (r,) = _reasons(fws, eid)
+    assert r["code"] == "production-failed" and "half-deployed" in r["text"] and "exit code 3" in r["text"]

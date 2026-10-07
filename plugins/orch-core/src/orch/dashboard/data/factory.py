@@ -89,15 +89,18 @@ _CAN = {  # what the human can do, per reason (rule text, never agent prose)
                         "or merge by hand, then Retry release on the merge stage.",
     "release-failed": "Read the stage's output on the run view, fix the cause, then Retry release: the stage runs once "
                       "more.",
-    "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy). Retry "
-                       "release only when running it again is safe; otherwise finish it by hand.",
+    "release-unknown": "Check by hand whether the stage's commands ran (did the branch merge, did dev deploy; for "
+                       "production, look at production now: it may be half-deployed). Retry release only when running "
+                       "it again is safe; otherwise finish it by hand.",
     "release-stale": "Look at what changed since the stage was proven (a child's branch, the children, or the base when "
                      "another production released a later commit). Retry release on the out-of-date stage to run it "
                      "for the children and the base as they are now (the merge, then dev, then production), or release "
                      "the change by hand.",
-    "production-failed": "Look at production now: its commands ran and its check did not pass, and nothing was rolled "
-                         "back (the charter signs no rollback, or the recipe has none). Roll back or fix it by hand, "
-                         "then Retry release on production if running it again is safe.",
+    "production-failed": "Look at production now: its commands ran, or began to, and did not prove themselves (a "
+                         "command failed, or its check did not pass), so it may be half-deployed, and nothing was "
+                         "rolled back (a rollback runs only after a failed check, and only when signed and in the "
+                         "recipe). Roll back or fix it by hand, then Retry release on production if running it again "
+                         "is safe.",
     "rolled-back": "Production is back where it was, as the rollback's check says. Read the output on the run view, fix "
                    "the cause, then Retry release on production: it runs once more, after its release window.",
     "release-blocked": "Fix what kept the stage from starting (it is named above: for example set the recipe again "

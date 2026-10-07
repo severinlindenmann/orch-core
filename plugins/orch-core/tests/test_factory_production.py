@@ -219,7 +219,7 @@ def test_a_failed_production_command_never_rolls_back(fws, prod, human):
     fake = ProdFake()
     fake.codes["deploy-prod"] = 3
     fr.tick(fws, human, fake)
-    assert "rollback" not in " ".join(fake.ran()) and _stopped(fws, eid) == ["release-failed"]
+    assert "rollback" not in " ".join(fake.ran()) and _stopped(fws, eid) == ["production-failed"]
 
 
 def test_a_signed_rollback_without_a_recipe_rollback_cannot_start_production(fws, prod, human, remote):

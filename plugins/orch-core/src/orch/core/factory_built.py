@@ -248,7 +248,10 @@ def close_blockers(ws, epic, d, units: list[str], testing: list[str]) -> list[st
             t = fr._ticket(ws, k)
             tip = us["sha"] if fr.own_merge(us) else (child_tree(ws, t)[0] if t is not None else None)
             got = adds(ws, rec, tip, us["base_sha"] if fr.own_merge(us) else base) if tip and base else None
-            if got is not None:
+            if got is None:  # fail closed: what cannot be listed may conflict
+                out.append(f"what {k} adds could not be listed" + ("" if base else
+                                                                   " (the base could not be fetched)"))
+            else:
                 per[k] = got
         dups = double_adds(per)
         if dups:
@@ -364,14 +367,19 @@ def move_refusal(ws, t) -> str | None:
     if bad:
         return (f"your branch has {bad}: the release would refuse it. Say so with orch log and do not move it; the "
                 "human fixes the message")
-    mine = adds(ws, rec, sha, base) or set()
+    mine = adds(ws, rec, sha, base)
+    if mine is None:
+        return "orch could not list what your branch adds: try the move again in a moment"
     epic = epics.parent_epic(ws, t)
     for e in (epics.children(ws, epic.id) if epic is not None else []):
         if e.id == t.id:
             continue
         other = fr._ticket(ws, e.id)
-        tip = child_tree(ws, other)[0] if other is not None else None
-        both = sorted(mine & (adds(ws, rec, tip, base) or set())) if tip else []
+        tip = child_tree(ws, other)[0] if other is not None else None  # a sibling with no branch yet adds nothing
+        theirs = adds(ws, rec, tip, base) if tip else set()
+        if theirs is None:
+            return f"orch could not list what {e.id} adds: try the move again in a moment"
+        both = sorted(mine & theirs)
         if both:
             return (f"you add {both[0]}, which {e.id} adds too: only one child creates a file, and the merge would "
                     f"conflict. Delete it with your file tools, then git add {both[0]} and git commit (two commands), "

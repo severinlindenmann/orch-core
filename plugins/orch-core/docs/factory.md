@@ -190,7 +190,9 @@ The same check is a condition: before the first merge command, a file the epic n
 start"), recorded on the child whose text names the file (else the first): Retry release works once a child commits
 it on its branch (or after you fix the epic); and the auto-close keeps the epic open while a named file is in no
 merged commit (no child's commit, without a signed release), a child in testing has uncommitted work in its clone,
-its clone holds a submodule, or its clone's state cannot be read. An epic that names no file has nothing to check here (and is not closed by itself, above).
+its clone holds a submodule, or its clone's state cannot be read, or what a child adds cannot be listed (two
+children adding one file conflict, so a list that cannot be read keeps it open; a move to testing is refused the same
+way). An epic that names no file has nothing to check here (and is not closed by itself, above).
 
 **Stopped.** The factory is at a dead end the agents cannot leave on their own. The message names every reason that
 holds, and what you can do about it; it has no action of its own. A reason is one of:

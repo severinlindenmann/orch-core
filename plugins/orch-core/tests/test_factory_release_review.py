@@ -232,3 +232,33 @@ def test_a_failed_merge_of_a_child_that_left_stays_a_reason(fws, ready, fh, huma
     assert row["unit"] == c and row["uncounted"] and "no longer in the epic's release" in row["why"]
     fr.retry(fws, human, eid, "merge", c)  # yours: after checking what its merge did
     assert "release-failed" not in _stopped(fws, eid)
+
+
+# -- the double-add check fails closed -----------------------------------------------------------------------------
+
+def test_the_close_double_add_check_fails_closed(fws, ready, human, monkeypatch):
+    from orch.core import factory_built as fb
+    eid, kids, d = ready(kids=2)
+    fr.tick(fws, human, Fake())
+    epic = store.load(fws, eid)[1]
+    assert not [x for x in fb.close_blockers(fws, epic, d, kids, kids) if "could not be listed" in x]
+    with monkeypatch.context() as m:
+        m.setattr(fb, "adds", lambda *a, **k: None)
+        got = fb.close_blockers(fws, epic, d, kids, kids)
+    assert [f"what {k} adds could not be listed" for k in kids] == [x for x in got if "could not be listed" in x]
+
+
+def test_the_move_double_add_check_fails_closed(fws, monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.core import factory_built as fb, factory_clones as fc
+    with monkeypatch.context() as m:
+        m.setattr(fc, "record", lambda ws, cid: {"branch": "b"})
+        m.setattr(fb, "uncommitted", lambda ws, cid: {"ok": True, "lines": [], "submodules": []})
+        m.setattr(fb, "child_tree", lambda ws, t: ("a" * 40, [], ""))
+        m.setattr(fb, "_git_rec", lambda ws: {"base": "main"})
+        m.setattr(fb, "_base_sha", lambda ws, rec: "b" * 40)
+        m.setattr(fr, "message_refusal", lambda *a: None)
+        m.setattr(fb, "adds", lambda *a, **k: None)
+        why = fb.move_refusal(fws, SimpleNamespace(id="L-0009"))
+    assert why and "could not list what your branch adds" in why

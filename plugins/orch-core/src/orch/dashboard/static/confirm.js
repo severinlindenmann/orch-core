@@ -104,7 +104,7 @@
     box.append(acts);
     d.append(box);
     document.body.append(d);
-    const opener = document.activeElement;
+    const opener = cfg.opener || document.activeElement;  // Safari does not focus a clicked button: name it
     let done = false;
     const close = (yes) => {
       if (done) return;
@@ -247,6 +247,7 @@
     const submitter = event.submitter;
     const cfg = configFromForm(form, submitter);
     if (!cfg || !window.HTMLDialogElement) return;  // nothing to ask, or no <dialog>: the server checks it as without JS
+    cfg.opener = submitter || form.querySelector("button[type=submit], button:not([type])");
     event.preventDefault();
     event.stopImmediatePropagation();
     clearWords(form);

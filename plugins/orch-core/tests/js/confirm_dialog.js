@@ -185,7 +185,12 @@ const button = (label) => dialog().querySelectorAll("button").find((b) => b.text
   assert.strictEqual(skip.sent[0].words.skip_release, "checked by hand");
 
   // 4. a dialog-tier form: its ask=1 (the server's no-JS confirm page) is cleared only when confirmed
-  const rel = formOf({ confirmTitle: "Release the claim?", confirmOk: "Release claim" }, [{ name: "ask", value: "1" }]);
+  const rel = formOf({ confirmTitle: "Release the claim?", confirmOk: "Release claim", confirmCancel: "Keep claim" }, [{ name: "ask", value: "1" }]);
+  const relButton = new El("button"); relButton.form = rel; rel.append(relButton);
+  active = null;
+  submit(rel, relButton); button("Keep claim").click(); await flush();
+  assert.strictEqual(active, relButton, "focus returns to the button that opened it (Safari never focused it)");
+  assert.strictEqual(rel.elements.ask.value, "1", "Cancel keeps the server's confirm page for a no-JS retry");
   submit(rel); button("Release claim").click(); await flush();
   assert.strictEqual(rel.sent[0].words.ask, "");
 

@@ -141,6 +141,7 @@ class Host:
     key_version: int = KEY_VERSION
     max_records: int | None = None
     per_device: int | None = None
+    busy_allowance: int | None = None
     registry: Registry = field(init=False)
     store: ReplayStore = field(init=False)
     pairing: Pairing = field(init=False)
@@ -157,7 +158,8 @@ class Host:
             raise ValueError("the workspace id is 16 bytes and K_ws 32")
         self.root = files.ensure_dir(Path(self.root))
         self.registry = Registry(self.root, self.workspace)
-        caps = {k: v for k, v in (("max_records", self.max_records), ("per_device", self.per_device)) if v}
+        caps = {k: v for k, v in (("max_records", self.max_records), ("per_device", self.per_device),
+                                                ("busy_allowance", self.busy_allowance)) if v}
         self.store = ReplayStore(self.root, **caps)
         self.pairing = Pairing(self.workspace)
         self._lock = FileLock(str(self.root / "host.lock"), timeout=10)
@@ -215,7 +217,8 @@ class Host:
             except Malformed:
                 return self._unverified(now, "malformed")
             if meta.get("op") == "pair":
-                return self.pairing.pair(h, hb, body, sig, meta, now, self.budget, self._phone_key)
+                return self.pairing.pair(h, hb, body, sig, meta, now, self.budget, self._phone_key,
+                                     self.host_pub)
             v = self.pairing.pending_request(h, hb, body, sig, meta, now, self.budget, self.rand, self.rp_id,
                                              self.origin)
             return v if v is not None else self._unverified(now, "not_paired")
@@ -243,6 +246,8 @@ class Host:
                 if "high" in extra:
                     extra["high"] = self.store.seq_state(did)[0]
                 return refuse(out["refusal"], why="replay", **extra)
+            if out.get("body_stored") is False:  # over 64 KiB: only the head was kept (§5.3)
+                return refuse("already_done", status=out["status"])
             return Verdict("replay", device=did, scope=dev.scope, outcome=out, body=known.body, rid=rid)
         # the device's quota in the request store: a device over it is refused `busy`, recorded (its allowance of
         # busy records is the store's own), and never takes room from another device; it does not consume its seq
@@ -320,8 +325,9 @@ class Host:
             self.store.set_outcome(rid, {"cancelled": stream}, now)
             return dataclasses.replace(acc, result="cancel", fields={"stream": stream})
         if op == "pair_status":  # a registered device: its pairing was approved
-            self.store.set_outcome(rid, {"state": "approved"}, now)
-            return dataclasses.replace(acc, result="pair_status", fields={"state": "approved"})
+            answer = {"state": "approved", "scope": dev.scope}
+            self.store.set_outcome(rid, answer, now)
+            return dataclasses.replace(acc, result="pair_status", fields=answer)
         if op == "assert":
             return self._assert(acc, dev, now)
         if op != "http":
@@ -447,10 +453,12 @@ class Host:
         """Store the result of a run as the outcome of every rid in `rids` (Verdict.answer_rids), before the
         response is sent. Only a running record takes it: when one was refused meanwhile (the device was revoked or
         rescoped while it ran), nothing is replaced and this returns False, and the caller sends that refusal
-        instead. A body over 64 KiB raises ValueError: what a replay of a larger response answers is the caller's
-        decision, the record then stays running (a retry gets already_done/unknown)."""
-        if len(body) > MAX_REPLAY_BODY or RUNNING in head:
-            raise ValueError("a stored replay body is at most 64 KiB, and a head has no running marker")
+        instead. A body over 64 KiB is not stored: the record keeps the head with "body_stored": false and a replay
+        is answered already_done with its status (§5.3)."""
+        if RUNNING in head:
+            raise ValueError("a head has no running marker")
+        if len(body) > MAX_REPLAY_BODY:
+            head, body = {**head, "body_stored": False}, b""
         with self._lock:
             now = self.clock()
             recs = [self.store.get(rid, now) for rid in rids]

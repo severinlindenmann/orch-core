@@ -6,6 +6,7 @@ import pytest
 
 from orch.core import store
 from orch.errors import UsageError
+from conftest import init_repo
 
 
 def _git(path, *args):
@@ -14,7 +15,7 @@ def _git(path, *args):
 
 @pytest.fixture
 def repo(ws_root):
-    _git(ws_root, "init", "-q")
+    init_repo(ws_root)
     _git(ws_root, "remote", "add", "origin", "git@github.com:acme/energy-data.git")
     return ws_root
 
@@ -29,7 +30,7 @@ def test_a_pr_number_resolves_against_the_workspace_repo(ws, aops, repo):
 def test_a_hash_number_and_a_named_repo(ws_root, configure, aops, repo):
     sub = ws_root / "infra"
     sub.mkdir()
-    _git(sub, "init", "-q")
+    init_repo(sub)
     _git(sub, "remote", "add", "origin", "https://gitlab.example.com/acme/infra.git")
     ws2 = configure(git={"repos": {"infra": {"path": "infra"}}})
     from orch.core.ops import Ops
@@ -117,7 +118,7 @@ def test_for_review_finds_the_key_in_the_body(ws, aops):
 def _two_repos(ws_root, configure):
     sub = ws_root / "infra"
     sub.mkdir()
-    _git(sub, "init", "-q")
+    init_repo(sub)
     _git(sub, "remote", "add", "origin", "git@github.com:acme/infra.git")
     return configure(git={"repos": {"infra": {"path": "infra"}}})
 

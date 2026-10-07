@@ -8,6 +8,7 @@ import pytest
 from orch.cli import run
 from orch.hooks.commit_msg import check_message, clean_message
 from orch.hooks.install import hook_script, hook_state, install_hooks, is_orch_hook
+from conftest import init_repo
 
 GOOD_BODY = "\n\nWhat: add it\nWhy:  needed\nRisk: low\n"
 
@@ -100,7 +101,7 @@ def _hooks_dir(repo):
 def _new_repo(ws_root, name):
     repo = ws_root / name
     repo.mkdir()
-    assert _git(repo, "init", "-q").returncode == 0
+    init_repo(repo)
     return repo
 
 
@@ -477,7 +478,7 @@ def test_hook_script_warns_when_orch_missing(ws, tmp_path):
 def test_hook_end_to_end(configure, ws_root, put):
     repo = ws_root / "hub"
     repo.mkdir()
-    _git(repo, "init", "-q")
+    init_repo(repo)
     ws = configure(git={"repos": {"hub": {}}})
     tid = put("in-progress", size="xs")
     install_hooks(ws)
@@ -501,7 +502,7 @@ def test_cli_hook_commit_msg(ws_root, put, tmp_path, capsys):
 def test_cli_hooks_install_json(configure, ws_root, capsys):
     repo = ws_root / "hub"
     repo.mkdir()
-    _git(repo, "init", "-q")
+    init_repo(repo)
     configure(git={"repos": {"hub": {}}})
     assert run(["hooks", "install", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
@@ -512,7 +513,7 @@ def test_cli_hooks_install_json(configure, ws_root, capsys):
 @needs_sh
 def test_stage_records_under_hooks_path_delegates_and_keeps_a_foreign_hook(configure, ws_root):
     """#38: --stage-records under a repo-owned core.hooksPath writes a tracked pre-commit that runs the local one."""
-    _git(ws_root, "init", "-q")  # records in a repo: a plain folder skips --stage-records (#161)
+    init_repo(ws_root)  # records in a repo: a plain folder skips --stage-records (#161)
     repo = _new_repo(ws_root, "hub")
     _git(repo, "config", "core.hooksPath", "scripts/git-hooks")
     ws = configure(git={"repos": {"hub": {}}})
@@ -539,7 +540,7 @@ def test_stage_records_under_hooks_path_delegates_and_keeps_a_foreign_hook(confi
 
 @needs_git
 def test_stage_records_is_reported_when_hooks_path_is_not_the_repos(configure, ws_root):
-    _git(ws_root, "init", "-q")
+    init_repo(ws_root)
     repo = _new_repo(ws_root, "hub")
     shared = ws_root / "shared-hooks"
     shared.mkdir()

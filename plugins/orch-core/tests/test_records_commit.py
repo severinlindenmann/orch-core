@@ -10,6 +10,7 @@ import pytest
 from orch.cli import run
 from orch.core import gitfiles
 from orch.hooks.commit_msg import check_message
+from conftest import init_repo
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh not installed")
@@ -30,7 +31,7 @@ def _touch(path, text="x\n"):
 
 @pytest.fixture
 def repo(ws_root, ws):
-    _git(ws_root, "init", "-q", "-b", "main")
+    init_repo(ws_root, "main")
     _git(ws_root, "config", "user.email", "t@example.com")
     _git(ws_root, "config", "user.name", "t")
     gitfiles.write_ignore_block(ws)

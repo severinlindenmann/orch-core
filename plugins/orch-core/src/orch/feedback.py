@@ -22,7 +22,7 @@ from pathlib import Path
 from orch.errors import NotFoundError, OrchError, UsageError
 
 REPO = "severinlindenmann/orch-core"
-DAILY_LIMIT = 3  # new reports per workspace in 24 hours; repeats of one report only raise its count
+DAILY_LIMIT = 10  # new reports per workspace in 24 hours; repeats of one report only raise its count
 MAX_COMMAND = 300
 MAX_PROBLEM = 2000
 MAX_ERROR = 3000

@@ -12,7 +12,6 @@ from orch.core.events import Actor, append_event, read_events, scan_events
 from orch.core.gates import GATE_SECTIONS, gate_hash, gate_state, plan_required, requirements_required
 from orch.core.ids import normalize_ref
 from orch.core.lifecycle import unanswered_blocking
-from orch.core.ops import claim_expired
 from orch.core.tasks_check import task_findings
 from orch.errors import OrchError
 
@@ -308,7 +307,7 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
                                f"the ledger, or written by hand); agents cannot proceed on it: review it with "
                                f"`orch ledger adopt {tid}`"))
         if gate_state(t, gate) == "invalidated":
-            out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval"))
+            out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval (`orch approve {tid} {gate}`)"))
             if emit:
                 _record_invalidation(ws, t, gate, events)
     if (not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending"
@@ -351,7 +350,8 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
         out.append(Finding("warning", "blocking-question-open", tid, "blocking questions are open while in progress: " + ", ".join(str(q.get("id")) for q in blocking)))
     out += _check_log_lines(t, events)
     claim = t.meta.get("claim") or {}
-    if claim.get("session") and claim_expired(claim, float(ws.config["claims"]["ttl_hours"])):
+    from orch.core.query import claim_is_expired
+    if claim.get("session") and claim_is_expired(ws, tid, entry.status, claim, [e for e in events if e.ticket == tid]):
         out.append(Finding("warning", "claim-expired", tid, f"claim by {claim.get('harness')} since {claim.get('at')} has expired"))
     return out
 

@@ -292,12 +292,42 @@ def commit(root, subject, files, branch=None):
     git(root, "commit", "-q", "-m", subject)
 
 
+_GIT_TEMPLATES: dict = {}
+
+
+def init_repo(root, branch=None, identity=False):
+    """`git init -q [-b branch]` in `root` (plus user.name/user.email "t" when `identity`), done by copying a `.git`
+    folder built once per test process for that combination: one copy instead of up to three git processes per test.
+    The template is built under the calling test's isolated git config (conftest's autouse fixtures), so it holds
+    exactly what `git init` would write there. Returns `root`."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+    root = Path(root)
+    key = (branch, identity)
+    if key not in _GIT_TEMPLATES:
+        tpl = Path(tempfile.mkdtemp(prefix="orch-git-template-"))
+        git(tpl, "init", "-q", *(("-b", branch) if branch else ()))
+        if identity:
+            git(tpl, "config", "user.email", "t@example.com")
+            git(tpl, "config", "user.name", "t")
+        _GIT_TEMPLATES[key] = tpl / ".git"
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(_GIT_TEMPLATES[key], root / ".git")
+    return root
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _drop_git_templates():
+    yield
+    import shutil
+    for dot_git in _GIT_TEMPLATES.values():
+        shutil.rmtree(dot_git.parent, ignore_errors=True)
+
+
 @pytest.fixture
 def ticket_repo(ws_root):
-    git(ws_root, "init", "-q", "-b", "main")
-    git(ws_root, "config", "user.email", "t@example.com")
-    git(ws_root, "config", "user.name", "t")
-    return ws_root
+    return init_repo(ws_root, "main", identity=True)
 
 
 @pytest.fixture

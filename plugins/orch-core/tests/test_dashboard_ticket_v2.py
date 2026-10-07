@@ -271,7 +271,7 @@ def test_activity_uses_timeline_wording(dash, ws, aops):
     t = aops.new("Backup")
     aops.log(t.id, "started on it")
     html = dash.get(f"/t/{t.id}").text
-    activity = html[html.index('class="timeline activity"'):]
+    activity = html[html.index('class="act"'):]
     assert "<b>claude-code</b>" in activity and "logged: started on it" in activity
     assert "agent:claude-code" not in activity and "log.added" not in activity
 
@@ -282,5 +282,6 @@ def test_sections_come_before_aside_in_source(dash, put):
     # story page (#16): h1 → steps → status card → chapters (code in Doing) → aside with timeline, links, files
     assert (html.index("<h1") < html.index('aria-label="Journey"') < html.index('class="status-card')
             < html.index('id="asked"') < html.index('id="agreed"') < html.index('id="doing"') < html.index('id="code"')
-            < html.index('id="proven"') < html.index('id="left"') < html.index("<aside"))
+            < html.index('id="proven"') < html.index("<aside"))
+    assert 'id="left"' not in html  # what is left is a line in the status card, not a chapter
     assert html.index("<aside") < html.index('id="artifacts"') < html.index('id="log"')  # M: Artifacts panel first

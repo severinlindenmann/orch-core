@@ -121,6 +121,28 @@ def test_events_reference_the_epic_approval(ws, aops, hops):
     assert epic_ev.data["children"] == [cid]
 
 
+def test_reapproving_an_epic_does_not_restamp_covered_children(ws, aops, hops, close_tasks):
+    """#209: only gates newly recorded get a gate.approved event and an "approved with epic" log line."""
+    from orch.core.events import read_events
+    eid = _epic(aops)
+    c1 = _child(aops, eid, "one")
+    c2 = _child(aops, eid, "two")
+    hops.approve(eid, "requirements")
+    aops.claim(c2)
+    close_tasks(aops, c2)
+    aops.set_section(c2, "Verification", "- AC1: ran it")
+    aops.move(c2, "testing")
+    c3 = _child(aops, eid, "three")
+    hops.approve(eid, "requirements")
+    evs = [e for e in read_events(ws) if e.kind == "gate.approved" and e.data.get("epic") == eid]
+    per = {t: [e.data["gate"] for e in evs if e.ticket == t] for t in (c1, c2, c3)}
+    assert per[c1] == ["requirements", "plan"] and per[c2] == ["requirements", "plan"]
+    assert sorted(per[c3]) == ["plan", "requirements"]
+    for t in (c1, c2):
+        assert _load(ws, t).section("Log").count("approved with epic") == 1
+    assert _load(ws, c3).section("Log").count("approved with epic") == 1
+
+
 def test_charter_refuses_unready_or_hidden_children(ws, aops, hops):
     eid = _epic(aops)
     stub = aops.new("stub", epic=eid)

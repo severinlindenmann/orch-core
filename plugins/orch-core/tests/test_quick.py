@@ -7,6 +7,7 @@ import pytest
 from orch.core import quick
 from orch.core.quick import QuickOps
 from orch.errors import ClaimError, HumanOnlyError, NotFoundError, TransitionError, UsageError, ValidationError
+from conftest import init_repo
 
 
 def _git(root, *args):
@@ -24,7 +25,7 @@ def _commit(root, files: dict, subject: str):
 
 @pytest.fixture
 def repo(ws_root):
-    _git(ws_root, "init", "-q")
+    init_repo(ws_root)
     _git(ws_root, "config", "user.email", "t@example.com")
     _git(ws_root, "config", "user.name", "t")
     _commit(ws_root, {"README.md": "x\n"}, "init")

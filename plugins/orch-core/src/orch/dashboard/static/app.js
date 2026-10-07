@@ -1009,6 +1009,90 @@
     if (id && !document.querySelector("dialog[open]")) proofOpen(id);
   };
 
+  // ---------- File viewer (ticket page): a drawer over the page ----------
+  // A link with data-viewer (Markdown, text, JSON, CSV, images of the ticket) opens the server-rendered viewer
+  // (GET <href>&partial=1, the same escaped template as its page) in a <dialog class="viewer-drawer">: ← → step through
+  // the ticket's files, Esc or ✕ closes, focus goes back to the link that opened it. Without this script, or with a
+  // modifier key, the link opens the viewer as a page.
+  let viewerDlg = null;
+  let viewerOpener = null;
+  const viewerLoad = (href, focusTitle) => fetch(href + (href.includes("?") ? "&" : "?") + "partial=1", { credentials: "same-origin" })
+    .then((r) => (r.ok || r.status === 409 ? r.text() : Promise.reject(new Error("viewer"))))
+    .then((text) => {
+      viewerDlg.innerHTML = text;  // server-rendered and escaped by the same templates as the page
+      const title = viewerDlg.querySelector("#viewer-title");
+      if (title) { title.setAttribute("tabindex", "-1"); if (focusTitle) title.focus({ preventScroll: true }); }
+      const body = viewerDlg.querySelector(".viewer-body");
+      if (body) body.scrollTop = 0;
+    });
+  const viewerOpen = (link) => {
+    if (!viewerDlg) {
+      viewerDlg = document.createElement("dialog");
+      viewerDlg.className = "viewer-drawer";
+      viewerDlg.setAttribute("aria-labelledby", "viewer-title");
+      document.body.append(viewerDlg);
+      viewerDlg.addEventListener("close", () => {
+        viewerDlg.innerHTML = "";
+        if (viewerOpener && viewerOpener.isConnected) viewerOpener.focus({ preventScroll: true });
+      });
+    }
+    return viewerLoad(link.getAttribute("href"), true).then(() => { if (!viewerDlg.open) viewerDlg.showModal(); });
+  };
+  document.addEventListener("click", (event) => {
+    const t = isEl(event.target) && event.target;
+    if (!t) return;
+    if (viewerDlg && viewerDlg.open && viewerDlg.contains(t)) {
+      if (t === viewerDlg || t.closest("[data-viewer-close]")) { viewerDlg.close(); return; }
+      const wrap = t.closest("[data-viewer-wrap]");
+      if (wrap) {
+        const on = wrap.getAttribute("aria-pressed") !== "true";
+        wrap.setAttribute("aria-pressed", String(on));
+        viewerDlg.querySelector(".viewer-body").classList.toggle("viewer-nowrap", !on);
+        return;
+      }
+    }
+    // an image inside evidence text opens in the viewer too, when the ticket links that same pinned file
+    const img = !t.closest("a") && t.closest(".proof-evidence img");
+    const twin = img && [...document.querySelectorAll("a[data-viewer] img")].find((i) => i.getAttribute("src") === img.getAttribute("src"));
+    const link = twin ? twin.closest("a") : t.closest("a[data-viewer]");
+    if (!link || !window.fetch || !window.HTMLDialogElement || event.metaKey || event.ctrlKey || event.shiftKey || event.button) return;
+    event.preventDefault();
+    if (!(viewerDlg && viewerDlg.open)) viewerOpener = link;
+    const inside = viewerDlg && viewerDlg.open && viewerDlg.contains(link);
+    (inside ? viewerLoad(link.getAttribute("href"), false) : viewerOpen(link)).catch(() => { host.navigate(link.getAttribute("href")); });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!viewerDlg || !viewerDlg.open || typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const step = event.key === "ArrowLeft" ? "[data-viewer-prev]" : event.key === "ArrowRight" ? "[data-viewer-next]" : null;
+    const link = step && viewerDlg.querySelector(step);
+    if (!link) return;
+    event.preventDefault();
+    viewerLoad(link.getAttribute("href"), false).catch(() => {});
+  });
+
+  // ---------- Long evidence (ticket page): clamped with "Show more" ----------
+  // [data-clamp] blocks taller than about six lines fold to that height with a button; without JS they show in full.
+  const clampIn = (root) => root.querySelectorAll("[data-clamp]").forEach((box) => {
+    if (box.dataset.clampDone) return;
+    if (box.scrollHeight <= 168) {  // images may still be loading: measure again once they have
+      box.querySelectorAll("img").forEach((img) => { if (!img.complete) img.addEventListener("load", () => clampIn(box.parentNode), { once: true }); });
+      return;
+    }
+    box.dataset.clampDone = "1";
+    box.classList.add("is-clamped");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "lnk clamp-toggle";
+    b.textContent = "Show more";
+    b.setAttribute("aria-expanded", "false");
+    b.addEventListener("click", () => {
+      const open = box.classList.toggle("is-clamped") === false;
+      b.textContent = open ? "Show less" : "Show more";
+      b.setAttribute("aria-expanded", String(open));
+    });
+    box.after(b);
+  });
+
   // ---------- Keyboard (design system ShortcutOverlay): moves and arms, never commits a gate ----------
   // j/k move between decisions, 1–9 focus an answer option, a arms the primary (then Enter confirms), c opens
   // "Request changes…"/"Send back…", o opens the ticket, z undoes a held send, g t/b/a go to Today/Board/Activity,
@@ -1363,13 +1447,17 @@
 
   // ---------- Per-page setup, run on load and after a partial page swap ----------
   const init = (root) => {
-    // Story chapters (ticket page): on wide screens every chapter starts open; phones keep the server's choice (the
+    // Story chapters (ticket page): on wide screens the work and its proof start open, Asked and What we agreed stay
+    // folded to their one-line summary unless they are the current chapter; phones keep the server's choice (the
     // current chapter open, the rest folded). `?open=all` opens everything without JS.
     if (window.matchMedia && window.matchMedia("(min-width: 900px)").matches) {
-      root.querySelectorAll("details[data-wide-open]").forEach((d) => { d.open = true; });
+      root.querySelectorAll("details[data-wide-open]").forEach((d) => {
+        if (d.matches(".chapter-current") || !d.matches(".chapter-asked, .chapter-agreed")) d.open = true;
+      });
     }
     composersIn(root);
     widgetsIn(root);
+    clampIn(root);
     proofFromAddress();
     // Paste screenshots into the new-ticket form.
     const pasteArea = root.querySelector("[data-paste-target]");

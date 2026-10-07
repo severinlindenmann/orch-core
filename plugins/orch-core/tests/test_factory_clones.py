@@ -699,37 +699,89 @@ def test_a_chained_git_add_and_commit_is_denied_with_how_to_run_them(fws, run, c
     assert _behavior(hook) == "deny" and "run git add and git commit as two separate commands" in msg, msg
 
 
-def _evil_repo(path, marker):
-    """A repository an agent could swap in for a clone's folder: its own config names a filter driver that leaves
-    `marker`, and its .gitattributes puts every file through it."""
-    subprocess.run(["git", "init", "-q", str(path)], check=True)
-    (path / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+def _evil_repo(path, marks, channel):
+    """A repository whose own config (and attributes) try to run a program, as an agent could leave it in a clone:
+    `channel` names what it plants (the channels measured with real git in the second review). Its files are dirty
+    with a changed stat, so `git status` must read their content."""
+    plain = {"PATH": "/usr/bin:/bin", "HOME": str(path.parent), "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(["git", "init", "-q", str(path)], check=True, env=plain)
     (path / "a.txt").write_text("one\n", encoding="utf-8")
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(path), "GIT_CONFIG_NOSYSTEM": "1"}
     for args in (["add", "-A"], ["-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "i"]):
-        subprocess.run(["git", "-C", str(path), *args], check=True, env=env)
-    for k, v in (("filter.evil.clean", f"touch {marker}; cat"), ("filter.evil.smudge", f"touch {marker}; cat"),
-                 ("filter.evil.required", "true")):
-        subprocess.run(["git", "-C", str(path), "config", k, v], check=True)
-    (path / "a.txt").write_text("two\n", encoding="utf-8")  # dirty: status and checkout read it through the filter
+        subprocess.run(["git", "-C", str(path), *args], check=True, env=plain)
+    mark = f"sh -c 'touch {marks}/{channel}' #"
+    attrs = "* filter=x diff=x\n"
+    cfg = {"info-process": [("filter.x.process", mark)], "info-clean": [("filter.x.clean", mark),
+                                                                         ("filter.x.smudge", mark)],
+           "worktree-process": [("filter.x.process", mark)], "fsmonitor": [("core.fsmonitor", mark)],
+           "ext": [("protocol.ext.allow", "always"), (f"url.ext::sh -c touch% {marks}/ext% .insteadOf", "SRC")],
+           "hooks": []}[channel]
+    if channel.startswith("info"):
+        (path / ".git" / "info").mkdir(exist_ok=True)
+        (path / ".git" / "info" / "attributes").write_text(attrs, encoding="utf-8")
+    if channel == "worktree-process":
+        (path / ".gitattributes").write_text(attrs, encoding="utf-8")
+    if channel == "hooks":
+        for h in ("post-checkout", "reference-transaction"):
+            (path / ".git" / "hooks" / h).write_text(f"#!/bin/sh\ntouch {marks}/hooks\n", encoding="utf-8")
+            (path / ".git" / "hooks" / h).chmod(0o755)
+    for k, v in cfg:
+        subprocess.run(["git", "-C", str(path), "config", k, v.replace("SRC", str(path.parent / "src"))],
+                       check=True, env=plain)
+    (path / "a.txt").write_text("two\n", encoding="utf-8")
+    os.utime(path / "a.txt", (1, 1))
 
 
-def test_a_folder_swapped_in_before_git_starts_runs_no_filter_of_its_own(fws, tmp_path):
-    """git reaches a clone by path after the descriptor checks: a repository swapped in at that moment, with a planted
-    filter driver and .gitattributes, must run nothing (the second review)."""
+# measured with git 2.54 (Apple) before this change: info-process, info-clean (git status ran the filter: GIT_ATTR_SOURCE
+# does not cover .git/info/attributes) and ext (the repository's protocol.ext.allow beat protocol.allow=never)
+CHANNELS = ("info-process", "info-clean", "worktree-process", "fsmonitor", "ext", "hooks")
+
+
+@pytest.mark.parametrize("channel", CHANNELS)
+def test_no_program_a_clones_own_config_names_runs_in_the_runners_git_calls(fws, tmp_path_factory, monkeypatch,
+                                                                            channel):
+    """Every git call the runner makes in a clone (status and ls-files for the release check, rev-parse,
+    merge-base, a fetch from a local repository, the checkout) runs pinned: its config is the runner's, written right
+    before git starts, so nothing an agent planted in the clone's `.git` runs."""
     git = shutil.which("git")
-    evil, marker = tmp_path / "swapped", tmp_path / "MARKER"
-    _evil_repo(evil, marker)
-    # the same calls without the attribute source do run the planted driver: the test can see it
-    plain = fr.run_command([git, *fr._git_flags({}), "-C", str(evil), "status", "--porcelain"], str(evil),
-                           fr._git_env(fws, git), 30)
-    assert plain["code"] == 0 and marker.exists()
-    marker.unlink()
+    tmp_path = tmp_path_factory.mktemp("chan")
+    src, repo, marks = tmp_path / "src", tmp_path / "C" / "repo", tmp_path / "marks"
+    marks.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True)
+    (src / "f").write_text("f\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(src), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(src), "-c", "user.name=x", "-c", "user.email=x@x", "commit", "-qm", "i"],
+                   check=True)
+    repo.parent.mkdir()
+    _evil_repo(repo, marks, channel)
+    pin = {"child": "C", "inode": fc._ino(os.stat(repo)), "git_inode": fc._ino(os.stat(repo / ".git")),
+           "source": str(src)}
+    monkeypatch.setattr(fc, "_open_clone", lambda ws, child, rec: (os.open(repo, os.O_RDONLY | os.O_DIRECTORY),
+                                                                   os.open(repo / ".git", os.O_RDONLY | os.O_DIRECTORY)))
     for args in (["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all"],
-                 ["checkout", "--", "a.txt"], ["diff"], ["ls-files", "-s", "-z"]):
-        r = fc._git(git, fws, "-C", str(evil), *args, cwd=str(evil), timeout=30)
-        assert r["code"] == 0, r
-        assert not marker.exists(), args
+                 ["ls-files", "-s", "-z"], ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+                 ["merge-base", "HEAD", "HEAD"],
+                 ["fetch", "-q", "--no-tags", "--no-write-fetch-head", str(src), "+refs/heads/main:refs/x/main"],
+                 ["checkout", "--quiet", "--no-recurse-submodules", "-b", "child", "HEAD"]):
+        r = fc._git(git, fws, "-C", str(repo), *args, cwd=str(repo), timeout=30, pin=pin)
+        assert r["code"] in (0, 1), (args, r)
+        assert os.listdir(marks) == [], (channel, args)
+
+
+def test_a_clone_folder_swapped_after_its_check_is_never_run_in(fws, tmp_path_factory):
+    """A folder that is not the pinned one (another inode) gets no git call at all, and a path in the clones folder
+    with no record of the runner's is refused."""
+    git = shutil.which("git")
+    tmp_path = tmp_path_factory.mktemp("swap")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    repo = tmp_path / "C" / "repo"
+    repo.parent.mkdir()
+    _evil_repo(repo, marks, "worktree-process")
+    pin = {"child": "C", "inode": "0:1", "git_inode": "0:2", "source": "/x"}
+    r = fc._git(git, fws, "-C", str(repo), "status", cwd=str(repo), timeout=30, pin=pin)
+    assert r["code"] is None and os.listdir(marks) == []
+    r = fc._git(git, fws, "-C", str(fc.clone_dir(fws, "L-0099")), "status", cwd="/", timeout=30)
+    assert r["code"] is None and "not a clone the runner recorded" in r["err"]
 
 
 def test_a_tombstone_swapped_after_its_check_is_not_removed(tmp_path):

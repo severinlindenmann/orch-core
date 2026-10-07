@@ -463,24 +463,72 @@ def clonable(ws) -> tuple[bool | None, str]:
 
 # -- making, reusing, checking, removing ------------------------------------------------------------------------
 
-def _git(git: str, ws, *args: str, cwd: str, timeout: float) -> dict:
+CLONE_FLAGS_EXTRA = ("-c", "core.protectHFS=true", "-c", "core.protectNTFS=true", "-c", "submodule.recurse=false",
+                     "-c", "status.submoduleSummary=false", "-c", "core.untrackedCache=false",
+                     "-c", "diff.ignoreSubmodules=all", "-c", "fetch.recurseSubmodules=false",
+                     "-c", "protocol.allow=never", "-c", "protocol.file.allow=always")
+
+
+def _git(git: str, ws, *args: str, cwd: str, timeout: float, pin: dict | None = None) -> dict:
+    """One git call for a clone. `-C <clone>` calls run pinned (_run_pinned): `pin` is the clone's {child, inode,
+    git_inode, source} (while it is made), else the runner's record of the clone at that path; a path inside the
+    clones folder with neither is refused. Measured with git 2.54 (Apple): a swapped-in repository's own config and
+    its `.git/info/attributes` (which GIT_ATTR_SOURCE does not cover) made `git status` run a filter driver, and its
+    `protocol.ext.allow` beat `protocol.allow=never`; the pinned run and GIT_ALLOW_PROTOCOL close both."""
     from orch.core import factory_release as fr
     # what a git call in a clone's work tree never does: enter a submodule (its own config and attributes could name a
     # filter), print a submodule summary, or trust an untracked cache the agent could have written
-    flags = [*fr._git_flags({}), "-c", "core.protectHFS=true", "-c", "core.protectNTFS=true",
-             "-c", "submodule.recurse=false", "-c", "status.submoduleSummary=false", "-c", "core.untrackedCache=false",
-             "-c", "diff.ignoreSubmodules=all", "-c", "fetch.recurseSubmodules=false",
-             "-c", "protocol.allow=never", "-c", "protocol.file.allow=always"]
-    # git goes to the clone by path, after the descriptor checks: a folder swapped in between could carry a config
-    # naming filter or diff drivers. git cannot open a directory through /dev/fd on macOS (tried: "not a git
-    # repository"), so instead no attributes are read from the work tree or index at all (GIT_ATTR_SOURCE: the empty
-    # tree; git 2.40 and later), so no driver is ever named, and the -c flags above switch off hooks, fsmonitor and
-    # every protocol but local paths. Cost: a checkout applies no .gitattributes (no eol conversion) in a clone.
+    flags = [*fr._git_flags({}), *CLONE_FLAGS_EXTRA]
     if not _attr_source_ok(git):
         return {"code": None, "out": "", "out_size": 0, "timed_out": False,
                 "err": f"{git} is older than git 2.40, which cannot keep a clone's attributes from naming a filter"}
-    env = {**fr._git_env(ws, git), "GIT_ATTR_SOURCE": EMPTY_TREE}
+    # no attributes from the work tree or the index (GIT_ATTR_SOURCE: the empty tree), and no protocol but local
+    # paths whatever a config says (GIT_ALLOW_PROTOCOL wins over every protocol.* setting)
+    env = {**fr._git_env(ws, git), "GIT_ATTR_SOURCE": EMPTY_TREE, "GIT_ALLOW_PROTOCOL": "file"}
+    if args[:1] == ("-C",):
+        pin = pin or _pin_for(ws, args[1])
+        if pin is None:
+            return {"code": None, "out": "", "out_size": 0, "timed_out": False,
+                    "err": f"{args[1]} is not a clone the runner recorded: git is not run there"}
+        return _run_pinned(ws, git, [*flags, *args[2:]], env, pin, timeout)
     return fr.run_command([git, *flags, *args], cwd, env, max(1, int(timeout)))
+
+
+def _pin_for(ws, path: str) -> dict | None:
+    """The runner's record of the clone at `path` (exactly its recorded path), or None."""
+    try:
+        p = Path(path)
+        rec = record(ws, p.parent.name)
+    except (OSError, ValueError):
+        return None
+    return rec if rec is not None and rec.get("path") == str(p) else None
+
+
+def _run_pinned(ws, git: str, argv: list[str], env: dict, pin: dict, timeout: float) -> dict:
+    """Run git in the pinned clone: right before it starts, the clone's folder and `.git` are opened again by
+    descriptor and must be the pinned ones (device and inode), a git dir orch takes, and its config is written again
+    by the runner, removing its `info` (attributes) and `hooks` folders; git then starts with its working folder set
+    to that very folder descriptor (fchdir) and GIT_DIR=.git, GIT_WORK_TREE=. (no path lookup above the clone, no
+    discovery walk). What is left: a process that writes inside the clone could replace `.git`, its config or its
+    info/attributes in the instant between that write and git reading them."""
+    from orch.core import factory_release as fr
+    try:
+        top, g = _open_clone(ws, pin["child"], pin)
+    except (CloneError, KeyError) as e:
+        return {"code": None, "out": "", "out_size": 0, "timed_out": False, "err": str(e)}
+    try:
+        why = _odd_fd(g)
+        if why:
+            return {"code": None, "out": "", "out_size": 0, "timed_out": False, "err": f"the clone {why}"}
+        _write_config_fd(g, pin["source"])
+        # ponytail: preexec_fn in a threaded server; it only calls fchdir. A spawn helper program is the upgrade path.
+        return fr.run_command([git, *argv], None, {**env, "GIT_DIR": ".git", "GIT_WORK_TREE": "."},
+                              max(1, int(timeout)), preexec=lambda: os.fchdir(top), pass_fds=(top,))
+    except OSError as e:
+        return {"code": None, "out": "", "out_size": 0, "timed_out": False, "err": f"{type(e).__name__}: {e}"}
+    finally:
+        os.close(g)
+        os.close(top)
 
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree (sha1 repositories)
@@ -524,7 +572,8 @@ def _reuse(ws, child: str, rec: dict) -> None:
         os.close(top)
 
 
-def _start_point(ws, git: str, dest: Path, base: str, deadline: float, budget: float) -> tuple[str, str]:
+def _start_point(ws, git: str, dest: Path, base: str, deadline: float, budget: float,
+                 pin: dict | None = None) -> tuple[str, str]:
     """(what the child's branch starts from, "") or ("", why). With a release recipe: the base as the recipe's remote
     has it, the commit the release will classify against, fetched into the runner's release repository (its isolation,
     a ref of its own) and from there into the clone; commits on the workspace's local base that the remote does not
@@ -548,15 +597,15 @@ def _start_point(ws, git: str, dest: Path, base: str, deadline: float, budget: f
     left = deadline - time.monotonic()
     why = _failed(_git(git, ws, "-C", str(dest), "fetch", "-q", "--no-tags", "--no-recurse-submodules",
                        "--no-write-fetch-head", str(fr.repo_dir(ws)), f"+{ref}:refs/remotes/release/{base}",
-                       cwd=str(dest), timeout=left), f"fetching the remote's {base}", budget) if left > 0 else \
+                       cwd=str(dest), timeout=left, pin=pin), f"fetching the remote's {base}", budget) if left > 0 else \
         f"the clone did not finish within {int(budget)} seconds (a large repository?)"
     if why:
         return "", why
     local = _git(git, ws, "-C", str(dest), "rev-parse", "--verify", "--quiet",
-                 f"refs/remotes/origin/{base}^{{commit}}", cwd=str(dest), timeout=30)
+                 f"refs/remotes/origin/{base}^{{commit}}", cwd=str(dest), timeout=30, pin=pin)
     if local.get("code") == 0:  # the workspace has the base locally: it must share history with the remote's
         mb = _git(git, ws, "-C", str(dest), "merge-base", (local.get("out") or "").strip(), sha, cwd=str(dest),
-                  timeout=30)
+                  timeout=30, pin=pin)
         if mb.get("code") != 0:
             return "", (f"the workspace's {base} and the recipe remote's {base} share no history: the runner cannot "
                         "tell which one the child should start from (fetch or fix the workspace's base first)")
@@ -643,11 +692,12 @@ def _ensure(ws, child: str, git: str, budget: float) -> tuple[Path | None, str]:
                     os.close(g)
             finally:
                 os.close(top)
-            start, why = _start_point(ws, git, dest, base, deadline, budget)
+            pin = {"child": child, "inode": inode, "git_inode": git_inode, "source": str(src)}
+            start, why = _start_point(ws, git, dest, base, deadline, budget, pin)
             left = deadline - time.monotonic()
             if not why:
                 why = _failed(_git(git, ws, "-C", str(dest), "checkout", "--quiet", "--no-recurse-submodules", "-b",
-                                   branch_for(child), start, cwd=str(dest), timeout=left),
+                                   branch_for(child), start, cwd=str(dest), timeout=left, pin=pin),
                               f"checking out {base}", budget) if left > 0 else \
                     f"the clone did not finish within {int(budget)} seconds (a large repository?)"
         if not why:

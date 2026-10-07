@@ -688,11 +688,17 @@ never start.
 used or copied (the test suite plants a hooks path, fsmonitor, filters, a textconv, aliases, an include, an ssh
 command and `uploadpack.packObjectsHook` in the workspace, all of which leave a marker if run, and checks that none
 runs and none reaches the clone). The tree that is checked out is agent-written: a `.gitattributes` names filters and
-drivers that are not configured, so none runs; and every git call orch makes in a clone reads no attributes at all
-(`GIT_ATTR_SOURCE` set to the empty tree, which needs git 2.40 or later: an older git is refused), with every protocol
-but local paths off, because it reaches the clone by path after the descriptor checks and a folder swapped in between
-could carry a config of its own (git cannot use the pinned descriptor itself: macOS's `/dev/fd` does not open a
-directory for it). The cost: a clone's checkout applies no `.gitattributes`, such as end-of-line conversion. Removing
+drivers that are not configured, so none runs; and every git call orch makes in a clone runs pinned. Right before git starts, the runner opens the clone's folder
+and `.git` again by descriptor (they must be the pinned ones, device and inode), writes the clone's config again and
+removes its `info` (attributes) and `hooks` folders, and starts git with its working folder set to that folder
+descriptor and `GIT_DIR=.git`, `GIT_WORK_TREE=.` (no path lookup above the clone, no discovery walk). git also reads
+no attributes from the work tree or the index (`GIT_ATTR_SOURCE` set to the empty tree, which needs git 2.40 or later:
+an older git is refused) and may use no protocol but local paths (`GIT_ALLOW_PROTOCOL=file`). Measured with git 2.54
+(Apple) before this: a clone's own `.git/info/attributes` (which `GIT_ATTR_SOURCE` does not cover) with a filter in
+its config made `git status` run the filter, and its `protocol.ext.allow` beat `protocol.allow=never`; git cannot use
+a directory descriptor through macOS's `/dev/fd`. What is left: a process that writes inside the clone could replace
+`.git`, its config or `info/attributes` in the instant between the runner's write and git reading them. The cost: a
+clone's checkout applies no `.gitattributes`, such as end-of-line conversion. Removing
 a clone checks on the open descriptor that its tombstone is still the pinned folder; `.gitmodules` is never read (no submodules); symlinks are checked out
 as symlinks (the guard judges file tool paths after links, as in the workspace). Git LFS pointers stay pointers: the
 user's LFS filter is in the git config the runner does not use. Whether the file system ignores case is probed in a

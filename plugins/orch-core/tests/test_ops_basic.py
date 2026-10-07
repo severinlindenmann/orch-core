@@ -42,7 +42,7 @@ def test_new_from_links_both(ws, aops):
 def test_claim_moves_open_to_in_progress(ws, aops, put):
     tid = put("open")
     t = aops.claim(tid)
-    assert t.status == "in-progress" and t.meta["claim"]["session"] == "7f3c9a21-0000"
+    assert t.status == "in-progress" and t.meta["claim"]["session"] == "7f3c9a21"  # the short form only
     assert t.meta["sessions"][0]["harness"] == "claude-code"
     assert store.resolve(ws, tid).status == "in-progress"
 

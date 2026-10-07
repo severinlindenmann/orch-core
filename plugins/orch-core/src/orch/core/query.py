@@ -6,6 +6,7 @@ from pathlib import Path
 
 from orch.core import store
 from orch.core.constants import PRIORITY_RANK, STATUSES
+from orch.core.events import short_session
 from orch.core.gates import GATE_SECTIONS, changes_pending, gate_state
 from orch.core.ids import normalize_ref
 from orch.errors import UsageError
@@ -34,7 +35,7 @@ def list_tickets(ws, *, status: str | None = None, label: str | None = None, ses
             if label and not (isinstance(labels, list) and label in labels):
                 continue
             claim = e.meta.get("claim")
-            if session and (claim.get("session") if isinstance(claim, dict) else None) != session:
+            if session and short_session(claim.get("session") if isinstance(claim, dict) else None) != short_session(session):
                 continue
         out.append(e)
     return sorted(out, key=_sort_key)

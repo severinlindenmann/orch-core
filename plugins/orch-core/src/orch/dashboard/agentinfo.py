@@ -17,6 +17,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from orch.core.events import short_session
+
 ACTIVE_SECONDS = 120  # a subagent whose transcript changed this recently counts as running
 TICKETS_SECONDS = 5.0  # how long the claims-by-session index is reused
 CACHE_TTL = 300  # the prompt cache's default lifetime; a write marked ephemeral_1h lasts 3600
@@ -231,7 +233,7 @@ def _claims(ws) -> dict:
     try:
         for e in store.scan(ws):
             claim = (e.meta or {}).get("claim") or {}
-            sid = claim.get("session") if isinstance(claim, dict) else None
+            sid = short_session(claim.get("session")) if isinstance(claim, dict) else None
             if not sid or e.status == "done":
                 continue
             prog = board_progress(e)
@@ -305,7 +307,7 @@ def _info(ws, session) -> dict:
     status = status if status in ("busy", "idle", "waiting") else None  # the file is the agent's: only known states
     sid = sf.get("sessionId") if sf else None
     t = _transcript(sid) if sid else None
-    tickets = _claims(ws).get(sid, []) if sid else []
+    tickets = _claims(ws).get(short_session(sid), []) if sid else []
     subs = _subagents(t, sid) if t else []
     if status == "waiting":
         now, kind = (f"Asks: {t.question}" if t and t.question else "Waiting for you"), "question"

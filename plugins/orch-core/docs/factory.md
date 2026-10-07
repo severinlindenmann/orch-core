@@ -527,9 +527,10 @@ permission hook trusts only this record to decide which epic's grants apply, and
 process the runner recorded for that session (same pid and same start time): a copied session id gets nothing
 elsewhere. An ended or stopped session loses the record at once. Only a human process writes it: agent processes are
 refused, and the guard keeps agents away from the folder. Session ids are random; the runner itself writes them to
-no event, ticket, log line or page. The agent's own orch commands do record its session: a claim writes the full
-session id into the claimed ticket (its `claim` and `sessions` entries in the frontmatter), and the event log names the
-agent with the first 8 characters of it. That grants nothing: the hook trusts the id only for a process running under
+no event, ticket, log line or page. The agent's own orch commands record only the first 8 characters of its session id
+(`events.short_session`): in the claimed ticket's `claim` and `sessions` entries, in the claim events and in the
+actor the event log names; views show the same. Tickets an older orch wrote with the full id still match (readers
+compare the short form). Even a full id grants nothing: the hook trusts the id only for a process running under
 the one the runner recorded, so a copied id gets no factory treatment (and the binding is gone once the session ends).
 
 **Where and how a session runs.** The runner's tmux server sits on a socket inside the guarded permits folder (a

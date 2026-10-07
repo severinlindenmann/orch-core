@@ -327,8 +327,8 @@ def is_factory_epic(ws, ref) -> bool:
 def factory_need(ws, method, route_path, pp, tag):
     """For a remote POST under /t/: (the scope needed, the kind of subject the device approves) when the request must
     carry a fresh assertion because of the AI Factory, else None. The approve form that arms the runner (Type) and
-    the epic's own verdict (Type); any other change on a factory epic or its child (Type for an edit, the route's
-    own scope for a decision). Comment and pause are left as tagged."""
+    the epic's own verdict (Type); any other change on a factory epic or its child (Type; a comment keeps Operate).
+    Pause is left as tagged."""
     if method != "POST" or not route_path or not route_path.startswith("/t/{ref}/") or route_path in FACTORY_OPEN:
         return None
     ref = pp.get("ref")
@@ -338,8 +338,9 @@ def factory_need(ws, method, route_path, pp, tag):
         return Scope.TYPE, "verdict"
     if tag is not None and tag.scope is not None and factory_guarded(ws, ref):
         kind = "verdict" if route_path == "/t/{ref}/verdict" else "action"
-        typed = tag.scope >= Scope.OPERATE and route_path != "/t/{ref}/comment"
-        return (Scope.TYPE if typed else tag.scope), kind
+        # a decision, a close or a move here can start agents or reach a launched prompt: Type, like Start. Only a
+        # comment keeps its own scope (Operate); pause is in FACTORY_OPEN.
+        return (tag.scope if route_path == "/t/{ref}/comment" else Scope.TYPE), kind
     return None
 
 

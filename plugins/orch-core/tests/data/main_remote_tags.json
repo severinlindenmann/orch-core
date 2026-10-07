@@ -1,0 +1,748 @@
+{
+"GET /": [
+[
+1,
+false,
+null
+]
+],
+"GET /__orch/status": [
+[
+null,
+false,
+null
+]
+],
+"GET /a/{ticket}/{name:path}": [
+[
+1,
+false,
+null
+]
+],
+"GET /activity": [
+[
+1,
+false,
+null
+]
+],
+"GET /activity.md": [
+[
+1,
+false,
+null
+]
+],
+"GET /addons/{name}": [
+[
+1,
+false,
+null
+]
+],
+"GET /addons/{name}/": [
+[
+1,
+false,
+null
+]
+],
+"GET /addons/{name}/files/{token}": [
+[
+3,
+false,
+null
+]
+],
+"GET /agents": [
+[
+1,
+false,
+null
+]
+],
+"GET /board": [
+[
+1,
+false,
+null
+]
+],
+"GET /design": [
+[
+1,
+false,
+null
+]
+],
+"GET /events": [
+[
+1,
+false,
+null
+]
+],
+"GET /graph": [
+[
+1,
+false,
+null
+]
+],
+"GET /graph.json": [
+[
+1,
+false,
+null
+]
+],
+"GET /graph/related": [
+[
+1,
+false,
+null
+]
+],
+"GET /groom": [
+[
+1,
+false,
+null
+]
+],
+"GET /guide": [
+[
+1,
+false,
+null
+]
+],
+"GET /new": [
+[
+1,
+false,
+null
+]
+],
+"GET /palette.json": [
+[
+1,
+false,
+null
+]
+],
+"GET /quick": [
+[
+1,
+false,
+null
+]
+],
+"GET /quick/{qid}": [
+[
+1,
+false,
+null
+]
+],
+"GET /reports": [
+[
+1,
+false,
+null
+]
+],
+"GET /reports.md": [
+[
+1,
+false,
+null
+]
+],
+"GET /schedules": [
+[
+1,
+false,
+null
+]
+],
+"GET /t/{ref}": [
+[
+1,
+false,
+null
+]
+],
+"GET /t/{ref}/agent/panel": [
+[
+1,
+false,
+null
+]
+],
+"GET /t/{ref}/edit": [
+[
+1,
+false,
+null
+]
+],
+"GET /t/{ref}/raw": [
+[
+1,
+false,
+null
+]
+],
+"GET /terminals": [
+[
+3,
+false,
+null
+]
+],
+"GET /terminals/stream": [
+[
+3,
+false,
+null
+]
+],
+"GET /terminals/{name}": [
+[
+3,
+false,
+null
+]
+],
+"GET /terminals/{name}/stream": [
+[
+3,
+false,
+null
+]
+],
+"GET /timeline": [
+[
+1,
+false,
+null
+]
+],
+"GET /timeline.md": [
+[
+1,
+false,
+null
+]
+],
+"GET /w/preview/{ref}": [
+[
+1,
+false,
+null
+]
+],
+"GET /w/{ref}/{section}/{digest}": [
+[
+1,
+false,
+null
+]
+],
+"GET /widgets": [
+[
+1,
+false,
+null
+]
+],
+"GET /workspace": [
+[
+null,
+false,
+null
+]
+],
+"GET /wp/{addon}/{digest}": [
+[
+1,
+false,
+null
+]
+],
+"GET /wpf/{addon}/{digest}": [
+[
+1,
+false,
+null
+]
+],
+"POST /addons/{name}/actions/{action_id}": [
+[
+4,
+false,
+null
+]
+],
+"POST /addons/{name}/decisions": [
+[
+3,
+false,
+null
+]
+],
+"POST /addons/{name}/refresh": [
+[
+3,
+false,
+null
+]
+],
+"POST /board/backlog": [
+[
+3,
+false,
+null
+]
+],
+"POST /new": [
+[
+3,
+false,
+"ticket_request"
+]
+],
+"POST /permits/grants/{gid}/revoke": [
+[
+2,
+false,
+null
+]
+],
+"POST /permits/{rid}/deny": [
+[
+2,
+false,
+null
+]
+],
+"POST /permits/{rid}/grant": [
+[
+4,
+true,
+null
+]
+],
+"POST /quick/add": [
+[
+3,
+false,
+null
+]
+],
+"POST /quick/{qid}/agent/start": [
+[
+4,
+false,
+null
+]
+],
+"POST /quick/{qid}/done": [
+[
+3,
+false,
+null
+]
+],
+"POST /quick/{qid}/drop": [
+[
+2,
+false,
+null
+]
+],
+"POST /quick/{qid}/promote": [
+[
+3,
+false,
+null
+]
+],
+"POST /quick/{qid}/release": [
+[
+3,
+false,
+null
+]
+],
+"POST /quick/{qid}/reopen": [
+[
+2,
+false,
+null
+]
+],
+"POST /schedules/runs/{rid}/{fid}/dismiss": [
+[
+2,
+false,
+null
+]
+],
+"POST /schedules/runs/{rid}/{fid}/file": [
+[
+3,
+false,
+"ticket_request"
+]
+],
+"POST /schedules/{sid}/arm": [
+[
+4,
+true,
+null
+]
+],
+"POST /schedules/{sid}/pause": [
+[
+2,
+false,
+null
+]
+],
+"POST /schedules/{sid}/run": [
+[
+4,
+false,
+null
+]
+],
+"POST /t/{ref}/agent/start": [
+[
+4,
+false,
+null
+]
+],
+"POST /t/{ref}/answer": [
+[
+2,
+false,
+"answer"
+]
+],
+"POST /t/{ref}/approve": [
+[
+4,
+true,
+"approve"
+],
+[
+2,
+false,
+"approve"
+],
+[
+4,
+true,
+"approve"
+],
+[
+4,
+true,
+"approve"
+],
+[
+4,
+true,
+"approve"
+],
+[
+4,
+true,
+"approve"
+]
+],
+"POST /t/{ref}/approve-together": [
+[
+2,
+false,
+"approve"
+]
+],
+"POST /t/{ref}/artifacts": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/close": [
+[
+2,
+false,
+null
+]
+],
+"POST /t/{ref}/comment": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/edit": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/epic/pause": [
+[
+2,
+false,
+null
+]
+],
+"POST /t/{ref}/move": [
+[
+2,
+false,
+null
+]
+],
+"POST /t/{ref}/option": [
+[
+2,
+false,
+null
+]
+],
+"POST /t/{ref}/release": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/reopen": [
+[
+2,
+false,
+null
+]
+],
+"POST /t/{ref}/request-changes": [
+[
+2,
+false,
+"request_changes"
+]
+],
+"POST /t/{ref}/task": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/task/add": [
+[
+3,
+false,
+null
+]
+],
+"POST /t/{ref}/verdict": [
+[
+2,
+false,
+"verdict"
+]
+],
+"POST /terminals/new": [
+[
+4,
+false,
+null
+]
+],
+"POST /terminals/{name}/end": [
+[
+4,
+false,
+null
+]
+],
+"POST /terminals/{name}/keys": [
+[
+4,
+false,
+null
+]
+],
+"POST /terminals/{name}/size": [
+[
+4,
+false,
+null
+]
+],
+"POST /theme": [
+[
+3,
+false,
+null
+]
+],
+"POST /workspace/addons/check-updates": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/addons/update-all": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/addons/{name}/background": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/addons/{name}/enable": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/addons/{name}/settings": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/addons/{name}/trust": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/density": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/harnesses/check": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/harnesses/{name}/update": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/phones/pair": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/phones/permissions": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/phones/{phone_id}/revoke": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/devices/{did}/revoke": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/devices/{did}/scope": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/disconnect": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/offer": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/pending/{did}/approve": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/remote/pending/{did}/reject": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/shortcuts": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/switcher": [
+[
+null,
+false,
+null
+]
+],
+"POST /workspace/tidy": [
+[
+null,
+false,
+null
+]
+]
+}

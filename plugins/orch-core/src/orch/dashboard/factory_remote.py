@@ -53,6 +53,8 @@ def _subject(kind: str, shown: str, digest: str) -> dict | None:
 
 def subject(ws, kind: str, route_path: str, pp: dict, params, method: str, target: str, body: bytes) -> dict | None:
     try:
+        if b";" in body or not body.isascii():
+            return None  # the route's form parser splits on ";" in some shapes and reads bytes as latin-1
         if kind != "action" and (params is None or any(len(v) > 1 for k, v in params.items() if k != "acs")):
             return None  # a field twice: the route may read another occurrence than the one shown
         return _BUILD[kind](ws, route_path, pp, params, method, target, body)
@@ -85,6 +87,8 @@ def _charter(ws, route_path, pp, params, method, target, body):
     seen = _one(params, "seen")
     if not epics.is_epic(t.meta) or not seen or _one(params, "gate") != "requirements":
         return None
+    if any(k in params for k in ("despite_open_question", "option_offered", "option_on")):
+        return None  # the route acts on these but they are neither shown nor bound: not from a device
     kids = epics.open_children(ws, t)  # read once: hashed and counted from the same objects
     if seen != epics.charter(ws, t, None, tickets=kids)["content_hash"]:
         return None

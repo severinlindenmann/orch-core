@@ -76,7 +76,8 @@ class Bridge:
     def run(self, v, fresh=None):
         """Run an authorised decision against the dashboard as the loop does: (status, location)."""
         m = v.meta
-        origin = RemoteOrigin(v.device, Scope[v.scope.upper()], "Pixel", v.fresh is True if fresh is None else fresh)
+        from orch.dashboard.bridge_loop import origin_for
+        origin = origin_for(v)
 
         async def go():
             status, headers = None, {}
@@ -468,40 +469,97 @@ def test_every_field_of_a_verdict_changes_the_subject(bridge, fws, fd, ready_epi
 # -- the gate is at least as strict as main for every route that existed ----------------------------------------------------
 
 def test_the_tags_table_is_at_least_as_strict_as_mains():
-    import subprocess
+    """tests/data/main_remote_tags.json is main's TAGS table before R13: every (method, route) with the (scope, fresh,
+    kind) of each probe of the conditional tags. Regenerate it only for a deliberate change to the table."""
     from pathlib import Path
     from orch.dashboard import remote_gate
-    here = Path(remote_gate.__file__)
-    top = subprocess.run(["git", "-C", str(here.parent), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
-    if top.returncode:
-        pytest.skip("not a git checkout")
-    rel = here.resolve().relative_to(Path(top.stdout.strip()).resolve())
-    old = subprocess.run(["git", "-C", top.stdout.strip(), "show", f"origin/main:{rel}"], capture_output=True, text=True)
-    if old.returncode:
-        pytest.skip("no origin/main to compare with")
-    import sys
-    import types
-    mod = types.ModuleType("main_remote_gate")
-    sys.modules["main_remote_gate"] = mod
-    try:
-        exec(compile(old.stdout, "main_remote_gate.py", "exec"), mod.__dict__)  # noqa: S102 - the repo's own file at main
-    finally:
-        del sys.modules["main_remote_gate"]
-    ns = mod.__dict__
-    probes = [{}, None, {"factory": ["1"]}, {"delegate": ["1"]}, {"max_children": ["3"]}, {"max_size": ["s"]}]
-    for key, was in ns["TAGS"].items():
-        assert key in remote_gate.TAGS, f"{key} was tagged on main"
-        now = remote_gate.TAGS[key]
-        for params in (probes if callable(was) or callable(now) else [None]):
-            a = was(params) if callable(was) else was
+    snap = json.loads((Path(__file__).parent / "data" / "main_remote_tags.json").read_text())
+    probes = [None, {}, {"factory": ["1"]}, {"delegate": ["1"]}, {"max_children": ["3"]}, {"max_size": ["s"]}]
+    for key, rows in snap.items():
+        method, path = key.split(" ", 1)
+        assert (method, path) in remote_gate.TAGS, f"{key} was tagged on main"
+        now = remote_gate.TAGS[(method, path)]
+        for params, (scope, fresh, kind) in zip(probes if callable(now) or len(rows) > 1 else [None], rows):
             b = now(params) if callable(now) else now
-            if a.scope is None:
+            if scope is None:
                 assert b.scope is None, (key, params)  # never remote stays never remote
             else:
-                assert b.scope is not None and b.scope >= a.scope and (b.fresh or not a.fresh) and b.kind == a.kind, (key, params)
+                assert b.scope is not None and b.scope >= scope and (b.fresh or not fresh) and b.kind == kind, (key, params)
+
+
+def test_factory_need_loosens_only_pause_against_mains_rule():
+    """On main every POST under /t/{ref} on a factory epic or its child needed a fresh assertion. Now each still does,
+    at Type, except a comment (its own scope, Operate) and the pause, which stays Decide with none."""
+    from orch.dashboard import remote_gate
+    assert remote_gate.FACTORY_OPEN == ("/t/{ref}/epic/pause",)
+    orig = remote_gate.factory_guarded
+    remote_gate.factory_guarded = lambda ws, ref: True  # stand in for a ticket under a running epic
+    try:
+        for (method, path), tag in remote_gate.TAGS.items():
+            if method != "POST" or not path.startswith("/t/{ref}/") or path in remote_gate.FACTORY_OPEN:
+                continue
+            tag = tag(None) if callable(tag) else tag
+            if tag.scope is None:
+                continue
+            need = remote_gate.factory_need(None, "POST", path, {"ref": "x"}, tag)
+            want = tag.scope if path == "/t/{ref}/comment" else remote_gate.Scope.TYPE
+            assert need is not None and need[0] == want, path
+    finally:
+        remote_gate.factory_guarded = orig
 
 
 def test_the_gate_itself_refuses_an_operate_origin_an_edit_even_with_a_fresh_assertion(bridge, fws, running):
     eid, cid, r = running
     assert bridge.raw(Scope.OPERATE, True, "POST", f"/t/{cid}/edit", "text=x")[0] == 403
     assert bridge.raw(Scope.TYPE, True, "POST", f"/t/{cid}/edit", "text=x")[0] != 403
+
+
+# -- review round: Decide routes under a running epic, extra Start fields, body shapes, the fresh backstop -----------------
+
+def test_a_decide_device_cannot_close_answer_move_or_approve_under_a_running_epic_even_with_an_assertion(bridge, fws, running):
+    eid, cid, r = running
+    cases = (("close", "as=wont-do&message=x"), ("answer", "qid=q1&qhash=x&value=y"), ("request-changes", "gate=plan&seen=x"),
+             ("move", "to=backlog"), ("approve", "gate=requirements&seen=x"), ("reopen", ""), ("option", "option=a%2Fb&value=1"),
+             ("approve-together", "seen=x&seen_plan=y"), ("verdict", "verdict=done&seen=x"))
+    for action, body in cases:
+        v, _ = bridge.post(KEY_B, f"/t/{cid}/{action}", body)
+        assert v.code == "forbidden_scope", action  # no challenge: Decide is below Type
+        assert bridge.raw(Scope.DECIDE, True, "POST", f"/t/{cid}/{action}", body)[0] == 403, action  # nor at the gate
+    assert store.load(fws, cid)[1].status != "done"  # nothing above ran
+    assert bridge.raw(Scope.TYPE, True, "POST", f"/t/{cid}/close", "as=wont-do&message=x")[0] != 403
+
+
+def test_a_start_with_fields_that_are_not_shown_is_refused(bridge, fws, fa):
+    e = _epic(fws, fa)
+    base = f"gate=requirements&seen={_seen_charter(fws, e)}&factory=1"
+    assert bridge.post(KEY_A, f"/t/{e}/approve", base)[0].code == "assertion_required"
+    for extra in ("&despite_open_question=1", "&option_offered=a%2Fb", "&option_on=a%2Fb"):
+        assert bridge.post(KEY_A, f"/t/{e}/approve", base + extra)[0].code == "assertion_failed", extra
+
+
+def test_a_body_the_route_would_read_differently_gets_no_challenge(bridge, fws, fa, running):
+    eid, cid, r = running
+    e = _epic(fws, fa)
+    seen = _seen_charter(fws, e)
+    assert bridge.post(KEY_A, f"/t/{e}/approve", f"gate=requirements&seen={seen}&x=1&factory=1;delegate=1")[0].code == "assertion_failed"
+    v, _ = bridge.post(KEY_A, f"/t/{eid}/verdict", "verdict=done&seen=x&message=é")
+    assert v.code == "assertion_failed"
+    ev = bridge._env(KEY_A, {"op": "http", "method": "POST", "path": f"/t/{cid}/comment", "headers": FORM},
+                     "text=é".encode())
+    assert bridge._decide(ev).code == "assertion_failed"  # raw non-ASCII bytes: not shown the way they are written
+
+
+def test_the_gates_fresh_backstop_holds_where_the_hook_asks_for_no_assertion(bridge, fws, fa, running):
+    # a Type device that skipped the assertion: schedule arm (no subject builder) and a multipart Start (unreadable form)
+    v, _ = bridge.post(KEY_A, "/schedules/s1/arm", "")
+    assert v.result == "run" and not v.fresh
+    assert bridge.run(v)[0] == 403
+    e = _epic(fws, fa)
+    meta = {"op": "http", "method": "POST", "path": f"/t/{e}/approve",
+            "headers": {"content-type": "multipart/form-data; boundary=x"}}
+    body = (f'--x\r\nContent-Disposition: form-data; name="factory"\r\n\r\n1\r\n--x\r\nContent-Disposition: form-data; '
+            f'name="gate"\r\n\r\nrequirements\r\n--x--\r\n').encode()
+    v = bridge._decide(bridge._env(KEY_A, meta, body))
+    assert v.code == "assertion_failed"  # the strictest tag: a fresh assertion is asked for, but there is nothing to show
+    assert bridge.raw(Scope.TYPE, False, "POST", f"/t/{e}/approve", "gate=requirements&factory=1")[0] == 403
+    assert epics.delegation(fws, store.load(fws, e)[1]) is None

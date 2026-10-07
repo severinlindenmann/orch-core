@@ -2285,16 +2285,84 @@ def _state_write(ws, cmd: str, code: str, cwd) -> bool:
     return False
 
 
-def _decode_ansi_c(cmd: str) -> str:
-    """`$'a\\x20b'` as the shell reads it (`a b`), every ANSI-C string of the command."""
-    import codecs
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+                "\\": "\\", "'": "'", '"': '"', "?": "?"}
 
-    def one(m: re.Match) -> str:
-        try:
-            return codecs.decode(m.group(1).encode("latin-1", "replace"), "unicode_escape")
-        except (UnicodeDecodeError, ValueError):
-            return m.group(0)
-    return _ANSI_C.sub(one, cmd)
+
+def _ansi_c_body(body: str) -> str:
+    """The text of one `$'…'` string as bash reads it: \\xH(H), \\uH..(4), \\UH..(8), octal 1-3 digits, \\cX control
+    characters, \\e, \\E and the usual single-letter escapes; an unknown escape stays as written; the string ends at
+    the first NUL."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        e = body[i + 1]
+        if e in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[e])
+            i += 2
+        elif e in "xuU":
+            width = {"x": 2, "u": 4, "U": 8}[e]
+            m = re.match(r"[0-9A-Fa-f]{1,%d}" % width, body[i + 2:])
+            if m:
+                code = int(m.group(0), 16)
+                out.append(chr(code) if code <= 0x10FFFF else "")
+                i += 2 + len(m.group(0))
+            else:
+                out.append("\\" + e)
+                i += 2
+        elif e in "01234567":
+            m = re.match(r"[0-7]{1,3}", body[i + 1:])
+            out.append(chr(int(m.group(0), 8) & 0xFF))
+            i += 1 + len(m.group(0))
+        elif e == "c" and i + 2 < n:
+            x = body[i + 2]
+            out.append("\x7f" if x == "?" else chr(ord(x) & 0x1F))
+            i += 3
+        else:
+            out.append("\\" + e)
+            i += 2
+        if out and out[-1] == "\x00":
+            return "".join(out[:-1])
+    return "".join(out)
+
+
+def _decode_ansi_c(cmd: str) -> str | None:
+    """Every `$'…'` string of `cmd` (outside single and double quotes, where `$'` is plain text) replaced by its text,
+    as bash reads it. None when one does not close: the guard cannot say what it holds, and the caller denies."""
+    out, i, n, quote = [], 0, len(cmd), None
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            out.append(c)
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            out.append(cmd[i:i + 2])
+            i += 2
+        elif quote is None and cmd.startswith("$'", i):
+            j = i + 2
+            while j < n and cmd[j] != "'":
+                j += 2 if cmd[j] == "\\" else 1
+            if j >= n:
+                return None
+            out.append(_ansi_c_body(cmd[i + 2:j]))
+            i = j + 1
+        elif c in "'\"":
+            if quote is None:
+                quote = c
+            elif quote == c:
+                quote = None
+            out.append(c)
+            i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 _CONTINUATION = re.compile(r"'[^']*'|\\\n")
@@ -2315,6 +2383,8 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
                 return d
     if not _decoded and "$'" in cmd:
         decoded = _decode_ansi_c(cmd)
+        if decoded is None:
+            return Decision(False, "a $'…' string the guard cannot read to its end could hold a command it would refuse")
         if decoded != cmd:
             d = _bash(ws, decoded, cwd, _decoded=True, _joined=_joined)  # judged as the shell would run it, too
             if not d.allow:

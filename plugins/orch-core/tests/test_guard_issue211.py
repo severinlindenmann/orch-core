@@ -296,6 +296,36 @@ def test_a_real_scratch_folder_still_takes_notes(ws):
     _check(ws, "echo x > orchestrator/temporary/L-0001-x.md", True)
 
 
+ANSI_C_DENIED = [
+    "eval $'\\x6frch \\x61pprove L-1 # \\xZ'",
+    "eval $'\\x6frch approve L-1 \\xZ'",
+    "eval $'orch approve L-1\\q'",
+    "eval $'\\157rch \\141pprove L-1'",
+    "eval $'\\u006frch approve L-1'",
+    "eval $'\\U0000006frch approve L-1'",
+    "eval $'o\\x72ch approve L-1'",
+    "eval $'orch\\x20approve\\x20L-1'",
+    "eval $'orch approve L-1\\cA'",
+    "eval $'orch approve L-1\\e'",
+    "eval $'orch approve L-1' # $'",
+    "eval $'orch approve L-1",
+    "eval $'orch\\nl approve",
+    "sh -c $'\\x6frch approve L-1'",
+    "echo $'\\x6frch approve L-1' | sh",
+]
+
+
+@pytest.mark.parametrize("cmd", ANSI_C_DENIED)
+def test_ansi_c_strings_are_decoded_like_bash_or_refused(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_a_dollar_and_quote_in_plain_text_is_not_ansi_c(ws):
+    _check(ws, "grep 'foo$' notes.txt", True)
+    _check(ws, "grep -n 'a$' x.txt | wc -l", True)
+    _check(ws, "echo $'plain text'", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

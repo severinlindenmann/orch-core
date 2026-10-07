@@ -305,10 +305,23 @@ ARMS = re.compile(r"_arm_runner|factory_sessions\.arm|launch\.start|permit_grant
                   r"|\.act\(|execute\(|sc\.arm\(|request_run\(")
 
 
+def _source_one_level(endpoint) -> str:
+    """The endpoint's source plus the source of each function in orch it calls by name (one level), so a route that
+    arms or launches through a helper is seen as well."""
+    source = inspect.getsource(endpoint)
+    seen = {endpoint}
+    for name in sorted(set(re.findall(r"(?<![.\w])([A-Za-z_]\w*)\(", source))):
+        fn = getattr(inspect.getmodule(endpoint), name, None)
+        if inspect.isfunction(fn) and fn not in seen and fn.__module__.startswith("orch.dashboard"):
+            seen.add(fn)
+            source += "\n" + inspect.getsource(fn)
+    return source
+
+
 def test_routes_that_arm_or_launch_are_type():
     found = set()
     for route in dashboard_routes():
-        source = inspect.getsource(route.endpoint)
+        source = _source_one_level(route.endpoint)
         if not ARMS.search(source):
             continue
         for method in route.methods:
@@ -327,6 +340,43 @@ def test_routes_that_arm_or_launch_are_type():
                      ("POST", "/schedules/{sid}/run")):
         assert expected in found, f"the arming scan no longer sees {expected}"
     assert remote_gate.TAGS[("POST", "/permits/{rid}/grant")].fresh
+
+
+# Every route a remote device may reach below Type, other than a plain read at Look, with the scope it is open at.
+# A new route is never remote until it is tagged; a route tagged below Type must also be added here, which is the
+# moment someone reviews that it neither arms, launches nor reaches the host. Lowering a route fails here too.
+BELOW_TYPE = {
+    ("GET", "/addons/{name}/files/{token}"): "OPERATE", ("GET", "/terminals"): "OPERATE",
+    ("GET", "/terminals/stream"): "OPERATE", ("GET", "/terminals/{name}"): "OPERATE",
+    ("GET", "/terminals/{name}/stream"): "OPERATE",
+    ("POST", "/addons/{name}/decisions"): "OPERATE", ("POST", "/addons/{name}/refresh"): "OPERATE",
+    ("POST", "/board/backlog"): "OPERATE", ("POST", "/new"): "OPERATE",
+    ("POST", "/permits/grants/{gid}/revoke"): "DECIDE", ("POST", "/permits/{rid}/deny"): "DECIDE",
+    ("POST", "/quick/add"): "OPERATE", ("POST", "/quick/{qid}/done"): "OPERATE",
+    ("POST", "/quick/{qid}/drop"): "DECIDE", ("POST", "/quick/{qid}/promote"): "OPERATE",
+    ("POST", "/quick/{qid}/release"): "OPERATE", ("POST", "/quick/{qid}/reopen"): "DECIDE",
+    ("POST", "/schedules/runs/{rid}/{fid}/dismiss"): "DECIDE", ("POST", "/schedules/runs/{rid}/{fid}/file"): "OPERATE",
+    ("POST", "/schedules/{sid}/pause"): "DECIDE",
+    ("POST", "/t/{ref}/answer"): "DECIDE", ("POST", "/t/{ref}/approve"): "conditional",
+    ("POST", "/t/{ref}/approve-together"): "DECIDE", ("POST", "/t/{ref}/artifacts"): "OPERATE",
+    ("POST", "/t/{ref}/close"): "DECIDE", ("POST", "/t/{ref}/comment"): "OPERATE", ("POST", "/t/{ref}/edit"): "OPERATE",
+    ("POST", "/t/{ref}/epic/pause"): "DECIDE", ("POST", "/t/{ref}/move"): "DECIDE", ("POST", "/t/{ref}/option"): "DECIDE",
+    ("POST", "/t/{ref}/release"): "OPERATE", ("POST", "/t/{ref}/reopen"): "DECIDE",
+    ("POST", "/t/{ref}/request-changes"): "DECIDE", ("POST", "/t/{ref}/task"): "OPERATE",
+    ("POST", "/t/{ref}/task/add"): "OPERATE", ("POST", "/t/{ref}/verdict"): "DECIDE", ("POST", "/theme"): "OPERATE",
+}
+
+
+def test_routes_open_below_type_are_an_explicit_allow_list():
+    actual = {}
+    for key, tag in remote_gate.TAGS.items():
+        if callable(tag):
+            actual[key] = "conditional"
+        elif tag.scope is not None and tag.scope < Scope.TYPE and not (key[0] == "GET" and tag.scope is Scope.LOOK):
+            actual[key] = tag.scope.name
+    assert actual == BELOW_TYPE, (
+        "a route is open to a remote device below Type that this list does not know (or one changed scope): "
+        "review that it cannot arm, launch or reach the host, then update BELOW_TYPE")
 
 
 # an addon's decision applies an intent the addon returned; it is Operate (not Type) and is listed here on purpose

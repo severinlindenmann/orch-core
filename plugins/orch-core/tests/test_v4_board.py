@@ -82,18 +82,54 @@ def test_a_pinned_image_is_the_thumbnail(dash, ws, aops, tmp_path):
     assert f'<img src="/a/{t.id}/dialog.png?v={sha[:16]}" alt="Export dialog"' in card
 
 
-def test_accept_sits_inside_the_expanded_proof(dash, ws, put):
+def test_accept_sits_inside_the_proof_drawer(dash, ws, put):
     from orch.core.epics import verdict_hash
     tid = put("testing", sections={"Acceptance criteria": "- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d",
                                    "Verification": "- AC1: query log clean\n- AC2: dropped in int"})
     card = _ym(dash.get("/board").text, tid)
-    proof = card.split('<details class="ym-proof">', 1)[1]
-    before = card.split('<details class="ym-proof">', 1)[0]
-    assert 'value="done"' not in before and "/verdict" not in before  # nothing to accept before the proof opens
+    marker = f'<dialog class="proof-drawer" id="proof-{tid}"'
+    assert marker in card
+    proof = card.split(marker, 1)[1]
+    before = card.split(marker, 1)[0]
+    assert 'value="done"' not in before and "/verdict" not in before  # nothing to accept outside the drawer
+    assert f'href="/t/{tid}#proven" data-proof-open="{tid}"' in before  # the button; a plain link without JS
     assert proof.index("AC4") < proof.index('value="done"')  # every criterion, then Accept
     assert "query log clean" in proof and "Verification" in proof
     assert f'name="seen" value="{verdict_hash([store.load(ws, tid)[1]], ws)}"' in proof
     assert "data-inline-confirm=" in proof and "+1" in before  # three tiles, then "+1"
+    for tab in ("criteria", "deliverables", "verification", "handoff"):
+        assert f'data-pd-tab="{tab}"' in proof and f'data-pd-panel="{tab}"' in proof
+    assert "<details" not in before  # the card itself no longer grows with the proof
+
+
+def test_the_drawer_pins_what_to_check_from_the_summary_widget(dash, put):
+    summary = ('```orch\n{"type": "summary", "delivered": "ten drafts", "check_first": "Open index.html first",'
+               ' "open": ["placeholder URL"]}\n```')
+    tid = put("testing", sections={"Acceptance criteria": "- [ ] a", "Verification": "- AC1: ok",
+                                   "Current state": summary})
+    card = _ym(dash.get("/board").text, tid)
+    assert 'aria-label="What to check"' in card and "Open index.html first" in card and "Open: placeholder URL" in card
+
+
+def test_the_drawer_pins_the_first_handoff_lines_without_a_summary(dash, put):
+    tid = put("testing", sections={"Acceptance criteria": "- [ ] a", "Verification": "- AC1: ok",
+                                   "Current state": "- Landing page URL is a placeholder\n- Sign-off needed first"})
+    card = _ym(dash.get("/board").text, tid)
+    assert "Landing page URL is a placeholder" in card and "Sign-off needed first" in card
+
+
+def test_a_card_tile_falls_back_to_the_criterions_linked_artifact(dash, ws, aops, put, tmp_path):
+    tid = put("testing", sections={"Acceptance criteria": "- [ ] a\n- [ ] b", "Verification": "no ac cited here"})
+    shot = tmp_path / "ac1.png"
+    shot.write_bytes(b"\x89PNG-ac1")
+    page = tmp_path / "landing.html"
+    page.write_text("<p>hi</p>")
+    aops.artifact_add(tid, shot, ac=1)
+    aops.artifact_add(tid, page, ac=2)
+    sha = store.load(ws, tid)[1].meta["artifacts"][0]["sha256"]
+    card = _ym(dash.get("/board").text, tid).split('<dialog', 1)[0]
+    assert f'<img src="/a/{tid}/ac1.png?v={sha[:16]}"' in card  # the linked image is the tile
+    assert 'class="ev-img ev-file"' in card and ">HTML<" in card  # an HTML artifact: a typed tile that links it
 
 
 def test_more_than_eight_moves_link_to_the_list(dash, put):

@@ -146,6 +146,9 @@ class Decision:
     criteria: list | None = None  # verdict: evidence.criteria(t), each AC with its proof lines
     verification: str = ""  # verdict: the Verification section, shown folded
     widgets: object = None  # verdict: the ticket's widgets (markdown.section_widgets), drawn as on the ticket page
+    artifact_view: dict | None = None  # verdict: data.artifact_view.view(): what the ticket links, by criterion too
+    what_to_check: list | None = None  # verdict: the lines the proof drawer pins on top (see what_to_check())
+    handoff: str = ""  # verdict: the Current state section (the agent's handoff), a tab of the proof drawer
     harness: str | None = None  # the claim's harness (stale-claim; the plan feedforward)
     priority: str | None = None
     # F2: requirements whose plan the agent drafted too: the plan as one more gated text ({"seen", "seen_short",
@@ -317,12 +320,15 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
             age = _invalidated_age(t, gate, by_ticket.get(tid, []), at_now)
             diff = story_mod.diff(approved_snapshot(ws, t.id, gate), normalized_text(t, gate))
             approved_day = steps_mod.day(((t.meta.get("gates") or {}).get(gate) or {}).get("approved"))
-        widgets = None
+        widgets = art_view = check_lines = None
         if kind == "verdict":
             from orch.core import evidence
+            from orch.dashboard.data import artifact_view
             from orch.dashboard.markdown import section_widgets
             criteria = evidence.criteria(t)
             widgets = section_widgets(ws, t, assets=True)
+            art_view = artifact_view.view(ws, t)
+            check_lines = what_to_check(t)
         out.append(Decision(kind=kind, category=CATEGORY.get(kind, "broken"), ticket=t.id, title=t.title,
                              status=item["status"], gate=gate, excerpt=excerpt, questions=questions,
                              age_minutes=age, detail=detail, seen=seen, hint=hint, task=task_info,
@@ -334,10 +340,34 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
                              together=together, why=steps_mod.why_waiting(item, together=bool(together)),
                              diff=diff, approved_day=approved_day,
                              criteria=criteria, verification=t.section("Verification") if kind == "verdict" else "", widgets=widgets,
+                             artifact_view=art_view, what_to_check=check_lines,
+                             handoff=t.section("Current state") if kind == "verdict" else "",
                              harness=harness, priority=t.meta.get("priority"), charter=charter,
                              art=artifact_scope(t, ws), artifacts=len(artifact_entries(t)),
                              **_epic_group(ws, t, epic_index)))
     return out
+
+
+_CHECK_SECTIONS = ("Current state", "Verification", "Context", "Findings")
+_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def what_to_check(t, limit: int = 4) -> list[str]:
+    """The few lines the proof drawer pins above the criteria: the first valid `summary` widget's check_first and open
+    points, else the first lines of the handoff (Current state): bullets before prose, each cut short. Plain text
+    (Markdown inline when drawn), never more than `limit` lines."""
+    from orch.widgets.blocks import parse_blocks
+    from orch.widgets.validate import validate
+    for name in _CHECK_SECTIONS:
+        for b in parse_blocks(t.section(name), name):
+            d = b.data if isinstance(b.data, dict) else {}
+            if d.get("type") == "summary" and not validate(b, t):
+                return ([d["check_first"]] + [f"Open: {o}" for o in d.get("open") or []])[:limit]
+    text = re.sub(r"```.*?```", "", t.section("Current state") or "", flags=re.S)
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    bullets = [_BULLET.sub("", ln) for ln in lines if _BULLET.match(ln)]
+    picked = bullets or [ln for ln in lines if not ln.startswith("#")]
+    return [ln[:240] + ("…" if len(ln) > 240 else "") for ln in picked[:limit]]
 
 
 _TOGETHER_FF = ("Approving both moves {tid} to open with its plan approved, so an agent can claim it and work the "

@@ -92,3 +92,33 @@ def wait_for_human(ws, ref: str, *, after: int | str | None = None, timeout: flo
         if left <= 0:
             return None
         sleep(min(interval, left))
+
+
+def feedback(ws, event) -> dict:
+    """What the human said with a decision, flattened for the waiting agent: `message` (the verdict's or the change
+    request's text), `acs` (the criteria it names) and `attachments` (the images stored with it: name, path from the
+    workspace root, sha256 as linked in the ticket). Keys appear only when there is something to say."""
+    data = event.data or {}
+    out: dict = {}
+    said = data.get("message") if isinstance(data.get("message"), str) else None
+    if not (said or "").strip() and event.kind == "question.answered":
+        said = data.get("note") if isinstance(data.get("note"), str) else None
+    if (said or "").strip():
+        out["message"] = said
+    if isinstance(data.get("acs"), list) and data["acs"]:
+        out["acs"] = [n for n in data["acs"] if isinstance(n, int)]
+    from orch.core import artifacts as art
+    names = [n for n in data.get("attachments") or [] if isinstance(n, str) and art.safe_name(n)]
+    if names:
+        try:
+            ticket = store.load(ws, event.ticket)[1]
+        except Exception:
+            ticket = None
+        out["attachments"] = []
+        for name in names:
+            item = {"name": name, "path": (ws.artifacts_dir / event.ticket / name).relative_to(ws.root).as_posix()}
+            entry = art.find(ticket, name) if ticket is not None else None
+            if isinstance(entry, dict) and entry.get("sha256"):
+                item["sha256"] = entry["sha256"]
+            out["attachments"].append(item)
+    return out

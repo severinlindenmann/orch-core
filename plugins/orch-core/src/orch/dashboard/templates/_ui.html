@@ -34,3 +34,21 @@
     <button type="submit" class="btn btn-quiet">{{ "Turn off" if o.value else "Turn on" }}</button>
   </form>{% endfor %}
 </section>{% endif %}{% endmacro %}
+
+{#- The message box of Send back and Request changes: several lines, optional criteria chips (`criteria`: [{n}]), and
+    images pasted (⌘V), dropped or picked. The form around it posts multipart (`enctype`) with data-composer; the
+    images travel as the `images` file field, which works without JS as a plain file picker. ⌘↵ sends (app.js). -#}
+{% macro composer(id, label, placeholder, button, criteria=none, field="message", required=true, rows=3) %}
+{% if label %}<label for="{{ id }}">{{ label }}</label>{% endif %}
+{% if criteria %}<fieldset class="cmp-acs"><legend class="muted">Which criteria? <span>(optional)</span></legend>
+  {% for c in criteria %}<label class="cmp-ac"><input type="checkbox" name="acs" value="{{ c.n }}"><span>AC{{ c.n }}</span></label>{% endfor %}
+</fieldset>{% endif %}
+<textarea id="{{ id }}" name="{{ field }}" rows="{{ rows }}"{{ " required" if required }} placeholder="{{ placeholder }}" data-composer-text></textarea>
+<div class="cmp-files" data-composer-files>
+  <ul class="cmp-thumbs" aria-label="Images attached" hidden></ul>
+  <label class="btn btn-quiet cmp-pick" for="{{ id }}-images">Add images…</label>
+  <input id="{{ id }}-images" class="sr-only" type="file" name="images" accept="image/png,image/jpeg,image/gif,image/webp" multiple>
+  <span class="field-hint cmp-hint">Paste a screenshot (<kbd>⌘V</kbd> or <kbd>Ctrl V</kbd>) or drop it here. <kbd>⌘↵</kbd> sends.</span>
+</div>
+{% if button %}<button type="submit" class="btn">{{ button }}</button>{% endif %}
+{% endmacro %}

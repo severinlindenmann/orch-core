@@ -750,6 +750,8 @@ class Ops(TaskOpsMixin):
             raise UsageError(f"invalid artifact name {name or src.name!r}")
         kind = "receipt" if _run is not None else _artifact_kind(kind, art.guess_kind(fname))
         label = _artifact_label(label)
+        if kind == "feedback":  # a person's own words and pictures: an agent cannot file one in a human's name
+            require_human(self.actor, "attaching feedback")
         if inline and ac is None:
             raise UsageError("--inline writes a Verification line for one criterion", hint="pass --ac <n> as well")
         limit = art.max_bytes(self.ws)
@@ -883,9 +885,9 @@ class Ops(TaskOpsMixin):
         return ticket, added
 
     def answer(self, ref: str, qid: str, value: str, note: str | None = None, *,
-               expected_hash: str | None = None) -> Ticket:
+               expected_hash: str | None = None, attachments: list[str] | None = None) -> Ticket:
         """`expected_hash` (a `question_hash`, required) binds the answer to the question text and options the human
-        saw."""
+        saw. `attachments`: the feedback artifacts (pasted images) stored with the answer, named in the event."""
         require_human(self.actor, "answering questions")
         _require_seen(expected_hash, "an answer")
 
@@ -910,9 +912,12 @@ class Ops(TaskOpsMixin):
                 moved = True
             restarted = None if unanswered_blocking(t) else restart_answered(t)
             shown = ", ".join(q["answer"]) if isinstance(q["answer"], list) else q["answer"]
-            self._log(t, f"answered {q['id']}: {shown}" + (f" — {note}" if note else "")
+            extra = _feedback_extra(None, attachments)
+            self._log(t, f"answered {q['id']}: {shown}" + (f" — {note}" if note else "") + _feedback_note(extra)
                       + (" → in-progress" if moved else "") + (f" · {restarted} restarted" if restarted else ""))
-            data = {"qid": q["id"], "answer": q["answer"]}
+            data = {"qid": q["id"], "answer": q["answer"], **extra}
+            if note:
+                data["note"] = note
             if restarted:
                 data["task_restarted"] = restarted
             return data
@@ -1426,7 +1431,8 @@ class Ops(TaskOpsMixin):
         self._ledger(t, "gate", gate=gate, hash=g["hash"], hash_v=g.get("hash_v"),
                      **({"despite_open_question": True} if despite else {}))
 
-    def request_changes(self, ref: str, gate: str, message: str, *, expected_hash: str | None = None) -> Ticket:
+    def request_changes(self, ref: str, gate: str, message: str, *, expected_hash: str | None = None,
+                        attachments: list[str] | None = None) -> Ticket:
         require_human(self.actor, "requesting changes")
         if gate not in GATE_SECTIONS:
             raise UsageError("gate must be requirements or plan")
@@ -1441,8 +1447,9 @@ class Ops(TaskOpsMixin):
             t.meta.setdefault("gates", {}).setdefault(gate, {})["changes_requested"] = {
                 "at": stamp(), "by": self.actor.label, "message": message, "hash": at_hash,
             }
-            self._log(t, f"asked for changes on the {gate}: {message}")
-            return {"gate": gate, "message": message, "hash": at_hash}
+            extra = _feedback_extra(None, attachments)
+            self._log(t, f"asked for changes on the {gate}: {message}" + _feedback_note(extra))
+            return {"gate": gate, "message": message, "hash": at_hash, **extra}
 
         return self._mutate(ref, "gate.changes_requested", fn)
 
@@ -1475,9 +1482,12 @@ class Ops(TaskOpsMixin):
             self._emit(tid, "verdict.given", data)
 
     def verdict(self, ref: str, verdict: str, message: str | None = None, *,
-                expected_hash: str | None = None) -> Ticket:
+                expected_hash: str | None = None, acs: list[int] | None = None,
+                attachments: list[str] | None = None) -> Ticket:
         """`expected_hash`: the hash of the criteria and evidence the human read (orch.core.epics.verdict_hash: for
-        an epic over its open children, else over this ticket); refused when it no longer matches."""
+        an epic over its open children, else over this ticket); refused when it no longer matches. A follow-up may name
+        the criteria it is about (`acs`, 1-based) and the feedback artifacts stored for it (`attachments`, names under
+        the ticket's artifacts): both go into the event and the Log line, so the agent reads them from `orch wait`."""
         require_human(self.actor, "giving verdicts")
         _require_seen(expected_hash, "a verdict")
         if verdict not in ("done", "follow-up"):
@@ -1488,9 +1498,10 @@ class Ops(TaskOpsMixin):
         if (target.meta or {}).get("type") == "epic":
             return self._epic_verdict(target.id, verdict, message, expected_hash)
 
-        return self._mutate(ref, "verdict.given", self._verdict_fn(verdict, message, expected_hash))
+        extra = _feedback_extra(acs, attachments) if verdict == "follow-up" else {}
+        return self._mutate(ref, "verdict.given", self._verdict_fn(verdict, message, expected_hash, extra))
 
-    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str):
+    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str, extra: dict | None = None):
         """The change one verdict makes to its ticket (inside the ticket's lock), checked against `expected_hash`."""
         def fn(t: Ticket) -> dict:
             from orch.core.epics import verdict_hash
@@ -1511,8 +1522,8 @@ class Ops(TaskOpsMixin):
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
                 t.meta["resolution"] = "completed"
                 t.meta.pop("superseded_by", None)
-            self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))
-            return {"verdict": verdict, "message": message}
+            self._log(t, f"verdict {verdict}" + (f": {message}" if message else "") + _feedback_note(extra))
+            return {"verdict": verdict, "message": message, **(extra or {})}
 
         return fn
 
@@ -1556,6 +1567,29 @@ def _artifact_name(raw: str) -> str:
     from orch.textsafe import strip_hidden
     name = _UNSAFE_NAME.sub("-", strip_hidden(str(raw), keep_whitespace=False)).split("/")[-1].strip()
     return re.sub(r"\s+", "-", name).lstrip(".")
+
+
+def _feedback_extra(acs: list[int] | None, attachments: list[str] | None) -> dict:
+    """What a human's feedback names besides its text: the criteria (positive integers, once each, in order) and the
+    feedback artifacts stored with it. Only what is given appears, so an old reader sees the old event."""
+    out: dict = {}
+    nums = sorted({int(n) for n in acs or [] if isinstance(n, int) and not isinstance(n, bool) and n > 0})
+    if nums:
+        out["acs"] = nums
+    names = [str(n) for n in attachments or [] if str(n).strip()]
+    if names:
+        out["attachments"] = names
+    return out
+
+
+def _feedback_note(extra: dict | None) -> str:
+    """The Log line's tail for `_feedback_extra`: " (AC1, AC5)" and " · 2 images: a.png, b.png"."""
+    extra = extra or {}
+    note = f" ({', '.join(f'AC{n}' for n in extra['acs'])})" if extra.get("acs") else ""
+    if extra.get("attachments"):
+        names = extra["attachments"]
+        note += f" · {len(names)} image{'s' if len(names) != 1 else ''}: {', '.join(names)}"
+    return note
 
 
 def _artifact_kind(kind: str | None, default: str) -> str:

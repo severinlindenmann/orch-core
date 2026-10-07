@@ -7,8 +7,8 @@ from orch.core import artifacts as art
 from orch.dashboard.markdown import artifact_scope, artifact_url, inline_size_ok
 
 TITLES = {"screenshot": "Screenshots", "diagram": "Diagrams", "report": "Reports", "dataset": "Datasets",
-          "log": "Logs", "build": "Builds", "link": "Links", "other": "Other files"}
-ORDER = ("screenshot", "diagram", "report", "dataset", "log", "build", "link", "other")
+          "log": "Logs", "build": "Builds", "link": "Links", "feedback": "Your feedback", "other": "Other files"}
+ORDER = ("screenshot", "diagram", "report", "dataset", "log", "build", "link", "feedback", "other")
 
 
 def widget_files(ws, t) -> list[dict]:

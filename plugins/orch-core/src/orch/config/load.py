@@ -33,7 +33,8 @@ DEFAULTS: dict = {
     "artifacts": {"mode": "local"},
     "temporary": {"max_age_days": 14},
     "dashboard": {"host": "127.0.0.1", "port": 8765, "pull_seconds": 60, "theme": "system", "brand": "none", "stale_minutes": 120,
-                  "revalidate_days": 30},  # an open or backlog ticket untouched this long is flagged idle (0: off)
+                  "revalidate_days": 30,  # an open or backlog ticket untouched this long is flagged idle (0: off)
+                  "authoring_hints": False},  # True: ticket pages link "Widgets for this section" (authoring docs)
     # Start agent (spec §7): the default harness (one of the known harnesses) and the prompt per
     # mode ({key} and {pr} are the only placeholders; ticket text never enters a prompt). What gets
     # launched (terminal, harness argv) is per user only: ~/.config/orch/launch.json, see

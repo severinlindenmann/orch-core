@@ -94,7 +94,8 @@
         "theme": {"enum": ["system", "light", "dark"]},
         "brand": {"type": "string"},
         "stale_minutes": {"type": "integer", "minimum": 1},
-        "revalidate_days": {"type": "integer", "minimum": 0}
+        "revalidate_days": {"type": "integer", "minimum": 0},
+        "authoring_hints": {"type": "boolean"}
       }
     },
     "agents": {

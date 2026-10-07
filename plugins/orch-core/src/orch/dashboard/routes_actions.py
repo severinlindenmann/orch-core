@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 
@@ -135,38 +135,127 @@ def epic_pause(request: Request, ref: str, next_url: Next = ""):
     return _run(request, ref, lambda: _ops(request).epic_pause(ref), "delegation paused", next_url)
 
 
+MAX_FEEDBACK_IMAGES = 8
+_IMAGE_SIGNATURES = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
+
+
+def _image_ext(head: bytes) -> str | None:
+    """The extension of an image by its first bytes (PNG, JPEG, GIF, WebP), never by the name or type the browser sent."""
+    for magic, ext in _IMAGE_SIGNATURES:
+        if head.startswith(magic):
+            return ext
+    return "webp" if head[:4] == b"RIFF" and head[8:12] == b"WEBP" else None
+
+
+def add_feedback_images(ws, ops: Ops, ref: str, files: list[UploadFile] | None, stem: str = "feedback") -> list[str]:
+    """Store the images a person pasted or dropped into Send back as artifacts of kind `feedback` and return their names.
+    Checked before anything is stored: at most MAX_FEEDBACK_IMAGES, each an image by its own bytes (the artifact size limit
+    applies as for any artifact). The name is `<stem>-<n>.<ext>`, the next free one, so a second round never overwrites."""
+    files = [f for f in files or [] if f.filename]  # an empty file input still sends one nameless part
+    if not files:
+        return []
+    if len(files) > MAX_FEEDBACK_IMAGES:
+        raise UsageError(f"at most {MAX_FEEDBACK_IMAGES} images can go with one message")
+    tid = store.resolve(ws, ref).id
+    kept = []
+    for f in files:
+        ext = _image_ext(f.file.read(16))
+        f.file.seek(0)
+        if ext is None:
+            raise UsageError(f"{Path(f.filename).name or 'a file'} is not a PNG, JPEG, GIF or WebP image")
+        kept.append((f, ext))
+    names = []
+    for f, ext in kept:
+        n = 1  # the next number no earlier file of any type has taken, so a round reads sendback-1, -2, -3 ...
+        while any((ws.artifacts_dir / tid / f"{stem}-{n}.{e}").exists() or f"{stem}-{n}.{e}" in names
+                  for e in ("png", "jpg", "gif", "webp")):
+            n += 1
+        name = f"{stem}-{n}.{ext}"
+        fd, tmp = tempfile.mkstemp(dir=ws.temporary_dir, prefix=".upload-")
+        try:
+            with open(fd, "wb") as out:
+                shutil.copyfileobj(f.file, out)
+            ops.artifact_add(ref, Path(tmp), name=name, kind="feedback", label="Your feedback")
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        names.append(name)
+    return names
+
+
+def _acs(raw: list[str]) -> list[int]:
+    """The criteria numbers a form named (`acs`, repeated or comma-separated); anything that is not a positive integer
+    is dropped."""
+    out = []
+    for item in raw:
+        for part in str(item).split(","):
+            if part.strip().isdigit() and int(part) > 0:
+                out.append(int(part))
+    return out
+
+
+def _with_images(request: Request, ref: str, files, action, success: str, next_url: str):
+    """`action(names)` once the images are stored. A refusal after that (the page was out of date) leaves them linked
+    as artifacts, which the error says."""
+    url = safe_url_or_ticket(request, ref, next_url)
+    ws, ops = request.app.state.ws, _ops(request)
+    names: list[str] = []
+    try:
+        names = add_feedback_images(ws, ops, ref, files, stem="sendback")
+        action(names)
+    except OrchError as e:
+        text = error_text(e)
+        return back(url, err=text + (" The images stay on the ticket as artifacts." if names else ""))
+    return back(url, msg=success)
+
+
+def safe_url_or_ticket(request: Request, ref: str, next_url: str) -> str:
+    return safe_next(next_url) or _ticket_url(request, ref)
+
+
 @router.post("/t/{ref}/request-changes")
 def request_changes(request: Request, ref: str, gate: Annotated[str, Form()], message: Annotated[str, Form()] = "",
-                     seen: Annotated[str, Form()] = "", next_url: Next = ""):
+                     seen: Annotated[str, Form()] = "", next_url: Next = "",
+                     images: Annotated[Optional[list[UploadFile]], File()] = None):
     # Bound to the gate text the human read (like approve): a request about text that changed since is refused.
     if not seen:
         return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
-    return _run(request, ref, lambda: _ops(request).request_changes(ref, gate, message, expected_hash=seen),
-                f"asked for changes on {gate}", next_url)
+    return _with_images(request, ref, images,
+                        lambda names: _ops(request).request_changes(ref, gate, message, expected_hash=seen,
+                                                                    attachments=names),
+                        f"asked for changes on {gate}", next_url)
 
 
 @router.post("/t/{ref}/answer")
 def answer(request: Request, ref: str, qid: Annotated[str, Form()],
            value: Annotated[list[str], Form()] = [], note: Annotated[str, Form()] = "",  # FastAPI copies the default
-           qhash: Annotated[str, Form()] = "", next_url: Next = ""):
+           qhash: Annotated[str, Form()] = "", next_url: Next = "",
+           images: Annotated[Optional[list[UploadFile]], File()] = None):
     # Bound to the question the human read (question_hash): an agent that re-asks it with other text or options
     # while the answer waits for its Undo window gets no answer to the new question.
     if not qhash:
         return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
     joined = ",".join(v for v in value if v.strip()) if len(value) > 1 else (value[0] if value else "")
-    return _run(request, ref, lambda: _ops(request).answer(ref, qid, joined, note=note or None, expected_hash=qhash),
-                f"answered {qid.upper()}", next_url)
+    return _with_images(request, ref, images,
+                        lambda names: _ops(request).answer(ref, qid, joined, note=note or None, expected_hash=qhash,
+                                                            attachments=names),
+                        f"answered {qid.upper()}", next_url)
 
 
 @router.post("/t/{ref}/verdict")
 def verdict(request: Request, ref: str, verdict: Annotated[str, Form()], message: Annotated[str, Form()] = "",
-            next_url: Next = "", seen: Annotated[str, Form()] = ""):
+            next_url: Next = "", seen: Annotated[str, Form()] = "", acs: Annotated[list[str], Form()] = [],
+            images: Annotated[Optional[list[UploadFile]], File()] = None):
     """`seen` (required): the hash of the criteria and evidence the page showed (orch.core.epics.verdict_hash; for
-    an epic over its open children). Ops.verdict refuses it once they changed."""
+    an epic over its open children). Ops.verdict refuses it once they changed. A send-back may carry `acs` (the
+    criteria it is about) and `images` (pasted or dropped screenshots, stored as feedback artifacts)."""
     if not seen:
         return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
-    return _run(request, ref, lambda: _ops(request).verdict(ref, verdict, message or None, expected_hash=seen),
-                f"verdict {verdict}", next_url)
+    if verdict != "follow-up":
+        acs, images = [], None  # only feedback carries criteria and pictures
+    return _with_images(request, ref, images,
+                        lambda names: _ops(request).verdict(ref, verdict, message or None, expected_hash=seen,
+                                                            acs=_acs(acs), attachments=names),
+                        f"verdict {verdict}", next_url)
 
 
 @router.post("/t/{ref}/move")

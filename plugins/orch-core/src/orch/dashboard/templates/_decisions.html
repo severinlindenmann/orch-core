@@ -10,13 +10,11 @@
 {% macro changes(d, back_to) %}
 <details class="dc-more">
   <summary class="btn btn-quiet" data-key-changes>Request changes…</summary>
-  <form method="post" action="/t/{{ d.ticket }}/request-changes" class="stack dc-fold" data-delayed-send="Sending your change request to {{ d.ticket }}">
+  <form method="post" action="/t/{{ d.ticket }}/request-changes" enctype="multipart/form-data" class="stack dc-fold" data-composer data-delayed-send="Sending your change request to {{ d.ticket }}">
     <input type="hidden" name="gate" value="{{ d.gate }}">
     <input type="hidden" name="seen" value="{{ d.seen }}">
     <input type="hidden" name="next" value="{{ back_to }}">
-    <label for="rc-{{ d.ticket }}-{{ d.gate }}">Tell the agent what to change in the {{ d.gate }}.</label>
-    <input id="rc-{{ d.ticket }}-{{ d.gate }}" name="message" placeholder="What should change?" required>
-    <button type="submit" class="btn">Request changes</button>
+    {{ ui.composer("rc-" ~ d.ticket ~ "-" ~ d.gate, "Tell the agent what to change in the " ~ d.gate ~ ".", "What should change?", "Request changes") }}
   </form>
 </details>
 {% endmacro %}
@@ -78,20 +76,17 @@
 </form>
 <details class="dc-more">
   <summary class="btn btn-quiet">Write another answer…</summary>
-  <form method="post" action="/t/{{ d.ticket }}/answer" class="stack dc-fold decision-other" data-delayed-send="{{ send_label }}">
+  <form method="post" action="/t/{{ d.ticket }}/answer" enctype="multipart/form-data" class="stack dc-fold decision-other" data-composer data-delayed-send="{{ send_label }}">
     <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
     <input type="hidden" name="next" value="{{ back_to }}">
-    <label for="other-{{ d.ticket }}-{{ q.id }}">Other answer</label>
-    <input id="other-{{ d.ticket }}-{{ q.id }}" name="value" required>
-    <button type="submit" class="btn">Send other answer</button>
+    {{ ui.composer("other-" ~ d.ticket ~ "-" ~ q.id, "Other answer", "Your answer", "Send other answer", field="value", rows=2) }}
   </form>
 </details>
 {% else %}
-<form method="post" action="/t/{{ d.ticket }}/answer" class="stack decision-answer" data-delayed-send="{{ send_label }}">
+<form method="post" action="/t/{{ d.ticket }}/answer" enctype="multipart/form-data" class="stack decision-answer" data-composer data-delayed-send="{{ send_label }}">
   <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
   <input type="hidden" name="next" value="{{ back_to }}">
-  <label for="ans-{{ d.ticket }}-{{ q.id }}">Your answer</label>
-  <input id="ans-{{ d.ticket }}-{{ q.id }}" name="value" required>
+  {{ ui.composer("ans-" ~ d.ticket ~ "-" ~ q.id, "Your answer", "Your answer", none, field="value", rows=2) }}
   <button type="submit" class="btn">Send answer</button>
 </form>
 {% endif %}
@@ -120,12 +115,10 @@
 </form>
 <details class="dc-more">
   <summary class="btn btn-quiet" data-key-changes>Send back…</summary>
-  <form method="post" action="/t/{{ d.ticket }}/verdict" class="stack dc-fold" data-delayed-send="Sending {{ d.ticket }} back to the agent">
+  <form method="post" action="/t/{{ d.ticket }}/verdict" enctype="multipart/form-data" class="stack dc-fold" data-composer data-delayed-send="Sending {{ d.ticket }} back to the agent">
     <input type="hidden" name="next" value="{{ back_to }}"><input type="hidden" name="seen" value="{{ d.seen }}">
     <input type="hidden" name="verdict" value="follow-up">
-    <label for="sb-{{ d.ticket }}">Not done yet? Tell the agent what is missing.</label>
-    <input id="sb-{{ d.ticket }}" name="message" placeholder="What is missing?" required>
-    <button type="submit" class="btn">Send back</button>
+    {{ ui.composer("sb-" ~ d.ticket, "Not done yet? Tell the agent what is missing.", "What is missing?", "Send back", d.criteria) }}
   </form>
 </details>
 {% endmacro %}

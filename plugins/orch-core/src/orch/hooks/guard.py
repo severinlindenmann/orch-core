@@ -576,39 +576,86 @@ _ENV_DENIED = ("changing the environment to remove or blank the agent harness ma
                "ORCH_HARNESS, ...) is not allowed: orch uses them to keep human-only actions with the human")
 
 
-def _human_only_tokens(seg: str) -> bool:
-    """The simple command, split as the shell would (quotes and escapes resolved), runs an orch program (`orch`,
-    `…/bin/orch`, `-m orch.cli`) with a human-only subcommand. Catches spellings such as `o''rch approve`."""
+# Options of orch that take no value (everything else with a leading dash may take one: orch has no top-level option
+# with a value today, so a future one must not hide the subcommand behind its value).
+_ORCH_FLAGS = frozenset({"--json", "--help", "-h", "--version", "--quiet", "-q", "--verbose", "-v"})
+
+
+def _orch_subcommand_starts(words: list[str]) -> list[list[str]]:
+    """The positional words after an orch program, once for every position the subcommand could stand at: a word
+    that follows an option may be that option's value, so `orch --opt val approve L-1` and `orch -C x approve L-1`
+    offer both `val approve L-1` and `approve L-1`. Words after a bare `--` are not options."""
+    opts, pos, ended = 0, 0, False
+    positional, idx = [], []
+    for w in words:
+        if not ended and w == "--":
+            ended = True
+        elif not ended and w.startswith("-"):
+            if "=" not in w and w not in _ORCH_FLAGS:
+                opts += 1
+        else:
+            if pos <= opts:  # enough options before it to have taken every earlier positional as a value
+                idx.append(pos)
+            positional.append(w)
+            pos += 1
+    return [positional[i:] for i in idx]
+
+
+def _human_rest(rest: list[str]) -> bool:
+    if rest and rest[0] in _HUMAN_VERBS:
+        return True
+    if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
+        return True
+    if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
+        return True
+    if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
+        return True
+    if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
+        return True
+    if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
+        return True
+    if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
+        return True
+    return False
+
+
+def _orch_programs(seg: str):
+    """(words after each orch program word) of the simple command, split as the shell would."""
     import shlex
     try:
         words = shlex.split(seg, comments=True, posix=True)
     except ValueError:
-        return False
+        return
     for k, word in enumerate(words):
-        if re.split(r"[/\\]", word)[-1] not in ("orch", "orch.cli"):
-            continue
-        rest = [w for w in words[k + 1:] if not w.startswith("-")]
-        if rest and rest[0] in _HUMAN_VERBS:
-            return True
-        if len(rest) >= 2 and rest[0] == "epic" and rest[1] == "pause":
-            return True
-        if len(rest) >= 2 and rest[0] == "checks" and rest[1] == "sign":  # signing the named checks is the human's
-            return True
-        if len(rest) >= 2 and rest[0] == "permit" and rest[1] in ("grant", "deny", "revoke"):
-            return True
-        if len(rest) >= 2 and rest[0] == "schedule" and rest[1] in _HUMAN_SCHEDULE:
-            return True
-        if len(rest) >= 2 and rest[0] == "quick" and rest[1] in ("reopen", "drop"):
-            return True
-        if len(rest) >= 3 and rest[0] == "move" and rest[2] in _HUMAN_TARGETS:
-            return True
-    return False
+        if re.split(r"[/\\]", word)[-1] in ("orch", "orch.cli"):
+            yield words[k + 1:]
+
+
+def _human_only_tokens(seg: str) -> bool:
+    """The simple command, split as the shell would (quotes and escapes resolved), runs an orch program (`orch`,
+    `…/bin/orch`, `-m orch.cli`) with a human-only subcommand. Catches spellings such as `o''rch approve`. An option
+    word may swallow the next word as its value, so every word that could be the subcommand is judged."""
+    return any(_human_rest(rest) for after in _orch_programs(seg) for rest in _orch_subcommand_starts(after))
+
+
+_ADMIN_WORDS = ("install", "update", "trust", "enable", "disable", "remove", "rollback", "setup")
+
+
+def _orch_serve_or_admin_tokens(seg: str) -> str:
+    """`serve` or `addon <admin verb>` as the subcommand of an orch program, behind options with values."""
+    for after in _orch_programs(seg):
+        for rest in _orch_subcommand_starts(after):
+            if rest[:1] == ["serve"]:
+                return "serve"
+            if rest[:1] == ["addon"] and any(w in _ADMIN_WORDS or w == "ticket-option" for w in rest[1:3]):
+                return "addon"
+    return ""
 
 
 # Interpreters whose code can run orch (for _drives_orch_as_human).
 _HUMAN_INTERP = re.compile(r"\b(?:python[0-9.]*|perl|ruby|node|deno|bun|php|lua)\b|<<")
 # `orch $X …`, `orch "$(…)"`: a subcommand the guard cannot read. Agents name their orch subcommands.
-_ORCH_DYNAMIC = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*['\"]?(?:\$|`)")
+_ORCH_DYNAMIC = re.compile(r"\borch(?:\.cli)?\s+(?:(?:-C\s+\S+|(?!-C\b)-\S+)\s+)*['\"]?(?:\$|`)")
 # `xargs orch` / `xargs -I{} orch …`: orch as the command of xargs; denied unless a literal subcommand that is not
 # human-only follows (`xargs -n1 orch show`).
 _XARGS_ORCH = re.compile(r"\bxargs(?:\s+(?:-\S+|\{\}|\d+))*\s+(?:\S*/)?orch(?:\.cli)?(?![\w.-])((?:\s+-\S+)*)\s*(\S*)")
@@ -2205,7 +2252,10 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         # git checks look at the command with quoted text blanked out, so a commit message or an
         # echo that mentions `git push` or `-n` is not mistaken for the command itself.
         plain = _unquoted(seg)
-        if _SERVE.search(plain) or _QUOTED_SERVE.search(seg):
+        behind_options = _orch_serve_or_admin_tokens(seg)
+        if behind_options == "addon":
+            return Decision(False, _ADDON_ADMIN_DENIED)
+        if _SERVE.search(plain) or _QUOTED_SERVE.search(seg) or behind_options == "serve":
             return Decision(False, _SERVE_DENIED)
         if _ORCH_TMUX.search(seg.replace("'", "").replace('"', "")):  # quotes removed: -L "orch" is -L orch
             return Decision(False, _ORCH_TMUX_DENIED)

@@ -254,6 +254,54 @@ def test_writing_state_stays_denied(ws, cmd):
     _check(ws, cmd, False)
 
 
+# --- 5. `orch -C "$d" ...` and 6. options that take a value ---------------------------------------------------------
+OPT_ALLOWED = [
+    'orch -C "$d" artifact add L-0001 f.md',
+    "orch -C $d artifact add L-0001 f.md",
+    'orch -C "$d" show L-0001',
+    "orch -C /tmp/x show L-0001 --json",
+    'orch --json -C "$PWD" list',
+    "orch log L-0001 -m approve",
+    "orch show L-0001 --json",
+]
+
+
+@pytest.mark.parametrize("cmd", OPT_ALLOWED)
+def test_known_option_values_are_not_the_subcommand(ws, cmd):
+    _check(ws, cmd, True)
+
+
+OPT_DENIED = [
+    "orch -C x approve L-1",
+    'orch -C "$d" approve L-1',
+    "orch -C x -C y verdict L-1 pass",
+    "orch --foo bar approve L-1",
+    "orch --foo bar --baz qux approve L-1",
+    "orch --foo bar answer L-1",
+    "orch --foo bar epic pause E-1",
+    "orch --foo bar permit grant x",
+    "orch --foo bar move L-1 done",
+    "orch -C x serve",
+    "orch --foo bar serve",
+    "orch --foo bar addon trust x",
+    "orch -C x addon install y",
+    "uv run orch --foo bar approve L-1",
+    "/usr/bin/orch --foo bar approve L-1",
+    "orch -C x $SUB approve",
+    'orch -C x "$SUB" L-1',
+    "orch $SUB L-1",
+    "orch -C $d $SUB",
+    "orch --json $(echo approve) L-1",
+    "orch -- approve L-1",
+    "orch --foo=bar approve L-1",
+]
+
+
+@pytest.mark.parametrize("cmd", OPT_DENIED)
+def test_an_option_value_cannot_hide_the_subcommand(ws, cmd):
+    _check(ws, cmd, False)
+
+
 def test_a_cwd_inside_state_stays_denied(ws):
     state = ws.root / "orchestrator" / ".state"
     state.mkdir(parents=True, exist_ok=True)

@@ -43,6 +43,8 @@ uv tool install "orch-core[dashboard] @ git+https://github.com/severinlindenmann
 
 `orch doctor` prints this command with the real plugin folder filled in, pointing at the marketplace clone (`~/.claude/plugins/marketplaces/<marketplace>/plugins/orch-core`) rather than Claude's plugin cache: `orch update` pulls the git clone the CLI was installed from, so an install from the cache cannot update and `orch update` says so. `orch update` always prints what it checked and what it found. It also compares `orch --version` with the plugin's version; when they differ (`terminal-cli`), upgrade with `uv tool install --force "<plugin folder>[dashboard]"`.
 
+`orch update` and `orch serve` also check the agent harnesses you can start (Claude Code, Codex, Copilot CLI, and any you add in `launch.json`) and offer their updates in the same question. How each was installed is read from where its binary lives, and that picks the command: `brew upgrade --cask claude-code@latest` for a Homebrew cask, `brew upgrade <formula>`, `npm install -g <package>@latest` (or pnpm / bun), or `claude update` for Claude Code's native installer. A harness orch cannot place is reported, never touched. The dashboard's Workspace → Setup → Agent harnesses card shows the last check, with Check for updates and an Update button that asks before it runs anything.
+
 ## GitHub Copilot
 
 ```bash

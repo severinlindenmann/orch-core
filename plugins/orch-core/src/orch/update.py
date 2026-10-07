@@ -1,8 +1,9 @@
-"""Keep orch-core and its custom addons current without the human running five commands.
+"""Keep orch-core, its custom addons and the agent harnesses current without the human running five commands.
 
 `orch serve` (and `orch update`) check, ask once, then apply: core first (pull the clone it was installed from, reinstall
-the uv tool, re-exec), then each custom addon (apply, and trust it again when it asks for nothing new). Everything here
-runs for the human at a terminal; the addon steps keep the human-only checks in `orch.addons.manage`."""
+the uv tool, re-exec), then each custom addon (apply, and trust it again when it asks for nothing new), then each agent
+harness (its own update command, see `orch.harness_update`). Everything here runs for the human at a terminal; the
+addon steps keep the human-only checks in `orch.addons.manage`."""
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
+from orch import harness_update
 from orch.addons import manage, userfiles
 from orch.errors import OrchError, ValidationError
 
@@ -304,8 +306,8 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
         out("checking the custom addons for updates …")
     else:
         src = core_source()
-        out(f"checking for updates: orch-core{' at ' + core_where(src if isinstance(src, GitRemote) else src[0]) if not isinstance(src, str) else ''} "
-            "and the custom addons …")
+        out(f"checking for updates: orch-core{' at ' + core_where(src if isinstance(src, GitRemote) else src[0]) if not isinstance(src, str) else ''}, "
+            "the custom addons and the agent harnesses …")
         status = core_status(src)
         out(f"orch-core: {status.line}")
         core = status.update
@@ -318,12 +320,16 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
     for i in infos:
         if not i.has_update and i.message != "up to date":
             out(f"  {i.name}: {i.message}")
-    if not core and not addons:
+    harnesses = harness_update.check_all()
+    for h in harnesses:
+        out(f"{h.label}: {h.line}")
+    stale = [h for h in harnesses if h.has_update]
+    if not core and not addons and not stale:
         _set_state(next_check=time.time() + CHECK_EVERY)
         out("nothing to update" if force or check_only else "nothing to update; next check in a day (orch update checks now)")
         return
     names = ([f"orch-core ({core.summary})"] if core else []) + \
-            [f"{i.name} ({i.message})" for i in addons]
+            [f"{i.name} ({i.message})" for i in addons] + [h.summary for h in stale]
     if check_only:
         out("updates available: " + ", ".join(names))
         return
@@ -342,3 +348,6 @@ def run(*, check_only: bool, ask: Callable[[str], str], review_text: Callable[[m
             addon_apply(i.name, review_text, confirm, out)
         except OrchError as e:  # one broken addon must not stop the others, or serve
             out(f"{i.name}: update failed: {e.message}")
+    for h in stale:
+        out(f"updating {h.label} …")
+        out(harness_update.apply(h))

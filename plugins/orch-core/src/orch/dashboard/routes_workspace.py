@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
-from orch import onboarding, update
+from orch import harness_update, onboarding, update
 from orch.addons import cache, manage, userfiles
 from orch.addons.discovery import custom_addons_dir, discover, find
 from orch.addons.loader import valid_name
@@ -28,6 +28,7 @@ from orch.remote import store as phone_store
 router = APIRouter()
 
 _BACK = "/workspace#addons"
+_ABOUT = "/workspace?tab=setup#about"
 _KIND_LABEL = {"capabilities": "capability", "binaries": "binary", "env": "env", "actions": "action",
                "uploads": "file upload action", "remote_actions": "action a paired device may run"}
 
@@ -181,6 +182,7 @@ def workspace(request: Request):
         widgets = dict(cat=routes_widgets.catalog(ws, request.query_params, theme), widget_css=css_names(),
                        inline_md=lambda text: Markup(inline(text)), html_state=ledger.widgets_html_state(ws),
                        unused_days=routes_widgets.UNUSED_DAYS, broken=registry.template_problems(ws.home))
+    harness_rows = harness_update.last()
     response = page(request, "workspace.html", nav="workspace", title="Workspace & addons", tab=tab, **widgets,
                 checks=snap.checks, checks_error=snap.checks_error,
                 repos=[{**r, "rel": _relative(r["path"], ws.root)} for r in snap.repos],
@@ -197,6 +199,7 @@ def workspace(request: Request):
                 default_harness=agent_start.default_harness(ws, launch_settings) or "none",
                 launch_warnings=agent_start.launch_warnings(ws, launch_settings),
                 about=update.about(),
+                harnesses=harness_rows[0], harnesses_checked=harness_rows[1],
                 addon_errors=runtime.registry.errors()[-4000:],
                 config_text=json.dumps(ws.config, indent=2, ensure_ascii=False),
                 phones=phone_store.phones(ws.root), phone_permissions=phone_store.permissions(ws.root),
@@ -283,6 +286,10 @@ def _update_everything(actor) -> tuple[list[str], list[str]]:
         updated.add(info.name)
         done.append(f"{info.name} {before} → {m.version}" + ("" if trusted else " (review and trust it below)"))
     userfiles.update_json(_update_path(), lambda d: [d.pop(n, None) for n in updated])
+    for h in harness_update.check_all():
+        if h.has_update:
+            said = harness_update.apply(h)
+            (problems if "update failed" in said else done).append(said)
     return done, problems
 
 
@@ -292,9 +299,9 @@ async def addon_update_all(request: Request, ask: str = Form("")):
         return _refused()
     if ask:
         return confirm_page(request, action="/workspace/addons/update-all", fields=[],
-                            title="Update orch and its addons?", body="Pulls orch-core and reinstalls it, then updates"
-                            " every custom addon. An addon that asks for nothing new is trusted again; any other waits for"
-                            " your review.", confirm="Update all", cancel="Cancel", cancel_href=_BACK, nav="workspace")
+                            title="Update orch, its addons and the harnesses?", body="Pulls orch-core and reinstalls it,"
+                            " then updates every custom addon and every out-of-date agent harness (Claude Code, Codex, …)."
+                            " An addon that asks for nothing new is trusted again; any other waits for your review.", confirm="Update all", cancel="Cancel", cancel_href=_BACK, nav="workspace")
     try:
         done, problems = await asyncio.to_thread(_update_everything, request_actor(request))
     except OrchError as e:
@@ -304,6 +311,43 @@ async def addon_update_all(request: Request, ask: str = Form("")):
     if problems:
         return back(_BACK, err="; ".join(problems), msg="; ".join(done) or None)
     return back(_BACK, msg="; ".join(done) if done else "Everything is up to date")
+
+
+@router.post("/workspace/harnesses/check")
+async def harnesses_check(request: Request):
+    """Human POST only: looks up each installed harness's newest version (network, brew); a render never does."""
+    if not strict_same_origin(request):
+        return _refused()
+    found = await asyncio.to_thread(harness_update.check_all)
+    stale = [h.summary for h in found if h.has_update]
+    if not found:
+        return back(_ABOUT, msg="No agent harness found on PATH")
+    return back(_ABOUT, msg=("Update available: " + ", ".join(stale)) if stale else "All agent harnesses are up to date")
+
+
+@router.post("/workspace/harnesses/{name}/update")
+async def harness_update_one(request: Request, name: str, ask: str = Form("")):
+    """Checks the harness again (the saved check may be old, and its command is never taken from a file), then runs
+    its update command."""
+    if not strict_same_origin(request):
+        return _refused()
+    program = harness_update.harness_bins().get(name)
+    if program is None:
+        return back(_ABOUT, err=f"{name} is not a known harness")
+    h = await asyncio.to_thread(harness_update.check, name, program)
+    if h is None:
+        return back(_ABOUT, err=f"{name} is not on PATH")
+    if not h.has_update:
+        await asyncio.to_thread(harness_update.remember, h)
+        return back(_ABOUT, msg=f"{h.label}: {h.line}")
+    if ask:
+        return confirm_page(request, action=f"/workspace/harnesses/{name}/update", fields=[],
+                            title=f"Update {h.label} to {h.latest}?",
+                            body=f"Runs {h.command_text} on this computer. Running {h.label} sessions keep the old"
+                                 " version until you restart them.",
+                            confirm=f"Update {h.label}", cancel="Not now", cancel_href=_ABOUT, nav="workspace")
+    said = await asyncio.to_thread(harness_update.apply, h)
+    return back(_ABOUT, err=said) if "update failed" in said else back(_ABOUT, msg=said)
 
 
 @router.post("/workspace/addons/{name}/enable")

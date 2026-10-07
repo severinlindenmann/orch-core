@@ -11,6 +11,9 @@ AGENT_ENV_VARS = ("ORCH_HOME", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "ORCH_HAR
 def _clean_env(monkeypatch, tmp_path_factory):
     for var in AGENT_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    # A core update sets ORCH_UPDATE_CONTINUE in os.environ itself (for its re-exec). Deleting it here also removes it
+    # again after the test, so it never reaches a later test in the same process (seen with pytest -n auto).
+    monkeypatch.delenv("ORCH_UPDATE_CONTINUE", raising=False)
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path_factory.mktemp("orch-state")))
     monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)

@@ -95,15 +95,15 @@ def test_log_state_sections(ws, aops, hops, put):
 
 def test_link(ws, aops, put):
     tid = put("in-progress")
-    with pytest.raises(UsageError):
-        aops.link(tid, branch="feature/x")  # a branch needs --repo; a PR defaults to the workspace repo (#14)
+    aops.link(tid, branch="feature/x")  # --repo defaults to the workspace's only repo (#14, #214)
+    assert store.load(ws, tid)[1].meta["branches"] == {"harness": "feature/x"}
     aops.link(tid, repo="hub", pr="https://x/pr/1", branch="feature/L-1")
     aops.link(tid, repo="hub", pr="https://x/pr/1")  # idempotent
     aops.link(tid, external="TIX-17")
     aops.link(tid, external="tix-17")
     m = store.load(ws, tid)[1].meta
     assert m["prs"] == [{"repo": "hub", "url": "https://x/pr/1", "state": "unknown"}]
-    assert m["branches"] == {"hub": "feature/L-1"} and m["repos"] == ["hub"]
+    assert m["branches"] == {"harness": "feature/x", "hub": "feature/L-1"} and m["repos"] == ["harness", "hub"]
     assert [x["key"] for x in m["external"]] == ["TIX-17"]
 
 

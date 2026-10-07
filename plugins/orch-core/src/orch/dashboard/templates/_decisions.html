@@ -83,10 +83,11 @@
   </form>
 </details>
 {% else %}
-<form method="post" action="/t/{{ d.ticket }}/answer" enctype="multipart/form-data" class="stack decision-answer" data-composer data-delayed-send="{{ send_label }}">
+<form method="post" action="/t/{{ d.ticket }}/answer" class="stack decision-answer" data-delayed-send="{{ send_label }}">
   <input type="hidden" name="qid" value="{{ q.id }}"><input type="hidden" name="qhash" value="{{ q.hash }}">
   <input type="hidden" name="next" value="{{ back_to }}">
-  {{ ui.composer("ans-" ~ d.ticket ~ "-" ~ q.id, "Your answer", "Your answer", none, field="value", rows=2) }}
+  <label for="ans-{{ d.ticket }}-{{ q.id }}">Your answer</label>
+  <input id="ans-{{ d.ticket }}-{{ q.id }}" name="value" required>
   <button type="submit" class="btn">Send answer</button>
 </form>
 {% endif %}

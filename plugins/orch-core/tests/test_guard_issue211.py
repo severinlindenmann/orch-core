@@ -360,6 +360,48 @@ def test_plain_words_after_orch_stay_allowed(ws):
     _check(ws, 'orch -C "$d" show L-0001', True)
 
 
+CONFIG_INDIRECT_DENIED = [
+    "cd ~/.config/orch && cat $(ls)",
+    "cd ~/.config/orch && for f in $(ls); do cat $f; done",
+    "cd ~/.config/orch && for f in *; do cat $f; done",
+    "cd ~/.config/orch && cat <(ls)",
+    "cd ~/.config/orch && cat `ls`",
+    "cd ~/.config/orch && ls | xargs cat",
+    "cd ~/.config/orch && git add -A && git diff --cached",
+    "git -C ~/.config/orch add -A",
+    "git -C ~/.config/orch diff",
+    "diff -ruN /tmp/e ~/.config/orch",
+    "diff -r ~/.config/orch /tmp/e",
+    "diff --recursive ~/.config/orch /tmp/e",
+    "bsdtar cf - ~/.config/orch",
+    "tar cf - ~/.config/orch",
+    "zip -r /tmp/x.zip ~/.config/orch",
+    "rsync -a ~/.config/orch/ /tmp/e/",
+    "cp -r ~/.config/orch /tmp/e",
+    "rclone copy ~/.config/orch /tmp/e",
+]
+
+
+@pytest.mark.parametrize("cmd", CONFIG_INDIRECT_DENIED)
+def test_the_config_dir_is_not_readable_by_indirection(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_a_cwd_in_the_config_dir_refuses_indirection(ws):
+    from orch.dashboard.launch import config_dir
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    for cmd in ("cat $(ls)", "for f in $(ls); do cat $f; done", "cat `ls`", "ls | xargs cat", "git add -A"):
+        assert not _bash(ws, cmd, cwd=d).allow, cmd
+
+
+def test_plain_commands_in_other_folders_stay_allowed(ws):
+    _check(ws, "cat $(ls)", True)
+    _check(ws, "diff -ru /tmp/a /tmp/b", True)
+    _check(ws, "git diff --cached", True)
+    _check(ws, "tar cf - /tmp/x", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

@@ -843,7 +843,8 @@ _BRIDGE_CMD_DENIED = ("the relay tool's bridge-key and bridge-host commands hand
 _REMOTE_PY = re.compile(r"\borch\.remote\b|\bfrom\s+orch\s+import\b[^;\n]*\bremote\b")
 _CONFIG_DIR_FORMS = r"(?:\.config|\$\{?XDG_CONFIG_HOME\}?)[/\\]orch|\$\{?ORCH_STATE_DIR\}?"
 _DIR_READER = re.compile(r"\b(?:e|f)?grep\b[^;&|\n]*\s(?:-\w*[rR]|--(?:dereference-)?recursive\b)"
-                         r"|\b(?:rg|ag|ack|tar|zip|7z|rsync|scp|find|xargs|ditto|pax)\b"
+                         r"|\b(?:rg|ag|ack|tar|bsdtar|gtar|zip|unzip|zipinfo|7z|7za|7zr|rsync|rclone|scp|find|xargs|ditto|pax|cpio)\b"
+                         r"|\bdiff\b[^;&|\n]*\s-\w*r|\bdiff\b[^;&|\n]*\s--recursive\b"
                          r"|\bcp\s+(?:-\w+\s+)*-\w*[rRa]|\bcp\b[^;&|\n]*\s--(?:recursive|archive)\b")
 _GLOB = re.compile(r"[*?\[]")
 _REVIEW = re.compile(r"\b(?:gh\s+pr\s+create|glab\s+mr\s+create|az\s+repos\s+pr\s+create)\b")
@@ -1489,7 +1490,8 @@ def _path_hits(path: str, targets: set[str]) -> bool:
 
 
 _REL_GLOB_SPLIT = re.compile(r"[\s;&|()<>]+")
-_READER_PROGS = frozenset({"rg", "ag", "ack", "tar", "zip", "7z", "rsync", "scp", "find", "xargs", "ditto", "pax"})
+_READER_PROGS = frozenset({"rg", "ag", "ack", "tar", "bsdtar", "gtar", "zip", "unzip", "zipinfo", "7z", "7za", "7zr", "rsync",
+                           "rclone", "scp", "find", "xargs", "ditto", "pax", "cpio"})
 _READER_WRAPPERS = frozenset({"sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "nice", "ionice",
                               "timeout", "stdbuf", "setsid", "sh", "bash", "zsh", "dash", "ksh"})
 
@@ -1558,9 +1560,20 @@ def _runs_dir_reader(rest: str) -> bool:
         if not words:
             continue
         if os.path.basename(words[0]) in _READER_PROGS or (
-                os.path.basename(words[0]) in ("grep", "egrep", "fgrep", "cp") and _DIR_READER.search(_unquoted(seg))):
+                os.path.basename(words[0]) in ("grep", "egrep", "fgrep", "cp", "diff") and _DIR_READER.search(_unquoted(seg))):
             return True
     return False
+
+
+_INDIRECT_RAW = re.compile(r"\$\(|`|[<>]\(")
+_INDIRECT_READ = re.compile(r"(?<![\w-])(?:for|while|until|xargs)(?![\w-])"
+                            r"|(?<![\w-])git\b[^;&|\n]*\s(?:add|diff|stash|commit|apply|bundle|status|log|show)\b")
+
+
+def _indirect_in_config(raw: str) -> bool:
+    """Run from inside the config dir itself: a substitution, process substitution, backtick, loop, xargs or a git
+    command that reads the working tree builds a listing of it, so none of them is allowed."""
+    return bool(_INDIRECT_RAW.search(raw) or _INDIRECT_READ.search(_unquoted(raw)))
 
 
 def _reads_dir_wholesale(rest: str, plain: str | None, raw_rest: str = "") -> bool:
@@ -1581,6 +1594,12 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
     import os
 
     dirs, ancestors = _config_paths()
+    if cwd:
+        try:
+            if os.path.realpath(str(cwd)) in dirs and _indirect_in_config(cmd):
+                return True  # the working directory is the config dir itself
+        except (OSError, ValueError):
+            return True
     reader = bool(_reads_a_dir(cmd) or _SYMLINK.search(cmd))
     for n, m in enumerate(_PATH_TOKEN.finditer(cmd)):
         if n > 200:
@@ -1599,6 +1618,8 @@ def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
             rest = _unquoted(cmd[m.end():])
             if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
                 return True
+            if _path_hits(path, dirs) and _indirect_in_config(cmd[m.end():]):
+                return True
     return False
 
 
@@ -1609,13 +1630,14 @@ def _reaches_pairing_keys_1(cmd: str, plain: str | None = None) -> bool:
         return True
     glob_in_dir, dir_itself = _config_dir_res(cmd)
     if glob_in_dir.search(cmd) or (dir_itself.search(cmd) and (
-            _reads_a_dir(cmd) or _SYMLINK.search(cmd))):
+            _reads_a_dir(cmd) or _SYMLINK.search(cmd)
+            or re.search(r"(?<![\w-])git\b[^;&|\n]*\s(?:add|diff|stash|commit|apply|bundle)\b", cmd))):
         return True
     for m in _CD.finditer(cmd):  # `cd ~/.config/orch && cat *` or `... && grep -r key .`
         target = next(g for g in m.groups() if g is not None)
         if dir_itself.search(target + " "):
             rest = _unquoted(cmd[m.end():])
-            if _reads_dir_wholesale(rest, plain, cmd[m.end():]):
+            if _reads_dir_wholesale(rest, plain, cmd[m.end():]) or _indirect_in_config(cmd[m.end():]):
                 return True
     return False
 

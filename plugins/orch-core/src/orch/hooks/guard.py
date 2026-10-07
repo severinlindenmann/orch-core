@@ -638,6 +638,9 @@ _ENV_UNEXPORT = re.compile(r"\bexport\s+(?:-\w*\s+)*-\w*n\w*\s+(?:\S+\s+)*?" + _
                            r"|(?<![\w-])exec\s+(?:-\w*\s+)*-\w*c\w*(?=\s|$)")
 
 
+_GIT_SHELL_ALIAS = re.compile(r"(?<![\w.-])alias\.[\w-]+\s*[=\s]\s*!")
+
+
 def _prose_view(seg: str, sole: bool = False) -> str:
     """`seg` with the quoted text that is only a message blanked: the message argument of a known command (git commit
     -m, gh --body/--title, orch log -m, ...), and, when `seg` is the whole command, the arguments of a plain echo or
@@ -2147,6 +2150,9 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
             return Decision(False, _ORCH_TMUX_DENIED)
         if _runs_human_only(seg, plain, len(all_segs) == 1):
             return Decision(False, _HUMAN_ONLY_DENIED)
+        if _GIT_WORD.search(plain) and _GIT_SHELL_ALIAS.search(seg.replace("'", "").replace('"', "")):
+            return Decision(False, "a git alias that starts with ! runs a shell command the guard cannot read: "
+                                   "run the command itself")
         if _strips_harness_env(seg, plain):
             return Decision(False, _ENV_DENIED)
         if _ADDON_ADMIN.search(plain) or _QUOTED_ADDON_ADMIN.search(seg):

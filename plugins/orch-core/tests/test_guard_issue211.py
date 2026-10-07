@@ -95,6 +95,58 @@ def test_quoted_verb_run_by_anything_stays_denied(ws, cmd):
     _check(ws, cmd, False)
 
 
+# What the shell runs outside or inside the "message" must still be inspected (parser-differential checks).
+MESSAGE_ESCAPES = [
+    'git commit -m "x" ; orch approve L-1',
+    'git commit -m "x" && orch approve L-1',
+    'git commit -m "x"\norch approve L-1',
+    'git commit -m "$(orch approve L-1)"',
+    'git commit -m "`orch approve L-1`"',
+    'git commit -m "a $(orch approve L-1) b"',
+    'gh issue create --body "x" --title "$(orch approve L-1)"',
+    'gh issue create --body "$(orch approve L-1)"',
+    'gh issue create --body "`orch approve L-1`"',
+    'git commit -m "a\\\\" ; orch approve L-1 ; \\""',
+    "git commit -m'x' ; orch approve L-1",
+    "git commit --message='x' ; orch approve L-1",
+    'git commit --message="x" ; orch approve L-1',
+    'git commit -m "x"\\\norch approve L-1',
+    "git -c alias.x='!orch approve L-1' x",
+    "git -c alias.x=!orch\\ approve\\ L-1 x",
+    'eval "$(echo orch approve L-1)"',
+    "orch log L-1 -m 'x' ; orch approve L-1",
+    'orch log L-1 -m "$(orch approve L-1)"',
+    'orch log L-1 -m "`orch approve L-1`"',
+    "orch log L-1 -m 'x'\norch approve L-1",
+    "orch log L-1 -m 'it'\"'\"'s' ; orch approve L-1",
+    "echo 'x' ; orch approve L-1",
+    "echo 'x'\n orch approve L-1",
+    "echo 'x' > f; orch approve L-1",
+    "echo 'orch approve L-1' | bash -s",
+    "echo 'orch approve L-1' > run.sh && sh run.sh",
+    "gh issue create --body 'x'; python3 -c \"import os; os.system('orch approve L-1')\"",
+    "gh issue create --body 'python' ; orch approve L-1",
+    "echo 'python' ; orch approve L-1",
+    "gh issue create --body 'x' <<EOF\norch approve L-1\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nx\nEOF\n)\"; orch approve L-1",
+    "git commit -m x$(orch approve L-1)",
+    "git commit -m \"x\"$(orch approve L-1)",
+    "git commit -m \"x\" -m \"$(orch approve L-1)\"",
+    "gh issue create --body='x' --title=\"$(orch approve L-1)\"",
+]
+
+
+@pytest.mark.parametrize("cmd", MESSAGE_ESCAPES)
+def test_message_text_does_not_hide_what_the_shell_runs(ws, cmd):
+    ws.config["git"]["agent_may"]["commit"] = True
+    _check(ws, cmd, False)
+
+
+def test_escaped_quotes_inside_one_message_are_still_one_message(ws):
+    ws.config["git"]["agent_may"]["commit"] = True
+    _check(ws, 'git commit -m "a\\" ; orch approve L-1 ; \\""', True)
+
+
 # --- 3. --help ----------------------------------------------------------------------------------------------------
 HELP_ALLOWED = [
     "orch approve --help",

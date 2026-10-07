@@ -88,7 +88,9 @@ def _ref_chip(r: dict) -> dict:
         text = r["target"]
     if r.get("label") and k != "url":
         text += f" — {r['label']}"
-    return {"kind": k, "icon": REF_ICON[k], "text": text, "url": url, "external": k in ("ext", "url"),
+    # the chip shows "AC2"; the criterion's text is its tooltip (it is printed in full in Proven)
+    short = f"AC{r['target']}" if k == "ac" else text
+    return {"kind": k, "icon": REF_ICON[k], "text": text, "short": short, "url": url, "external": k in ("ext", "url"),
             "missing": not r.get("exists", True)}
 
 
@@ -113,6 +115,8 @@ def card(view: dict, *, can_edit: bool, plan_text: str = "") -> dict:
             for t in view["tasks"]]
     return {"rows": rows, "progress": progress(view["summary"]), "segments": _segments([t["state"] for t in view["tasks"]]),
             "bar": bar(view["summary"]), "open": view["open"], "added_since": view["added_since_approval"],
+            # every task came after the plan approval: said once above the list instead of a chip on each row
+            "all_added_since": bool(rows) and view["added_since_approval"] == len(rows),
             "plan_note": bool(rows) and bool(_PLAN_CHECK.search(plan_text or "")),
             "can_edit": can_edit, "error": view.get("error")}
 

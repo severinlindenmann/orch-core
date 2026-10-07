@@ -341,8 +341,8 @@ def test_single_activity_list_and_log_behind_show_log(dash, aops):
     t = aops.new("Backup")
     aops.log(t.id, "started on it")
     html = _page(dash, t.id)
-    assert html.count('class="timeline activity"') == 1
-    details = html.split("<summary>Show log</summary>", 1)[1].split("</details>", 1)[0]
+    assert html.count('<ol class="act" ') == 1
+    details = html.split("<summary>Raw log</summary>", 1)[1].split("</details>", 1)[0]
     assert "started on it" in details
 
 

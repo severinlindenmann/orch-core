@@ -9,6 +9,7 @@ import pytest
 from orch.cli import run
 from orch.hooks.install import UNTRACKED_DIR, hook_state, install_hooks, uninstall_untracked
 from orch.onboarding import doctor
+from conftest import init_repo
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh not installed")
@@ -23,7 +24,7 @@ def _git(repo, *args, env=None):
 def _repo(parent, name):
     repo = parent / name
     repo.mkdir(parents=True)
-    assert _git(repo, "init", "-q").returncode == 0
+    init_repo(repo)
     return repo
 
 

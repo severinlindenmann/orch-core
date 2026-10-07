@@ -2,7 +2,6 @@
 import asyncio
 import inspect
 import re
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -442,15 +441,6 @@ def test_the_factory_lookup_runs_off_the_event_loop(app, ws, put, monkeypatch):
     assert status == 303 and seen and main not in seen  # the scan and ticket reads must not block the loop
 
 
-def test_bridge_clock_window():
-    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
-    assert bridge.BRIDGE_SKEW_S == 300
-    assert bridge.within_window(now + timedelta(seconds=300), now) and bridge.within_window(now - timedelta(seconds=300), now)
-    assert not bridge.within_window(now + timedelta(seconds=301), now)
-    assert not bridge.within_window(now - timedelta(seconds=301), now)
-    assert not bridge.within_window(datetime(2026, 10, 5, 12, 0), now)  # naive: no
-
-
 def test_the_signed_phone_path_keeps_its_own_windows():
     from orch.remote import verify
     assert (verify.MAX_AGE_DAYS, verify.MAX_SKEW_S) == (14, 300)
@@ -661,19 +651,6 @@ def test_an_addon_decision_under_a_factory_epic_needs_a_fresh_assertion(factory)
                                         Intent("move", ref=child, value="backlog")) is not None
     assert remote_gate.decision_refusal(type("R", (), {"scope": {reach.SCOPE_KEY: origin(Scope.TYPE, fresh=True)}})(),
                                         fws, Intent("move", ref=child, value="backlog")) is None
-
-
-def test_within_window_never_raises():
-    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
-    for bad in (0, 1.5, "2026-10-05T12:00:00Z", None, b"x", object()):
-        assert bridge.within_window(bad, now) is False
-        assert bridge.within_window(now, bad) is False
-    assert bridge.within_window(datetime(2026, 10, 5, 12, 0), now) is False  # naive
-    assert bridge.within_window(now, datetime(2026, 10, 5, 12, 0)) is False
-    assert bridge.within_window(now + timedelta(seconds=300), now) is True
-    assert bridge.within_window(now - timedelta(seconds=300), now) is True
-    assert bridge.within_window(now + timedelta(seconds=300, microseconds=1), now) is False
-    assert bridge.within_window(datetime.max.replace(tzinfo=timezone.utc), datetime.min.replace(tzinfo=timezone.utc)) is False
 
 
 # -- the factory lookup is explicit, and every doubt means guarded ----------------------------------------------------

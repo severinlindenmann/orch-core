@@ -874,9 +874,26 @@ def _words(seg: str) -> list[str]:
     return words
 
 
+# `orch` subcommands that only read or change tickets: none runs a file or stdin as code, so a line that writes a note
+# with a heredoc and then calls them (`cat > plan.md <<'EOF' … EOF && orch section set … --file plan.md`) still only
+# writes prose. Anything else (`serve`, `checks`, `init`, `update`, the human-only verbs) keeps the body judged as code.
+_DATA_ONLY_ORCH = frozenset({"section", "task", "show", "list", "search", "path", "next", "related", "claim", "release",
+                             "log", "link", "ask", "new", "artifact", "label", "state", "due", "version", "index"})
+
+
+def _data_only_command(words: list[str]) -> bool:
+    first = words[:1] or [""]
+    if first[0] in _DATA_ONLY_WORDS:
+        return True
+    if first[0] == "orch":
+        sub = next((w for w in words[1:] if not w.startswith("-")), "")
+        return sub in _DATA_ONLY_ORCH
+    return False
+
+
 def _all_data_only(main: str) -> bool:
-    """Every simple command of `main` starts with a data-only word (see _DATA_ONLY_WORDS)."""
-    return all((_words(main[a:b])[:1] or [""])[0] in _DATA_ONLY_WORDS for a, b in _segment_spans(main))
+    """Every simple command of `main` starts with a data-only word (see _DATA_ONLY_WORDS, _DATA_ONLY_ORCH)."""
+    return all(_data_only_command(_words(main[a:b])) for a, b in _segment_spans(main))
 
 
 def _is_cat_heredoc(payload: str) -> bool:
@@ -1292,7 +1309,51 @@ def _path_hits(path: str, targets: set[str]) -> bool:
         return False
 
 
-def _path_tokens_reach(cmd: str, cwd) -> bool:
+_REL_GLOB_SPLIT = re.compile(r"[\s;&|()<>]+")
+_READER_PROGS = frozenset({"rg", "ag", "ack", "tar", "zip", "7z", "rsync", "scp", "find", "xargs", "ditto", "pax"})
+_READER_WRAPPERS = frozenset({"sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "nice", "ionice",
+                              "timeout", "stdbuf", "setsid", "sh", "bash", "zsh", "dash", "ksh"})
+
+
+_RUNS_ITS_ARGS = frozenset({"awk", "gawk", "mawk", "sed", "ssh", "watch", "expect", "script", "osascript", "xargs"})
+
+
+def _relative_glob(plain: str) -> bool:
+    """`plain` (quoted text blanked) has an unquoted word with a wildcard that the shell expands in the working
+    directory: not an option, an absolute or `~`/`$` path (judged on its own), or a URL's `?`."""
+    return any(_GLOB.search(w) and not w.startswith(("/", "~", "$", "-")) and "://" not in w
+               for w in _REL_GLOB_SPLIT.split(plain))
+
+
+def _runs_dir_reader(rest: str) -> bool:
+    """A command of `rest` is a recursive reader or archiver as the program it runs (after `sudo`, `env`, `VAR=`):
+    `find`, `tar`, `grep -r`, `cp -r`. The word as an argument (`databricks bundle find`) or inside quoted text is not."""
+    if _HUMAN_INTERP.search(rest):
+        return True  # an interpreter's strings cannot be told from the commands it runs: any reader word counts
+    for seg in _command_segments(rest):
+        words, _ = _command(seg)
+        if words and os.path.basename(words[0]) in _RUNS_ITS_ARGS:
+            return True
+        while words and os.path.basename(words[0]) in _READER_WRAPPERS:
+            words = [w for w in words[1:] if not w.startswith("-") and not (words[0] == "env" and "=" in w)]
+        if not words:
+            continue
+        if os.path.basename(words[0]) in _READER_PROGS or (
+                os.path.basename(words[0]) in ("grep", "egrep", "fgrep", "cp") and _DIR_READER.search(_unquoted(seg))):
+            return True
+    return False
+
+
+def _reads_dir_wholesale(rest: str, plain: str | None) -> bool:
+    """After a `cd` into the config dir or a dir above it, `rest` expands a relative wildcard or runs a recursive
+    reader. `plain` is the whole command with quoted text blanked, from before the quote-stripping normalisation, so
+    text only a quoted string held (a jq filter, a URL, prose) is not read as a glob or a reader."""
+    if plain is None:
+        return bool(_GLOB.search(rest) or _DIR_READER.search(rest))
+    return _relative_glob(plain) or (bool(_DIR_READER.search(plain)) and _runs_dir_reader(rest))
+
+
+def _path_tokens_reach(cmd: str, cwd, plain: str | None = None) -> bool:
     """Every path-like word placed as an absolute, normalised path (see _expand_path_token): a glob right inside
     the config dir or a dir above it, or such a dir as the operand of a recursive reader or `ln -s`, or as a `cd`
     target followed by a glob or a recursive reader. Catches `~/.config/./orch/*`, `~/.config/orch/..`, and
@@ -1300,7 +1361,7 @@ def _path_tokens_reach(cmd: str, cwd) -> bool:
     import os
 
     dirs, ancestors = _config_paths()
-    reader = bool(_DIR_READER.search(cmd) or _SYMLINK.search(cmd))
+    reader = bool((_DIR_READER.search(cmd) and _runs_dir_reader(cmd)) or _SYMLINK.search(cmd))
     for n, m in enumerate(_PATH_TOKEN.finditer(cmd)):
         if n > 200:
             break
@@ -1316,24 +1377,25 @@ def _path_tokens_reach(cmd: str, cwd) -> bool:
         path = _expand_path_token(target, cwd)
         if path is not None and _path_hits(path, ancestors):
             rest = _unquoted(cmd[m.end():])
-            if _GLOB.search(rest) or _DIR_READER.search(rest):
+            if _reads_dir_wholesale(rest, plain):
                 return True
     return False
 
 
-def _reaches_pairing_keys_1(cmd: str) -> bool:
+def _reaches_pairing_keys_1(cmd: str, plain: str | None = None) -> bool:
     if _REMOTE_KEYS.search(cmd):
         return True
     if _INTERPRETER.search(cmd) and _REMOTE_PY.search(cmd):
         return True
     glob_in_dir, dir_itself = _config_dir_res(cmd)
-    if glob_in_dir.search(cmd) or (dir_itself.search(cmd) and (_DIR_READER.search(cmd) or _SYMLINK.search(cmd))):
+    if glob_in_dir.search(cmd) or (dir_itself.search(cmd) and (
+            (_DIR_READER.search(cmd) and _runs_dir_reader(cmd)) or _SYMLINK.search(cmd))):
         return True
     for m in _CD.finditer(cmd):  # `cd ~/.config/orch && cat *` or `... && grep -r key .`
         target = next(g for g in m.groups() if g is not None)
         if dir_itself.search(target + " "):
             rest = _unquoted(cmd[m.end():])
-            if _GLOB.search(rest) or _DIR_READER.search(rest):
+            if _reads_dir_wholesale(rest, plain):
                 return True
     return False
 
@@ -1358,10 +1420,11 @@ def _reaches_pairing_keys(cmd: str, cwd=None) -> bool:
 
     The file's name counts anywhere in the text. The path rules skip text that is only data (see _without_data_text);
     a heredoc an interpreter or shell runs is code and stays judged, quoted strings in it included."""
-    if any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd)):
+    if any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(_without_message_text(cmd))):
         return True
     text = _without_data_text(cmd)
-    return any(_reaches_pairing_keys_1(c) or _path_tokens_reach(c, cwd) for c in _key_check_candidates(text))
+    plain = _unquoted(text)
+    return any(_reaches_pairing_keys_1(c, plain) or _path_tokens_reach(c, cwd, plain) for c in _key_check_candidates(text))
 
 
 _GIT_MESSAGE_CMD = re.compile(r"git(?:\s+-[Cc]\s+(?:\"[^\"]*\"|'[^']*'|\S+))*\s+commit\b")
@@ -1370,11 +1433,11 @@ _GH_TEXT_CMD = re.compile(r"gh\s+(?:pr|issue|release)\s+(?:create|edit|comment)\
 _GH_TEXT_ARG = re.compile(r"""((?:^|\s)(?:-t|--title|-b|--body)(?:=|\s+))('[^']*'|"[^"$`\\]*")""")
 
 
-def _without_data_text(cmd: str) -> str:
+def _without_data_text(cmd: str, heredocs: bool = True) -> str:
     """`cmd` without the text that is only data: data heredoc bodies (see _code_text), and the quoted message of a
     `git commit` or title/body of a `gh` create/edit/comment that starts its simple command. A double-quoted string
-    with `$`, a backtick or a backslash stays, since the shell expands it."""
-    code = _code_text(cmd)
+    with `$`, a backtick or a backslash stays, since the shell expands it. `heredocs=False` leaves heredoc bodies in."""
+    code = _code_text(cmd) if heredocs else cmd
     out, last = [], 0
     for a, b in _segment_spans(code):
         seg = code[a:b]
@@ -1386,6 +1449,12 @@ def _without_data_text(cmd: str) -> str:
         out += [code[last:a], seg]
         last = b
     return "".join(out) + code[last:]
+
+
+def _without_message_text(cmd: str) -> str:
+    """`cmd` without the quoted message or title/body of a `git commit` / `gh` create, edit or comment, heredoc
+    bodies kept: a name only mentioned in text someone will read is not a file access."""
+    return _without_data_text(cmd, heredocs=False)
 
 
 def _pairing_key_path(raw: str, *, dirs_too: bool = False) -> bool:
@@ -1739,7 +1808,9 @@ def _cwd_in_state(ws, cwd) -> bool:
 
 def _ticket_file_re(ws) -> re.Pattern:
     prefix = re.escape(str(ws.config["id"]["prefix"]))
-    return re.compile(rf"\b{prefix}-\d+[-\w.]*\.md\b")
+    # not a note kept in the workspace's scratch folders (`orchestrator/temporary/L-0004-plan.md`): tickets live under
+    # tickets/<status>/, and a path that goes through tickets/ or .state/ is judged by _names_state_path
+    return re.compile(rf"(?<!temporary/)(?<!artifacts/)\b{prefix}-\d+[-\w.]*\.md\b")
 
 
 # Commands that can neither move, link, copy a link nor change into a folder, nor run another program: with only these

@@ -247,6 +247,55 @@ def test_message_text_counts_only_when_the_message_command_is_alone(ws, cmd):
     _check(ws, cmd, False)
 
 
+SCRATCH_STEP_1 = [
+    "ln -sfn tickets/./open orchestrator/temporary",
+    "ln -sfn tickets//open orchestrator/temporary",
+    "ln -s ../tickets/open orchestrator/artifacts",
+    "ln -sfn orchestrator/tickets/open orchestrator/temporary",
+    "ln -s x orchestrator/temporary",
+    "ln -sfn x orchestrator/artifacts/",
+    "mv orchestrator/temporary orchestrator/t2",
+    "cp -r orchestrator/tickets/open orchestrator/temporary",
+    "cp -R x orchestrator/artifacts",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCH_STEP_1)
+def test_linking_or_moving_a_scratch_folder_is_refused(ws, cmd):
+    _check(ws, cmd, False)
+
+
+SCRATCH_STEP_2 = [
+    "echo x > orchestrator/temporary/L-0001-x.md",
+    "cat > orchestrator/temporary/L-0001-x.md <<'EOF'\nx\nEOF",
+    "cp /tmp/x.md orchestrator/temporary/L-0001-x.md",
+    "mv /tmp/x.md orchestrator/artifacts/L-0001-x.md",
+    "tee orchestrator/temporary/L-0001-x.md < /tmp/x.md",
+]
+
+
+@pytest.mark.parametrize("cmd", SCRATCH_STEP_2)
+def test_a_symlinked_scratch_folder_does_not_write_tickets(ws, cmd):
+    tickets = ws.tickets_dir
+    (tickets / "open").mkdir(parents=True, exist_ok=True)
+    tmp = ws.root / "orchestrator" / "temporary"
+    arts = ws.root / "orchestrator" / "artifacts"
+    for link in (tmp, arts):
+        if link.is_symlink() or link.exists():
+            if link.is_symlink() or link.is_file():
+                link.unlink()
+            else:
+                link.rmdir()
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(tickets / "open")
+    _check(ws, cmd, False)
+
+
+def test_a_real_scratch_folder_still_takes_notes(ws):
+    (ws.root / "orchestrator" / "temporary").mkdir(parents=True, exist_ok=True)
+    _check(ws, "echo x > orchestrator/temporary/L-0001-x.md", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

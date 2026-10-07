@@ -1998,7 +1998,24 @@ _SCRATCH_NOTE = re.compile(r"(?:[\w.+@~-]+/)*orchestrator/(?:temporary|artifacts
 _PATH_SPECIAL = re.compile(r"[*?\[{$`'\"\\]")
 
 
-def _names_ticket_file(ws, cmd: str) -> bool:
+def _scratch_is_real(ws, word: str, cwd) -> bool:
+    """The note's folder, resolved through every symlink against the working directory, is outside the ticket and state
+    folders. A folder that cannot be resolved gives no exemption."""
+    try:
+        base = Path(str(cwd)) if cwd else Path(ws.root)
+        base = base if base.is_absolute() else Path(ws.root) / base
+        w = Path(os.path.expanduser(word))
+        w = w if w.is_absolute() else base / w
+        parent = Path(os.path.realpath(w.parent))
+        full = parent / w.name
+        if full.is_symlink():
+            return False
+        return not (_under(parent, ws.tickets_dir.resolve()) or _under(parent, ws.state_dir.resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _names_ticket_file(ws, cmd: str, cwd=None) -> bool:
     """`cmd` names a file called like a ticket (`L-0004-x.md`), except one spelled out in full under
     orchestrator/temporary or orchestrator/artifacts. When such a note is named, any other path word of the line
     with a wildcard, brace, variable or quote could still lead into the ticket folder: that counts as a hit."""
@@ -2009,7 +2026,7 @@ def _names_ticket_file(ws, cmd: str) -> bool:
         word = _PREFIX_ASSIGN.sub("", cmd[a:b])
         if len(word) > 2 and word[0] == word[-1] and word[0] in "'\"" and not _PATH_SPECIAL.search(word[1:-1]):
             word = word[1:-1]
-        if _SCRATCH_NOTE.fullmatch(word) and ".." not in word.split("/"):
+        if _SCRATCH_NOTE.fullmatch(word) and ".." not in word.split("/") and _scratch_is_real(ws, word, cwd):
             notes.add((a, b))
             continue
         return True
@@ -2136,12 +2153,25 @@ def _names_state_path(ws, cmd: str, cwd) -> bool:
     return False
 
 
+_PATH_NOISE = re.compile(r"/(?:\.?/)+")
+_LINKS_SCRATCH = re.compile(r"(?:^|[\s;&|(`'\"])(?:ln|mv|cp\s+(?:-\w*[rRa]\w*)|install)\b[^;&|\n]*"
+                            r"(?<![\w.-])(?:temporary|artifacts)(?:/?['\"]?(?=\s|$|[;&|)])|/\.?/)")
+
+
+def _links_scratch(cmd: str) -> bool:
+    """A link, move or recursive copy whose operand is a scratch folder (orchestrator/temporary or artifacts): the
+    folder may become a link into the tickets, so notes written through it later are not notes."""
+    return any(_LINKS_SCRATCH.search(seg) for seg in _command_segments(cmd))
+
+
 def _touches_state(ws, cmd: str, cwd) -> bool:
+    cmd = _PATH_NOISE.sub("/", cmd)  # `tickets/./open` and `tickets//open` are `tickets/open`
     return bool(
         _names_state_path(ws, cmd, cwd)
         or _cwd_in_state(ws, cwd)
         or _cd_targets_state(cmd)
-        or _names_ticket_file(ws, cmd)
+        or _names_ticket_file(ws, cmd, cwd)
+        or _links_scratch(cmd)
     )
 
 
@@ -2217,13 +2247,16 @@ def _redirect_targets(seg: str) -> list[str]:
     return out
 
 
+_LN_CMD = re.compile(r"(?:^|[\s;&|(`])ln\b")  # a link into or out of the state folders is a change to what they are
+
+
 def _state_write(ws, cmd: str, code: str, cwd) -> bool:
     """The command names the ticket or state files and writes. Judged by command when every command that names them
     is a plain reader whose own redirects stay outside them; a cd, a working directory, a variable naming them, or
     anything that feeds a later command (xargs, loops, eval) keeps the whole-line test."""
     if not _touches_state(ws, code, cwd):
         return False
-    if not _is_write(cmd):
+    if not (_is_write(cmd) or _LN_CMD.search(_unquoted(code))):
         return False
     if _cwd_in_state(ws, cwd) or _cd_targets_state(code) or _STATE_INDIRECT.search(_unquoted(code)):
         return True

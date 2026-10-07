@@ -402,6 +402,39 @@ def test_plain_commands_in_other_folders_stay_allowed(ws):
     _check(ws, "tar cf - /tmp/x", True)
 
 
+FD_REDIRECTS_DENIED = [
+    "cat nonexistent 2>orchestrator/tickets/open/L-0001-x.md",
+    "cat x 1>orchestrator/tickets/open/L-0001-x.md",
+    "printf x 3>orchestrator/tickets/open/L-0001-x.md",
+    "cat x 2>>orchestrator/tickets/open/L-0001-x.md",
+    "cat x &>orchestrator/tickets/open/L-0001-x.md",
+    "cat x &>>orchestrator/tickets/open/L-0001-x.md",
+    "cat x >|orchestrator/tickets/open/L-0001-x.md",
+    "cat x >& orchestrator/tickets/open/L-0001-x.md",
+    "cat x {fd}>orchestrator/tickets/open/L-0001-x.md",
+    "exec {fd}>orchestrator/tickets/open/L-0001-x.md",
+    "cat x 3<>orchestrator/tickets/open/L-0001-x.md",
+    "cat x 2> orchestrator/.state/err",
+    "cat orchestrator/.state/x 2>orchestrator/.state/y",
+    "cat orchestrator/.state/x 2>$E",
+    "cat x 1>orchestrator/tickets/open/L-0001-x.md 2>/dev/null",
+    "cat x >> /dev/null >> orchestrator/tickets/open/L-0001-x.md",
+]
+
+
+@pytest.mark.parametrize("cmd", FD_REDIRECTS_DENIED)
+def test_fd_redirects_into_tickets_and_state_are_writes(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_harmless_redirects_stay_allowed(ws):
+    _check(ws, "cat orchestrator/.state/x 2>/dev/null", True)
+    _check(ws, "cat orchestrator/.state/x 2>&1", True)
+    _check(ws, "cat orchestrator/.state/x &>/dev/null", True)
+    _check(ws, "cat orchestrator/.state/x 2>/tmp/err.txt", True)
+    _check(ws, "cat orchestrator/.state/x > /dev/null 2>&1", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

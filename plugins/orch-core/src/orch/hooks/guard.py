@@ -864,7 +864,8 @@ _OTHER_WRITE = re.compile(
 # Any real output redirect (not to /dev/null, not a bare fd dup like 2>&1 or >&2). Checked against
 # the command with quoted substrings blanked out, so a literal ">" inside quotes (e.g. `grep ">"
 # file`) is not mistaken for a shell redirect.
-_OUTPUT_REDIRECT = re.compile(r"(?<![0-9&])>{1,2}(?!\s*(?:/dev/null\b|&))")
+# `>f`, `>>f`, `>|f`, `N>f` (any descriptor, `{var}>f` too), `&>f`, `>&f` and `<>f`; not `2>&1`, `>&2`, `>(cmd)` or /dev/null.
+_OUTPUT_REDIRECT = re.compile(r"(?:&>>?|(?<![>&<])(?:>>|>(?!>))\|?|<>)(?!\s*(?:/dev/null\b|&[0-9-]|\())")
 _QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 _INTERP_WRITE = re.compile(r"\b(?:python3?|perl|ruby|node)\s+-[ce]\b")
 # `sh -c "..."`, `bash -lc '...'`, `eval "..."`: the quoted payload is itself a command line.
@@ -2308,8 +2309,11 @@ def _redirect_targets(seg: str) -> list[str]:
     """Words after an output redirect in `seg` (quoted text aside)."""
     flat = _unquoted(seg)
     out = []
-    for m in re.finditer(r"(?<![0-9&])(?:&>>?|>>?)\|?\s*(&?[^\s;&|<>()]*)", flat):
-        out.append(m.group(1))
+    for m in re.finditer(r"(?:&>>?|(?<![>&<])(?:>>|>(?!>))\|?|<>)\s*(&?\s*[^\s;&|<>()]*)", flat):
+        target = m.group(1)
+        if re.fullmatch(r"&[0-9-]", target) or target == "/dev/null":
+            continue
+        out.append(target)
     return out
 
 

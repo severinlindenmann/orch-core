@@ -2283,6 +2283,13 @@ def _links_scratch(ws, cmd: str, cwd) -> bool:
     """A link, move or recursive copy with an operand that resolves to the workspace's orchestrator/temporary or
     orchestrator/artifacts folder (or, unreadable, names them): the folder may become a link into the tickets, so notes
     written through it later are not notes. A bare `artifacts` or `temporary` elsewhere is just a folder."""
+    try:
+        return _links_scratch_1(ws, cmd, cwd)
+    except (OSError, ValueError, RuntimeError):
+        return True  # a path that cannot be resolved (a NUL byte, a loop) is not shown to be elsewhere
+
+
+def _links_scratch_1(ws, cmd: str, cwd) -> bool:
     scratch = {os.path.realpath(str(d)) for d in (ws.temporary_dir, ws.artifacts_dir)}
     scratch |= {str(Path(ws.root) / "orchestrator" / n) for n in ("temporary", "artifacts")}
     base = os.path.realpath(str(cwd)) if cwd else os.path.realpath(str(ws.root))
@@ -2725,6 +2732,8 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
             d = _bash(ws, decoded, cwd, _decoded=True, _joined=_joined)  # judged as the shell would run it, too
             if not d.allow:
                 return d
+    if "\x00" in cmd:  # a shell word cannot hold a NUL byte; the path checks below cannot resolve one
+        return Decision(False, "a NUL byte in a command is not allowed")
     _SCRATCH_LINE_OK.set(_scratch_line_safe(cmd, cwd))
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))

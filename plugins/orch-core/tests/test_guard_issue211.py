@@ -644,6 +644,29 @@ def test_no_interpreter_or_assignment_on_a_scratch_note_line(ws, cmd):
     _check(ws, cmd, False)
 
 
+NUL_DENIED = [
+    "ln -s a b\x00",
+    "mv x\x00 y",
+    "cp -r a\x00 b",
+    "ln -s a\x00 orchestrator/temporary",
+    "cat orchestrator/.state/x\x00",
+    "echo x > orchestrator/temporary/L-0001-a\x00.md",
+    "ls \x00",
+    "cd ~/.config/orch\x00 && cat *",
+]
+
+
+@pytest.mark.parametrize("cmd", NUL_DENIED)
+def test_a_nul_byte_is_a_deny_not_a_crash(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_links_scratch_treats_an_unresolvable_path_as_touching_state(ws):
+    from orch.hooks.guard import _links_scratch
+    for cmd in ("ln -s a b\x00", "mv x\x00 y", "cp -r a\x00 b"):
+        assert _links_scratch(ws, cmd, str(ws.root)) is True, cmd
+
+
 def test_the_same_commands_as_separate_calls_are_each_allowed(ws):
     (ws.root / "orchestrator" / "temporary").mkdir(parents=True, exist_ok=True)
     _check(ws, NOTE, True)

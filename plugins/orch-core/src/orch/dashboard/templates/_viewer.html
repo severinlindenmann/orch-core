@@ -1,0 +1,60 @@
+{#- One linked file of a ticket, as the viewer shows it (routes_ticket.artifact_viewer): the drawer's content
+    (app.js loads it with ?partial=1 into a <dialog>) and the body of viewer.html without JS. Everything here is
+    escaped text; Markdown goes through the dashboard's renderer with the ticket's artifact scope. -#}
+{% import "_artifacts.html" as art %}
+<div class="viewer" data-viewer-root>
+  <header class="viewer-head">
+    {{ art.file_icon(item) }}
+    <div class="viewer-title">
+      <h2 id="viewer-title">{{ item.label }}</h2>
+      <p class="muted">{{ item.text }}{% if item.size %} · {{ item.size }}{% endif %}
+        {%- if item.ac %} · <a class="lnk" href="/t/{{ t.id }}#proven">AC{{ item.ac }}</a>{% endif %}
+        {%- if item.task %} · <a class="lnk" href="/t/{{ t.id }}#task-{{ item.task }}">{{ item.task }}</a>{% endif %}
+        {%- if body.mode == "text" %} · {{ body.total }} line{{ "s" if body.total != 1 }}{% endif %}</p>
+    </div>
+    <div class="cluster viewer-actions">
+      {% if item.href %}<a class="btn" href="{{ item.href }}" target="_blank" rel="noopener">Open raw ↗</a>{% endif %}
+      {% if body.mode == "text" %}<button type="button" class="btn" data-viewer-wrap aria-pressed="true">Wrap</button>{% endif %}
+      {% if partial %}<button type="button" class="btn" data-viewer-close aria-label="Close the viewer">✕</button>
+      {% else %}<a class="btn" href="/t/{{ t.id }}#artifacts">Back to {{ t.id }}</a>{% endif %}
+    </div>
+  </header>
+
+  <div class="viewer-body viewer-mode-{{ body.mode }}">
+    {% if body.mode == "md" %}
+    <div class="viewer-md">{{ body.text|md|safe }}</div>
+    {% elif body.mode == "text" %}
+    <ol class="viewer-lines" aria-label="{{ item.text }}, {{ body.total }} lines">
+      {% for line in body.lines %}<li id="L{{ loop.index }}"><span class="ln" aria-hidden="true">{{ loop.index }}</span><code>{{ line }}</code></li>{% endfor %}
+    </ol>
+    {% if body.cut %}<p class="muted viewer-cut">The first {{ body.lines|length }} of {{ body.total }} lines. <a class="lnk" href="{{ item.href }}" target="_blank" rel="noopener">Open raw ↗</a> for the rest.</p>{% endif %}
+    {% elif body.mode == "table" %}
+    <div class="viewer-table-wrap">
+      <table class="viewer-table">
+        {% if body.head %}<thead><tr>{% for c in body.head %}<th scope="col">{{ c }}</th>{% endfor %}</tr></thead>{% endif %}
+        <tbody>{% for r in body.rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% if body.cut %}<p class="muted viewer-cut">The first {{ body.rows|length }} rows. <a class="lnk" href="{{ item.href }}" target="_blank" rel="noopener">Open raw ↗</a> for all.</p>{% endif %}
+    {% elif body.mode == "image" %}
+    <figure class="viewer-image"><img src="{{ item.href }}" alt="{{ item.label }}" decoding="async"></figure>
+    {% if images|length > 1 %}
+    <ul class="plain viewer-strip" aria-label="Images of {{ t.id }}">
+      {% for i in images %}<li><a href="{{ i.view }}" data-viewer{% if i.text == item.text %} aria-current="true"{% endif %} aria-label="{{ i.label }}"><img src="{{ i.href }}" alt="" loading="lazy" decoding="async"></a></li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% elif body.mode == "changed" %}
+    <p>This file changed since it was linked in the ticket, so it is not shown. The agent links the new version with <code>orch artifact add {{ t.id }} {{ item.text }} --replace</code>.</p>
+    {% elif body.mode == "large" %}
+    <p>This file is too large to show here. <a class="lnk" href="{{ item.href }}" target="_blank" rel="noopener">Open raw ↗</a></p>
+    {% else %}
+    <p>This file is not text. <a class="lnk" href="{{ item.href }}" target="_blank" rel="noopener">Open raw ↗</a></p>
+    {% endif %}
+  </div>
+
+  <footer class="viewer-foot">
+    {% if prev %}<a class="btn" href="{{ prev.view }}" data-viewer data-viewer-prev rel="prev">← <span class="viewer-step">{{ prev.label }}</span></a>{% else %}<span></span>{% endif %}
+    <span class="muted">{{ index }} of {{ total }}{% if partial %} · ← → step · Esc closes{% endif %}</span>
+    {% if next %}<a class="btn" href="{{ next.view }}" data-viewer data-viewer-next rel="next"><span class="viewer-step">{{ next.label }}</span> →</a>{% else %}<span></span>{% endif %}
+  </footer>
+</div>

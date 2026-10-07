@@ -41,7 +41,7 @@ def test_today_offers_no_verdict_for_a_testing_ticket_with_changed_requirements(
     assert "Accept, mark done" not in dash.get("/").text
     page = dash.get(f"/t/{tid}").text
     assert "Accept, mark done" not in page
-    assert "Re-approve requirements" in page and "Requirements changed after approval" in page
+    assert "Re-approve requirements" in page and "changed since you approved it" in page
 
 
 def test_epic_verdict_is_not_offered_while_a_child_changed(dash, ws, aops, hops, close_tasks):

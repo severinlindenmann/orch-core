@@ -168,13 +168,21 @@ def test_your_move_per_needs_kind(kind, detail, want):
     assert {k: move["action"].get(k) for k in want} == want
 
 
-def test_reapprove_requirements_outside_backlog_offers_move_back():
+def test_reapprove_requirements_outside_backlog_is_approved_in_place():
     from orch.dashboard.data.steps import your_move
     t = _approved(_t("open", Requirements="- r", Acceptance_criteria="- a"), "requirements")
     t.set_section("Requirements", "- r changed")
     move = your_move(t, [_need("re-approve", "requirements")], moves=("backlog",))
-    assert move["action"] == {"kind": "move", "gate": "requirements", "to": "backlog", "label": "Move back to backlog"}
-    assert move["text"].startswith("Requirements changed after approval")
+    assert move["action"]["kind"] == "approve" and move["action"]["gate"] == "requirements"
+    assert move["action"]["label"] == "Re-approve requirements"
+
+
+def test_reapprove_requirements_hint_never_says_back_to_backlog():
+    from orch.dashboard.data.steps import reapprove_hint
+    t = _approved(_t("in-progress", Requirements="- r", Acceptance_criteria="- a"), "requirements")
+    t.set_section("Requirements", "")
+    hint = reapprove_hint(t, "requirements", ("backlog",))
+    assert "backlog" not in hint["text"] and hint["action"]["kind"] == "hint"
 
 
 def test_reapprove_plan_in_testing_lets_the_verdict_lead():
@@ -333,8 +341,8 @@ def test_single_activity_list_and_log_behind_show_log(dash, aops):
     t = aops.new("Backup")
     aops.log(t.id, "started on it")
     html = _page(dash, t.id)
-    assert html.count('class="timeline activity"') == 1
-    details = html.split("<summary>Show log</summary>", 1)[1].split("</details>", 1)[0]
+    assert html.count('<ol class="act" ') == 1
+    details = html.split("<summary>Raw log</summary>", 1)[1].split("</details>", 1)[0]
     assert "started on it" in details
 
 
@@ -389,15 +397,13 @@ def test_testing_with_edited_plan_offers_neither_approve_nor_accept(dash, ws, pu
     assert "Plan changed after approval" in bar and f'action="/t/{tid}/request-changes"' in bar
 
 
-def test_open_with_edited_requirements_offers_move_back(dash, ws, put):
+def test_open_with_edited_requirements_offers_reapproval_in_place(dash, ws, put):
     tid = put("open", sections={"Requirements": "- r", "Acceptance criteria": "- a"})
     _store_edit(ws, tid, approve=("requirements",))
     _store_edit(ws, tid, Requirements="- r changed")
     html = _page(dash, tid)
-    bar = _bar(html)
-    assert f'action="/t/{tid}/approve"' not in html
-    assert f'action="/t/{tid}/move"' in bar and 'name="to" value="backlog"' in bar and "Move back to backlog" in bar
-    assert 'data-inline-confirm="Confirm · move to backlog"' in bar  # no browser popup
+    assert f'action="/t/{tid}/approve"' in html and "Re-approve requirements" in html
+    assert 'name="to" value="backlog"' not in html
 
 
 def test_no_approve_while_changes_requested(dash, ws, put):

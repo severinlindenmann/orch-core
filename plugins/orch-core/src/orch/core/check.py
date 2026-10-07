@@ -302,7 +302,7 @@ def _check_ticket(ws, entry, t, events, emit: bool, *, closed: bool = False) -> 
                                f"the ledger, or written by hand); agents cannot proceed on it: review it with "
                                f"`orch ledger adopt {tid}`"))
         if gate_state(t, gate) == "invalidated":
-            out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval"))
+            out.append(Finding("warning", "gate-invalidated", tid, f"{gate} changed since it was approved on {g['approved']}; needs re-approval (`orch approve {tid} {gate}`)"))
             if emit:
                 _record_invalidation(ws, t, gate, events)
     if (not closed and entry.status != "backlog" and gate_state(t, "requirements") == "pending"

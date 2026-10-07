@@ -84,7 +84,7 @@ class Pairing:
         if scope not in SCOPES or SCOPES[scope] > SCOPES[p.scope]:
             raise ValueError("a pairing's scope can only be lowered")
         dev = registry.add(Device(did, p.pub, scope, p.label, now_ms, False, p.phone_link, p.credential), now_ms)
-        p.state = "approved"
+        p.state, p.scope = "approved", scope  # a pair_status answers the scope actually granted
         return dev
 
     def reject(self, did: str, registry: Registry, now_ms: int) -> None:
@@ -97,10 +97,11 @@ class Pairing:
     # -- requests from a device that is not registered (§6.1 step 3) ----------------------------------------------------
 
     def pair(self, h: Header, hb: bytes, body: bytes, sig: bytes, meta: dict, now_ms: int, host_budget: SlidingLimit,
-             phone_key: Callable[[str], bytes | None]) -> Verdict:
-        """§8.1 step 3, in its order."""
+             phone_key: Callable[[str], bytes | None], host_pub: bytes) -> Verdict:
+        """§8.1 step 3, in its order. Every refusal carries host_pub (§6.2): the device checks it against the link's
+        pin before it believes the refusal."""
         def unverified(code, bucket=host_budget, **extra):
-            return refuse(code, **extra) if bucket.take(now_ms) else drop("budget")
+            return refuse(code, host_pub=host_pub.hex(), **extra) if bucket.take(now_ms) else drop("budget")
 
         try:
             pid = meta["pairing_id"]
@@ -122,7 +123,7 @@ class Pairing:
         if abs(now_ms - h.ts_ms) > WINDOW_MS:
             return unverified("stale_timestamp", offer.budget, host_ms=now_ms)
         if resend:  # nothing changes: the same answer again
-            return self._pending_answer(did, held)
+            return self._pending_answer(did, held, host_pub)
         offer.used = True
         link = None  # a phone link is recorded only with its proof (§8.2)
         phone_id = meta.get("phone_id")
@@ -135,12 +136,13 @@ class Pairing:
             if hmac.compare_digest(phone_link_proof(key, h.device), proof):
                 link = phone_id
         self.pending[did] = Pending(pub, pid, offer.scope, link, label)
-        return self._pending_answer(did, self.pending[did])
+        return self._pending_answer(did, self.pending[did], host_pub)
 
     @staticmethod
-    def _pending_answer(did: str, p: Pending) -> Verdict:
+    def _pending_answer(did: str, p: Pending, host_pub: bytes) -> Verdict:
+        """The answer's meta is exactly these three fields (§8.1 step 3); the device pins host_pub from it."""
         return Verdict("pair_pending", device=did, scope=p.scope,
-                       fields={"fingerprint": p.fingerprint, "device": did, "scope": p.scope, "phone_link": p.phone_link})
+                       fields={"state": "pending", "host_pub": host_pub.hex(), "fingerprint": p.fingerprint})
 
     def pending_request(self, h: Header, hb: bytes, body: bytes, sig: bytes, meta: dict, now_ms: int,
                         host_budget: SlidingLimit, rand: Callable[[int], bytes], rp_id: str, origin: str) -> Verdict | None:
@@ -160,7 +162,8 @@ class Pairing:
         if abs(now_ms - h.ts_ms) > WINDOW_MS:
             return unverified("stale_timestamp", host_ms=now_ms)
         if op == "pair_status":  # read-only: a replay changes nothing
-            return Verdict("pair_status", device=did, fields={"state": p.state})
+            return Verdict("pair_status", device=did, fields={"state": p.state, **(
+                {"scope": p.scope} if p.state == "approved" else {})})
         if p.state != "pending":
             return unverified("pairing_closed")
         if op == "credential_begin":

@@ -7,8 +7,9 @@
 {% import "_artifacts.html" as art %}
 {% block head %}{% for css in widget_css %}<link rel="stylesheet" href="{{ static_url(css) }}">{% endfor %}
 <script src="{{ static_url('widgets/orch-frames.js') }}" defer></script>{% endblock %}
-{#- The ticket as a story (#16): header (L card), status card, then Asked → Agreed → Doing → Proven → Left, the
-    agent's notes, and an aside with the timeline (from events), links and files. Every gated text is shown in
+{#- The ticket as a story (#16): header (L card), status card (with what is left), in testing the agent's
+    handoff, then Asked → Agreed → Doing → Proven, the agent's notes, and an aside with the files (grouped, each
+    opening in the viewer or a new tab), the activity (from events) and links. Every gated text is shown in
     full above its Approve button; Approve, Accept and moves confirm inline (app.js), and without JS the plain
     POST is still checked by the server against the hash of the text shown. -#}
 
@@ -433,6 +434,8 @@
 <section class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
   <p class="status-label" id="status-title">{% if human %}{{ tc.move_chip(card.move) }}{% elif stale %}{{ ui.status("warn", "No activity") }}{% else %}{{ ui.icon("neu") }} Agent's move{% endif %}</p>
   <p class="ym-text">{{ move.text }}</p>
+  {#- What is left (formerly its own chapter): one line here, rule text only. -#}
+  {% if card.left and card.left != "your verdict" %}<p class="muted ym-left"><b>Left:</b> {{ card.left }}</p>{% endif %}
   {% if not human and card.agent %}<p class="muted">{{ tc.agent_line(card) }}</p>{% endif %}
   <div class="cluster ym-actions">
     {% if a.kind == "approve" and epic %}<a class="btn" href="#epic-approve">Read the epic and its children, then approve below</a>
@@ -455,6 +458,16 @@
   </div>
   {% endfor %}
 </section>
+{#- In testing the agent's handoff says how to review: shown under the card (never inside it: it is the agent's
+    text, attributed, not orch's rule text), and left out of the Agent notes below. -#}
+{% set handoff = notes|selectattr("name", "equalto", "Current state")|first if t.status == "testing" and notes else none %}
+{% if handoff %}
+<section class="handoff" aria-labelledby="handoff-h">
+  <h2 id="handoff-h">How to review</h2>
+  <p class="muted handoff-by">the agent's handoff · {% if handoff.author %}{{ handoff.author.who }} wrote{% if handoff.author.at %} <time datetime="{{ handoff.author.at.isoformat() }}" title="{{ handoff.author.at|local }}">{{ handoff.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</p>
+  <div class="note-text" data-clamp>{{ handoff.text|section_md(handoff.name, widgets)|safe }}</div>
+</section>
+{% endif %}
 {% if start_box and not start_box.disabled %}{{ start_agent(start_box, t.id) }}{% endif %}
 {% endif %}
 
@@ -534,7 +547,7 @@
         </div>
       </details>
       {% if gv.can_approve and not epic %}
-      <p class="dc-ff muted">{% if gv.gate == "requirements" %}Approving moves {{ t.id }} to open, so an agent can claim it.{% else %}Lets {{ card.agent.harness if card.agent else "the agent" }} work the tasks.{% if card.code %} Does not approve {{ card.code.label }}.{% endif %}{% endif %}</p>
+      <p class="dc-ff muted">{% if gv.gate == "requirements" and gv.reapprove and t.status != "backlog" %}{{ t.id }} stays {{ t.status }} and keeps its plan approval.{% elif gv.gate == "requirements" %}Approving moves {{ t.id }} to open, so an agent can claim it.{% if t.meta.parent %} It covers {{ t.id }} only: the epic and its other children are not approved again.{% endif %}{% else %}Lets {{ card.agent.harness if card.agent else "the agent" }} work the tasks.{% if card.code %} Does not approve {{ card.code.label }}.{% endif %}{% endif %}</p>
       {% if together and gv.gate == "requirements" %}
       <div class="cluster story-actions">{{ approve_form(gv, "Approve requirements only", false) }}{{ changes_form(gv.gate) }}</div>
       {% else %}
@@ -606,15 +619,13 @@
         <span class="proof-mark" aria-hidden="true">{{ "✓" if c.proven else "○" }}</span>
         <div><p><b class="ac-n">AC{{ c.n }}</b> {{ c.text|md_inline|safe }} <span class="sr-only">{{ "has evidence" if c.proven else "no evidence yet" }}</span>
           {%- set chip = (ac_chips or {}).get(c.n) %}{% if chip %} {{ chip }} <span class="w-from">the agent's check</span>{% endif %}</p>
-          {% if c.proven %}{% for e in c.evidence %}<div class="proof-evidence">{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
+          {% if c.proven %}{% for e in c.evidence %}<div class="proof-evidence" data-clamp>{{ e|section_md("Verification", widgets)|safe }}</div>{% endfor %}
           <p class="muted proof-by">{% if evidence_by %}evidence by {{ evidence_by.who }}{% if evidence_by.at %} · <time datetime="{{ evidence_by.at.isoformat() }}" title="{{ evidence_by.at|local }}">{{ evidence_by.at|ago }}</time>{% endif %}{% else %}evidence written in the file{% endif %} · your verdict decides</p>
           {% else %}<p class="muted">No evidence yet{% if c.ticked %}; ticked without a Verification line{% endif %}.</p>{% endif %}
           {{ art.for_criterion(artifact_view.by_ac.get(c.n), t.id) }}</div>
-        {#- M: the evidence tile: the first bound image the evidence shows, else one the criterion's artifacts link;
-            dashed and empty while the proof is missing. -#}
-        {% set pics = c.evidence|join("\n")|pinned(none, 1) if c.proven else [] %}
-        {% set linked = (artifact_view.by_ac.get(c.n) or [])|selectattr("image")|list %}
-        <span class="ev-tile proof-tile{{ ' ev-tile-ok' if c.proven else ' ev-tile-missing' }}" aria-hidden="true">{% if pics %}<img src="{{ pics[0].href }}" alt="" loading="lazy" decoding="async">{% elif linked %}<img src="{{ linked[0].href }}" alt="" loading="lazy" decoding="async">{% elif c.proven %}<span class="ev-cap">✓ AC{{ c.n }}</span>{% else %}<span class="ev-cap">no evidence yet</span>{% endif %}</span>
+        {#- M: the evidence tile, dashed and empty while the proof is missing; once proven, the criterion's images
+            show as the thumbnail strip under its evidence instead. -#}
+        {% if not c.proven %}<span class="ev-tile proof-tile ev-tile-missing" aria-hidden="true"><span class="ev-cap">no evidence yet</span></span>{% endif %}
       </li>
       {% endfor %}
     </ol>
@@ -630,14 +641,11 @@
   {% endcall %}
   {% endif %}
 
-  {% call chapter_block("left") %}
-    <p>{{ card.left }}</p>
-  {% endcall %}
-
-  {% if notes %}
+  {% set notes_below = notes|rejectattr("name", "equalto", "Current state")|list if t.status == "testing" else notes %}
+  {% if notes_below %}
   <details class="agent-notes" id="notes"{% if open_all %} open{% endif %}>
-    <summary><h2 class="notes-title">Agent notes</h2> <span class="muted">· {{ notes|map(attribute="label")|join(", ") }}</span></summary>
-    {% for n in notes %}
+    <summary><h2 class="notes-title">Agent notes</h2> <span class="muted">· {{ notes_below|map(attribute="label")|join(", ") }}</span></summary>
+    {% for n in notes_below %}
     <section class="note" aria-labelledby="note-{{ loop.index }}">
       <h3 id="note-{{ loop.index }}">{{ n.label }} <span class="muted note-by">{% if n.author %}{{ n.author.who }} wrote{% if n.author.at %} <time datetime="{{ n.author.at.isoformat() }}" title="{{ n.author.at|local }}">{{ n.author.at|ago }}</time>{% endif %}{% else %}written in the file{% endif %}</span>{% if authoring_hints and n.name in ("Context", "Current state", "Findings") %} <a class="lnk widgets-for" href="/workspace?tab=widgets&amp;section={{ n.name|urlencode }}">Widgets for this section</a>{% endif %}</h3>
       <div class="note-text">{{ n.text|section_md(n.name, widgets)|safe }}</div>
@@ -647,24 +655,41 @@
   {% endif %}
 </article>
 
-<aside class="ticket-aside" aria-label="Artifacts, timeline and links">
+<aside class="ticket-aside" aria-label="Files, activity and links">
   {{ art.panel(artifact_view, t.id, artifacts) }}
-  <section class="card" id="log" aria-labelledby="timeline-h">
-    <h2 id="timeline-h">Timeline</h2>
-    {% if timeline %}
-    <ol class="timeline activity">
-      {% for row in timeline %}
-      <li><span class="muted">{% if row.at %}<time datetime="{{ row.raw_at }}" title="{{ row.at|ago }}">{{ row.at|local }}</time>{% else %}{{ row.raw_at }}{% endif %}</span>
-        <span><b>{{ row.who }}</b> {{ row.what }}</span></li>
+  {#- Activity: oldest first, one block per status (a status entered again is a new round), runs of one kind
+      folded, your own actions marked; from orch's event log (story.activity). -#}
+  <section class="card act-card" id="log" aria-labelledby="timeline-h">
+    <h2 id="timeline-h">Activity</h2>
+    {% if activity %}
+    <ol class="act" aria-label="Activity, oldest first">
+      {% for r in activity %}
+      <li class="act-round{{ ' act-round-open' if r.open }}">
+        <h3 class="act-head">{{ r.label }}{% if r.round > 1 %} · round {{ r.round }}{% endif %}
+          <span class="act-span">{% if r.day %}{{ r.day }}{% endif %}{% if r.elapsed %} · {{ r.elapsed }}{{ " so far" if r.open else "" }}{% endif %}</span></h3>
+        <ol class="act-rows">
+          {% for row in r.rows %}
+          <li class="act-row{{ ' act-you' if row.human }}">
+            <span class="act-time">{% if row.time %}<time datetime="{{ row.at.isoformat() }}" title="{{ row.at|local }}">{{ row.time }}</time>{% endif %}</span>
+            <span class="act-what"><b>{{ row.who }}</b> {{ row.what }}
+            {%- if row.events %}
+              <details class="act-fold"><summary>show {{ row.events|length }}</summary>
+                <ul class="plain">{% for e in row.events %}<li>{% if e.at %}<span class="muted">{{ e.at.astimezone().strftime("%H:%M") }}</span> {% endif %}{{ e.what }}</li>{% endfor %}</ul>
+              </details>
+            {%- endif %}</span>
+          </li>
+          {% endfor %}
+        </ol>
+      </li>
       {% endfor %}
     </ol>
     {% else %}
     <p class="muted">No activity yet.</p>
     {% endif %}
     <details class="show-log">
-      <summary>Show log</summary>
+      <summary>Raw log</summary>
       {{ t.section("Log")|section_md("Log", widgets)|safe }}
-      <p class="muted hint">Raw text from the ticket file, not verified: the timeline above comes from orch's event log. Times in the log are UTC.</p>
+      <p class="muted hint">Raw text from the ticket file, not verified: the activity above comes from orch's event log. Times in the log are UTC.</p>
     </details>
   </section>
   {% set qids = questions|map(attribute="id")|list %}

@@ -2283,16 +2283,54 @@ def _is_user_addon_file(path: Path) -> bool:
                for base in _user_config_dirs())
 
 
+_SED_CMD_W = re.compile(r"(?:^|[;{}\n]|\d|\$|,|/|!)\s*[wWe](?:\s|$)")
+_SED_FLAG_W = re.compile(r"(?:^|[;{}\n\s])[0-9,$/!]*s(.).*?\1.*?\1[a-zA-Z0-9]*[we]")
+
+
+def _tool_writes(cmd: str) -> bool:
+    """A command whose own options make it write a file or run a program, though it is no redirect: `sed -n 'w f'`,
+    `sed 's/a/b/w f'`, `sed e`, `sort -o f`, `uniq IN OUT`, `xxd IN OUT`, `rg --pre`, awk's print > f or system()."""
+    for seg in _command_segments(cmd):
+        words, _ = _command(seg)
+        if not words:
+            continue
+        prog = os.path.basename(words[0])
+        args = words[1:]
+        plain = [a for a in args if not a.startswith("-")]
+        if prog == "sed":
+            if any(_SED_CMD_W.search(a) or _SED_FLAG_W.search(a) for a in args):
+                return True
+        elif prog in ("awk", "gawk", "mawk", "nawk"):
+            if any(re.search(r"[>|]|system\s*\(|getline", a) for a in plain):
+                return True
+        elif prog == "sort":
+            if any(a == "-o" or a.startswith("--output") or re.fullmatch(r"-[A-Za-z]*o\S*", a) for a in args):
+                return True
+        elif prog in ("uniq", "xxd"):
+            if len(plain) >= 2:
+                return True
+        elif prog in ("less", "more"):
+            if any(a in ("-o", "-O") or a.startswith(("--log-file", "--LOG-FILE")) for a in args):
+                return True
+        elif prog == "file":
+            if any(a in ("-C", "--compile") for a in args):
+                return True
+        elif prog == "rg":
+            if any(a == "--pre" or a.startswith("--pre=") or a.startswith("--hostname-bin") for a in args):
+                return True
+    return False
+
+
 def _is_write(cmd: str) -> bool:
-    return bool(_WRITE_TOOL.search(cmd) or _OTHER_WRITE.search(cmd)
+    return bool(_WRITE_TOOL.search(cmd) or _OTHER_WRITE.search(cmd) or _tool_writes(cmd)
                 or _OUTPUT_REDIRECT.search(_unquoted(cmd)) or _INTERP_WRITE.search(cmd))
 
 
 # Commands that only print what they read. A segment of one of these that names the state folder, with no output
 # redirect to a path that may be in it, does not write there.
-_STATE_READERS = frozenset({"cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "jq", "wc", "ls", "stat",
-                            "file", "diff", "cmp", "sort", "uniq", "cut", "nl", "od", "xxd", "md5sum", "shasum", "sha256sum",
-                            "cksum", "test", "[", "echo", "printf", "true", ":"})
+# sort -o, uniq IN OUT, xxd -r IN OUT, rg --pre, file, less and more can write or run a program: not readers.
+_STATE_READERS = frozenset({"cat", "head", "tail", "grep", "egrep", "fgrep", "jq", "wc", "ls", "stat", "diff", "cmp", "cut",
+                            "nl", "od", "md5sum", "shasum", "sha256sum", "cksum", "test", "[", "echo", "printf", "true", ":"})
 _JQ_FILTER = re.compile(r"""^(\s*(?:\S*/)?jq\s+(?:-[A-Za-z]+\s+|--(?:arg|argjson|slurpfile|rawfile)\s+\S+\s+\S+\s+|--(?:indent)\s+\d+\s+|--[a-z-]+\s+)*)"""
                          r"""('[^']*'|"[^"$`\\]*"|[^\s'"$`\\-]\S*)""")
 _STATE_INDIRECT = re.compile(r"(?<![\w-])(?:xargs|while|for|read|eval|source|exec)(?![\w-])|^\s*\.\s|[;&|]\s*\.\s")

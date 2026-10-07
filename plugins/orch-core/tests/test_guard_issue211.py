@@ -435,6 +435,50 @@ def test_harmless_redirects_stay_allowed(ws):
     _check(ws, "cat orchestrator/.state/x > /dev/null 2>&1", True)
 
 
+T = "orchestrator/tickets/open/L-0001-x.md"
+WRITE_CAPABLE_READERS_DENIED = [
+    f"sort -o {T} {T}",
+    f"sort -o{T} {T}",
+    f"sort --output={T} {T}",
+    f"sort {T} -o {T}",
+    f"uniq {T} {T}",
+    f"uniq in.txt {T}",
+    f"xxd -r in.hex {T}",
+    f"xxd in.bin {T}",
+    f"sed -n 'w {T}' {T}",
+    f"sed 'w {T}' in.txt",
+    f"sed -n '1,3w {T}' in.txt",
+    f"sed -n '/x/w {T}' in.txt",
+    f"sed -n 'W {T}' in.txt",
+    f"sed 's/a/b/w {T}' in.txt",
+    "sed 's/a/b/e' orchestrator/.state/x",
+    "sed e orchestrator/.state/x",
+    "sed -n '1e id' orchestrator/.state/x",
+    f"rg --pre ./x.sh pattern {T}",
+    f"rg --pre=./x.sh pattern {T}",
+    "less -o log.txt orchestrator/.state/x",
+    "less --log-file=log.txt orchestrator/.state/x",
+    "more -o log orchestrator/.state/x",
+    "file -C orchestrator/.state/x",
+    f"awk '{{print > \"{T}\"}}' in.txt",
+    f"awk '{{system(\"rm {T}\")}}' in.txt",
+    "gawk 'BEGIN{while ((getline l < \"x\") > 0) print l}' orchestrator/.state/x",
+]
+
+
+@pytest.mark.parametrize("cmd", WRITE_CAPABLE_READERS_DENIED)
+def test_commands_that_can_write_are_not_readers(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_plain_reads_with_those_tools_stay_allowed(ws):
+    _check(ws, f"sort {T} | head -3", True)
+    _check(ws, f"sed -n '1,5p' {T}", True)
+    _check(ws, f"sed 's/a/b/g' {T} | wc -l", True)
+    _check(ws, f"uniq -c {T}", True)
+    _check(ws, f"rg pattern {T}", True)
+
+
 CONTINUATION_AND_COMMENTS = [
     'true # \\\n orch approve L-1',
     "echo hi # c \\\no''rch approve L-1",

@@ -1262,8 +1262,16 @@ For every epic whose charter signs a release, your verdict or close reads which 
 entry under the workspace's release lock, even when nothing is skipped, so no stage starts in between: while a release
 round holds the lock, it is refused ("a release is running"). The charter's own close records, per stage and unit, the
 attempt, state and commits it closed on. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
-reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased"). A child's own
-verdict card says that accepting the child alone releases nothing while its epic's release has not run. A verdict
+reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased").
+
+A child of an open factory epic whose charter is active gets no verdict card of its own (the seventh live run: Today
+showed one Verdict per child, both were accepted, and the release then had no child to release): Today, the Board and
+the ticket page show "Part of <epic>: the epic's release and verdict come first. Nothing for you to do yet.", linking
+to the run view, and Today does not count it as a decision. Send back stays on the ticket page and the Ready report.
+A done verdict on such a child while the epic's signed release is not proven is refused everywhere ("This child
+belongs to <epic>, which still has to release it: accept the epic when it is Ready, or close this child without
+releasing with a reason."); `orch verdict <child> done --skip-release REASON` (or the reason field on the ticket page,
+once the charter is paused) closes it anyway and its verdict entry records `release_skipped`. A verdict
 or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in
 a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
 

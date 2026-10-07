@@ -777,7 +777,7 @@ def verdict(ref: str, result: Annotated[str, typer.Argument(metavar="done|follow
         from orch.cli_epic import render_verdict
         cur = store.load(ws, target.id)[1]
         seen = epics.verdict_hash([cur], ws)
-        t = _human_op(ws, ref, lambda ops, kw: ops.verdict(ref, result, message, **kw),
+        t = _human_op(ws, ref, lambda ops, kw: ops.verdict(ref, result, message, skip_release=skip_release, **kw),
                       lambda p: "\n".join(render_verdict([cur], epic=False)
                                           + [f"{p.id}: verdict {result} ({_short(seen)}); status then {p.status}"]),
                       bound={"expected_hash": seen}, dry_run=dry_run, json_out=json_out, bind_file=True)

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from starlette.background import BackgroundTask
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
-from orch.core import evidence, query, store, tasks_view
+from orch.core import evidence, factory_report, query, store, tasks_view
 from orch.core.epics import verdict_hash
 from orch.core.events import read_events
 from orch.core.gates import GATE_SECTIONS, approved_snapshot, gate_hash, gate_state, invalidated_gates, plan_required
@@ -210,6 +210,7 @@ def ticket_page(request: Request, ref: str, open: str = ""):
                 gate_views=gate_views, pr_early=pr_early, questions=questions, card_qids=card_qids, actions=actions,
                 verdict_seen=verdict_hash([t], ws) if actions["verdict"] else "", invalidated=invalidated_gates(t),
                 epic_unreleased=_epic_unreleased(ws, t) if actions["verdict"] else None,
+                factory_held=factory_report.held_by(ws, t) if actions["verdict"] else None,
                 criteria=evidence.criteria(t), other_evidence=evidence.other_evidence(t),
                 evidence_by=story.evidence_author(ticket_events),
                 ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),

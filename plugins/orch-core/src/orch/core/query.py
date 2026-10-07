@@ -361,7 +361,10 @@ def _needs_you(ws, entries: list[store.Entry], events: list | None = None) -> li
                 by_ticket_events = {}
                 for ev in (events if events is not None else read_events(ws)):
                     by_ticket_events.setdefault(ev.ticket, []).append(ev)
-            add("verdict", round=latest_testing_round(by_ticket_events.get(t.id, [])))
+            from orch.core import factory_report
+            held = factory_report.held_by(ws, t)  # a factory child: the epic's release and verdict come first
+            add("verdict", scope="later" if held else "blocking",
+                round=latest_testing_round(by_ticket_events.get(t.id, [])), **({"factory_epic": held} if held else {}))
         if e.status in ("in-progress", "waiting"):
             try:
                 ticket_tasks = tk.ticket_tasks(t)

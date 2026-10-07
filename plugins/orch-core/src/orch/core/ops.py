@@ -1364,7 +1364,8 @@ class Ops(TaskOpsMixin):
         seen = {ct.id: epics.verdict_hash([ct], self.ws) for ct in tickets}
         if self.dry_run:
             for ct in tickets:
-                self.verdict(ct.id, "done", note, expected_hash=seen[ct.id])
+                self.verdict(ct.id, "done", note, expected_hash=seen[ct.id],
+                             skip_release=(skipped or {}).get("release_skipped"))
         else:
             self._close_children([e.id for e in kids], seen, note, *([charter] if charter else []))
 
@@ -1500,9 +1501,29 @@ class Ops(TaskOpsMixin):
 
         if charter is not None:
             raise UsageError("a charter closes an epic, not a single ticket")
-        return self._mutate(ref, "verdict.given", self._verdict_fn(verdict, message, expected_hash))
+        skipped = self._child_skip(target, skip_release) if verdict == "done" else {}
+        return self._mutate(ref, "verdict.given", self._verdict_fn(verdict, message, expected_hash, skipped=skipped))
 
-    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str, charter: dict | None = None):
+    def _child_skip(self, target, skip_release: str | None) -> dict:
+        """A done verdict on one child of an open factory epic whose signed release has not run: refused without a
+        reason (the epic still has to release it), else {release_skipped, skipped_stages} for its ledger entry."""
+        from orch.core import epics, factory_release, permits
+        t = store.load(self.ws, target.id)[1]
+        epic = epics.parent_epic(self.ws, t)
+        if epic is None or epic.status != "open" or permits.factory_delegation(self.ws, epic) is None:
+            return {}
+        left = factory_release.unreleased(self.ws, epic)
+        if not left:
+            return {}
+        why = " ".join((skip_release or "").split())[:300]
+        if not why:
+            raise ValidationError(f"This child belongs to {epic.id}, which still has to release it: accept the epic "
+                                  "when it is Ready, or close this child without releasing with a reason.",
+                                  hint=f"orch verdict {t.id} done --skip-release REASON")
+        return {"release_skipped": why, "skipped_stages": left}
+
+    def _verdict_fn(self, verdict: str, message: str | None, expected_hash: str, charter: dict | None = None,
+                    skipped: dict | None = None):
         """The change one verdict makes to its ticket (inside the ticket's lock), checked against `expected_hash`."""
         def fn(t: Ticket) -> dict:
             from orch.core.epics import verdict_hash
@@ -1523,10 +1544,11 @@ class Ops(TaskOpsMixin):
                       if isinstance((t.meta.get("gates") or {}).get(gt), dict)
                       and (t.meta.get("gates") or {}).get(gt, {}).get("hash")}
             self._ledger(t, "verdict", verdict=verdict, verify_at=t.meta["gates"]["verify"]["at"],
-                         verdict_hash=seen, gates=sealed, **(charter or {}))
+                         verdict_hash=seen, gates=sealed, **(charter or {}), **(skipped or {}))
             if to == "done":
                 t.meta["claim"] = dict(_EMPTY_CLAIM)
-            self._log(t, f"verdict {verdict}" + (f": {message}" if message else ""))
+            self._log(t, f"verdict {verdict}" + (f": {message}" if message else "")
+                      + (f" (closed without release: {skipped['release_skipped']})" if skipped else ""))
             return {"verdict": verdict, "message": message}
 
         return fn

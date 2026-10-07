@@ -68,12 +68,15 @@
 {% endmacro %}
 
 {% macro verdict_forms() %}
-{% if epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone releases nothing. The runner releases the epic's children together once the epic is Ready.</p>{% endif %}
+{% if factory_held %}<p class="muted" data-factory-held="{{ factory_held }}">{{ ui.status("neu", "In the factory") }} Part of <a class="lnk key" href="/factory/{{ factory_held }}">{{ factory_held }}</a>: the epic's release and verdict come first. Nothing for you to do yet.</p>
+{% elif epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone closes it without releasing, so say why.</p>{% endif %}
 <div class="cluster story-actions">
-  {% if actions.accept %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ t.id }} as done">
+  {% if factory_held %}
+  {% elif actions.accept %}
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ t.id }} as done">
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ verdict_seen }}">
-    <button type="submit" class="btn btn-primary">Accept, mark done</button>
+    {% if epic_unreleased %}<label class="field-col" for="child-skip"><span>Why close it without releasing</span><textarea id="child-skip" name="skip_release" required maxlength="300" rows="2"></textarea></label>{% endif %}
+    <button type="submit" class="btn btn-primary">{{ "Close without releasing" if epic_unreleased else "Accept, mark done" }}</button>
   </form>
   {% else %}<p class="muted">No verdict yet: {{ invalidated|join(" and ") }} changed after approval. Re-approve first (see above), or send it back.</p>{% endif %}
   <details class="ym-more" id="send-back">

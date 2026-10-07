@@ -154,6 +154,7 @@ class Decision:
     why: str = ""  # F4: one line saying why this waits on the human (rule text, never agent prose)
     art: object | None = None  # markdown.ArtifactScope: what `artifact:<name>` in the gated text and evidence shows
     artifacts: int = 0  # how many artifacts the ticket links
+    held: str | None = None  # verdict: the factory epic whose release and verdict come first (no Accept here)
 
     @property
     def cid(self) -> str:
@@ -336,7 +337,7 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
                              criteria=criteria, verification=t.section("Verification") if kind == "verdict" else "", widgets=widgets,
                              harness=harness, priority=t.meta.get("priority"), charter=charter,
                              art=artifact_scope(t, ws), artifacts=len(artifact_entries(t)),
-                             **_epic_group(ws, t, epic_index)))
+                             held=item.get("factory_epic"), **_epic_group(ws, t, epic_index)))
     return out
 
 

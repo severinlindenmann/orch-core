@@ -116,6 +116,22 @@ def _ready_state(ws, epic, entries, signed, events):
             "total": sum(r["total"] for r in rows), "coverage": _coverage(ws, epic, entries, signed)}, []
 
 
+def held_by(ws, t, signed=None) -> str | None:
+    """The open factory epic whose run decides child `t` (its charter active: not paused, unchanged, in budget), else
+    None. Such a child gets no verdict card of its own: the epic's release and verdict come first (the seventh live
+    run: two per-child verdicts closed the children before the release, which then had nothing to release)."""
+    try:
+        if not permits.enabled(ws) or epics.is_epic(t):
+            return None
+        epic = epics.parent_epic(ws, t)
+        if epic is None or epic.status != "open":
+            return None
+        d = permits.factory_delegation(ws, epic, signed)
+        return epic.id if d and d["active"] else None
+    except Exception:
+        return None
+
+
 def ready(ws, epic, *, entries=None, signed=None, events=None) -> dict | None:
     """The Ready report of factory epic `epic`, or None while it is not ready (or not verifiably so). It carries the
     epic's `coverage` (what was asked against what the children's text mentions)."""

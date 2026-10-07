@@ -540,7 +540,8 @@ def test_a_child_closed_after_its_merge_does_not_make_dev_stale(fws, ready, huma
     fr.tick(fws, human, fake)
     assert _states(fws, eid) == {"merge": "proven", "dev": "failed"}
     t1 = store.load(fws, c1)[1]
-    Ops(fws, human).verdict(c1, "done", "ok", expected_hash=epics.verdict_hash([t1], fws))
+    Ops(fws, human).verdict(c1, "done", "ok", expected_hash=epics.verdict_hash([t1], fws),
+                            skip_release="closed after its merge")  # dev is not proven: a reason is needed
     fr.retry(fws, human, eid, "dev", eid)
     fake.results.pop("deploy-dev")
     assert fr.tick(fws, human, fake) == [f"{eid}: dev of {eid} proven"]

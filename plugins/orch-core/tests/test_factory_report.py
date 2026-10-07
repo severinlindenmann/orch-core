@@ -297,8 +297,8 @@ def test_waiting_and_counts_include_ready_and_stopped(fws, fa, fh, epic, close_t
     _to_testing(fa, c, close_tasks)
     items = [i for i in query.waiting(fws) if i["kind"].startswith("factory-")]
     assert [(i["ticket"], i["kind"]) for i in items] == [(epic.id, "factory-ready")]
-    # the child's own verdict is a blocking item too; the report adds one
-    assert query.counts(query.waiting(fws))["blocking"] == before + 2
+    # only the report counts: the child's own verdict waits on the epic's (a "later" item, never a decision)
+    assert query.counts(query.waiting(fws))["blocking"] == before + 1
     fh.verdict(epic.id, "done", expected_hash=_ready(fws, epic.id)["seen"])
     assert not [i for i in query.waiting(fws) if i["kind"].startswith("factory-")]
 

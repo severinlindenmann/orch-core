@@ -342,6 +342,8 @@ def evidence_refusal(ws, t) -> str | None:
     in the Ready report's format (`- AC<n>: ...`, evidence.missing), named; else None. The epic is Ready only when every
     child in testing proves all its criteria, so a child moved without them leaves the run with nothing to do."""
     from orch.core import epics, evidence, permits
+    if not isinstance(getattr(t, "meta", None), dict):
+        return None  # not a ticket read from its file (nothing to read criteria from)
     epic = epics.parent_epic(ws, t)
     if epic is None or permits.factory_delegation(ws, epic) is None:
         return None

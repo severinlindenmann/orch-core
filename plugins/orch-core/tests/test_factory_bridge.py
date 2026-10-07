@@ -1,0 +1,425 @@
+"""R13: the AI Factory from a paired device, layer by layer. The real bridge host (scope hook, assertion check, replay
+record), the real dashboard app behind it and the real ledger writes; only the transport child is absent."""
+import asyncio
+import hashlib
+import json
+import re
+import struct
+
+import pytest
+
+pytest.importorskip("cryptography")
+pytest.importorskip("fastapi")
+
+from cryptography.hazmat.primitives import hashes  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+
+import test_bridge_host_vectors as V  # noqa: E402
+from orch.core import epics, factory_sessions, ledger, permits, store  # noqa: E402
+from orch.dashboard.app import create_app, dashboard_routes  # noqa: E402
+from orch.dashboard.bridge_dispatch import BridgeRequest, Refused, Start, dispatch  # noqa: E402
+from orch.dashboard.bridge_loop import route_hook  # noqa: E402
+from orch.dashboard.reach import RemoteOrigin, Scope  # noqa: E402
+from orch.remote.bridge_host import envelope as E, files  # noqa: E402
+from orch.remote.bridge_host.assertion import AD_UP, AD_UV, assertion_challenge  # noqa: E402
+from orch.remote.bridge_host.host_check import Host  # noqa: E402
+from orch.remote.bridge_host.registry import Device  # noqa: E402
+from test_bridge_host import AUTH, CRED_ID, KEY_A, KEY_B, NEW, NOW, WS, WS_HEX, credential, did, env, pub, rid_of  # noqa: E402
+from test_factory_dashboard import CMD, PROOF, _refine, _seen, fa, fd, fh, fws, ready_epic, running  # noqa: E402,F401
+
+FORM = {"content-type": "application/x-www-form-urlencoded"}
+OTHER_SHA = "sha256:" + "0" * 64
+
+
+class Bridge:
+    """A host with three devices: A (Type), B (Decide) and C (Operate), each with an authenticator."""
+
+    def __init__(self, tmp_path, ws):
+        self.ws, self.clock = ws, V.Clock(NOW)
+        self.app = create_app(ws, "tok")
+        self.host = Host(workspace=WS, k_ws=V.K_WS, host_key=__import__("test_bridge_host").signatures.private_key(
+            bytes.fromhex(V.VEC["keys"]["host"]["d"])), root=files.bridge_dir(tmp_path, WS_HEX), clock=self.clock,
+            route=route_hook(dashboard_routes(), ws), phone_key=lambda pid: None, rp_id=V.RP_ID, origin=V.ORIGIN)
+        for key, scope in ((KEY_A, "type"), (KEY_B, "decide"), (NEW, "operate")):
+            self.host.registry.add(Device(did(key), pub(key), scope, "Phone " + scope, 0, credential=credential()), 0)
+        self.seq: dict = {}
+        self.count: dict = {}
+
+    def _env(self, key, meta, data=b""):
+        self.seq[did(key)] = self.seq.get(did(key), 0) + 1
+        self.clock.now += 1000
+        return env(key, meta, data, seq=self.seq[did(key)], ts=self.clock.now)
+
+    def _decide(self, e):
+        acc = self.host.check(e, rid_of(e))
+        return self.host.authorize(acc) if acc.result == "accept" else acc
+
+    def post(self, key, path, body: str = "", method="POST"):
+        """(verdict, envelope) of one request: a `run`, or a refusal (assertion_required included)."""
+        e = self._env(key, {"op": "http", "method": method, "path": path, "headers": FORM}, body.encode())
+        return self._decide(e), e
+
+    def answer(self, key, refusal, r1, *, subject=None, for_rid=None):
+        """R2: the authenticator signs the challenge of `refusal` (over `subject` when given: a forged one)."""
+        f = refusal.fields
+        self.count[did(key)] = self.count.get(did(key), 0) + 1
+        ch = assertion_challenge(WS, bytes.fromhex(did(key)), bytes.fromhex(rid_of(r1)), f["purpose"], f["scope"],
+                                 f["expires_ms"], bytes.fromhex(f["nonce"]), subject or f["subject"])
+        ad = hashlib.sha256(V.RP_ID.encode()).digest() + bytes([AD_UP | AD_UV]) + struct.pack(">I", self.count[did(key)])
+        cdj = E.canonical_json({"type": "webauthn.get", "challenge": E.b64u(ch), "origin": V.ORIGIN, "crossOrigin": False})
+        der = AUTH.sign(ad + hashlib.sha256(cdj).digest(), ec.ECDSA(hashes.SHA256()))
+        meta = {"op": "assert", "for": for_rid or rid_of(r1), "credential_id": E.b64u(CRED_ID),
+                "authenticator_data": E.b64u(ad), "client_data_json": E.b64u(cdj), "signature": E.b64u(der)}
+        e = self._env(key, meta)
+        return self._decide(e), e
+
+    def run(self, v, fresh=None):
+        """Run an authorised decision against the dashboard as the loop does: (status, location)."""
+        m = v.meta
+        origin = RemoteOrigin(v.device, Scope[v.scope.upper()], "Pixel", v.fresh is True if fresh is None else fresh)
+
+        async def go():
+            status, headers = None, {}
+            async for ev in dispatch(self.app, BridgeRequest(m["method"], m["path"], m.get("headers", {}), v.data),
+                                     origin, still_authorized=lambda: self.host.still_authorized(v)):
+                if isinstance(ev, Start):
+                    status, headers = ev.status, dict(ev.headers)
+                elif isinstance(ev, Refused):
+                    return ev.reason, ""
+            return status, headers.get("location", "")
+        return asyncio.run(go())
+
+    def raw(self, scope, fresh, method, path, body=""):
+        """One request straight into the app with an origin the test builds: (status, location)."""
+        origin = RemoteOrigin("dev_raw", scope, "Raw", fresh)
+
+        async def go():
+            status, headers = None, {}
+            async for ev in dispatch(self.app, BridgeRequest(method, path, FORM, body.encode()), origin,
+                                     still_authorized=lambda: True):
+                if isinstance(ev, Start):
+                    status, headers = ev.status, dict(ev.headers)
+            return status, headers.get("location", "")
+        return asyncio.run(go())
+
+    def raw_body(self, scope, path):
+        return self.raw(scope, False, "GET", path)
+
+    def fresh(self, key, path, body):
+        """The whole round: request, assertion, run. (refusal verdict, run verdict or None, status, location)."""
+        v, r1 = self.post(key, path, body)
+        if v.code != "assertion_required":
+            return v, None, None, ""
+        run, _ = self.answer(key, v, r1)
+        if run.result != "run":
+            return v, run, None, ""
+        status, loc = self.run(run)
+        return v, run, status, loc
+
+
+@pytest.fixture
+def bridge(tmp_path, fws):
+    return Bridge(tmp_path, fws)
+
+
+def _grant_body(r, scope="once", sha=None):
+    return f"sha={sha or r['sha']}&scope={scope}&next=%2F"
+
+
+# -- Allow: Type + a fresh assertion over the exact request ------------------------------------------------------------
+
+def test_allow_runs_only_after_an_assertion_over_the_exact_request_and_names_the_device(bridge, fws, running):
+    eid, cid, r = running
+    path = f"/permits/{r['id']}/grant"
+    refusal, r1 = bridge.post(KEY_A, path, _grant_body(r, "epic"))
+    assert refusal.code == "assertion_required"
+    sub = refusal.fields["subject"]
+    assert sub["kind"] == "permission" and sub["digest"] == r["sha"].removeprefix("sha256:")
+    assert permits.shown(CMD) in sub["shown"] and "for the whole epic" in sub["shown"] and r["id"] in sub["shown"]
+    assert not [e for e in ledger.entries(fws) if e["kind"] == "grant"]  # nothing written before the assertion
+    run, _ = bridge.answer(KEY_A, refusal, r1)
+    assert run.result == "run" and run.fresh
+    status, loc = bridge.run(run)
+    assert status == 303 and "err=" not in loc
+    grants = [e for e in ledger.entries(fws) if e["kind"] == "grant"]
+    assert len(grants) == 1 and grants[0]["scope"] == "epic" and grants[0]["device"] == did(KEY_A)
+    assert (r["id"], r["sha"]) in permits.decisions(fws)
+
+
+def test_a_decide_device_cannot_allow_and_a_type_device_without_an_assertion_cannot_either(bridge, fws, running):
+    eid, cid, r = running
+    path = f"/permits/{r['id']}/grant"
+    v, _ = bridge.post(KEY_B, path, _grant_body(r))
+    assert v.code == "forbidden_scope"  # Decide is below Type: no challenge is even issued
+    v, _ = bridge.post(NEW, path, _grant_body(r))
+    assert v.code == "forbidden_scope"  # Operate too
+    # a request that reached the app without an assertion (the origin is not fresh) is refused by the gate itself
+    assert bridge.raw(Scope.TYPE, False, "POST", path, _grant_body(r))[0] == 403
+    assert not [x for x in ledger.entries(fws) if x["kind"] == "grant"]
+
+
+def test_deny_revoke_and_pause_need_only_decide(bridge, fws, running):
+    eid, cid, r = running
+    v, _ = bridge.post(KEY_B, f"/permits/{r['id']}/deny", f"sha={r['sha']}&next=%2F")
+    assert v.result == "run" and not v.fresh
+    status, loc = bridge.run(v)
+    assert status == 303 and "err=" not in loc
+    deny = [e for e in ledger.entries(fws) if e["kind"] == "permit_deny"]
+    assert len(deny) == 1 and deny[0]["device"] == did(KEY_B)
+    v, _ = bridge.post(KEY_B, f"/t/{eid}/epic/pause")  # Pause (= Stop): no assertion
+    assert v.result == "run"
+    status, loc = bridge.run(v)
+    assert status == 303 and epics.delegation(fws, store.load(fws, eid)[1])["paused"]
+
+
+# -- an assertion binds one request: another request, another hash, a replay, a stale state ----------------------------
+
+def test_an_assertion_for_one_request_does_not_release_another(bridge, fws, running, fa):
+    eid, cid, r = running
+    r2 = permits.request(fws, fa.actor, store.load(fws, cid)[1], "make other", reason="x")
+    v1, e1 = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    v2, e2 = bridge.post(KEY_A, f"/permits/{r2['id']}/grant", _grant_body(r2))
+    assert v1.fields["subject"] != v2.fields["subject"]
+    bad, _ = bridge.answer(KEY_A, v1, e1, for_rid=rid_of(e2))  # signed for request 1, offered for request 2
+    assert bad.code == "assertion_failed"
+    assert not [e for e in ledger.entries(fws) if e["kind"] == "grant"]
+
+
+def test_an_assertion_over_a_different_subject_is_refused(bridge, fws, running):
+    eid, cid, r = running
+    v, e = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    forged = {**v.fields["subject"], "digest": "1" * 64}
+    bad, _ = bridge.answer(KEY_A, v, e, subject=forged)
+    assert bad.code == "assertion_failed"
+    assert not [x for x in ledger.entries(fws) if x["kind"] == "grant"]
+
+
+def test_a_replayed_assertion_does_not_run_twice(bridge, fws, running):
+    eid, cid, r = running
+    v, e = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    run, e2 = bridge.answer(KEY_A, v, e)
+    assert run.result == "run"
+    bridge.run(run)
+    bridge.host.finish(run.answer_rids, {"status": 303, "headers": []}, b"")
+    n = len(ledger.entries(fws))
+    assert bridge.host.check(e2, rid_of(e2)).result == "replay"  # the same bytes: the stored outcome
+    again, e3 = bridge.answer(KEY_A, v, e)  # the same assertion in a new envelope: its challenge is spent
+    assert again.code == "assertion_failed" and len(ledger.entries(fws)) == n
+
+
+def test_a_stale_or_unknown_request_gets_no_challenge(bridge, fws, running):
+    eid, cid, r = running
+    for path, body in ((f"/permits/{r['id']}/grant", _grant_body(r, sha=OTHER_SHA)),  # not the command shown
+                       (f"/permits/{r['id']}/grant", "scope=once"),  # no sha at all
+                       ("/permits/P-FFFFFFFF/grant", _grant_body(r)),  # no such request
+                       (f"/permits/{r['id']}/grant", _grant_body(r, scope="forever"))):
+        v, _ = bridge.post(KEY_A, path, body)
+        assert v.code == "assertion_failed", (path, body)
+    v, e = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    permits.permit_deny(fws, __import__("orch.dashboard.reach", fromlist=["LOCAL_HUMAN"]).LOCAL_HUMAN, r["id"], expected_sha=r["sha"])
+    run, _ = bridge.answer(KEY_A, v, e)  # answered meanwhile: the write itself refuses
+    status, loc = bridge.run(run)
+    assert "err=" in loc and not [x for x in ledger.entries(fws) if x["kind"] == "grant"]
+    v, _ = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    assert v.code == "assertion_failed"  # an answered request gets no new challenge
+
+
+def test_the_host_being_away_means_nothing_queued(bridge, fws, running):
+    eid, cid, r = running
+    v, e = bridge.post(KEY_A, f"/permits/{r['id']}/grant", _grant_body(r))
+    bridge.host.stop()  # the kill switch / host away: the assertion cannot release anything
+    run, _ = bridge.answer(KEY_A, v, e)
+    assert run.result != "run" and not [x for x in ledger.entries(fws) if x["kind"] == "grant"]
+
+
+# -- Start: the existing approve route with the factory limits -------------------------------------------------------------
+
+def _epic(fws, fa):
+    e = fa.new("Billing revamp", type="epic")
+    _refine(fa, e.id, plan=None)
+    return e.id
+
+
+def _seen_charter(fws, eid):
+    return epics.charter(fws, store.load(fws, eid)[1])["content_hash"]
+
+
+def test_start_from_a_device_signs_the_charter_arms_the_runner_and_records_the_device(bridge, fws, fa):
+    eid = _epic(fws, fa)
+    seen = _seen_charter(fws, eid)
+    body = f"gate=requirements&seen={seen}&factory=1&next=%2F"
+    v, e = bridge.post(KEY_B, f"/t/{eid}/approve", body)
+    assert v.code == "forbidden_scope"  # Decide cannot Start
+    refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{eid}/approve", body)
+    assert refusal.fields["subject"]["kind"] == "charter" and refusal.fields["subject"]["digest"] == seen.removeprefix("sha256:")
+    assert eid in refusal.fields["subject"]["shown"] and "max_children 25" in refusal.fields["subject"]["shown"]
+    assert status == 303 and "err=" not in loc
+    d = epics.delegation(fws, store.load(fws, eid)[1])
+    assert d["factory"] and d["active"]
+    charter = epics.latest_charter(fws, eid)
+    assert charter["device"] == did(KEY_A)  # the signed ledger entry names the device
+    assert factory_sessions.armed(fws, d["id"])
+    marker = factory_sessions._root() / "armed" / factory_sessions._key(fws, d["id"])
+    assert json.loads(marker.read_text())["device"] == did(KEY_A)  # and so does the armed marker
+
+
+def test_start_with_a_stale_charter_gets_no_challenge_and_an_ordinary_approval_stays_decide(bridge, fws, fa):
+    eid = _epic(fws, fa)
+    v, _ = bridge.post(KEY_A, f"/t/{eid}/approve", f"gate=requirements&seen={OTHER_SHA}&factory=1")
+    assert v.code == "assertion_failed"
+    v, _ = bridge.post(KEY_A, f"/t/{eid}/approve", "gate=requirements&factory=1")  # no hash at all
+    assert v.code == "assertion_failed"
+    assert epics.delegation(fws, store.load(fws, eid)[1]) is None
+    v, _ = bridge.post(KEY_B, f"/t/{eid}/approve", f"gate=requirements&seen={_seen_charter(fws, eid)}")
+    assert v.result == "run"  # no factory limits: Decide, no assertion, as before
+
+
+def test_start_whose_epic_changed_after_the_assertion_writes_nothing(bridge, fws, fa):
+    eid = _epic(fws, fa)
+    body = f"gate=requirements&seen={_seen_charter(fws, eid)}&factory=1"
+    v, e = bridge.post(KEY_A, f"/t/{eid}/approve", body)
+    run, _ = bridge.answer(KEY_A, v, e)
+    fa.set_section(eid, "Requirements", "changed after you looked")
+    status, loc = bridge.run(run)
+    assert "err=" in loc and epics.delegation(fws, store.load(fws, eid)[1]) is None
+
+
+# -- editing under a running epic ------------------------------------------------------------------------------------------
+
+def test_editing_under_a_running_epic_needs_type_and_an_assertion_but_commenting_does_not(bridge, fws, running):
+    eid, cid, r = running
+    v, _ = bridge.post(NEW, f"/t/{cid}/edit", "text=x")
+    assert v.code == "forbidden_scope"  # Operate is below Type here
+    refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{cid}/task/add", "text=new+step")
+    assert refusal.fields["subject"]["kind"] == "action" and "text=new+step" in refusal.fields["subject"]["shown"]
+    assert run.result == "run" and status != 403
+    v, _ = bridge.post(NEW, f"/t/{cid}/comment", "text=hello")  # Operate: no assertion
+    assert v.result == "run"
+    assert bridge.run(v)[0] == 303
+    v, _ = bridge.post(NEW, f"/t/{cid}/epic/pause")
+    assert v.result == "run"  # pausing is Decide: an Operate device may, with no assertion
+
+
+# -- the epic's done verdict ---------------------------------------------------------------------------------------------
+
+def test_the_epic_verdict_needs_type_and_an_assertion_over_the_hash_the_ready_report_carries(bridge, fws, fd, ready_epic):
+    eid, cid = ready_epic
+    seen = _seen(fd)
+    body = f"verdict=done&seen={seen}&next=%2F"
+    v, _ = bridge.post(KEY_B, f"/t/{eid}/verdict", body)
+    assert v.code == "forbidden_scope"  # Decide may not sign an epic's verdict
+    refusal, run, status, loc = bridge.fresh(KEY_A, f"/t/{eid}/verdict", body)
+    sub = refusal.fields["subject"]
+    assert sub["kind"] == "verdict" and sub["digest"] == seen.removeprefix("sha256:") and cid in sub["shown"]
+    assert status == 303 and "err=" not in loc
+    assert store.load(fws, eid)[1].status == "done" and store.load(fws, cid)[1].status == "done"
+    verdicts = [e for e in ledger.entries(fws) if e["kind"] == "verdict" and e["ticket"] in (eid, cid)]
+    assert verdicts and all(e.get("device") == did(KEY_A) for e in verdicts)
+
+
+def test_an_epic_verdict_over_a_stale_hash_gets_no_challenge_and_a_change_after_it_writes_nothing(bridge, fws, fa, ready_epic, fd):
+    eid, cid = ready_epic
+    v, _ = bridge.post(KEY_A, f"/t/{eid}/verdict", f"verdict=done&seen={OTHER_SHA}")
+    assert v.code == "assertion_failed"
+    seen = _seen(fd)
+    v, e = bridge.post(KEY_A, f"/t/{eid}/verdict", f"verdict=done&seen={seen}")
+    run, _ = bridge.answer(KEY_A, v, e)
+    fa.set_section(cid, "Verification", PROOF + "\n- AC1: changed after you read it")
+    status, loc = bridge.run(run)
+    assert "err=" in loc and store.load(fws, eid)[1].status == "open"
+
+
+def test_an_epic_verdict_other_than_done_gets_no_challenge(bridge, fws, fd, ready_epic):
+    eid, cid = ready_epic
+    v, _ = bridge.post(KEY_A, f"/t/{eid}/verdict", f"verdict=follow-up&seen={_seen(fd)}")
+    assert v.code == "assertion_failed"
+
+
+# -- status data and the two background tasks ------------------------------------------------------------------------------
+
+def test_the_factory_status_reaches_a_look_device_and_the_heartbeat(bridge, fws, running):
+    from orch.remote import presence
+    eid, cid, r = running
+    state = presence.factory(fws)
+    assert state["factory"] == "waiting" and state["children_total"] == 1 and "budget_pct" in state
+    for path in ("/", "/board", f"/t/{eid}"):  # the cards a Look device reads: nothing needs a higher scope
+        status, _ = bridge.raw(Scope.LOOK, False, "GET", path)
+        assert status == 200, path
+
+
+def test_the_runner_and_the_bridge_loop_run_side_by_side_in_the_lifespan(ws, monkeypatch):
+    from orch.dashboard import factory_runner
+
+    started = {}
+
+    async def runner(w, *a, **k):
+        started["runner"] = True
+        await asyncio.sleep(3600)
+
+    class FakeLoop:
+        host, link = None, None
+
+        async def run(self):
+            started["bridge"] = True
+            await asyncio.sleep(3600)
+
+        async def stop(self):
+            started["stopped"] = True
+
+    monkeypatch.setattr(factory_runner, "loop", runner)
+    app = create_app(ws, "tok", remote=lambda a: FakeLoop())
+
+    async def main():
+        async with app.router.lifespan_context(app):
+            for _ in range(100):
+                if started.get("runner") and started.get("bridge"):
+                    break
+                await asyncio.sleep(0.02)
+            assert started.get("runner") and started.get("bridge")  # both tasks alive at once
+        assert started.get("stopped")
+    asyncio.run(main())
+
+
+# -- one parse: what is shown is what the route reads -----------------------------------------------------------------------
+
+def test_a_field_twice_or_only_in_the_query_gets_no_challenge(bridge, fws, fa, running):
+    eid, cid, r = running
+    path = f"/permits/{r['id']}/grant"
+    for body, p in ((f"sha={OTHER_SHA}&sha={r['sha']}&scope=once", path), (f"sha={r['sha']}&sha={r['sha']}", path),
+                    (f"scope=once", path + f"?sha={r['sha']}"), (f"sha={r['sha']}&scope=once&scope=epic", path)):
+        v, _ = bridge.post(KEY_A, p, body)
+        assert v.code == "assertion_failed", (body, p)
+    e2 = _epic(fws, fa)
+    seen = _seen_charter(fws, e2)
+    v, _ = bridge.post(KEY_A, f"/t/{e2}/approve", f"gate=requirements&seen={seen}&factory=0&factory=1")
+    assert v.code == "assertion_failed"
+    v, _ = bridge.post(KEY_A, f"/t/{e2}/approve?seen={seen}", "gate=requirements&factory=1")
+    assert v.code == "assertion_failed"
+
+
+def test_the_charter_shown_is_what_the_route_does(bridge, fws, fa):
+    e2 = _epic(fws, fa)
+    seen = _seen_charter(fws, e2)
+    # "factory=yes" arms nothing in the route: the person is told it is an approval with no delegation
+    v, e = bridge.post(KEY_A, f"/t/{e2}/approve", f"gate=requirements&seen={seen}&factory=yes")
+    assert "no delegation" in v.fields["subject"]["shown"] and "AI Factory" not in v.fields["subject"]["shown"]
+    run, _ = bridge.answer(KEY_A, v, e)
+    bridge.run(run)
+    assert not (epics.delegation(fws, store.load(fws, e2)[1]) or {}).get("factory")
+    e3 = _epic(fws, fa)
+    v, _ = bridge.post(KEY_A, f"/t/{e3}/approve", f"gate=requirements&seen={_seen_charter(fws, e3)}&factory=1&max_children=3")
+    assert "AI Factory" in v.fields["subject"]["shown"] and "max_children 25" in v.fields["subject"]["shown"]
+    v, _ = bridge.post(KEY_A, f"/t/{e3}/approve", f"gate=plans&seen={_seen_charter(fws, e3)}&factory=1")
+    assert v.code == "assertion_failed"
+
+
+def test_an_action_body_that_is_not_text_cannot_be_approved(bridge, fws, running):
+    eid, cid, r = running
+    e = bridge._env(KEY_A, {"op": "http", "method": "POST", "path": f"/t/{cid}/edit", "headers": FORM}, b"text=\xff\xfe")
+    assert bridge._decide(e).code == "assertion_failed"
+
+
+def test_a_subject_always_carries_a_digest():
+    from orch.dashboard.factory_remote import _subject
+    assert _subject("verdict", "x", "") is None and _subject("verdict", "x", "AB" * 32) is None
+    assert _subject("verdict", "x", "a" * 64)["digest"] == "a" * 64

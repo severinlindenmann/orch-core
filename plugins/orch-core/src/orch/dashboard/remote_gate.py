@@ -258,13 +258,16 @@ class RemoteGate:
             return await _respond(send, 403, no)
         if not bridge.allows(self.root, tag.kind, origin, tag.scope):
             return await _respond(send, 403, no)
-        if (not origin.fresh and scope["method"] == "POST" and path.startswith("/t/")
-                and await asyncio.to_thread(factory_guarded, self.ws, self._ref(scope))):
-            # a change under a running factory epic can start agents or alter a launched one's prompt. The lookup
-            # scans the workspace and reads tickets, so it runs in a thread: a large workspace never stalls the loop.
-            # It is a policy check made before the handler runs: an epic armed in the gap between the two is not
-            # seen (accepted, see the README).
-            return await _respond(send, 403, FRESH)
+        if scope["method"] == "POST" and path.startswith("/t/"):
+            route_path, pp = self._match(scope)
+            needed = await asyncio.to_thread(factory_need, self.ws, scope["method"], route_path, pp, tag)  # scans the workspace: in a thread
+            if needed is not None:
+                # a change under a running factory epic can start agents or alter a launched one's prompt; the epic's
+                # own verdict ends it. Type for an edit, and always a fresh assertion over this very request.
+                if origin.scope < needed[0] or not bridge.allows(self.root, tag.kind, origin, needed[0]):
+                    return await _respond(send, 403, no)
+                if not origin.fresh:
+                    return await _respond(send, 403, FRESH)
         action = self._addon_action(scope)
         if action is not None and action_unlisted(Request(scope), *action):
             return await _respond(send, 403, no)  # this layer sits outside the others: the same bytes as any refusal
@@ -284,12 +287,57 @@ class RemoteGate:
                 return p.get("name"), p.get("action_id")
         return None
 
-    def _ref(self, scope):
+    def _match(self, scope):
+        """(the matched route's declared path, its path parameters); (None, {}) when nothing matches."""
         for route in self.routes:
             match, child = route.matches(scope)
             if match is Match.FULL:
-                return child.get("path_params", {}).get("ref")
+                return route.path, child.get("path_params", {})
+        return None, {}
+
+
+# Under a running factory epic these stay as tagged: reading, commenting, and pausing (Decide: it only stops work).
+FACTORY_OPEN = ("/t/{ref}/comment", "/t/{ref}/epic/pause")
+
+
+def is_factory_epic(ws, ref) -> bool:
+    """The ticket is an epic whose signed charter is a factory one (whatever its state). Fails closed: any doubt
+    answers yes; only "no such ticket" and an epic-less ticket answer no."""
+    from orch.core import epics, store
+    from orch.errors import NotFoundError
+    if not isinstance(ref, str) or not ref.strip():
+        return True
+    try:
+        try:
+            entry = store.resolve(ws, ref)
+        except NotFoundError:
+            return False
+        if entry.meta is None:
+            return True
+        if not epics.is_epic(entry.meta):
+            return False
+        d = epics.delegation(ws, store.read_ticket(entry.path))
+        return bool(d and d.get("factory"))
+    except Exception:  # noqa: BLE001 - fail closed
+        return True
+
+
+def factory_need(ws, method, route_path, pp, tag):
+    """For a remote POST under /t/: (the scope needed, the kind of subject the device approves) when the request must
+    carry a fresh assertion because of the AI Factory, else None. The approve form that arms the runner (Type) and
+    the epic's own verdict (Type); any other change on a factory epic or its child (Type for an edit, the route's
+    own scope for a decision). Comment and pause are left as tagged."""
+    if method != "POST" or not route_path or not route_path.startswith("/t/{ref}/") or route_path in FACTORY_OPEN:
         return None
+    ref = pp.get("ref")
+    if route_path == "/t/{ref}/approve" and tag is not None and tag.fresh:
+        return Scope.TYPE, "charter"
+    if route_path == "/t/{ref}/verdict" and is_factory_epic(ws, ref):
+        return Scope.TYPE, "verdict"
+    if tag is not None and tag.scope is not None and factory_guarded(ws, ref):
+        kind = "verdict" if route_path == "/t/{ref}/verdict" else "action"
+        return (Scope.TYPE if tag.scope >= Scope.OPERATE else tag.scope), kind
+    return None
 
 
 def factory_guarded(ws, ref) -> bool:

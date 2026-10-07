@@ -295,7 +295,7 @@ def prepare(ws, *, take_over: bool = False, out=print) -> Remote:
     server = urlsplit(info["server"])
     try:
         host = Host(workspace=bytes.fromhex(info["space"]), k_ws=k_ws, host_key=host_key, root=root,
-                    clock=lambda: time.time_ns() // 1_000_000, route=route_hook(dashboard_routes()),
+                    clock=lambda: time.time_ns() // 1_000_000, route=route_hook(dashboard_routes(), ws),
                     phone_key=phone_key, rp_id=server.hostname, origin=f"{server.scheme}://{server.netloc}")
     except (files.Damaged, OSError) as e:
         raise RemoteNotReady("the bridge's records cannot be opened", hint=DOCS + ", \"Damaged records\"") from e

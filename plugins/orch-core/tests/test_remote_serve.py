@@ -125,10 +125,10 @@ def fake(tmp_path, monkeypatch):
     return f
 
 
-def make_host(per_device=None, scope_a="operate", scope_b="look"):
+def make_host(per_device=None, scope_a="operate", scope_b="look", ws=None):
     from orch.dashboard.launch import config_dir
     host = Host(workspace=WS, k_ws=V.K_WS, host_key=HOST_KEY, root=files.bridge_dir(config_dir(), WS_HEX),
-                clock=now_ms, route=route_hook(dashboard_routes()), phone_key=lambda pid: None, rp_id=V.RP_ID,
+                clock=now_ms, route=route_hook(dashboard_routes(), ws), phone_key=lambda pid: None, rp_id=V.RP_ID,
                 origin=V.ORIGIN, per_device=per_device)
     if not host.registry.devices():
         host.registry.add(Device(did(KEY_A), signatures.public_bytes(KEY_A), scope_a, "Laptop", 0), 0)
@@ -538,7 +538,8 @@ def test_an_idle_stream_gets_keepalives(ws, fake):
 
 # -- F: the factory-epic rule, end to end ----------------------------------------------------------------------------
 
-def test_an_operate_device_is_refused_alike_under_a_running_factory_epic(configure, agent, human, fake):
+def test_an_operate_device_cannot_change_things_under_a_running_factory_epic(configure, agent, human, fake):
+    """A decision asks for a fresh assertion (nothing ran); an edit needs Type, so an Operate device is refused."""
     from conftest import human_ops
     from orch.core import store
     from orch.core.ops import Ops
@@ -550,18 +551,18 @@ def test_an_operate_device_is_refused_alike_under_a_running_factory_epic(configu
     h.approve(epic.id, "requirements", delegate={"factory": True})
     child = a_ops.new("child", epic=epic.id)
     before = store.resolve(fws, child.id).path.read_text()
-    host, dev = make_host(scope_a="operate"), Device_(KEY_A)
+    host, dev = make_host(scope_a="operate", ws=fws), Device_(KEY_A)
 
     async def main():
         loop = make_loop(fws, host, app=create_app(fws, TOKEN))
         task = await started(loop)
+        cases = (("approve", b"gate=requirements&seen=x", "assertion_required"), ("move", b"to=backlog", "assertion_required"),
+                 ("edit", b"text=changed", "forbidden_scope"))
         rids = [fake.request(dev.envelope(http("POST", f"/t/{child.id}/{action}", FORM), body))
-                for action, body in (("approve", b"gate=requirements&seen=x"), ("move", b"to=backlog"),
-                                     ("edit", b"text=changed"))]
+                for action, body, _ in cases]
         await until(lambda: all(fake.chunks(r) and fake.chunks(r)[-1][0].flags & E.F_LAST for r in rids))
-        answers = [(fake.chunks(r)[0][1]["status"], b"".join(d for _, _, d in fake.chunks(r))) for r in rids]
-        assert {s for s, _ in answers} == {403} and len({body for _, body in answers}) == 1  # uniform
-        assert b"fresh confirmation" in answers[0][1]
+        # the device has no authenticator: it is asked, cannot answer, and nothing runs
+        assert [fake.chunks(r)[0][1].get("refusal") for r in rids] == [c[2] for c in cases]
         await finish(loop, task)
     arun(main())
     assert store.resolve(fws, child.id).path.read_text() == before

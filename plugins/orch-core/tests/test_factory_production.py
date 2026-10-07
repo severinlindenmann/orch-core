@@ -315,7 +315,7 @@ def test_a_stale_dev_never_lets_production_run(fws, prod, fa, human, close_tasks
     _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
     fa.claim(c.id)
     close_tasks(fa, c.id)
-    fa.set_section(c.id, "Verification", "- AC1: ok")
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
     fa.move(c.id, "testing")
     real = clock.now
     monkeypatch.setattr(clock, "now", lambda: real() + timedelta(hours=30))
@@ -540,7 +540,8 @@ def test_a_child_closed_after_its_merge_does_not_make_dev_stale(fws, ready, huma
     fr.tick(fws, human, fake)
     assert _states(fws, eid) == {"merge": "proven", "dev": "failed"}
     t1 = store.load(fws, c1)[1]
-    Ops(fws, human).verdict(c1, "done", "ok", expected_hash=epics.verdict_hash([t1], fws))
+    Ops(fws, human).verdict(c1, "done", "ok", expected_hash=epics.verdict_hash([t1], fws),
+                            skip_release="closed after its merge")  # dev is not proven: a reason is needed
     fr.retry(fws, human, eid, "dev", eid)
     fake.results.pop("deploy-dev")
     assert fr.tick(fws, human, fake) == [f"{eid}: dev of {eid} proven"]

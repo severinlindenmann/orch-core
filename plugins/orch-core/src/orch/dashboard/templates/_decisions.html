@@ -110,6 +110,12 @@
 </form>
 {% endmacro %}
 
+{#- A child of a running factory epic in testing: nothing to decide on it alone (the epic's release and verdict come
+    first); a quiet line linking to the run. -#}
+{% macro held_row(tid, eid) %}
+<p class="muted" data-factory-held="{{ eid }}">{{ ui.status("neu", "In the factory") }} Part of <a class="lnk key" href="/factory/{{ eid }}">{{ eid }}</a>: the epic's release and verdict come first. Nothing for you to do yet.</p>
+{% endmacro %}
+
 {#- Accept (inline confirm) and the folded Send back, both bound to the verdict hash of what the card shows. -#}
 {% macro verdict_forms(d, back_to) %}
 <form method="post" action="/t/{{ d.ticket }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ d.ticket }} as done"
@@ -231,6 +237,8 @@
     {% set anchor = card_anchor(d) %}
     {% if anchor %}{% for addon, a in addon_inline.get((d.ticket|upper, anchor), []) %}{{ ui.addon_decision(addon, a) }}{% endfor %}{% endif %}
 
+  {% elif d.kind == "verdict" and d.held %}
+    {{ held_row(d.ticket, d.held) }}
   {% elif d.kind == "verdict" %}
     {% if d.criteria %}
     <ol class="proof dc-proof" aria-label="Acceptance criteria and their evidence">

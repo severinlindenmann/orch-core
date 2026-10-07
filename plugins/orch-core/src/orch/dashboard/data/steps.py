@@ -123,6 +123,8 @@ def why_waiting(item: dict | None, *, together: bool | None = None) -> str:
         return _WHY_TOGETHER
     if kind == "task" and item.get("scope") == "later":
         return _WHY_LATER_TASK
+    if kind == "verdict" and item.get("factory_epic"):
+        return f"Part of {item['factory_epic']}: the epic's release and verdict come first. Nothing for you to do yet."
     return _WHY.get(kind, "").format(gate=need_gate(item) or "gate")
 
 
@@ -228,6 +230,10 @@ def _candidate(ticket, item: dict, plan_skip_sizes, moves) -> dict:
                 f"{', '.join(qids)}. Answer so the agent can go on.")
         return {"text": text, "rank": 0,
                 "action": {"kind": "answer", "qid": qid, "label": f"Answer {qid}".strip(), "href": f"#q-{qid}"}}
+    if kind == "verdict" and item.get("factory_epic"):
+        eid = item["factory_epic"]
+        return {"text": f"Part of {eid}: the epic's release and verdict come first. Nothing for you to do yet.",
+                "rank": 2, "action": {"kind": "factory", "label": "Open the run", "href": f"/factory/{eid}"}}
     if kind == "verdict":
         return {"text": "The work is ready for testing. Check it, then accept it or send it back.", "rank": 0,
                 "action": {"kind": "verdict", "label": "Accept"}}
@@ -292,6 +298,8 @@ def your_move(ticket, needs_items, *, plan_skip_sizes=(), moves=()) -> dict:
         cands = sorted((_candidate(ticket, i, plan_skip_sizes, moves) for i in own), key=lambda c: c["rank"])
         first = cands[0]
         more = [{"text": c["text"], "action": c["action"]} for c in cands[1:] if c["rank"] == 1]
+        if first["action"]["kind"] == "factory":  # a factory child in testing: the run's move, not yours
+            return {"kind": "agent", "text": first["text"], "action": first["action"], "more": more}
         return {"kind": "human", "text": first["text"], "action": first["action"], "more": more}
     return {"kind": "agent", "text": _agent_text(ticket, plan_skip_sizes), "action": None, "more": []}
 

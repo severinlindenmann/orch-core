@@ -4,7 +4,7 @@
 {% import "_ui.html" as ui %}
 
 {% macro request_card(r, back) %}
-<article class="card permit-card" data-permit="{{ r.id }}" aria-labelledby="pc-h-{{ r.id }}">
+<article class="card permit-card" id="pc-{{ r.id }}" data-permit="{{ r.id }}" aria-labelledby="pc-h-{{ r.id }}">
   <div class="permit-head">{{ ui.status("you", "Permission") }} <b class="key" id="pc-h-{{ r.id }}">{{ r.id }}</b>
     <span class="muted">epic <a class="lnk key" href="/t/{{ r.epic }}">{{ r.epic }}</a> · <a class="lnk key" href="/t/{{ r.ticket }}">{{ r.ticket }}</a> asks</span></div>
   <pre class="permit-cmd" aria-label="The exact command">{{ r.command }}</pre>
@@ -32,7 +32,7 @@
 {% endmacro %}
 
 {% macro budget_card(c) %}
-<article class="card permit-card permit-budget" data-budget="{{ c.epic }}">
+<article class="card permit-card permit-budget" id="pb-{{ c.epic }}" data-budget="{{ c.epic }}">
   <div class="permit-head">{{ ui.status("warn", "Budget used up") }} <a class="lnk key" href="/t/{{ c.epic }}">{{ c.epic }}</a> {{ c.title }}</div>
   <p>{{ c.reason }}. Agents stopped on this epic; you decide how it goes on.</p>
   <a class="btn" href="/t/{{ c.epic }}#factory">Open the epic</a>
@@ -43,7 +43,7 @@
     and the one action that is yours: the epic's verdict, bound to the hash of exactly these children and their
     evidence. Text the agents wrote is plain text here, never formatted. -#}
 {% macro ready_card(r, back, here=False) %}
-<article class="card permit-card factory-ready" data-ready="{{ r.epic }}" aria-labelledby="fr-h-{{ r.epic }}">
+<article class="card permit-card factory-ready" id="fr-{{ r.epic }}" data-ready="{{ r.epic }}" aria-labelledby="fr-h-{{ r.epic }}">
   <div class="permit-head">{{ ui.status("ok", "Ready") }} <b id="fr-h-{{ r.epic }}">{{ r.title }}</b>
     {% if not here %}<a class="lnk key" href="/t/{{ r.epic }}#factory">{{ r.epic }}</a>{% endif %}</div>
   <p>The agents report that every child is in testing or done, with evidence cited for each criterion ({{ r.proven }} of {{ r.total }}). That is what they wrote, not a check: read it before you sign.{% if r.auto %} Your charter signs closing it by itself: that replaces your verdict for this run.{% else %} Nothing is closed until you give the verdict.{% endif %}</p>
@@ -102,7 +102,7 @@
 {#- An epic whose charter signs a release that has not run: no plain Accept. The human closes it without releasing,
     with a reason the verdict's ledger entry records (release_skipped). -#}
 {% macro skip_release_form(eid, seen, back, stages) %}
-<div class="stack" data-release-unrun="{{ eid }}">
+<div class="stack" id="unrun-{{ eid }}" data-release-unrun="{{ eid }}">
   <p>{{ ui.status("warn", "Not released") }} The release has not run; closing now skips it ({{ stages|join(", ") }} not proven yet). The runner releases it once the epic is Ready; or close it yourself without releasing.</p>
   <form method="post" action="/t/{{ eid }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ eid }} without releasing">
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ seen }}">{% if back %}<input type="hidden" name="next" value="{{ back }}">{% endif %}
@@ -118,7 +118,7 @@
 
 {#- The Stopped message: why the factory cannot go on by itself and what you can do. It offers no action of its own. -#}
 {% macro stopped_card(s, here=False) %}
-<article class="card permit-card factory-stopped" data-stopped="{{ s.epic }}" aria-labelledby="fs-h-{{ s.epic }}">
+<article class="card permit-card factory-stopped" id="fs-{{ s.epic }}" data-stopped="{{ s.epic }}" aria-labelledby="fs-h-{{ s.epic }}">
   <div class="permit-head">{{ ui.status("warn", "Stopped") }} <b id="fs-h-{{ s.epic }}">{{ s.title }}</b>
     {% if not here %}<a class="lnk key" href="/t/{{ s.epic }}#factory">{{ s.epic }}</a>{% endif %}</div>
   <p>The agents cannot go on by themselves.</p>
@@ -130,7 +130,7 @@
 {% endmacro %}
 
 {% macro grant_row(g, back) %}
-<li class="permit-grant" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code> <span class="muted">{{ "for this epic" if g.scope == "epic" else "once, unused" }}</span>
+<li class="permit-grant" id="grant-{{ g.grant }}" data-grant="{{ g.grant }}"><code class="permit-cmd-inline">{{ g.command }}</code> <span class="muted">{{ "for this epic" if g.scope == "epic" else "once, unused" }}</span>
   <form method="post" action="/permits/grants/{{ g.grant }}/revoke" class="inline-confirm-form" data-inline-confirm="Confirm · revoke this grant">
     <input type="hidden" name="next" value="{{ back }}"><button type="submit" class="btn btn-quiet">Revoke</button>
   </form></li>

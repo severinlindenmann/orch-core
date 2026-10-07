@@ -199,9 +199,10 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished"),
            "asks": ("you", 0, "Question in its pane"), "hung": ("warn", 0, "Busy, screen unchanged"),
            "parked": ("you", 0, "Session ended"), "launches": ("warn", 0, "Launches used up"),
-           "children": ("warn", 0, "Children limit")}
+           "children": ("warn", 0, "Children limit"), "accepted": ("you", 0, "Needs you"),
+           "unready": ("you", 0, "Needs you")}
 NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children",
-             "windowlook", "relhold")
+             "windowlook", "relhold", "accepted", "unready")
 BUSY_MINUTES = 20  # a session busy this long with an unchanged screen (its spinner aside) gets a warning
 
 
@@ -298,12 +299,19 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
     from orch.core import factory_close
     auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
+    all_done = epic.status == "open" and bool(kids) and all(t.status == "done" for _, t in kids)
+    early_done = _accepted_early(ws, epic, d, kids)
+    unready = None
     if lit[-1]:
         how = _last_close(signed, eid)
         said = "You closed it" if how.get("kind") == "close" else "You gave the verdict"
         state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
                                        else f"{said}: closed without release" if how.get("release_skipped")
                                        else said)
+    elif all_done and early_done:
+        state, headline = "accepted", (f"{_and(early_done)} {'was' if len(early_done) == 1 else 'were'} accepted "
+                                       "before the release ran, so nothing can be released for "
+                                       f"{'it' if len(early_done) == 1 else 'them'}")
     elif d["paused"]:
         state, headline = "paused", "You stopped the run"
     elif mine["stopped"]:
@@ -331,6 +339,9 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = "closing", "It closes by itself when everything is proven"
     elif mine["requests"] or mine["ready"] or mine["budget"]:
         state, headline = "waiting", "Your answer is needed on the cards below"
+    elif not mine["ready"] and (unready := factory_report.unready(ws, epic, entries=entries, signed=signed,
+                                                                   events=events)):
+        state, headline = "unready", "Not Ready: " + "; ".join(f"{u['child']}: {u['why']}" for u in unready)
     elif stalled := _stalled(running, kids):
         state, headline = "stalled", "; ".join(f"{s['child']} is idle and still {s['status']}: its agent stopped "
                                                "without finishing" for s in stalled)
@@ -371,7 +382,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     here = {"asks": "wait", "parked": "wait", "hung": "now", "working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
             "closing": "todo", "held": "wait", "trust": "wait", "stalled": "wait",
-            "windowlook": "wait", "relhold": "wait"}.get(state, "stop")
+            "windowlook": "wait", "relhold": "wait", "accepted": "wait", "unready": "wait"}.get(state, "stop")
     marks = ["done" if lit[i] else here if i == n else "todo" for i in range(len(names))]
     current = min(n, len(names) - 1)
     live = state in ("working", "planning", "releasing")  # motion and glow only while it really works
@@ -388,7 +399,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
-            "all_done": epic.status == "open" and bool(kids) and all(t.status == "done" for _, t in kids),
+            "all_done": all_done, "early_done": early_done, "unready": unready or [],
             "unreleased": _unreleased(ws, epic) if epic.status == "open" else None,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
@@ -442,6 +453,24 @@ def _last_close(signed, eid: str) -> dict:
     without its signed release."""
     return next((e for e in reversed(signed or []) if str(e.get("ticket")).upper() == eid
                  and e.get("kind") in ("verdict", "close")), None) or {}
+
+
+def _and(ids) -> str:
+    return ids[0] if len(ids) == 1 else ", ".join(ids[:-1]) + " and " + ids[-1]
+
+
+def _accepted_early(ws, epic, d, kids) -> list[str]:
+    """The children closed done without a proven merge while the epic's signed release is not proven: accepted before
+    the release ran, so the release has nothing of theirs to release (it counts testing children, and done ones with
+    a proven merge). Empty without a signed release, or once the epic is closed."""
+    from orch.core import factory_release
+    if epic.status != "open" or not d.get("release") or not _unreleased(ws, epic):
+        return []
+    try:
+        return [t.id for _, t in kids or [] if t.status == "done"
+                and factory_release.unit_state(ws, epic.id, "merge", t.id)["state"] != "proven"]
+    except Exception:
+        return []
 
 
 def _unreleased(ws, epic):

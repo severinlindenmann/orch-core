@@ -167,9 +167,10 @@ def test_the_lock_is_held_even_when_nothing_is_skipped(fws, ready, fh, human):
     assert held == [True] and fr.lock_holder(fws) is None
 
 
-def _all_done(fws, fh, eid):
+def _all_done(fws, fh, eid):  # each child accepted alone, before the release ran (it says so: a reason)
     for k in epics.children(fws, eid):
-        fh.verdict(k.id, "done", expected_hash=epics.verdict_hash([store.load(fws, k.id)[1]], fws))
+        fh.verdict(k.id, "done", expected_hash=epics.verdict_hash([store.load(fws, k.id)[1]], fws),
+                   skip_release="accepted alone")
 
 
 def test_the_epic_close_needs_the_skip_reason_too(fws, ready, fh):
@@ -188,11 +189,53 @@ def test_the_run_views_close_form_asks_for_the_skip_reason(fws, ready, fh):
     _all_done(fws, fh, eid)
     c = _client(fws)
     html = c.get(f"/factory/{eid}").text
-    assert f'data-release-unrun="{eid}"' in html and 'name="skip_release"' in html and "Close without releasing" in html
+    assert f'data-release-unrun="{eid}"' in html and "Close the epic without releasing</button>" in html
     r = c.post(f"/factory/{eid}/close", data={"reason": "done"}, follow_redirects=False)
     assert "err=" in r.headers.get("location", "") and store.load(fws, eid)[1].status == "open"
     c.post(f"/factory/{eid}/close", data={"reason": "done", "skip_release": "by hand"}, follow_redirects=False)
     assert store.load(fws, eid)[1].status == "done"
+
+
+def _close_block(html):
+    return html.split("<div data-all-done>", 1)[1].split("</div>", 1)[0]
+
+
+def test_the_close_block_is_one_form_one_labelled_reason_one_button(fws, ready, fh):
+    """The live run: two stacked forms, the labels "Why close it" and "Why close it without releasing" empty-looking,
+    an input without a label. Now: one form, one textarea with its label, the release sentence as its help text."""
+    eid, _, _ = ready(release="dev")
+    _all_done(fws, fh, eid)
+    c = _client(fws)
+    block = _close_block(c.get(f"/factory/{eid}").text)
+    assert block.count("<form") == 1 and block.count("<textarea") == 1 and block.count("<button") == 1
+    assert block.count("<label") == 1 and '<label for="close-reason">Why close it</label>' in block
+    assert 'id="close-reason"' in block and 'aria-describedby="close-help"' in block and 'id="close-help"' in block
+    assert re.findall(r"<input [^>]*>", block) == ['<input type="hidden" name="skip_with_reason" value="1">']
+    assert ">Close the epic without releasing</button>" in block
+    r = c.post(f"/factory/{eid}/close", data={"reason": "checked by hand", "skip_with_reason": "1"},
+               follow_redirects=False)
+    assert "err=" not in r.headers["location"] and store.load(fws, eid)[1].status == "done"
+    last = [e for e in ledger.entries(fws) if e.get("ticket") == eid and e.get("kind") == "close"][-1]
+    assert last["release_skipped"] == "checked by hand"
+
+
+def test_children_accepted_before_the_release_leave_one_clear_action(fws, ready, fh, human):
+    """The live run's end state: both children accepted alone, no proven merge, the release with nothing to release
+    and the run view saying "Idle". It now says what happened, needs you, and offers the one close."""
+    eid, (c0, c1), _ = ready(release="dev", kids=2)
+    _all_done(fws, fh, eid)
+    r = _run(fws, eid)
+    assert (r["state"], r["role"], r["chip"]) == ("accepted", "you", "Needs you")
+    assert r["headline"] == f"{c0} and {c1} were accepted before the release ran, so nothing can be released for them"
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert ">Close the epic without releasing</button>" in html and "reopen it and move it to testing" in html
+    # to release one after all: the human reopens it and moves it to testing; the release counts it again
+    assert fr._units(fws, store.load(fws, eid)[1]) == []
+    fh.reopen(c0, "release it after all")
+    fh.move(c0, "in-progress")
+    fh.move(c0, "testing")
+    assert fr._units(fws, store.load(fws, eid)[1]) == [c0]
+    assert _run(fws, eid)["state"] != "accepted"
 
 
 def test_orch_check_says_closed_without_release_and_warns_without_a_reason(fws, ready, fh, monkeypatch):
@@ -208,7 +251,43 @@ def test_orch_check_says_closed_without_release_and_warns_without_a_reason(fws, 
     assert (eid2, "warning", "closed-unreleased") in found
 
 
-def test_the_childs_own_verdict_card_says_accepting_it_releases_nothing(fws, ready):
+def test_a_factory_child_gets_no_verdict_card_of_its_own(fws, ready):
+    """The seventh live run: Today showed a Verdict card per child ("2 decisions"), the human accepted both, the
+    children closed before the release and the epic could never release or close normally."""
+    from orch.core import query
     eid, (c,), _ = ready(release="dev")
-    html = _client(fws).get(f"/t/{c}").text
-    assert "data-child-release-unrun" in html and f"accepting {c} alone releases nothing" in html
+    held = f'data-factory-held="{eid}"'
+    page = _client(fws).get(f"/t/{c}").text
+    assert held in page and f'action="/t/{c}/verdict" class="inline-confirm-form' not in page
+    assert f"Part of <a class=\"lnk key\" href=\"/factory/{eid}\">{eid}</a>: the epic's release and verdict come first. " \
+           "Nothing for you to do yet." in page
+    today = _client(fws).get("/").text
+    assert held in today and f'action="/t/{c}/verdict"' not in today
+    assert f"Part of {eid}" in _client(fws).get("/board").text  # the Board's move chip names the run, not a verdict
+    assert f'href="/factory/{eid}">Open the run</a>' in page  # the ticket's status card: the run's move
+    items = query.waiting(fws)
+    assert [i["scope"] for i in items if i["ticket"] == c] == ["later"]  # never counted as a decision
+    assert not any(i["ticket"] == c for i in items if i.get("scope") == "blocking")
+
+
+def test_a_childs_own_done_verdict_needs_a_reason_while_its_epic_has_to_release_it(fws, ready, fh):
+    eid, (c,), _ = ready(release="dev")
+    seen = epics.verdict_hash([store.load(fws, c)[1]], fws)
+    with pytest.raises(ValidationError, match=f"This child belongs to {eid}, which still has to release it: accept "
+                                              "the epic when it is Ready, or close this child without releasing "
+                                              "with a reason."):
+        fh.verdict(c, "done", expected_hash=seen)
+    assert store.load(fws, c)[1].status == "testing"
+    fh.verdict(c, "done", expected_hash=seen, skip_release="checked by hand")
+    e = _verdict_entry(fws, c)
+    assert e["release_skipped"] == "checked by hand" and e["skipped_stages"] == ["merge", "dev"]
+
+
+def test_the_cli_refuses_a_childs_plain_done_and_takes_its_reason(fws, ready, switch, capsys):
+    eid, (c,), _ = ready(release="dev")
+    switch.human(c)
+    capsys.readouterr()
+    assert cli_run(["verdict", c, "done"]) != 0
+    assert f"This child belongs to {eid}" in capsys.readouterr().err and store.load(fws, c)[1].status == "testing"
+    assert cli_run(["verdict", c, "done", "--skip-release", "by hand"]) == 0
+    assert _verdict_entry(fws, c)["release_skipped"] == "by hand"

@@ -337,14 +337,35 @@ def release_doubles(ws, rec: dict, epic, kids: list[str], found: dict) -> tuple[
 
 # -- told while the agent still runs: `orch move <child> testing` from its own session ------------------------------
 
+def evidence_refusal(ws, t) -> str | None:
+    """Why child `t` of a factory epic may not move to testing yet: an acceptance criterion with no Verification line
+    in the Ready report's format (`- AC<n>: ...`, evidence.missing), named; else None. The epic is Ready only when every
+    child in testing proves all its criteria, so a child moved without them leaves the run with nothing to do."""
+    from orch.core import epics, evidence, permits
+    if not isinstance(getattr(t, "meta", None), dict):
+        return None  # not a ticket read from its file (nothing to read criteria from)
+    epic = epics.parent_epic(ws, t)
+    if epic is None or permits.factory_delegation(ws, epic) is None:
+        return None
+    miss = [f"AC{n}" for n in evidence.missing(t)]
+    if not miss:
+        return None
+    names = miss[0] if len(miss) == 1 else ", ".join(miss[:-1]) + " and " + miss[-1]
+    return (f"{names} {'has' if len(miss) == 1 else 'have'} no evidence yet: write a Verification line for "
+            f"{'it' if len(miss) == 1 else 'each'} with the Write tool and --file, then move again (one line per "
+            f"criterion: - {miss[0]}: what shows it)")
+
+
 def move_refusal(ws, t) -> str | None:
-    """Why child `t` (with a runner-made clone) may not move to testing yet, as fixed text naming what to do, or None:
-    work in its clone that is not committed, a commit message orch's commit-msg check refuses (the release refuses it
+    """Why child `t` may not move to testing yet, as fixed text naming what to do, or None: a criterion without
+    evidence (evidence_refusal, any child of a factory epic); and for a child with a runner-made clone, work in its
+    clone that is not committed, a commit message orch's commit-msg check refuses (the release refuses it
     later), or a file it adds that another child adds too (the merge would conflict). The release checks the same
     things later; this says it while the agent can still fix it."""
     from orch.core import epics, factory_clones, factory_release as fr, permits
-    if factory_clones.record(ws, t.id) is None:
-        return None
+    why = evidence_refusal(ws, t)
+    if why or factory_clones.record(ws, t.id) is None:
+        return why
     st = uncommitted(ws, t.id)
     if st is None:
         return None

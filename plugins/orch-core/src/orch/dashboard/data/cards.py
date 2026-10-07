@@ -114,6 +114,8 @@ def _human_move(t, item: dict) -> dict:
         return _move("re-approve", f"Re-approve {gate}", who="you", role="you", ref=gate, since=since)
     if kind == "approve-epic":
         return _move("approve-epic", "Re-approve the epic", who="you", role="you", ref="requirements", since=since)
+    if kind == "verdict" and item.get("factory_epic"):  # the epic's release and verdict come first
+        return _move("factory", f"Part of {item['factory_epic']}", who="agent", role="neu", since=since)
     if kind == "verdict":
         return _move("verdict", "Verdict", who="you", role="you", since=since)
     return _move("repair", "Repair", who="you", role="you", since=since)

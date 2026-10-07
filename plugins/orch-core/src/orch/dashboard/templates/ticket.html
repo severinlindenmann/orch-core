@@ -68,12 +68,15 @@
 {% endmacro %}
 
 {% macro verdict_forms() %}
-{% if epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone releases nothing. The runner releases the epic's children together once the epic is Ready.</p>{% endif %}
+{% if factory_held %}<p class="muted" data-factory-held="{{ factory_held }}">{{ ui.status("neu", "In the factory") }} Part of <a class="lnk key" href="/factory/{{ factory_held }}">{{ factory_held }}</a>: the epic's release and verdict come first. Nothing for you to do yet.</p>
+{% elif epic_unreleased %}<p class="permit-meta" data-child-release-unrun>{{ ui.status("warn", "Not released") }} The release of {{ epic_unreleased[0] }} has not run ({{ epic_unreleased[1]|join(", ") }} not proven yet): accepting {{ t.id }} alone closes it without releasing, so say why.</p>{% endif %}
 <div class="cluster story-actions">
-  {% if actions.accept %}
-  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form" data-inline-confirm="Confirm · close {{ t.id }} as done">
+  {% if factory_held %}
+  {% elif actions.accept %}
+  <form method="post" action="/t/{{ t.id }}/verdict" class="inline-confirm-form stack" data-inline-confirm="Confirm · close {{ t.id }} as done">
     <input type="hidden" name="verdict" value="done"><input type="hidden" name="seen" value="{{ verdict_seen }}">
-    <button type="submit" class="btn btn-primary">Accept, mark done</button>
+    {% if epic_unreleased %}<label class="field-col" for="child-skip"><span>Why close it without releasing</span><textarea id="child-skip" name="skip_release" required maxlength="300" rows="2"></textarea></label>{% endif %}
+    <button type="submit" class="btn btn-primary">{{ "Close without releasing" if epic_unreleased else "Accept, mark done" }}</button>
   </form>
   {% else %}<p class="muted">No verdict yet: {{ invalidated|join(" and ") }} changed after approval. Re-approve first (see above), or send it back.</p>{% endif %}
   <details class="ym-more" id="send-back">
@@ -335,7 +338,7 @@
 {% if t.status != "done" %}
 {% set human = move.kind == "human" %}
 {% set a = move.action or {} %}
-<section class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
+<section id="status-card" class="status-card{{ ' status-you' if human else (' status-warn' if stale else '') }}" aria-labelledby="status-title">
   <p class="status-label" id="status-title">{% if human %}{{ tc.move_chip(card.move) }}{% elif stale %}{{ ui.status("warn", "No activity") }}{% else %}{{ ui.icon("neu") }} Agent's move{% endif %}</p>
   <p class="ym-text">{{ move.text }}</p>
   {% if not human and card.agent %}<p class="muted">{{ tc.agent_line(card) }}</p>{% endif %}
@@ -345,6 +348,7 @@
     {% elif a.kind == "approve" %}<a class="btn" href="#gate-{{ a.gate }}">Read the {{ a.gate }} and approve below</a>{% endif %}
     {% if a.kind == "verdict" %}<a class="btn" href="#proven">Check the proof and give the verdict below</a>{% endif %}
     {% if a.kind in ("repair", "task") %}<a class="btn btn-primary" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
+    {% if a.kind == "factory" %}<a class="btn" href="{{ a.href }}">{{ a.label }}</a>{% endif %}
     {% if a.kind == "move" %}{{ move_form(a.to, a.label, true) }}{{ changes_form(a.gate) }}{% endif %}
     {% if a.kind == "hint" %}{{ changes_form(a.gate) }}{% endif %}
     {% if stale and actions.release %}<form method="post" action="/t/{{ t.id }}/release" data-dialog="Release {{ card.agent.harness }}'s claim on {{ t.id }}?" data-dialog-body="{{ t.id }} goes back to open and any agent can claim it. Branch and notes stay." data-dialog-confirm="Release claim" data-dialog-cancel="Keep claim"><input type="hidden" name="ask" value="1"><button type="submit" class="btn">Release claim…</button></form>{% endif %}

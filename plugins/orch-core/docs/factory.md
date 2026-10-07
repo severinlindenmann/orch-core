@@ -476,7 +476,7 @@ what runs, and the epic page says why.
 with a non-blocking error in every session (the plugin's `bin/orch` needs `uv`, which was not on the session's PATH),
 so the guard and the permission hook silently did nothing. Before it starts a session, the runner therefore runs
 these checks under the sessions' exact environment (`env -i`, the session PATH, the allowlisted variables) and shows
-the failures on the run view (with the last lines of a failing program's output, escaped). While a blocking check
+the failures on the run view (with the last lines of a failing program's output, cleaned and escaped). While a blocking check
 fails it starts nothing. A result is kept for at most 60 seconds, and only while the programs it probed and the hook
 commands it ran are still the ones the runner would use (checked again, without running anything, right before a
 launch: a change since then starts nothing until the next round's checks); the run view says when the checks ran
@@ -839,8 +839,13 @@ You can type into them as into orch's own sessions (for example to answer Claude
 same rules: the token cookie, a request from this machine with a loopback Host, a same-origin POST. There is no end
 from that page: the runner owns their lifecycle, so you stop them with Stop in the run view. While you type, the
 runner types no nudge into that session for 60 seconds (it records the time of your last browser key, in memory).
-With Terminals off (or tmux missing), the run view shows a read-only look at each session's last 12 lines,
-escaped, and says how to turn Terminals on. Both the link and the look are shown only to a request from this machine
+The run view shows one status line per running session: its ticket, what it is doing (from the runner's own reading
+of its pane: a trust question, a question in its pane, idle at its prompt, stopped working; for a busy pane only fixed
+patterns: thinking, reading, searching, editing, running a command, a hook waiting for a permission card; otherwise
+just "Working") and how long its screen has been unchanged by the runner's clock. A closed "Show screen" holds its
+last 12 lines, cleaned (escape sequences, box borders and spinner lines dropped, real characters, HTML-escaped once).
+With Terminals on, each line has a Watch link; with it off (or tmux missing), one line says how to turn it on.
+The status lines and screens are shown only to a request from this machine
 with a loopback Host, as Terminals itself (never over the dashboard's LAN mode). Watching a factory session never
 resizes its pane; Type and CLI do, never below 80x24, and that counts as you at it (no nudge). Agents reach none of this: the dashboard needs your token, the guard
 refuses `tmux -L orch` and anything naming the permits folder (where the runner's socket is).
@@ -1232,7 +1237,10 @@ redirects); the nudge depends on Claude Code's current screen markers.
   <child> testing`, which a factory session's agent cannot pass while either holds (a fixed reason says what to
   do); a human's move is never held, and the Ready report, the release and the close still check. Sensitive paths:
   only at the release (the paths are the recipe's, which agents cannot read). Named files in a commit: at Ready and
-  the release (whether a child should hold a file is the epic's split, not the child's own knowledge).
+  the release (whether a child should hold a file is the epic's split, not the child's own knowledge). Evidence: at
+  `orch move <child> testing`, an agent's move of any factory child is refused while an acceptance criterion has no
+  Verification line in the Ready format (`- AC<n>: ...` saying something concrete), naming the criteria ("AC2 has no
+  evidence yet"); a child in testing without it would leave the epic never Ready (the seventh live run).
 
 ## Release recipe (phase 6)
 
@@ -1254,8 +1262,30 @@ For every epic whose charter signs a release, your verdict or close reads which 
 entry under the workspace's release lock, even when nothing is skipped, so no stage starts in between: while a release
 round holds the lock, it is refused ("a release is running"). The charter's own close records, per stage and unit, the
 attempt, state and commits it closed on. `orch check` reports an epic closed without its release as info ("closed-without-release", with the
-reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased"). A child's own
-verdict card says that accepting the child alone releases nothing while its epic's release has not run. A verdict
+reason) and warns about a done epic with stages not proven and no signed reason ("closed-unreleased").
+
+A child of an open factory epic whose charter is active gets no verdict card of its own (the seventh live run: Today
+showed one Verdict per child, both were accepted, and the release then had no child to release): Today, the Board and
+the ticket page show "Part of <epic>: the epic's release and verdict come first. Nothing for you to do yet.", linking
+to the run view, and Today does not count it as a decision. Send back stays on the ticket page and the Ready report.
+A done verdict on such a child while the epic's signed release is not proven is refused everywhere ("This child
+belongs to <epic>, which still has to release it: accept the epic when it is Ready, or close this child without
+releasing with a reason."); `orch verdict <child> done --skip-release REASON` (or the reason field on the ticket page,
+once the charter is paused) closes it anyway and its verdict entry records `release_skipped`.
+
+When children were accepted before the release ran anyway (done, with no proven merge, while the signed release is not
+proven), the release has nothing of theirs to release: it counts children in testing, and done ones whose merge is
+proven. The run view says so ("T-0002 and T-0003 were accepted before the release ran, so nothing can be released for
+them"), as a Needs you state once every child is done, with one action: "Close the epic without releasing" (one reason
+field; the reason is recorded as `release_skipped`). To release such a child after all, reopen it and move it to
+testing, both as the human (`orch reopen <child> -m REASON`, `orch move <child> in-progress`, `orch move <child>
+testing`): the release counts it again from the next round.
+
+When every child is in testing or done but the epic is not Ready, the run view says why, per child, as a Needs you
+state ("Not Ready: T-0002: AC2 has no evidence"; a gate changed since approval; a status not backed by a record), with
+what you can do: type into the child's session on Terminals, or send the child back with a note from its ticket page.
+
+A verdict
 or close from a phone or an addon on such an epic is refused (it carries no reason); give it on the dashboard or in
 a terminal. Without a signed release, or once every stage is proven, the verdict is as before.
 

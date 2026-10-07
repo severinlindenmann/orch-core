@@ -12,6 +12,7 @@ to: a terminal is a shell as the user.
 from __future__ import annotations
 
 import html
+import json
 import re
 import shutil
 import subprocess
@@ -370,3 +371,55 @@ def ansi_to_html(text: str) -> str:
         pos = m.end()
     emit(text[pos:])
     return "".join(out)
+
+
+# ---- a pane's last lines as plain text (the run view), and what a session is doing by fixed patterns --------------
+
+_CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_BORDER = re.compile(r"^[\s─-╿|>❯]*$")  # a box border, or the input box's empty line
+_SPINNER = re.compile(r"^\s*[·*✢✳✶✻✽]\s*(?:\S.*….*)?$")  # "✻ Thinking… (12s)"
+
+
+def _spinner(line: str) -> bool:
+    return "esc to interrupt" in line.casefold() or bool(_SPINNER.match(line))
+
+
+def clean_screen(text, n: int = 12, *, record: bool = False) -> str:
+    """The last `n` lines of a pane worth reading, as plain text with its real characters: escape sequences and
+    control characters removed, box borders and spinner lines dropped, each line cut to 200 characters. Never HTML:
+    the template escapes it (once). `record`: the text is a runner record's tail, whose lines were kept JSON-escaped
+    (factory_runner.escaped_tail); their escapes are read back first, so "\\u23fa" shows as the character itself."""
+    lines = []
+    for ln in str(text or "").splitlines():
+        if record:
+            try:
+                ln = json.loads('"' + ln + '"')
+            except ValueError:
+                pass  # not an escaped line: shown as it is
+        for part in _OTHER_ESC.sub("", _SGR.sub("", ln)).splitlines():
+            part = _CTRL.sub("", part.replace("\x1b", "")).rstrip()
+            if part.strip() and not _BORDER.match(part) and not _spinner(part):
+                lines.append(part[:200])
+    return "\n".join(lines[-n:])
+
+
+# Claude Code's tool lines ("⏺ Bash(npm test)") by the tool's name: what the session is doing, in fixed words only.
+_TOOL = re.compile(r"^\s*[⏺●]\s*(Read|Grep|Glob|Search|Edit|MultiEdit|Write|Update|NotebookEdit|Bash)\(")
+_DOING = {"Read": "Reading files", "Grep": "Searching files", "Glob": "Searching files", "Search": "Searching files",
+          "Edit": "Editing a file", "MultiEdit": "Editing a file", "Write": "Editing a file", "Update": "Editing a file",
+          "NotebookEdit": "Editing a file", "Bash": "Running a command"}
+
+
+def activity(text) -> str:
+    """What a busy session's pane says it does, by fixed patterns only: a hook waiting (the permission card),
+    Claude's thinking spinner, or the tool of its latest action line. Anything else is just "Working"."""
+    lines = [ln for ln in _OTHER_ESC.sub("", _SGR.sub("", str(text or ""))).splitlines() if ln.strip()][-30:]
+    low = "\n".join(lines[-12:]).casefold()
+    if "pretooluse hook" in low or "permissionrequest" in low:
+        return "Waiting for a permission card"
+    spin = next((ln for ln in reversed(lines[-12:]) if _spinner(ln)), "")
+    if "thinking" in spin.casefold():
+        return "Thinking"
+    last = next((ln for ln in reversed(lines) if ln.lstrip()[:1] in ("⏺", "●")), "")
+    m = _TOOL.match(last)
+    return _DOING[m[1]] if m else "Working"

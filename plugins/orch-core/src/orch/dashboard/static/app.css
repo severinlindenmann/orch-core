@@ -1772,3 +1772,13 @@ form.form-card.inline-confirm { flex-direction: column; flex-wrap: nowrap; align
 .release-unit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
 .release-unit form { margin: 0; }
 .release-tail { max-height: 20rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The run view's running sessions: one status line each, the screen behind "Show screen" (plain lines, scrolled). */
+.run-sessions { gap: var(--s-2); }
+/* The run view's close: one reason, its help under it, one button. */
+.close-epic { max-width: 40rem; }
+.close-epic label { font-weight: 600; align-self: flex-start; text-align: left; }
+.close-epic textarea { width: 100%; box-sizing: border-box; }
+.close-epic > button { align-self: flex-start; }
+.run-session-line { overflow-wrap: anywhere; }
+.run-screen-fold > summary, .run-details > summary { cursor: pointer; font: var(--type-meta); color: var(--muted); }
+.run-screen { font-family: var(--font-mono); font-size: .85em; max-height: 16rem; overflow: auto; white-space: pre; }

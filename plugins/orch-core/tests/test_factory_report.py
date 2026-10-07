@@ -78,9 +78,12 @@ def test_not_ready_until_every_child_is_in_testing(fws, fa, epic, close_tasks):
     assert rep["proven"] == rep["total"] == 2 and rep["open"] == 2
 
 
-def test_not_ready_while_a_criterion_has_no_evidence(fws, fa, epic, close_tasks):
+def test_not_ready_while_a_criterion_has_no_evidence(fws, fa, fh, epic, close_tasks):
+    from orch.errors import ValidationError
     c = _child(fa, epic.id)
-    _to_testing(fa, c, close_tasks, proof="nothing numbered")
+    with pytest.raises(ValidationError, match="AC1 has no evidence yet"):  # the agent's move is refused ...
+        _to_testing(fa, c, close_tasks, proof="nothing numbered")
+    fh.move(c, "testing")  # ... a human's is not
     assert _ready(fws, epic.id) is None
 
 
@@ -294,8 +297,8 @@ def test_waiting_and_counts_include_ready_and_stopped(fws, fa, fh, epic, close_t
     _to_testing(fa, c, close_tasks)
     items = [i for i in query.waiting(fws) if i["kind"].startswith("factory-")]
     assert [(i["ticket"], i["kind"]) for i in items] == [(epic.id, "factory-ready")]
-    # the child's own verdict is a blocking item too; the report adds one
-    assert query.counts(query.waiting(fws))["blocking"] == before + 2
+    # only the report counts: the child's own verdict waits on the epic's (a "later" item, never a decision)
+    assert query.counts(query.waiting(fws))["blocking"] == before + 1
     fh.verdict(epic.id, "done", expected_hash=_ready(fws, epic.id)["seen"])
     assert not [i for i in query.waiting(fws) if i["kind"].startswith("factory-")]
 
@@ -362,3 +365,22 @@ def test_wait_ignores_factory_state_for_an_ordinary_ticket(ws, aops):
     from orch.core.wait import wait_for_human
     t = aops.new("plain")
     assert wait_for_human(ws, t.id, timeout=0.1, poll=0.01) is None
+
+
+def test_the_run_view_says_why_the_epic_is_not_ready(fws, fa, fh, epic, close_tasks):
+    """The live run: T-0002 sat in testing with AC2 unproven, its session ended, and the run view said "Working"."""
+    from orch.dashboard.data import factory as data
+    c = fa.new("two criteria", epic=epic.id)
+    fa.set_section(c.id, "Requirements", "r")
+    fa.set_section(c.id, "Acceptance criteria", "- [ ] the page loads\n- [ ] the data is shown")
+    fa.set_section(c.id, "Plan", "1. do it")
+    fa.epic_auto_approve(c.id)
+    fa.claim(c.id)
+    close_tasks(fa, c.id)
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
+    fh.move(c.id, "testing")  # only a human's move gets it there now
+    assert _ready(fws, epic.id) is None
+    assert factory_report.unready(fws, store.load(fws, epic.id)[1]) == [{"child": c.id, "why": "AC2 has no evidence"}]
+    r = data.run_view(fws, store.load(fws, epic.id)[1])
+    assert (r["state"], r["role"], r["chip"]) == ("unready", "you", "Needs you")
+    assert r["headline"] == f"Not Ready: {c.id}: AC2 has no evidence"

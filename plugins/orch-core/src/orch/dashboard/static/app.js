@@ -444,7 +444,7 @@
     button.setAttribute("aria-busy", "true");
     post(form, encode(form, button)).then((response) => {
       const o = outcome(response);
-      if (!o.ok) { window.location = o.url.href; return; }  // the server's message, on the page it chose
+      if (!o.ok) { storePlace(placeOf(card), o.url); window.location = o.url.href; return; }  // the server's message, on the page it chose
       disarm(form, false);
       collapseInto(card, form.dataset.receipt);
     }).catch(() => form.submit());
@@ -1045,7 +1045,7 @@
     page.catch(() => cache.delete(url));
     return page;
   };
-  const swapIn = (page, push) => {
+  const swapIn = (page, push, keep) => {
     const next = new DOMParser().parseFromString(page.text, "text/html");
     const main = next.querySelector("main.content");
     const menu = next.querySelector("nav.menu");
@@ -1061,10 +1061,10 @@
     dirty = false;
     if (push) history.pushState({ orch: true }, "", page.url);
     const hash = new URL(page.url).hash;
-    if (!hash) window.scrollTo(0, 0);
+    if (!hash && !keep) window.scrollTo(0, 0);
     init(main);
     const heading = main.querySelector("h1");
-    if (heading && !(hash && document.getElementById(hash.slice(1)))) {
+    if (!keep && heading && !(hash && document.getElementById(hash.slice(1)))) {
       heading.setAttribute("tabindex", "-1");
       heading.focus({ preventScroll: true });
     }
@@ -1117,8 +1117,11 @@
       }
       else if (window.DOMParser && window.fetch && SWAPPABLE.test(window.location.pathname)) {
         cache.clear();
-        fetchPage(window.location.href).then((page) => swapIn({ ...page, url: window.location.href }, false))
-          .catch(() => window.location.reload());
+        const place = placeOf(active);
+        fetchPage(window.location.href).then((page) => {
+          swapIn({ ...page, url: window.location.href }, false, true);
+          restorePlace(place);
+        }).catch(() => window.location.reload());
       } else window.location.reload();
     };
     // Debounced: an agent's burst of writes (and every open tab) refreshes once, 1.5 s after the last change.
@@ -1160,6 +1163,119 @@
     window.addEventListener("pagehide", close);
     if (!document.hidden) open();
   }
+
+  // ---------- Actions keep your place ----------
+  // Every POST form in the page's main area (Grant, Deny, Retry release, Resolve, Reopen, Close, Accept, Stop the
+  // run, approvals, ...) posts in the background, follows the server's redirect and, when that lands on this same
+  // page, swaps the page in place: the window stays where it was, the form's card or section (its nearest element with
+  // an id) stays at the same height on screen and gets the focus, and the server's message shows next to it as a
+  // receipt. Another swappable page is swapped in as a navigation; anything else is a normal load of the redirect's
+  // target (a GET, never a second POST); an error or confirm page the server answered directly is shown as the browser
+  // would show it. Without JS, or for a form this does not take, the form posts as before, and the place is kept in
+  // sessionStorage and restored once on the next load of the same page.
+  const PLACE_KEY = "orch-place";
+  function placeOf(el) {
+    const ids = [];
+    let n = isEl(el) ? el.closest("[id]") : null;
+    while (n && n.id !== "main") {
+      ids.push({ id: n.id, top: n.getBoundingClientRect().top });
+      n = n.parentElement && n.parentElement.closest ? n.parentElement.closest("[id]") : null;
+    }
+    let box = isEl(el) ? el.parentElement : null;  // the nearest scrolled container (a wide table, the board)
+    while (box && box !== document.body && !(box.scrollTop || box.scrollLeft)) box = box.parentElement;
+    const scrolled = box && box !== document.body && box.id ? { id: box.id, top: box.scrollTop, left: box.scrollLeft } : null;
+    return { ids, y: window.scrollY || 0, box: scrolled };
+  }
+  // Back to a place: the window's scroll, then the innermost region still on the page moved to where it was on
+  // screen, then the scrolled container. The region found, or null.
+  function restorePlace(place) {
+    if (!place || typeof window.scrollTo !== "function") return null;
+    window.scrollTo(0, place.y);
+    const hit = (place.ids || []).find((r) => document.getElementById(r.id));
+    const el = hit ? document.getElementById(hit.id) : null;
+    if (el) window.scrollBy(0, el.getBoundingClientRect().top - hit.top);
+    const box = place.box && document.getElementById(place.box.id);
+    if (box) { box.scrollTop = place.box.top; box.scrollLeft = place.box.left; }
+    return el;
+  }
+  function storePlace(place, url) {
+    try {
+      window.sessionStorage.setItem(PLACE_KEY, JSON.stringify({ ...place, path: (url || window.location).pathname, at: Date.now() }));
+    } catch (e) { /* no storage: the page opens at its top, as without JS */ }
+  }
+  const restoreStored = () => {
+    let place = null;
+    try {
+      place = JSON.parse(window.sessionStorage.getItem(PLACE_KEY) || "null");
+      if (place) window.sessionStorage.removeItem(PLACE_KEY);  // once
+    } catch (e) { return; }
+    if (place && place.path === window.location.pathname && Date.now() - place.at < 30000 && !window.location.hash) {
+      restorePlace(place);
+    }
+  };
+  restoreStored();
+  const actionForm = (form) => Boolean(form && form.matches && form.matches("main.content form")
+    && String(form.getAttribute("method") || "").toLowerCase() === "post" && !form.getAttribute("target")
+    && !form.hasAttribute("data-no-swap"));
+  const landHere = (page, place) => {
+    swapIn(page, false, true);
+    if (window.history && window.history.replaceState) window.history.replaceState(null, "", page.url);
+    const main = document.querySelector("main.content");
+    if (main.querySelector(".reveal")) { window.scrollTo(0, 0); return; }  // shown once: never scrolled past
+    const el = restorePlace(place);
+    const flash = main.querySelector(".flash.err, .flash.ok");
+    if (el && flash) {  // the server's message next to the form's region (the flash itself is at the top)
+      el.before(receiptEl(flash.textContent.trim(), flash.classList.contains("err") ? "err" : ""));
+      const was = place.ids.find((r) => r.id === el.id);
+      window.scrollBy(0, el.getBoundingClientRect().top - was.top);
+    }
+    const target = el || main;
+    if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+  };
+  const tried = (fn) => { try { fn(); return true; } catch (e) { return false; } };
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (event.defaultPrevented || !actionForm(form)) return;
+    const action = new URL(form.getAttribute("action") || window.location.href, window.location.href);
+    if (action.origin !== window.location.origin) return;
+    const place = placeOf(event.submitter || form);
+    // an addon's action may answer with a one-time download (a redirect a background fetch would use up), and a
+    // Terminals page keeps live state a swap would drop: those post as before
+    if (!window.fetch || !window.DOMParser || action.pathname.startsWith("/addons/")
+        || document.querySelector("[data-term], [data-term-grid]")) {
+      storePlace(place);  // a normal post: the next load of this page restores the place
+      return;
+    }
+    event.preventDefault();
+    const multipart = String(form.getAttribute("enctype") || "").toLowerCase() === "multipart/form-data";
+    let body;
+    if (multipart) {
+      body = new FormData(form);
+      if (event.submitter && event.submitter.name && !body.has(event.submitter.name)) body.append(event.submitter.name, event.submitter.value);
+    } else body = encode(form, event.submitter);
+    const busy = event.submitter || form.querySelector("button[type=submit]");
+    if (busy) busy.setAttribute("aria-busy", "true");
+    fetch(action.href, { method: "POST", body, credentials: "same-origin", redirect: "follow",
+                         headers: multipart ? {} : { "Content-Type": "application/x-www-form-urlencoded" } })
+      .then((r) => r.text().then((text) => ({ r, text })))
+      .then(({ r, text }) => {
+        const final = new URL(r.url || action.href);
+        const isHtml = (r.headers.get("content-type") || "").includes("text/html");
+        const page = { url: final.href, text };
+        if (isHtml && r.redirected && final.pathname === window.location.pathname && tried(() => landHere(page, place))) return;
+        if (isHtml && r.redirected && SWAPPABLE.test(final.pathname) && tried(() => swapIn(page, true))) return;
+        if (r.redirected && r.ok) { window.location.href = final.href; return; }  // a GET of where the server sent it
+        // the server answered here (an error page, a confirm page): shown as the browser would show it
+        if (isHtml && tried(() => swapIn({ url: window.location.href, text }, false))) return;
+        throw new Error("the dashboard answered " + r.status);
+      })
+      .catch((e) => {
+        if (busy) busy.removeAttribute("aria-busy");
+        form.before(receiptEl("Could not finish: " + ((e && e.message) || e) + ". Reload to see whether it was recorded.", "err"));
+      });
+  });
+  window.orchPlace = { placeOf, restorePlace, storePlace, PLACE_KEY };  // read by the unit test
 
   // Countdowns ([data-until], the server's text stays without JS): same format as the server, every 30 s.
   const tick = () => document.querySelectorAll("[data-until]").forEach((el) => {

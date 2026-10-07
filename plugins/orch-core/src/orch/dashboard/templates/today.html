@@ -57,7 +57,7 @@
     </section>
     {% endif %}
     {% if n %}
-    <section class="dc-section" aria-labelledby="waiting-h">
+    <section class="dc-section" id="waiting" aria-labelledby="waiting-h">
       <h2 id="waiting-h" class="dc-section-h">Waiting on you <span class="count">{{ n }}</span></h2>
       {% for g in blocking %}
       {% if g.label %}<div class="dc-group" data-group="{{ g.key }}" role="group" aria-label="{{ g.label }}"><h3 class="dc-group-h">{{ g.label }} <span class="muted">{{ g.decisions|length }}</span></h3>{% endif %}
@@ -67,7 +67,7 @@
       {% if g.label %}</div>{% endif %}
       {% endfor %}
       {% if stale %}
-      <section class="card stale-claims" aria-labelledby="stale-h">
+      <section class="card stale-claims" id="stale-claims" aria-labelledby="stale-h">
         <h3 id="stale-h">{{ ui.status("warn", "No activity") }} {{ stale_total }} {{ "claim" if stale_total == 1 else "claims" }} gone silent</h3>
         <p class="dc-ff muted">Releasing puts a ticket back to open; any agent can claim it. Branch and notes stay.</p>
         <ul class="dc-rows">
@@ -105,7 +105,7 @@
     {% endif %}
 
     {% if later %}
-    <section class="dc-section" aria-labelledby="later-h">
+    <section class="dc-section" id="later" aria-labelledby="later-h">
       <h2 id="later-h" class="dc-section-h">When you have a moment <span class="count">{{ summary.later }}</span> <span class="muted">no agent waits on these</span></h2>
       {% for d in later if d.cid in full %}{{ dc.card(d, "/", kind_labels, addon_inline, card_anchor) }}{% endfor %}
       {% set rows = later|rejectattr("cid", "in", full)|list %}
@@ -114,7 +114,7 @@
     {% endif %}
 
     {% if backlog %}
-    <section class="card backlog-line" aria-labelledby="backlog-h">
+    <section class="card backlog-line" id="backlog-line" aria-labelledby="backlog-h">
       <div class="bl-head">
         <h2 id="backlog-h">{{ ui.icon("neu") }} Backlog <b>{{ summary.backlog }}</b> to groom</h2>
         <span class="muted">none of them blocks an agent{% if summary.backlog_oldest_minutes is not none %} · oldest {{ summary.backlog_oldest_minutes|minutes_ago }}{% endif %}</span>

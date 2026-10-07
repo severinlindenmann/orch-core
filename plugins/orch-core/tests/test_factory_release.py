@@ -832,7 +832,7 @@ def test_a_child_added_after_dev_was_proven_makes_dev_stale(fws, ready, fa, huma
     _work(fa, fws.root, c.id, f"feat/{c.id.lower()}-work", {"src/late.py": "x\n"})
     fa.claim(c.id)
     close_tasks(fa, c.id)
-    fa.set_section(c.id, "Verification", "- AC1: ok")
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
     fa.move(c.id, "testing")
     assert _states(fws, eid)["dev"] == "stale" and "release-stale" in _stopped(fws, eid)
 
@@ -965,7 +965,7 @@ def test_never_runs_without_a_release_target_or_for_a_non_dark_epic(fws, fa, fh,
         fa.link(c.id, repo="app", branch=f"feat/{c.id.lower()}")
         fa.claim(c.id)
         close_tasks(fa, c.id)
-        fa.set_section(c.id, "Verification", "- AC1: ok")
+        fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
         fa.move(c.id, "testing")
         assert fr.status(fws, store.load(fws, e.id)[1], epics.delegation(fws, store.load(fws, e.id)[1])) is None
     fake = Fake()

@@ -102,11 +102,11 @@ def test_the_run_view_links_to_the_sessions_or_peeks_while_terminals_is_off(ws, 
     monkeypatch.setattr(factory_runner.TmuxLauncher, "capture", lambda self, name: f"line one\n{EVIL}\n")
     req = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={"host": "127.0.0.1:8765"})
     w = routes_factory._watch(req, ws, "L-0001")
-    assert w == {"on": True, "n": 2, "peek": []}
+    assert w["on"] and w["n"] == 2 and [p["doing"] for p in w["sessions"]] == ["Working", "Working"]
     monkeypatch.setattr(terminals, "addon_on", lambda ws: False)
     w = routes_factory._watch(req, ws, "L-0001")
-    assert not w["on"] and [p["name"] for p in w["peek"]] == ["fx-l-0002-a1", "fx-l-0003-b2"]
-    assert "\x1b" not in w["peek"][0]["tail"] and "line one" in w["peek"][0]["tail"]  # escaped, never raw
+    assert not w["on"] and [p["name"] for p in w["sessions"]] == ["fx-l-0002-a1", "fx-l-0003-b2"]
+    assert "\x1b" not in w["sessions"][0]["screen"] and "line one" in w["sessions"][0]["screen"]  # cleaned, never raw
     assert routes_factory._watch(req, ws, "L-0099") is None  # no session of that epic
 
 
@@ -120,10 +120,12 @@ def test_the_run_view_page_shows_the_link_or_the_escaped_peek(monkeypatch, fws, 
     monkeypatch.setattr(terminals, "addon_on", lambda ws: False)
     html = _client(fws).get(f"/factory/{eid}").text
     assert "data-peek-note" in html and f'data-peek="fx-{c.lower()}-a1"' in html and "Workspace &amp; addons" in html
-    assert "<script>alert" not in html and "&lt;script&gt;" in html
+    assert html.count("data-peek-note") == 1 and "data-watch-link" not in html  # the hint once, not per child
+    assert "<script>alert" not in html and "&lt;script&gt;" in html and "&amp;lt;" not in html  # escaped once
+    assert f'<a class="lnk key" href="/t/{c}">{c}</a> · <span data-doing>Working</span>' in html
     monkeypatch.setattr(terminals, "addon_on", lambda ws: True)
     html = _client(fws).get(f"/factory/{eid}").text
-    assert f'href="/terminals#factory-{eid}"' in html and "Watch the sessions" in html and "data-peek=" not in html
+    assert f'href="/terminals#factory-{eid}" data-watch-link>Watch</a>' in html and "data-peek-note" not in html
 
 
 
@@ -207,3 +209,69 @@ def test_an_untrusted_tmux_or_a_stale_binding_never_breaks_the_pages(ws, two, mo
                   headers={"origin": LOCAL}).status_code == 204
     monkeypatch.setattr(factory_runner, "_tmux", FakeTmux(sessions=[]))  # the runner's session is gone, its binding not
     assert c.get("/terminals").status_code == 200 and c.get("/factory-sessions/fx-l-0002-a1").status_code == 200
+
+
+# -- the run view's status line and its cleaned screen ------------------------------------------------------------------
+
+CLAUDE_BUSY = ("\u23fa I will run the tests now.\n\n\u23fa Bash(npm test)\n  \u23bf  Running\u2026\n\n"
+               "\u273b Thinking\u2026 (40s \u00b7 esc to interrupt)\n\n\u256d" + "\u2500" * 20 + "\u256e\n\u2502 > "
+               + " " * 17 + "\u2502\n\u2570" + "\u2500" * 20 + "\u256f\n")
+
+
+def test_clean_screen_shows_real_characters_and_drops_borders_and_spinners():
+    out = terminals.clean_screen(CLAUDE_BUSY)
+    assert "\u23fa Bash(npm test)" in out and "\\u" not in out  # the character itself, never its escape
+    assert "\u2500" not in out and "esc to interrupt" not in out and "\u2502 >" not in out
+    assert terminals.clean_screen("a \x1b[31mred\x1b[0m \x1b]0;title\x07b\x07") == "a red b"
+
+
+def test_clean_screen_reads_a_records_escaped_tail_back():
+    from orch.core import factory_runner as core
+    rec = core.escaped_tail("\u23fa Done \u2500 ok\n" + "\u2500" * 30 + "\n<b>x</b>\n")
+    assert "\\u23fa" in rec  # the record keeps it escaped ...
+    assert terminals.clean_screen(rec, record=True) == "\u23fa Done \u2500 ok\n<b>x</b>"  # ... the page shows it
+
+
+@pytest.mark.parametrize("screen, doing", [
+    (CLAUDE_BUSY, "Thinking"),
+    ("\u23fa Read(src/a.py)\n  \u23bf  Read 40 lines\n\u2722 Pondering\u2026 (esc to interrupt)\n", "Reading files"),
+    ("\u23fa Update(src/a.py)\n\u2722 Pondering\u2026 (esc to interrupt)\n", "Editing a file"),
+    ("\u23fa Bash(make)\n  \u23bf  Running\u2026\n", "Running a command"),
+    ("\u23fa Bash(git push)\nRunning PreToolUse hooks\u2026\n", "Waiting for a permission card"),
+    ("\u23fa Let me look at the tests.\n\u2722 Pondering\u2026 (esc to interrupt)\n", "Working"),
+    ("anything at all\n", "Working")])
+def test_activity_says_only_what_fixed_patterns_show(screen, doing):
+    assert terminals.activity(screen) == doing
+
+
+def test_the_status_line_comes_from_the_runners_reading_and_clock(monkeypatch):
+    from datetime import timedelta
+
+    from orch import clock
+    from orch.dashboard import routes_factory
+    rec = {"idle": "1", "pane_at": clock.stamp_s(clock.now() - timedelta(minutes=4))}
+    monkeypatch.setattr(factory_sessions, "nudge_record", lambda s: rec)
+    w = {"name": "fx-a", "session": "s1"}
+    assert routes_factory.doing(w, CLAUDE_BUSY) == {"doing": "Idle at its prompt", "since": "4 min"}
+    rec.update(idle="busy", pane_at=clock.stamp_s(clock.now() - timedelta(seconds=40)))
+    assert routes_factory.doing(w, CLAUDE_BUSY) == {"doing": "Thinking", "since": "40 s"}
+    for idle, said in (("trust", "Trust question"), ("ask", "At a question in its pane")):
+        rec["idle"] = idle
+        assert routes_factory.doing(w, CLAUDE_BUSY)["doing"] == said
+    assert routes_factory.doing(w, CLAUDE_BUSY, {"stalled": [{"name": "fx-a"}]})["doing"] == "Stopped working"
+    monkeypatch.setattr(factory_sessions, "nudge_record", lambda s: None)
+    assert routes_factory.doing(w, "") == {"doing": "Working", "since": None}
+
+
+def test_the_run_view_shows_the_screen_with_real_characters_escaped_once(monkeypatch, fws, ready):
+    eid, (c,), _ = ready(release="none")
+    monkeypatch.setattr(factory_sessions, "bindings", lambda w: [
+        {"name": f"fx-{c.lower()}-a1", "epic": eid, "child": c, "session": "s1", "delegation": "d"}])
+    monkeypatch.setattr(factory_sessions, "is_planner", lambda b: False)
+    monkeypatch.setattr(factory_runner.TmuxLauncher, "capture", lambda self, name: CLAUDE_BUSY + EVIL)
+    monkeypatch.setattr(terminals, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(terminals, "addon_on", lambda ws: False)
+    html = _client(fws).get(f"/factory/{eid}").text
+    assert "\u23fa Bash(npm test)" in html and "\\u23fa" not in html and "\\u2500" not in html
+    assert "<summary>Show screen</summary>" in html and "<details class=\"run-screen-fold\" open" not in html
+    assert "<script>alert" not in html and "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt; red" in html

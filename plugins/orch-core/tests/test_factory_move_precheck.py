@@ -121,6 +121,7 @@ def test_the_refusals_never_tell_the_agent_to_do_what_its_session_cannot(fws, fa
     from orch.core import dark_profile, store
     from orch.hooks.guard import evaluate
     eid, cid, clone = child
+    fa.set_section(cid, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")  # evidenced: not the refusal here
     other = _child(fa, eid)
     clone_b, _ = fc.ensure(fws, human, other)
     (clone / "x.json").write_text("[]\n", encoding="utf-8")
@@ -140,3 +141,23 @@ def test_the_refusals_never_tell_the_agent_to_do_what_its_session_cannot(fws, fa
     for cmd in ("git rm same.json", "git rm --cached same.json"):  # what "delete it" would have needed: refused
         assert not evaluate(fws, {"session_id": b["session"], "tool_name": "Bash", "tool_input": {"command": cmd},
                                   "cwd": str(run["clone"])}).allow
+
+
+def test_a_move_with_a_criterion_without_evidence_is_refused_naming_it(fws, fa, fh, human, child, close_tasks):
+    """The live run: T-0002 moved to testing with AC1 evidenced and AC2 not, its session ended, and the epic could
+    never be Ready. The agent's move is refused naming AC2; the human's move is never held."""
+    from orch.errors import ValidationError
+    eid, _, _ = child
+    c = fa.new("two criteria", epic=eid)
+    fa.set_section(c.id, "Requirements", "r")
+    fa.set_section(c.id, "Acceptance criteria", "- [ ] the page loads\n- [ ] the data is shown")
+    fa.set_section(c.id, "Plan", "1. do it")
+    fa.epic_auto_approve(c.id)
+    fa.claim(c.id)
+    close_tasks(fa, c.id)
+    fa.set_section(c.id, "Verification", "- AC1: ran `pytest -q` on the branch, 3 passed")
+    with pytest.raises(ValidationError, match="not moved to testing: AC2 has no evidence yet: write a Verification "
+                                              "line for it with the Write tool and --file, then move again"):
+        fa.move(c.id, "testing")
+    fh.move(c.id, "testing")  # the human decides
+    assert __import__("orch.core.store", fromlist=["x"]).load(fws, c.id)[1].status == "testing"

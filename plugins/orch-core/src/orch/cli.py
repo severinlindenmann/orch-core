@@ -1511,13 +1511,23 @@ def serve(
                                                           "the relay, end-to-end encrypted (see docs/remote.md).")] = False,
     take_over: Annotated[bool, typer.Option("--take-over", help="With --remote: take this workspace over from "
                                                                 "another host serving it.")] = False,
+    link: Annotated[bool, typer.Option("--link", help="Print the sign-in link of this workspace's running dashboard "
+                                                      "and exit.")] = False,
+    new_token: Annotated[bool, typer.Option("--new-token", help="Sign every browser out: start with a new token "
+                                                                "instead of the kept one.")] = False,
 ) -> None:
     """Start the local dashboard. Every write goes through the same rules as the CLI."""
     import secrets
     import webbrowser
 
     from orch.actor import require_human_terminal
+    from orch.dashboard import serve_token
     require_human_terminal("starting the dashboard", hint="the dashboard is for the human: run it in your own terminal")
+    if link:
+        _print_serve_link(_ws())
+        return
+    if lan and new_token:
+        raise UsageError("--new-token goes without --lan", hint="--lan always starts with a token for this run only")
     if remote and lan:
         raise UsageError("--remote and --lan cannot be combined",
                          hint="--remote keeps the dashboard on this machine and reaches your devices through the "
@@ -1560,7 +1570,9 @@ def serve(
     if port is None and bind_port != (remembered or cfg["port"]):
         was = f"its remembered port {remembered}" if remembered else f"the configured port {cfg['port']}"
         typer.echo(f"{was} is taken; using {bind_port}")
-    token = secrets.token_urlsafe(24)
+    # --lan: a token for this run only, never kept, as the link reaches the network; otherwise the workspace's kept
+    # token, so a restart does not sign out open tabs (orch.dashboard.serve_token)
+    token = secrets.token_urlsafe(24) if lan else serve_token.load_or_create(ws, new=new_token)
     shown = _lan_ip() if bind == "0.0.0.0" else bind
     url = f"http://{shown}:{bind_port}/?token={token}"
     typer.echo(f"orch dashboard: {url}")
@@ -1578,6 +1590,17 @@ def serve(
         else create_app(ws, token, port=bind_port)
     server = uvicorn.Server(uvicorn.Config(dash, host=bind, port=bind_port, log_level="warning"))
     server.run(sockets=[sock])
+
+
+def _print_serve_link(ws) -> None:
+    from orch.dashboard import serve_token, switcher
+    port = switcher.remembered_port(ws)
+    token = serve_token.read(ws)
+    if port is None or token is None or not switcher.serves(ws, port):
+        raise UsageError("no dashboard is running for this workspace", hint="start it with orch serve")
+    host = ws.config["dashboard"]["host"]
+    host = "127.0.0.1" if host in ("0.0.0.0", "::") else (f"[{host}]" if ":" in host else host)
+    typer.echo(f"http://{host}:{port}/?token={token}")
 
 
 # -- ticket schema (tools such as phone apps) --------------------------------------------

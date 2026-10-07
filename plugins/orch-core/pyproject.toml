@@ -1,6 +1,6 @@
 [project]
 name = "orch-core"
-version = "0.4.4"
+version = "0.4.5"
 description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses"
 requires-python = ">=3.11"
 license = "Apache-2.0"

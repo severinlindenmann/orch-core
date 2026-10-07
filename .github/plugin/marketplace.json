@@ -7,7 +7,7 @@
       "name": "orch-core",
       "source": "./plugins/orch-core",
       "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
-      "version": "0.4.4"
+      "version": "0.4.5"
     }
   ]
 }

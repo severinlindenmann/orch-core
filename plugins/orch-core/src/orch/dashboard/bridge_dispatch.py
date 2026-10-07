@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Callable
 from urllib.parse import unquote
 
-from orch.dashboard.auth import COOKIE
+from orch.dashboard.auth import app_cookie
 from orch.dashboard.reach import SCOPE_KEY, RemoteOrigin
 from orch.dashboard.remote_gate import RemoteGate
 
@@ -111,7 +111,7 @@ def _build(app, request: BridgeRequest, origin, limits: Limits):
     except UnicodeDecodeError:
         return "bad_request"
     headers = [(b"host", LOCAL_HOST.encode()), (b"origin", f"http://{LOCAL_HOST}".encode()),
-               (b"cookie", f"{COOKIE}={token}".encode()), (b"content-length", str(len(request.body)).encode())]
+               (b"cookie", f"{app_cookie(app)}={token}".encode()), (b"content-length", str(len(request.body)).encode())]
     seen = set()
     for key, value in request.headers.items():
         name = key.lower() if isinstance(key, str) else ""

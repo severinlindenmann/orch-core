@@ -315,6 +315,16 @@ def show(ref: str, json_out: JsonOpt = False,
 
 
 @app.command()
+def status(ref: str, json_out: JsonOpt = False) -> None:
+    """A compact view of one ticket: move, gates, questions and answers, claim and expiry, tasks, wait cursor."""
+    from orch.core import store
+    from orch.core.status_view import render_text, status_document
+    ws = _ws()
+    s = status_document(ws, store.load(ws, ref)[1])
+    _out(s, json_out, render_text(s))
+
+
+@app.command()
 def search(text: str, summary: SummaryOpt = False, json_out: JsonOpt = False) -> None:
     """Full-text search over ticket files."""
     from orch.core import query
@@ -408,34 +418,52 @@ def log(ref: str, message: Annotated[str, typer.Option("--message", "-m")], json
 def wait(ref: str,
          timeout: Annotated[float, typer.Option("--timeout", help="Give up after this many seconds (0 = never).")] = 0.0,
          after: Annotated[Optional[str], typer.Option("--after", help="Event seq or cursor to start after (default: your last event on the ticket).")] = None,
+         all_events: Annotated[bool, typer.Option("--all", help="Return every human decision since the cursor in one result, with the highest cursor to pass to --after.")] = False,
          json_out: JsonOpt = False) -> None:
     """Wait until the human answers, approves, requests changes or gives a verdict on a ticket. Agents may run it."""
     from dataclasses import asdict
 
     from orch.core import store
-    from orch.core.wait import wait_for_human
-    from orch.errors import WaitTimeout
+    from orch.core.wait import feedback, wait_for_human
+    from orch.errors import UsageError, WaitTimeout
 
     ws = _ws()
-    from orch.errors import UsageError
     try:
-        event = wait_for_human(ws, ref, after=after, timeout=timeout)
+        found = wait_for_human(ws, ref, after=after, timeout=timeout, all_events=all_events)
     except ValueError:
         raise UsageError("--after takes an event number or the cursor a previous wait printed") from None
-    if event is None:
+    if found is None:
         raise WaitTimeout(f"no human decision on {store.resolve(ws, ref).id} within {timeout:g} s",
                           hint="run orch wait again, or stop and tell the user what you are waiting for")
+
+    def cursor_of(event):
+        return event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq
+
+    def lines(event, said, status):
+        who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
+        return (f"{event.ticket}: {event.kind} {who} (status {status})"
+                + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
+                                                       ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
+                                                       ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
+                          if v))
+
+    if all_events:
+        events = found
+        status = store.resolve(ws, events[0].ticket).status
+        items = []
+        for event in events:
+            said = feedback(ws, event)
+            items.append({"event": asdict(event), **said, "cursor": cursor_of(event), "text": lines(event, said, status)})
+        cursor = cursor_of(events[-1])
+        _out({"ticket": events[0].ticket, "status": status, "events": [{k: v for k, v in i.items() if k != "text"} for i in items],
+              "cursor": cursor}, json_out,
+             "\n".join(i["text"] for i in items) + f"\ncursor: {cursor}")
+        return
+    event = found
     status = store.resolve(ws, event.ticket).status
-    who = "by the factory's state" if event.kind.startswith("factory.") else "by the human"
-    from orch.core.wait import feedback
     said = feedback(ws, event)
-    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said,
-          "cursor": event.data.get("cursor", event.seq) if event.kind.startswith("factory.") else event.seq}, json_out,
-         f"{event.ticket}: {event.kind} {who} (status {status})"
-         + "".join(f"\n  {k}: {v}" for k, v in (("message", said.get("message")),
-                                                 ("criteria", ", ".join(f"AC{n}" for n in said.get("acs", [])) or None),
-                                                 ("images", ", ".join(a["path"] for a in said.get("attachments", [])) or None))
-                   if v))
+    _out({"ticket": event.ticket, "event": asdict(event), "status": status, **said, "cursor": cursor_of(event)},
+         json_out, lines(event, said, status) + f"\ncursor: {cursor_of(event)}")
 
 
 @app.command()
@@ -954,19 +982,91 @@ def verdict(ref: str, result: Annotated[str, typer.Argument(metavar="done|follow
 
 
 @app.command()
-def close(ref: str,
+def close(refs: Annotated[list[str], typer.Argument(metavar="REF...", help="One or more tickets.")],
           as_: Annotated[str, typer.Option("--as", metavar="completed|wont-do|superseded|duplicate",
                                            help="Why it is closed.")] = "completed",
           by: Annotated[Optional[str], typer.Option("--by", help="The ticket that replaces it (superseded, duplicate).")] = None,
           message: MessageOpt = None, dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
-    """Close a ticket from any status as done, saying why (-m). Human only."""
+    """Close one or more tickets from any status as done, saying why (-m). Human only. Several tickets are previewed
+    in a table and closed after one typed confirmation ("CLOSE 3"); a ticket that cannot be closed is skipped."""
     ws = _ws()
+    if len(refs) > 1:
+        return _close_many(ws, refs, as_, by, message or "", dry_run, json_out)
+    ref = refs[0]
     t = _human_op(ws, ref, lambda ops, kw: ops.close(ref, message or "", as_, by),
                   lambda p: f"{p.id}: close as {as_}" + (f" by {p.meta.get('superseded_by')}" if by else ""),
                   dry_run=dry_run, json_out=json_out, bind_file=True)
     if dry_run:
         return _dry(ws, t, json_out, f"{t.id}: would close as {as_}")
     _out(_view(ws, t), json_out, f"{t.id}: closed as {as_}")
+
+
+def _close_many(ws, refs: list[str], as_: str, by: str | None, message: str, dry_run: bool, json_out: bool) -> None:
+    """`orch close A B C` (#221): every ticket is previewed with the very same Ops.close as a dry run, a table lists
+    what would close and why the others are skipped, one typed confirmation ("CLOSE <n>") follows, and then each close
+    runs bound to its own ticket's file stamp as the preview read it: a ticket changed in between is skipped and
+    reported, the others are closed. --as, --by and -m apply to all."""
+    import contextlib
+    import sys
+
+    from orch.actor import require_human_terminal
+    from orch.core import store
+    from orch.core.events import Actor
+    from orch.core.lifecycle import require_human
+    from orch.core.ops import Ops, file_stamp
+    from orch.errors import HumanOnlyError, OrchError, ValidationError
+    from orch.textsafe import visible
+    require_human(Actor("human", "you", "tty"), "closing a ticket")  # an agent is refused here, dry run or not
+    if not dry_run:
+        require_human_terminal("human-only action")
+    entries, seen = [], set()
+    for ref in refs:
+        e = store.resolve(ws, ref)
+        if e.id not in seen:
+            seen.add(e.id)
+            entries.append(e)
+    stamps = {e.id: file_stamp(e.path) for e in entries}
+    status = {e.id: e.status for e in entries}
+    previews, skipped = [], []
+    for e in entries:
+        try:
+            previews.append(Ops(ws, Actor("human", "you", "tty"), dry_run=True).close(e.id, message, as_, by))
+        except HumanOnlyError:
+            raise
+        except OrchError as err:
+            skipped.append((e.id, err.message))
+    table = [f"{'key':<12} {'status':<12} title"] + [
+        f"{t.id:<12} {status[t.id]:<12} {visible(t.title)}" for t in previews]
+    table += [f"{sid}: skipped ({why})" for sid, why in skipped]
+    how = f"as {as_}" + (f" by {by}" if by else "")
+    if dry_run:
+        return _out({"dry_run": True, "would_close": [t.id for t in previews], "skipped": dict(skipped)}, json_out,
+                    "\n".join(table + [f"dry run: would close {len(previews)} ticket(s) {how}; nothing was written"]))
+    if not previews:
+        typer.echo("\n".join(table), err=json_out)
+        raise ValidationError("none of the tickets can be closed")
+    phrase = f"CLOSE {len(previews)}"
+    typer.echo("\n".join(table + [f"close the {len(previews)} ticket(s) above {how}: "
+                                  f"{visible(' '.join(message.split()))}"]), err=json_out)
+    with contextlib.redirect_stdout(sys.stderr):
+        typed = input(f'Type "{phrase}" to confirm: ').strip()
+    if typed != phrase:
+        raise HumanOnlyError("confirmation did not match; nothing changed")
+    actor_ = Actor("human", "you", "tty", None)
+    closed = []
+    for t in previews:
+        ops = _ops(ws, actor_)
+        ops.expected_stamp = stamps[t.id]  # this close is bound to the file the preview read
+        try:
+            ops.close(t.id, message, as_, by)
+            closed.append(t.id)
+        except HumanOnlyError:
+            raise
+        except OrchError as err:
+            skipped.append((t.id, err.message))
+    _out({"closed": closed, "skipped": dict(skipped)}, json_out,
+         "\n".join([f"{i}: closed {how}" for i in closed]
+                   + [f"{sid}: skipped, not closed ({why})" for sid, why in skipped]))
 
 
 @app.command()

@@ -345,11 +345,9 @@ def near(ws, ref: str | None = None, paths: list[str] | None = None, actor=None)
 def _held_ticket(ws, session: str) -> str | None:
     """A ticket this session still works on (in progress or waiting, claim not expired)."""
     from orch.core import query
-    from orch.core.ops import claim_expired as ticket_claim_expired
-    ttl = float(ws.config["claims"]["ttl_hours"])
     for e in query.list_tickets(ws, session=session):
         claim = (e.meta or {}).get("claim") or {}
-        if e.status in ("in-progress", "waiting") and not ticket_claim_expired(claim, ttl):
+        if e.status in ("in-progress", "waiting") and not query.claim_is_expired(ws, e.id, e.status, claim):
             return e.id
     return None
 

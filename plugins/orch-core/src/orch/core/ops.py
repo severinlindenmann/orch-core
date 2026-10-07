@@ -365,16 +365,18 @@ class Ops(TaskOpsMixin):
         ttl = float(self.ws.config["claims"]["ttl_hours"])
 
         def fn(t: Ticket) -> dict:
+            from orch.core.query import claim_is_expired
             if t.meta.get("type") == "epic":
                 raise TransitionError(f"{t.id} is an epic: claim one of its children instead",
                                       hint=f"orch list, then orch claim <child of {t.id}>")
             if t.status not in ("open", "in-progress"):
                 raise TransitionError(f"{t.id} is {t.status}; only open or in-progress tickets can be claimed")
             current = t.meta.get("claim") or {}
-            if current.get("session") and current["session"] != session and not claim_expired(current, ttl):
+            if current.get("session") and current["session"] != session \
+                    and not claim_is_expired(self.ws, t.id, t.status, current):
                 raise ClaimError(
                     f"{t.id} is claimed by {current.get('harness')} (session {str(current['session'])[:8]}) since {current.get('at')}",
-                    hint=f"claims expire after {ttl:g} h; the holder can run `orch release {t.id}`",
+                    hint=f"claims expire {ttl:g} h after their last sign of life; the holder can run `orch release {t.id}`",
                 )
             frm = t.status
             if not self.actor.is_human:

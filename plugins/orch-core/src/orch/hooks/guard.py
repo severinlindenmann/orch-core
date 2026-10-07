@@ -2119,6 +2119,67 @@ def _is_write(cmd: str) -> bool:
                 or _OUTPUT_REDIRECT.search(_unquoted(cmd)) or _INTERP_WRITE.search(cmd))
 
 
+# Commands that only print what they read. A segment of one of these that names the state folder, with no output
+# redirect to a path that may be in it, does not write there.
+_STATE_READERS = frozenset({"cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "jq", "wc", "ls", "stat",
+                            "file", "diff", "cmp", "sort", "uniq", "cut", "nl", "od", "xxd", "md5sum", "shasum", "sha256sum",
+                            "cksum", "test", "[", "echo", "printf", "true", ":"})
+_JQ_FILTER = re.compile(r"""^(\s*(?:\S*/)?jq\s+(?:-[A-Za-z]+\s+|--(?:arg|argjson|slurpfile|rawfile)\s+\S+\s+\S+\s+|--(?:indent)\s+\d+\s+|--[a-z-]+\s+)*)"""
+                         r"""('[^']*'|"[^"$`\\]*"|[^\s'"$`\\-]\S*)""")
+_STATE_INDIRECT = re.compile(r"(?<![\w-])(?:xargs|while|for|read|eval|source|exec)(?![\w-])|^\s*\.\s|[;&|]\s*\.\s")
+
+
+def _jq_filter_blanked(seg: str) -> str:
+    """`jq '.state' f`: the filter is jq's program, not a path (unless it comes from -f, where it is a file name)."""
+    if re.search(r"\s(?:-[A-Za-z]*f|--from-file)(?:\s|$)", seg):
+        return seg
+    return _JQ_FILTER.sub(r"\1''", seg, count=1)
+
+
+def _redirect_targets(seg: str) -> list[str]:
+    """Words after an output redirect in `seg` (quoted text aside)."""
+    flat = _unquoted(seg)
+    out = []
+    for m in re.finditer(r"(?<![0-9&])(?:&>>?|>>?)\|?\s*(&?[^\s;&|<>()]*)", flat):
+        out.append(m.group(1))
+    return out
+
+
+def _state_write(ws, cmd: str, code: str, cwd) -> bool:
+    """The command names the ticket or state files and writes. Judged by command when every command that names them
+    is a plain reader whose own redirects stay outside them; a cd, a working directory, a variable naming them, or
+    anything that feeds a later command (xargs, loops, eval) keeps the whole-line test."""
+    if not _touches_state(ws, code, cwd):
+        return False
+    if not _is_write(cmd):
+        return False
+    if _cwd_in_state(ws, cwd) or _cd_targets_state(code) or _STATE_INDIRECT.search(_unquoted(code)):
+        return True
+    for seg in _command_segments(code):
+        shown = _jq_filter_blanked(seg)
+        words, assigns = _command(seg)
+        if any(_touches_state(ws, v, cwd) for v in assigns.values()):
+            return True  # a variable that holds the path: a later command may write through it
+        if not _touches_state(ws, shown, cwd):
+            # A write tool or redirect in a command that does not name the state may still reach it (a symlink or
+            # variable set earlier in the line): only a bare interpreter call (`python3 -c`) or a redirect to a plain
+            # path outside it is skipped.
+            if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg):
+                return True
+            if any(re.search(r"[$`*?\[~]", t) or _touches_state(ws, t, cwd) for t in _redirect_targets(seg)):
+                return True
+            continue
+        prog = os.path.basename(words[0]) if words else ""
+        if prog not in _STATE_READERS:
+            return True  # not provably a reader: the old whole-line test (already true above)
+        for target in _redirect_targets(seg):
+            if re.search(r"[$`*?\[~]", target) or _touches_state(ws, target, cwd):
+                return True
+        if _WRITE_TOOL.search(_unquoted(seg)) or _OTHER_WRITE.search(seg) or _INTERP_WRITE.search(seg):
+            return True
+    return False
+
+
 def _bash(ws, cmd: str, cwd=None) -> Decision:
     if _reaches_pairing_keys(cmd, cwd):
         named = any(_REMOTE_KEYS.search(c) for c in _key_check_candidates(cmd))
@@ -2182,7 +2243,7 @@ def _bash(ws, cmd: str, cwd=None) -> Decision:
         return Decision(False, _DECODED_DENIED)
     if (_user_addon_path(cmd) or _config_dir_indirect(cmd)) and _is_write(cmd):
         return Decision(False, _ADDON_ADMIN_DENIED)
-    if _touches_state(ws, code, cwd) and _is_write(cmd):
+    if _state_write(ws, cmd, code, cwd):
         return Decision(False, _USE_ORCH)
     if _writes_startup_file(cmd, code):
         return Decision(False, _STARTUP_DENIED)

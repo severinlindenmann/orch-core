@@ -193,3 +193,70 @@ HELP_DENIED = [
 @pytest.mark.parametrize("cmd", HELP_DENIED)
 def test_help_with_anything_else_stays_denied(ws, cmd):
     _check(ws, cmd, False)
+
+
+# --- 4. read-only access to .state ----------------------------------------------------------------------------------
+STATE_ALLOWED = [
+    "orch show L-0001 --json | jq '.state' > /tmp/out.json",
+    "orch show L-0001 --json | jq -r '.state' | python3 -c 'import sys; print(sys.stdin.read())'",
+    "orch list --json | jq -r '.[] | select(.state == \"open\") | .id' > /tmp/ids",
+    "jq --arg s open '.state == $s' /tmp/x.json > /tmp/y.json",
+    "cat orchestrator/.state/x.json | python3 -c 'import json,sys; print(json.load(sys.stdin))'",
+    "cat orchestrator/.state/x.json > /tmp/copy.json",
+    "grep foo orchestrator/.state/x.json 2>/dev/null > /tmp/o",
+    "python3 -c 'print(1)'; cat orchestrator/.state/x.json",
+    "ls orchestrator/.state > /tmp/listing; python3 -c 'print(2)'",
+    "jq '.a' orchestrator/.state/x.json | python3 -c 'import sys; sys.stdin.read()'",
+]
+
+
+@pytest.mark.parametrize("cmd", STATE_ALLOWED)
+def test_reading_state_is_allowed(ws, cmd):
+    _check(ws, cmd, True)
+
+
+STATE_DENIED = [
+    "echo x > orchestrator/.state/x",
+    "cat a > orchestrator/.state/x",
+    "cat orchestrator/.state/x > orchestrator/.state/y",
+    "cat orchestrator/.state/x >> orchestrator/.state/y",
+    "cat orchestrator/.state/x > $OUT",
+    "cat orchestrator/.state/x > ~/y",
+    "F=orchestrator/.state/x; cat a >> $F",
+    "F=orchestrator/.state/x\ncat orchestrator/.state/y; echo x >> $F",
+    "export F=orchestrator/.state/x; echo x >> $F",
+    "cd orchestrator/.state && echo x > y",
+    "cd orchestrator/.state; cat y > /tmp/z",
+    "cd orchestrator && cd .state && rm x",
+    "pushd orchestrator/.state; touch y",
+    "rm orchestrator/.state/x",
+    "mv orchestrator/.state/x /tmp/x",
+    "cp /tmp/x orchestrator/.state/x",
+    "cat orchestrator/.state/x; rm -rf orchestrator/.stat*",
+    "cat orchestrator/.state/x; rm -rf $D",
+    "ls orchestrator/.state | xargs rm",
+    "find orchestrator/.state -name x | xargs rm",
+    "find orchestrator/.state -delete",
+    "for f in orchestrator/.state/*; do : > $f; done",
+    "python3 -c \"open('orchestrator/.state/x','w').write('1')\"",
+    "jq . x.json > orchestrator/.state/y.json",
+    "jq '.a' x.json | tee orchestrator/.state/y",
+    "jq '.state' x.json | sed -i s/a/b/ orchestrator/.state/z",
+    "sed -i s/a/b/ orchestrator/.state/z",
+    "echo '{}' | tee orchestrator/.state/x.json",
+    "ln -sfn orchestrator archiv && python3 -c 'print(1)' && rm archiv/.state/x",
+    "orch show L-1 --json | jq '.state' | tee /tmp/ok; ln -sfn orchestrator a; rm a/.state/x",
+]
+
+
+@pytest.mark.parametrize("cmd", STATE_DENIED)
+def test_writing_state_stays_denied(ws, cmd):
+    _check(ws, cmd, False)
+
+
+def test_a_cwd_inside_state_stays_denied(ws):
+    state = ws.root / "orchestrator" / ".state"
+    state.mkdir(parents=True, exist_ok=True)
+    for cmd in ("echo x > y", "cat y > /tmp/z", "python3 -c 'print(1)'", "rm y"):
+        d = _bash(ws, cmd, cwd=state)
+        assert not d.allow, cmd

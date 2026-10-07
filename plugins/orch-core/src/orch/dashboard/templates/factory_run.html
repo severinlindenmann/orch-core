@@ -56,7 +56,7 @@
     {% if run.checks and run.active %}<div data-readiness><p class="muted">The runner's readiness checks (run under the sessions' own environment before it starts anything{% if run.state == "blocked" %}; it starts nothing until each blocking one passes{% endif %}):</p>
       <ul class="plain">{% for c in run.checks %}<li data-check="{{ c.name }}">{{ ui.status("warn" if c.level == "block" else "neu", "Blocks" if c.level == "block" else "Warning") }} {{ c.why }}.{% if c.tail %}<pre class="release-tail">{{ c.tail }}</pre>{% endif %}</li>{% endfor %}</ul></div>{% endif %}
     {% if run.dark and not run.look_dark %}<p class="muted" data-dark-switch-off>Dark switch is off: this epic runs as an ordinary AI Factory. Commands outside your grants and the harness's allowlist are cards for you.</p>{% endif %}
-    {% if run.live %}<p class="muted" data-time>No estimate yet.{% if run.elapsed %} Running for {{ run.elapsed }} since you signed the start.{% endif %}</p>
+    {% if run.live %}<p class="muted" data-time>{% if run.estimate %}About {{ run.estimate.minutes }} minute{{ "s" if run.estimate.minutes != 1 }} left (from {{ run.estimate.runs }} earlier runs).{% else %}No estimate yet.{% endif %}{% if run.elapsed %} Running for {{ run.elapsed }} since you signed the start.{% endif %}</p>
     {% elif run.state != "finished" and run.elapsed %}<p class="muted" data-time>Started {{ run.elapsed }} ago.</p>{% endif %}
     {{ fx.marks(run, steps) }}
     <p class="muted permit-meta">Build is as the agents report it: the children's tasks they closed.</p>

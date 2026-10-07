@@ -271,10 +271,10 @@ def release_once(ws, run=None) -> list[str]:
     """One release round (phase 6, orch.core.factory_release): Ready Dark epics whose charter signs a release go
     through the human's recipe; then Dark epics whose charter signs `close` and whose every condition holds are closed
     by the charter (orch.core.factory_close). Needs no tmux; nothing unless the factory is on."""
-    from orch.core import factory_close, factory_release, permits
+    from orch.core import factory_close, factory_estimates, factory_release, permits
     if not permits.enabled(ws):
         return []
-    return factory_release.tick(ws, HUMAN, run) + factory_close.tick(ws, HUMAN)
+    return factory_release.tick(ws, HUMAN, run) + factory_close.tick(ws, HUMAN) + factory_estimates.tick(ws, HUMAN)
 
 
 async def _release_loop(ws, seconds: float) -> None:

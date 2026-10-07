@@ -365,9 +365,18 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "unreleased": _unreleased(ws, epic) if epic.status == "open" else None,
             "hot": look_dark and live and built, "marks": marks,
             "elapsed": span((end - start).total_seconds()) if start else None,
+            "estimate": _estimate(ws, d, (end - start).total_seconds()) if start and live else None,
             "edits_off": factory_runner.edits_why(), "checks": checks or [],
             "cap": factory_runner.concurrency(ws),
             "active": bool(d["active"]) and epic.status != "done", "kids": kids, "mine": mine, "planner": planner}
+
+
+def _estimate(ws, d, elapsed_s):
+    from orch.core import factory_estimates
+    try:
+        return factory_estimates.estimate(ws, d, elapsed_s)
+    except Exception:
+        return None  # no number rather than a wrong one
 
 
 _LOG_PHRASE = {"permit.requested": "asked for a permission", "permit.granted": "granted a permission",

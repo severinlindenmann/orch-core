@@ -1069,7 +1069,8 @@ refusal of a process under an agent harness, as for every approval).
   taken), needs you, waiting for children, idle, paused, stopped, budget used up, edited, blocked, not running (not
   armed) or finished. Motion only while it works (working or planning); a Dark run's working chip is mint, an AI
   Factory's blue. The Dark core glows stronger only with real build evidence: a task a child closed (a running session
-  is not evidence). Then the time: "Running for ... since you signed the start" while it works (there is no estimate),
+  is not evidence). Then the time: "Running for ... since you signed the start" while it works, preceded by "About N minutes left (from M
+  earlier runs)" only when an estimate exists (see "Estimates" below; otherwise "No estimate yet."),
   "Started ... ago" otherwise, and for a finished run the duration once, in its summary; what waits for you (the same cards as
   elsewhere), a read-only log in plain words (time, ticket, who and a fixed phrase per event kind; no command text,
   hashes or session ids) and "Stop the run…", which is the epic's pause. A finished epic shows a summary from the
@@ -1647,6 +1648,18 @@ gets run as you could write the records.
 
 A safe local live test of the release and the close, with a bare repository as the remote and example scripts that
 record what they were told: [factory-release-live-test.md](factory-release-live-test.md).
+
+## Estimates
+
+The runner keeps a record of every finished run of an armed factory epic, once, beside the ledger
+(`permits/durations/`, guarded like the rest of the permits folder; written only by the dashboard's process): the
+whole run (from your signed start to the epic's last event), the planner's time (to the first child), each child's
+time with its size (its first claim to its move into testing) and each release stage's time (to its proven record),
+all read from orch's own event log. The run view shows "About N minutes left (from M earlier runs)" only when at least
+three finished runs with the same release target are recorded and the median of their whole runs is still ahead of
+the running one; with fewer runs, or a run already longer than that median, it keeps "No estimate yet." A record that
+does not read back whole is left out. The per-step times are recorded for later use; only the whole run is estimated
+today.
 
 ## Coming in later phases
 

@@ -228,7 +228,7 @@ def _REMOTE_NAME(n: str) -> bool:
 CONFIG_TOP = ("ledger.key", "ledger.jsonl", "ledger.head", "ledger.lock", "launch.json", "remote-humans.json", "permits")
 PERMIT_NAMES = ("sessions", "armed", "runs", "children", "requests", "used", "factory-command.json",
                 "factory-release.json", "factory-release.json.lock", "release-records", "release-repos", "child-clones",
-                "nudges", "early-ends", "tmux", "tmux.name")
+                "nudges", "early-ends", "tmux", "tmux.name", "durations")
 # real names a glob could stand for, to ask "can this pattern reach one of them"
 _SENSITIVE_NAMES = tuple(dict.fromkeys(CONFIG_TOP + PERMIT_NAMES))
 # a plain word that is, or can stand for, one of them (a name with an extension by its stem: `ledger.key.bak` too)

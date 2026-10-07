@@ -17,7 +17,7 @@ dashboard = [
     "segno>=1.6",
     "cryptography>=42",  # Orch Remote's bridge (orch.remote.bridge_host), imported only when the bridge is used
 ]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "pytest-xdist>=3.6"]
 
 [project.scripts]
 orch = "orch.cli:main"

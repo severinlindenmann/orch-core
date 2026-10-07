@@ -149,3 +149,48 @@ def test_unknown_ticket_is_not_found(ws):
     with pytest.raises(Exception) as e:
         wait_for_human(ws, "L-9999", timeout=0.05, poll=0.01)
     assert "no ticket" in str(e.value)
+
+
+def _two_answers(aops, hops):
+    t = aops.new("Several")
+    aops.ask(t.id, [{"text": "A?", "type": "confirm"}, {"text": "B?", "type": "confirm"}])
+    hops.answer(t.id, "Q1", "yes")
+    hops.answer(t.id, "Q2", "no")
+    return t.id
+
+
+def test_all_returns_every_human_decision_since_the_cursor(ws, aops, hops):
+    tid = _two_answers(aops, hops)
+    events = wait_for_human(ws, tid, timeout=1, poll=0.01, all_events=True)
+    assert [e.data["qid"] for e in events] == ["Q1", "Q2"]
+    assert wait_for_human(ws, tid, after=events[-1].seq, timeout=0.05, poll=0.01, all_events=True) is None
+
+
+def test_all_writes_nothing(ws, aops, hops):
+    tid = _asked(aops)
+    hops.answer(tid, "Q1", "yes")
+    before = last_seq(ws)
+    wait_for_human(ws, tid, timeout=0.2, poll=0.01, all_events=True)
+    assert last_seq(ws) == before
+
+
+def test_cli_prints_the_cursor_and_chains(ws, aops, hops, capsys, monkeypatch):
+    tid = _two_answers(aops, hops)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert run(["wait", tid, "--timeout", "1"]) == 0
+    first = int(capsys.readouterr().out.strip().splitlines()[-1].removeprefix("cursor: "))
+    assert run(["wait", tid, "--after", str(first), "--timeout", "1", "--json"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["event"]["data"]["qid"] == "Q2"           # the next one, not Q1 again
+    assert run(["wait", tid, "--after", "0", "--all", "--timeout", "1"]) == 0
+    text = capsys.readouterr().out
+    assert text.count("question.answered") == 2 and text.strip().splitlines()[-1] == f"cursor: {second['cursor']}"
+
+
+def test_cli_all_json_lists_events_and_max_cursor(ws, aops, hops, capsys, monkeypatch):
+    tid = _two_answers(aops, hops)
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert run(["wait", tid, "--after", "0", "--all", "--json", "--timeout", "1"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [e["event"]["data"]["qid"] for e in out["events"]] == ["Q1", "Q2"]
+    assert out["cursor"] == out["events"][-1]["event"]["seq"] == last_seq(ws)

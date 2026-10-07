@@ -8,22 +8,8 @@ evidence beyond what an ordinary dashboard action already is.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
-BRIDGE_SKEW_S = 300  # a bridged request's timestamp may be this far in the past or the future, no further
-
 # The kinds a phone switch covers (Workspace -> Phones). A bridged `move` has no switch: its scope alone decides.
 SWITCHED_KINDS = ("answer", "request_changes", "approve", "verdict", "ticket_request")
-
-
-def within_window(at: datetime, now: datetime) -> bool:
-    """Whether a bridged request stamped `at` is acceptable at `now` (timezone-aware datetimes, 300 s each way)."""
-    if not isinstance(at, datetime) or not isinstance(now, datetime) or at.tzinfo is None or now.tzinfo is None:
-        return False
-    try:
-        return abs(now - at) <= timedelta(seconds=BRIDGE_SKEW_S)
-    except (OverflowError, TypeError):
-        return False
 
 
 def allows(root, kind: str | None, origin, needed) -> bool:

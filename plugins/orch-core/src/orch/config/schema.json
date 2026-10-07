@@ -45,7 +45,9 @@
               "default_branch": {"type": "string"},
               "review_url": {"type": "string"},
               "type": {"type": "string", "minLength": 1},
-              "base_url": {"type": "string", "pattern": "^(https?://\\S+)?$"}
+              "base_url": {"type": "string", "pattern": "^(https?://\\S+)?$"},
+              "commit_check": {"enum": ["enforce", "warn", "off"]},
+              "commit_skip": {"type": "array", "items": {"type": "string", "minLength": 1}}
             }
           }
         },
@@ -68,7 +70,8 @@
         "subject": {"type": "string"},
         "body": {"type": "array", "items": {"type": "string"}},
         "rollback": {"type": "boolean"},
-        "forbid_attribution": {"type": "boolean"}
+        "forbid_attribution": {"type": "boolean"},
+        "skip": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
     },
     "check": {

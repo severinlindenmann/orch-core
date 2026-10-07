@@ -11,6 +11,8 @@ pytest.importorskip("cryptography")
 import test_bridge_host_vectors as V  # noqa: E402
 from orch.remote.bridge_host import host_check  # noqa: E402
 
+pytestmark = pytest.mark.slow  # re-runs the host cases against every mutant
+
 SRC = Path(host_check.__file__).read_text(encoding="utf-8")
 
 SEQ = ('        high, bitmap = self.store.seq_state(did)\n'

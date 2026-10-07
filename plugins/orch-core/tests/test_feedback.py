@@ -54,10 +54,15 @@ def test_same_report_is_counted_not_duplicated(ws, as_agent, capsys):
 
 
 def test_rate_limit_per_workspace_and_day(ws, as_agent, capsys):
-    for i in range(feedback.DAILY_LIMIT + 2):
+    for i in range(feedback.DAILY_LIMIT):
         assert run(["feedback", "add", "--command", f"orch thing{i}", "-m", f"problem {i}"]) == 0
+    capsys.readouterr()
+    assert run(["feedback", "add", "--command", "orch over", "-m", "one too many"]) != 0  # #220: the file must survive
+    out = capsys.readouterr().out
     assert len(_reports()) == feedback.DAILY_LIMIT
-    assert "limit" in capsys.readouterr().out
+    assert "nothing saved; keep orchestrator/temporary/orch-feedback.md, do not delete it" in out
+    assert feedback.DAILY_LIMIT == 10
+
 
 
 def test_switched_off_per_workspace(configure, as_agent, capsys):
@@ -246,7 +251,7 @@ def test_file_needs_exactly_FILE(ws, monkeypatch):
     assert _reports()[0]["status"] == "open"
 
 
-def test_rule_says_to_delete_the_report_file():
+def test_rule_deletes_the_file_only_after_saved_or_counted():  # #220
     from orch.config.load import DEFAULTS
     from orch.instructions.render import agents_rules
-    assert "then delete" in agents_rules(DEFAULTS)
+    assert "delete it only after `saved` / `counted`" in agents_rules(DEFAULTS)

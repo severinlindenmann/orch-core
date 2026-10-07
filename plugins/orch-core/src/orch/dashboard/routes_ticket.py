@@ -163,7 +163,7 @@ def _question_view(q: dict) -> dict:
 
 
 @router.get("/t/{ref}")
-def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act: str = ""):
+def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act: str = "", files: str = ""):
     # One scan per request, shared by the load, needs_you, blockers, agent rows, the card and the menu badge.
     entries = store.scan(request.app.state.ws)
     ws, path, t, error = load_or_error(request, ref, entries)
@@ -262,8 +262,9 @@ def ticket_page(request: Request, ref: str, open: str = "", show: str = "", act:
                 evidence_by=story.evidence_author(ticket_events),
                 ask_by=ask_by, ask_agent_editable=agent_wrote_ask(ws, t, ticket_events),
                 notes=story.agent_notes(t, ticket_events), timeline=story.timeline(ticket_events),
+                activity=story.activity(ticket_events),
                 plan_checklist=plan_checklist(t.section("Plan")) if not task_view["tasks"] else None,
-                artifacts=_artifacts(ws, t.id, _drawn_html(ws, t)), artifact_view=artifact_view.view(ws, t), blockers=blockers, claim=claim, claim_at=when(claim.get("at")), ran_on=ran_on,
+                artifacts=_artifacts(ws, t.id, _drawn_html(ws, t)), artifact_view=artifact_view.view(ws, t, files), blockers=blockers, claim=claim, claim_at=when(claim.get("at")), ran_on=ran_on,
                 external=external, prs=prs, branches=branches, start_box=start_box, tasks_card=tasks_card,
                 ticket_decisions=ticket_decisions, epic=epic_view, together=bool(together),
                 together_questions=human_questions_in(t, "requirements") + human_questions_in(t, "plan"))
@@ -312,6 +313,82 @@ def raw_page(request: Request, ref: str):
     return page(request, "raw.html", nav="board", title=f"{entry.id} raw file", tid=entry.id, path=entry.path.relative_to(ws.home).as_posix(),
                 text=entry.path.read_text(encoding="utf-8", errors="replace"),
                 editable=entry.meta is not None)  # the editor needs a file that parses
+
+
+VIEW_MAX_BYTES = 2 * 1024 * 1024  # larger files open raw instead
+VIEW_MAX_LINES = 2000
+VIEW_MAX_ROWS = 200
+
+
+def _view_body(item: dict, data: bytes) -> dict:
+    """What the viewer shows for a file's pinned bytes: {mode: md|text|table|binary, ...}. Only text is produced
+    here; the template escapes it (md goes through the dashboard's Markdown renderer)."""
+    if b"\x00" in data[:8192]:
+        return {"mode": "binary"}
+    text = data.decode("utf-8", errors="replace")
+    if item["viewer"] == "md":
+        return {"mode": "md", "text": text}
+    if item["viewer"] == "table":
+        import csv
+        import io
+        reader = csv.reader(io.StringIO(text), delimiter="\t" if item["text"].lower().endswith(".tsv") else ",")
+        rows = []
+        for row in reader:
+            rows.append(row)
+            if len(rows) > VIEW_MAX_ROWS + 1:
+                break
+        return {"mode": "table", "head": rows[0] if rows else [], "rows": rows[1:VIEW_MAX_ROWS + 1],
+                "cut": len(rows) > VIEW_MAX_ROWS + 1}
+    if item["text"].lower().endswith(".json"):
+        import json
+        try:
+            text = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
+        except ValueError:
+            pass  # not valid JSON: shown as it is
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return {"mode": "text", "lines": lines[:VIEW_MAX_LINES], "cut": len(lines) > VIEW_MAX_LINES, "total": len(lines)}
+
+
+@router.get("/t/{ref}/view/{name:path}")
+def artifact_viewer(request: Request, ref: str, name: str, v: str = "", partial: str = ""):
+    """A linked file of the ticket shown in the dashboard: Markdown rendered, text and JSON as numbered lines, CSV as
+    a table, images in a lightbox. Only a file the ticket links, read once from the bytes its `?v=` pin names (the
+    artifact route's rule), so the viewer never shows bytes other than the ones linked. HTML, PDF and anything else
+    open through the sandboxed artifact route instead. `partial=1` returns the drawer's fragment for app.js."""
+    from fastapi.responses import HTMLResponse
+
+    from orch.core.artifacts import read_pinned
+    from orch.dashboard.views import TEMPLATES
+    ws, path, t, error = load_or_error(request, ref)
+    if error:
+        return error
+    items = artifact_view.view(ws, t)["viewable"]
+    item = next((i for i in items if i["text"] == name), None)
+    if item is None or not v or not item["view"].endswith(f"?v={v}"):
+        return page(request, "error.html", 404, nav="board", title="Not found", heading="Not found",
+                    message=f"{t.id} links no viewable file of that name and version.")
+    status = 200
+    if item["viewer"] == "image":
+        body: dict = {"mode": "image"}
+    else:
+        root = query.artifact_root(ws, t.id)
+        data = read_pinned(root / name, v, limit=VIEW_MAX_BYTES + 1, root=root)
+        if data is None:
+            body, status = {"mode": "changed"}, 409
+        elif len(data) > VIEW_MAX_BYTES:
+            body = {"mode": "large"}
+        else:
+            body = _view_body(item, data)
+    at = items.index(item)
+    ctx = {"t": t, "item": item, "body": body, "index": at + 1, "total": len(items),
+           "prev": items[at - 1] if at > 0 else None, "next": items[at + 1] if at + 1 < len(items) else None,
+           "images": [i for i in items if i["viewer"] == "image"]}
+    if partial:
+        html = TEMPLATES.get_template("_viewer.html").render(request=request, partial=True, **ctx)
+        return HTMLResponse(html, status_code=status, headers={"Cache-Control": "no-store"})
+    return page(request, "viewer.html", status, nav="board", title=f"{t.id} · {item['label']}", **ctx)
 
 
 @router.get("/a/{ticket}/{name:path}")

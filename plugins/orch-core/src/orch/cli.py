@@ -202,9 +202,14 @@ def new(
     type_: Annotated[str, typer.Option("--type", help="feature|bug|chore|spike|investigation|epic")] = "feature",
     priority: Annotated[str, typer.Option("--priority", help="low|normal|high|urgent")] = "normal",
     size: Annotated[str, typer.Option("--size", help="xs|s|m|l (xs skips the plan gate)")] = "m",
-    from_: Annotated[Optional[str], typer.Option("--from", help="Create as follow-up of this ticket.")] = None,
+    from_: Annotated[Optional[str], typer.Option(
+        "--from", help="Create as follow-up of this ticket. Joins that ticket's epic unless --epic or --no-epic "
+                       "says otherwise; the ticket keeps the follow-up link either way.")] = None,
     external: Annotated[Optional[str], typer.Option("--external", help="External key, e.g. ABC-123.")] = None,
-    epic: Annotated[Optional[str], typer.Option("--epic", help="Create as a child of this epic.")] = None,
+    epic: Annotated[Optional[str], typer.Option(
+        "--epic", help="Create as a child of this epic (also with --from).")] = None,
+    no_epic: Annotated[bool, typer.Option(
+        "--no-epic", help="With --from: do not join the source ticket's epic.")] = False,
     sprint: Annotated[Optional[str], typer.Option("--sprint", help="A sprint id from the workspace config.")] = None,
     due: Annotated[Optional[str], typer.Option("--due", help="Due date, YYYY-MM-DD (optional).")] = None,
     label: Annotated[Optional[list[str]], typer.Option(
@@ -241,7 +246,9 @@ def new(
         sections[name] = f.read_text(encoding="utf-8")
     ops = _ops(ws)
     t = ops.new(title, type=type_, priority=priority, size=size, ask=ask, external=external, from_ref=from_,
-                epic=epic, sprint=sprint, sections=sections, labels=label, due=due)
+                epic=epic, sprint=sprint, sections=sections, labels=label, due=due, no_epic=no_epic)
+    for notice in ops.notices:
+        typer.echo(notice, err=True)
     _warn(ops)
     _out({**_view(ws, t), "warnings": ops.warnings} if ops.warnings else _view(ws, t), json_out,
          f"created {t.id} in backlog: {t.title}")

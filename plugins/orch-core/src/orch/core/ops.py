@@ -139,6 +139,7 @@ class Ops(TaskOpsMixin):
     def __init__(self, ws, actor: Actor, *, dry_run: bool = False):
         self.ws = ws
         self._actor = actor
+        self.notices: list[str] = []  # what the last operation chose for the caller (`new --from` joining an epic)
         self.warnings: list[str] = []  # what the last operation allowed but the caller should hear about
         # dry_run (#7): every check runs as usual on the loaded ticket and the method returns the ticket as it would
         # be, but nothing is written: no lock file, no save, no event, no ledger entry, no gate snapshot.
@@ -247,22 +248,31 @@ class Ops(TaskOpsMixin):
     def new(self, title: str, *, type: str = "feature", priority: str = "normal", size: str = "m",
             ask: str = "", external: str | None = None, from_ref: str | None = None, epic: str | None = None,
             sprint: str | None = None, sections: dict[str, str] | None = None, due: str | None = None,
-            labels: list[str] | None = None) -> Ticket:
+            labels: list[str] | None = None, no_epic: bool = False) -> Ticket:
         """`sections` (#24): Summary, Requirements, Acceptance criteria and Out of scope written at creation, with the
         same rules as `orch section set`. `labels` (#173): checked by `check_labels`. `self.warnings` names a gated
-        section left empty."""
+        section left empty. `from_ref` with `epic` (#213): `parent` is the epic, the source keeps its `follow_ups`
+        back-link; `from_ref` alone joins the source's epic (not done, new type not epic) unless `no_epic`, and
+        says so in `self.notices`."""
         from orch.core.body import SPLIT_SECTIONS, empty_gate_warnings
         self.warnings = []
+        self.notices = []
         title = " ".join(title.split())
         if not title:
             raise UsageError("title must not be empty")
         _choice("type", type, TYPES)
         _choice("priority", priority, PRIORITIES)
         _choice("size", size, SIZES)
-        if epic and from_ref:
-            raise UsageError("pass --epic or --from, not both")
+        if epic and no_epic:
+            raise UsageError("pass --epic or --no-epic, not both")
         source = store.resolve(self.ws, from_ref) if from_ref else None  # validate before allocating an ID
         parent_epic = self._epic_target(epic, child_type=type) if epic else None
+        if source and not epic and not no_epic and type != "epic":
+            from orch.core.epics import parent_epic as epic_of
+            inherited = epic_of(self.ws, source)
+            if inherited is not None and inherited.status != "done":
+                parent_epic = store.resolve(self.ws, inherited.id)
+                self.notices.append(f"created in epic {parent_epic.id} (from {source.id}'s epic)")
         sprint_id = self._sprint(sprint) if sprint else None
         if due is not None:
             from orch.core.due import checked_due

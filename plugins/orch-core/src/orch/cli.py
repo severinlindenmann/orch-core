@@ -1428,9 +1428,13 @@ def guard(
         return
     try:
         decision = guard_mod.evaluate(ws, payload)
-    except Exception:
-        _guard_error(ws)  # fail open, but leave a trace
-        return
+    except Exception as e:
+        try:
+            _guard_error(ws)  # leave a trace
+        except Exception:
+            pass
+        # fail closed: a bug in the guard must never turn into an allow
+        decision = guard_mod.Decision(False, f"guard error: {type(e).__name__}: {e}; command refused (fail-closed)")
     if not decision.allow:
         reason = f"orch guard: {decision.reason}"
         if hook_json:

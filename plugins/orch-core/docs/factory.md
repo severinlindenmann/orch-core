@@ -211,8 +211,8 @@ must be an absolute, literal path with no `..`, outside the config dir (relative
 working directory is not known to a later command). The same resolution rules cover the file tools (a relative path is
 taken from the hook's working directory) and every segment of a command. A path with a symlink component that leads into
 the config dir is refused as written, never trusted because of where it points today. The rules are bounded (command
-length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard still lets the
-hook fail open and log, as before). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
+length, glob matches, path depth, time): hitting a bound, or an error inside these rules, is a deny (an unrelated internal error in the guard makes the
+hook refuse the command and log, fail-closed). Only a tmux or screen command word and its own arguments are judged: a `grep tmux`,
 a heredoc body or quoted text is not. The rule against reading the config dir wholesale (a recursive reader, archiver
 or glob next to the config dir or a folder above it) likewise skips text that is only data: a heredoc body fed to
 `cat`, `tee`, `gh … --body-file -` or `git commit -F -` when nothing in the line runs code, and the quoted message of

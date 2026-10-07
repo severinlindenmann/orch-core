@@ -76,3 +76,31 @@ def test_a_window_shut_by_a_future_record_needs_you(fws, prod, human):
     r = _run(fws, eid)
     assert r["state"] == "windowlook" and r["state"] in data.NEEDS_YOU and "clear-window" in r["headline"]
 
+
+
+# -- production never releases a commit older than what production already has -------------------------------------
+
+def test_a_later_production_of_another_epic_makes_dev_out_of_date(fws, prod, human, remote, monkeypatch):
+    from test_factory_release import _main_commit
+    _at(fws, 1)  # the window is shut: A's merge and dev are proven, its production waits
+    a, _, _ = prod()
+    fake = ProdFake()
+    fr.tick(fws, human, fake)
+    assert _states(fws, a) == {"merge": "proven", "dev": "proven", "production": "waiting"}
+    _main_commit(fws.root, remote, {"later.txt": "x\n"})  # another epic's work reached the base since
+    b, _, _ = prod()
+    _later(monkeypatch, 21)
+    fr._release(fws, human, fr.gate(fws, b), fake)  # B alone: merge, dev and production on the later base
+    assert _states(fws, b)["production"] == "proven" and _deploys(fake) == 1
+    assert fr.last_released(fws) == fr.unit_state(fws, b, "dev", b)["base_sha"]
+    _later(monkeypatch, 21)
+    lines = fr.tick(fws, human, fake)
+    assert _deploys(fake) == 1, lines  # A's production would roll B's back: it does not run
+    assert _states(fws, a)["dev"] == "stale" and "release-stale" in _stopped(fws, a)
+    st = fr.status(fws, store.load(fws, a)[1], permits.factory_delegation(fws, store.load(fws, a)[1]))
+    assert any("the base moved since dev was proven" in r["text"] for r in st["reasons"])
+    fr.retry(fws, human, a, "dev", a)  # dev again, on the base as it is now; then production after the window
+    fr.tick(fws, human, fake)
+    _later(monkeypatch, 21)
+    fr.tick(fws, human, fake)
+    assert _states(fws, a)["production"] == "proven" and _deploys(fake) == 2

@@ -1391,7 +1391,10 @@ then dev).
 
 **The production stage.** Production runs only for a charter that signs `--release prod`, after dev is proven and not
 out of date (a changed merge or a new child makes dev, and with it production, out of date; production never runs
-while dev is), on the commit dev was proven on, under the same lock, gate, intent-before-commands records and pinned
+while dev is), on the commit dev was proven on, and only when that commit contains the commit the workspace's last production
+released (recorded in the journal and the window record; the base is fetched first): a production of another epic
+since dev was proven makes dev out of date ("the base moved since dev was proven ... run dev again"), so production
+never rolls back what a later production released. It runs under the same lock, gate, intent-before-commands records and pinned
 programs as the other stages. It gets one automatic attempt: a failed or unknown production attempt stops the release,
 and only your Retry release allows one more. It checks out the base commit dev was proven on and fills `{sha}` with it;
 that commit is what production releases only when your recipe's commands use `{sha}` (a script that deploys "the
@@ -1442,8 +1445,9 @@ latest main" deploys whatever main is then).
   then Retry release for that stage: it runs once more.
 - *Release outcome unknown*: check by hand whether the stage's commands ran (did the branch merge, did dev deploy).
   Retry release runs it once more, so retry only when running it again is safe; otherwise finish it by hand.
-- *Release out of date*: children changed after the release stage was proven; Retry release on that stage, or
-  release the change by hand.
+- *Release out of date*: children changed after the release stage was proven, or (dev) the base moved: another
+  production released a commit the dev commit does not contain; Retry release on that stage, or release the change by
+  hand.
 - *Production check failed*: production's commands ran and its live check did not pass, and nothing was rolled back
   (none signed, or none in the recipe). Look at production now; roll back or fix it by hand.
 - *Production rolled back*: the live check failed and the signed rollback ran and its check passed. Fix the cause,

@@ -608,7 +608,8 @@ def unit_state(ws, epic_id: str, stage: str, unit: str, holder: dict | None = No
         if retried:
             return {**info, "state": "waiting"}  # the human asked for it to run again (it went stale)
         if os.path.lexists(d / _name(stage, unit, n, "stale")):
-            return {**info, "state": "stale", "why": "its branch changed after it was merged"}
+            why = (_read(d / _name(stage, unit, n, "stale")) or {}).get("why")
+            return {**info, "state": "stale", "why": str(why) if why else "its branch changed after it was merged"}
         return {**info, "state": "proven"}
     if retried:
         return {**info, "state": "waiting"}  # the human allowed one more attempt
@@ -1012,8 +1013,23 @@ def resolve(ws, actor, epic_id: str, reason: str) -> str:
             "it")
 
 
-def _record_production(ws, epic_id: str) -> None:
-    _atomic(_window_path(ws), json.dumps({"at": _now(), "epic": str(epic_id).upper()}))
+def _record_production(ws, epic_id: str, sha: str | None = None) -> None:
+    _atomic(_window_path(ws), json.dumps({"at": _now(), "epic": str(epic_id).upper(), "sha": sha}))
+
+
+def last_released(ws) -> str | None:
+    """The commit the workspace's last production attempt released (begun, whatever came of it), from the runner's
+    journal, else its window record; None when none names one."""
+    for x in reversed(_journal(ws)[0]):
+        if x.get("kind", "production") == "production" and isinstance(x.get("sha"), str) and _SHA.fullmatch(x["sha"]):
+            return x["sha"]
+    body = _read(_window_path(ws), 1024) if os.path.lexists(_window_path(ws)) else None
+    sha = (body or {}).get("sha")
+    return sha if isinstance(sha, str) and _SHA.fullmatch(sha) else None
+
+
+BASE_MOVED = ("the base moved since dev was proven: an earlier production released a commit this dev commit does not "
+              "contain; run dev again")
 
 
 def status(ws, epic, d: dict | None, entries=None) -> dict | None:
@@ -1120,7 +1136,7 @@ def _reasons(stages, sens, blocked=None) -> list[dict]:
             elif u["state"] == "stale":
                 out.append({"code": "release-stale", "label": "Release out of date",
                             "text": f"the {s['name']} stage of {_text(u['unit'], 40)} was proven, but "
-                                    f"{_text(u.get('why'), 120)}: children changed after the release stage was proven"})
+                                    f"{_text(u.get('why'), 200)}"})
     return out
 
 
@@ -1917,6 +1933,15 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
                 base_sha = dev.get("base_sha") if dev["state"] == "proven" else None
                 if not isinstance(base_sha, str) or not _SHA.fullmatch(base_sha):
                     return block("no proven dev commit to release")
+                ensure_repo(ws, rec)
+                if fetch_base(ws, rec) is None:
+                    return block("the base could not be fetched from the recipe's remote")
+                last = last_released(ws)  # never release a commit older than what production already has
+                if last and last != base_sha and _git(ws, rec, "merge-base", "--is-ancestor", last,
+                                                       base_sha).get("code") != 0:
+                    _write(_dir(ws, epic.id) / _name("dev", epic.id, dev["attempt"], "stale"),
+                           {"why": BASE_MOVED, "was": base_sha, "released": last})
+                    return f"{epic.id}: production of {unit} not started: {BASE_MOVED}", False
                 extra.update(children=dict(dev.get("children") or {}))
             else:
                 base_sha = fetch_base(ws, rec)
@@ -1953,11 +1978,11 @@ def _attempt(ws, actor, epic, d, rec, s, unit, n, found, kids, wsid, run) -> tup
     # with the intent, in the runner's journal: the hold, the window and the blocks never depend on ticket files, and a
     # journal that goes missing while records exist blocks every release
     _journal_add(ws, {"kind": "production" if name == "production" else "intent", "epic": epic.id, "stage": name,
-                      "unit": unit, "attempt": n})
+                      "unit": unit, "attempt": n, **({"sha": extra["base_sha"]} if name == "production" else {})})
     if not _write(ddir / _name(name, unit, n, "intent"), intent):
         return f"{epic.id}: {name} of {unit}: another runner started it", False
     if name == "production":  # the window's clock starts when production's commands begin, whatever comes of them
-        _record_production(ws, epic.id)
+        _record_production(ws, epic.id, extra["base_sha"])
     env = command_env(ws, *progs.values())
     cwd = str(repo_dir(ws))
     moved = (lambda: fetch_child(ws, rec, ctx["branch"], src, unit) != ctx["sha"]) if child else None

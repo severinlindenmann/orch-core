@@ -272,7 +272,7 @@ def test_compound_means_chains_pipes_redirects_and_substitutions_only(cmd, want)
     ("git ls-tree HEAD", True), ("git ls-tree -r --name-only HEAD src", True), ("git ls-files", True),
     ("git ls-files --modified", True), ("git rev-parse HEAD", True), ("git rev-parse --show-toplevel", True),
     ('git rev-parse "HEAD^"', True), ("git ls-tree HEAD:../x", False), ("git ls-files /etc", False),
-    ("git ls-files ~/x", False), ("git rev-parse --git-dir=/x", False), ("git ls-files -o", False),
+    ("git ls-files ~/x", False), ("git rev-parse --git-dir=/x", False), ("git ls-files -o", True),
 ])
 def test_the_read_only_git_verbs_workers_use(dws, human, cmd, ok):
     dark_profile.add_baseline(dws, human, name="git-basic")
@@ -344,3 +344,12 @@ def test_orch_show_limits_its_output_without_a_pipe(dws, capsys):
         assert "--json gives the whole ticket" in io.out + io.err  # the JSON error with --json
 
 
+
+
+def test_git_ls_files_o_matches_but_the_letter_stays_refused_elsewhere():
+    """Review 18 F4: `-o` of ls-files is `--others`; the same letter elsewhere keeps refusing."""
+    assert dark_profile._runs_code(dark_profile.simple_tokens("git ls-files -o")) is None
+    assert "-o" in permits._VERBS["ls-files"]["flags"]  # the commit gate allows the same word
+    for cmd in ("git ls-files -oz", "git ls-files -o1", "git log -o", "git diff -o x", "npm test -o",
+                "git ls-files -o -c --exec=x"):
+        assert dark_profile._runs_code(dark_profile.simple_tokens(cmd)) is not None, cmd

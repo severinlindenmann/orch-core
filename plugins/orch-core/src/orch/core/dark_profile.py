@@ -181,14 +181,20 @@ def _is_orch(word) -> bool:
     return isinstance(word, str) and word.startswith("/") and word == resolve_bin("orch")
 
 
+# Short options that hold a _SHORT_LETTERS letter but, for this git verb, only read: the exact word, nothing attached.
+# `git ls-files -o` is `--others` (untracked file names). The commit gate (permits._VERBS) allows the same word.
+_GIT_READ_SHORT = {"ls-files": frozenset({"-o"})}
+
+
 def _runs_code(words) -> str | None:
     orch = bool(words) and _is_orch(words[0])
     git = bool(words) and _prog(words[0]) == "git"
     commit = git and words[1:2] == ["commit"]
+    safe = _GIT_READ_SHORT.get(words[1], frozenset()) if git and len(words) > 1 else frozenset()
     for i, w in enumerate(words):
         prev = words[i - 1] if i else ""
         message = commit and (prev in ("-m", "--message") or bool(re.fullmatch(r"-[a-zA-Z]*m", prev)))
-        if _bad_arg(w, orch) or (git and _git_bad(w, message, commit)):
+        if (_bad_arg(w, orch) and w not in safe) or (git and _git_bad(w, message, commit)):
             return w
     return None
 

@@ -877,7 +877,7 @@ status`, `git diff`, `git log`, `git show`, `git add`, `git commit`, the read-on
 `git rev-parse`, and the exact rule `git branch --show-current`
 (`git branch` is never a prefix rule). Nothing that reaches out, rewrites or configures: `git push`, `fetch`,
 `reset`, `clean`, `checkout`, `switch`, `rebase`, `config`, `stash`, `git -c …` and `git -C …` stay out, and the
-argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). For any git command a prefix
+argument shapes below still refuse (`git diff --output=…`, `--ext-diff`, `git log -p`). One exception to the single-letter shapes: `git ls-files -o` (exactly that word, `--others`) matches. For any git command a prefix
 rule also refuses what reads files outside the repository or rewrites other commits: `--no-index`,
 `--pathspec-from-file`, `--template`, `--orderfile`, `--amend`, `--fixup`, `--squash`, `--file` (and every
 abbreviation git accepts), a short option word holding `F` or `t`, and any argument (or the value after `=` or `:`)

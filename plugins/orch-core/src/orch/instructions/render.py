@@ -58,7 +58,7 @@ def agents_rules(cfg: dict) -> str:
                      "allow, the guard blocks a legitimate step, a step needs a workaround, the docs and the behaviour "
                      "disagree), write the exact command, what you expected and what happened into "
                      "`orchestrator/temporary/orch-feedback.md`, run `orch feedback add --file "
-                     "orchestrator/temporary/orch-feedback.md` once, then delete that file, and carry on. Report only what you saw orch do, "
+                     "orchestrator/temporary/orch-feedback.md` once; delete it only after `saved` / `counted` (if it says nothing saved, keep the file), and carry on. Report only what you saw orch do, "
                      "not this workspace's own bugs (those are `orch new`). The report stays on this machine for the "
                      "user; never open an issue on orch-core yourself.\n"
                      if cfg.get("feedback", {}).get("enabled", True) else "")

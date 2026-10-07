@@ -1653,8 +1653,9 @@ def feedback_add(
     if outcome == "off":
         typer.echo("orch feedback is turned off in this workspace; nothing saved. Carry on with your work.")
     elif outcome == "limit":
-        typer.echo(f"orch feedback: the daily limit ({feedback.DAILY_LIMIT} reports) is reached; nothing saved. "
-                   "Carry on with your work.")
+        typer.echo(f"orch feedback: the daily limit ({feedback.DAILY_LIMIT} reports) is reached; nothing saved; "
+                   "keep orchestrator/temporary/orch-feedback.md, do not delete it")
+        raise typer.Exit(1)
     else:
         word = "already reported; counted again" if outcome == "counted" else "saved"
         typer.echo(f"orch feedback {report['id']} {word} (on this machine only; the user reviews it with "

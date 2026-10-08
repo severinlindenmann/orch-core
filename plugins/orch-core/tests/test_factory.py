@@ -562,6 +562,29 @@ def test_concurrent_auto_approvals_at_the_limit_admit_one(fws, fh, agent):
     assert results.count("ok") == 1
 
 
+def test_concurrent_grants_for_one_request_write_one_grant(fws, fa, fh, human):
+    import threading
+    _factory(fa, fh)
+    permits.hook_decision(fws, _payload("make deploy-staging"))
+    (r,) = permits.open_requests(fws)
+    barrier = threading.Barrier(2)
+    results = []
+
+    def go():
+        barrier.wait()
+        try:
+            permits.permit_grant(fws, human, r["id"], "once", expected_sha=r["sha"])
+            results.append("ok")
+        except Exception as x:
+            results.append(type(x).__name__)
+
+    ts = [threading.Thread(target=go) for _ in range(2)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert results.count("ok") == 1
+    assert len([e for e in ledger.entries(fws) if e.get("kind") == "grant"]) == 1
+
+
 def test_no_message_names_a_flag_that_does_not_exist():
     with pytest.raises(UsageError) as e:
         epics.normalize_delegate({"factory": True, "max_hours": 0})

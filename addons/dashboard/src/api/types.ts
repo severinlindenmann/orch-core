@@ -376,8 +376,11 @@ export interface CoreLaunch {
   command: string
   model?: string
   tier?: string
-  /** The one-line model summary (model routing on). */
+  /** The subagent model passed in the environment (Claude Code only). */
+  subagent_model?: string
+  /** The launch addon's own one-line summary: its words, shown apart from core's facts (`line_by` names it). */
   line?: string
+  line_by?: string
   /** A sentence from the launch addon (`blocked_by`) that blocks the start; shown as that addon's words. */
   blocked?: string
   blocked_by?: string

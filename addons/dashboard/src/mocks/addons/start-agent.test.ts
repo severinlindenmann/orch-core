@@ -70,7 +70,7 @@ describe('starting a run', () => {
     const res = await start(s)
     expect(res.message).toMatch(/^Started Claude Code on DEMO-0044/)
     const session = sessionOn(s, 'DEMO-0044')
-    expect(session).toMatch(/^s_[0-9a-f]{4}$/)
+    expect(session).toMatch(/^s_[0-9a-f]{8}$/) // 8 hex: no clash with seeded ids such as s_9e3f
     expect(s.store.ticket('DEMO-0044')!.claim).toBeNull() // nothing happens before the clock moves
 
     vi.advanceTimersByTime(1500)
@@ -268,5 +268,49 @@ describe('the launch is structured and checked by core', () => {
     expect(() => launchSpec({ ...ok, where: 'x$(id)' as never }, {})).toThrow()
     expect(() => launchSpec(ok, { model: '-x' })).toThrow()
     expect(() => launchSpec(ok, { subagentModel: 'a b' })).toThrow()
+  })
+})
+
+describe('review fixes: the run stops when it may no longer work', () => {
+  it('a grant that expires mid-run stops the run at its next step and releases the claim and lease', async () => {
+    const s = setup()
+    await s.api.revokeGrant(s.ws, 'gr_01J9Z8')
+    const g = await s.api.issueGrant(s.ws, { hours: 1, scope: 'all' })
+    await start(s)
+    const session = sessionOn(s, 'DEMO-0044')
+    vi.advanceTimersByTime(3500) // claim + lease
+    expect(s.store.ticket('DEMO-0044')!.claim?.session).toBe(session)
+    vi.setSystemTime(Date.now() + 3600_000) // the grant's hour passes; no step has run in between
+    vi.advanceTimersByTime(3000)
+    const doc = s.store.ticket('DEMO-0044')!
+    expect(doc.claim).toBeNull()
+    expect(doc.tasks_state[0].lease).toBeNull()
+    expect(s.store.eventsOf('DEMO-0044').filter((e) => e.type === 'log.added' && (e.actor as { session?: string }).session === session)).toHaveLength(0)
+    expect(s.store.wsEventsOf(s.ws).at(-1)).toMatchObject({ type: 'agent.stopped', session, reason: 'grant expired' })
+    expect(s.store.sim.running()).not.toContain(session)
+    expect(g.id).toBeTruthy()
+  })
+  it('if someone else claims the ticket first, the run ends instead of working on it', async () => {
+    const s = setup()
+    await start(s)
+    const session = sessionOn(s, 'DEMO-0044')
+    s.store.append('DEMO-0044', { type: 'claim.taken', actor: 'codex:s_other:p_mara', expires: '2026-10-09T17:00:00Z' })
+    vi.advanceTimersByTime(20_000)
+    const doc = s.store.ticket('DEMO-0044')!
+    expect(doc.claim?.session).toBe('s_other')
+    expect(s.store.eventsOf('DEMO-0044').some((e) => (e.actor as { session?: string }).session === session)).toBe(false)
+    expect(s.store.wsEventsOf(s.ws).at(-1)).toMatchObject({ type: 'agent.stopped', session, reason: 'claim held by another session' })
+    expect(s.store.sim.running()).not.toContain(session)
+  })
+  it('never takes over a task another session holds: it picks the next task to do', async () => {
+    const s = setup()
+    s.store.append('DEMO-0044', { type: 'lease.taken', actor: 'codex:s_other:p_mara', task: 'T1' })
+    await start(s)
+    const session = sessionOn(s, 'DEMO-0044')
+    vi.advanceTimersByTime(15_000)
+    const [t1, t2] = s.store.ticket('DEMO-0044')!.tasks_state
+    expect(t1).toMatchObject({ state: 'doing', lease: { session: 's_other' } })
+    expect(t2.state).toBe('done')
+    expect(s.store.eventsOf('DEMO-0044').filter((e) => e.type === 'task.done').map((e) => [e.task, (e.actor as { session: string }).session])).toEqual([['T2', session]])
   })
 })

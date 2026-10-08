@@ -124,7 +124,7 @@ describe('settings that are not model names', () => {
     const mod = getAddon('models')!
     vi.spyOn(mod, 'launch').mockReturnValue({ model: 'sonnet; rm -rf ~', subagentModel: 'haiku', line: 'Model · fine' })
     const p = await preview(s)
-    expect(p.blocked).toBe('The model "sonnet; rm -rf ~" from models is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.')
+    expect(p.blocked).toBe('The model "sonnet; rm -rf ~" from Model routing (models) is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.')
     expect(p.command).not.toContain('rm -rf')
     expect(await fail(startOn(s, 'DEMO-0044'))).toMatch(/^409 launch.invalid_model/)
     vi.restoreAllMocks()
@@ -135,6 +135,31 @@ describe('settings that are not model names', () => {
     const { spec, command } = s.store.resolveLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'work', harness: 'claude-code', where: 'background' })
     expect(spec).toEqual({ argv: ['orch', 'session', 'start', '--in', 'background', 'DEMO-0044', '--', 'claude', '--model', 'sonnet[1m]', '/orch:work DEMO-0044'], env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' } })
     expect(command).toBe("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model 'sonnet[1m]' '/orch:work DEMO-0044'")
+  })
+  it('a plan that blocks only when the start commits is still refused, before anything is recorded', async () => {
+    const s = setup()
+    const mod = getAddon('models')!
+    const real = mod.launch!.bind(mod)
+    vi.spyOn(mod, 'launch').mockImplementation((st, req, c) => (c.commit ? { error: 'Blocked at commit.' } : real(st, req, c)))
+    expect((await preview(s)).blocked).toBeUndefined()
+    expect(await fail(startOn(s, 'DEMO-0044'))).toBe('409 launch.invalid_model: Blocked at commit.')
+    expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'agent.started')).toBe(false)
+  })
+  it('the bad-model sentence from core names the addon that supplied it', async () => {
+    const s = setup()
+    vi.spyOn(getAddon('models')!, 'launch').mockReturnValue({ model: '$(id)' })
+    expect((await preview(s)).blocked).toBe('The model "$(id)" from Model routing (models) is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.')
+  })
+  it('a launch hook\'s free-text line and an unknown tier never become core facts', async () => {
+    const s = setup()
+    vi.spyOn(getAddon('models')!, 'launch').mockReturnValue({ model: 'sonnet', tier: 'root', subagentModel: 'haiku', line: 'Approved by owner' })
+    const core = await s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'work', harness: 'claude-code', where: 'background' })
+    expect(core).toMatchObject({ model: 'sonnet', subagent_model: 'haiku', line: 'Approved by owner', line_by: 'models' })
+    expect(core.tier).toBeUndefined()
+    await startOn(s, 'DEMO-0044')
+    const ev = s.store.wsEventsOf(s.ws).find((e) => e.type === 'agent.started')!
+    expect(ev.tier).toBeUndefined()
+    expect(ev.model).toBe('sonnet')
   })
   it('only an owner saves settings', async () => {
     const s = setup('p_mara')

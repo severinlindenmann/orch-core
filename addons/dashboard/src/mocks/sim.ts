@@ -31,13 +31,13 @@ export class Simulator {
         this.timers.delete(id)
         return
       }
-      this.timers.set(
-        id,
-        this.clock.setTimeout(() => {
-          steps[i].run(this.store)
-          next(i + 1)
-        }, steps[i].afterMs),
-      )
+      const handle = this.clock.setTimeout(() => {
+        steps[i].run(this.store)
+        // A step may end its own script (stop) or replace it (play): then nothing more of this run is scheduled.
+        if (this.timers.get(id) !== handle) return
+        next(i + 1)
+      }, steps[i].afterMs)
+      this.timers.set(id, handle)
     }
     next(0)
   }

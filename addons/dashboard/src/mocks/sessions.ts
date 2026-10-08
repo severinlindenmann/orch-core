@@ -98,15 +98,15 @@ export const agentActor = (s: StartedSession): Actor => ({ kind: 'agent', id: s.
 
 const VERB: Record<LaunchMode, string> = { refine: 'Refining', work: 'Working on', fix: 'Fixing the checks of', continue: 'Picking up feedback on' }
 
-/** The next task to work on: one in progress, else the first one to do. */
-const nextTask = (doc: TicketDocument | undefined) => doc?.tasks_state.find((t) => t.state === 'doing') ?? doc?.tasks_state.find((t) => t.state === 'todo')
+/** The next task to work on: the first one still to do (never one another session holds a lease on). */
+const nextTask = (doc: TicketDocument | undefined) => doc?.tasks_state.find((t) => t.state === 'todo')
 
 /**
  * The simulated run: claim → start the next task (lease) → a log line → the task done with a receipt → a blocking
  * question to the person the session works for → wait. Each step reads the ticket as it is then; the script is
  * played under the session id, so stopping the session (or revoking its grant) ends it.
  */
-export function sessionScript(s: StartedSession, expires: string): SimStep[] {
+export function sessionScript(s: StartedSession, wsId: string, expires: string): SimStep[] {
   const actor = agentActor(s)
   const key = s.ticket
   let task: string | undefined
@@ -115,7 +115,9 @@ export function sessionScript(s: StartedSession, expires: string): SimStep[] {
       afterMs: 1500,
       run: (st: MockStore) => {
         const doc = st.ticket(key)
-        if (!doc || doc.claim) return
+        if (!doc) return
+        // Someone else holds the ticket: the session does not work around them, it ends.
+        if (doc.claim) return void st.endRun(wsId, s.session, 'claim held by another session')
         st.append(key, { type: 'claim.taken', actor, expires })
         if (doc.status === 'open' || doc.status === 'backlog') st.append(key, { type: 'status.changed', actor: 'host', to: 'in-progress' })
       },
@@ -158,5 +160,15 @@ export function sessionScript(s: StartedSession, expires: string): SimStep[] {
       },
     },
   ]
-  return steps
+  // Before every step: a session whose grant is no longer active (expired or revoked) or that was stopped ends now.
+  return steps.map((step) => ({
+    afterMs: step.afterMs,
+    run: (st: MockStore) => {
+      const cur = st.startedSessions(wsId).find((x) => x.session === s.session)
+      if (!cur || cur.stopped) return void st.sim.stop(s.session)
+      const g = st.grants(wsId).find((x) => x.id === s.grant)
+      if (!g || g.revoked || g.until <= st.now()) return void st.endRun(wsId, s.session, g?.revoked ? 'grant revoked' : 'grant expired')
+      step.run(st)
+    },
+  }))
 }

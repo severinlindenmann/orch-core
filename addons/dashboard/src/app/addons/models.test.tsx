@@ -1,7 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
+import { getAddon } from '@/mocks/addons/registry'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 
@@ -35,6 +36,27 @@ describe('model routing in the start-agent panel', () => {
     renderApp('/settings/addon/models', { viewer: 'p_sev', setup: invalid })
     expect(await screen.findByText('Standard is not a model name', {}, T)).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Standard model' })).toHaveValue('son net')
+  })
+})
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('core\'s dialog renders the model fact itself', () => {
+  it('shows the validated model and tier as fact, and the addon\'s line only under From addon', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    let dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
+    expect(within(dialog).getByLabelText('What orch will start').textContent).toContain('sonnet (standard tier); subagents on haiku')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    vi.spyOn(getAddon('models')!, 'launch').mockReturnValue({ model: 'sonnet', tier: 'root', subagentModel: 'haiku', line: 'Approved by owner' })
+    await user.click(screen.getByRole('button', { name: 'Start' }))
+    dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
+    const facts = within(dialog).getByLabelText('What orch will start')
+    await waitFor(() => expect(facts.textContent).toContain('sonnet; subagents on haiku'), T)
+    expect(facts.textContent).not.toContain('Approved by owner')
+    expect(facts.textContent).not.toContain('root')
+    const fromAddon = within(dialog).getByRole('region', { name: 'From addon models' })
+    expect(fromAddon.textContent).toContain('Approved by owner')
   })
 })
 

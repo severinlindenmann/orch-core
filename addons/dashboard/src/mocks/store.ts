@@ -552,11 +552,15 @@ export class MockStore {
       plan = { ...mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier }), by: pkg.name }
       break
     }
-    // Core checks the addon's model names itself (shared allowlist); a bad one blocks the start and never reaches argv.
+    // Core checks the addon's plan itself: model names against the shared allowlist (a bad one blocks the start and
+    // never reaches argv), the tier against the known tiers (anything else is dropped, never shown or recorded).
+    if (plan.tier !== undefined && !['light', 'standard', 'strong'].includes(plan.tier)) plan = { ...plan, tier: undefined }
     const bad = [plan.model, plan.subagentModel].find((m) => m !== undefined && !isModelName(m))
     if (bad !== undefined) {
+      const title = this.addons.find((a) => a.name === plan.by)?.title
+      const from = plan.by ? `${title ?? plan.by} (${plan.by})` : 'an addon'
       plan = {
-        error: plan.error ?? `The model "${String(bad)}" from ${plan.by ?? 'an addon'} is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.`,
+        error: plan.error ?? `The model "${String(bad)}" from ${from} is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the ${title ?? 'addon\'s'} settings.`,
         by: plan.by,
       }
     }
@@ -588,7 +592,8 @@ export class MockStore {
         command,
         ...(plan.model ? { model: plan.model } : {}),
         ...(plan.tier ? { tier: plan.tier } : {}),
-        ...(plan.line ? { line: plan.line } : {}),
+        ...(plan.subagentModel && r.harness === 'claude-code' ? { subagent_model: plan.subagentModel } : {}),
+        ...(plan.line ? { line: plan.line, line_by: plan.by } : {}),
         ...(plan.error ? { blocked: plan.error, blocked_by: plan.by } : {}),
       },
     }
@@ -616,9 +621,11 @@ export class MockStore {
     const grant = this.activeGrant(wsId, actor.id)
     if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
     const blocked = this.resolveLaunch(wsId, req).plan.error
-    if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the Model routing settings.')
+    if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the launch addon\'s settings.')
+    // The committing resolve is the one that counts: refuse if it blocks too (nothing is recorded or started then).
     const { plan, spec, command } = this.resolveLaunch(wsId, req, true)
-    const session = 's_' + fnvHex(`${req.ticket}|${this.now()}|${this.wsEventsOf(wsId).length}`, 4)
+    if (plan.error) return refuse(409, 'launch.invalid_model', plan.error, 'Fix the model names in the launch addon\'s settings.')
+    const session = 's_' + fnvHex(`${req.ticket}|${this.now()}|${this.wsEventsOf(wsId).length}|${this.cursor(wsId)}`, 8)
     this.appendWs(wsId, {
       type: 'agent.started',
       actor,
@@ -637,7 +644,7 @@ export class MockStore {
       addon: req.addon,
     })
     const started = this.startedSessions(wsId).find((x) => x.session === session)!
-    this.sim.play(session, sessionScript(started, grant.until))
+    this.sim.play(session, sessionScript(started, wsId, grant.until))
     return { ok: true, session: started }
   }
 
@@ -650,13 +657,20 @@ export class MockStore {
     if (!s || !this.isVisible(s.ticket, actor.id)) return refuse(404, 'not_found', `No session ${session}`)
     if (s.for !== actor.id && !can(role, 'grant.revoke.any')) return refuse(403, 'forbidden', `Only the person it works for or an owner can stop ${session}.`)
     if (s.stopped) return refuse(409, 'session.stopped', `${session} has already stopped.`)
+    this.endRun(wsId, session, 'stopped', actor)
+    return { ok: true, session: this.startedSessions(wsId).find((x) => x.session === session)! }
+  }
+
+  /** End a running session (stop, grant gone, ticket taken): the script stops, its claim and leases are released, `agent.stopped` is recorded once. */
+  endRun(wsId: string, session: string, reason: string, actor: Actor = { kind: 'host', id: 'orch' }): void {
     this.sim.stop(session)
+    const s = this.startedSessions(wsId).find((x) => x.session === session)
+    if (!s || s.stopped) return
     const doc = this.ticket(s.ticket)
     const agent = `${s.agent}:${s.session}:${s.for}`
-    for (const t of doc?.tasks_state ?? []) if (t.lease && sessionBelongsTo(t.lease.session, session)) this.append(s.ticket, { type: 'lease.released', actor: agent, task: t.id, reason: 'stopped' })
-    if (doc?.claim && doc.claim.session === session) this.append(s.ticket, { type: 'claim.released', actor: agent, reason: 'stopped' })
-    this.appendWs(wsId, { type: 'agent.stopped', actor, session, reason: 'stopped' })
-    return { ok: true, session: this.startedSessions(wsId).find((x) => x.session === session)! }
+    for (const t of doc?.tasks_state ?? []) if (t.lease && sessionBelongsTo(t.lease.session, session)) this.append(s.ticket, { type: 'lease.released', actor: agent, task: t.id, reason })
+    if (doc?.claim && doc.claim.session === session) this.append(s.ticket, { type: 'claim.released', actor: agent, reason })
+    this.appendWs(wsId, { type: 'agent.stopped', actor, session, reason })
   }
 
   /** Saved views the viewer can see: their own and the shared ones. */

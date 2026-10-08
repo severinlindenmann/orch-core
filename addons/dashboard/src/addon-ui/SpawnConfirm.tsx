@@ -115,7 +115,8 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     ['Mode', c.mode],
     ['Harness', c.harness],
     ['Where', c.where],
-    ['Model', c.line ?? (c.model ? c.model : 'the harness default')],
+    // Rendered by core from the validated plan, never from the addon's text.
+    ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
     ['Grant', grant ? `${grant.id} until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
   ]
   // What the addon displayed, where it differs from what orch will start.
@@ -151,6 +152,15 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
             From addon <span className="font-mono">{addon}</span>: its panel shows something else; orch starts only what is listed above.
           </p>
           <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(cap).filter(Boolean).join(' · ')}</p>
+        </section>
+      )}
+      {c.line && (
+        <section aria-label={`From addon ${c.line_by ?? 'launch'}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
+          <p className="mb-1 flex items-center gap-1.5">
+            <AddonBadge name={c.line_by ?? 'launch'} />
+            From addon <span className="font-mono">{c.line_by ?? 'launch'}</span>:
+          </p>
+          <p className="whitespace-pre-wrap break-all">{cap(c.line)}</p>
         </section>
       )}
     </>

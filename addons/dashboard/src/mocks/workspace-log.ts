@@ -29,8 +29,15 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       }
       case 'addon.installed': {
         const name = String(e.name)
-        const version = String(e.version ?? '')
-        ws.addons[name] ??= { enabled: false, status: 'needs_grant', installed: true, granted: null, version }
+        ws.addons[name] ??= {
+          enabled: false,
+          status: 'needs_grant',
+          installed: true,
+          granted: null,
+          version: String(e.version ?? ''),
+          package_sha256: String(e.package_sha256 ?? ''),
+          capabilities: Array.isArray(e.capabilities) ? (e.capabilities as string[]) : [],
+        }
         break
       }
       case 'addon.granted': {
@@ -43,14 +50,16 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
           at: e.at,
           by: e.actor.id,
         }
-        a.status = addonStatus(a.version, a.granted, a.enabled)
+        a.status = addonStatus(a)
         break
       }
       case 'addon.updated': {
         const a = ws.addons[String(e.name)]
         if (!a) break
         a.version = String(e.version)
-        a.status = addonStatus(a.version, a.granted, a.enabled) // a new version needs a new grant
+        a.package_sha256 = String(e.package_sha256 ?? '')
+        a.capabilities = Array.isArray(e.capabilities) ? (e.capabilities as string[]) : []
+        a.status = addonStatus(a) // a new version needs a new grant
         break
       }
       case 'addon.enabled':
@@ -58,7 +67,7 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
         const a = ws.addons[String(e.name)]
         if (!a) break
         a.enabled = e.type === 'addon.enabled'
-        a.status = addonStatus(a.version, a.granted, a.enabled)
+        a.status = addonStatus(a)
         break
       }
       case 'addon.uninstalled':

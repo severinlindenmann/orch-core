@@ -24,7 +24,7 @@ export function TodayPage() {
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const agentsQ = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const decisionsQ = useQuery({ queryKey: ['addon-decisions'], queryFn: api.getAddonDecisions })
+  const decisionsQ = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
 
   const role = workspace?.members.find((m) => m.person === me.data?.person)?.role
   const readOnly = role === undefined || role === 'viewer'

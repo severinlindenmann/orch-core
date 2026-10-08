@@ -432,7 +432,9 @@ export function buildRouter(): MockRouter {
     const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
     return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
   })
-  r.add('GET', '/api/addons/decisions', (s) => ok(s.canDecide() ? s.addons.filter((a) => a.enabled).flatMap((a) => a.decisions ?? []) : []))
+  r.add('GET', '/api/workspaces/:ws/addons/decisions', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.addonDecisions(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
   r.add('GET', '/api/workspaces/:ws/addons/:name/state', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     const v = s.addonStateView(c.params.ws, c.params.name)
@@ -442,6 +444,7 @@ export function buildRouter(): MockRouter {
     const addon = s.addons.find((a) => a.name === c.params.name && a.enabled)
     if (!addon) return fail(404, 'not_found', 'No such addon')
     const res = s.runAddon(addon.name, c.params.id, (c.body ?? {}) as Record<string, unknown>)
+    if (res && !res.ok) return fail(res.status, res.code, res.message, res.hint)
     return res ? ok(res) : fail(404, 'not_found', `Addon ${addon.name} has no action ${c.params.id}`)
   })
   r.add('POST', '/api/dev/reset', (s) => {

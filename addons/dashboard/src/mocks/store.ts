@@ -2,6 +2,7 @@
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
 import type {
   AddonActionResult,
+  AddonDecision,
   AddonManifest,
   AddonOpRequest,
   WorkspaceAddon,
@@ -23,7 +24,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive } from '@/api/addons'
+import { addonActive, sameSet } from '@/api/addons'
 import { getAddon } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
@@ -164,7 +165,7 @@ export class MockStore {
     this.workspaces = this.seedWorkspaces.map((w) => foldWorkspace(w, this.wsEvents.get(w.id) ?? []))
     // A catalog addon becomes a global manifest once any workspace installs it (its nav etc. then resolve).
     for (const c of this.catalog()) {
-      if (!this.addons.some((a) => a.name === c.name) && this.workspaces.some((w) => w.addons[c.name])) this.addons.push(structuredClone(c))
+      if (!this.addons.some((a) => a.name === c.name) && this.workspaces.some((w) => w.addons[c.name])) this.addons.push({ ...structuredClone(c), enabled: true }) // listed as off in the catalog; installed somewhere, it is a live manifest
     }
   }
 
@@ -528,8 +529,8 @@ export class MockStore {
     return {
       ...m,
       version: st.version,
-      capabilities: atUpdate ? m.update!.capabilities : m.capabilities,
-      package_sha256: atUpdate ? m.update!.package_sha256 : m.package_sha256,
+      capabilities: st.capabilities,
+      package_sha256: st.package_sha256,
       enabled: st.enabled,
       installed: true,
       granted: st.granted,
@@ -566,7 +567,7 @@ export class MockStore {
       if (st) return refuse(409, 'addon.installed', `${name} is already installed.`)
       const c = this.catalog().find((x) => x.name === name)
       if (!c) return refuse(404, 'not_found', `No addon ${name} in the catalog`)
-      this.appendWs(wsId, { type: 'addon.installed', actor, name, version: c.version, package_sha256: c.package_sha256 })
+      this.appendWs(wsId, { type: 'addon.installed', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities })
       return done()
     }
     const m = this.addons.find((a) => a.name === name)
@@ -574,8 +575,11 @@ export class MockStore {
     const v = this.addonView(m, st)
     switch (req.op) {
       case 'grant':
+        if (req.op !== 'grant') break
         if (req.version !== st.version) return refuse(409, 'addon.version_mismatch', `The installed version is ${st.version}; a grant for ${String(req.version)} was refused.`, 'Review the installed version and grant again.')
-        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: v.package_sha256, capabilities: v.capabilities, presence: 'touchid' })
+        if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities))
+          return refuse(409, 'addon.changed', `${v.title} changed since you reviewed it; nothing was signed.`, 'Open the grant again and review the current package.')
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, presence: 'touchid' })
         break
       case 'enable':
         if (st.status === 'needs_grant') return refuse(409, 'addon.needs_grant', `${v.title} ${st.version} has no grant yet.`, 'Review its capabilities and grant them first.')
@@ -585,7 +589,10 @@ export class MockStore {
         this.appendWs(wsId, { type: 'addon.disabled', actor, name })
         break
       case 'update':
+        if (req.op !== 'update') break
         if (!v.update) return refuse(409, 'addon.no_update', `${v.title} is up to date.`)
+        if (req.version !== v.update.version || req.package_sha256 !== v.update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, v.update.capabilities))
+          return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
         this.appendWs(wsId, { type: 'addon.updated', actor, name, version: v.update.version, from: st.version, package_sha256: v.update.package_sha256, capabilities: v.update.capabilities, presence: 'touchid' })
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
@@ -607,12 +614,16 @@ export class MockStore {
   }
 
   /** Mock of POST /api/addons/:name/actions/:id. `ws` defaults to the ticket's workspace, else the first one. Null for an unknown action. */
-  runAddon(name: string, id: string, body: Record<string, unknown>): AddonActionResult | null {
+  runAddon(name: string, id: string, body: Record<string, unknown>): AddonActionResult | StoreFailure | null {
     const addon = getAddon(name)
     const action = addon?.actions[id]
     if (!addon || !action) return null
     const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
     const ws = typeof body.ws === 'string' ? body.ws : (ticket && this.wsOfKey.get(ticket)) || this.workspaces[0].id
+    const w = this.workspaces.find((x) => x.id === ws)
+    if (!w) return refuse(404, 'not_found', 'No such workspace')
+    // A disabled addon, or one whose installed version has no grant, runs nothing.
+    if (!addonActive(w, name)) return refuse(409, 'addon.inactive', `${name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
@@ -690,10 +701,17 @@ export class MockStore {
     return !role || role === 'viewer' ? this.openItems(workspaceId) : []
   }
 
-  /** May the current viewer decide addon decisions? */
-  canDecide(): boolean {
-    const role = this.roleIn(this.workspaces[0].id, this.viewer)
+  /** May the current viewer decide addon decisions in `wsId`? */
+  canDecide(wsId: string): boolean {
+    const role = this.roleIn(wsId, this.viewer)
     return role === 'owner' || role === 'maintainer'
+  }
+
+  /** Open decisions of the addons that are active in `wsId`; none for a viewer. */
+  addonDecisions(wsId: string): AddonDecision[] {
+    const w = this.workspaces.find((x) => x.id === wsId)
+    if (!w || !this.canDecide(wsId)) return []
+    return this.addons.filter((a) => a.enabled && addonActive(w, a.name)).flatMap((a) => a.decisions ?? [])
   }
 
   today(workspaceId: string): TodayDocument {

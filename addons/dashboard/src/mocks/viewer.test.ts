@@ -31,9 +31,9 @@ describe('mock router: viewer-aware views and addon actions', () => {
 
   it('shows addon decisions only to owners and maintainers', async () => {
     const { api, store } = setup()
-    expect((await api.getAddonDecisions()).length).toBeGreaterThan(0)
+    expect((await api.getAddonDecisions(store.workspaces[0].id)).length).toBeGreaterThan(0)
     store.setViewer('p_tom')
-    expect(await api.getAddonDecisions()).toEqual([])
+    expect(await api.getAddonDecisions(store.workspaces[0].id)).toEqual([])
   })
 
   it('github import creates a backlog ticket, removes the issue and records an addon event', async () => {

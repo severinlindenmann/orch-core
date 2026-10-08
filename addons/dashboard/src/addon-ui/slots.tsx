@@ -28,9 +28,10 @@ export interface ResolvedContribution {
 /** Pure selection (used by the hook and by tests). `workspace` filters by per-workspace enablement. */
 export function selectContributions(addons: AddonManifest[], slot: AddonSlot, ctx: SlotContext = {}): ResolvedContribution[] {
   const out: ResolvedContribution[] = []
+  if (!ctx.workspace) return out // deny by default: no workspace, no per-workspace enablement to check
   for (const a of addons) {
     if (!a.enabled) continue
-    if (ctx.workspace && !addonActive(ctx.workspace, a.name)) continue
+    if (!addonActive(ctx.workspace, a.name)) continue
     for (const c of a.contributions as AddonContribution[]) {
       if (c.slot !== slot) continue
       if (c.when && (getPath(ctx, c.when) ?? null) === null) continue

@@ -1,14 +1,21 @@
 // Pure addon-state rules shared by the mock and the UI (part of the API contract).
-import type { AddonGrant, AddonStatus, Workspace } from './types'
+import type { AddonGrant, AddonStatus, Workspace, WorkspaceAddon } from './types'
 
-/** needs_grant whenever there is no grant for the installed version; otherwise active or disabled. */
-export function addonStatus(version: string, granted: AddonGrant | null, enabled: boolean): AddonStatus {
-  if (granted?.version !== version) return 'needs_grant'
-  return enabled ? 'active' : 'disabled'
+/** Does this grant cover exactly the installed package: same version and hash, and every installed capability? */
+export function grantCovers(a: Pick<WorkspaceAddon, 'version' | 'package_sha256' | 'capabilities'>, g: AddonGrant | null): g is AddonGrant {
+  return !!g && g.version === a.version && g.package_sha256 === a.package_sha256 && a.capabilities.every((c) => g.capabilities.includes(c))
 }
 
-/** Is this addon live in the workspace? Enabled and granted for its installed version. */
+/** needs_grant unless the grant covers the installed version, package and capabilities; otherwise active or disabled. */
+export function addonStatus(a: Pick<WorkspaceAddon, 'version' | 'package_sha256' | 'capabilities' | 'granted' | 'enabled'>): AddonStatus {
+  if (!grantCovers(a, a.granted)) return 'needs_grant'
+  return a.enabled ? 'active' : 'disabled'
+}
+
+/** Is this addon live in the workspace? Enabled and granted for its installed package. */
 export function addonActive(workspace: Pick<Workspace, 'addons'> | undefined, name: string): boolean {
   const a = workspace?.addons[name]
   return !!a && a.enabled && a.status !== 'needs_grant'
 }
+
+export const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))

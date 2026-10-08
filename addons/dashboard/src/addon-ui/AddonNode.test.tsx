@@ -1,19 +1,25 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Fragment } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import type { AddonManifest } from '@/api/types'
+import type { AddonManifest, Workspace } from '@/api/types'
+import workspacesFixture from '@/mocks/fixtures/workspaces.json'
 import addonsFixture from '@/mocks/fixtures/addons.json'
+import { WorkspaceProvider } from '@/app/workspace'
 import { AddonNode } from './AddonNode'
 import { resolveBindings } from './bindings'
 import { selectContributions, type SlotContext } from './slots'
 
-function renderNode(node: unknown, { addon, ctx }: { addon: string; ctx?: SlotContext }) {
+function renderNode(node: unknown, { addon, ctx, withWorkspace }: { addon: string; ctx?: SlotContext; withWorkspace?: boolean }) {
+  const Wrap = withWorkspace ? WorkspaceProvider : Fragment
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <AddonNode node={node} addon={addon} ctx={ctx} />
+      <Wrap>
+        <AddonNode node={node} addon={addon} ctx={ctx} />
+      </Wrap>
     </QueryClientProvider>,
   )
 }
@@ -89,9 +95,14 @@ describe('bindings', () => {
 
 describe('SlotRegistry', () => {
   const addons = addonsFixture as unknown as AddonManifest[]
+  const workspace = workspacesFixture[0] as unknown as Workspace
+
+  it('selects nothing without a workspace (deny by default)', () => {
+    expect(selectContributions(addons, 'nav')).toEqual([])
+  })
 
   it("returns github's board.lane with its three issues", () => {
-    const lanes = selectContributions(addons, 'board.lane')
+    const lanes = selectContributions(addons, 'board.lane', { workspace })
     expect(lanes).toHaveLength(1)
     expect(lanes[0].addon).toBe('github')
     expect(lanes[0].title).toBe('External · GitHub issues')
@@ -100,10 +111,10 @@ describe('SlotRegistry', () => {
 
   it('skips disabled addons and contributions whose `when` binding is empty', () => {
     const off = addons.map((a) => (a.name === 'github' ? { ...a, enabled: false } : a))
-    expect(selectContributions(off, 'board.lane')).toHaveLength(0)
-    const withPr = selectContributions(addons, 'ticket.panel', { ticket: { key: 'T', addons: { github: { pr: { number: 3 } } } } as never })
+    expect(selectContributions(off, 'board.lane', { workspace })).toHaveLength(0)
+    const withPr = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: { github: { pr: { number: 3 } } } } as never })
     expect(withPr.some((c) => c.addon === 'github')).toBe(true)
-    const without = selectContributions(addons, 'ticket.panel', { ticket: { key: 'T', addons: {} } as never })
+    const without = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: {} } as never })
     expect(without.some((c) => c.addon === 'github')).toBe(false)
   })
 })
@@ -155,7 +166,7 @@ describe('new node types', () => {
     expect(screen.getByText(/could not be shown/i)).toBeInTheDocument()
   })
   it('shows the placeholder alert for a terminal node from an addon with pty', async () => {
-    renderNode({ type: 'terminal', session: 't1' }, { addon: 'terminals' })
+    renderNode({ type: 'terminal', session: 't1' }, { addon: 'terminals', withWorkspace: true })
     expect(await screen.findByText(/Terminal sessions arrive with the terminals addon/)).toBeInTheDocument()
   })
   it('renders alert and progress', () => {

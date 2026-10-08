@@ -99,7 +99,7 @@ export function createApi(transport: Transport) {
     getAddonCatalog: (ws: string) => call<AddonManifest[]>('GET', `/api/workspaces/${ws}/addons/catalog`),
     /** Owner only. grant and update are signed in the dashboard; agents are refused (human_only). */
     postAddonOp: (ws: string, name: string, req: AddonOpRequest) => call<AddonManifest>('POST', `/api/workspaces/${ws}/addons/${name}`, req),
-    getAddonDecisions: () => call<AddonDecision[]>('GET', '/api/addons/decisions'),
+    getAddonDecisions: (ws: string) => call<AddonDecision[]>('GET', `/api/workspaces/${ws}/addons/decisions`),
     runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),
     getAddonState: (ws: string, name: string) => call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state`),

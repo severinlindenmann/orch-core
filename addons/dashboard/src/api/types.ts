@@ -29,6 +29,9 @@ export interface WorkspaceAddon {
   /** The grant for the installed version; null until the owner signs one. */
   granted: AddonGrant | null
   version: string
+  /** The installed package (from addon.installed / addon.updated); a grant must match it. */
+  package_sha256: string
+  capabilities: string[]
 }
 
 export interface Workspace {
@@ -384,7 +387,10 @@ export type SettingsRequest =
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
-export type AddonOpRequest = { op: 'install' | 'enable' | 'disable' | 'update' | 'uninstall' } | { op: 'grant'; version: string }
+export type AddonOpRequest =
+  | { op: 'install' | 'enable' | 'disable' | 'uninstall' }
+  /** grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now. */
+  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[] }
 
 // ---------------------------------------------------------------- addons.json
 

@@ -57,7 +57,7 @@ describe('workspace log', () => {
     const w = s.workspaceList()[0]
     expect(w.gates.plan).toEqual({ approvers: 'maintainer', count: 2 })
     expect(w.members.map((m) => m.person)).toEqual(['p_sev', 'p_mara', 'p_new'])
-    expect(w.addons.extra).toEqual({ enabled: false, status: 'needs_grant', installed: true, granted: null, version: '1.0.0' })
+    expect(w.addons.extra).toEqual({ enabled: false, status: 'needs_grant', installed: true, granted: null, version: '1.0.0', package_sha256: '', capabilities: [] })
     expect(w.addons.wiki).toBeUndefined()
   })
 

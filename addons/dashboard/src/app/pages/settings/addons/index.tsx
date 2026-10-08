@@ -35,7 +35,9 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
   }
   const sign = (a: GrantAsk) => {
     setAsk(null)
-    const req: AddonOpRequest = a.kind === 'update' ? { op: 'update' } : { op: 'grant', version: a.addon.version }
+    // Send exactly what the prompt showed; the host refuses if the package changed in between.
+    const t = a.kind === 'update' && a.addon.update ? a.addon.update : a.addon
+    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities }
     void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, () => api.postAddonOp(ws, a.addon.name, req))
   }
 

@@ -310,7 +310,8 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
 function TerminalNode() {
   const { addon } = useContext(RuntimeCtx)
   const { data } = useAddons()
-  if (!canUsePty(data?.find((a) => a.name === addon))) return <AddonUnavailable addon={addon} />
+  const { workspace } = useWorkspace()
+  if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
   // TODO(Task 21): render core's <TerminalView session=…/> here.
   return (
     <div role="alert" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text-muted">

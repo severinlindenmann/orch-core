@@ -1,12 +1,13 @@
 // Capability gate for node types that reach beyond pure rendering (today: the terminal node needs `pty`).
-import type { AddonManifest } from '@/api/types'
+import { grantCovers } from '@/api/addons'
+import type { AddonManifest, WorkspaceAddon } from '@/api/types'
 
 /**
- * May this addon render a terminal node? It must declare `pty`, be enabled, and the owner's grant for the
- * current version must include `pty`. Deny by default (undefined manifest, no grant, grant for another version).
+ * May this addon render a terminal node in this workspace? The addon must declare `pty`, and its state in THIS
+ * workspace must be enabled with a grant that covers the installed version and package hash and includes `pty`.
+ * Deny by default (no manifest, not installed here, no or stale grant).
  */
-export function canUsePty(manifest: AddonManifest | undefined): boolean {
-  if (!manifest || !manifest.enabled || !manifest.capabilities.includes('pty')) return false
-  const g = manifest.granted
-  return !!g && g.version === manifest.version && g.capabilities.includes('pty')
+export function canUsePty(manifest: AddonManifest | undefined, installed: WorkspaceAddon | undefined): boolean {
+  if (!manifest || !manifest.enabled || !installed || !installed.enabled || !installed.capabilities.includes('pty')) return false
+  return grantCovers(installed, installed.granted) && installed.granted.capabilities.includes('pty')
 }

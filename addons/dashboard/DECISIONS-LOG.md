@@ -26,3 +26,15 @@ Format: date, decision, why, how to revert.
 - **Decision:** The Tickets page sends every filter except `status` to the mock and filters status in the browser, so the status chips show counts for the other filters and toggle instantly. Bulk "Add label" uses a new mock action `{action:'add_label', label}` (owner/maintainer only, event `labels.changed`, derived into `labels`). The table has `min-w-[800px]` inside its own scroll container: at 1024 px with the wide sidebar it scrolls inside the card instead of squeezing the title to ~100 px; the page itself never overflows.
 - **Why:** Counts per status need the unfiltered-by-status list; labels had no endpoint; a 100 px title is unreadable.
 - **Revert:** Pass `status` in the `listTickets` params and drop the client filter in `src/app/pages/tickets/index.tsx`; remove the `add_label` case in `src/mocks/router.ts` and `labels.changed` in `src/mocks/derive.ts`; lower `min-w` in `TicketsTable.tsx`.
+
+## 2026-10-08 New ticket page: creation rules, draft handling, section data location
+
+- **Decision:** At creation only Title (3-120 chars) and Requirements are required (epic: also Summary). Sections the type marks "yes" but that are not required at creation show "needed before the plan gate" and may stay empty; `absent` sections are not shown (their text is kept in the draft when switching type, but never sent). `parent` must be an epic in the same workspace; new tickets are `backlog`, key = `max(key)+1` zero-padded to 4; viewers get 403. The per-type section table and labels (spike: "Questions to answer", "Findings") live in `src/api/sections.ts` (Ruling R1), not `src/mocks/`. The mock emits `ticket.created` then `people.set` (only when people were chosen) and persists created tickets in `PersistedV2.created`. The draft autosaves to `localStorage` key `orch.dashboard.new-ticket.draft.<person>.<workspace>`; leaving with unsaved text asks "Discard this draft?" through TanStack `useBlocker`. `c` (no modifiers, not typing) opens the page; `NewTicketDialog` is removed. Priority, size, parent, owner and visibility use native `<select>`s; labels use a Popover + Command combobox.
+- **Why:** Keeps the brief's rules in one place the UI and mock share; native selects are accessible and testable without Radix portals.
+- **Revert:** Delete `src/app/pages/new-ticket`, the `/tickets/new` route, `createTicket` in `store.ts`, `client.ts`, `router.ts`; restore `NewTicketDialog` from git history (commit before "new ticket: type-aware sections").
+
+## 2026-10-08 New ticket UI test asserts "Backlog", not "backlog"
+
+- **Decision:** The brief's `getByText('backlog')` after creating became `findByText('Backlog')`, because the ticket page's `StatusChip` renders `STATUS_LABEL` ("Backlog").
+- **Why:** No lowercase "backlog" text exists on the ticket page.
+- **Revert:** Lowercase the chip label (not recommended).

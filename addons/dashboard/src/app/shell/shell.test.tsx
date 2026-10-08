@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 
@@ -38,5 +38,18 @@ describe('app shell', () => {
     const title = await screen.findByRole('heading', { level: 1, name: /Usage/ })
     expect(title.querySelector('[aria-label="From addon: usage"]')).not.toBeNull()
     expect(await screen.findByText('CHF 31.40')).toBeInTheDocument()
+  })
+
+  it('opens the new ticket page from the button and from the c shortcut, but not while typing', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    await user.click(screen.getByRole('button', { name: /New ticket/ }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
+    await user.click(screen.getByRole('link', { name: /Board/ }))
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board'))
+    await user.keyboard('c')
+    expect(await screen.findByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Title'), 'c')
+    expect(screen.getByLabelText('Title')).toHaveValue('c')
   })
 })

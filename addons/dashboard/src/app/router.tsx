@@ -5,6 +5,7 @@ import { Placeholder } from './pages/Placeholders'
 import { TodayPage } from './pages/today'
 import { BoardPage } from './pages/board'
 import { TicketPage } from './pages/ticket'
+import { NewTicketPage } from './pages/new-ticket'
 import { TicketsPage } from './pages/tickets'
 import { validateTicketsSearch } from './pages/tickets/search'
 
@@ -19,6 +20,7 @@ const ticketsRoute = createRoute({
   validateSearch: validateTicketsSearch,
   component: TicketsPage,
 })
+const newTicketRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tickets/new', component: NewTicketPage })
 const ticketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'ticket/$key',
@@ -38,7 +40,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, ticketRoute, agentsRoute, settingsRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, addonRoute])
 
 export function createAppRouter(initialPath = '/') {
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) })

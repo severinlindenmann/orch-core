@@ -107,6 +107,21 @@ export type BodySections = Partial<
   >
 >
 
+/** POST /api/workspaces/:ws/tickets. Acceptance criteria are texts; the host assigns AC1.. */
+export interface NewTicketRequest {
+  type: TicketType
+  title: string
+  priority: Priority
+  size: Size | null
+  labels: string[]
+  parent: string | null
+  due: string | null
+  visibility: Visibility
+  people: { owner: string | null; assignees: string[]; reviewers: string[] }
+  sections: BodySections
+  acceptance: string[]
+}
+
 // ---------------------------------------------------------------- events (§5)
 
 export type Actor =

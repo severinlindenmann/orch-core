@@ -30,7 +30,7 @@ function useDebounced<T>(value: T, ms: number): T {
 
 /** Global command palette: ⌘K / Ctrl+K. Tickets (server search), navigation, "New ticket", addon commands. */
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, setNewTicketOpen } = useShellState()
+  const { paletteOpen, setPaletteOpen } = useShellState()
   const { workspace } = useWorkspace()
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -98,7 +98,7 @@ export function CommandPalette() {
               value="new-ticket"
               onSelect={() => {
                 close()
-                setNewTicketOpen(true)
+                void navigate({ to: '/tickets/new' })
               }}
             >
               <Plus />

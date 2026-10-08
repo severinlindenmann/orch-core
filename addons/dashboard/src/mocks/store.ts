@@ -152,6 +152,10 @@ export class MockStore {
     const p = loadPersisted()
     if (!p) return
     let latest = 0
+    for (const [key, c] of Object.entries(p.created)) {
+      if (this.defs.has(key) || !this.workspaces.some((w) => w.id === c.ws)) continue
+      this.register(c.ws, c.def, c.body)
+    }
     for (const [key, evs] of Object.entries(p.ticketEvents)) {
       const list = this.events.get(key)
       if (!list) continue
@@ -314,6 +318,35 @@ export class MockStore {
     this.bump(this.wsOfKey.get(key))
     this.save()
     return event
+  }
+
+  // ------------------------------------------------------------ creating tickets
+
+  /** Registers a ticket with no events yet (the caller appends `ticket.created` first). */
+  private register(wsId: string, def: TicketDefinition, body: BodySections) {
+    this.defs.set(def.key, def)
+    this.bodies.set(def.key, body)
+    this.wsOfKey.set(def.key, wsId)
+    this.events.set(def.key, [])
+    this.seeded.set(def.key, 0)
+  }
+
+  /** The next free key of a workspace: max(number) + 1, zero-padded to 4. */
+  nextKey(wsId: string): string {
+    const prefix = this.workspaces.find((w) => w.id === wsId)!.prefix
+    const nums = [...this.defs.keys()].filter((k) => k.startsWith(prefix + '-')).map((k) => Number(k.slice(prefix.length + 1)))
+    return `${prefix}-${String(Math.max(0, ...nums) + 1).padStart(4, '0')}`
+  }
+
+  /** Creates a backlog ticket. `ticket.created` is its first event, then `people.set` when people were chosen. */
+  createTicket(wsId: string, input: Omit<TicketDefinition, 'schema' | 'uid' | 'key' | 'links' | 'blocked_by' | 'tasks' | 'questions' | 'addons'>, body: BodySections, people: { owner: string | null; assignees: string[]; reviewers: string[] }): TicketDocument {
+    const key = this.nextKey(wsId)
+    const def = fillDefinition({ ...input, key, uid: '01J9ZN' + fnvHex(key + this.now(), 8).toUpperCase().padEnd(20, '0') })
+    this.register(wsId, def, body)
+    this.created[key] = { ws: wsId, def, body }
+    this.append(key, { type: 'ticket.created', status: 'backlog' })
+    if (people.owner || people.assignees.length || people.reviewers.length) this.append(key, { type: 'people.set', ...people, watchers: [] })
+    return this.ticket(key)!
   }
 
   // ------------------------------------------------------------ live cursor

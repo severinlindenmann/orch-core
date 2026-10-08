@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowDown, ArrowUp, Lock } from 'lucide-react'
-import type { BodySections, TicketSummary } from '@/api/types'
+import { SECTION_LABEL } from '@/api/sections'
+import type { TicketSummary } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -10,17 +11,6 @@ import { CardFields, People, ProgressBar, type BoardPeople } from '../board/Tick
 import { PriorityMarker, STATUS_LABEL, TypeIcon } from '../board/lib'
 import { ago } from '../ticket/shared'
 import type { SortKey } from './search'
-
-const SECTION_LABEL: Record<keyof BodySections, string> = {
-  summary: 'Summary',
-  context: 'Context',
-  requirements: 'Requirements',
-  out_of_scope: 'Out of scope',
-  plan: 'Plan',
-  decisions: 'Decisions',
-  verification: 'Verification',
-  current_state: 'Current state',
-}
 
 export interface AddonColumn {
   addon: string

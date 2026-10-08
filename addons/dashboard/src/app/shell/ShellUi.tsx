@@ -1,10 +1,9 @@
+import { useNavigate } from '@tanstack/react-router'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 interface ShellUi {
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
-  newTicketOpen: boolean
-  setNewTicketOpen: (open: boolean) => void
   header: PageHeaderState
   setHeader: (h: PageHeaderState) => void
 }
@@ -20,11 +19,10 @@ const Ctx = createContext<ShellUi | null>(null)
 
 export function ShellUiProvider({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [newTicketOpen, setNewTicketOpen] = useState(false)
   const [header, setHeader] = useState<PageHeaderState>({})
   const value = useMemo(
-    () => ({ paletteOpen, setPaletteOpen, newTicketOpen, setNewTicketOpen, header, setHeader }),
-    [paletteOpen, newTicketOpen, header],
+    () => ({ paletteOpen, setPaletteOpen, header, setHeader }),
+    [paletteOpen, header],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -37,8 +35,9 @@ function useShellUi() {
 
 /** Pages and components open the global overlays through this. */
 export function useShellActions() {
-  const { setPaletteOpen, setNewTicketOpen } = useShellUi()
-  return { openPalette: () => setPaletteOpen(true), openNewTicket: () => setNewTicketOpen(true) }
+  const { setPaletteOpen } = useShellUi()
+  const navigate = useNavigate()
+  return { openPalette: () => setPaletteOpen(true), openNewTicket: () => void navigate({ to: '/tickets/new' }) }
 }
 
 export const useShellState = useShellUi

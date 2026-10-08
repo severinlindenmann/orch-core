@@ -1,7 +1,8 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { ActionRequest, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
+import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
 
 export interface RouteContext {
@@ -235,6 +236,48 @@ export function buildRouter(): MockRouter {
   r.add('GET', '/api/workspaces/:ws/tickets', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     return ok(searchTickets(s, c.params.ws, c.query))
+  })
+  r.add('POST', '/api/workspaces/:ws/tickets', (s, c) => {
+    const wsId = c.params.ws
+    const ws = s.workspaces.find((w) => w.id === wsId)
+    if (!ws) return fail(404, 'not_found', 'No such workspace')
+    const role = s.roleIn(wsId, s.viewer)
+    if (!role || role === 'viewer') return fail(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
+    const b = c.body as NewTicketRequest | null
+    if (!b || typeof b !== 'object' || !(b.type in SECTIONS_BY_TYPE)) return fail(400, 'validation', 'Body must be a new ticket.')
+    const title = (b.title ?? '').trim()
+    if (title.length < 3 || title.length > 120) return fail(400, 'validation.title', 'The title needs 3 to 120 characters.')
+    const needs = SECTIONS_BY_TYPE[b.type]
+    const body: BodySections = {}
+    for (const [name, text] of Object.entries(b.sections ?? {}) as [SectionName, string | undefined][]) {
+      if (needs[name] === undefined || needs[name] === 'absent' || !text?.trim()) continue
+      body[name] = text.trim()
+    }
+    for (const name of requiredAtCreation(b.type)) {
+      if (!body[name]) return fail(400, 'validation.section_missing', `${sectionLabel(b.type, name)} ${name === 'requirements' ? 'are' : 'is'} needed.`, 'Write it before creating the ticket.')
+    }
+    if (b.size !== null && !['xs', 's', 'm', 'l', 'xl'].includes(b.size as string)) return fail(400, 'validation.size', `Unknown size ${String(b.size)}.`)
+    if (b.parent) {
+      const parent = s.hasTicket(b.parent) && s.workspaceOf(b.parent)?.id === wsId ? s.ticket(b.parent) : undefined
+      if (!parent || parent.type !== 'epic') return fail(400, 'validation.parent', `${b.parent} is not an epic in this workspace.`)
+    }
+    const ticket = s.createTicket(
+      wsId,
+      {
+        title,
+        type: b.type,
+        priority: b.priority ?? 'medium',
+        size: b.size ?? null,
+        labels: [...new Set((b.labels ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean))],
+        parent: b.parent ?? null,
+        due: b.due ?? null,
+        visibility: b.visibility ?? 'workspace',
+        acceptance: (b.acceptance ?? []).map((t) => t.trim()).filter(Boolean).map((text, i) => ({ id: `AC${i + 1}`, text })),
+      },
+      body,
+      b.people ?? { owner: null, assignees: [], reviewers: [] },
+    )
+    return ok({ ok: true, ticket }, 201)
   })
   r.add('GET', '/api/workspaces/:ws/views', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.views(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),

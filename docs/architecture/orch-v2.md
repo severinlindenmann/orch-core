@@ -483,6 +483,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D45 | Native iPhone app | orch mobile is a native app in Swift/SwiftUI (iOS 18+), new repo `orch-mobile`: Core package with protocol v2, notification service extension, share extension, XCUITest. Replaces the PWA (D16). |
 | D46 | P-256 everywhere | The one crypto suite is P-256 (protocol v2 suite 2), so device keys live in the Secure Enclave on iPhone and Apple-silicon Macs. Replaces D22. |
 | D47 | TestFlight and APNs | Apple Developer Program account; builds go out through TestFlight; push goes through APNs with the auth key on the relay. App Store later, if ever. |
+| D48 | One VPS, dev then prod | Everything is built and tested on `*.dev.severin.io`. When all phases are tested, the same VPS moves to production on `*.orch.severin.io`, with new sites and certificates, fresh production data (demo and test data never move), the production APNs environment and the app's production relay URL. DNS for both is in place (8 Oct 2026). |
 
 ---
 
@@ -701,6 +702,9 @@ The owner adds one wildcard record:
 ```
 
 Instead of the record, a DNS API token limited to that zone would let agents add records themselves.
+
+**Status (8 Oct 2026):** done. `*.dev.severin.io` and `*.orch.severin.io` both resolve to the VPS (A and AAAA).
+Development uses only `*.dev.severin.io`; `*.orch.severin.io` stays unused until the move to production (D48).
 
 Caddy gets certificates automatically (HTTP-01) for:
 

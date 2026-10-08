@@ -53,6 +53,13 @@ not only from the event log or ticket files, so editing those cannot understate 
 signed charter alone: the factory switch does not lift it. At the limit, a child the delegation approved goes on;
 any other child without a human approval is refused a claim or task start.
 
+## Approving a factory epic again
+
+The children the planner (or any agent) creates and auto-approves under a running charter are covered by it: the epic
+page and Today offer no re-approval for them, and an agent's log line on the epic changes nothing a charter signs. A
+re-approval is offered only when one is missing: the epic's own text changed, a child the charter or its delegation
+covered changed, a child someone else added waits, or a child left the epic (a child that is done did not leave it).
+
 ## What changes for agents in a factory epic
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never

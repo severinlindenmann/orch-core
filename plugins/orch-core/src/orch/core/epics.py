@@ -505,8 +505,10 @@ def charter_diff(ws, epic, signed=None, entries=None, tickets=None) -> dict:
         out[c["id"]] = ("new" if old is None
                         else "unchanged" if (old.get("requirements"), old.get("plan")) == (c["requirements"], c["plan"])
                         else "changed")
+    # a child that is done since did not leave the epic: only one that is no longer its child did
+    still = {e.id for e in children(ws, epic.id, entries)}
     return {"epic_changed": bool(entry) and not _epic_current(epic, entry), "children": out,
-            "removed": [i for i in before if i not in out], "previous": entry}
+            "removed": [i for i in before if i not in out and i not in still], "previous": entry}
 
 
 def rollup(ws, epic, entries=None, needs=None) -> dict:

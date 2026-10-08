@@ -221,6 +221,15 @@ def test_reapprove_covers_new_children_and_shows_the_diff(ws, aops, hops):
     aops.claim(c2)
 
 
+def test_a_child_done_since_the_charter_did_not_leave_the_epic(ws, aops, hops):
+    eid = _epic(aops)
+    c1, c2 = _child(aops, eid, "one"), _child(aops, eid, "two")
+    hops.approve(eid, "requirements")
+    hops.close(c1, "done by hand")
+    diff = epics.charter_diff(ws, _load(ws, eid))
+    assert diff["removed"] == [] and diff["children"] == {c2: "unchanged"}  # nothing to re-approve
+
+
 def test_needs_you_asks_for_the_epic_reapproval(ws, aops, hops):
     from orch.core.query import needs_you
     eid = _epic(aops)

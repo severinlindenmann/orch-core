@@ -190,8 +190,10 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
              rows=rows, approve=approve, proof=proof, unready=[c["blocker"] for c in approve if c["blocker"]], verdict_seen=epics.verdict_hash(kids.values(), ws),
              verdict_ready=bool(open_kids) and all(r["card"]["status"] == "testing" for r in open_kids)
              and epic.status == "open" and not changed, verdict_changed=changed, unreleased=_unreleased(ws, epic),
+             # offered only when an approval is missing: a child the signed charter does not list but its delegation
+             # covers (the planner's, under a running factory) needs none (the live run's trap: a plain Re-approve
+             # there ended the run)
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
-                                          or any(v != "unchanged" for v in changes.values())
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
     return s
 

@@ -888,13 +888,13 @@ class Ops(TaskOpsMixin):
                 stream = opened
         try:
             return self._artifact_add(ref, entry, src, name, stream, base, in_place, context=context, kind=kind,
-                                      label=label, task=task, ac=ac, inline=inline, replace=replace)
+                                      label=label, task=task, ac=ac, inline=inline, replace=replace, _run=_run)
         finally:
             if opened is not None:
                 opened.close()
 
     def _artifact_add(self, ref, entry, src, name, stream, base, in_place, *, context, kind, label, task, ac, inline,
-                      replace) -> Path:
+                      replace, _run=None) -> Path:
         from orch.core import artifacts as art
         fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(name or src.name)
         if not art.safe_name(fname):
@@ -957,15 +957,33 @@ class Ops(TaskOpsMixin):
         if len(files) == 1:
             return [self.artifact_add(ref, files[0], name, context=context, kind=kind, label=label, task=task,
                                       ac=ac, inline=inline, replace=replace)]
+        opened: list = []  # a factory session's files, each opened once and checked (agent_source); closed below
+        try:
+            return self._artifact_add_many(ref, files, context, kind, label, task, ac, replace, opened)
+        finally:
+            for f in opened:
+                f.close()
+
+    def _artifact_add_many(self, ref, files, context, kind, label, task, ac, replace, opened) -> list[Path]:
+        from orch.core import artifacts as art
+        from orch.core.fsutil import agent_source
         entry = store.resolve(self.ws, ref)
         base = self.ws.artifacts_dir / entry.id
         label = _artifact_label(label)
         limit = art.max_bytes(self.ws)
         plan: list[tuple[Path, str, str, bool]] = []  # (source, stored name, kind, already in the folder)
+        streams: dict = {}
         for src in files:
             if src.is_symlink() or not src.is_file():
                 raise UsageError(f"not a file: {src}")
             in_place = _inside(src, base)
+            # the same scope check as a single file: an agent copies only workspace files, read from the one
+            # descriptor that was checked (never from the path again)
+            handle = agent_source(self.ws, self.actor, src)
+            if handle is not None:
+                opened.append(handle)
+                if not in_place:
+                    streams[src] = handle
             fname = src.resolve().relative_to(base.resolve()).as_posix() if in_place else _artifact_name(src.name)
             if not art.safe_name(fname):
                 raise UsageError(f"invalid artifact name {src.name!r}")
@@ -1002,7 +1020,7 @@ class Ops(TaskOpsMixin):
                             backups.append((dest, backup))
                         else:
                             created.append(dest)
-                        _copy_capped(src, None, dest, limit)
+                        _copy_capped(src, streams.get(src), dest, limit)
                     item = {"name": fname, "kind": k}
                     if not self.dry_run:
                         item.update(sha256=art.file_sha256(dest), size=dest.stat().st_size)

@@ -575,7 +575,7 @@ def test_agent_file_options_stay_inside_the_workspace(ws, tmp_path, capsys, monk
                      ("new", "-t", "x", "--acceptance-file", bad), ("new", "-t", "x", "--summary-file", bad),
                      ("new", "-t", "x", "--out-of-scope-file", bad), ("section", "set", t["id"], "Plan", "--file", bad),
                      ("state", t["id"], "--file", bad), ("task", "add", t["id"], "--file", bad),
-                     ("artifact", "add", t["id"], bad)):
+                     ("artifact", "add", t["id"], bad), ("artifact", "add", t["id"], str(inside), bad)):
             code, out = _run(capsys, *args)
             assert code != 0 and "PRIVATE KEY" not in json.dumps(store.load(ws, t["id"])[1].sections), (args, out)
             assert "an agent cannot hand orch the file" in out.err or "not a file" in out.err \
@@ -689,7 +689,7 @@ def test_cli_agent_with_a_malformed_binding_is_refused_a_file(ws, human, capsys,
 
 # every Ops method that takes a ticket ref and is reachable by an agent changes it through one of these, and each of
 # them runs the scope check (_in_bound_epic) on the loaded ticket before it changes anything
-_ROUTES = re.compile(r"self\.(_mutate|_mutate_events|_edit_tasks|_task_move|_write_section|_artifact_add|approve)\(")
+_ROUTES = re.compile(r"self\.(_mutate|_mutate_events|_edit_tasks|_task_move|_write_section|_artifact_add|_artifact_add_many|approve)\(")
 _UNSCOPED = {"replace_raw": "human only: require_human refuses every agent before it reads the ticket"}
 
 

@@ -245,3 +245,79 @@ other addon.
 - **Disk:** it stays plain, readable by whoever has the files.
 
 Real secrecy from other members means a separate workspace.
+
+## 10. How agents see and change tickets
+
+Agents never read or write ticket files directly. They use the `orch` CLI, which talks to the workspace host over
+its local socket (`<state>/hosts/<workspace_id>.sock`). If no host is running, the CLI starts one. The host does all
+writes, signs its appends, and holds every key. The agent holds none.
+
+### What tells an agent how to work
+
+| Source | Content | When the agent sees it |
+|---|---|---|
+| `AGENTS.orch.md` (generated, included from AGENTS.md / CLAUDE.md) | The rules: claim before working, one task at a time, evidence for every acceptance criterion, ask instead of guessing, never edit ticket files, human-only actions | Every session |
+| Session-start hook | A short status: the workspace, who the agent works for, its session grant, and the tickets that need it | First thing in a session |
+| Skills `orch-tickets`, `orch-work-on-ticket`, `orch-refine-ticket` (plus addon skills) | Step-by-step workflows | When the task matches |
+| `orch … --help` | Exact command usage | On demand |
+
+### Identity
+
+- An agent session works **for** a person, under that person's signed session grant (`session.granted`: agent,
+  session, scope, expiry).
+- The CLI finds the grant through the harness session id. Every event the agent causes carries `actor: {kind: agent,
+  id, session, for, grant}`.
+- Without a valid grant the agent can only read.
+
+### Reading (token-cheap by default)
+
+| Command | Returns |
+|---|---|
+| `orch status` | The agent's own claims, what needs it, and new events since its cursor |
+| `orch next` | The next ticket it should pick up, by priority, assignment and readiness |
+| `orch show KEY` | A short text view (about 350 tokens): header, whose turn it is, Current state, open questions, acceptance criteria and task summary, the last 5 events, hints |
+| `orch show KEY --section Plan,Context` | Only those sections |
+| `orch show KEY --full` | Everything |
+| `orch show KEY --log --since N` | Events after its cursor |
+| `orch task next KEY` | The next task with its acceptance criteria and verify command |
+| `--json` on any read | The ticket document (§7) for parsing |
+
+### Writing (every write is an event the host appends)
+
+| Command | Event |
+|---|---|
+| `orch new "title" --type … [--file def.json]` | `created` |
+| `orch claim KEY` / `orch release KEY` | `claim.taken` / `claim.released` |
+| `orch task add KEY --file tasks.json` | `edited` (fields: tasks). Validated against the schema before writing, with line-level errors. |
+| `orch task start KEY T3` / `orch task done KEY T3 --run` | `task.started` / `task.done`; `--run` executes the verify command and stores a receipt |
+| `orch section set KEY "Current state" --file -` | `edited` (sections), with `base_rev`; a conflict comes back with both versions |
+| `orch artifact add KEY file.png --kind screenshot --ac AC1` | `artifact.added` (file copied into `artifacts/`, sha256 recorded) |
+| `orch ask KEY --to p_mara --file q.json` | `question.asked`; a blocking question moves the ticket to `waiting` |
+| `orch move KEY testing` | `moved` (only moves that are allowed for agents) |
+| `orch log KEY "…"` | `log` |
+| `orch link KEY --pr URL` / `--branch` | `edited` (links) |
+
+### Waiting
+
+- `orch wait KEY` blocks until something it waits for happens: an answer, an approval, a change request or a verdict.
+- It returns one JSON object with `kind` (`answered`, `approved`, `changes_requested`, `verdict`, `timeout`), the
+  data, and the new cursor, so the agent can branch on the kind.
+- A change request is never shown as a success.
+
+### What an agent cannot do
+
+- **Human-only actions:** approve, request changes, give a verdict, answer, close, reopen, change people, roles or
+  policy, grant a session or an addon, purge addon data. All of these need a person's signature with user presence.
+  The CLI refuses them for agents, saying "this needs a human; ask with `orch ask` or wait".
+- **Direct file edits:** an Edit-tool change to `ticket.json` or `body.md` is detected through `rev` and the section
+  hashes.
+  - Prose changes are taken in as `edit.external` and void any gate they touch.
+  - Protected fields are reverted with `projection.repaired`.
+  - The next `orch show` names the edit.
+
+### Agents in other workspaces
+
+- A ticket handed over from a pinned peer workspace arrives through the relay as a signed envelope, and lands as a
+  normal ticket marked `from-peer`.
+- The agent there sees it with `orch inbox` and `orch show`, and replies with `orch reply KEY --result result.json`.
+- What it receives is treated as data, never as instructions (spec §9).

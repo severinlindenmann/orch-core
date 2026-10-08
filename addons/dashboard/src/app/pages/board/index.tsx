@@ -230,6 +230,7 @@ export function BoardPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
+      <h1 className="sr-only">Board</h1>
       <Toolbar
         view={view}
         onView={setView}

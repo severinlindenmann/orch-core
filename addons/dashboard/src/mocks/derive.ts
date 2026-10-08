@@ -348,60 +348,115 @@ function computeTurn(
 
 /** One-line description of an event for feeds. */
 export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknown>): string {
+  // A one-line, never-empty summary. Sparse events fall back to a plain phrase instead of "undefined" or a dangling verb.
+  const t = (v: unknown, fallback: string): string => (typeof v === 'string' || typeof v === 'number') && String(v).trim() ? String(v).trim() : fallback
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [])
+  const who = t(e.who ?? e.name ?? e.person, 'a member')
   switch (e.type) {
     case 'ticket.created':
       return 'created the ticket'
     case 'status.changed':
-      return `moved to ${e.to}`
-    case 'labels.changed':
-      return `labelled ${((e.add as string[] | undefined) ?? []).join(', ')}`
+      return e.to ? `moved to ${t(e.to, 'a new status')}` : 'changed the status'
+    case 'labels.changed': {
+      const add = list(e.add)
+      const remove = list(e.remove)
+      if (add.length && remove.length) return `labelled ${add.join(', ')}, removed ${remove.join(', ')}`
+      if (add.length) return `labelled ${add.join(', ')}`
+      if (remove.length) return `removed label ${remove.join(', ')}`
+      return 'changed the labels'
+    }
     case 'claim.taken':
       return 'took the claim'
     case 'claim.released':
-      return e.reason ? `released the claim (${String(e.reason)})` : 'released the claim'
+      return e.reason ? `released the claim (${t(e.reason, '')})` : 'released the claim'
     case 'lease.released':
-      return e.reason ? `released ${e.task} (${String(e.reason)})` : `released ${e.task}`
+      return e.reason ? `released ${t(e.task, 'a task')} (${t(e.reason, '')})` : `released ${t(e.task, 'a task')}`
     case 'agent.refused':
-      return `was refused: ${e.code}`
+      return `was refused: ${t(e.code, 'no reason given')}`
     case 'lease.taken':
-      return `started ${e.task}`
+      return `started ${t(e.task, 'a task')}`
     case 'task.done':
-      return `finished ${e.task}`
+      return `finished ${t(e.task, 'a task')}`
     case 'artifact.added':
-      return `added ${e.name}`
+      return `added ${t(e.name, 'an artifact')}`
     case 'question.asked':
-      return `asked ${e.question}`
+      return `asked ${t(e.question, 'a question')}`
     case 'question.answered':
-      return `answered ${e.question}`
+      return `answered ${t(e.question, 'a question')}`
     case 'gate.approved':
-      return `approved ${e.gate}`
+      return `approved ${t(e.gate, 'a gate')}`
     case 'gate.changes_requested':
-      return `requested changes on ${e.gate}`
+      return `requested changes on ${t(e.gate, 'a gate')}`
     case 'verdict.given':
-      return `gave verdict: ${e.result}`
+      return `gave verdict: ${t(e.result, 'none')}`
     case 'handoff.written':
       return 'wrote a handoff'
     case 'section.edited':
-      return `edited ${String(e.section).replace('_', ' ')}`
+      return `edited ${t(e.section, 'a section').replace('_', ' ')}`
     case 'gate.invalidated':
-      return `invalidated the ${e.gate} approval`
+      return `invalidated the ${t(e.gate, 'gate')} approval`
     case 'log.added':
       return 'logged a note'
+    case 'comment.added':
+      return 'commented'
+    case 'people.set':
+      return 'changed the people on the ticket'
     case 'github.pr_linked':
-      return `linked PR #${e.number}`
+      return e.number ? `linked PR #${t(e.number, '')}` : 'linked a pull request'
+    case 'github.imported':
+      return `imported ${t(e.external, 'an issue')} from GitHub`
     case 'publish.shared':
       return 'shared a secret link'
     case 'publish.revoked':
       return 'revoked a share'
     case 'publish.decided':
-      return `decided to publish: ${e.option}`
+      return `decided to publish: ${t(e.option, 'no option')}`
     case 'estimate.set':
-      return `estimated ${e.points} points`
-    case 'github.imported':
-      return `imported ${e.external} from GitHub`
+      return e.points !== undefined ? `estimated ${t(e.points, '?')} points` : 'set an estimate'
     case 'usage.recorded':
       return 'recorded usage'
+    case 'records.committed':
+      return 'committed the records'
+    case 'records.pushed':
+      return 'pushed the records'
+    case 'quick.made_ticket':
+      return 'made a quick task into a ticket'
+    case 'wiki.linked':
+      return 'linked a wiki page'
+    // Workspace events
+    case 'member.added':
+      return `added ${who} as ${t(e.role, 'member')}`
+    case 'member.role_changed':
+      return `made ${who} ${/^[aeiou]/.test(t(e.role, 'member')) ? 'an' : 'a'} ${t(e.role, 'member')}`
+    case 'member.removed':
+      return `removed ${who}`
+    case 'gate.policy_set':
+      return `changed the ${t(e.gate, 'gate')} approval rule`
+    case 'addon.installed':
+      return `installed ${t(e.name, 'an addon')}`
+    case 'addon.granted':
+      return `granted ${t(e.name, 'an addon')}`
+    case 'addon.enabled':
+      return `enabled ${t(e.name, 'an addon')}`
+    case 'addon.disabled':
+      return `disabled ${t(e.name, 'an addon')}`
+    case 'addon.updated':
+      return e.version ? `updated ${t(e.name, 'an addon')} to ${t(e.version, '')}` : `updated ${t(e.name, 'an addon')}`
+    case 'addon.uninstalled':
+      return `uninstalled ${t(e.name, 'an addon')}`
+    case 'addon.settings_saved':
+      return `saved the settings of ${t(e.name, 'an addon')}`
+    case 'grant.issued':
+      return 'issued a grant'
+    case 'grant.revoked':
+      return 'revoked a grant'
+    case 'view.saved':
+      return e.name ? `saved view "${t(e.name, '')}"` : 'saved a view'
+    case 'view.deleted':
+      return 'deleted a saved view'
+    case 'workspace.renamed':
+      return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
     default:
-      return String(e.type)
+      return t(e.type, 'did something')
   }
 }

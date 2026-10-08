@@ -592,7 +592,7 @@ Safety comes from what the machine can reach, not from prompts:
 - **A dedicated machine.** It has no real orch config, no real workspaces, no TIX account and no login to
   `tix.severin.io`. Whatever an agent does there touches only the sandbox, the test VPS and the dev domain.
 - **GitHub through a bot account (D30), with branches split (D33):**
-  - The machine logs `gh` in as a separate GitHub user (e.g. `orch-dev-bot`) with write access to the repos.
+  - The machine logs `gh` in as a separate GitHub user (`severin-agent`) with write access to the repos.
   - `main` is protected in every repo: a PR and one approval are required, and only the owner can merge or push.
   - `develop` and all feature branches are the bot's. It creates feature branches, opens PRs into `develop` and
     merges them itself once T2 and the required reviews have passed.

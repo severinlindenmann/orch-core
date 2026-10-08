@@ -445,8 +445,8 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D26 | History for new devices | Current epoch only. Phones are for acting on what is happening now. Older Drop objects are re-wrapped by the host on request (§5.4). |
 | D27 | Exchange key rotation | The previous `WXK` is accepted for 14 days, then deleted (§5.4). |
 | D28 | Peer auto-start permissions | Peer tickets run only under a Dark AI Factory profile, intersected with the peer rule. One permission system (§9). |
-| D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
 | D29 | Client-hosted workspaces | Readable by that machine's admins, and only that workspace. Stated in §4 and on the workspace card. |
+| D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
 
 ---
 

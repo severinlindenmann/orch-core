@@ -176,6 +176,18 @@ never a mix.
 - Old content keeps its epoch tag. Devices that still hold old epochs can read old content. This is the honest limit,
   and the UI states it.
 - A phone logging itself out (D7) deregisters and wipes. That does not rotate.
+- **Rotation is automatic.** The host checks the epoch's age at startup and once a day, and rotates when it is due
+  (D24) or when it learns of a revocation or removal. The only human steps are deciding to revoke or remove a device,
+  and the optional `orch keys rotate`.
+- **Devices offline during a rotation** pick up their sealed `WK_{e+1}` from the relay at their next connect. Nothing
+  manual is needed.
+- **New members get the current epoch only (D26).** A device that joins at epoch `e` is sealed `WK_e` and later epochs,
+  never earlier ones. Live views through the bridge (tickets, questions, Factory) are served by the host and show
+  the full state anyway. For an older Drop object, the device asks the host, which re-wraps that one object's `DEK`
+  under the current epoch if the device's scope allows it.
+- **Exchange key overlap (D27).** When `WXK` rotates, the host keeps the previous private key for 14 days and still
+  accepts envelopes and Drop wraps sealed to it, then deletes it. Senders pick up the new `wxk_version` from the
+  card and, when the receiver answers `stale_wxk`, refetch the card and reseal.
 
 ### 5.5 Key custody and the host socket API
 
@@ -419,6 +431,8 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D23 | Dev domains | `*.dev.severin.io`: `relay.dev`, `relay-internal.dev`, `pub.dev`, `apps.dev`. |
 | D24 | Rotation | Every 90 days, plus every revoke or removal. |
 | D25 | Transcription | Kept as an opt-in, off by default, and stated in the threat model (§4) as the one exception. |
+| D26 | History for new devices | Current epoch only. Phones are for acting on what is happening now. Older Drop objects are re-wrapped by the host on request (§5.4). |
+| D27 | Exchange key rotation | The previous `WXK` is accepted for 14 days, then deleted (§5.4). |
 
 ---
 

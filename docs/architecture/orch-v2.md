@@ -98,6 +98,9 @@ Non-goals for v2:
   that a question was resolved.
 - **Sealed, not leaked:** device and machine names, project and workspace names and descriptions (orch-tix #75's
   lesson).
+- **The one deliberate exception: voice-note transcription.** It is opt-in per person and off by default. When it is
+  on, audio uploaded from the phone or browser is sent over HTTPS to Deepgram (as in TIX today). The transcript comes
+  back into the object's sealed metadata. The setting and the Drop upload screen both say so.
 
 ## 5. Identity and keys
 
@@ -114,7 +117,7 @@ Non-goals for v2:
 | Drop space key `SK_e` | symmetric, per epoch | sealed to the space's member devices | Shared Drop spaces |
 | Personal vault key | symmetric | your devices | Personal settings only. Never derives anything else. |
 
-**Algorithms (to confirm in spike S1).** The candidates:
+**Algorithms (decided, confirmed by spike S1).** The suite:
 
 - Ed25519 for signatures and X25519 for key agreement, through WebCrypto.
 - HKDF-SHA-256, and AES-256-GCM in authenticated chunks (as in TIX today).
@@ -140,8 +143,9 @@ never a mix.
 - **Removing a device from one workspace** is a request signed by any member device with Operate scope, applied by
   that host. It also rotates.
 - **Recovery kit:** a 24-word code shown once at person creation. It wraps a copy of `PK`, and the relay stores the
-  wrapped blob. Without the code and one device, the person key is gone and peers must re-pin. (This is an open
-  item for review: whether to allow a second "backup device" instead of the code.)
+  wrapped blob. The code is stretched with a memory-hard KDF before it unwraps anything. If both the code and every
+  device are lost, the person key is gone and peers must re-pin a new one. (Decided: recovery code only, no backup
+  device.)
 
 ### 5.3 Workspace identity
 
@@ -275,6 +279,8 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 - **Scoped agent devices (D15).** An owner issues a one-time enrollment code, scoped to one shared space with an
   expiry. The agent's certificate carries `scope=drop:<space_id>`, and the relay enforces it on every route.
 - **Public links and upload links** carry over from TIX (the key stays in the URL fragment).
+- **Voice notes:** opt-in transcription carries over from TIX (§4, the one exception). The Deepgram key is personal
+  vault data; the relay never stores it in the clear.
 
 ## 7. orch mobile
 
@@ -404,14 +410,15 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | **P7 orch-publish** | Rename, the signed HTTPS API, namespaces, per-recipient tokens, and the migration from orch-apps branches. | Each demo workspace publishes in its own namespace, and one cannot touch the other's apps. |
 | **P8 Colleagues + internal** | Second account (D1 B), cross-person peers and Drop, the internal relay install, `--lan` removal, agent UID on macOS, TIX switch-off plan. | Persona "colleague" on WS2 exchanges a ticket and a document with WS1. **iPhone session 3:** full regression. |
 
-## 14. Open items for review
+## 14. Former open items (decided 8 Oct 2026)
 
-1. Recovery: a recovery code (proposed), or a second backup device.
-2. The signature and key-agreement suite, decided by spike S1.
-3. Dev domain names. Proposed: `relay.dev.severin.io`, `pub.dev.severin.io`, `apps.dev.severin.io`,
-   `relay-internal.dev.severin.io`.
-4. The epoch rotation interval (90 days proposed).
-5. Whether orch-relay keeps TIX's audio transcription (Deepgram). Proposed: no, not in v2.
+| # | Item | Decision |
+|---|---|---|
+| D21 | Recovery | A 24-word recovery code only (§5.2). No backup device. |
+| D22 | Crypto suite | Ed25519 and X25519 through WebCrypto. If spike S1 shows they are unreliable on the oldest supported iOS, P-256 everywhere. Always a single suite. |
+| D23 | Dev domains | `*.dev.severin.io`: `relay.dev`, `relay-internal.dev`, `pub.dev`, `apps.dev`. |
+| D24 | Rotation | Every 90 days, plus every revoke or removal. |
+| D25 | Transcription | Kept as an opt-in, off by default, and stated in the threat model (§4) as the one exception. |
 
 ---
 
@@ -655,7 +662,7 @@ The owner reports pass or fail per step, and screenshots go into Drop.
 
 ## 24. Before the first implementation task
 
-1. The owner reviews and approves this spec, and answers §14.
+1. The owner reviews and approves this spec (the §14 items are decided).
 2. The owner completes M1–M5 and M10, the VPS (§20) and DNS (§21).
 3. The manager runs P0, group 1: the folder layout, `bin/dev-env --check`, VPS provisioning, an empty relay
    deployed, and the e2e harness with one green "hello" scenario.

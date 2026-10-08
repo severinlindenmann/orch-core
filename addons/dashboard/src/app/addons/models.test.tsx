@@ -20,7 +20,7 @@ describe('model routing in the start-agent panel', () => {
   it('shows the model line and --model in the command', async () => {
     renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: on })
     expect(await screen.findByText('Model · work runs on standard: Standard (sonnet); subagents on haiku', {}, T)).toBeInTheDocument()
-    expect(screen.getByText(code("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model sonnet '/orch:work DEMO-0044'"))).toBeInTheDocument()
+    expect(await screen.findByText(code("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model sonnet '/orch:work DEMO-0044'"), {}, T)).toBeInTheDocument()
   })
   it('an invalid model name shows the sentence and blocks Start in core\'s dialog', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: invalid })

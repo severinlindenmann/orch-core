@@ -1,18 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const SRC = path.resolve(import.meta.dirname, '..')
-
-function sourceFiles(dir = SRC): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = path.join(dir, e.name)
-    if (e.isDirectory()) return sourceFiles(p)
-    return /\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [p] : []
-  })
-}
-const rel = (f: string) => path.relative(SRC, f).split(path.sep).join('/')
-const FILES = sourceFiles().map((f) => ({ file: rel(f), text: readFileSync(f, 'utf8') }))
+// Every non-test source file, read as text by Vite (keys look like "/src/app/router.tsx").
+const RAW = import.meta.glob<string>(['/src/**/*.{ts,tsx}', '!/src/**/*.test.{ts,tsx}'], { query: '?raw', import: 'default', eager: true })
+const FILES = Object.entries(RAW).map(([key, text]) => ({ file: key.replace('/src/', ''), text }))
 
 describe('layout guard (the real 1024 px check is the browser pass)', () => {
   // The app is desktop-only from 1024 px: nothing may force the page wider than that.

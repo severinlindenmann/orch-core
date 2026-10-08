@@ -15,10 +15,12 @@ const FORMATTERS: Record<string, (v: unknown) => string> = {
 
 export function getPath(root: unknown, path: string): unknown {
   let cur: unknown = root
-  for (const part of path.split('.')) {
-    if (cur === null || typeof cur !== 'object' || part === '__proto__' || part === 'constructor') return undefined
+  for (const raw of path.split('.')) {
     // `$ticket` stands for the key of the ticket in the slot context: {"$ref": "addon.sharesByTicket.$ticket"}.
-    cur = (cur as Record<string, unknown>)[part === '$ticket' ? ((root as { ticket?: { key?: string } }).ticket?.key ?? '') : part]
+    // The prototype guard runs on the segment AFTER that substitution, so a ticket key cannot reach the prototype.
+    const part = raw === '$ticket' ? ((root as { ticket?: { key?: string } }).ticket?.key ?? '') : raw
+    if (cur === null || typeof cur !== 'object' || part === '__proto__' || part === 'constructor') return undefined
+    cur = (cur as Record<string, unknown>)[part]
   }
   return cur
 }

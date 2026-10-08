@@ -149,3 +149,22 @@ describe('publish decisions', () => {
     expect(s.store.addons.find((a) => a.name === 'publish')!.decisions!.map((d) => d.id)).toContain('dec_publish_failed_build')
   })
 })
+
+describe('closed decisions are refused by the store, for any addon', () => {
+  it('deciding the same decision twice is refused the second time and does nothing', async () => {
+    const s = setup()
+    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
+    const shares = (await state(s)).shares.length
+    const again = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
+    expect(again).toMatchObject({ ok: true, message: 'That decision is closed.' })
+    expect(again.changed).toBeFalsy()
+    expect((await state(s)).shares).toHaveLength(shares)
+  })
+  it('a decision that is not currently open (failed-build once the app runs) is closed', async () => {
+    const s = setup()
+    await s.api.runAddonAction(s.ws, 'publish', 'redeploy', { id: 'app_ops' })
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' })
+    expect(r.message).toBe('That decision is closed.')
+  })
+})
+

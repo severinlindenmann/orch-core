@@ -408,7 +408,7 @@ export interface AddonContribution {
    * nav: the page body. board.lane: a `list` node (items become cards). board.card_field: a small `stat`/`kv`.
    */
   node: unknown
-  /** Binding path (e.g. `ticket.addons.github.pr`): the contribution is skipped when it resolves to nothing. */
+  /** Binding path (e.g. `addon.prByTicket.$ticket`): the contribution is skipped when it resolves to nothing. */
   when?: string
 }
 
@@ -470,6 +470,8 @@ export interface AddonActionResult {
   message: string
   /** True when the action changed addon data: the client refetches. */
   changed?: boolean
+  /** An https address the client opens in a new tab (e.g. github's Open). */
+  url?: string
 }
 
 // ---------------------------------------------------------------- actions & errors

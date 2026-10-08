@@ -24,6 +24,6 @@ describe('board page', () => {
     renderApp('/board')
     const lane = await screen.findByRole('region', { name: /GitHub issues/ })
     expect(within(lane).getByRole('img', { name: 'From addon: github' })).toBeInTheDocument()
-    expect(within(lane).getAllByRole('button', { name: /Import as ticket/ })).toHaveLength(3)
+    expect(await within(lane).findAllByRole('button', { name: /Import as ticket/ })).toHaveLength(8)
   })
 })

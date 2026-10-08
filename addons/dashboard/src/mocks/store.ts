@@ -476,7 +476,7 @@ export class MockStore {
     fn(data)
   }
 
-  /** github/import: a lane issue becomes a new backlog ticket in workspace `wsId`. */
+  /** github/import: a lane issue becomes a new backlog ticket in workspace `wsId` (the github module removes the issue from its state). */
   importGithubIssue(wsId: string, item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
     const ws = this.workspaces.find((w) => w.id === wsId)!
     const title = item.title?.trim()
@@ -504,9 +504,6 @@ export class MockStore {
     this.append(key, { type: 'ticket.created', actor, status: 'backlog' })
     this.append(key, { type: 'people.set', owner: this.viewer, assignees: [], reviewers: [], watchers: [] })
     this.append(key, { type: 'github.imported', actor, external })
-    const lane = this.addons.find((a) => a.name === 'github')?.contributions.find((c) => c.slot === 'board.lane')
-    const node = lane?.node as { items?: { subtitle?: string }[] } | undefined
-    if (node?.items) node.items = node.items.filter((i) => i.subtitle !== item.subtitle)
     return { ok: true, message: `Imported ${external} as ${key}`, changed: true }
   }
 
@@ -612,6 +609,10 @@ export class MockStore {
     if (!can(role, 'addon.action')) return refuse(403, 'forbidden', 'Viewers cannot run addon actions.', 'Ask an owner or maintainer.')
     const min = actionMinRole(action)
     if (!atLeast(role, min)) return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
+    // A decision that is no longer open (already decided, or its condition went away) is closed for every addon.
+    const pkg = this.addons.find((a) => a.name === name)
+    const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
+    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? []).some((d) => d.id === decision.id)) return { ok: true, message: 'That decision is closed.' }
     const res = actionRun(action)({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()

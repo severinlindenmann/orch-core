@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
+import type { ItemAction } from '@/addon-ui/nodes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DisabledReason, VIEWER_REASON } from '@/components/DisabledReason'
@@ -16,6 +18,8 @@ interface LaneItem {
   title: string
   subtitle?: string
   badge?: string
+  /** The item's own actions (the addon decides what a card can do, e.g. github's "Import as ticket"). */
+  actions?: ItemAction[]
 }
 
 function laneItems(c: ResolvedContribution): LaneItem[] {
@@ -25,18 +29,20 @@ function laneItems(c: ResolvedContribution): LaneItem[] {
 
 function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
   const { workspace } = useWorkspace()
+  const qc = useQueryClient()
   const canRun = can(useRole(), 'addon.action')
-  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
-  async function run() {
+  const [busy, setBusy] = useState(false)
+  async function run(a: ItemAction) {
     if (!workspace) return
-    setState('busy')
+    setBusy(true)
     try {
-      const res = await api.runAddonAction(workspace.id, c.addon, 'import', { item })
+      const res = await api.runAddonAction(workspace.id, c.addon, a.action, { ...a.args })
       toast.success(res.message)
-      setState('done')
+      void qc.invalidateQueries()
     } catch (e) {
-      setState('idle')
-      toastApiError(e, 'Import failed')
+      toastApiError(e, 'Action failed')
+    } finally {
+      setBusy(false)
     }
   }
   return (
@@ -52,12 +58,18 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
           </Badge>
         )}
       </div>
-      <DisabledReason reason={canRun ? null : VIEWER_REASON}>
-        <Button size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={state !== 'idle' || !canRun} onClick={run}>
-          <Download className="size-3.5" />
-          {state === 'done' ? 'Imported' : 'Import as ticket'}
-        </Button>
-      </DisabledReason>
+      {item.actions && item.actions.length > 0 && (
+        <DisabledReason reason={canRun ? null : VIEWER_REASON}>
+          <div className="flex gap-1.5">
+            {item.actions.map((a, i) => (
+              <Button key={i} size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={busy || !canRun} onClick={() => run(a)}>
+                {a.action === 'import' && <Download className="size-3.5" />}
+                {a.label}
+              </Button>
+            ))}
+          </div>
+        </DisabledReason>
+      )}
     </li>
   )
 }

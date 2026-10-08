@@ -110,8 +110,9 @@ describe('SlotRegistry', () => {
     expect(selectContributions(addons, 'nav')).toEqual([])
   })
 
-  it("returns github's board.lane with its three issues", () => {
-    const lanes = selectContributions(addons, 'board.lane', { workspace })
+  it("returns github's board.lane with the issues of its state", () => {
+    const issueItems = [{ title: 'a' }, { title: 'b' }, { title: 'c' }]
+    const lanes = selectContributions(addons, 'board.lane', { workspace, addon: { issueItems } })
     expect(lanes).toHaveLength(1)
     expect(lanes[0].addon).toBe('github')
     expect(lanes[0].title).toBe('External · GitHub issues')
@@ -123,9 +124,9 @@ describe('SlotRegistry', () => {
     expect(selectContributions(addons, 'board.lane', { workspace: off })).toHaveLength(0)
     const ungranted = { ...workspace, addons: { ...workspace.addons, github: { ...workspace.addons.github, status: 'needs_grant' as const } } }
     expect(selectContributions(addons, 'board.lane', { workspace: ungranted })).toHaveLength(0)
-    const withPr = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: { github: { pr: { number: 3 } } } } as never })
+    const withPr = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T' } as never, addon: { prByTicket: { T: { number: 3 } } } })
     expect(withPr.some((c) => c.addon === 'github')).toBe(true)
-    const without = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: {} } as never })
+    const without = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T' } as never, addon: { prByTicket: {} } })
     expect(without.some((c) => c.addon === 'github')).toBe(false)
   })
 })

@@ -293,17 +293,17 @@
                 {
                   "type": "stat",
                   "label": "Open PRs",
-                  "value": 3
+                  "value": "${addon.openPrs}"
                 },
                 {
                   "type": "stat",
                   "label": "Need review",
-                  "value": 2
+                  "value": "${addon.needReview}"
                 },
                 {
                   "type": "stat",
                   "label": "Checks failing",
-                  "value": 0
+                  "value": "${addon.checksFailing}"
                 }
               ]
             },
@@ -311,8 +311,8 @@
               "type": "table",
               "columns": [
                 {
-                  "key": "ticket",
-                  "label": "Ticket"
+                  "key": "repo",
+                  "label": "Repository"
                 },
                 {
                   "key": "pr",
@@ -323,35 +323,41 @@
                   "label": "Title"
                 },
                 {
-                  "key": "state",
-                  "label": "State"
+                  "key": "ticket",
+                  "label": "Ticket"
                 },
                 {
                   "key": "checks",
                   "label": "Checks"
+                },
+                {
+                  "key": "review",
+                  "label": "Review"
+                },
+                {
+                  "key": "updated",
+                  "label": "Updated"
                 }
               ],
-              "rows": [
+              "rows": {
+                "$ref": "addon.prRows"
+              },
+              "rowActions": [
                 {
-                  "ticket": "DEMO-0043",
-                  "pr": "#31",
-                  "title": "Tariff seeds",
-                  "state": "draft",
-                  "checks": "pending"
+                  "label": "Approve on GitHub",
+                  "action": "approve",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "secondary"
                 },
                 {
-                  "ticket": "DEMO-0041",
-                  "pr": "#29",
-                  "title": "Reconciliation tests",
-                  "state": "open",
-                  "checks": "passing"
-                },
-                {
-                  "ticket": "DEMO-0042",
-                  "pr": "#27",
-                  "title": "UTC timestamps",
-                  "state": "merged",
-                  "checks": "passing"
+                  "label": "Open",
+                  "action": "open",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
                 }
               ]
             },
@@ -371,18 +377,10 @@
         "icon": "GitPullRequest",
         "node": {
           "type": "list",
-          "items": [
-            {
-              "title": "#29 Reconciliation tests",
-              "subtitle": "acme/energy-dbt \u00b7 DEMO-0041",
-              "badge": "checks passing"
-            },
-            {
-              "title": "#31 Tariff seeds",
-              "subtitle": "acme/energy-dbt \u00b7 DEMO-0043",
-              "badge": "checks pending"
-            }
-          ]
+          "items": {
+            "$ref": "addon.todayItems"
+          },
+          "empty": "No pull requests need a review."
         }
       },
       {
@@ -392,23 +390,10 @@
         "icon": "Github",
         "node": {
           "type": "list",
-          "items": [
-            {
-              "title": "Seed loader fails on BOM files",
-              "subtitle": "acme/energy-dbt#118",
-              "badge": "bug"
-            },
-            {
-              "title": "Document tariff naming",
-              "subtitle": "acme/energy-dbt#121",
-              "badge": "docs"
-            },
-            {
-              "title": "Bump dbt-utils",
-              "subtitle": "acme/energy-dbt#124",
-              "badge": "chore"
-            }
-          ]
+          "items": {
+            "$ref": "addon.issueItems"
+          },
+          "empty": "No open issues."
         }
       },
       {
@@ -416,39 +401,67 @@
         "id": "pr",
         "title": "Pull request",
         "icon": "GitPullRequest",
-        "when": "ticket.addons.github.pr",
+        "when": "addon.prByTicket.$ticket",
         "node": {
-          "type": "kv",
-          "pairs": [
+          "type": "stack",
+          "children": [
             {
-              "label": "Repository",
-              "value": {
-                "$ref": "ticket.addons.github.pr.repo"
-              },
-              "mono": true
+              "type": "kv",
+              "pairs": [
+                {
+                  "label": "Repository",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.repo"
+                  },
+                  "mono": true
+                },
+                {
+                  "label": "Branch",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.branch"
+                  },
+                  "mono": true
+                },
+                {
+                  "label": "PR",
+                  "value": "#${addon.prByTicket.$ticket.number}"
+                },
+                {
+                  "label": "Author",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.author"
+                  }
+                },
+                {
+                  "label": "Diff",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.diff"
+                  }
+                },
+                {
+                  "label": "Review",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.review"
+                  }
+                }
+              ]
             },
             {
-              "label": "Branch",
-              "value": {
-                "$ref": "ticket.addons.github.pr.branch"
-              },
-              "mono": true
-            },
-            {
-              "label": "PR",
-              "value": "#${ticket.addons.github.pr.number}"
-            },
-            {
-              "label": "State",
-              "value": {
-                "$ref": "ticket.addons.github.pr.state"
+              "type": "kv",
+              "pairs": {
+                "$ref": "addon.prByTicket.$ticket.checkPairs"
               }
             },
             {
-              "label": "Checks",
-              "value": {
-                "$ref": "ticket.addons.github.pr.checks"
-              }
+              "type": "link",
+              "label": "Open on GitHub",
+              "href": "${addon.prByTicket.$ticket.url}"
+            },
+            {
+              "type": "button",
+              "label": "Refresh",
+              "action": "refresh",
+              "variant": "secondary"
             }
           ]
         }
@@ -467,13 +480,29 @@
                 "type": "string",
                 "title": "Organisation"
               },
+              "repos": {
+                "type": "string",
+                "title": "Repositories (comma separated)"
+              },
+              "poll_minutes": {
+                "type": "integer",
+                "title": "Poll interval (minutes)",
+                "enum": [
+                  1,
+                  5,
+                  15,
+                  30
+                ]
+              },
               "link_prs": {
                 "type": "boolean",
                 "title": "Link PRs from branch names"
               }
             }
           },
-          "formData": { "$ref": "addon.settings" },
+          "formData": {
+            "$ref": "addon.settings"
+          },
           "action": "save_settings",
           "submitLabel": "Save"
         }

@@ -38,16 +38,15 @@ describe('mock router: viewer-aware views and addon actions', () => {
 
   it('github import creates a backlog ticket, removes the issue and records an addon event', async () => {
     const { api, store } = setup()
-    const lane = () =>
-      JSON.stringify(store.addons.find((a) => a.name === 'github')?.contributions.find((c) => c.slot === 'board.lane')?.node)
-    const item = { title: 'Seed loader fails on BOM files', subtitle: 'acme/energy-dbt#118', badge: 'bug' }
-    const res = await api.runAddonAction(store.workspaces[0].id, 'github', 'import', { item })
+    const lane = async () => JSON.stringify((await api.getAddonState(store.workspaces[0].id, 'github')).issueItems)
+    const item = { title: 'Seed loader fails on BOM files', badge: 'bug' }
+    const res = await api.runAddonAction(store.workspaces[0].id, 'github', 'import', { id: 'acme-energy/energy-dbt#118' })
     expect(res).toMatchObject({ ok: true, message: 'Imported GH-118 as DEMO-0050', changed: true })
     const t = await api.getTicket('DEMO-0050')
     expect(t).toMatchObject({ status: 'backlog', type: 'bug', title: item.title })
     expect(t.links.external[0].label).toBe('GH-118')
     expect(store.eventsOf('DEMO-0050').some((e) => e.actor.kind === 'addon' && e.actor.id === 'github')).toBe(true)
-    expect(lane()).not.toContain('#118')
+    expect(await lane()).not.toContain('#118')
     const today = await api.getToday(store.workspaces[0].id)
     expect(today.recent.some((r) => r.ticket === 'DEMO-0050' && r.actor.kind === 'addon')).toBe(true)
   })

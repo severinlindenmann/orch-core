@@ -124,16 +124,6 @@
         "estimate": {
           "points": 5
         },
-        "github": {
-          "pr": {
-            "repo": "acme/energy-dbt",
-            "number": 31,
-            "state": "open",
-            "draft": true,
-            "checks": "pending",
-            "branch": "feat/DEMO-0043-tariff-seeds"
-          }
-        },
         "usage": {
           "cents": 412,
           "sessions": 3,
@@ -588,16 +578,6 @@
         "estimate": {
           "points": 3
         },
-        "github": {
-          "pr": {
-            "repo": "acme/energy-dbt",
-            "number": 29,
-            "state": "open",
-            "draft": false,
-            "checks": "passing",
-            "branch": "feat/DEMO-0041-reconciliation"
-          }
-        },
         "usage": {
           "cents": 298,
           "sessions": 2,
@@ -774,16 +754,6 @@
       "addons": {
         "estimate": {
           "points": 3
-        },
-        "github": {
-          "pr": {
-            "repo": "acme/energy-dbt",
-            "number": 27,
-            "state": "merged",
-            "draft": false,
-            "checks": "passing",
-            "branch": "feat/DEMO-0042-utc"
-          }
         },
         "usage": {
           "cents": 187,
@@ -1391,16 +1361,6 @@
         "estimate": {
           "points": 3
         },
-        "github": {
-          "pr": {
-            "repo": "acme/energy-dbt",
-            "number": 33,
-            "state": "open",
-            "draft": true,
-            "checks": "failing",
-            "branch": "feat/DEMO-0037-freshness"
-          }
-        },
         "usage": {
           "cents": 143,
           "sessions": 1,
@@ -1657,16 +1617,6 @@
       "addons": {
         "estimate": {
           "points": 2
-        },
-        "github": {
-          "pr": {
-            "repo": "acme/energy-dbt",
-            "number": 21,
-            "state": "merged",
-            "draft": false,
-            "checks": "passing",
-            "branch": "chore/DEMO-0036-ci"
-          }
         }
       }
     },

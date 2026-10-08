@@ -209,6 +209,7 @@ function useAddonAction(): { run: (action: string, extra?: Record<string, unknow
     },
     onSuccess: (res) => {
       toast.success(res.message)
+      if (res.url && /^https:\/\//i.test(res.url)) window.open(res.url, '_blank', 'noopener,noreferrer')
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
       void qc.invalidateQueries({ queryKey: ['ticket'] })
       void qc.invalidateQueries({ queryKey: ['today'] })

@@ -10,3 +10,11 @@ describe('$ticket path segment', () => {
     expect(resolveBindings({ $ref: 'addon.byTicket.$ticket' }, { addon: ctx.addon })).toBeNull()
   })
 })
+
+describe('prototype guard after $ticket substitution', () => {
+  const addon = { byTicket: { safe: 1 } }
+  it.each(['__proto__', 'constructor'])('a ticket key of %s resolves to nothing', (key) => {
+    expect(resolveBindings({ $ref: 'addon.byTicket.$ticket' }, { ticket: { key }, addon })).toBeNull()
+    expect(resolveBindings('x${addon.byTicket.$ticket}y', { ticket: { key }, addon })).toBe('xy')
+  })
+})

@@ -1,5 +1,5 @@
 import type { AddonDecision } from '@/api/types'
-import { markDecided, registerAddon } from './registry'
+import { getAddon, markDecided, openDecisions, registerAddon } from './registry'
 
 // publish: apps served from the workspace and read-only shares. Addon state is the single source of truth for both;
 // nothing is written to ticket addon data. The ticket panel reads `addon.sharesByTicket.$ticket` (see view()).
@@ -210,7 +210,8 @@ registerAddon({
       run({ store, state, body }) {
         const id = String(body.id ?? '')
         const option = String(body.option ?? '')
-        const open = store.addons.find((a) => a.name === 'publish')?.decisions?.find((d) => d.id === id)
+        // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
+        const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? []).find((d) => d.id === id)
         if (!open) return { ok: true, message: 'That decision is closed.' }
         markDecided(state, id)
         if (id === 'dec_publish_failed_build') {

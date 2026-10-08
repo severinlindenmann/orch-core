@@ -360,6 +360,12 @@ def push_records(ws) -> dict:
     rc2, merge = _run(top, "config", f"branch.{branch}.merge")
     if rc != 0 or rc2 != 0 or not remote or not merge.startswith("refs/heads/"):
         return no(f"{branch} has no upstream; nothing pushed", False)
+    if not re.fullmatch(r"refs/heads/[\w./-]+", merge) or merge.startswith("+") or ".." in merge:
+        return no(f"the upstream branch name of {branch} is not one orch pushes to; nothing pushed")
+    for key in (f"branch.{branch}.pushRemote", "remote.pushDefault"):  # a different push target than the upstream
+        rc3, other_remote = _run(top, "config", key)
+        if rc3 == 0 and other_remote and other_remote != remote:
+            return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
     if remote == ".":
         return no(f"the upstream of {branch} is a local branch; nothing pushed", False)
     counts = _unpushed(ws, top)
@@ -370,7 +376,8 @@ def push_records(ws) -> dict:
         return no("nothing to push", False)
     if other:
         return no(f"{other} other commit(s) wait; push them yourself", False)
-    push = ("push", remote, f"HEAD:{merge}")
+    # an explicit refspec on the command line: remote.<name>.push and push.default from the repository are not used
+    push = ("push", "--no-follow-tags", remote, f"HEAD:{merge}")
     rc, out = _run(top, *push, timeout=120)
     if rc == 0:
         return {"pushed": True, "failed": False, "reason": f"pushed {total} records commit(s) to {remote}/{merge[11:]}"}

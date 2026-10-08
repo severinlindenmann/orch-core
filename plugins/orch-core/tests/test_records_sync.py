@@ -175,6 +175,34 @@ def test_rebase_conflict_is_aborted_and_named(repo, ws, put, remote):
 
 
 @needs_git
+def test_push_target_is_only_the_upstream(repo, ws, put, remote, tmp_path):
+    bare, _ = remote
+    other = tmp_path / "other2.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+    _git(repo, "remote", "add", "elsewhere", str(other))
+    _git(repo, "config", "branch.main.pushRemote", "elsewhere")
+    put("backlog", size="m")
+    result = gitfiles.sync_records(ws, push=True)
+    assert result["committed"] and not result["pushed"] and "pushRemote" in result["reason"]
+    _git(repo, "config", "--unset", "branch.main.pushRemote")
+    _git(repo, "config", "remote.origin.push", "+refs/heads/*:refs/heads/*")  # repo config cannot widen the refspec
+    _git(repo, "branch", "unrelated")
+    assert gitfiles.push_records(ws)["pushed"]
+    assert _git(bare, "branch", "--list", "unrelated").stdout.strip() == ""
+
+
+@needs_git
+def test_auto_push_respects_agent_may_push_even_when_auto_is_on(repo, ws, human, remote, configure, monkeypatch):
+    bare, _ = remote
+    Ops(ws, human).set_records_auto(True)
+    configure(git={"agent_may": {"commit": True, "push": False}})
+    monkeypatch.setenv("ORCH_HARNESS", "claude-code")
+    assert run(["new", "--title", "One", "--size", "s"]) == 0
+    assert _subjects(repo, "HEAD", 1)[0].startswith("orch: records")  # committed
+    assert _subjects(bare, "main", 1)[0] == "base"  # not pushed
+
+
+@needs_git
 def test_agent_push_needs_agent_may_push(repo, ws, put, remote, monkeypatch, configure, capsys):
     bare, _ = remote
     configure(git={"agent_may": {"commit": True, "push": False}})

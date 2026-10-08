@@ -55,6 +55,10 @@ def open_terminal(phone, stack) -> None:
     B.open_workspace(phone, stack.b)
     go(phone, f"/terminals/{SESSION}")
     B.wait_frame_text(phone.page, SESSION)
+    # Typing before the live stream has answered is refused with "Typing needs the live screen" (and that banner is not
+    # cleared when typing then works): give the stream its moment, as a person does, and start from a clean banner.
+    phone.page.wait_for_timeout(4_000)
+    phone.page.evaluate("document.getElementById('remote-notice').textContent = ''")
 
 
 def type_line(phone, text: str) -> None:
@@ -63,6 +67,19 @@ def type_line(phone, text: str) -> None:
     f.locator('button[data-mode="type"]').click()
     f.locator('input[name="text"]').fill(text)
     f.locator('input[name="text"]').press("Enter")
+
+
+def type_and_confirm(phone, stack, text: str) -> None:
+    """Type a line; answer the sheet if one comes (it does not inside an open lease); wait until it is on the terminal."""
+    type_line(phone, text)
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        if phone.page.locator("#unlock-sheet").count():
+            B.confirm_sheet(phone)
+        if text in screen(stack):
+            return
+        time.sleep(0.4)
+    raise AssertionError(f"{text!r} never reached the terminal; notice: {notice(phone)!r}")
 
 
 def screen(stack) -> str:
@@ -128,15 +145,22 @@ def test_typing_asks_once_types_in_order_and_a_second_burst_needs_no_sheet(stack
     assert "Typing needs the live screen" not in notice(phone)
 
 
+def test_a_typed_line_arrives_once_and_the_page_goes_quiet(stack, phone):
+    """After a confirmed burst the page must not keep posting keys: no more posts, and the line is typed exactly once
+    (the terminal echoes it twice: the tty's echo and cat's output)."""
+    open_terminal(phone, stack)
+    type_and_confirm(phone, stack, "exactly-once")
+    phone.page.wait_for_timeout(2_000)
+    posts = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    phone.page.wait_for_timeout(8_000)
+    later = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    assert len(later) == len(posts), f"the page kept posting after the keys arrived: {later[len(posts):]}"
+    assert screen(stack).count("exactly-once") <= 2, screen(stack)
+
+
 def test_the_lease_ends_and_the_next_burst_asks_again(stack, phone):
     open_terminal(phone, stack)
-    type_line(phone, "inside-lease")                              # may or may not need a sheet, depending on the clock
-    try:
-        B.sheet_text(phone, timeout=8_000)
-        B.confirm_sheet(phone)
-    except Exception:  # noqa: BLE001 - still inside the lease
-        pass
-    wait_on_screen(stack, "inside-lease")
+    type_and_confirm(phone, stack, "inside-lease")                # a sheet only if the lease has lapsed
     time.sleep(H.LEASE_MS / 1000 + 3)                             # the host's lease (shortened by the launcher) ends
     shown = B.sheets_shown(phone)
     type_line(phone, "after-expiry")
@@ -147,3 +171,120 @@ def test_the_lease_ends_and_the_next_burst_asks_again(stack, phone):
     assert "after-expiry" not in screen(stack), "keys were typed although the sheet was cancelled"
     H.until(lambda: "not confirmed" in notice(phone).lower() or "nothing was done" in notice(phone).lower(), 15, 0.5,
             what="a readable message after a cancelled sheet")
+
+
+# -- starts: each its own sheet, never on the lease -----------------------------------------------------------------
+
+def sessions(stack) -> list[str]:
+    return sorted(stack.tmux.run("list-sessions", "-F", "#{session_name}").stdout.split())
+
+
+def press_new_session(phone) -> None:
+    go(phone, "/terminals")
+    B.wait_frame_text(phone.page, "Terminals")
+    frame(phone).locator('form[action="/terminals/new"] button[type="submit"]').first.click()
+
+
+def test_a_new_session_needs_its_own_sheet_even_inside_a_lease_and_starts_once(stack, phone):
+    open_terminal(phone, stack)
+    type_and_confirm(phone, stack, "lease-first")                  # a lease is open now
+    posts = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    phone.page.wait_for_timeout(4_000)
+    later = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    assert later == posts, f"the page kept posting keys after they arrived: {later[len(posts):]}"
+    assert "Typing needs the live" not in notice(phone), notice(phone)
+    before = sessions(stack)
+    press_new_session(phone)
+    text = B.sheet_text(phone)
+    assert "Typing needs the live" not in notice(phone), "leaving the terminal page raised the typing banner"
+    assert text.startswith("Start a new terminal session "), text
+    assert H.FAKE_AGENT in text and "Command: " in text, text
+    B.cancel_sheet(phone)                                          # not confirmed: nothing starts
+    phone.page.wait_for_timeout(3_000)
+    assert sessions(stack) == before, "a session started without a confirmation"
+    press_new_session(phone)
+    assert B.sheet_text(phone).startswith("Start a new terminal session ")
+    B.confirm_sheet(phone)
+    H.until(lambda: len(sessions(stack)) == len(before) + 1, 30, 0.5, what="exactly one new session")
+    phone.page.wait_for_timeout(3_000)
+    assert len(sessions(stack)) == len(before) + 1, "the start ran more than once"
+    new = (set(sessions(stack)) - set(before)).pop()
+    H.until(lambda: "FAKE-AGENT-STARTED" in stack.tmux.screen(new), 20, 0.5, what="the fake agent's first line")
+
+
+def ticket_id(host, title: str) -> str:
+    from orch.core import store
+    from orch.core.workspace import Workspace
+    ws = Workspace.open(host.root, use_env=False)
+    return next(e.id for e in store.scan(ws) if (e.meta or {}).get("title") == title)
+
+
+def press_start_agent(phone, ref: str) -> None:
+    go(phone, f"/t/{ref}")
+    B.wait_frame_text(phone.page, ref)
+    f = frame(phone)
+    f.locator('form[data-agent-start] select[name="harness"]').first.select_option(H.FAKE_AGENT)   # Terminals runs only this one
+    f.locator('form[data-agent-start] button[name="where"]:not([disabled])').first.click()
+
+
+def test_an_agent_start_has_its_own_sheet_naming_the_ticket_and_starts_once(stack, phone):
+    ref = ticket_id(stack.b, "Migrate the billing job")
+    B.open_workspace(phone, stack.b)
+    before = sessions(stack)
+    press_start_agent(phone, ref)
+    text = B.sheet_text(phone)
+    assert text.startswith(f"Start an agent. Harness {H.FAKE_AGENT}, "), text
+    assert f"as session {ref}" in text and f'Ticket {ref} titled: "Migrate the billing job"' in text, text
+    B.cancel_sheet(phone)
+    phone.page.wait_for_timeout(3_000)
+    assert sessions(stack) == before, "an agent started without a confirmation"
+    press_start_agent(phone, ref)
+    assert B.sheet_text(phone).startswith("Start an agent. ")
+    B.confirm_sheet(phone)
+    H.until(lambda: ref in sessions(stack), 30, 0.5, what=f"the session {ref}")
+    phone.page.wait_for_timeout(3_000)
+    assert sessions(stack).count(ref) == 1 and len(sessions(stack)) == len(before) + 1, "the start ran more than once"
+    H.until(lambda: "FAKE-AGENT-STARTED" in stack.tmux.screen(ref), 20, 0.5, what="the fake agent's first line")
+
+
+def test_a_sheet_text_too_long_for_the_phone_is_refused_in_a_fixed_sentence_and_nothing_runs(stack, phone):
+    """The phone refuses to show a text over 2000 characters it cannot check (and one with invisible or look-alike
+    spacing: the host turns those in a title into plain spaces, so only the length can be reached from here; the
+    spacing rule is covered by orch-tix's own tests). Nothing is asked of the authenticator and nothing starts."""
+    stack.b.set_terminal_harness(H.LONG_AGENT)
+    try:
+        B.open_workspace(phone, stack.b)
+        before = sessions(stack)
+        phone.page.evaluate("document.getElementById('remote-notice').textContent = ''")
+        press_new_session(phone)
+        H.until(lambda: "too long to check on this phone" in notice(phone) or phone.page.locator("#unlock-sheet").count(),
+                30, 0.5, what="the phone to answer")
+        assert phone.page.locator("#unlock-sheet").count() == 0, "a sheet was drawn for text the phone cannot check"
+        assert "The computer sent a request that is too long to check on this phone." in notice(phone), notice(phone)
+        phone.page.wait_for_timeout(2_000)
+        assert sessions(stack) == before, "something started"
+    finally:
+        stack.b.set_terminal_harness(H.FAKE_AGENT)
+
+
+def test_a_failed_face_id_starts_nothing_and_says_so(stack, phone):
+    B.open_workspace(phone, stack.b)                               # a new frame: no page of an earlier test is still running
+    before = sessions(stack)
+    phone.page.evaluate("document.getElementById('remote-notice').textContent = ''")
+    B.set_user_verified(phone, False)                              # the person fails Face ID
+    try:
+        press_new_session(phone)
+        assert B.sheet_text(phone).startswith("Start a new terminal session ")
+        phone.page.wait_for_timeout(700)
+        phone.page.evaluate("() => { const t = document.getElementById('unlock-text'); t.scrollTop = t.scrollHeight; }")
+        phone.page.locator("#unlock-go").click()
+        H.until(lambda: "nothing was done" in notice(phone).lower() or "not confirmed" in notice(phone).lower()
+                or phone.page.locator("#unlock-sheet").count() == 0, 20, 0.5, what="the sheet to end")
+    finally:
+        B.set_user_verified(phone, True)
+    if phone.page.locator("#unlock-sheet").count():
+        B.cancel_sheet(phone)
+    phone.page.wait_for_timeout(2_000)
+    assert sessions(stack) == before, "a session started although the confirmation failed"
+    assert "nothing was done" in notice(phone).lower() or "not confirmed" in notice(phone).lower(), \
+        f"{notice(phone)!r}; the frame asked for: {B.frame_requests(phone)[-12:]}"

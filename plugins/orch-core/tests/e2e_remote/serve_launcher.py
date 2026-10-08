@@ -19,6 +19,11 @@ if sock:
     from orch.dashboard import terminals
     terminals.SOCKET = sock
 
+fresh_limit = os.environ.get("E2E_FRESH_LIMIT")
+if fresh_limit:  # D9 allows 6 fresh confirmations per 10 minutes per device; the run asks for more than that
+    from orch.remote.bridge_host import budgets
+    budgets.FRESH_LIMIT = int(fresh_limit)
+
 lease_ms = os.environ.get("E2E_LEASE_MS")
 if lease_ms:  # the typing lease is 15 minutes; the run shortens it so that its end can be watched
     from orch.remote.bridge_host import host_check

@@ -28,7 +28,8 @@ LAUNCHER = HERE.parent / "serve_launcher.py"
 SNAPS = Path(os.environ.get("ORCH_E2E_SNAPS", "/tmp/orch-e2e-remote-snaps"))  # pictures of a failure
 SNAPS.mkdir(parents=True, exist_ok=True)
 _Popen = subprocess.Popen  # the suite's autouse fixtures may replace Popen on the module; keep the real one
-FAKE_AGENT = "fakeagent"       # the harness a session or an agent start may run in this run (see Host.prepare)
+LONG_AGENT = "longagent"       # a fake harness with a very long command (the sheet for it is too long to check)
+FAKE_AGENT = "fakeagent"      # the harness a session or an agent start may run in this run (see Host.prepare)
 LEASE_MS = 30_000              # the host's typing lease is shortened from 15 minutes so that its end can be seen
 AGENT_VARS = ("ORCH_HOME", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "ORCH_HARNESS", "ORCH_SESSION", "ORCH_MODEL",
               "CLAUDE_CODE_ENTRYPOINT", "AI_AGENT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "GEMINI_CLI",
@@ -269,8 +270,17 @@ class Host:
         # credit. The user-level launch settings are the only place a harness can be defined (never the workspace).
         (self.state_dir / "launch.json").write_text(json.dumps({
             "terminal": "tmux", "default_harness": FAKE_AGENT,
-            "harnesses": {FAKE_AGENT: ["sh", "-c", "echo FAKE-AGENT-STARTED; exec cat", "{prompt}"]}}), encoding="utf-8")
+            "harnesses": {FAKE_AGENT: ["sh", "-c", "echo FAKE-AGENT-STARTED; exec cat", "{prompt}"],
+                          # a start whose sheet text is over the phone's 2000 characters: refused there, nothing runs
+                          LONG_AGENT: ["sh", "-c", "echo LONG-AGENT; exec cat # " + "x" * 2300, "{prompt}"]}}),
+            encoding="utf-8")
         return self
+
+    def set_terminal_harness(self, name: str) -> None:
+        """The harness the Terminals addon runs for a new session or an agent start (Workspace & addons, a person's choice)."""
+        from orch.addons import userfiles
+        with state_env(self.state_dir):
+            userfiles.save_addon_config(self.root, "terminals", {"harness": name, "open_here": True})
 
     def _path_with_tmux_wrapper(self) -> str:
         """`tmux -L orch ...` (where the dashboard starts sessions, and which is the person's own server) is sent to this
@@ -288,7 +298,7 @@ class Host:
         self.port = free_port()
         args = ["--remote", "--no-open", "--no-update", "--port", str(self.port)] + (["--take-over"] if take_over else [])
         env = clean_env(ORCH_STATE_DIR=str(self.state_dir), XDG_CONFIG_HOME=str(self.state_dir / "xdg"),
-                        E2E_LEASE_MS=str(LEASE_MS),
+                        E2E_LEASE_MS=str(LEASE_MS), E2E_FRESH_LIMIT="200",
                         **({"E2E_TMUX_SOCKET": self.tmux_socket, "PATH": self._path_with_tmux_wrapper()}
                            if self.tmux_socket else {}))
         self.log.write_text("")

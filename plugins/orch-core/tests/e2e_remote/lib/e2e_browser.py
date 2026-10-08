@@ -144,6 +144,20 @@ COUNT_SHEETS = """(() => { if (window.top !== window.self) return; window.__shee
     .observe(document, { childList: true, subtree: true }); })();"""
 
 
+TAP_REQUESTS = """(() => { if (window.top !== window.self) return; const MC = window.MessageChannel;
+  window.__reqs = [];                                       // what the frame asked its host for: [time, method, path]
+  window.MessageChannel = function () { const c = new MC();
+    c.port1.addEventListener('message', (e) => { const d = e.data || {};
+      if (d.t === 'req' || d.t === 'sopen') { let b = ''; try { b = d.body ? new TextDecoder().decode(d.body) : ''; } catch (err) { b = '?'; }
+        window.__reqs.push([Math.round(performance.now()), d.method || 'GET', String(d.path).slice(0, 100), b.slice(0, 140)]); } });
+    c.port1.start(); return c; }; })();"""
+
+
+def frame_requests(phone) -> list:
+    """Every request the dashboard frame has made on this page so far: [ms, method, path]."""
+    return phone.page.evaluate("window.__reqs || []")
+
+
 def new_phone(stack):
     """-> a Stack whose page is a new browser context (a phone). Its WebAuthn is a CDP virtual platform authenticator
     that answers at once with user verification, so Face ID is simulated and the TIX app's own code runs unchanged.
@@ -151,6 +165,7 @@ def new_phone(stack):
     import dataclasses
     ctx = stack.extra["browser"].new_context(viewport={"width": 390, "height": 844})
     ctx.add_init_script(COUNT_SHEETS)
+    ctx.add_init_script(TAP_REQUESTS)
     page = ctx.new_page()
     page.on("console", lambda m: CONSOLE.append(f"phone {m.type}: {m.text}"[:300]))
     page.goto(f"{stack.tix.url}/login")

@@ -38,6 +38,8 @@ def phone(stack):
     """The phone: paired with bravo at Type, with its platform credential registered."""
     if not stack.tmux:
         pytest.skip("tmux is not installed: there is no terminal to watch or type into")
+    if H.unlock_problem(stack.tix.dir):
+        pytest.skip(H.unlock_problem(stack.tix.dir))
     p = B.new_phone(stack)
     p.extra["did"] = B.pair(p, stack.b, "type", register=True)
     return p
@@ -267,6 +269,41 @@ def test_a_sheet_text_too_long_for_the_phone_is_refused_in_a_fixed_sentence_and_
         stack.b.set_terminal_harness(H.FAKE_AGENT)
 
 
+def test_a_stream_that_keeps_dying_does_not_hammer_the_host(stack, phone):
+    """With the relay refusing every answer for 20 s, a watched terminal's stream dies again and again: the number of
+    requests it posts to the relay must stay small (a person's phone on a bad network must not flood the host)."""
+    open_terminal(phone, stack)
+    posted: list[float] = []
+    phone.page.on("request", lambda r: posted.append(time.monotonic())
+                  if r.method == "POST" and f"/api/bridge/{stack.b.space}/requests" in r.url else None)
+    phone.page.route(f"**/api/bridge/{stack.b.space}/responses*", lambda route: route.abort())
+    try:
+        phone.page.wait_for_timeout(20_000)
+    finally:
+        phone.page.unroute(f"**/api/bridge/{stack.b.space}/responses*")
+    print(f"requests posted in 20 s with every answer refused: {len(posted)}")
+    assert len(posted) <= 12, f"{len(posted)} requests in 20 s: the page hammers the host while its answers fail"
+    phone.page.wait_for_timeout(5_000)
+    B.wait_frame_text(phone.page, SESSION)                          # and the page is still there afterwards
+
+
+@pytest.mark.xfail(strict=True, reason="found by this run: after a confirmed typing burst, leaving the terminal page "
+                   "(any link in the dashboard) leaves its key batcher running in the frame: it posts the same batch "
+                   "(same n) once a second for good, each refused locally with 'Typing needs the live screen', and "
+                   "asks for a new confirmation when the lease lapses (orch-core#328: static/terminal.js and the "
+                   "frame shim in orch-tix)")
+def test_a_confirmed_burst_is_not_posted_again_after_the_page_is_left(stack, phone):
+    open_terminal(phone, stack)
+    type_and_confirm(phone, stack, "then-leave")
+    go(phone, "/terminals")
+    B.wait_frame_text(phone.page, "Terminals")
+    before = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    phone.page.wait_for_timeout(6_000)
+    after = [r for r in B.frame_requests(phone) if r[1] == "POST"]
+    assert after == before, f"keys were posted again from a page that was left: {after[len(before):][:3]}"
+    assert "Typing needs the live" not in notice(phone), notice(phone)
+
+
 def test_a_failed_face_id_starts_nothing_and_says_so(stack, phone):
     B.open_workspace(phone, stack.b)                               # a new frame: no page of an earlier test is still running
     before = sessions(stack)
@@ -288,3 +325,18 @@ def test_a_failed_face_id_starts_nothing_and_says_so(stack, phone):
     assert sessions(stack) == before, "a session started although the confirmation failed"
     assert "nothing was done" in notice(phone).lower() or "not confirmed" in notice(phone).lower(), \
         f"{notice(phone)!r}; the frame asked for: {B.frame_requests(phone)[-12:]}"
+
+
+# -- revoked while typing (last: the phone is gone after it) --------------------------------------------------------
+
+def test_revoking_the_phone_while_it_types_refuses_the_next_keys_and_types_nothing_more(stack, phone):
+    open_terminal(phone, stack)
+    type_and_confirm(phone, stack, "before-revoke")                # a lease is open
+    r = stack.b.dash.revoke(phone.extra["did"])
+    assert r.status_code == 303 and "Device revoked" in r.headers["location"].replace("+", " ").replace("%20", " ")
+    phone.page.evaluate("document.getElementById('remote-notice').textContent = ''")
+    type_line(phone, "after-revoke")
+    H.until(lambda: "removed from that computer" in notice(phone), 60, 0.5, what="the readable refusal after a revoke")
+    phone.page.wait_for_timeout(3_000)
+    assert "after-revoke" not in screen(stack), "keys were typed after the device was revoked"
+    assert phone.extra["did"] not in stack.b.dash.devices()

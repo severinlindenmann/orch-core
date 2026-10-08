@@ -4,8 +4,8 @@ remote flag through the real relay tool against a local TIX server, and one Chro
 Run it: see docs/remote-validation.md ("Running the automated run"). The tests share one expensive stack and run in
 file order; a test that needs an earlier step pairs again by itself when it finds the device gone.
 
-What is not here: typing into a terminal and starting the AI Factory need the unlock sheet (a fresh Face ID, Touch ID
-or PIN answer) in the TIX app; those tests are written and skipped until it is in the orch-tix checkout."""
+This file pairs a browser WITHOUT a platform credential (scopes, streams, restarts, revoke). Typing, starts and the AI
+Factory, which need the unlock sheet, are in test_remote_unlock_e2e.py and test_remote_factory_e2e.py."""
 from __future__ import annotations
 
 import json
@@ -84,13 +84,6 @@ def go(stack, path: str) -> None:
 
 def frame_has(stack, text: str, seconds: int = 60) -> None:
     B.wait_frame_text(stack.page, text, seconds)
-
-
-def skip_unless_unlock_sheet(stack):
-    js = stack.tix.dir / "fileshare" / "static" / "js"
-    if not any("unlock" in p.name for p in js.glob("*.js")):
-        pytest.skip("the orch-tix checkout has no unlock sheet yet (no unlock*.js in fileshare/static/js): "
-                    "typing and the Factory start need a fresh Face ID, Touch ID or PIN answer from the app")
 
 
 # -- pairing and switching ------------------------------------------------------------------------------------------
@@ -273,19 +266,6 @@ def test_a_type_device_without_an_unlock_is_refused_and_types_nothing(stack):
     assert raw.get("refusal") in ("lease_required", "assertion_required", "assertion_failed"), raw
     assert "typed-without-lease" not in stack.tmux.screen("BRAVO-1")
     stack.b.dash.set_scope(did, "operate")
-
-
-# -- the unlock sheet: typing and the AI Factory (waiting for the TIX app's side) ------------------------------------
-
-def test_typing_after_an_unlock(stack):
-    skip_unless_unlock_sheet(stack)
-    pytest.skip("written when the unlock sheet lands: give the Type device a virtual authenticator (CDP WebAuthn), "
-                "answer the sheet, type into BRAVO-1 and read it back from the private tmux server")
-
-
-def test_the_factory_start_needs_a_fresh_confirmation(stack):
-    skip_unless_unlock_sheet(stack)
-    pytest.skip("written when the unlock sheet lands: the permission card and Start, each with a fresh assertion")
 
 
 # -- the computer stops, restarts, vanishes -------------------------------------------------------------------------

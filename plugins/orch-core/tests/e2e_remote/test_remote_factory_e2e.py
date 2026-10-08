@@ -31,6 +31,8 @@ pytestmark = pytest.mark.e2e_remote
 @pytest.fixture(scope="module")
 def charlie(stack):
     """A third workspace with the Factory on and its epics, started, and a phone paired with it at Type."""
+    if H.unlock_problem(stack.tix.dir):
+        pytest.skip(H.unlock_problem(stack.tix.dir))
     host = H.Host(stack.tix, stack.a.root.parent, "charlie", stack.a.state_dir, tmux_socket=None, tickets=[])
     host.prepare()
     F.enable_factory(host)

@@ -58,6 +58,15 @@ def tix_problem(tix: Path | None) -> str | None:
     return None
 
 
+def unlock_problem(tix: Path) -> str | None:
+    """Why the unlock-sheet tests cannot run against this orch-tix checkout (None when they can)."""
+    js = tix / "fileshare" / "static" / "js"
+    if not any(p.name.startswith("unlock") for p in js.glob("*.js")):
+        return ("the orch-tix checkout has no unlock sheet (no unlock*.js in fileshare/static/js): typing, starts and "
+                "the Factory need a fresh Face ID, Touch ID or PIN answer from the TIX app")
+    return None
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))

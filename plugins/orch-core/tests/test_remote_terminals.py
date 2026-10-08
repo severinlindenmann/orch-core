@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 
 import test_bridge_host as H  # noqa: E402
 import test_remote_serve as S  # noqa: E402
-from orch.dashboard import routes_terminals, terminals  # noqa: E402
+from orch.dashboard import remote_gate, routes_terminals, terminals  # noqa: E402
 from orch.dashboard.app import create_app, dashboard_routes  # noqa: E402
 from orch.dashboard.bridge_dispatch import Body, BridgeRequest, Limits, Start, dispatch  # noqa: E402
 from orch.dashboard.bridge_loop import route_hook  # noqa: E402
@@ -196,15 +196,23 @@ def meta(method, path):
     return {"method": method, "path": path}
 
 
-def test_the_hook_asks_for_the_lease_on_every_typing_route_and_for_nothing_on_watching():
+def test_the_hook_asks_for_the_lease_on_typing_routes_only_and_for_nothing_on_watching():
     need = lambda m, p: HOOK(meta(m, p), b"")  # noqa: E731
     for m, p in [("POST", "/terminals/DEMO-1/keys"), ("POST", "/terminals/DEMO-1/size"),
-                 ("POST", "/terminals/DEMO-1/end"), ("POST", "/terminals/new"), ("POST", "/t/B-0001/agent/start")]:
-        assert need(m, p) == Requirement("type", "lease"), p
+                 ("POST", "/terminals/DEMO-1/end")]:
+        got = need(m, p)
+        assert (got.scope, got.assertion) == ("type", "lease"), p
+        assert got.subject["kind"] == "lease" and got.subject["digest"] == ""
+        assert "terminal DEMO-1 for 15 minutes" in got.subject["shown"]
+        assert "every terminal on this computer for 15 minutes" in got.subject["shown"]  # the lease covers them all
     for p in ("/terminals", "/terminals/stream", "/terminals/DEMO-1", "/terminals/DEMO-1/stream",
               "/terminals/DEMO-1/snapshot"):
         assert need("GET", p) == Requirement("operate", "none"), p
-    assert need("POST", "/quick/q1/agent/start") == Requirement("type", "lease")
+    # a start is never on the lease: the gate asks for a fresh assertion (the hook without a workspace builds no subject)
+    for m, p in [("POST", "/terminals/new"), ("POST", "/t/B-0001/agent/start"), ("POST", "/quick/q1/agent/start")]:
+        assert need(m, p) == Requirement("type", "none"), p
+        assert remote_gate.TAGS[(m, {"/terminals/new": "/terminals/new", "/t/B-0001/agent/start": "/t/{ref}/agent/start",
+                                     "/quick/q1/agent/start": "/quick/{qid}/agent/start"}[p])].fresh
     # every other Type route is as on main: Type alone (whether they should need the lease is a separate decision)
     assert need("POST", "/schedules/s1/run") == Requirement("type", "none")
     assert need("POST", "/addons/x/actions/y") == Requirement("type", "none")

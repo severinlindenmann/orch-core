@@ -387,13 +387,7 @@ def new(request: Request):
     template = agent_start.harnesses(ws, settings).get(harness)
     if not template:
         return back("/terminals", err=f"unknown harness {harness!r}")
-    argv = []
-    for part in template:  # drop the prompt, and an option that only introduced it (copilot's -i)
-        if "{prompt}" in part:
-            if argv and argv[-1].startswith("-"):
-                argv.pop()
-            continue
-        argv.append(part)
+    argv = terminals.scratch_argv(template)
     try:
         name = terminals.free_name(ws, "scratch")
         launch.start(ws, name, argv, terminal="tmux", name=name, harness=harness, settings=settings)

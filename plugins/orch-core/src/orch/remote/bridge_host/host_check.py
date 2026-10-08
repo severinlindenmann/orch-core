@@ -348,7 +348,7 @@ class Host:
         if lease_class and self.leases.get(did, 0) > now:
             return self._run(acc, dev, (rid,), now, until_ms=self.leases[did])
         if lease_class:
-            purpose, subject = "lease", dict(LEASE_SUBJECT)
+            purpose, subject = "lease", _lease_subject(req.subject)
         else:
             purpose = "fresh"
             subject = _subject(req.subject)
@@ -447,6 +447,7 @@ class Host:
         req = self._requirement(r1)  # R1 runs exactly once, after its scope is checked again
         stream = r1.header.stream
         if req is None or req.scope != issued.scope or SCOPES[req.scope] > dev.level or (
+                issued.purpose == "fresh" and _subject(req.subject) != issued.subject) or (  # what was shown still holds
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")
@@ -612,6 +613,19 @@ def still_authorized(decision: Verdict, registry: Registry, now_ms: int) -> bool
     if current is None or not _same_entry(decision, current):
         return False
     return decision.until_ms is None or now_ms < decision.until_ms
+
+
+def _lease_subject(subject) -> dict:
+    """The sheet text of a typing lease: the hook's own text (kind lease, no digest), else the plain default."""
+    try:
+        if isinstance(subject, dict) and set(subject) == {"kind", "shown", "digest"} and subject["kind"] == "lease" \
+                and subject["digest"] == "":
+            shown = clean_shown(subject["shown"])
+            if shown:
+                return {"kind": "lease", "shown": shown, "digest": ""}
+    except ValueError:
+        pass
+    return dict(LEASE_SUBJECT)
 
 
 def _subject(subject) -> dict | None:

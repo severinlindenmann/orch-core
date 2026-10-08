@@ -155,6 +155,19 @@ def _target(name: str) -> str:
     return f"={name}:"  # exact session name (no prefix match), its current window and pane
 
 
+def scratch_argv(template) -> list[str]:
+    """The harness command of a scratch session: the template without its prompt, and without an option that only
+    introduced it (copilot's -i). The new-session route runs this and the remote start sheet shows it."""
+    argv: list[str] = []
+    for part in template:
+        if "{prompt}" in part:
+            if argv and argv[-1].startswith("-"):
+                argv.pop()
+            continue
+        argv.append(part)
+    return argv
+
+
 def free_name(ws, base: str) -> str:
     """`base`, or `base-2`, `base-3`, … if a session (of any workspace) already has that name."""
     if not NAME.fullmatch(base):

@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
+import { AddonBadge, openResultUrl, parseNode, useSlot, withoutReservedKeys, type ResolvedContribution } from '@/addon-ui'
 import type { ItemAction } from '@/addon-ui/nodes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -36,8 +36,9 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
     if (!workspace) return
     setBusy(true)
     try {
-      const res = await api.runAddonAction(workspace.id, c.addon, a.action, { ...a.args })
+      const res = await api.runAddonAction(workspace.id, c.addon, a.action, withoutReservedKeys(a.args))
       toast.success(res.message)
+      openResultUrl(res)
       void qc.invalidateQueries()
     } catch (e) {
       toastApiError(e, 'Action failed')

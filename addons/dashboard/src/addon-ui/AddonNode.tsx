@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
 import { AddonChart } from './AddonChart'
 import { AddonFrame } from './AddonFrame'
+import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
@@ -187,12 +188,6 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   )
 }
 
-/** The workspace and `ticket` come from core's render context only; addon-authored args may never set them. */
-function withoutReservedKeys(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  const { ws: _ws, ticket: _ticket, ...rest } = extra
-  return rest
-}
-
 /** Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only. */
 function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean } {
   const { readOnly } = useContext(RuntimeCtx)
@@ -209,7 +204,7 @@ function useAddonAction(): { run: (action: string, extra?: Record<string, unknow
     },
     onSuccess: (res) => {
       toast.success(res.message)
-      if (res.url && /^https:\/\//i.test(res.url)) window.open(res.url, '_blank', 'noopener,noreferrer')
+      openResultUrl(res)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
       void qc.invalidateQueries({ queryKey: ['ticket'] })
       void qc.invalidateQueries({ queryKey: ['today'] })

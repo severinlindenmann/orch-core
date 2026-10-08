@@ -166,6 +166,24 @@ describe('new node types', () => {
     await clickWhenEnabled('Go')
     expect(post.mock.calls[0][3]).toEqual({ keep: 'k', ticket: 'DEMO-1' })
   })
+  it.each(['javascript:alert(1)', 'http://example.com/x', 'data:text/html,hi'])('does not open an action result url of %s', async (url) => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done', url })
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderNode({ type: 'button', label: 'Go', action: 'go' }, { addon: 'publish', withWorkspace: true })
+    await clickWhenEnabled('Go')
+    await waitFor(() => expect(post).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 50)) // let onSuccess run
+    expect(open).not.toHaveBeenCalled()
+    open.mockRestore()
+  })
+  it('opens an https action result url', async () => {
+    vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done', url: 'https://github.com/x/y' })
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderNode({ type: 'button', label: 'Go', action: 'go' }, { addon: 'publish', withWorkspace: true })
+    await clickWhenEnabled('Go')
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://github.com/x/y', '_blank', 'noopener,noreferrer'))
+    open.mockRestore()
+  })
   it('renders a frame sandboxed without same-origin', () => {
     renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })
     const f = screen.getByTitle('Bars') as HTMLIFrameElement

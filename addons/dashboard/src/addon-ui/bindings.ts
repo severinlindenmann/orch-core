@@ -4,11 +4,17 @@
 //   "addon.byTicket.$ticket"                      -> `$ticket` is the current ticket's key (state keyed by ticket)
 // Only plain property reads; no expressions, no function calls.
 
-const FORMATTERS: Record<string, (v: unknown) => string> = {
+export const FORMATTERS: Record<string, (v: unknown) => string> = {
   cents: (v) => (Number(v) / 100).toFixed(2),
   duration: (v) => {
     const min = Math.round(Number(v) / 60000)
     return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min` : `${min} min`
+  },
+  chf: (v) => `CHF ${(Number(v) / 100).toFixed(2)}`,
+  /** A real token count: "84k", "2.4 M". */
+  ktok: (v) => {
+    const n = Number(v)
+    return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} M` : `${Math.round(n / 1000)}k`
   },
   tokens: (v) => `${Math.round((Number(v) * 5800) / 1000)}k`,
 }

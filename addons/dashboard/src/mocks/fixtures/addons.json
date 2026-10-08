@@ -543,32 +543,45 @@
           "type": "stack",
           "children": [
             {
+              "$ref": "addon.budgetNotice"
+            },
+            {
               "type": "stack",
               "direction": "row",
               "children": [
                 {
                   "type": "stat",
                   "label": "This week",
-                  "value": "CHF 31.40",
-                  "hint": "of CHF 50.00 budget"
+                  "value": "${addon.weekCents|chf}",
+                  "hint": "last 7 days"
                 },
                 {
                   "type": "stat",
-                  "label": "Agent time",
-                  "value": "11 h 20 min",
-                  "hint": "7 sessions"
+                  "label": "Month to date",
+                  "value": "${addon.monthCents|chf}",
+                  "hint": "${addon.budgetPct}% of CHF ${addon.budgetChf} budget"
                 },
                 {
                   "type": "stat",
                   "label": "Tokens",
-                  "value": "2.4 M",
-                  "hint": "in + out"
+                  "value": "${addon.tokens30|ktok}",
+                  "hint": "last 30 days, in + out"
                 }
               ]
             },
             {
+              "type": "progress",
+              "label": "Budget used (CHF)",
+              "value": {
+                "$ref": "addon.monthChf"
+              },
+              "max": {
+                "$ref": "addon.budgetChf"
+              }
+            },
+            {
               "type": "chart",
-              "kind": "bar",
+              "kind": "line",
               "xKey": "day",
               "series": [
                 {
@@ -576,36 +589,23 @@
                   "label": "CHF per day"
                 }
               ],
-              "points": [
+              "points": {
+                "$ref": "addon.perDay"
+              }
+            },
+            {
+              "type": "chart",
+              "kind": "bar",
+              "xKey": "model",
+              "series": [
                 {
-                  "day": "Mon",
-                  "chf": 4.2
-                },
-                {
-                  "day": "Tue",
-                  "chf": 5.1
-                },
-                {
-                  "day": "Wed",
-                  "chf": 3.8
-                },
-                {
-                  "day": "Thu",
-                  "chf": 6.9
-                },
-                {
-                  "day": "Fri",
-                  "chf": 2.6
-                },
-                {
-                  "day": "Sat",
-                  "chf": 5.4
-                },
-                {
-                  "day": "Sun",
-                  "chf": 3.4
+                  "key": "chf",
+                  "label": "CHF per model"
                 }
-              ]
+              ],
+              "points": {
+                "$ref": "addon.perModel"
+              }
             },
             {
               "type": "table",
@@ -627,26 +627,9 @@
                   "label": "Cost"
                 }
               ],
-              "rows": [
-                {
-                  "ticket": "DEMO-0040",
-                  "sessions": 9,
-                  "time": "4 h 50 min",
-                  "cost": "CHF 12.80"
-                },
-                {
-                  "ticket": "DEMO-0043",
-                  "sessions": 3,
-                  "time": "1 h 31 min",
-                  "cost": "CHF 4.12"
-                },
-                {
-                  "ticket": "DEMO-0041",
-                  "sessions": 2,
-                  "time": "1 h 05 min",
-                  "cost": "CHF 2.98"
-                }
-              ]
+              "rows": {
+                "$ref": "addon.topTickets"
+              }
             }
           ]
         }
@@ -659,8 +642,8 @@
         "node": {
           "type": "stat",
           "label": "This week",
-          "value": "CHF 31.40 this week",
-          "hint": "budget CHF 50.00"
+          "value": "${addon.weekCents|chf}",
+          "hint": "${addon.monthCents|chf} this month"
         }
       },
       {
@@ -668,27 +651,27 @@
         "id": "ticket",
         "title": "Usage",
         "icon": "Gauge",
-        "when": "ticket.addons.usage",
+        "when": "addon.byTicket.$ticket",
         "node": {
           "type": "kv",
           "pairs": [
             {
               "label": "Cost",
-              "value": "CHF ${ticket.addons.usage.cents|cents}"
+              "value": "${addon.byTicket.$ticket.cents|chf}"
+            },
+            {
+              "label": "Tokens",
+              "value": "${addon.byTicket.$ticket.tokens|ktok}"
             },
             {
               "label": "Sessions",
               "value": {
-                "$ref": "ticket.addons.usage.sessions"
+                "$ref": "addon.byTicket.$ticket.sessions"
               }
             },
             {
               "label": "Agent time",
-              "value": "${ticket.addons.usage.ms|duration}"
-            },
-            {
-              "label": "Tokens",
-              "value": "${ticket.addons.usage.cents|tokens}"
+              "value": "${addon.byTicket.$ticket.ms|duration}"
             }
           ]
         }
@@ -703,13 +686,15 @@
           "schema": {
             "type": "object",
             "properties": {
-              "weekly_budget_chf": {
+              "budget_chf": {
                 "type": "number",
-                "title": "Weekly budget (CHF)"
+                "title": "Monthly budget (CHF)"
               }
             }
           },
-          "formData": { "$ref": "addon.settings" },
+          "formData": {
+            "$ref": "addon.settings"
+          },
           "action": "save_settings",
           "submitLabel": "Save"
         }

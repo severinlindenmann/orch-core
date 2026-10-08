@@ -1,18 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { RouterProvider } from '@tanstack/react-router'
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { createAppRouter } from '../router'
-
-function renderApp(path = '/') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={createAppRouter(path)} />
-    </QueryClientProvider>,
-  )
-}
+import { renderApp } from '@/test/renderApp'
 
 describe('app shell', () => {
   it('renders nav links, the addon group with badges, and the Today placeholder', async () => {
@@ -26,8 +14,7 @@ describe('app shell', () => {
   })
 
   it('opens the command palette with Ctrl+K and lists actions and addon commands', async () => {
-    const user = userEvent.setup()
-    renderApp('/')
+    const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
     await user.keyboard('{Control>}k{/Control}')
     expect(await screen.findByPlaceholderText(/Search tickets/)).toBeInTheDocument()
@@ -36,8 +23,7 @@ describe('app shell', () => {
   })
 
   it('toggles the sidebar between wide and narrow with the button and with [', async () => {
-    const user = userEvent.setup()
-    renderApp('/')
+    const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
     const aside = document.querySelector('aside')!
     const start = aside.getAttribute('data-collapsed')

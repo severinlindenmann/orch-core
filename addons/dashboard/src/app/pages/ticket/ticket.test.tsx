@@ -1,34 +1,13 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { RouterProvider } from '@tanstack/react-router'
 import { render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { api } from '@/api/client'
-import { createAppRouter } from '../../router'
+import { describe, expect, it } from 'vitest'
+import { renderApp } from '@/test/renderApp'
 import { WordDiff } from './History'
-
-function renderTicket(key: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={client}>
-      <RouterProvider router={createAppRouter(`/ticket/${key}`)} />
-    </QueryClientProvider>,
-  )
-}
 
 const T = { timeout: 5000 }
 
-beforeEach(async () => {
-  await api.resetDemo()
-})
-afterEach(async () => {
-  await api.resetDemo()
-})
-
 describe('ticket page', () => {
   it('shows DEMO-0043 with tasks T1-T4 and the open question Q2', async () => {
-    const user = userEvent.setup()
-    renderTicket('DEMO-0043')
+    const { user } = renderApp('/ticket/DEMO-0043')
     expect(await screen.findByRole('heading', { level: 1, name: 'Load tariff tables as dbt seeds' }, T)).toBeInTheDocument()
     expect(screen.getByTestId('claim-box')).toHaveTextContent(/Claude Code working for Severin/)
     expect(screen.getByTestId('claim-box')).toHaveTextContent(/T2.*sub1.*T3.*sub2/)
@@ -47,12 +26,11 @@ describe('ticket page', () => {
   })
 
   it('answers Q2 here after a simulated Touch ID and updates the Questions tab', async () => {
-    const user = userEvent.setup()
-    renderTicket('DEMO-0043')
+    const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     await user.click(screen.getByRole('tab', { name: /Questions/ }))
     await user.click(await screen.findByRole('radio', { name: /DATE \(local midnight\)/ }))
-    await user.click(screen.getByRole('button', { name: 'Answer Q2' }))
+    await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Answer Q2' }))
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/sha256:/)).toBeInTheDocument()
@@ -64,26 +42,24 @@ describe('ticket page', () => {
   })
 
   it('tells Tom that DEMO-0044 is not visible to him', async () => {
-    await api.setViewer('p_tom')
-    renderTicket('DEMO-0044')
+    renderApp('/ticket/DEMO-0044', { viewer: 'p_tom' })
     expect(await screen.findByText('This ticket is not visible to you', undefined, T)).toBeInTheDocument()
     expect(screen.queryByText('Rotate warehouse service credentials')).not.toBeInTheDocument()
   })
 
   it('shows an invalidated gate with its reason, and epic children', async () => {
-    const view = renderTicket('DEMO-0046')
+    const view = renderApp('/ticket/DEMO-0046')
     expect(await screen.findByTestId('gate-plan', undefined, T)).toHaveAttribute('data-state', 'invalidated')
     expect(screen.getByTestId('gate-plan')).toHaveTextContent('Plan changed after approval: T2 added')
     view.unmount()
 
-    renderTicket('DEMO-0040')
+    renderApp('/ticket/DEMO-0040')
     expect(await screen.findByText(/Children \(/, undefined, T)).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /DEMO-0043/ }, T)).toBeInTheDocument()
   })
 
   it('renders DEMO-0041 (testing) with a verdict action for the reviewer', async () => {
-    const user = userEvent.setup()
-    renderTicket('DEMO-0041')
+    const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
     expect(within(document.getElementById('ac-AC1')!).getByText('verified by receipt')).toBeInTheDocument()
@@ -92,8 +68,7 @@ describe('ticket page', () => {
   })
 
   it('renders added and removed words in the History changes view', async () => {
-    const user = userEvent.setup()
-    renderTicket('DEMO-0043')
+    const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     await user.click(screen.getByRole('tab', { name: 'History' }))
     await user.click(await screen.findByRole('radio', { name: 'Changes' }))

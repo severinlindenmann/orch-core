@@ -80,4 +80,10 @@ export function createApi(transport: Transport) {
 export type Api = ReturnType<typeof createApi>
 
 /** The app-wide api object. Today it talks to the in-process mock; swap the transport for createFetchTransport(url). */
-export const api: Api = createApi(createMockTransport(createMockStore()))
+const isTest = import.meta.env.MODE === 'test'
+/** Exposed for tests only (renderApp resets it). */
+export const mockStore = createMockStore({ persist: !isTest })
+export const api: Api = createApi(createMockTransport(mockStore, { latency: !isTest }))
+export function resetMockStoreForTests() {
+  mockStore.reset()
+}

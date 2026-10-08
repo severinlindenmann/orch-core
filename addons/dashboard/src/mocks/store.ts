@@ -50,6 +50,7 @@ import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launc
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
+import { startLive } from './busy/live'
 import { makeRng } from './busy/rng'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
@@ -89,6 +90,8 @@ export interface StoreOptions {
   persist?: boolean
   /** The demo dataset to start with. Default: the persisted one, else 'normal'. */
   dataset?: Dataset
+  /** Play the Busy day's background script (one event every 4 to 8 seconds). The app turns it on; tests leave it off. */
+  live?: boolean
 }
 
 function fillDefinition(d: FixtureTicket['definition']): TicketDefinition {
@@ -141,8 +144,15 @@ export class MockStore {
     this.persist = opts.persist ?? true
     const saved = this.persist ? loadPersisted() : null
     this.dataset = opts.dataset ?? saved?.dataset ?? 'normal'
+    this.live = opts.live ?? false
     this.seed()
     if (this.persist) this.load(saved)
+    this.startLiveIfBusy()
+  }
+
+  private live = false
+  private startLiveIfBusy() {
+    if (this.live && this.dataset === 'busy') startLive(this)
   }
 
   // ------------------------------------------------------------ seeding & persistence
@@ -270,6 +280,7 @@ export class MockStore {
     this.clockBase = Date.parse(MOCK_EPOCH)
     clearPersisted()
     if (dataset !== 'normal') this.save() // the mode survives a reload
+    this.startLiveIfBusy()
   }
 
   // ------------------------------------------------------------ clock & people

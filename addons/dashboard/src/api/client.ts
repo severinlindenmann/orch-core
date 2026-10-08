@@ -122,8 +122,10 @@ export function createApi(transport: Transport) {
     postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
-    /** Mock only: restore the seeded demo data. */
-    resetDemo: () => call<{ ok: true }>('POST', '/api/dev/reset'),
+    /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */
+    resetDemo: (dataset?: 'normal' | 'busy') => call<{ ok: true }>('POST', '/api/dev/reset', dataset ? { dataset } : undefined),
+    /** Mock only: which demo dataset is loaded. */
+    getDataset: () => call<{ dataset: 'normal' | 'busy' }>('GET', '/api/dev/dataset'),
   }
 }
 
@@ -132,8 +134,8 @@ export type Api = ReturnType<typeof createApi>
 /** The app-wide api object. Today it talks to the in-process mock; swap the transport for createFetchTransport(url). */
 const isTest = import.meta.env.MODE === 'test'
 /** Exposed for tests only (renderApp resets it). */
-export const mockStore = createMockStore({ persist: !isTest })
+export const mockStore = createMockStore({ persist: !isTest, live: !isTest })
 export const api: Api = createApi(createMockTransport(mockStore, { latency: !isTest }))
 export function resetMockStoreForTests() {
-  mockStore.reset()
+  mockStore.reset('normal')
 }

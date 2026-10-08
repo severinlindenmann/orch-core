@@ -423,10 +423,13 @@ export function buildRouter(): MockRouter {
     if (res && !res.ok) return fail(res.status, res.code, res.message, res.hint)
     return res ? ok(res) : fail(404, 'not_found', `Addon ${addon.name} has no action ${c.params.id}`)
   })
-  r.add('POST', '/api/dev/reset', (s) => {
-    s.reset()
+  r.add('POST', '/api/dev/reset', (s, c) => {
+    const dataset = (c.body as { dataset?: unknown } | null)?.dataset
+    if (dataset !== undefined && dataset !== 'normal' && dataset !== 'busy') return fail(400, 'validation', 'dataset must be "normal" or "busy"')
+    s.reset(dataset)
     return ok({ ok: true })
   })
+  r.add('GET', '/api/dev/dataset', (s) => ok({ dataset: s.dataset }))
   r.add('POST', '/api/dev/viewer', (s, c) => {
     const person = (c.body as { person?: string } | null)?.person
     if (!person || !s.workspaces.some((w) => w.members.some((m) => m.person === person))) return fail(400, 'validation', 'Unknown person')

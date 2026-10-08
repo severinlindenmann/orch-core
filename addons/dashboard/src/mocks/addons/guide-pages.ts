@@ -185,7 +185,7 @@ This is a clickable mockup. Nothing leaves your browser. The buttons really chan
 - **The relay.** The link between this dashboard and your machines is not built. The grey dot beside the workspace name stands for it and is never connected.
 - **Agent runs.** When you start an agent it plays a short script: it claims the ticket, takes a task, logs a line, finishes with a receipt and asks you a question. No model is called.
 - **Time.** The clock is fixed at 2026-10-09 11:30 UTC and moves forward only while the page is open. Grants and claims run out against that clock.
-- **Demo data.** The workspaces, tickets and people are made up. Your changes are kept in this browser. The **Demo data** button in the top bar resets everything.
+- **Demo data.** The workspaces, tickets and people are made up. Your changes are kept in this browser. The **Demo data** pill in the top bar resets everything, and switches between the Normal demo and a **Busy day** with a lot of tickets, agents and addon data.
 `,
   },
 ]

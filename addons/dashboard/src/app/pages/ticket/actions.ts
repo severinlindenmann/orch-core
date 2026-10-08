@@ -1,11 +1,12 @@
 import type { GateName, QuestionStatus, TicketDocument } from '@/api/types'
+import { roleMeets } from '@/api/roles'
 import type { Viewer } from './shared'
 
 /** Mirrors the gate policy the mock host enforces: who may approve a gate. */
 export function canApproveGate(t: TicketDocument, gate: GateName, viewer: Viewer): boolean {
   const g = t.gates[gate]
   if (!viewer.role || viewer.role === 'viewer') return false
-  if (g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !(g.approvers === 'maintainer' ? viewer.role === 'owner' || viewer.role === 'maintainer' : viewer.role === g.approvers)) return false
+  if (g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !roleMeets(viewer.role, g.approvers)) return false
   if (g.not === 'assignees' && t.people.assignees.includes(viewer.person)) return false
   if (g.approvals.some((a) => a.by === viewer.person)) return false
   return true

@@ -30,14 +30,12 @@ import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
 import viewsFixture from './fixtures/views.json'
 import workspacesFixture from './fixtures/workspaces.json'
+import { roleMeets } from '@/api/roles'
 import { Simulator } from './sim'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
-/** Gate approver groups: 'maintainer' means owners and maintainers, any other value is an exact role. */
-export const roleMeets = (role: string, approvers: string) => (approvers === 'maintainer' ? role === 'owner' || role === 'maintainer' : role === approvers)
-
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
 
 interface FixtureEvent {

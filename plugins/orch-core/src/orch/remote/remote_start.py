@@ -83,6 +83,18 @@ def _config_dir_problem(ws) -> bool:
         return True
 
 
+def _relay_address_ok(server: str) -> bool:
+    """https://, or http:// to this machine only: the relay tool applies the same rule, and a local relay is how the
+    end-to-end test and a person trying Remote on one computer run it."""
+    try:
+        u = urlsplit(server)
+        host = u.hostname
+        u.port  # noqa: B018 - a malformed port raises
+    except ValueError:
+        return False
+    return bool(host) and (u.scheme == "https" or (u.scheme == "http" and host in ("127.0.0.1", "localhost", "::1")))
+
+
 def preflight(ws) -> dict:
     """{"tool", "space", "server"} when everything the bridge needs is here; RemoteNotReady listing every missing
     piece otherwise. Reads no addon code and no secret."""
@@ -143,8 +155,9 @@ def preflight(ws) -> dict:
                                    "device first"))
         else:
             space, server = data["space_id"], str(data.get("server") or "")
-            if not server.startswith("https://") or not urlsplit(server).hostname:
-                missing.append(Missing("the relay server address", "the tool reports no https server address"))
+            if not _relay_address_ok(server):
+                missing.append(Missing("the relay server address", "the tool reports no https server address "
+                                                                   "(plain http only for 127.0.0.1, localhost or ::1)"))
     if missing:
         raise RemoteNotReady(f"the remote bridge cannot start: {len(missing)} thing(s) missing",
                              hint="\n".join(f"- {m.what}: {m.fix}" for m in missing))

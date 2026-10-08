@@ -784,6 +784,18 @@ def test_preflight_names_each_missing_piece_with_its_fix(ws, ready, fake, monkey
     assert err.hint.count("\n") + 1 == int(err.message.split(": ")[1].split()[0])  # the count matches the list
 
 
+@pytest.mark.parametrize("server,ok", [
+    ("http://localhost:8123", True), ("http://127.0.0.1:8123", True), ("http://[::1]:8123", True),
+    ("http://tix.example", False), ("http://localhost.evil.example", False), ("ftp://localhost", False),
+    ("https://tix.example", True), ("http://localhost:99999", False)])
+def test_preflight_takes_http_only_for_this_machine(ws, ready, fake, server, ok):
+    (fake.dir / "space.json").write_text(json.dumps({"space_id": WS_HEX, "owner": True, "server": server}))
+    if ok:
+        assert remote_start.preflight(ws)["server"] == server
+    else:
+        assert "the relay server address" in _missing(ws).hint
+
+
 def test_preflight_lists_everything_missing_at_once(ws, ready, monkeypatch, tmp_path):
     from orch.remote import bridge_host
     ready["trusted"] = False

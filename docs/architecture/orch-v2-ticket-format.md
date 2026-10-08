@@ -26,7 +26,7 @@ several people in one workspace from day one (D39). The flows for colleagues are
 | T13 | Everything optional is an addon. Addons run out of process, with capabilities granted in signed events. |
 | T14 | **Events are the only truth for state:** status, people, claims, task and acceptance-criteria state, answers, gates, and artifacts. |
 | T15 | The prose sections depend on the ticket type. Context and Decisions are added; Current state is capped. |
-| T16 | Every human signature on a Mac needs user presence (Touch ID or password) until agents run under their own OS user (P1b). |
+| T16 | Every human signature on a Mac needs user presence (Touch ID or password) until agents run under their own OS user (P2). |
 
 ## 2. Workspace layout
 

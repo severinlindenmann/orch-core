@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { TriangleAlert } from 'lucide-react'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
+import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { pendingUpdate } from '@/api/addons'
 import type { AddonStatus, InstalledAddon } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -45,6 +46,7 @@ export function AddonRow({ addon, active, canEdit, hasSettings, actions }: { add
         <div className="flex items-center gap-2">
           <AddonBadge name={addon.name} />
           <span className="font-medium">{addon.title}</span>
+          <PreviewChip name={addon.name} />
           <span className="font-mono text-[12px] text-text-muted">{addon.ws.version}</span>
         </div>
         <p className="mt-0.5 max-w-xs text-[12px] text-text-muted">{addon.description}</p>

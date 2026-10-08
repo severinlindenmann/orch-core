@@ -1,4 +1,5 @@
 export { AddonBadge } from './AddonBadge'
+export { PreviewChip } from './PreviewChip'
 export { AddonFrame } from './AddonFrame'
 export { AddonNode, AddonUnavailable } from './AddonNode'
 export { AddonContributionView, AddonSlotStack } from './AddonSlot'

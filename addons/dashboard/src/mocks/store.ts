@@ -377,13 +377,13 @@ export class MockStore {
   }
 
   /** Creates a backlog ticket. `ticket.created` is its first event, then `people.set` when people were chosen. */
-  createTicket(wsId: string, input: Omit<TicketDefinition, 'schema' | 'uid' | 'key' | 'links' | 'blocked_by' | 'tasks' | 'questions' | 'addons'>, body: BodySections, people: { owner: string | null; assignees: string[]; reviewers: string[] }): TicketDocument {
+  createTicket(wsId: string, input: Omit<TicketDefinition, 'schema' | 'uid' | 'key' | 'links' | 'blocked_by' | 'tasks' | 'questions' | 'addons'>, body: BodySections, people: { owner: string | null; assignees: string[]; reviewers: string[] }, actor?: string): TicketDocument {
     const key = this.nextKey(wsId)
     const def = fillDefinition({ ...input, key, uid: '01J9ZN' + fnvHex(key + this.now(), 8).toUpperCase().padEnd(20, '0') })
     this.register(wsId, def, body)
     this.created[key] = { ws: wsId, def, body }
-    this.append(key, { type: 'ticket.created', status: 'backlog' })
-    if (people.owner || people.assignees.length || people.reviewers.length) this.append(key, { type: 'people.set', ...people, watchers: [] })
+    this.append(key, { type: 'ticket.created', status: 'backlog', ...(actor ? { actor } : {}) })
+    if (people.owner || people.assignees.length || people.reviewers.length) this.append(key, { type: 'people.set', ...people, watchers: [], ...(actor ? { actor } : {}) })
     return this.ticket(key)!
   }
 
@@ -830,7 +830,8 @@ export class MockStore {
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
     }
     // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
-    if (meta?.confirm && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
+    if (meta?.confirm === 'spawn_agent' && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
+    if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
     // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
     if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }

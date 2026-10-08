@@ -2,6 +2,7 @@ import {
   Bot,
   BookOpen,
   CircleHelp,
+  Factory,
   Gauge,
   GitBranch,
   GitPullRequest,
@@ -21,6 +22,7 @@ import {
 const ICONS: Record<string, LucideIcon> = {
   Bot,
   BookOpen,
+  Factory,
   Gauge,
   Github: GitBranch,
   GitBranch,

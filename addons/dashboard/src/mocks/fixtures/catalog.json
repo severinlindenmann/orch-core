@@ -429,14 +429,155 @@
     "name": "factory",
     "title": "AI Factory",
     "version": "0.1.0",
-    "description": "Turn a requirements-approved ticket into a batch of agent sessions.",
+    "preview": true,
+    "description": "Preview: one epic in, finished work out. Agents split, specify and build its children within a signed charter.",
     "capabilities": [
       "spawn_agent"
     ],
     "first_party": true,
     "package_sha256": "0ad0db68f941e070652de5c0e942fdf847b32899b110fb155e9fff63296dcaa8",
     "update": null,
-    "contributions": []
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "factory",
+        "title": "AI Factory",
+        "icon": "Factory",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.stateAlert"
+            },
+            {
+              "type": "kv",
+              "pairs": [
+                {
+                  "label": "Epic",
+                  "value": "${addon.epicLine}"
+                },
+                {
+                  "label": "Charter",
+                  "value": "${addon.charter}"
+                }
+              ]
+            },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "$ref": "addon.usedProgress"
+                },
+                {
+                  "$ref": "addon.timeProgress"
+                }
+              ]
+            },
+            {
+              "$ref": "addon.controls"
+            },
+            {
+              "type": "markdown",
+              "text": "### Permits"
+            },
+            {
+              "type": "markdown",
+              "text": "${addon.permitsLine}"
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "id",
+                  "label": "Permit"
+                },
+                {
+                  "key": "command",
+                  "label": "Command"
+                },
+                {
+                  "key": "child",
+                  "label": "Asked by"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.permitRows"
+              }
+            },
+            {
+              "type": "markdown",
+              "text": "### Children"
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "ticket",
+                  "label": "Child"
+                },
+                {
+                  "key": "title",
+                  "label": "Title"
+                },
+                {
+                  "key": "status",
+                  "label": "Status"
+                },
+                {
+                  "key": "approval",
+                  "label": "Approval"
+                },
+                {
+                  "key": "size",
+                  "label": "Size"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.children"
+              }
+            },
+            {
+              "$ref": "addon.readyNode"
+            }
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "watch",
+        "title": "Watch the AI Factory live",
+        "action": "watch"
+      }
+    ],
+    "actions": {
+      "pause": {
+        "minRole": "maintainer",
+        "confirm": "sign",
+        "label": "Pause the AI Factory"
+      },
+      "resume": {
+        "minRole": "maintainer",
+        "confirm": "sign",
+        "label": "Resume the AI Factory"
+      },
+      "permit": {
+        "minRole": "maintainer"
+      },
+      "watch": {
+        "minRole": "viewer",
+        "label": "Watch live"
+      },
+      "stop_watching": {
+        "minRole": "viewer",
+        "label": "Stop watching"
+      }
+    }
   },
   {
     "name": "schedules",

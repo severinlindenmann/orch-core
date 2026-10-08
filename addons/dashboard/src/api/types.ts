@@ -492,8 +492,10 @@ export interface ActionMeta {
    * Core confirms this action in its own dialog before it is posted (the addon's node cannot skip it).
    * 'spawn_agent': the start-agent dialog (signs a grant first when the person has none). The host refuses the
    * action without core's `confirmed` flag (409 confirm.required).
+   * 'sign': core's own signing prompt (what is covered, then Touch ID). The dialog title is `label`; the host
+   * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
-  confirm?: 'spawn_agent'
+  confirm?: 'spawn_agent' | 'sign'
 }
 
 export interface AddonUpdate {
@@ -517,6 +519,8 @@ export interface AddonPackage {
   package_sha256: string
   /** A newer published version, if any. */
   update: AddonUpdate | null
+  /** A preview: core draws a "Preview" chip wherever the title appears (nav, page title, addon manager). Never addon-authored markup. */
+  preview?: boolean
   contributions: AddonContribution[]
   decisions?: AddonDecision[]
   /** Command palette entries; each runs POST /api/workspaces/:ws/addons/:name/actions/:action. */

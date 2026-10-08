@@ -1781,5 +1781,350 @@
         "to": "done"
       }
     ]
+  },
+  {
+    "definition": {
+      "uid": "01J9ZYEPIC5000000000000000",
+      "key": "DEMO-0050",
+      "title": "Monthly billing v2",
+      "type": "epic",
+      "priority": "high",
+      "size": null,
+      "labels": [
+        "billing",
+        "factory"
+      ],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "The monthly billing run prices every period from versioned tariffs"
+        },
+        {
+          "id": "AC2",
+          "text": "Mid-month tariff changes are prorated and reconcile within 0.1 %"
+        }
+      ],
+      "tasks": [],
+      "addons": {}
+    },
+    "body": {
+      "summary": "Rebuild the monthly billing run on versioned tariffs, with proration and an invoice preview. Run as an AI Factory epic: agents split, specify and build the children.",
+      "requirements": "- One billing run per month, priced from tariff versions.\n- Mid-month tariff changes are prorated.\n- Every invoice line points to its billing run.\n- Children are size m or smaller; larger work waits for the owner.",
+      "out_of_scope": "- Customer-facing invoice PDFs.",
+      "current_state": "Factory running. Pricing is done; proration and the run id are in progress."
+    },
+    "events": [
+      {
+        "at": "2026-10-07T07:30:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-07T07:30:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-07T08:00:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements",
+        "factory": true
+      },
+      {
+        "at": "2026-10-07T08:00:01Z",
+        "type": "status.changed",
+        "actor": "p_sev",
+        "to": "in-progress"
+      }
+    ]
+  },
+  {
+    "definition": {
+      "uid": "01J9ZYCHILD510000000000000",
+      "key": "DEMO-0051",
+      "title": "Price a billing period from tariff versions",
+      "type": "feature",
+      "priority": "high",
+      "size": "s",
+      "labels": [
+        "billing"
+      ],
+      "parent": "DEMO-0050",
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "A billing period is priced from the tariff version valid on each day"
+        }
+      ],
+      "tasks": [],
+      "addons": {}
+    },
+    "body": {
+      "summary": "Price one period from the tariff version in force on each day.",
+      "requirements": "- Pick the tariff version per day.\n- Unit tests cover a version change.",
+      "current_state": "Merged and verified."
+    },
+    "events": [
+      {
+        "at": "2026-10-07T08:20:00Z",
+        "type": "ticket.created",
+        "actor": "claude-code:s_f101:p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-07T08:20:01Z",
+        "type": "people.set",
+        "actor": "claude-code:s_f101:p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-07T08:30:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-07T08:40:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-07T09:00:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-07T13:00:00Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-07T15:00:00Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify"
+      },
+      {
+        "at": "2026-10-07T15:01:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "Prices match the finance sheet."
+      },
+      {
+        "at": "2026-10-07T15:01:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      }
+    ]
+  },
+  {
+    "definition": {
+      "uid": "01J9ZYCHILD520000000000000",
+      "key": "DEMO-0052",
+      "title": "Prorate mid-month tariff changes",
+      "type": "feature",
+      "priority": "high",
+      "size": "m",
+      "labels": [
+        "billing"
+      ],
+      "parent": "DEMO-0050",
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "A tariff change on the 15th prices 14 days at the old rate and the rest at the new"
+        }
+      ],
+      "tasks": [],
+      "addons": {}
+    },
+    "body": {
+      "summary": "Split a period at the day a tariff version changes.",
+      "requirements": "- Split the period at the change.\n- Round per line, not per period.",
+      "current_state": "Splitting periods; rounding tests next."
+    },
+    "events": [
+      {
+        "at": "2026-10-08T09:00:00Z",
+        "type": "ticket.created",
+        "actor": "claude-code:s_f101:p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T09:00:01Z",
+        "type": "people.set",
+        "actor": "claude-code:s_f101:p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T09:10:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T09:20:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-08T09:40:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "in-progress"
+      }
+    ]
+  },
+  {
+    "definition": {
+      "uid": "01J9ZYCHILD530000000000000",
+      "key": "DEMO-0053",
+      "title": "Add billing_run_id to invoice lines",
+      "type": "chore",
+      "priority": "medium",
+      "size": "xs",
+      "labels": [
+        "billing"
+      ],
+      "parent": "DEMO-0050",
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "Every invoice line carries the id of the run that produced it"
+        }
+      ],
+      "tasks": [],
+      "addons": {}
+    },
+    "body": {
+      "summary": "Trace each invoice line back to its run.",
+      "requirements": "- Add the column and backfill it.",
+      "current_state": "Column added; backfill running."
+    },
+    "events": [
+      {
+        "at": "2026-10-08T09:05:00Z",
+        "type": "ticket.created",
+        "actor": "claude-code:s_f101:p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T09:05:01Z",
+        "type": "people.set",
+        "actor": "claude-code:s_f101:p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T09:15:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T09:25:00Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-09T08:00:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "in-progress"
+      }
+    ]
+  },
+  {
+    "definition": {
+      "uid": "01J9ZYCHILD540000000000000",
+      "key": "DEMO-0054",
+      "title": "Invoice preview in the dbt docs",
+      "type": "feature",
+      "priority": "medium",
+      "size": "m",
+      "labels": [
+        "billing",
+        "docs"
+      ],
+      "parent": "DEMO-0050",
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "The dbt docs show a sample invoice for the last closed period"
+        }
+      ],
+      "tasks": [],
+      "addons": {}
+    },
+    "body": {
+      "summary": "Expose an invoice preview as a documented dbt exposure.",
+      "requirements": "- One exposure with a sample period."
+    },
+    "events": [
+      {
+        "at": "2026-10-08T10:00:00Z",
+        "type": "ticket.created",
+        "actor": "claude-code:s_f101:p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T10:00:01Z",
+        "type": "people.set",
+        "actor": "claude-code:s_f101:p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T10:10:00Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T14:00:00Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-08T14:00:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "open"
+      }
+    ]
   }
 ]

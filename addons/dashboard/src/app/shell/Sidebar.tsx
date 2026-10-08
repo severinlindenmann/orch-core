@@ -17,6 +17,8 @@ import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { useRole } from '../useRole'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
+import { PreviewChip } from '@/addon-ui/PreviewChip'
+import { useAddons } from '@/addon-ui/slots'
 import { useSlot } from '@/addon-ui/slots'
 import { OrbitMark } from '@/brand/OrbitMark'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -127,6 +129,8 @@ export function Sidebar() {
   const qc = useQueryClient()
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const navItems = useSlot('nav')
+  const { data: packages } = useAddons()
+  const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
   const role = useRole() ?? me?.role
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
@@ -198,7 +202,7 @@ export function Sidebar() {
               {navItems.map((item) => {
                 const Icon = iconByName(item.icon)
                 return (
-                  <RailTip key={`${item.addon}/${item.id}`} label={`${item.title} · from addon ${item.addon}`}>
+                  <RailTip key={`${item.addon}/${item.id}`} label={`${item.title}${previews.has(item.addon) ? ' (Preview)' : ''} · from addon ${item.addon}`}>
                     <Link
                       to="/addon/$name/$page"
                       params={{ name: item.addon, page: item.id }}
@@ -216,6 +220,7 @@ export function Sidebar() {
                       {!collapsed && (
                         <>
                           <span className="flex-1 truncate">{item.title}</span>
+                          <PreviewChip name={item.addon} />
                           <AddonBadge name={item.addon} />
                         </>
                       )}

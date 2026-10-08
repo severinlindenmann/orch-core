@@ -430,6 +430,14 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'pushed the records'
     case 'quick.made_ticket':
       return 'made a quick task into a ticket'
+    case 'permit.granted':
+      return `granted ${t(e.permit, 'a permit')} ${e.scope === 'epic' ? 'for this epic' : 'once'}`
+    case 'permit.refused':
+      return `refused ${t(e.permit, 'a permit')}`
+    case 'factory.paused':
+      return 'paused the AI Factory'
+    case 'factory.resumed':
+      return 'resumed the AI Factory'
     case 'wiki.linked':
       return 'linked a wiki page'
     // Workspace events

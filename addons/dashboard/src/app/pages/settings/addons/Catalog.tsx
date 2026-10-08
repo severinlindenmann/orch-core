@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
+import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -24,7 +25,10 @@ export function Catalog({ ws, canEdit, open, onOpenChange, onInstall }: { ws: st
             <article key={a.name} aria-label={a.title} className="space-y-2 rounded-lg border border-border bg-bg p-3">
               <header className="flex items-center gap-2">
                 <AddonBadge name={a.name} />
-                <h3 className="flex-1 text-[14px] font-semibold">{a.title}</h3>
+                <div className="flex flex-1 items-center gap-2">
+                  <h3 className="text-[14px] font-semibold">{a.title}</h3>
+                  <PreviewChip name={a.name} />
+                </div>
                 {a.first_party && <Badge variant="outline">First-party</Badge>}
                 <span className="font-mono text-[12px] text-text-muted">{a.version}</span>
               </header>

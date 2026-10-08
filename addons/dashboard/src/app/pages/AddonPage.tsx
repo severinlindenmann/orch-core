@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
+import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useAddonStates, selectContributions } from '@/addon-ui/slots'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -50,6 +51,7 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
       <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
         <AddonBadge name={c.addon} className="size-5 text-xs" />
         {c.title}
+        <PreviewChip name={c.addon} />
       </h1>
       <AddonContributionView c={c} ctx={{ workspace, addon }} readOnly={!can(role, 'addon.action')} />
     </div>

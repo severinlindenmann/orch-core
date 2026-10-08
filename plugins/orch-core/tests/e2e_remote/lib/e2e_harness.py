@@ -5,6 +5,7 @@ Nothing here talks to the internet. TIX runs from a checkout of orch-tix (ORCH_T
 under the name `localhost` (a WebAuthn relying party cannot be an IP address)."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -27,6 +28,8 @@ LAUNCHER = HERE.parent / "serve_launcher.py"
 SNAPS = Path(os.environ.get("ORCH_E2E_SNAPS", "/tmp/orch-e2e-remote-snaps"))  # pictures of a failure
 SNAPS.mkdir(parents=True, exist_ok=True)
 _Popen = subprocess.Popen  # the suite's autouse fixtures may replace Popen on the module; keep the real one
+FAKE_AGENT = "fakeagent"       # the harness a session or an agent start may run in this run (see Host.prepare)
+LEASE_MS = 30_000              # the host's typing lease is shortened from 15 minutes so that its end can be seen
 AGENT_VARS = ("ORCH_HOME", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "ORCH_HARNESS", "ORCH_SESSION", "ORCH_MODEL",
               "CLAUDE_CODE_ENTRYPOINT", "AI_AGENT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "GEMINI_CLI",
               "CLAUDE_CONFIG_DIR", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA")
@@ -188,7 +191,7 @@ class Dash:
     # -- the Remote tab ----------------------------------------------------------------------------------------
     def offer(self, scope: str = "operate") -> str:
         """Press 'new pairing link': the link the owner opens on the other device."""
-        r = self.post("/workspace/remote/offer", {"scope": scope})
+        r = self.post("/workspace/remote/offer", {"scope": scope, **({"allow_type": "1"} if scope == "type" else {})})
         assert r.status_code == 303, r.text
         page = self.get(r.headers["location"]).text
         m = re.search(r"https?://[^\s\"'<>]+/remote/pair#v1\.[A-Za-z0-9._-]+", unescape(page))
@@ -261,13 +264,33 @@ class Host:
             userfiles.save_addon_config(self.root, "orch-tix", {"sharing_path": str(self.tix.tool)})
             if self.tmux_socket:
                 userfiles.set_enabled(self.root, "terminals", True)
+                userfiles.save_addon_config(self.root, "terminals", {"harness": FAKE_AGENT, "open_here": True})
+        # The only agent this run can start is a fake one that prints a line and echoes its input: nothing real, no
+        # credit. The user-level launch settings are the only place a harness can be defined (never the workspace).
+        (self.state_dir / "launch.json").write_text(json.dumps({
+            "terminal": "tmux", "default_harness": FAKE_AGENT,
+            "harnesses": {FAKE_AGENT: ["sh", "-c", "echo FAKE-AGENT-STARTED; exec cat", "{prompt}"]}}), encoding="utf-8")
         return self
+
+    def _path_with_tmux_wrapper(self) -> str:
+        """`tmux -L orch ...` (where the dashboard starts sessions, and which is the person's own server) is sent to this
+        run's private socket by a wrapper first on PATH; every other tmux call passes through unchanged."""
+        real = shutil.which("tmux") or "tmux"
+        bin_dir = self.state_dir / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        wrapper = bin_dir / "tmux"
+        wrapper.write_text('#!/bin/sh\nif [ "$1" = "-L" ] && [ "$2" = "orch" ]; then\n  shift 2\n'
+                           f'  exec "{real}" -L "{self.tmux_socket}" "$@"\nfi\nexec "{real}" "$@"\n')
+        wrapper.chmod(0o755)
+        return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
 
     def start(self, take_over: bool = False, timeout: float = 90) -> "Host":
         self.port = free_port()
         args = ["--remote", "--no-open", "--no-update", "--port", str(self.port)] + (["--take-over"] if take_over else [])
         env = clean_env(ORCH_STATE_DIR=str(self.state_dir), XDG_CONFIG_HOME=str(self.state_dir / "xdg"),
-                        **({"E2E_TMUX_SOCKET": self.tmux_socket} if self.tmux_socket else {}))
+                        E2E_LEASE_MS=str(LEASE_MS),
+                        **({"E2E_TMUX_SOCKET": self.tmux_socket, "PATH": self._path_with_tmux_wrapper()}
+                           if self.tmux_socket else {}))
         self.log.write_text("")
         with open(self.log, "ab") as log:
             self.proc = _Popen([sys.executable, str(LAUNCHER), *args], cwd=self.root, env=env, stdout=log,

@@ -19,6 +19,11 @@ if sock:
     from orch.dashboard import terminals
     terminals.SOCKET = sock
 
+lease_ms = os.environ.get("E2E_LEASE_MS")
+if lease_ms:  # the typing lease is 15 minutes; the run shortens it so that its end can be watched
+    from orch.remote.bridge_host import host_check
+    host_check.LEASE_MS = int(lease_ms)
+
 from orch.cli import run  # noqa: E402
 
 sys.exit(run(["serve", *sys.argv[1:]]))

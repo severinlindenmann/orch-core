@@ -105,7 +105,7 @@ def stack(tmp_path_factory):
         page.locator("#passphrase").fill(tix.sim.passphrase)
         page.get_by_role("button", name="Log in").click()
         page.wait_for_url(f"{tix.url}/", timeout=TIX_PASSPHRASE_WAIT)
-        yield Stack(tix, a, b, tmux, page, context, extra={"console": console})
+        yield Stack(tix, a, b, tmux, page, context, extra={"console": console, "browser": browser})
     finally:
         for h in (a, b):
             h.stop()

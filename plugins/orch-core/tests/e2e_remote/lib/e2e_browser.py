@@ -8,9 +8,10 @@ from playwright.sync_api import expect
 import e2e_harness as H
 
 
-def pair(stack, host, scope: str = "operate", link: str | None = None) -> str:
+def pair(stack, host, scope: str = "operate", link: str | None = None, register: bool = False) -> str:
     """The whole pairing ceremony: the owner makes a link on the computer, the browser opens it and shows its
-    fingerprint, the owner types the last group of what the device shows and approves in the Remote tab."""
+    fingerprint, the owner types the last group of what the device shows and approves in the Remote tab. With
+    `register` the browser also makes its platform credential (Face ID or device unlock) on the button's click."""
     page = stack.page
     link = link or host.dash.offer(scope)
     page.goto(f"{stack.tix.url}/remote")            # a new hash alone would not reload the pairing page
@@ -23,6 +24,11 @@ def pair(stack, host, scope: str = "operate", link: str | None = None) -> str:
                              f"{page.locator('#pair-state').inner_text()!r}; pending on the computer: "
                              f"{host.dash.pending()}; log: {host.text()[-400:]!r}") from None
     shown = page.locator("#pair-fp").inner_text().strip()
+    if register:   # the platform credential (the virtual authenticator answers): made on the person's click, before approval
+        page.locator("#pair-cred").click()
+        expect(page.locator("#pair-cred")).to_have_count(0, timeout=40_000)
+        # the note says what the credential is for until it is made, then nothing; a failure puts its sentence there
+        expect(page.locator("#pair-cred-note")).to_have_text("", timeout=40_000)
     mine = H.until(lambda: [p for p in host.dash.pending() if p[1] == shown], 30, what="the pending pairing on the computer")
     did = mine[0][0]
     r = host.dash.approve(did, shown, scope)
@@ -129,3 +135,62 @@ def raw_request(stack, host, method: str, path: str, body: str | None = None, he
 
 def notice(page) -> str:
     return page.locator("#remote-notice").inner_text() if page.locator("#remote-notice").is_visible() else ""
+
+
+# -- a phone: a second browser context with its own keys, its own TIX session and a virtual platform authenticator --
+
+COUNT_SHEETS = """(() => { if (window.top !== window.self) return; window.__sheets = 0;     // the TIX page only, never the frame
+  new MutationObserver((muts) => { for (const m of muts) for (const n of m.addedNodes) if (n.id === 'unlock-sheet') window.__sheets++; })
+    .observe(document, { childList: true, subtree: true }); })();"""
+
+
+def new_phone(stack):
+    """-> a Stack whose page is a new browser context (a phone). Its WebAuthn is a CDP virtual platform authenticator
+    that answers at once with user verification, so Face ID is simulated and the TIX app's own code runs unchanged.
+    `phone.extra["auth"]` is the authenticator id, `phone.cdp` the CDP session (see set_user_verified)."""
+    import dataclasses
+    ctx = stack.extra["browser"].new_context(viewport={"width": 390, "height": 844})
+    ctx.add_init_script(COUNT_SHEETS)
+    page = ctx.new_page()
+    page.on("console", lambda m: CONSOLE.append(f"phone {m.type}: {m.text}"[:300]))
+    page.goto(f"{stack.tix.url}/login")
+    page.locator("#passphrase").fill(stack.tix.sim.passphrase)
+    page.get_by_role("button", name="Log in").click()
+    page.wait_for_url(f"{stack.tix.url}/", timeout=30_000)
+    cdp = ctx.new_cdp_session(page)
+    cdp.send("WebAuthn.enable")
+    auth = cdp.send("WebAuthn.addVirtualAuthenticator", {"options": {
+        "protocol": "ctap2", "transport": "internal", "hasResidentKey": True, "hasUserVerification": True,
+        "isUserVerified": True, "automaticPresenceSimulation": True}})["authenticatorId"]
+    return dataclasses.replace(stack, page=page, context=ctx, cdp=cdp, extra={**stack.extra, "auth": auth})
+
+
+def set_user_verified(phone, ok: bool) -> None:
+    """The person fails (or passes) Face ID: with False the authenticator cannot verify the user, so a confirmation fails."""
+    phone.cdp.send("WebAuthn.setUserVerified", {"authenticatorId": phone.extra["auth"], "isUserVerified": ok})
+
+
+def sheets_shown(phone) -> int:
+    """How many unlock sheets this page has drawn so far."""
+    return phone.page.evaluate("window.__sheets || 0")
+
+
+def sheet_text(phone, timeout: int = 60_000) -> str:
+    phone.page.locator("#unlock-sheet").wait_for(state="visible", timeout=timeout)
+    return phone.page.locator("#unlock-text").inner_text()
+
+
+def confirm_sheet(phone) -> None:
+    """Read to the end, wait out the sheet's own delay, press Confirm (a real click), wait for the sheet to go."""
+    page = phone.page
+    page.wait_for_timeout(700)
+    page.evaluate("() => { const t = document.getElementById('unlock-text'); t.scrollTop = t.scrollHeight; }")
+    go = page.locator("#unlock-go")
+    expect(go).to_be_enabled(timeout=10_000)
+    go.click()
+    expect(page.locator("#unlock-sheet")).to_have_count(0, timeout=30_000)
+
+
+def cancel_sheet(phone) -> None:
+    phone.page.locator("#unlock-cancel").click()
+    expect(phone.page.locator("#unlock-sheet")).to_have_count(0, timeout=10_000)

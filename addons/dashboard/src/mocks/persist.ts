@@ -12,6 +12,8 @@ export interface PersistedV2 {
   wsEvents: Record<string, WorkspaceEvent[]> // appended after the seed, per workspace id
   addonState: Record<string, Record<string, unknown>> // `${ws}/${addon}` -> state
   viewer?: string
+  /** The demo dataset ('busy' = the generated busy day). Absent in older storage = 'normal'. */
+  dataset?: 'normal' | 'busy'
 }
 
 /** null when absent, unparsable, or not v2. */
@@ -31,6 +33,7 @@ export function loadPersisted(): PersistedV2 | null {
       wsEvents: p.wsEvents ?? {},
       addonState: p.addonState ?? {},
       viewer: p.viewer,
+      dataset: p.dataset === 'busy' ? 'busy' : 'normal',
     }
   } catch {
     return null

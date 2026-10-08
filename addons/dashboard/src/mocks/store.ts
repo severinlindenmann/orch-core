@@ -49,6 +49,7 @@ import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
+import { generateBusy, type BusyData } from './busy/generate'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -80,9 +81,13 @@ const wellFormed = (e: unknown): boolean => {
 }
 const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
+export type Dataset = 'normal' | 'busy'
+
 export interface StoreOptions {
   /** Persist appended events to localStorage. Default true; tests pass false. */
   persist?: boolean
+  /** The demo dataset to start with. Default: the persisted one, else 'normal'. */
+  dataset?: Dataset
 }
 
 function fillDefinition(d: FixtureTicket['definition']): TicketDefinition {
@@ -127,10 +132,16 @@ export class MockStore {
   private cursors = new Map<string, number>()
   readonly sim = new Simulator(this)
 
+  /** Which demo dataset is loaded: today's seed, or the seed plus a generated busy day (src/mocks/busy). */
+  dataset: Dataset = 'normal'
+  private busy: BusyData | null = null
+
   constructor(opts: StoreOptions = {}) {
     this.persist = opts.persist ?? true
+    const saved = this.persist ? loadPersisted() : null
+    this.dataset = opts.dataset ?? saved?.dataset ?? 'normal'
     this.seed()
-    if (this.persist) this.load()
+    if (this.persist) this.load(saved)
   }
 
   // ------------------------------------------------------------ seeding & persistence
@@ -142,6 +153,7 @@ export class MockStore {
     this.seeded.clear()
     this.wsOfKey.clear()
     this.addons = structuredClone([...addonsFixture, ...catalogFixture]) as unknown as AddonPackage[]
+    this.busy = this.dataset === 'busy' ? generateBusy() : null
     this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
@@ -153,7 +165,8 @@ export class MockStore {
       ...(otherFixture as unknown as Record<string, FixtureTicket[]>),
     }
     for (const ws of this.workspaces) {
-      for (const t of byPrefix[ws.prefix] ?? []) {
+      const extra = (this.busy?.tickets as Record<string, unknown[]> | undefined)?.[ws.prefix] ?? []
+      for (const t of [...(byPrefix[ws.prefix] ?? []), ...(extra as FixtureTicket[])]) {
         const def = fillDefinition(structuredClone(t.definition))
         this.defs.set(def.key, def)
         this.bodies.set(def.key, t.body)
@@ -183,8 +196,7 @@ export class MockStore {
     this.workspaces = this.seedWorkspaces.map((w) => foldWorkspace(w, this.wsEvents.get(w.id) ?? []))
   }
 
-  private load() {
-    const p = loadPersisted()
+  private load(p: PersistedV2 | null) {
     if (!p) return
     let latest = 0
     for (const [key, c] of Object.entries(p.created)) {
@@ -223,16 +235,19 @@ export class MockStore {
     }
     const wsEvents: PersistedV2['wsEvents'] = {}
     for (const [id, list] of this.wsEvents) if (list.length) wsEvents[id] = list
-    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, viewer: this.viewer })
+    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, viewer: this.viewer, dataset: this.dataset })
   }
 
-  reset() {
+  /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */
+  reset(dataset: Dataset = this.dataset) {
     this.sim.stopAll()
+    this.dataset = dataset
     this.seed()
     this.viewer = meFixture.person
     this.startedAt = Date.now()
     this.clockBase = Date.parse(MOCK_EPOCH)
     clearPersisted()
+    if (dataset !== 'normal') this.save() // the mode survives a reload
   }
 
   // ------------------------------------------------------------ clock & people

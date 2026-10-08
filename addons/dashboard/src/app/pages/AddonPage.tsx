@@ -1,6 +1,6 @@
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
-import { useAddons, selectContributions } from '@/addon-ui/slots'
+import { useAddons, useAddonStates, selectContributions } from '@/addon-ui/slots'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../workspace'
 import { usePageHeader } from '../shell/ShellUi'
@@ -9,7 +9,8 @@ import { usePageHeader } from '../shell/ShellUi'
 export function AddonPage({ name, page }: { name: string; page: string }) {
   const { data: addons, isLoading } = useAddons()
   const { workspace } = useWorkspace()
-  const c = selectContributions(addons ?? [], 'nav', { workspace }).find((x) => x.addon === name && x.id === page)
+  const { [name]: addon } = useAddonStates(workspace?.id, [name])
+  const c = selectContributions(addons ?? [], 'nav', { workspace, addon }).find((x) => x.addon === name && x.id === page)
   usePageHeader(c ? c.title : name)
 
   if (isLoading) return <Skeleton className="h-40 w-full max-w-3xl" />
@@ -28,7 +29,7 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
         <AddonBadge name={c.addon} className="size-5 text-xs" />
         {c.title}
       </h1>
-      <AddonContributionView c={c} ctx={{ workspace }} />
+      <AddonContributionView c={c} ctx={{ workspace, addon }} />
     </div>
   )
 }

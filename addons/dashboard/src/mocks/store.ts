@@ -18,6 +18,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
+import { getAddon } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import demoFixture from './fixtures/demo.json'
@@ -73,7 +74,7 @@ export class MockStore {
   private seedWorkspaces: Workspace[] = []
   private wsEvents = new Map<string, WorkspaceEvent[]>()
   private created: PersistedV2['created'] = {}
-  private addonState: PersistedV2['addonState'] = {}
+  private addonStates: PersistedV2['addonState'] = {}
   addons: AddonManifest[] = []
   private defs = new Map<string, TicketDefinition>()
   private bodies = new Map<string, BodySections>()
@@ -105,7 +106,7 @@ export class MockStore {
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     this.created = {}
-    this.addonState = {}
+    this.addonStates = {}
     this.refoldWorkspaces()
     const byPrefix: Record<string, FixtureTicket[]> = {
       DEMO: demoFixture as unknown as FixtureTicket[],
@@ -163,7 +164,7 @@ export class MockStore {
       }
     }
     this.created = p.created
-    this.addonState = p.addonState
+    this.addonStates = p.addonState
     this.refoldWorkspaces()
     if (p.viewer) this.viewer = p.viewer
     if (latest) this.clockBase = Math.max(this.clockBase, latest + 1000)
@@ -178,7 +179,7 @@ export class MockStore {
     }
     const wsEvents: PersistedV2['wsEvents'] = {}
     for (const [id, list] of this.wsEvents) if (list.length) wsEvents[id] = list
-    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonState, viewer: this.viewer })
+    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, viewer: this.viewer })
   }
 
   reset() {
@@ -355,7 +356,7 @@ export class MockStore {
 
   // ------------------------------------------------------------ addon actions (mock)
 
-  private setAddonData(key: string, addon: string, fn: (data: Record<string, unknown>) => void) {
+  setAddonData(key: string, addon: string, fn: (data: Record<string, unknown>) => void) {
     const def = this.defs.get(key)
     if (!def) return
     const data = (def.addons[addon] ??= {})
@@ -363,7 +364,7 @@ export class MockStore {
   }
 
   /** github/import: a lane issue becomes a new backlog ticket in the first workspace. */
-  private importGithubIssue(item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
+  importGithubIssue(item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
     const ws = this.workspaces[0]
     const title = item.title?.trim()
     const m = /^(.*)#(\d+)$/.exec(item.subtitle ?? '')
@@ -396,55 +397,31 @@ export class MockStore {
     return { ok: true, message: `Imported ${external} as ${key}`, changed: true }
   }
 
-  /** Mock of POST /api/addons/:name/actions/:id. Returns null for an unknown action. */
-  addonAction(addon: string, id: string, body: Record<string, unknown>): AddonActionResult | null {
+  /** Per-workspace state of an addon (lazily seeded, persisted). */
+  addonState(ws: string, name: string): Record<string, unknown> {
+    const key = `${ws}/${name}`
+    return (this.addonStates[key] ??= getAddon(name)?.seed(ws, this) ?? {})
+  }
+
+  /** GET .../addons/:name/state: state with the addon's derived view merged over it. Null when unknown or disabled. */
+  addonStateView(ws: string, name: string): Record<string, unknown> | null {
+    const addon = getAddon(name)
+    const w = this.workspaces.find((x) => x.id === ws)
+    if (!addon || !w?.addons[name]?.enabled) return null
+    const state = this.addonState(ws, name)
+    return { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer }) ?? {}) }
+  }
+
+  /** Mock of POST /api/addons/:name/actions/:id. `ws` defaults to the ticket's workspace, else the first one. Null for an unknown action. */
+  runAddon(name: string, id: string, body: Record<string, unknown>): AddonActionResult | null {
+    const addon = getAddon(name)
+    const action = addon?.actions[id]
+    if (!addon || !action) return null
     const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
-    switch (`${addon}/${id}`) {
-      case 'publish/share': {
-        if (!ticket || !this.defs.has(ticket)) return { ok: true, message: 'Pick a ticket first.' }
-        this.setAddonData(ticket, 'publish', (d) => {
-          const shares = (d.shares as unknown[] | undefined) ?? []
-          shares.unshift({ title: `share/${ticket.toLowerCase()}-${shares.length + 1}`, subtitle: 'expires in 7 days · 0 views', badge: 'secret link' })
-          d.shares = shares
-        })
-        this.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
-        return { ok: true, message: `Shared ${ticket} as a secret link for 7 days.`, changed: true }
-      }
-      case 'publish/decide': {
-        const option = String(body.option ?? '')
-        const decisions = this.addons.find((a) => a.name === 'publish')?.decisions
-        if (decisions) {
-          const i = decisions.findIndex((d) => d.id === body.id)
-          if (i >= 0) {
-            const [done] = decisions.splice(i, 1)
-            if (done.ticket && this.defs.has(done.ticket)) this.append(done.ticket, { type: 'publish.decided', actor: { kind: 'addon', id: 'publish' }, option })
-          }
-        }
-        return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
-      }
-      case 'estimate/set': {
-        const points = Number((body.formData as { points?: unknown } | undefined)?.points)
-        if (!ticket || !Number.isFinite(points)) return { ok: true, message: 'Nothing to save.' }
-        this.setAddonData(ticket, 'estimate', (d) => (d.points = points))
-        this.append(ticket, { type: 'estimate.set', actor: { kind: 'addon', id: 'estimate' }, points })
-        return { ok: true, message: `${ticket} estimated at ${points} points.`, changed: true }
-      }
-      case 'estimate/save_settings':
-      case 'publish/save_settings':
-      case 'usage/save_settings':
-      case 'terminals/save_settings':
-        return { ok: true, message: 'Settings saved (mock).' }
-      case 'terminals/open':
-        return { ok: true, message: 'Terminals arrive in a later iteration.' }
-      case 'github/import':
-        return this.importGithubIssue((body.item ?? {}) as { title?: string; subtitle?: string; badge?: string })
-      case 'github/refresh':
-        return { ok: true, message: 'Checked GitHub: 2 pull requests updated.' }
-      case 'wiki/open':
-        return { ok: true, message: 'Wiki editor arrives in a later iteration.' }
-      default:
-        return null
-    }
+    const ws = typeof body.ws === 'string' ? body.ws : (ticket && this.wsOfKey.get(ticket)) || this.workspaces[0].id
+    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    this.save()
+    return res
   }
 
   // ------------------------------------------------------------ workspace views

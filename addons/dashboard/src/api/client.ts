@@ -69,6 +69,7 @@ export function createApi(transport: Transport) {
     getAddonDecisions: () => call<AddonDecision[]>('GET', '/api/addons/decisions'),
     runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),
+    getAddonState: (ws: string, name: string) => call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state`),
     getAgents: (workspaceId: string) => call<AgentInfo[]>('GET', `/api/workspaces/${workspaceId}/agents`),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),

@@ -1,0 +1,33 @@
+import { describe, expect, it } from 'vitest'
+import { createApi } from '@/api/client'
+import { createMockTransport } from '@/api/transport'
+import { createMockStore } from '@/mocks/store'
+
+const setup = () => {
+  const store = createMockStore({ persist: false })
+  return { store, api: createApi(createMockTransport(store, { latency: false })), ws: store.workspaces[0].id }
+}
+
+describe('addon registry', () => {
+  it('serves per-workspace addon state', async () => {
+    const { api, ws } = setup()
+    const s = await api.getAddonState(ws, 'publish')
+    expect(Array.isArray(s.apps)).toBe(true)
+  })
+  it('an action mutates state and the next read sees it', async () => {
+    const { api, ws } = setup()
+    await api.runAddonAction('publish', 'share', { ws, ticket: 'DEMO-0043' })
+    const s = await api.getAddonState(ws, 'publish')
+    expect((s.shares as unknown[]).length).toBeGreaterThan(0)
+  })
+  it('404s for an addon disabled in the workspace', async () => {
+    const { api, store, ws } = setup()
+    store.appendWs(ws, { type: 'addon.disabled', name: 'wiki' })
+    await expect(api.getAddonState(ws, 'wiki')).rejects.toMatchObject({ status: 404 })
+  })
+  it('keeps the six iteration-1 actions working', async () => {
+    const { api, ws } = setup()
+    for (const [a, id] of [['publish', 'decide'], ['estimate', 'save_settings'], ['github', 'refresh'], ['terminals', 'save_settings'], ['usage', 'save_settings'], ['wiki', 'open']] as const)
+      expect((await api.runAddonAction(a, id, { ws })).ok).toBe(true)
+  })
+})

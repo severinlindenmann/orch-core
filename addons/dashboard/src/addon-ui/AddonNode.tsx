@@ -5,6 +5,7 @@ import validator from '@rjsf/validator-ajv8'
 import { ExternalLink, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -163,11 +164,15 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean } {
   const { addon, ctx } = useContext(RuntimeCtx)
   const qc = useQueryClient()
+  const { workspace } = useWorkspace()
   const m = useMutation({
     mutationFn: ({ action, extra }: { action: string; extra?: Record<string, unknown> }) =>
-      api.runAddonAction(addon, action, { ...extra, ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}) }),
+      api.runAddonAction(addon, action, { ...extra, ...(workspace ? { ws: workspace.id } : {}), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}) }),
     onSuccess: (res) => {
       toast.success(res.message)
+      void qc.invalidateQueries({ queryKey: ['addon-state'] })
+      void qc.invalidateQueries({ queryKey: ['ticket'] })
+      void qc.invalidateQueries({ queryKey: ['today'] })
       if (res.changed) void qc.invalidateQueries()
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Action failed'),

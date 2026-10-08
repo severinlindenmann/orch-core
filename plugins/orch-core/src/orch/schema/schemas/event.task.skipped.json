@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.task.skipped",
+  "title": "task.skipped event",
+  "description": "10.3 task skip.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.skipped"
+    },
+    "task": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    },
+    "reason": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    }
+  },
+  "required": [
+    "type",
+    "task"
+  ],
+  "unevaluatedProperties": false
+}

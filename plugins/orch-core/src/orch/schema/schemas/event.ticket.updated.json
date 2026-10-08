@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.ticket.updated",
+  "title": "ticket.updated event",
+  "description": "T9/T10: a host-written edit of ticket.json fields and/or body.md sections, carrying base_rev.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "ticket.updated"
+    },
+    "base_rev": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+      },
+      "uniqueItems": true
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sectionId"
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "type",
+    "base_rev"
+  ],
+  "unevaluatedProperties": false
+}

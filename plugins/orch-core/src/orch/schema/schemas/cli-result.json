@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/cli-result",
+  "title": "CLI JSON result",
+  "description": "Format doc 10.4 item 3 and 9.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": "orch.cli/2.0"
+    },
+    "ok": {
+      "const": true
+    },
+    "data": {},
+    "key": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "duplicate": {
+      "const": true
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "ok",
+    "data",
+    "key",
+    "seq",
+    "cursor",
+    "hints"
+  ]
+}

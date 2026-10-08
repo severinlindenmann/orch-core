@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/checkpoint",
+  "title": "Checkpoint",
+  "description": "Section 5: WSK-signed ticket checkpoint {uid, seq, head} or workspace checkpoint over all ticket heads.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "uid": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "head": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        "host_sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "uid",
+        "seq",
+        "head",
+        "host_sig"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "heads": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "head": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "seq",
+              "head"
+            ]
+          }
+        },
+        "host_sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "heads",
+        "host_sig"
+      ]
+    }
+  ]
+}

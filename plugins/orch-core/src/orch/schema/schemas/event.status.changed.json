@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.status.changed",
+  "title": "status.changed event",
+  "description": "T14: status is derived from events.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "status.changed"
+    },
+    "from": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+    },
+    "to": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+    }
+  },
+  "required": [
+    "type",
+    "from",
+    "to"
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.restore",
+  "title": "restore event",
+  "description": "Section 5 checkpoints: owner-signed restore {from_seq, reason}.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "restore"
+    },
+    "from_seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    }
+  },
+  "required": [
+    "type",
+    "from_seq",
+    "reason"
+  ],
+  "unevaluatedProperties": false
+}

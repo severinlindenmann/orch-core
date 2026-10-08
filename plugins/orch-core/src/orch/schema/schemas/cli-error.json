@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/cli-error",
+  "title": "CLI error envelope",
+  "description": "Format doc 10.4 item 4.",
+  "type": "object",
+  "properties": {
+    "ok": {
+      "const": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "message": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+        },
+        "hint": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+        },
+        "fix": {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "argv"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "error"
+  ]
+}

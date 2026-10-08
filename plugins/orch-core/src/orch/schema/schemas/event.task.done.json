@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.task.done",
+  "title": "task.done event",
+  "description": "Section 5 example: task.done with receipt {exit, ms, commit}.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.done"
+    },
+    "task": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    },
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "exit": {
+          "type": "integer"
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exit",
+        "ms"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "task"
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.gate.approved",
+  "title": "gate.approved event",
+  "description": "Section 5 example and 'Who may approve'.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "gate.approved"
+    },
+    "hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "gate": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+    },
+    "policy_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "list_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "gate",
+    "hash",
+    "policy_hash",
+    "list_seq"
+  ],
+  "unevaluatedProperties": false
+}

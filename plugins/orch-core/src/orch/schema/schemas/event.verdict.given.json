@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.verdict.given",
+  "title": "verdict.given event",
+  "description": "Section 5: verdicts are signed. Event name and outcome values not given in the doc.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "verdict.given"
+    },
+    "hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "outcome": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ]
+    },
+    "text": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    },
+    "list_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "hash",
+    "outcome"
+  ],
+  "unevaluatedProperties": false
+}

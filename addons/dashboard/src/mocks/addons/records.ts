@@ -12,9 +12,9 @@ import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 interface Commit {
   hash: string
   at: string
-  tickets: number
-  events: number
   by: string
+  /** Events recorded per ticket. Shown to a person only for the tickets they can see. */
+  perTicket: Record<string, number>
 }
 interface Settings {
   auto_commit_minutes: number
@@ -44,6 +44,13 @@ const settingsOf = (state: Record<string, unknown>): Settings => {
     remote: typeof s.remote === 'string' && s.remote.trim() && s.remote.length <= 200 && !/[\r\n]/.test(s.remote) ? s.remote.trim() : DEFAULTS.remote,
   }
 }
+/** A seed commit spread over `n` tickets (from `from`) with `events` events in all. */
+const spread = (keys: string[], from: number, n: number, events: number): Record<string, number> => {
+  const out: Record<string, number> = {}
+  const picked = keys.slice(from, from + n)
+  picked.forEach((k, i) => (out[k] = Math.floor(events / picked.length) + (i < events % picked.length ? 1 : 0)))
+  return out
+}
 const history = (state: Record<string, unknown>) => state.history as Commit[] // newest first
 const recorded = (state: Record<string, unknown>) => state.recorded as Record<string, number>
 
@@ -70,13 +77,14 @@ registerAddon({
       if (lag) i++
       marks[key] = last - lag
     }
+    const keys = store.ticketKeys(ws).sort()
     return {
       settings: { ...DEFAULTS },
       recorded: marks,
       history: [
-        { hash: 'c41d9e2', at: '2026-10-09T08:00:00Z', tickets: 5, events: 17, by: 'auto-commit' },
-        { hash: '9b07a3f', at: '2026-10-08T17:30:00Z', tickets: 3, events: 9, by: 'Mara' },
-        { hash: '5e2f810', at: '2026-10-08T09:15:00Z', tickets: 6, events: 24, by: 'Severin' },
+        { hash: 'c41d9e2', at: '2026-10-09T08:00:00Z', by: 'auto-commit', perTicket: spread(keys, 0, 5, 17) },
+        { hash: '9b07a3f', at: '2026-10-08T17:30:00Z', by: 'Mara', perTicket: spread(keys, 2, 3, 9) },
+        { hash: '5e2f810', at: '2026-10-08T09:15:00Z', by: 'Severin', perTicket: spread(keys, 0, 6, 24) },
       ] satisfies Commit[],
       seq: 3,
       behind: false,
@@ -104,7 +112,13 @@ registerAddon({
         ? { type: 'alert', tone: 'success', title: ok }
         : { type: 'stack', children: [] }
     const last = state.lastPush as LastPush | null
+    // Each entry as this viewer sees it: counts over the visible tickets only; an entry with none of them is left out.
     const hist = history(state)
+      .map((h) => {
+        const seen = Object.entries(h.perTicket).filter(([k]) => canSeeTicket(c, k))
+        return { hash: h.hash, at: h.at, by: h.by, tickets: seen.length, events: seen.reduce((n, [, e]) => n + e, 0) }
+      })
+      .filter((h) => h.tickets > 0)
     const marks = recorded(state)
     return {
       settings: s,
@@ -115,6 +129,7 @@ registerAddon({
       pendingTickets: rows.length,
       summary,
       pushAlert,
+      history: hist, // overrides the raw entries, which carry the per-ticket breakdown
       lastPush: last,
       lastPushText: last ? `Last push ${last.commit} to ${last.remote}, ${last.at.slice(0, 16).replace('T', ' ')} UTC` : 'Not pushed yet',
       historyItems: hist.map((h, i) => ({
@@ -129,14 +144,16 @@ registerAddon({
   actions: {
     commit(ctx) {
       const { state, store } = ctx
-      const all = pending(ctx, state, true)
-      if (!all.length) return { ok: true, message: 'Nothing to record.' }
+      // "Is there anything to record" is judged on what the caller can see; hidden tickets stay pending until someone who can see them commits.
+      const mine = pending(ctx, state)
+      if (!mine.length) return { ok: true, message: 'Nothing to record.' }
+      const all = pending(ctx, state, true) // the commit itself is workspace-wide
       const marks = recorded(state)
       for (const key of store.ticketKeys(ctx.ws)) marks[key] = lastSeq(store, key)
       const seq = ((state.seq as number) ?? 0) + 1
       state.seq = seq
-      history(state).unshift({ hash: hashOf(seq), at: store.now(), tickets: all.length, events: all.reduce((n, p) => n + p.events, 0), by: nameOf(ctx) })
-      return { ok: true, message: `Recorded as ${hashOf(seq)}.`, changed: true }
+      history(state).unshift({ hash: hashOf(seq), at: store.now(), by: nameOf(ctx), perTicket: Object.fromEntries(all.map((p) => [p.key, p.events])) })
+      return { ok: true, message: `Recorded ${plural(mine.reduce((n, p) => n + p.events, 0), 'event', 'events')} on ${plural(mine.length, 'ticket', 'tickets')} as ${hashOf(seq)}.`, changed: true }
     },
     push(ctx) {
       const { state, store } = ctx
@@ -145,7 +162,7 @@ registerAddon({
       state.pushOk = null
       if (state.behind) {
         state.pushError = REJECTED
-        return { ok: true, message: REJECTED, changed: true }
+        return { ok: true, message: `Push rejected: ${REJECTED}`, changed: true }
       }
       const head = history(state)[0]
       state.pushError = null

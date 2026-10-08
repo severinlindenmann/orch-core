@@ -100,7 +100,7 @@ describe('push and pull', () => {
     const st = await state(s)
     expect((st as unknown as { lastPush: { commit: string; remote: string } }).lastPush).toMatchObject({ commit: st.history[0].hash, remote: st.remote })
 
-    await run(s, 'push')
+    expect((await run(s, 'push')).message).toMatch(/^Push rejected: Remote rejected/)
     expect(await alertOf(s)).toMatchObject({ type: 'alert', tone: 'error', title: 'Remote rejected: non-fast-forward. Pull first.' })
 
     await run(s, 'pull')
@@ -145,5 +145,32 @@ describe('records and ticket visibility', () => {
     expect(json).not.toContain(hiddenKey)
     expect(json).not.toContain(hiddenTitle)
     expect(JSON.stringify(await state(setup('p_sev', [hiddenKey])))).toContain(hiddenKey)
+  })
+
+  it('a commit by an outside member shows them only their visible counts; the owner sees the full entry', async () => {
+    const all = await state(setup('p_sev'))
+    const hidden = all.rows[0] // first pending ticket is the one restricted below
+    const s = setup('p_mara', [hidden.ticket])
+    const mine = await state(s)
+    const r = await run(s, 'commit')
+    expect(r.message).toContain(`${mine.pendingEvents} events on ${mine.pendingTickets} tickets`)
+    expect(r.message).not.toContain(String(all.pendingEvents))
+    const seen = (await state(s)).history[0]
+    expect(seen).toMatchObject({ tickets: mine.pendingTickets, events: mine.pendingEvents, by: 'Mara' })
+    expect(JSON.stringify(await state(s))).not.toContain(hidden.ticket)
+    s.store.setViewer('p_sev')
+    expect((await state(s)).history[0]).toMatchObject({ hash: seen.hash, tickets: all.pendingTickets, events: all.pendingEvents })
+  })
+  it('when only hidden tickets are pending, an outside member commit is a no-op', async () => {
+    const s = setup('p_sev')
+    await run(s, 'commit')
+    s.store.append('DEMO-0041', { type: 'comment.added', actor: 'p_sev', text: 'secret' })
+    ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get('DEMO-0041')!.visibility = { restricted: ['p_sev'] }
+    s.store.setViewer('p_mara')
+    const n = (await state(s)).history.length
+    expect((await run(s, 'commit')).message).toBe('Nothing to record.')
+    expect((await state(s)).history).toHaveLength(n)
+    s.store.setViewer('p_sev')
+    expect((await state(s)).pendingEvents).toBe(1)
   })
 })

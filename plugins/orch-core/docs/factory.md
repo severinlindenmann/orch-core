@@ -1260,7 +1260,10 @@ redirects); the nudge depends on Claude Code's current screen markers.
   while the box holds the runner's own text (never Enter), logs "nudge cleaned up", and tries the same answer again
   in the next round; a nudge an earlier attempt left in the box is cleared before a new one. Workers also ran `git
   add f && git commit ...`, a chain no rule matches: the prompt now says to run them as two separate plain commands,
-  and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands".
+  and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands". A denied
+  command that redirects output into a file (`printf ... > /tmp/x.md`, `echo ... >> file`, `cat > file`) says "Write
+  the file with your Write tool (inside the workspace temporary folder) and pass its path with --file; do not
+  redirect shell output.", and its card's reason carries the same line.
 - *A commit message the release refused (the fifth run).* A worker committed a subject with What: and Why: but no
   Risk: line, in its clone, where no commit-msg hook runs; only the release's merge stage refused it, and the human
   amended it by hand. Now the commit gate checks every `git commit` of a bound session with orch's own commit-msg

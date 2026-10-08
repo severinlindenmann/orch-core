@@ -275,3 +275,27 @@ def test_counts_say_working_and_ended_apart(planned):
     assert {r["epic"] for r in rows} == {w.epic, e2.id}
     assert [r["epic"] for r in rows][-1] == w.epic  # ended runs last
     assert "1 ended" in _text(_client(w).get("/factory"))
+
+
+# -- 4. a shell redirect into a file is denied with the way that works -------------------------------------------
+
+def test_a_redirect_into_a_file_is_denied_with_the_write_tool_hint(make_world):
+    from orch.core import permits
+    from test_factory_e2e import edit_worker
+    w = make_world({"release": "merge"})
+    live = "printf 'AC1: elephants.json exists\\nAC2: committed\\n' > /tmp/verification.md"  # as the live agent wrote it
+    edit_worker(w, "elephants.json", lambda s, a: s.before("evidence", ("redirect", lambda: a.bash(live))))
+    w.settle(release=False)
+    kid = next(c.id for c in epics.children(w.ws, w.epic) if "elephants.json" in _epic_ac(w, c.id))
+    (bad,) = w.session(kid).agent.denied()
+    assert bad.text == live and bad.by == "hook", (bad.by, bad.message)
+    assert permits.REDIRECT_HINT in bad.message and "was not run" in bad.message
+    (card,) = [c for c in w.cards() if c["command"] == live]
+    assert permits.REDIRECT_HINT in card["reason"]
+    for cmd in ("echo ok >> notes.md", "cat > notes.md"):
+        assert permits._writes_file(cmd)
+    assert not permits._writes_file("orch show T-1 2>/dev/null") and not permits._writes_file("grep '>' f")
+
+
+def _epic_ac(w, tid):
+    return store.load(w.ws, tid)[1].section("Acceptance criteria")

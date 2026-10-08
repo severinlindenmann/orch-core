@@ -445,6 +445,7 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D26 | History for new devices | Current epoch only. Phones are for acting on what is happening now. Older Drop objects are re-wrapped by the host on request (§5.4). |
 | D27 | Exchange key rotation | The previous `WXK` is accepted for 14 days, then deleted (§5.4). |
 | D28 | Peer auto-start permissions | Peer tickets run only under a Dark AI Factory profile, intersected with the peer rule. One permission system (§9). |
+| D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
 | D29 | Client-hosted workspaces | Readable by that machine's admins, and only that workspace. Stated in §4 and on the workspace card. |
 
 ---
@@ -553,50 +554,63 @@ The owner prepares items marked **Owner**. Agents do the rest in P0 and tick the
 |---|---|---|---|
 | M1 | macOS with **Xcode** installed and opened once, and an iOS runtime for the Simulator | Owner | `xcode-select -p` points into Xcode.app, and `xcrun simctl list runtimes` lists iOS |
 | M2 | Claude Code installed and logged in. The manager runs on Opus; subagents can use Sonnet. | Owner | `claude --version` |
-| M3 | `gh` logged in as **severinlindenmann** and active | Owner | `gh auth status` shows it as the active account |
+| M3 | `gh` logged in as the **bot account** (D30), and branch protection on `main` in every repo (PR + approval, only the owner merges) | Owner | `gh auth status` shows the bot; `gh pr merge` on a test PR is refused |
 | M4 | SSH key for the VPS, with a host alias `orch-dev` in `~/.ssh/config` | Owner | `ssh orch-dev true` |
 | M5 | direnv installed and hooked into the shell, and `~/orch-dev/.envrc` allowed | Owner (allow once) | `direnv status` |
 | M6 | `uv`, Python 3.11+, Node 24, git, tmux | Agent | `bin/dev-env --check` |
 | M7 | Playwright with Chromium and WebKit | Agent | `npx playwright --version` |
 | M8 | The dedicated dev keychain is created; the login keychain is untouched | Agent | `security list-keychains` shows it, and `bin/dev-env --check` |
 | M9 | Repos cloned into `~/orch-dev/`, and the demo workspaces created and seeded | Agent | `bin/dev-env --check` |
-| M10 | `~/orch-dev/.claude/settings.json` in place (§19) | Owner writes it, or approves the agent's draft | — |
+| M10 | `~/orch-dev/.claude/settings.json` in place, with `defaultMode: bypassPermissions` and the deny rules from §19 | Owner copies it from `settings.json.example` | `claude` starts in bypass mode; a test `curl https://tix.severin.io` is refused |
 | M11 | Optional: OrbStack for a local internal relay | Owner | `docker version` |
 
 ## 19. Permissions and guardrails
 
-`~/orch-dev/.claude/settings.json` allows, without asking:
+The dev machine runs Claude Code in **`bypassPermissions` mode** (`claude --permission-mode bypassPermissions`, or
+`"defaultMode": "bypassPermissions"` in `~/orch-dev/.claude/settings.json`). Agents are never blocked by permission
+prompts.
 
-- `ssh orch-dev …` and `scp`/`rsync` to `orch-dev`;
-- `uv run …`, `npx playwright …`, `node --test …` and `xcrun simctl …`;
-- `orch …` and `bin/*`;
-- `git` and `gh` (except merge), inside `~/orch-dev`.
+Safety does not come from prompts. It comes from what the machine can reach. In bypass mode, Claude Code still
+applies explicit **deny rules** and **hooks**, so the few hard boundaries are written as those.
 
-It asks first for: `gh pr merge`, anything that writes outside `~/orch-dev`, and DNS changes.
+**Hard boundaries in the environment:**
 
-It denies:
+- **A dedicated machine.** It has no real orch config, no real workspaces, no TIX account and no login to
+  `tix.severin.io`. Whatever an agent does there can only touch the sandbox, the test VPS and the dev domain.
+- **GitHub through a bot account (D30).** The machine logs `gh` in as a separate GitHub user (e.g. `orch-dev-bot`)
+  with write access to orch-core, orch-relay, orch-apps/orch-publish and orch-dev-kit.
+  - `main` in each repo is protected: a PR and one approval are required, and only the owner may merge or push.
+  - The bot can open PRs and push branches, and technically cannot merge.
+  - The owner's own GitHub token is never on the dev machine.
+- **Infrastructure scoped to tests.** The VPS is a test server. A DNS token, if used, is limited to the
+  `dev.severin.io` zone. An Anthropic API key for the VPS agent has a spend cap.
+- **The sandbox keychain** is a separate file. Its password is unlocked by the owner at session start, or kept in
+  the machine's login keychain under a dedicated item that only `bin/dev-env` reads.
 
-- `tix.severin.io`, the real `~/.config/orch`, the login keychain and the owner's real workspace paths;
-- edits to the sandbox's own control files: `~/orch-dev/{.claude,.envrc,CLAUDE.md,bin,keychain}` and
-  `state/orch/dev-workspaces.json`. Changing these is an owner action.
+**Deny rules in `settings.json`** (they still apply in bypass mode):
 
-The dev keychain's password is never stored in a file. It is unlocked by the owner at session start, or kept in
-the login keychain under a dedicated item that only `bin/dev-env` reads.
+- network access to `tix.severin.io` and the production relay;
+- `gh pr merge` and pushes to `main` (a second fence behind branch protection).
 
-Guardrails that hold whatever the permissions say:
+**Hooks:** the orch guard keeps running. That is the product under test, and it is the reason for dev mode below.
 
-- Agents drive Mission Control only through dev mode (#251) on workspaces marked `dev`. Actions are recorded as
-  `agent:<session>`, never as the human. The guard and the human-only rules are not weakened for the real
-  workspaces.
+**Rules that hold in the product itself, whatever the permission mode:**
+
+- Agents drive Mission Control only through dev mode (#251) on workspaces marked `dev` in the host state dir.
+  Actions are recorded as `agent:<session>`, never as the human. The guard and the human-only rules are not
+  weakened for real workspaces.
 - Owner-only actions in the demo workspaces (approve, verdict, close) are done by a **test human**. This is a
   scripted persona with its own person key in the sandbox keychain, used only by e2e scenarios. Its certificates
   carry `dev: true`, and real workspaces refuse to pin a person or device with that flag.
 - No secrets in repos. VAPID keys and the like are generated on the VPS and kept there.
-- Agents open PRs. Only the owner merges.
+
+**Changing the dev kit.** Agents never edit the live `~/orch-dev` checkout in place: changing it mid-session would
+change the running environment. Kit changes are made in a separate clone at `~/orch-dev/src/orch-dev-kit`
+(gitignored) and go through a PR. After the owner merges, the owner runs `git pull` in `~/orch-dev`.
 
 ## 20. VPS setup (test server)
 
-The owner provides a clean VPS. The agent provisions it with an idempotent script, `orch-relay/infra/dev/provision.sh`,
+The owner provides a clean VPS. The agent provisions it with an idempotent script, `orch-dev-kit/vps/provision.sh`,
 so it can be rebuilt from scratch at any time.
 
 **Owner provides:** Ubuntu 24.04 LTS, at least 2 vCPU, 4 GB RAM and 40 GB disk, a public IPv4 (IPv6 optional),

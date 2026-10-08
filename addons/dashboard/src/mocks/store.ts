@@ -25,7 +25,7 @@ import type {
   WorkspaceEvent,
 } from '@/api/types'
 import { addonActive, pendingUpdate, sameSet } from '@/api/addons'
-import { actionMinRole, actionRun, getAddon, openDecisions } from './addons'
+import { getAddon, openDecisions } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
@@ -604,16 +604,20 @@ export class MockStore {
     }
     // A disabled addon, or one whose installed version has no grant, runs nothing.
     if (!addonActive(w, name)) return refuse(409, 'addon.inactive', `${name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
-    // Viewers run nothing; each action may ask for more than a member (the registry's minRole, e.g. save_settings: owner).
+    // Who may run an action is declared once, in the package manifest (`actions[id].minRole`, default member).
+    // Non-members run nothing; a viewer runs only the actions the package marks 'viewer' (e.g. navigation).
     const role = this.roleIn(ws, this.viewer)
-    if (!can(role, 'addon.action')) return refuse(403, 'forbidden', 'Viewers cannot run addon actions.', 'Ask an owner or maintainer.')
-    const min = actionMinRole(action)
-    if (!atLeast(role, min)) return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
-    // A decision that is no longer open (already decided, or its condition went away) is closed for every addon.
     const pkg = this.addons.find((a) => a.name === name)
+    const min = pkg?.actions?.[id]?.minRole ?? 'member'
+    if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
+    if (!atLeast(role, min)) {
+      if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot run addon actions.', 'Ask an owner or maintainer.')
+      return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
+    }
+    // A decision that is no longer open (already decided, or its condition went away) is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
     if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? []).some((d) => d.id === decision.id)) return { ok: true, message: 'That decision is closed.' }
-    const res = actionRun(action)({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
     return res

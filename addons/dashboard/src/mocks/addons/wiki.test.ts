@@ -13,13 +13,20 @@ type Page = { slug: string; title: string; markdown: string; by: string; tickets
 type Item = { title: string; subtitle?: string; actions?: { action: string; args?: Record<string, unknown> }[] }
 type State = {
   pages: Page[]
-  current: { slug: string; title: string; markdown: string }
-  editForm: { title: string; markdown: string }
+  current: { slug: string; title: string; markdown: string; meta: string }
+  editForm: { slug: string; title: string; markdown: string }
   items: Item[]
-  slugs: string[]
+  pageOptions: { const: string; title: string }[]
   byTicket: Record<string, Item[]>
 }
-const state = async (s: ReturnType<typeof setup>) => (await s.api.getAddonState(s.ws, 'wiki')) as unknown as State
+type S = ReturnType<typeof setup>
+const state = async (s: S) => (await s.api.getAddonState(s.ws, 'wiki')) as unknown as State
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'wiki', id, body)
+/** The same store seen as another person. */
+const as = (s: S, person: string) => {
+  s.store.setViewer(person)
+  return s
+}
 
 describe('wiki seed', () => {
   it('has 7 pages, one with a code block and a table and one with hostile markup', async () => {
@@ -31,59 +38,107 @@ describe('wiki seed', () => {
     expect(hostile.markdown).toContain('<script>')
     expect(hostile.markdown).toContain('javascript:')
   })
-  it('lists every page with an open action carrying its slug', async () => {
+  it('lists every page with an open action carrying its slug; the first page is open by default', async () => {
     const st = await state(setup())
     expect(st.items).toHaveLength(7)
     expect(st.items[0].actions![0]).toMatchObject({ action: 'open', args: { slug: st.pages[0].slug } })
     expect(st.current.slug).toBe(st.pages[0].slug)
+    expect(st.current.meta).toMatch(/^by Mara · updated \d+d ago$/)
   })
 })
 
 describe('wiki actions', () => {
-  it('open sets the current page and the edit form follows', async () => {
+  it('open sets the current page and the edit form (with its slug) follows', async () => {
     const s = setup()
     const target = (await state(s)).pages[3]
-    await s.api.runAddonAction(s.ws, 'wiki', 'open', { slug: target.slug })
+    await run(s, 'open', { slug: target.slug })
     const st = await state(s)
     expect(st.current.slug).toBe(target.slug)
-    expect(st.editForm).toEqual({ title: target.title, markdown: target.markdown })
+    expect(st.editForm).toEqual({ slug: target.slug, title: target.title, markdown: target.markdown })
   })
-  it('open with an unknown slug changes nothing', async () => {
+  it('open by title or with an unknown slug changes nothing: pages are addressed by slug only', async () => {
     const s = setup()
-    const before = (await state(s)).current.slug
-    await s.api.runAddonAction(s.ws, 'wiki', 'open', { slug: 'nope' })
-    expect((await state(s)).current.slug).toBe(before)
+    const st0 = await state(s)
+    await run(s, 'open', { slug: 'nope' })
+    await run(s, 'open', { slug: st0.pages[2].title })
+    expect((await state(s)).current.slug).toBe(st0.current.slug)
   })
-  it('save updates the current page, its author and its date', async () => {
-    const s = setup('p_mara')
-    await s.api.runAddonAction(s.ws, 'wiki', 'save', { formData: { title: 'New title', markdown: '# Fresh text' } })
+  it('save writes to the page named in the form, even after the open page changed meanwhile', async () => {
+    const s = setup()
+    const [a, b] = (await state(s)).pages
+    await run(s, 'open', { slug: b.slug })
+    const form = (await state(s)).editForm // the draft the user is typing into
+    await run(s, 'open', { slug: a.slug }) // same person navigates elsewhere before pressing save
+    await run(s, 'save', { formData: { ...form, markdown: '# Edited B' } })
     const st = await state(s)
-    expect(st.current).toMatchObject({ title: 'New title', markdown: '# Fresh text' })
-    const p = st.pages.find((x) => x.slug === st.current.slug) as Page & { updated: string }
-    expect(p.by).toBe('Mara')
+    expect(st.pages.find((p) => p.slug === a.slug)!.markdown).toBe(a.markdown)
+    expect(st.pages.find((p) => p.slug === b.slug)!.markdown).toBe('# Edited B')
+  })
+  it('save records the author and date, and refuses an empty or duplicate title', async () => {
+    const s = as(setup(), 'p_mara')
+    const [a, b] = (await state(s)).pages
+    await run(s, 'save', { formData: { slug: a.slug, title: 'New title', markdown: '# Fresh text' } })
+    let st = await state(s)
+    const p = st.pages.find((x) => x.slug === a.slug) as Page & { updated: string }
+    expect(p).toMatchObject({ title: 'New title', markdown: '# Fresh text', by: 'Mara' })
     expect(p.updated.startsWith('2026-10-09')).toBe(true)
+    await run(s, 'save', { formData: { slug: a.slug, title: b.title.toUpperCase(), markdown: 'dup' } })
+    await run(s, 'save', { formData: { slug: a.slug, title: '  ', markdown: 'empty' } })
+    st = await state(s)
+    expect(st.pages.find((x) => x.slug === a.slug)).toMatchObject({ title: 'New title', markdown: '# Fresh text' })
   })
   it('search filters the list by title and text and an empty query restores it', async () => {
     const s = setup()
-    await s.api.runAddonAction(s.ws, 'wiki', 'search', { formData: { query: 'runbook' } })
+    await run(s, 'search', { formData: { query: 'runbook' } })
     const hit = await state(s)
     expect(hit.items.length).toBeGreaterThan(0)
     expect(hit.items.length).toBeLessThan(7)
     expect(hit.items.every((i) => /runbook/i.test(i.title))).toBe(true)
-    await s.api.runAddonAction(s.ws, 'wiki', 'search', { formData: { query: '' } })
+    await run(s, 'search', { formData: { query: '' } })
     expect((await state(s)).items).toHaveLength(7)
   })
-  it('link attaches a page to the ticket in the body; the panel map reads it', async () => {
+  it('link attaches a page, by slug, to the ticket in the body; the panel map reads it', async () => {
     const s = setup()
     const st0 = await state(s)
     expect(st0.byTicket['DEMO-0043'].length).toBeGreaterThanOrEqual(2)
+    expect(st0.pageOptions[0]).toEqual({ const: st0.pages[0].slug, title: st0.pages[0].title })
     const free = st0.pages.find((p) => !p.tickets.includes('DEMO-0042'))!
-    await s.api.runAddonAction(s.ws, 'wiki', 'link', { ticket: 'DEMO-0042', formData: { page: free.title } })
-    const st = await state(s)
-    expect(st.byTicket['DEMO-0042'].map((i) => i.title)).toContain(free.title)
+    await run(s, 'link', { ticket: 'DEMO-0042', formData: { page: free.title } }) // a title is not an address
+    expect((await state(s)).byTicket['DEMO-0042'].map((i) => i.title)).not.toContain(free.title)
+    await run(s, 'link', { ticket: 'DEMO-0042', formData: { page: free.slug } })
+    expect((await state(s)).byTicket['DEMO-0042'].map((i) => i.title)).toContain(free.title)
   })
-  it('viewers cannot edit, search-state aside: save, link and open are refused', async () => {
+})
+
+describe('wiki navigation is per viewer', () => {
+  it("one member opening or searching does not change another member's view", async () => {
+    const s = setup('p_sev')
+    const pages = (await state(s)).pages
+    await run(s, 'open', { slug: pages[4].slug })
+    await run(s, 'search', { formData: { query: 'glossary' } })
+    as(s, 'p_mara')
+    const mara = await state(s)
+    expect(mara.current.slug).toBe(pages[0].slug)
+    expect(mara.items).toHaveLength(7)
+    as(s, 'p_sev')
+    const sev = await state(s)
+    expect(sev.current.slug).toBe(pages[4].slug)
+    expect(sev.items.length).toBeLessThan(7)
+  })
+  it('a viewer can open and search (changing only their own view) but cannot save or link', async () => {
     const s = setup('p_tom')
-    for (const id of ['save', 'link', 'open']) await expect(s.api.runAddonAction(s.ws, 'wiki', id, { slug: 'x' })).rejects.toMatchObject({ status: 403 })
+    const pages = (await state(s)).pages
+    await run(s, 'open', { slug: pages[2].slug })
+    await run(s, 'search', { formData: { query: 'tolerance' } })
+    const tom = await state(s)
+    expect(tom.current.slug).toBe(pages[2].slug)
+    expect(tom.items.length).toBeLessThan(7)
+    as(s, 'p_sev')
+    expect((await state(s)).current.slug).toBe(pages[0].slug)
+    as(s, 'p_tom')
+    const body = { ticket: 'DEMO-0042', formData: { slug: pages[0].slug, title: 'Hacked', markdown: 'x', page: pages[0].slug } }
+    await expect(run(s, 'save', body)).rejects.toMatchObject({ status: 403 })
+    await expect(run(s, 'link', body)).rejects.toMatchObject({ status: 403 })
+    expect((await state(s)).pages[0].title).toBe(pages[0].title)
   })
 })

@@ -1,4 +1,4 @@
-import type { AddonActionResult, AddonDecision, Role } from '@/api/types'
+import type { AddonActionResult, AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 
 export interface AddonCtx {
@@ -14,13 +14,10 @@ export interface AddonCtx {
 export type AddonActionFn = (ctx: AddonCtx) => AddonActionResult
 
 /**
- * An action: a plain function (members and up may run it), or `{ minRole, run }` for a higher bar.
- * Viewers never run addon actions (`addon.action` in src/api/permissions.ts).
+ * An action. Who may run it is NOT decided here: the package manifest declares `actions[id].minRole` (default member)
+ * and the store enforces it before this runs.
  */
-export type AddonAction = AddonActionFn | { minRole: Exclude<Role, 'viewer'>; run: AddonActionFn }
-
-export const actionMinRole = (a: AddonAction): Exclude<Role, 'viewer'> => (typeof a === 'function' ? 'member' : a.minRole)
-export const actionRun = (a: AddonAction): AddonActionFn => (typeof a === 'function' ? a : a.run)
+export type AddonAction = AddonActionFn
 
 export interface MockAddon {
   name: string

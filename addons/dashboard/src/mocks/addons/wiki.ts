@@ -1,7 +1,9 @@
 import { registerAddon } from './registry'
 
-// wiki: markdown pages in the workspace, linked from tickets. Pages, the open page (`current`) and the search
-// query live in the addon state, so they are per workspace (not per viewer): opening a page changes it for everyone.
+// wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
+// open and their search query are per viewer (`state.nav[viewer] = { current, query }`), so navigating never affects
+// anyone else. `open` and `search` are minRole 'viewer' in the manifest (viewers can read and navigate; only editing
+// needs member). Pages are always addressed by slug; titles are labels and must be unique.
 // The ticket panel reads `addon.byTicket.$ticket`, generated in view() from each page's `tickets`.
 // Page text is untrusted markdown: the UI renders it only through SafeMarkdown.
 
@@ -173,8 +175,8 @@ const ago = (iso: string) => {
 }
 
 const pagesOf = (state: Record<string, unknown>) => state.pages as Page[]
-const find = (state: Record<string, unknown>, key: unknown) =>
-  typeof key === 'string' ? pagesOf(state).find((p) => p.slug === key || p.title === key) : undefined
+const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string; query?: string }>
+const bySlug = (state: Record<string, unknown>, slug: unknown) => (typeof slug === 'string' ? pagesOf(state).find((p) => p.slug === slug) : undefined)
 
 const item = (p: Page, open: boolean) => ({
   title: p.title,
@@ -185,59 +187,63 @@ const item = (p: Page, open: boolean) => ({
 
 registerAddon({
   name: 'wiki',
-  seed: () => ({ settings: {}, pages: structuredClone(PAGES), current: PAGES[0].slug, query: '' }),
-  view(state) {
+  seed: () => ({ settings: {}, pages: structuredClone(PAGES), nav: {} }),
+  view(state, { viewer }) {
     const pages = pagesOf(state)
-    const q = String(state.query ?? '').trim().toLowerCase()
+    const nav = navOf(state)[viewer] ?? {}
+    const query = nav.query ?? ''
+    const q = query.trim().toLowerCase()
     const shown = q ? pages.filter((p) => `${p.title}\n${p.markdown}`.toLowerCase().includes(q)) : pages
-    const cur = find(state, state.current) ?? pages[0]
+    const cur = bySlug(state, nav.current) ?? pages[0]
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
     for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p, false))
     return {
       items: shown.map((p) => item(p, true)),
-      current: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by } : { slug: '', title: '', markdown: 'No page selected.', updated: '', by: '' },
-      editForm: cur ? { title: cur.title, markdown: cur.markdown } : null,
-      searchForm: { query: String(state.query ?? '') },
-      titles: pages.map((p) => p.title),
-      slugs: pages.map((p) => p.slug),
+      current: cur
+        ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated)}` }
+        : { slug: '', title: '', markdown: 'No page selected.', updated: '', by: '', meta: '' },
+      editForm: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown } : null,
+      searchForm: { query },
+      pageOptions: pages.map((p) => ({ const: p.slug, title: p.title })),
       byTicket,
     }
   },
   actions: {
-    open({ state, body }) {
-      const p = find(state, body.slug)
+    open({ state, body, viewer }) {
+      const p = bySlug(state, body.slug)
       if (!p) return { ok: true, message: 'Pick a page to open.' }
-      state.current = p.slug
+      navOf(state)[viewer] = { ...navOf(state)[viewer], current: p.slug }
       return { ok: true, message: `Opened ${p.title}.`, changed: true }
     },
+    search({ state, body, viewer }) {
+      const data = (body.formData ?? {}) as { query?: unknown }
+      const query = typeof data.query === 'string' ? data.query : ''
+      navOf(state)[viewer] = { ...navOf(state)[viewer], query }
+      return { ok: true, message: query ? `Filtered by "${query}".` : 'Showing all pages.', changed: true }
+    },
     save({ state, body, store, ws, viewer }) {
-      const p = find(state, state.current)
-      const data = (body.formData ?? {}) as { title?: unknown; markdown?: unknown }
-      if (!p || typeof data.title !== 'string' || typeof data.markdown !== 'string' || !data.title.trim()) return { ok: true, message: 'A page needs a title.' }
-      p.title = data.title.trim()
+      const data = (body.formData ?? {}) as { slug?: unknown; title?: unknown; markdown?: unknown }
+      const p = bySlug(state, data.slug) // the page the form was opened on, never "whatever is current now"
+      if (!p) return { ok: true, message: 'That page no longer exists.' }
+      const title = typeof data.title === 'string' ? data.title.trim() : ''
+      if (!title || typeof data.markdown !== 'string') return { ok: true, message: 'A page needs a title.' }
+      if (pagesOf(state).some((o) => o !== p && o.title.toLowerCase() === title.toLowerCase())) return { ok: true, message: `A page called "${title}" already exists.` }
+      p.title = title
       p.markdown = data.markdown
       p.updated = store.now()
       p.by = store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === viewer)?.name ?? viewer
       return { ok: true, message: `Saved ${p.title}.`, changed: true }
     },
-    search({ state, body }) {
-      const data = (body.formData ?? {}) as { query?: unknown }
-      state.query = typeof data.query === 'string' ? data.query : ''
-      return { ok: true, message: state.query ? `Filtered by "${state.query}".` : 'Showing all pages.', changed: true }
-    },
     link({ state, body, ticket, store }) {
-      const p = find(state, (body.formData as { page?: unknown } | undefined)?.page)
+      const p = bySlug(state, (body.formData as { page?: unknown } | undefined)?.page)
       if (!ticket || !store.hasTicket(ticket)) return { ok: true, message: 'Pick a ticket first.' }
       if (!p) return { ok: true, message: 'Pick a page to link.' }
       if (!p.tickets.includes(ticket)) p.tickets = [...p.tickets, ticket]
       return { ok: true, message: `Linked ${p.title} to ${ticket}.`, changed: true }
     },
-    save_settings: {
-      minRole: 'owner',
-      run: ({ state, body }) => {
-        state.settings = body.formData ?? {}
-        return { ok: true, message: 'Settings saved.', changed: true }
-      },
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
     },
   },
 })

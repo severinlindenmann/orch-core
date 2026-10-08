@@ -158,12 +158,9 @@ registerAddon({
       if (!target) return { ok: true, message: 'That pull request no longer exists.' }
       return { ok: true, message: `Opening #${target.number} on GitHub.`, url: prUrl(target) }
     },
-    save_settings: {
-      minRole: 'owner',
-      run: ({ state, body }) => {
-        state.settings = body.formData ?? {}
-        return { ok: true, message: 'Settings saved.', changed: true }
-      },
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
     },
   },
 })

@@ -205,36 +205,30 @@ registerAddon({
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
     },
-    decide: {
-      minRole: 'maintainer', // deciding is addon.decide (Today shows decisions to owners and maintainers)
-      run({ store, state, body }) {
-        const id = String(body.id ?? '')
-        const option = String(body.option ?? '')
-        // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
-        const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? []).find((d) => d.id === id)
-        if (!open) return { ok: true, message: 'That decision is closed.' }
-        markDecided(state, id)
-        if (id === 'dec_publish_failed_build') {
-          const ops = apps(state).find((a) => a.id === 'app_ops')
-          if (option === 'retry' && ops) {
-            ops.status = 'running'
-            ops.log.push('Rebuilt from the last good version', 'Started')
-          }
-          return { ok: true, message: option === 'retry' ? 'Ops notebook rebuilt from the last good version.' : 'Left as it is.', changed: true }
+    decide({ store, state, body }) {
+      const id = String(body.id ?? '')
+      const option = String(body.option ?? '')
+      // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
+      const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? []).find((d) => d.id === id)
+      if (!open) return { ok: true, message: 'That decision is closed.' }
+      markDecided(state, id)
+      if (id === 'dec_publish_failed_build') {
+        const ops = apps(state).find((a) => a.id === 'app_ops')
+        if (option === 'retry' && ops) {
+          ops.status = 'running'
+          ops.log.push('Rebuilt from the last good version', 'Started')
         }
-        if (open.ticket && store.hasTicket(open.ticket)) {
-          store.append(open.ticket, { type: 'publish.decided', actor: { kind: 'addon', id: 'publish' }, option })
-          if (option === 'yes') newShare(state, open.ticket, 'secret link', 'Before/after report', token(state))
-        }
-        return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
-      },
+        return { ok: true, message: option === 'retry' ? 'Ops notebook rebuilt from the last good version.' : 'Left as it is.', changed: true }
+      }
+      if (open.ticket && store.hasTicket(open.ticket)) {
+        store.append(open.ticket, { type: 'publish.decided', actor: { kind: 'addon', id: 'publish' }, option })
+        if (option === 'yes') newShare(state, open.ticket, 'secret link', 'Before/after report', token(state))
+      }
+      return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
     },
-    save_settings: {
-      minRole: 'owner',
-      run: ({ state, body }) => {
-        state.settings = body.formData ?? {}
-        return { ok: true, message: 'Settings saved.', changed: true }
-      },
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
     },
   },
 })

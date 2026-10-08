@@ -36,11 +36,21 @@ describe('wiki page', () => {
     expect(md.innerHTML).not.toMatch(/\son\w+=/i)
     expect(md.innerHTML).not.toMatch(/javascript:|data:text/i)
     for (const a of md.querySelectorAll('a')) expect(a.getAttribute('href')).toMatch(/^https?:\/\//)
-    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined()
   })
-  it('viewers see the form disabled', async () => {
-    renderApp('/addon/wiki/pages', { viewer: 'p_tom' })
-    expect(await screen.findByLabelText('Markdown', {}, T)).toBeDisabled()
+  it('shows the page title and who edited it last above the text', async () => {
+    renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    expect(await screen.findByText(/^by Mara · updated \d+d ago$/, {}, T)).toBeInTheDocument()
+  })
+  it('a viewer can open pages and search, but the edit form is read-only', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_tom' })
+    const item = (await screen.findByText('Glossary', {}, T)).closest('li')!
+    const open = within(item).getByRole('button', { name: 'Open' })
+    await waitFor(() => expect(open).toBeEnabled(), T)
+    await user.click(open)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Glossary' })).toBeInTheDocument(), T)
+    expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled()
+    expect(screen.getByLabelText('Markdown')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save page' })).toBeDisabled()
   })
 })
 

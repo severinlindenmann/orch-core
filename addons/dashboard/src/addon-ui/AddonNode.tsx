@@ -188,10 +188,21 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   )
 }
 
+/**
+ * Is this action enabled for the viewer? A read-only viewer (core says so) may still run the actions the package
+ * declares with minRole 'viewer' (navigation). The server stays the authority; this only decides what looks clickable.
+ */
+function useActionAllowed(): (action?: string) => boolean {
+  const { addon, readOnly } = useContext(RuntimeCtx)
+  const { data } = useAddons()
+  const actions = data?.find((a) => a.name === addon)?.actions
+  return (action) => !readOnly || (!!action && actions?.[action]?.minRole === 'viewer')
+}
+
 /** Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only. */
-function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean } {
-  const { readOnly } = useContext(RuntimeCtx)
+function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean } {
   const { addon, ctx } = useContext(RuntimeCtx)
+  const allowed = useActionAllowed()
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const m = useMutation({
@@ -212,13 +223,13 @@ function useAddonAction(): { run: (action: string, extra?: Record<string, unknow
     },
     onError: (err) => toastApiError(err, 'Action failed'),
   })
-  return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending, blocked: !workspace || readOnly }
+  return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a) }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked } = useAddonAction()
+  const { run, pending, blocked } = useAddonAction(node.action)
   return (
     <div>
       <Button size="sm" variant={BUTTON_VARIANT[node.variant]} disabled={pending || blocked} onClick={() => run(node.action)}>
@@ -229,8 +240,8 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
 }
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
-  const { run, pending, blocked } = useAddonAction()
-  const { readOnly } = useContext(RuntimeCtx)
+  const { run, pending, blocked } = useAddonAction(node.action)
+  const readOnly = !useActionAllowed()(node.action)
   return (
     <ThemedForm
       disabled={readOnly}
@@ -265,11 +276,11 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
 }
 
 function ItemActions({ actions, row }: { actions: ItemAction[]; row?: Record<string, unknown> }) {
-  const { run, pending, blocked } = useAddonAction()
+  const { run, pending, blockedFor } = useAddonAction()
   return (
     <div className="flex shrink-0 items-center gap-1">
       {actions.map((a, i) => (
-        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending || blocked} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
+        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending || blockedFor(a.action)} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
           {a.label}
         </Button>
       ))}

@@ -460,6 +460,8 @@ export interface AddonPackage {
   decisions?: AddonDecision[]
   /** Command palette entries; each runs POST /api/workspaces/:ws/addons/:name/actions/:action. */
   commands?: { id: string; title: string; action: string }[]
+  /** Who may run an action: its minimum role (default 'member'; 'viewer' for read-only navigation). The one source of truth. */
+  actions?: Record<string, { minRole: Role }>
 }
 
 /** An addon installed in one workspace: the package plus that workspace's state (installed version, grant, status). */

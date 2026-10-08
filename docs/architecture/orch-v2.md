@@ -94,6 +94,11 @@ Non-goals for v2:
   can reach the keychain and the socket. "Agents never read keys" holds only on the VPS until then.**
 - **Peer workspaces** are pinned, and everything they send is untrusted data. A valid signature proves origin, not
   safety.
+- **A workspace on someone else's machine** (e.g. a client's VM) is readable by that machine's administrators. They
+  have root, so they can read the host's keys and everything in that one workspace. They cannot read any other
+  workspace: they were never sealed its `WK`, and the workspace's `WXK` opens only what is addressed to it. Rule:
+  anything you put into a workspace on a client's machine is visible to that client. The dashboard says so on such
+  a workspace's card, which is marked "hosted by <owner of the machine>" at setup.
 - **Accepted leaks to the relay:** sizes, timing, routing ids (random workspace and device ids), push timing, and
   that a question was resolved.
 - **Sealed, not leaked:** device and machine names, project and workspace names and descriptions (orch-tix #75's
@@ -356,8 +361,14 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 - **Receiving (D13):**
   - The receiver verifies the pin, the signature, `depth ≤ 1` and the deadline, and deduplicates on `id`.
   - The ticket lands in the inbox, marked `from-peer`.
-  - The charter rule `auto_start: {peer, kinds, profile}` can start it with the restricted profile: no secrets, no
+  - The charter rule `auto_start: {peer, kinds, profile}` can start it with a restricted profile: no secrets, no
     push, network only within scope, and no `orch send`.
+  - **One permission system (D28).** There is no separate "peer profile". `profile` names a Dark AI Factory
+    profile (#79: a signed charter, the Dark switch, and permits granted by the harness hook).
+    - A ticket from a peer always runs under a Dark-style profile.
+    - Its grants are the intersection of that profile and the peer rule's limits above, so it can never have more
+      rights than a Dark run in the same workspace.
+    - When the Dark switch is off, auto-start is off too, and peer tickets wait in the inbox.
 - **Result.** A signed `result` envelope carries a summary, Drop references and a status. The sender treats it as
   data and its agent continues. When the deadline passes, the ticket goes back to the human; there is no silent
   retry.
@@ -433,6 +444,8 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D25 | Transcription | Kept as an opt-in, off by default, and stated in the threat model (§4) as the one exception. |
 | D26 | History for new devices | Current epoch only. Phones are for acting on what is happening now. Older Drop objects are re-wrapped by the host on request (§5.4). |
 | D27 | Exchange key rotation | The previous `WXK` is accepted for 14 days, then deleted (§5.4). |
+| D28 | Peer auto-start permissions | Peer tickets run only under a Dark AI Factory profile, intersected with the peer rule. One permission system (§9). |
+| D29 | Client-hosted workspaces | Readable by that machine's admins, and only that workspace. Stated in §4 and on the workspace card. |
 
 ---
 

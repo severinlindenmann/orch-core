@@ -24,3 +24,4 @@ def test_only_a_button_asks_for_a_size_explicitly():
     assert src.count("sizeTmux(true)") == 2 and src.count("sizeTmux()") == 2
     assert "layout(); sizeTmux(); }, 150" in src
     assert "sizeTmux(); // fit the session" in src
+    assert "remote: Boolean(host.remote)," in src  # the sizer is read-only exactly when a host serves the page

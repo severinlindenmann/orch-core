@@ -114,6 +114,21 @@ def test_every_field_of_an_agent_start_changes_the_subject(bridge, ticket, tmux,
     assert subject_of(bridge, f"/t/{t2.id}/agent/start", agent_body())["digest"] != base["digest"]
 
 
+def test_a_where_the_route_ignores_still_changes_the_subject(bridge, ticket, tmux, started):
+    a = subject_of(bridge, f"/t/{ticket}/agent/start", "mode=work&harness=claude&where=x")
+    b = subject_of(bridge, f"/t/{ticket}/agent/start", "mode=work&harness=claude&where=y")
+    assert a["digest"] != b["digest"]  # same sheet text, so the digest alone must tell the two bodies apart
+
+
+def test_a_changed_command_changes_the_subject_of_a_new_session(bridge, tmux, started, monkeypatch):
+    from orch.dashboard.data import agent_start
+    base = subject_of(bridge, "/terminals/new", "")
+    real = agent_start.harnesses
+    monkeypatch.setattr(agent_start, "harnesses", lambda ws, settings: {**real(ws, settings), "claude": ["claude", "--other"]})
+    other = subject_of(bridge, "/terminals/new", "")
+    assert other["digest"] != base["digest"] and "--other" in other["shown"]
+
+
 def test_every_field_of_a_quick_start_changes_the_subject(bridge, qid, tmux, started):
     base = subject_of(bridge, f"/quick/{qid}/agent/start", "where=tmux")
     for body in ("where=", "where=tmux&next=%2Fquick"):

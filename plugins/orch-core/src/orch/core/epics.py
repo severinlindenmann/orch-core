@@ -225,6 +225,32 @@ def latest_charter(ws, epic_id: str, signed=None) -> dict | None:
     return None
 
 
+def factory_charter(ws, epic_id: str, signed=None) -> dict | None:
+    """The epic's latest signed charter when it carries a factory delegation: a run that a later charter has not
+    ended, whether it works, is paused, used up its budget or waits for its edited text to be re-signed. None
+    otherwise. An approval without a factory delegation ends it (Ops: only on purpose, `end_factory`)."""
+    e = latest_charter(ws, epic_id, signed)
+    d = (e or {}).get("delegate")
+    return e if isinstance(d, dict) and d.get("factory") and e.get("delegation") else None
+
+
+_RELEASE_LINE = {None: "Release: none, the run only builds and proves", "merge": "Release up to: merge",
+                 "dev": "Release up to: dev",
+                 "prod": "Release up to: production, never before its release window opens"}
+
+
+def charter_checklist(d: dict) -> list[str]:
+    """What a factory charter signs, one line each: the re-sign dialog and `orch approve` show the same lines."""
+    out = ["Mode: " + ("Dark AI Factory" if d.get("dark") else "AI Factory"),
+           _RELEASE_LINE.get(d.get("release"), f"Release up to: {d.get('release')}")]
+    if d.get("release") == "prod":
+        out.append("Rollback by itself when the production check fails: " + ("yes" if d.get("rollback") else "no"))
+    out.append("Closes the epic by itself when everything is proven" if d.get("close") else "You give the verdict")
+    out.append(f"Limits: up to {d.get('max_children')} children or {d.get('max_hours')} hours, children of size "
+               f"{d.get('max_size')} or smaller")
+    return out
+
+
 def ever_chartered(ws, epic_id: str, child_id: str, signed=None) -> bool:
     return any(e.get("kind") == "charter" and e.get("ticket") == epic_id
                and any(isinstance(c, dict) and c.get("id") == child_id for c in e.get("children") or [])
@@ -244,7 +270,10 @@ def delegation(ws, epic, signed=None) -> dict | None:
     epic_changed, expired} (a factory delegation also `factory`, `max_hours`). Active only while not paused, the
     epic's requirements still hash as signed and a factory's time budget is not used up."""
     signed = _signed(ws, signed)
-    entry = latest_charter(ws, epic.id, signed)
+    return _delegation_of(epic, latest_charter(ws, epic.id, signed), signed)
+
+
+def _delegation_of(epic, entry, signed) -> dict | None:
     if not entry or not isinstance(entry.get("delegate"), dict) or not entry.get("delegation"):
         return None
     did = entry["delegation"]
@@ -255,7 +284,24 @@ def delegation(ws, epic, signed=None) -> dict | None:
     kept = [k for k in (pause or {}).get("kept") or [] if isinstance(k, dict) and k.get("id")]
     expired = budget_used_up(entry, d)
     return {"id": did, **d, "paused": pause is not None, "epic_changed": changed, "expired": expired,
-            "active": pause is None and not changed and not expired, "kept": kept, "at": entry.get("at")}
+            "active": pause is None and not changed and not expired, "kept": kept, "at": entry.get("at"),
+            "paused_at": (pause or {}).get("at")}
+
+
+def factory_run(ws, epic, signed=None) -> dict | None:
+    """The epic's last factory run, live or ended, from the signed ledger alone: delegation()'s dict for the last
+    charter that signed a factory delegation, with `ended_by`, the next charter of the epic (signed without the
+    factory: it ended the run; `ends_factory` in it when ended on purpose), or None while that charter is the latest.
+    An ended run is never active. None when the epic never had a factory charter."""
+    signed = _signed(ws, signed)
+    mine = [e for e in signed if e.get("kind") == "charter" and e.get("ticket") == epic.id]
+    for i in range(len(mine) - 1, -1, -1):
+        dl = mine[i].get("delegate")
+        if isinstance(dl, dict) and dl.get("factory") and mine[i].get("delegation"):
+            d = _delegation_of(epic, mine[i], signed)
+            nxt = mine[i + 1] if i + 1 < len(mine) else None
+            return {**d, "ended_by": nxt, **({"active": False} if nxt else {})}
+    return None
 
 
 def _covered(ws, epic, child, gate: str, h, signed) -> bool:
@@ -505,8 +551,10 @@ def charter_diff(ws, epic, signed=None, entries=None, tickets=None) -> dict:
         out[c["id"]] = ("new" if old is None
                         else "unchanged" if (old.get("requirements"), old.get("plan")) == (c["requirements"], c["plan"])
                         else "changed")
+    # a child that is done since did not leave the epic: only one that is no longer its child did
+    still = {e.id for e in children(ws, epic.id, entries)}
     return {"epic_changed": bool(entry) and not _epic_current(epic, entry), "children": out,
-            "removed": [i for i in before if i not in out], "previous": entry}
+            "removed": [i for i in before if i not in out and i not in still], "previous": entry}
 
 
 def rollup(ws, epic, entries=None, needs=None) -> dict:

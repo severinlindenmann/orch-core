@@ -341,8 +341,11 @@ def _needs_you(ws, entries: list[store.Entry], events: list | None = None) -> li
             if e.status == "open" and not changes_pending(t, "requirements"):
                 pending = _epic_needs(ws, t, entries, events)
                 if pending is not None:
+                    # a factory run (running or just ended): the decision re-signs its charter, never a plain one
                     add("approve-epic", ", ".join(pending), gate="requirements",
-                        gate_hash=epics.charter(ws, t, entries=entries)["content_hash"], children=pending)
+                        gate_hash=epics.charter(ws, t, entries=entries)["content_hash"], children=pending,
+                        **({"factory": True, "epic_changed": gate_state(t, "requirements") == "invalidated"}
+                           if epics.factory_charter(ws, t.id) else {}))
         in_epic = epic_meta.get(normalize_ref(ws, str(t.meta.get("parent") or "")).upper())
         if (e.status in ("in-progress", "waiting") and plan_required(ws, t)
                 and gate_state(t, "plan") == "pending" and t.section("Plan").strip()

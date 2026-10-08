@@ -157,7 +157,7 @@
 {% if groups %}
 {% for g in groups %}
 <section class="swimlane" aria-labelledby="lane-{{ loop.index }}">
-  <h2 class="lane-h" id="lane-{{ loop.index }}">{% if g.epic %}<span aria-hidden="true">◇</span> {{ g.label }} <a class="lnk muted" href="/t/{{ g.epic.id }}">{{ g.epic.id }}</a>{% else %}{{ g.label }}{% endif %} <span class="count">{{ g.count }}</span></h2>
+  <h2 class="lane-h" id="lane-{{ loop.index }}">{% if g.epic %}<span aria-hidden="true">◇</span> {{ g.label }} <a class="lnk muted" href="/t/{{ g.epic.id }}">{{ g.epic.id }}</a>{% if group_by == "factory" %} <a class="lnk muted" href="/factory/{{ g.epic.id }}">run view</a>{% endif %}{% else %}{{ g.label }}{% endif %} <span class="count">{{ g.count }}</span></h2>
   {% set lane_index = loop.index %}
   <div class="flow" role="group" aria-label="{{ g.label }}: agent flow">
     {% for status in flow %}{{ flow_lane(status, g.columns[status], "-" ~ lane_index, "h3", g.label ~ ": ") }}{% endfor %}

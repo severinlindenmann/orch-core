@@ -53,6 +53,38 @@ not only from the event log or ticket files, so editing those cannot understate 
 signed charter alone: the factory switch does not lift it. At the limit, a child the delegation approved goes on;
 any other child without a human approval is refused a claim or task start.
 
+## Approving a factory epic again
+
+The children the planner (or any agent) creates and auto-approves under a running charter are covered by it: the epic
+page and Today offer no re-approval for them, and an agent's log line on the epic changes nothing a charter signs. A
+re-approval is offered only when one is missing: the epic's own text changed, a child the charter or its delegation
+covered changed, a child someone else added waits, or a child left the epic (a child that is done did not leave it).
+
+While the epic's latest charter is a factory one (running, paused, out of budget, or waiting for its edited text),
+approving it again **re-signs the same charter**: the same mode, release target, rollback, close and limits, over the
+epic and its children as they are now (a new content hash, a new delegation with a fresh time budget; the runner
+stays armed when the run was). The epic page then says "Re-sign the Dark charter" (or "Re-sign the AI Factory
+charter") with the checklist of what is signed, and the run view and Today show one banner, for example "The epic's
+text changed: re-sign the charter to continue", with one button to the re-sign. `orch approve <epic> requirements`
+prints the same checklist before the charter and asks for the typed epic id as before.
+
+The only way to sign such an epic **without** its factory delegation is **End the factory run**: the epic page's
+care-toned button (its dialog says what stops: the runner ends the sessions, nothing more is released or closed by
+itself, the children stay), or `orch approve <epic> requirements --end-factory`. It is signed into the charter entry
+as `ends_factory` (the delegation it ended). Any other approval without a factory delegation of such an epic is
+refused and signs nothing: an old or forged form, an addon's or a phone's approve intent, `--delegate`.
+
+**An ended run stays visible.** Factories (`/factory`) and the run view (`/factory/<epic>`) show the epic's last
+factory run whether or not its charter is still the latest, derived from the signed ledger alone (no new record):
+the last charter with a factory delegation and the charter after it, if any. A run that ended is listed last as
+"Ended" with how: Finished (you gave the verdict, you closed it, or it closed by itself), Stopped (its time budget
+is used up), Ended by you (you ended the factory run, or, for runs signed before this, approved the epic again
+without the factory), or Paused (Stop the run). The list header counts them apart ("1 working, 1 ended"), and the
+run view shows a summary tile (children done, release stages proven, how long, permission requests and how they were
+answered) with one sentence for why it ended, a link to the epic and, for a run you ended, Start a new run (the
+epic page's approval, with the Start choice). The epic page links to the ended run, and the Board's factory group
+links each lane to its run view.
+
 ## What changes for agents in a factory epic
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never
@@ -1228,7 +1260,10 @@ redirects); the nudge depends on Claude Code's current screen markers.
   while the box holds the runner's own text (never Enter), logs "nudge cleaned up", and tries the same answer again
   in the next round; a nudge an earlier attempt left in the box is cleared before a new one. Workers also ran `git
   add f && git commit ...`, a chain no rule matches: the prompt now says to run them as two separate plain commands,
-  and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands".
+  and a denied `git add ... && git commit ...` says "run git add and git commit as two separate commands". A denied
+  command that redirects output into a file (`printf ... > /tmp/x.md`, `echo ... >> file`, `cat > file`) says "Write
+  the file with your Write tool (inside the workspace temporary folder) and pass its path with --file; do not
+  redirect shell output.", and its card's reason carries the same line.
 - *A commit message the release refused (the fifth run).* A worker committed a subject with What: and Why: but no
   Risk: line, in its clone, where no commit-msg hook runs; only the release's merge stage refused it, and the human
   amended it by hand. Now the commit gate checks every `git commit` of a bound session with orch's own commit-msg

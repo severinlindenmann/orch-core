@@ -1039,6 +1039,19 @@ CD_HINT = "run the orch command from your current folder, without cd"
 _GIT_ADD_COMMIT = re.compile(r"\s*(?:\S*/)?git\s+add\b[^;&|]*(?:&&|;)\s*(?:\S*/)?git\s+commit\b")
 GIT_HINT = "run git add and git commit as two separate commands"
 _CHAIN_HINTS = ((_CD_ORCH, CD_HINT), (_GIT_ADD_COMMIT, GIT_HINT))
+# `printf ... > /tmp/x.md`, `echo ... >> file`, `cat > file`: an agent writing evidence through the shell (the live run
+# of 8 October). The file tool writes it without a card, and --file passes it.
+REDIRECT_HINT = ("Write the file with your Write tool (inside the workspace temporary folder) and pass its path with "
+                 "--file; do not redirect shell output.")
+
+
+def _writes_file(command) -> bool:
+    """An unquoted output redirect into a file (not /dev/null, not an fd dup), as the guard reads one."""
+    from orch.hooks.guard import _OUTPUT_REDIRECT, _unquoted
+    try:
+        return bool(_OUTPUT_REDIRECT.search(_unquoted(str(command))))
+    except Exception:
+        return False
 
 
 def commit_message(args: list[str]) -> str:
@@ -1154,8 +1167,10 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
     if g is not None and use(ws, actor, g, ticket.id):
         return _decision("allow")
     hint = next((h for rx, h in _CHAIN_HINTS if rx.match(str(command))), "")
+    if not hint and _writes_file(command):
+        hint = REDIRECT_HINT
     if dark:
-        r = request(ws, actor, ticket, command, reason="not in the Dark profile" + (f" ({CD_HINT})" if hint else ""),
+        r = request(ws, actor, ticket, command, reason="not in the Dark profile" + (f" ({hint})" if hint else ""),
                     source="dark")
         if r.get("allowed"):  # a rule was added since the check above
             return _decision("allow")
@@ -1163,6 +1178,9 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
             return _decision("deny", f"{hint}: orch already acts on the workspace's tickets (ORCH_HOME is set for "
                                      f"you). Run just the orch command, as one plain command. Request {r['id']} "
                                      "stays open for the human; do not file another one.")
+        if hint == REDIRECT_HINT:
+            return _decision("deny", f"This command was not run: it writes a file through the shell. {hint} Request "
+                                     f"{r['id']} stays open for the human; do not file another one.")
         if hint:  # the fix is the same commands, one per tool call
             return _decision("deny", f"This command was not run: a chain never matches a rule. {hint}: each one "
                                      f"alone runs without asking. Request {r['id']} stays open for the human; do not "
@@ -1170,9 +1188,11 @@ def _factory_answer(ws, payload: dict, ticket, b: dict) -> dict:
         return _decision("deny", f"This command was not run: it is not in the Dark profile of this checkout. "
                                  + _NO_WAIT.format(rid=r["id"], key=ticket.id)
                                  + " A person can add it to the Dark profile or grant it.")
-    r = request(ws, actor, ticket, command, reason="the harness asked for permission", source="harness")
+    r = request(ws, actor, ticket, command, reason="the harness asked for permission"
+                + (f" ({hint})" if hint == REDIRECT_HINT else ""), source="harness")
     if r.get("allowed"):  # the Dark switch came on since the check above, and the profile lists it
         return _decision("allow")
-    return _decision("deny", (f"{hint}: orch already acts on the workspace's tickets. " if hint else "")
+    return _decision("deny", (f"{hint} " if hint == REDIRECT_HINT
+                              else f"{hint}: orch already acts on the workspace's tickets. " if hint else "")
                      + f"This command was not run (waiting for permission {r['id']}). "
                      + _NO_WAIT.format(rid=r["id"], key=ticket.id))

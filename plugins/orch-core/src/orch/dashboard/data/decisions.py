@@ -139,6 +139,7 @@ class Decision:
     # An epic's approval (E2): its charter binds the epic and every child, so the card links to the epic page's
     # approve view instead of approving inline.
     charter: bool = False
+    resign: bool = False  # the charter of a factory run: the card says re-sign, never a plain re-approve
     seen_short: str = ""  # "sha256 ab1e…7f" of `seen`, named by the inline confirm
     feedforward: str = ""  # rule text under the gated text: what the primary action does and does not do
     diff: list[dict] | None = None  # re-approve: the approved snapshot against the current text (story.diff)
@@ -249,7 +250,9 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
             gate = "requirements"
             excerpt = (f"The epic and {len(kids)} {'child' if len(kids) == 1 else 'children'}: " + ", ".join(kids)
                        if kids else "The epic, no children yet.")
-            if kind == "approve-epic":
+            if kind == "approve-epic" and item.get("factory"):
+                excerpt = steps_mod.resign_why(item) + "\n" + excerpt
+            elif kind == "approve-epic":
                 excerpt = "Changed since your approval: " + (detail or "the epic's own text") + "\n" + excerpt
         elif kind == "approve-requirements":
             gate, excerpt = "requirements", _excerpt(t.section("Requirements"))
@@ -336,6 +339,7 @@ def decisions(ws, *, now: datetime | None = None, events: list | None = None,
                              diff=diff, approved_day=approved_day,
                              criteria=criteria, verification=t.section("Verification") if kind == "verdict" else "", widgets=widgets,
                              harness=harness, priority=t.meta.get("priority"), charter=charter,
+                             resign=bool(charter and item.get("factory")),
                              art=artifact_scope(t, ws), artifacts=len(artifact_entries(t)),
                              held=item.get("factory_epic"), **_epic_group(ws, t, epic_index)))
     return out

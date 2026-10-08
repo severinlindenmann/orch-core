@@ -812,7 +812,7 @@ def test_factory_list_order_counts_and_menu(dws, fa, human, close_tasks, monkeyp
     monkeypatch.setattr(factory_runner, "user_settings_blocker", lambda environ=None: calls.append(1))
     html = c.get("/factory").text
     assert len(calls) == 1  # read once for the whole list
-    assert "4 factories, 1 working, 1 needs you" in html
+    assert "4 factories, 1 working, 2 ended, 1 needs you" in html
     assert re.findall(r'data-factory="([A-Z]+-\d+)"', html) == [waiting, working, paused, finished]
     row = html.split(f'data-factory="{working}"', 1)[1].split("</li>\n", 1)[0]
     assert ">Dark AI Factory<" in row and "chip-ok" in row and row.count('class="step-mark is-') == 5
@@ -822,12 +822,12 @@ def test_factory_list_order_counts_and_menu(dws, fa, human, close_tasks, monkeyp
 def test_factory_list_counts_stopped_as_needing_you(dws, fa, human, dark_request):
     c, eid, cid, r = dark_request
     permits.permit_deny(dws, human, r["id"], expected_sha=r["sha"])
-    assert "1 factory, 0 working, 1 needs you" in c.get("/factory").text
+    assert "1 factory, 0 working, 0 ended, 1 needs you" in c.get("/factory").text
 
 
 def test_factory_list_empty_state_and_no_menu_entry_while_off(fws, configure):
     html = _client(fws).get("/factory").text
-    assert "No factories yet" in html and "0 factories, 0 working, 0 need you" in html
+    assert "No factories yet" in html and "0 factories, 0 working, 0 ended, 0 need you" in html
     assert 'href="/factory"' not in _client(configure(factory={"enabled": False})).get("/").text
 
 

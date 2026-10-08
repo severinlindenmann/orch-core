@@ -553,15 +553,24 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             close: Annotated[bool, typer.Option(
                 "--close", help="With --dark: close the epic by itself when everything is proven. This replaces "
                                 "your verdict for this run; Reopen stays yours.")] = False,
+            end_factory: Annotated[bool, typer.Option(
+                "--end-factory", help="Epics with a factory run: end it on purpose and approve the epic without a "
+                                      "delegation (sessions end, nothing is released, the children stay). Without "
+                                      "any delegation option, approving such an epic re-signs its charter as "
+                                      "signed.")] = False,
             dry_run: DryRunOpt = False, json_out: JsonOpt = False) -> None:
     """Approve the requirements or plan gate. Human only.
 
     On an epic this approves its charter: the epic's requirements and every child that is not done (in any status),
     its requirements and its plan, all printed before the typed confirmation; the approval binds exactly what was
     printed. `orch approve <epic> plans` approves only the children's plans that wait for approval (in progress or
-    waiting), each printed with its hash, after one typed confirmation of the epic's key."""
+    waiting), each printed with its hash, after one typed confirmation of the epic's key. On an epic with a factory
+    run, the approval re-signs the same charter (printed first) unless --factory, --dark or --end-factory says
+    otherwise."""
     from orch.core import epics, store
     ws = _ws()
+    if end_factory and (delegate or factory or dark):
+        raise UsageError("--end-factory signs the epic without a delegation: pass no --delegate, --factory or --dark")
     if dark:
         from orch.core.permits import dark_on
         if not dark_on(ws):
@@ -591,7 +600,7 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
             limits["close"] = True
     target = store.resolve(ws, ref)
     if gate == "plans":
-        if delegate:
+        if delegate or end_factory:
             raise UsageError("delegation is given when approving an epic's requirements")
         if despite_open_question and despite_on is not None:
             raise UsageError("pass --despite-open-question or --despite-open-question-on KEY,..., not both")
@@ -604,12 +613,26 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         from orch.cli_epic import render_charter
         epic_t = store.load(ws, target.id)[1]
         kids = epics.open_children(ws, epic_t)
-        chosen = epics.normalize_delegate(limits)
+        run = epics.factory_charter(ws, epic_t.id)
+        resign = run is not None and limits is None and not end_factory  # keeps the run: the same charter again
+        chosen = epics.normalize_delegate(dict(run["delegate"]) if resign else limits)
         content = epics.charter(ws, epic_t, chosen, tickets=kids)["content_hash"]
-        t = _human_op(ws, ref, lambda ops, kw: ops.approve(ref, gate, despite_open_question=despite_open_question,
-                                                           delegate=limits, **kw),
-                      lambda p: "\n".join(render_charter(ws, epic_t, kids, chosen)
-                                          + [f"{p.id}: approve the epic as shown ({_short(content)})"]),
+        if resign:
+            head = ([f"Re-sign the {'Dark' if chosen.get('dark') else 'AI Factory'} charter of {epic_t.id}, as "
+                     "signed:"] + [f"  - {x}" for x in epics.charter_checklist(chosen)]
+                    + [f"  (to end the run instead: orch approve {epic_t.id} requirements --end-factory)"])
+            call = (lambda ops, kw: ops.resign_factory(ref, charter=run["delegation"],
+                                                       despite_open_question=despite_open_question, **kw))
+            verb = "re-sign the charter over the epic as shown"
+        else:
+            head = (["End the factory run: its sessions end, nothing more is released, the children stay."]
+                    if end_factory else [])
+            call = (lambda ops, kw: ops.approve(ref, gate, despite_open_question=despite_open_question,
+                                                delegate=limits, end_factory=end_factory, **kw))
+            verb = "end the factory run and approve the epic as shown" if end_factory else "approve the epic as shown"
+        t = _human_op(ws, ref, call,
+                      lambda p: "\n".join(head + render_charter(ws, epic_t, kids, chosen)
+                                          + [f"{p.id}: {verb} ({_short(content)})"]),
                       bound={"expected_hash": content}, dry_run=dry_run, json_out=json_out)
         if dry_run:
             return _dry(ws, t, json_out, f"{t.id}: would approve the epic ({_short(content)}), status then {t.status}")
@@ -617,7 +640,7 @@ def approve(ref: str, gate: Annotated[str, typer.Argument(help="requirements | p
         text = "\n".join([f"{t.id}: {gate} approved (status {t.status})"]
                          + charter_lines(epics.summary(ws, store.load(ws, t.id)[1])))
         return _out(_view(ws, t), json_out, text)
-    if delegate:
+    if delegate or end_factory:
         raise UsageError("delegation is given when approving an epic")
     from orch.core.gates import GATE_SECTIONS, gate_hash
     if gate not in GATE_SECTIONS:

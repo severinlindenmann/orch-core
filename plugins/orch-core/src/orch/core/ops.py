@@ -879,12 +879,14 @@ class Ops(TaskOpsMixin):
 
     def approve(self, ref: str, gate: str, *, expected_hash: str | None = None,
                 despite_open_question: bool = False, delegate: dict | None = None,
-                skip_if_signed: bool = False) -> Ticket:
+                skip_if_signed: bool = False, end_factory: bool = False) -> Ticket:
         """`skip_if_signed` (batch approval): a gate already approved for exactly this hash is refused with
         "already approved" under the ticket lock, so two batches never sign the same plan twice.
         `despite_open_question`: the human read the gate and approves although a line looks like an open question
         for them (recorded in the event and the ledger). For an epic, `expected_hash` is the charter's hash and
-        `delegate` ({max_children, max_size}, {} for the defaults) opts in to delegation (orch.core.epics)."""
+        `delegate` ({max_children, max_size}, {} for the defaults) opts in to delegation (orch.core.epics).
+        `end_factory`: an epic whose latest charter is a factory one is approved without a factory delegation only with
+        it (ending the run on purpose); without it that approval is refused, so an old or forged form fails closed."""
         require_human(self.actor, "approving gates")
         _require_seen(expected_hash, "an approval")
         if gate not in GATE_SECTIONS:
@@ -892,7 +894,9 @@ class Ops(TaskOpsMixin):
         target = store.resolve(self.ws, ref)
         if (target.meta or {}).get("type") == "epic":
             return self._approve_epic(target.id, gate, expected_hash=expected_hash,
-                                      despite=despite_open_question, delegate=delegate)
+                                      despite=despite_open_question, delegate=delegate, end_factory=end_factory)
+        if end_factory:
+            raise UsageError("--end-factory goes with an epic's approval")
         if delegate is not None:
             raise UsageError("delegation is given when approving an epic", hint="orch approve <epic> requirements --delegate")
 
@@ -1007,14 +1011,21 @@ class Ops(TaskOpsMixin):
 
     # -- epics -----------------------------------------------------------------------
 
-    def _approve_epic(self, eid: str, gate: str, *, expected_hash, despite: bool, delegate) -> Ticket:
+    def _approve_epic(self, eid: str, gate: str, *, expected_hash, despite: bool, delegate, end_factory: bool = False,
+                      resign_of: str | None = None) -> Ticket:
         """The charter approval: the epic's requirements and every open child's requirements and plan, in one
-        signed decision. Everything is checked before anything is signed or written."""
+        signed decision. Everything is checked before anything is signed or written. While the epic's latest charter
+        is a factory one (running, paused, out of budget or edited), an approval without a factory delegation ends
+        that run: it is signed only with `end_factory`, and records which delegation it ended. `resign_of`: the
+        factory delegation the human re-signs (resign_factory), checked under the lock."""
         from orch.core import epics
         from orch.core.gates import gate_meta, gate_parts
         if gate != "requirements":
             raise UsageError(f"{eid} is an epic: it has only the requirements gate (its children have plans)",
                              hint=f"orch approve {eid} requirements")
+        if end_factory and delegate is not None:
+            raise UsageError("ending the factory run signs the epic without a delegation: pass no --delegate, "
+                             "--factory or --dark with --end-factory")
         if isinstance(delegate, dict) and delegate.get("factory"):
             from orch.core.permits import enabled, off_reason
             if not enabled(self.ws):
@@ -1037,6 +1048,18 @@ class Ops(TaskOpsMixin):
         def fn(t: Ticket) -> dict:
             if t.status not in ("backlog", "open"):
                 raise TransitionError(f"epics are approved in backlog or open; {t.id} is {t.status}")
+            run = epics.factory_charter(self.ws, t.id)  # the factory run this approval keeps or ends
+            if resign_of is not None and (run is None or run.get("delegation") != resign_of):
+                raise ValidationError(f"the charter of {t.id} changed since you opened it: nothing was signed",
+                                      hint="reload the page and review again")
+            if end_factory and run is None:
+                raise ValidationError(f"{t.id} has no factory run to end: nothing was signed")
+            if run is not None and not (delegate or {}).get("factory") and not end_factory:
+                raise ValidationError(
+                    f"{t.id} runs under an AI Factory charter: approving it without the factory would end the run, "
+                    "so nothing was signed",
+                    hint=f"re-sign the same charter: orch approve {t.id} requirements; or end the run on purpose: "
+                         f"orch approve {t.id} requirements --end-factory")
             kids = epics.open_children(self.ws, t)  # read once: checked and hashed from the same objects
             ch = epics.charter(self.ws, t, delegate, tickets=kids)
             if expected_hash != ch["content_hash"]:
@@ -1065,7 +1088,8 @@ class Ops(TaskOpsMixin):
             self._sign_approval(t, gate, bool(asks))
             self._ledger(t, "charter", charter=ch["hash"], epic_hash=ch["epic_hash"], hash_v=ch["hash_v"],
                          children=ch["children"], delegate=delegate,
-                         **({"delegation": ch["hash"]} if delegate else {}))
+                         **({"delegation": ch["hash"]} if delegate else {}),
+                         **({"ends_factory": run["delegation"]} if end_factory else {}))
             moved_to = None
             if t.status == "backlog":
                 check_move(t, "open", self.actor, plan_skip_sizes=self._skip_sizes)
@@ -1073,16 +1097,42 @@ class Ops(TaskOpsMixin):
             covered.update(ch=ch)
             ids = [c["id"] for c in ch["children"]]
             # the delegation's limits stay out of the file (event and ledger only)
-            self._log(t, "approved the epic" + (f" with {', '.join(ids)}" if ids else "")
+            self._log(t, ("ended the factory run and approved the epic" if end_factory
+                          else "re-signed the factory charter" if resign_of else "approved the epic")
+                      + (f" with {', '.join(ids)}" if ids else "")
                       + (" despite an open-question line" if asks else "")
                       + (f" → {moved_to}" if moved_to else ""))
             return {"gate": gate, "hash": t.meta["gates"][gate]["hash"], "hash_v": HASH_VERSION,
                     "charter": ch["hash"], "children": ids, "delegate": delegate,
+                    **({"ends_factory": run["delegation"]} if end_factory else {}),
+                    **({"resigns": resign_of} if resign_of else {}),
                     **({"despite_open_question": True} if asks else {})}
 
         epic = self._mutate(eid, "gate.approved", fn)
         for c in covered["ch"]["children"]:
             self._cover_child(c, epic.id, covered["ch"]["hash"])
+        return epic
+
+    def resign_factory(self, ref: str, *, expected_hash: str | None, charter: str | None,
+                       despite_open_question: bool = False) -> Ticket:
+        """Re-sign the epic's factory charter as it is signed (mode, release, rollback, close, limits) over the epic and
+        its children as shown now (`expected_hash`, the content hash). `charter`: the factory delegation the human
+        was shown; another one signed since refuses it. The runner stays armed when the run was."""
+        require_human(self.actor, "approving gates")
+        _require_seen(expected_hash, "an approval")
+        from orch.core import epics, factory_sessions
+        target = store.resolve(self.ws, ref)
+        if not epics.is_epic(target.meta or {}):
+            raise UsageError(f"{target.id} is not an epic")
+        run = epics.factory_charter(self.ws, target.id)
+        if run is None or not charter or run.get("delegation") != charter:
+            raise ValidationError(f"{target.id} has no factory charter to re-sign as shown: nothing was signed",
+                                  hint="reload the page and review again")
+        epic = self._approve_epic(target.id, "requirements", expected_hash=expected_hash,
+                                  despite=despite_open_question, delegate=dict(run["delegate"]), resign_of=charter)
+        d = epics.delegation(self.ws, epic)
+        if not self.dry_run and d and d["id"] != charter and factory_sessions.armed(self.ws, charter):
+            factory_sessions.arm(self.ws, self.actor, d["id"])  # the run goes on as it was started
         return epic
 
     def approve_plans(self, ref: str, expected: dict, *,

@@ -190,10 +190,36 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
              rows=rows, approve=approve, proof=proof, unready=[c["blocker"] for c in approve if c["blocker"]], verdict_seen=epics.verdict_hash(kids.values(), ws),
              verdict_ready=bool(open_kids) and all(r["card"]["status"] == "testing" for r in open_kids)
              and epic.status == "open" and not changed, verdict_changed=changed, unreleased=_unreleased(ws, epic),
+             # offered only when an approval is missing: a child the signed charter does not list but its delegation
+             # covers (the planner's, under a running factory) needs none (the live run's trap: a plain Re-approve
+             # there ended the run)
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
-                                          or any(v != "unchanged" for v in changes.values())
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
+    s.update(run=_run(ws, epic, s, rows))
+    fr = epics.factory_run(ws, epic) if s["run"] is None else None
+    # an ended run keeps its run view (linked here), and one ended by you offers a new start in the approval
+    s.update(run_ended=fr is not None, restart=bool(fr and fr.get("ended_by") and epic.status == "open"))
     return s
+
+
+def _run(ws, epic, s, rows) -> dict | None:
+    """The epic's factory run while a later charter has not ended it (epics.factory_charter): what re-signing it
+    signs again, and why a re-signature is needed (only when `reapprove` says one is). None otherwise."""
+    run = epics.factory_charter(ws, epic.id)
+    if run is None or epic.status == "done":
+        return None
+    try:
+        d = epics.normalize_delegate(dict(run["delegate"]))
+    except Exception:
+        return None  # a charter orch cannot read again offers nothing to re-sign (Ops refuses it too)
+    why = None
+    if s["reapprove"]:
+        kids = [r["card"]["id"] for r in rows if r["state"] in ("changed", "new", "paused")]
+        why = ("The epic's text changed: re-sign the charter to continue" if s["diff"]["epic_changed"]
+               else f"{', '.join(kids)} changed since the charter: re-sign the charter to continue" if kids
+               else "The epic's children changed: re-sign the charter to continue")
+    return {"charter": run["delegation"], "dark": bool(d.get("dark")), "checklist": epics.charter_checklist(d),
+            "name": "Dark charter" if d.get("dark") else "AI Factory charter", "why": why}
 
 
 def _unreleased(ws, epic):

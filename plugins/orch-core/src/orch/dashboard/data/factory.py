@@ -193,16 +193,16 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
            "windowlook": ("you", 0, "Window needs a look"), "relhold": ("you", 0, "Release waits"),
-           "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("you", 0, "Edited"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
            "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished"),
            "asks": ("you", 0, "Question in its pane"), "hung": ("warn", 0, "Busy, screen unchanged"),
            "parked": ("you", 0, "Session ended"), "launches": ("warn", 0, "Launches used up"),
            "children": ("warn", 0, "Children limit"), "accepted": ("you", 0, "Needs you"),
-           "unready": ("you", 0, "Needs you")}
+           "unready": ("you", 0, "Needs you"), "ended": ("neu", 3, "Ended by you")}
 NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children",
-             "windowlook", "relhold", "accepted", "unready")
+             "windowlook", "relhold", "accepted", "unready", "changed")
 BUSY_MINUTES = 20  # a session busy this long with an unchanged screen (its spinner aside) gets a warning
 
 
@@ -298,11 +298,15 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
     clones = _clone_failures(ws, kids)
     # the chip says the state in a word or two; the headline gives the reason, once, in the same style everywhere
     from orch.core import factory_close
-    auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") else None
+    ended_by = d.get("ended_by")  # a later charter without the factory ended this run (epics.factory_run)
+    auto = factory_close.view(ws, epic, d, signed=signed) if d.get("close") and ended_by is None else None
     all_done = epic.status == "open" and bool(kids) and all(t.status == "done" for _, t in kids)
     early_done = _accepted_early(ws, epic, d, kids)
     unready = None
-    if lit[-1]:
+    if ended_by is not None:
+        state, headline = "ended", ("You ended the factory run" if ended_by.get("ends_factory")
+                                    else "You approved the epic again without the factory, which ended the run")
+    elif lit[-1]:
         how = _last_close(signed, eid)
         said = "You closed it" if how.get("kind") == "close" else "You gave the verdict"
         state, headline = "finished", ("Closed by itself under your charter" if auto and auto["by_charter"]
@@ -319,7 +323,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = (("budget", "Agents stopped on this epic") if only_budget
                            else ("stopped", "The agents cannot go on by themselves"))
     elif d["epic_changed"]:
-        state, headline = "changed", "The epic's text changed since you started it"
+        state, headline = "changed", "The epic's text changed: re-sign the charter to continue"
     elif trusting := [b for b in running if factory_sessions.at_trust_question(b["session"])]:
         state, headline = "trust", "; ".join(factory_runner.trust_line(b) for b in trusting)
     elif asks := _showing(running, "ask", factory_runner.IDLE_SECONDS):
@@ -375,9 +379,26 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         role = "ok"  # a Dark run that works: the mint look of its panel, not the AI Factory's blue
     start = _at(d.get("at"))
     end = clock.now()
-    if state == "finished":
-        end = max((_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given"
-                   and _at(e.at)), default=end)
+    # an ended run: how it ended, from the signed ledger (the charter that ended it, the verdict or close, the pause)
+    # or the budget, and when; it counts apart from the working ones and sorts last
+    kind, end_at = None, None
+    if state == "ended":
+        kind, end_at = "Ended by you", _at(ended_by.get("at"))
+    elif state == "finished":
+        kind = "Finished"
+        end_at = _at(_last_close(signed, eid).get("at")) or max(
+            (_at(e.at) for e in events if str(e.ticket).upper() == eid and e.kind == "verdict.given" and _at(e.at)),
+            default=None)
+    elif state == "paused":
+        kind, end_at = "Paused", _at(d.get("paused_at"))
+    elif d.get("expired"):
+        kind, end_at = "Stopped", start + timedelta(hours=d["max_hours"]) if start else None
+    ended = ({"kind": kind, "restart": state == "ended" and epic.status == "open",
+              "why": f"Its time budget of {d['max_hours']} hours is used up" if kind == "Stopped" else headline}
+             if kind else None)
+    if ended:
+        rank = 3
+        end = min(end, end_at) if end_at else end
     # the ring: done = solid thin, the current step thick (now), dashed (waiting for you) or amber (stopped)
     here = {"asks": "wait", "parked": "wait", "hung": "now", "working": "now", "planning": "now", "releasing": "now", "waiting": "wait", "asleep": "wait", "unarmed": "todo",
             "nokids": "todo", "slot": "todo", "idle": "todo", "finished": "todo", "window": "todo",
@@ -397,6 +418,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
             "clones": clones, "stalled": stalled if state == "stalled" else [], "asks": asks if state == "asks" else [],
             "hung": hung if state == "hung" else [], "max_launches": factory_sessions.MAX_LAUNCHES,
             "state": state, "role": role, "rank": rank, "chip": chip, "headline": headline, "blocker": blocker,
+            "ended": ended,
             "steps": n, "current": current, "step": names[current], "live": live, "names": names,
             "arc": _arc(current, len(names)), "release": rel, "window": window, "held": held, "auto": auto,
             "all_done": all_done, "early_done": early_done, "unready": unready or [],
@@ -620,7 +642,7 @@ def run_view(ws, epic) -> dict | None:
     from orch.core import dark_profile, ledger
     from orch.core.events import read_events
     signed, events, entries = ledger.entries(ws), read_events(ws), store.scan(ws)
-    d = permits.factory_delegation(ws, epic, signed)
+    d = epics.factory_run(ws, epic, signed)  # live or ended: an ended run keeps its view
     if d is None:
         return None
     view = permit_view(ws)
@@ -631,7 +653,7 @@ def run_view(ws, epic) -> dict | None:
     r["log"] = _epic_events(events, ids, frozenset(i for i in ids if factory_close.charter_status(ws, i, signed)))
     r["profile_empty"] = r["look_dark"] and r["state"] != "finished" and not dark_profile.rules(ws, signed)
     r["permits"] = {**view, **r["mine"], "grants": [g for g in view["grants"] if str(g["epic"]).upper() == epic.id.upper()]}
-    if r["state"] == "finished":
+    if r["ended"]:
         reqs = [x for x in permits.requests(ws, events).values() if str(x["epic"]).upper() == epic.id.upper()]
         answered = permits.decisions(ws, signed)
         listed = dark_profile.rules(ws, signed)
@@ -646,13 +668,16 @@ def run_view(ws, epic) -> dict | None:
         r["summary"] = {"children": len(r["kids"]), "tasks": sum(_tasks(t)[0] for _, t in r["kids"]),
                         "requests": len(reqs), "card": card, "profile": profile, "open": len(reqs) - card - profile,
                         # closed by the charter: what the runner's own record says was proven when it closed
-                        "auto": (r["auto"] or {}).get("closed") if (r["auto"] or {}).get("by_charter") else None}
+                        "auto": (r["auto"] or {}).get("closed") if (r["auto"] or {}).get("by_charter") else None,
+                        "done": sum(1 for _, t in r["kids"] if t.status == "done"), "took": r["elapsed"],
+                        "stages": [s["name"] for s in (r["release"] or {}).get("stages") or []
+                                   if s.get("state") == "proven"]}
     return r
 
 
 def factory_list(ws) -> list[dict] | None:
-    """Every factory epic of this workspace (AI Factory and Dark), needs-you first, then working, stopped, finished;
-    None while the factory is off."""
+    """Every factory epic of this workspace (AI Factory and Dark), needs-you first, then working, stopped, and the
+    ended runs last (`ended`: finished, ended by you, paused, out of budget); None while the factory is off."""
     if not permits.enabled(ws):
         return None
     from orch.core import ledger
@@ -667,7 +692,7 @@ def factory_list(ws) -> list[dict] | None:
             epic = store.read_ticket(e.path)
         except Exception:
             continue
-        d = permits.factory_delegation(ws, epic, signed)
+        d = epics.factory_run(ws, epic, signed)  # ended runs stay listed, counted apart
         if d is not None:
             out.append(run_status(ws, epic, d, view, signed=signed, events=events, entries=entries,
                                   blocker=blocker, bound=bound, checks=checks))
@@ -684,7 +709,7 @@ def factory_epic_ids(ws, entries) -> set[str]:
         if e.meta is None or not epics.is_epic(e.meta):
             continue
         try:
-            if permits.factory_delegation(ws, store.read_ticket(e.path), signed):
+            if epics.factory_run(ws, store.read_ticket(e.path), signed):  # its run view exists, ended or not
                 out.add(e.id.upper())
         except Exception:
             continue

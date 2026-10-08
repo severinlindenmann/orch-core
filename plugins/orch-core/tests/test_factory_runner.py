@@ -1510,6 +1510,9 @@ def test_agent_may_commit_false_means_no_commit_prompt_and_no_release_run(fws, f
     real = permits.factory_delegation  # the charter as if it signed a release up to merge
     monkeypatch.setattr(permits, "factory_delegation",
                         lambda *a, **k: (lambda x: x and {**x, "release": "merge"})(real(*a, **k)))
+    from orch.core import epics
+    run = epics.factory_run  # the run view reads the run, live or ended
+    monkeypatch.setattr(epics, "factory_run", lambda *a, **k: (lambda x: x and {**x, "release": "merge"})(run(*a, **k)))
     lines = _tick(fws, human, fake)
     assert not fake.started and any(f"not starting anything for {eid}: its charter signs a release" in x
                                     for x in lines)

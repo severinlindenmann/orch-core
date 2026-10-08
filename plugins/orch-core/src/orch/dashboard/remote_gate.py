@@ -96,9 +96,10 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/addons/{name}/refresh"): OPERATE,
     ("POST", "/addons/{name}/decisions"): OPERATE,  # an addon's decision applies an intent as the human
     # -- whatever makes the host run something
-    ("POST", "/terminals/new"): TYPE, ("POST", "/terminals/{name}/keys"): TYPE,
+    # a start (a new session, an agent) is never on the typing lease: each needs its own fresh assertion
+    ("POST", "/terminals/new"): _t(Scope.TYPE, fresh=True), ("POST", "/terminals/{name}/keys"): TYPE,
     ("POST", "/terminals/{name}/size"): TYPE, ("POST", "/terminals/{name}/end"): TYPE,
-    ("POST", "/t/{ref}/agent/start"): TYPE,
+    ("POST", "/t/{ref}/agent/start"): _t(Scope.TYPE, fresh=True),
     ("POST", "/schedules/{sid}/run"): TYPE,  # starts an agent run on the host
     ("POST", "/schedules/{sid}/arm"): _t(Scope.TYPE, fresh=True),  # lets agents run on a clock, like the factory's start
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),
@@ -107,7 +108,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/quick/add"): OPERATE, ("POST", "/quick/{qid}/done"): OPERATE, ("POST", "/quick/{qid}/release"): OPERATE,
     ("POST", "/quick/{qid}/promote"): OPERATE,
     ("POST", "/quick/{qid}/reopen"): DECIDE, ("POST", "/quick/{qid}/drop"): DECIDE,
-    ("POST", "/quick/{qid}/agent/start"): TYPE,  # starts an agent on the host, like a ticket's Start agent
+    ("POST", "/quick/{qid}/agent/start"): _t(Scope.TYPE, fresh=True),  # starts an agent on the host, like a ticket's Start agent
     # -- never remote: the whole Workspace family (phones, permissions, addon install/update/trust/enable/disable,
     # settings, the agent-HTML switch, update-all), and anything that serves or starts the dashboard
     ("GET", "/workspace"): NO,

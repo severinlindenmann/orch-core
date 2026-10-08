@@ -173,7 +173,8 @@ def test_scope_ladder_on_a_few_real_routes(app, put):
     assert not ok(call(app, "POST", f"/t/{tid}/answer", remote=origin(Scope.LOOK), body=b"qid=q1&qhash=x", headers=FORM)[0])
     assert ok(call(app, "POST", f"/t/{tid}/answer", remote=origin(Scope.DECIDE), body=b"qid=q1&qhash=x", headers=FORM)[0])
     assert not ok(call(app, "POST", "/terminals/new", remote=origin(Scope.OPERATE))[0])
-    assert ok(call(app, "POST", "/terminals/new", remote=origin(Scope.TYPE))[0])
+    assert not ok(call(app, "POST", "/terminals/new", remote=origin(Scope.TYPE))[0])  # a start needs its own assertion
+    assert ok(call(app, "POST", "/terminals/new", remote=origin(Scope.TYPE, fresh=True))[0])
 
 
 def test_the_refusal_is_a_readable_page(app):

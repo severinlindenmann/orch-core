@@ -55,7 +55,7 @@ def subject(ws, kind: str, route_path: str, pp: dict, params, method: str, targe
     try:
         if b";" in body or not body.isascii():
             return None  # the route's form parser splits on ";" in some shapes and reads bytes as latin-1
-        if kind != "action" and (params is None or any(len(v) > 1 for k, v in params.items() if k != "acs")):
+        if kind not in ("action", "start_terminal") and (params is None or any(len(v) > 1 for k, v in params.items() if k != "acs")):
             return None  # a field twice: the route may read another occurrence than the one shown
         return _BUILD[kind](ws, route_path, pp, params, method, target, body)
     except Exception:  # noqa: BLE001 - no subject, no challenge
@@ -145,4 +145,103 @@ def _action(ws, route_path, pp, params, method, target, body):
                     f"{permits.shown(text)}", digest)
 
 
-_BUILD = {"permission": _permission, "charter": _charter, "verdict": _verdict, "action": _action}
+# -- starts: what a new session or an agent will run. Never on the typing lease; each is its own assertion. The state
+# is read once. The session name shown is the one free now; the host builds this subject a second time when the
+# assertion arrives and refuses a run whose shown text or digest moved (a name taken, a title edited).
+
+def _start(shown: str, **fields):
+    return _subject("action", shown, _bound(**fields))
+
+
+def _text(value) -> str:
+    from orch.core import permits
+    return permits.shown(value)
+
+
+def _where(terminal: str) -> str:
+    return "Mission Control terminals" if terminal == "tmux" else f"a {_text(terminal)} window"
+
+
+def _start_terminal(ws, route_path, pp, params, method, target, body):
+    from orch.dashboard import launch, terminals
+    from orch.dashboard.data import agent_start
+    if body or not terminals.addon_on(ws) or not terminals.available():  # the route reads no field: no body at all
+        return None
+    harness = terminals.settings(ws.root)["harness"]
+    template = agent_start.harnesses(ws, launch.load_settings()).get(harness)
+    if not template:
+        return None
+    argv, root, name = terminals.scratch_argv(template), str(ws.root), terminals.free_name(ws, "scratch")
+    return _start(f"Start a new terminal session {name} running {_text(harness)} with no prompt, in {_text(root)}. "
+                  f"Command: {_text(' '.join(argv))}", kind="start_terminal", session=name, harness=harness,
+                  cwd=root, argv=argv)
+
+
+def _start_agent(ws, route_path, pp, params, method, target, body):
+    import os
+    import sys
+    from orch.dashboard import launch, terminals
+    t = _ticket(ws, pp.get("ref"))
+    mode, harness = _one(params, "mode"), _one(params, "harness")
+    nxt, where, another = _one(params, "next"), _one(params, "where"), _one(params, "another")
+    if not mode or not harness or "\0" in (mode, harness, nxt, where, another):
+        return None
+    settings = launch.load_settings()
+    terminal = "tmux" if where == "tmux" else launch.choose(os.environ, settings["terminal"], sys.platform)
+    if terminal == "none" or (terminal == "tmux" and not terminals.addon_on(ws)):
+        return None
+    session = terminals.free_name(ws, t.id) if terminal == "tmux" else t.id
+    more = " alongside the one already running" if another == "1" else ""
+    route = _routing(ws, t.id, mode, harness)
+    if route is False:
+        return None
+    # the title is agent-writable text: quoted and last, so it cannot read as part of the sentence
+    return _start(f"Start an agent. Harness {_text(harness)}, mode {_text(mode)}, in {_where(terminal)} as session "
+                  f"{session}{more}.{route[0]} Ticket {t.id} titled: \"{_text(t.title)}\"", kind="start_agent",
+                  ticket=t.id, title=t.title, mode=mode, harness=harness, terminal=terminal, session=session,
+                  another=another, next=nxt, where=where, routing=route[1])
+
+
+def _routing(ws, ticket, mode, harness):
+    """(sentence, bound fields) for what an addon with `launch` chooses for this start (model, environment names, a
+    prompt note): the route applies it, so the sheet shows it. False when the addon cannot plan (the route refuses)."""
+    from orch.addons import launching
+    from orch.addons.api import LaunchRequest
+    try:
+        r = launching.resolve(ws, LaunchRequest(ticket, mode, harness), strict=True)
+    except Exception:  # noqa: BLE001 - the route refuses it too: no sheet
+        return False
+    if r is None or not r.active:
+        return "", None
+    names = ", ".join(_text(k) for k, _ in r.env)
+    parts = [f"model {_text(r.model)}" if r.model else "", f"environment {names}" if names else "",
+             "a note added to the prompt" if r.note else ""]
+    return (" An addon chooses: " + "; ".join(x for x in parts if x) + ".",
+            {"model": r.model, "env": [list(e) for e in r.env], "note": r.note, "label": r.label})
+
+
+def _start_quick(ws, route_path, pp, params, method, target, body):
+    import os
+    import sys
+    from orch.core import quick
+    from orch.dashboard import launch, terminals
+    from orch.dashboard.data import agent_start
+    t = quick.load(ws, pp.get("qid"))
+    where, nxt = _one(params, "where"), _one(params, "next")
+    if "\0" in (where, nxt) or t["status"] != "open" or t.get("outgrew"):
+        return None
+    settings = launch.load_settings()
+    terminal = "tmux" if where == "tmux" else launch.choose(os.environ, settings["terminal"], sys.platform)
+    if terminal == "none" or (terminal == "tmux" and not terminals.addon_on(ws)):
+        return None
+    harness = terminals.settings(ws.root)["harness"] if terminal == "tmux" else agent_start.default_harness(ws, settings)
+    if not harness:
+        return None
+    session = terminals.free_name(ws, t["id"]) if terminal == "tmux" else t["id"]
+    return _start(f"Start an agent. Harness {_text(harness)}, in {_where(terminal)} as session {session}. "
+                  f"Quick task {t['id']} titled: \"{_text(t['title'])}\"", kind="start_quick", task=t["id"],
+                  title=t["title"], harness=harness, terminal=terminal, session=session, where=where, next=nxt)
+
+
+_BUILD = {"permission": _permission, "charter": _charter, "verdict": _verdict, "action": _action,
+          "start_terminal": _start_terminal, "start_agent": _start_agent, "start_quick": _start_quick}

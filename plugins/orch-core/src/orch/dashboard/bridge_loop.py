@@ -127,11 +127,25 @@ def _form(meta, data, query: str):
     return params
 
 
-# The routes that type into or start something on the host and so need the typing lease. Every other Type route
-# keeps what it had (Type alone, or a fresh assertion where the gate says so).
-LEASE_ROUTES = frozenset({("POST", "/terminals/new"), ("POST", "/terminals/{name}/keys"),
-                          ("POST", "/terminals/{name}/size"), ("POST", "/terminals/{name}/end"),
-                          ("POST", "/t/{ref}/agent/start"), ("POST", "/quick/{qid}/agent/start")})
+# The routes that type into a terminal and so need the typing lease. A lease never authorises a start: a new session
+# and an agent start need their own fresh assertion (START_ROUTES). Every other Type route keeps what it had (Type
+# alone, or a fresh assertion where the gate says so).
+LEASE_ROUTES = frozenset({("POST", "/terminals/{name}/keys"), ("POST", "/terminals/{name}/size"),
+                          ("POST", "/terminals/{name}/end")})
+# route -> the subject builder (factory_remote._BUILD) of a start: the person approves exactly what starts.
+START_ROUTES = {"/terminals/new": "start_terminal", "/t/{ref}/agent/start": "start_agent",
+                "/quick/{qid}/agent/start": "start_quick"}
+_LEASE_ALL = "The same unlock lets this device type into every terminal on this computer for 15 minutes."
+_TERMINAL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def lease_subject(route_path, pp) -> dict:
+    """The sheet text for a typing lease: the terminal the request names (when its path does), and the plain fact that
+    the lease covers every terminal for 15 minutes."""
+    name = pp.get("name") if route_path else None
+    head = f"Type into terminal {name} for 15 minutes." if isinstance(name, str) and _TERMINAL.fullmatch(name) \
+        else "Type into terminals on this computer for 15 minutes."
+    return {"kind": "lease", "shown": f"{head} {_LEASE_ALL}", "digest": ""}
 
 
 def route_hook(routes, ws=None):
@@ -142,9 +156,11 @@ def route_hook(routes, ws=None):
     stale request gets no challenge (R13). Without `ws`, or for a fresh route with no subject builder, no assertion
     is asked for and the gate refuses it (no origin is fresh). The gate decides every route again on the request
     as received, so this can only refuse more than the gate, never less. A Type route that is not fresh and is one of
-    LEASE_ROUTES (terminal keys, size, end, new, Start agent) asks the library for the typing lease instead: a
+    LEASE_ROUTES (terminal keys, size, end) asks the library for the typing lease instead: a
     platform-authenticator assertion bound to the device, valid 15 minutes from the unlock (a run inside it does not
-    extend it), given only to input sent on a stream the device itself opened. Other Type routes are as they were."""
+    extend it), given only to input sent on a stream the device itself opened. A new session and an agent start
+    (START_ROUTES) are never on the lease: each needs a fresh assertion over a subject that says what starts.
+    Other Type routes are as they were."""
     from orch.dashboard.factory_remote import subject
     from orch.dashboard.remote_gate import factory_need, match_route, tag_for
 
@@ -165,21 +181,27 @@ def route_hook(routes, ws=None):
         route = match_route(routes, scope)
         lease = tag.scope is Scope.TYPE and not tag.fresh and route is not None \
             and (method, route.path) in LEASE_ROUTES
-        plain = Requirement(tag.scope.name.lower(), "lease" if lease else "none")
-        if ws is None:
-            return plain
         route_path = route.path if route is not None else None
         pp = route.matches(scope)[1].get("path_params", {}) if route is not None else {}
+        plain = Requirement(tag.scope.name.lower(), "lease" if lease else "none",
+                            lease_subject(route_path, pp) if lease else None)
+        if ws is None:
+            return plain
         needed, kind = tag.scope, None
         if route_path == "/permits/{rid}/grant":
             kind = "permission"
         n = factory_need(ws, method, route_path, pp, tag)
         if n is not None:
             needed, kind = n
+        if method == "POST" and route_path in START_ROUTES:  # its own subject, whatever else the factory asks
+            needed, kind = tag.scope, START_ROUTES[route_path]
         if kind is None:
             return plain
         body = data if isinstance(data, bytes) else b""
-        return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body))
+        # a start has no write of its own that checks the state it showed: the host builds its subject again when the
+        # assertion arrives and runs only if the shown text and digest are the same
+        return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body),
+                           recheck=kind in START_ROUTES.values())
     return hook
 
 

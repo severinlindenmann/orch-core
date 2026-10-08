@@ -83,6 +83,7 @@ class Requirement:
     scope: str
     assertion: str = "none"  # none | lease | fresh
     subject: dict | None = None
+    recheck: bool = False  # fresh only: build the subject again when the assertion arrives and run only if unchanged
 
 
 RouteHook = Callable[[dict, bytes], "Requirement | None"]  # (meta, data) -> what the route needs; None: never remote
@@ -348,7 +349,7 @@ class Host:
         if lease_class and self.leases.get(did, 0) > now:
             return self._run(acc, dev, (rid,), now, until_ms=self.leases[did])
         if lease_class:
-            purpose, subject = "lease", dict(LEASE_SUBJECT)
+            purpose, subject = "lease", _lease_subject(req.subject)
         else:
             purpose = "fresh"
             subject = _subject(req.subject)
@@ -450,6 +451,13 @@ class Host:
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")
+        if issued.purpose == "fresh" and req.recheck and _subject(req.subject) != issued.subject:
+            # what was shown no longer holds (a start's session name taken, a title edited): nothing runs, and the
+            # audit line written above for the valid assertion is followed by the refusal
+            self.registry.audit(now, "assertion", device=did, ok=False, why="changed", rid=for_rid,
+                                purpose=issued.purpose, scope=issued.scope, subject=issued.subject)
+            self.store.set_outcome(for_rid, {"refusal": "assertion_failed"}, now)
+            return self._final(rid2, now, "assertion_failed", why="changed")
         if issued.purpose == "lease":  # opened only once R1 passed its check again
             self.leases[did] = now + LEASE_MS
         until = self.leases[did] if issued.purpose == "lease" else issued.expires_ms  # the grant behind this run
@@ -612,6 +620,19 @@ def still_authorized(decision: Verdict, registry: Registry, now_ms: int) -> bool
     if current is None or not _same_entry(decision, current):
         return False
     return decision.until_ms is None or now_ms < decision.until_ms
+
+
+def _lease_subject(subject) -> dict:
+    """The sheet text of a typing lease: the hook's own text (kind lease, no digest), else the plain default."""
+    try:
+        if isinstance(subject, dict) and set(subject) == {"kind", "shown", "digest"} and subject["kind"] == "lease" \
+                and subject["digest"] == "":
+            shown = clean_shown(subject["shown"])
+            if shown:
+                return {"kind": "lease", "shown": shown, "digest": ""}
+    except ValueError:
+        pass
+    return dict(LEASE_SUBJECT)
 
 
 def _subject(subject) -> dict | None:

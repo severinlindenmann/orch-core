@@ -9,7 +9,7 @@ const assert = require("assert");
 const src = fs.readFileSync(process.argv[2], "utf8");
 const m = src.match(/\/\/ batcher:begin\n([\s\S]*?)\/\/ batcher:end/);
 assert(m, "batcher markers");
-const lib = vm.runInNewContext("(() => {" + m[1] + "; return { makeBatcher, keySender }; })()", { Date, Math, setTimeout, Promise, Error, Boolean });
+const lib = vm.runInNewContext("(() => {" + m[1] + "; return { makeBatcher, keySender, makeSizer }; })()", { Date, Math, setTimeout, Promise, Error, Boolean });
 const make = lib.makeBatcher;
 
 const rig = (answers) => {
@@ -107,5 +107,32 @@ const rig = (answers) => {
   assert.strictEqual(lib.keySender({}, deps), null);
   assert.strictEqual(lib.keySender({ remote: false }, deps), null);
   assert.notStrictEqual(lib.keySender({ remote: true }, deps), null);
+
+  // watching is read-only through a host: a size is posted only for something the person did
+  const sizer = (remote, want = { cols: 50, rows: 20 }, state = {}) => {
+    const posts = [];
+    const f = lib.makeSizer({ remote, gone: () => Boolean(state.gone), want: () => want,
+      current: () => ({ cols: 80, rows: 24 }), post: (w) => posts.push(w) });
+    return { f, posts };
+  };
+  let z = sizer(true);
+  z.f(); z.f(undefined); z.f(false);  // opening, resize, rotation, keyboard: no argument
+  assert.deepStrictEqual(z.posts, [], "a bridged page that only watches posts no size");
+  z.f(true);  // the person pressed a view or zoom button
+  assert.deepStrictEqual(z.posts, [{ cols: 50, rows: 20 }]);
+  z.f(true);  // a burst asks once
+  assert.strictEqual(z.posts.length, 1);
+  z = sizer(false);  // local: every fit posts, as ever
+  z.f();
+  assert.strictEqual(z.posts.length, 1);
+  z = sizer(false, { cols: 80, rows: 24 });  // already that size
+  z.f();
+  assert.strictEqual(z.posts.length, 0);
+  z = sizer(false, null);  // nothing measured yet
+  z.f();
+  assert.strictEqual(z.posts.length, 0);
+  z = sizer(false, { cols: 50, rows: 20 }, { gone: true });  // the session ended
+  z.f();
+  assert.strictEqual(z.posts.length, 0);
   console.log("ok");
 })().catch((e) => { console.error(e); process.exit(1); });

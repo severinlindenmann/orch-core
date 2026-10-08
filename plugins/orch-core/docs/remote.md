@@ -142,14 +142,39 @@ Terminals work from a paired device on the same routes as at the desk, each tagg
 
 - Watching (the list, a session, its stream and its JSON snapshot) needs Operate: live output can hold secrets.
   Look and Decide devices cannot watch.
-- Typing needs Type and a typing lease: sending keys, resizing, ending or starting a session, and Start agent on a
-  ticket or a quick task. The host asks the device for a fresh platform-authenticator assertion (Face ID, Touch ID,
-  Windows Hello or a PIN), checks it with the host library, and binds the lease to that device. The lease ends 15
-  minutes from the unlock: a key post inside it does not extend it. When it ends the host answers `lease_required`
-  and the device client must ask the person for the assertion again. The lease covers only input sent on a stream
-  the device itself opened; a revoke or a change of scope ends it, and so does a restart. A device with no platform
-  authenticator never gets one, so it can watch but not type. Other Type routes (a schedule's Run now, an addon
-  action) are unchanged: Type alone.
+- Typing needs Type and a typing lease: sending keys, resizing and ending a session. The host asks the device for a
+  fresh platform-authenticator assertion (Face ID, Touch ID, Windows Hello or a PIN), checks it with the host
+  library, and binds the lease to that device. The sheet reads "Type into terminal NAME for 15 minutes", naming the
+  terminal the request is for, and says in the same text that the unlock lets this device type into every terminal on
+  this computer for 15 minutes. The lease ends 15 minutes from the unlock: a key post inside it does not extend it.
+  When it ends the host answers `lease_required` and the device client must ask the person for the assertion again.
+  The lease covers only input sent on a stream the device itself opened; a revoke or a change of scope ends it, and
+  so does a restart. A device with no platform authenticator never gets one, so it can watch but not type. Limit: the
+  binding is to a stream this device opened, not to a person pressing a key, so a hostile page served to the device
+  can open a hidden stream for any terminal itself and type into it for the rest of the lease.
+- Starting is never on the lease. A new session (`POST /terminals/new`) and Start agent on a ticket or a quick task
+  each need Type and their own fresh assertion, every time, over a sheet that says what starts: "Start a new
+  terminal session NAME running HARNESS with no prompt, in FOLDER. Command: ..." or "Start an agent. Harness H, mode M, in WHERE as session NAME. Ticket REF titled: "TITLE"" (the title is
+  quoted and last, because an agent can write it; the quick-task sheet is the same with the task). The
+  sheet's digest covers the fields the route reads from the request (ticket or task and its title, harness, mode,
+  `where`, `another`, `next`), the terminal it will use, the free session name and, for a new session, the command
+  and folder, plus what an addon with a launch plan chooses (its model, environment, prompt note and label: the sheet
+  prints the model, the environment variable names and that a note is added, never the values), all from one look at
+  the workspace and the urlencoded body only, the
+  way the route reads it: a field given twice, a query-only field, a body that is not ASCII form data or holds a
+  ";" gets no sheet and nothing starts. The request waits parked; when the assertion arrives the host builds the
+  sheet again and runs the request, once, only if the text and digest are unchanged (a session name taken or a title
+  edited meanwhile is refused as `assertion_failed` ("changed"), audited as a failed assertion, and starts nothing).
+  Not bound by the sheet, because the route reads them from the host when it runs: the mode's prompt text and a linked
+  pull request, and the release of a stale claim on the ticket, which the route does before it starts. The session
+  name can also still move after that last check (the route picks the free name again when it runs, so a sheet
+  naming `scratch` can start `scratch-2`); nothing else about the start changes. An unlock for typing never authorises a start, and a start's assertion opens no
+  lease. A Decide or Operate device cannot start.
+- Watching is read-only. The terminal page served through a host never posts `/size` for the page opening, a
+  resize, a rotation or the phone keyboard (asking for a size is a lease route, so it would pop an unlock sheet
+  nobody asked for); only the page's view and zoom buttons do, as something the person pressed. Locally the page
+  fits as before. The consequence: a phone that only watches leaves the session at the size the desktop gave it
+  until the person taps a view or zoom button. Other Type routes (a schedule's Run now, an addon action) are unchanged: Type alone.
 - Key posts carry `seq` (the keys, in order), `page` (a name the page picks for itself) and `n`, a number that must
   rise with every post of that page. A post whose `n` was already used or is older than one already taken answers
   409 and types nothing, so a retry or a late arrival never types twice; two tabs of one device count apart. At

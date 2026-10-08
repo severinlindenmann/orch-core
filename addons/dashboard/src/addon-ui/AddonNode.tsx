@@ -275,8 +275,8 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
         setSignPending(true)
         void signed(signTitle(s.action, addonTitle), async () => {
           const res = await api.runAddonAction(workspace.id, addon, s.action, { ...withoutReservedKeys(s.extra), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}), confirmed: true })
-          toast.success(res.message)
           openResultUrl(res)
+          return res.message
         }).finally(() => setSignPending(false))
       }}
     />

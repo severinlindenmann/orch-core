@@ -324,3 +324,9 @@ Format: date, decision, why, how to revert.
 - **Recorded limits:** Run now stays member-level and unsigned in this preview (a real host needs spawn_agent plus a grant check). Signed actions are not palette commands: the palette cannot sign, so the host fails closed (409 confirm.required).
 - **Why:** Task 30 review.
 - **Revert:** Not recommended; restoring the old behaviour would let manifest text pose as core's and viewers write shared state.
+
+## 2026-10-09 Task 30 re-review fixes
+
+- **Decision:** `addon.action_signed` is appended for every successful `confirm: 'sign'` action, with `changed: !!res.changed` as a field, so an addon cannot hide the record by not reporting a change. The `ticket` key stays in the args (the record is owner/maintainer-only in Activity). A signed action shows one success toast, the action's message (`useSignedAction` uses a returned sentence as its toast).
+- **Why:** Task 30 re-review.
+- **Revert:** Gate on `res.changed` again (not recommended).

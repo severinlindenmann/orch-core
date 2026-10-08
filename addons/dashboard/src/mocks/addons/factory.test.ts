@@ -4,6 +4,7 @@ import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { describeEvent } from '@/mocks/derive'
 import { installAndGrant } from '@/test/installAddon'
+import { getAddon } from './registry'
 
 // AI Factory (Phase 2 preview): one factory epic with a signed charter, children, permits as core decisions,
 // pause/resume signed by core, and a "Watch live" simulator that is capped.
@@ -330,12 +331,27 @@ describe('minors', () => {
   it('the view carries no watcher map', async () => {
     const s = setup()
     await run(s, 'watch')
-    expect(JSON.stringify(await state(s))).not.toContain('p_mara')
-    expect(Object.keys(await state(s))).not.toContain('nav')
+    const json = JSON.stringify(await state(s))
+    expect(json).not.toContain('p_sev') // the actual watcher
+    expect(json).not.toContain('watching":true,"') // no per-person flag map
+    for (const k of ['nav', 'simBy', 'simTimes', 'simSteps']) expect(Object.keys(JSON.parse(json))).not.toContain(k)
+    expect(await state(s)).toMatchObject({ watching: true })
   })
 })
 
 describe('signed actions leave a core record', () => {
+  it('records a success even when the addon does not set `changed`', async () => {
+    const s = setup()
+    const addon = getAddon('factory')!
+    const orig = addon.actions.resume
+    addon.actions.resume = () => ({ ok: true, message: 'quiet' })
+    try {
+      await run(s, 'resume', { confirmed: true })
+    } finally {
+      addon.actions.resume = orig
+    }
+    expect(s.store.wsEventsOf(s.ws).find((e) => e.type === 'addon.action_signed')).toMatchObject({ action: 'resume', changed: false })
+  })
   it('pause appends addon.action_signed with scalar args only; a no-op or a refusal does not', async () => {
     const s = setup()
     expect(await fail(run(s, 'pause'))).toBe('409 confirm.required')
@@ -347,8 +363,11 @@ describe('signed actions leave a core record', () => {
     expect((ev[0].args as Record<string, string>).id).toHaveLength(120)
     expect(ev[0].args).not.toHaveProperty('nested')
     expect(ev[0].args).not.toHaveProperty('confirmed')
-    await run(s, 'pause', { confirmed: true })
-    expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')).toHaveLength(1)
+    expect(ev[0].changed).toBe(true)
+    await run(s, 'pause', { confirmed: true, ticket: 'DEMO-0052' })
+    const all = s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')
+    expect(all).toHaveLength(2)
+    expect(all[1]).toMatchObject({ changed: false, args: { ticket: 'DEMO-0052' } })
     expect(describeEvent(ev[0])).toBe('signed pause of factory')
   })
   it('Activity shows the record to owners and maintainers only', async () => {

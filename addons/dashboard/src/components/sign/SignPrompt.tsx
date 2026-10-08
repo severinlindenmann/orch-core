@@ -20,9 +20,10 @@ export function useSignedAction() {
     const id = toast.loading('Touch the sensor to confirm')
     await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
     try {
-      await run()
+      const result = await run()
       await qc.invalidateQueries()
-      toast.success(`${title}: signed with Touch ID`, { id })
+      // A run that returns a sentence (an addon action's message) is the one success toast; otherwise the default.
+      toast.success(typeof result === 'string' ? result : `${title}: signed with Touch ID`, { id })
       return true
     } catch (e) {
       toastApiError(e, 'Could not sign', id)

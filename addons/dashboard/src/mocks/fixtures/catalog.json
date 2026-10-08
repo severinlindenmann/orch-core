@@ -8,7 +8,133 @@
     "first_party": true,
     "package_sha256": "e160706069101712e0d86be0baaf7a2f93b0217beb27013e01a771a76fce5930",
     "update": null,
-    "contributions": []
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "worktrees",
+        "title": "Worktrees",
+        "icon": "GitBranch",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Worktrees",
+                  "value": "${addon.total}"
+                },
+                {
+                  "type": "stat",
+                  "label": "With changes",
+                  "value": "${addon.dirty}"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "**acme-energy/energy-dbt**"
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.byRepo.energy-dbt"
+              },
+              "empty": "No worktrees in this repository."
+            },
+            {
+              "type": "markdown",
+              "text": "**acme-energy/billing-api**"
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.byRepo.billing-api"
+              },
+              "empty": "No worktrees in this repository."
+            },
+            {
+              "type": "markdown",
+              "text": "**acme-energy/ingest**"
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.byRepo.ingest"
+              },
+              "empty": "No worktrees in this repository."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "$ref": "addon.addSchema"
+              },
+              "formData": {
+                "base": "main"
+              },
+              "action": "add",
+              "submitLabel": "Add worktree"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket",
+        "title": "Worktrees",
+        "icon": "GitBranch",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.byTicket.$ticket"
+              },
+              "empty": "No worktree for this ticket."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "title": "Repository",
+                    "enum": [
+                      "acme-energy/energy-dbt",
+                      "acme-energy/billing-api",
+                      "acme-energy/ingest"
+                    ]
+                  },
+                  "base": {
+                    "type": "string",
+                    "title": "Base branch",
+                    "default": "main"
+                  }
+                }
+              },
+              "formData": {
+                "base": "main"
+              },
+              "action": "add",
+              "submitLabel": "Add worktree for this ticket"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "open_terminal": {
+        "minRole": "member",
+        "label": "Open terminal here"
+      }
+    }
   },
   {
     "name": "quick",

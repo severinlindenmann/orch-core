@@ -514,3 +514,23 @@ def test_head_must_not_move_before_a_rebase(repo, ws, put, remote, monkeypatch):
     monkeypatch.setattr(gitfiles, "_unpushed", moving)
     result = gitfiles.push_records(ws)
     assert not result["pushed"] and "HEAD changed" in result["reason"]
+
+
+@needs_git
+def test_harmless_remote_keys_and_orchs_own_hook_install_do_not_block(repo, ws, put, remote):
+    bare, _ = remote
+    for k, v in (("remote.origin.gh-resolved", "base"), ("remote.origin.prune", "true"), ("remote.origin.tagOpt", "--no-tags"),
+                 ("orch.something", "1"), ("core.hooksPath", str(repo / ".git" / "orch-hooks"))):
+        _git(repo, "config", k, v)
+    put("backlog", size="m")
+    assert gitfiles.sync_records(ws, push=True)["pushed"]
+    assert _subjects(bare, "main", 1)[0].startswith("orch: records")
+
+
+@needs_git
+@pytest.mark.parametrize("key", ["filter.lfs.process", "core.fsmonitor", "remote.origin.mirror", "remote.origin.push"])
+def test_the_refusal_names_the_key(repo, ws, put, remote, key):
+    put("backlog", size="m")
+    _git(repo, "config", key, "x")
+    result = gitfiles.sync_records(ws, push=True)
+    assert not result["pushed"] and f"sets {key.lower()}," in result["reason"]

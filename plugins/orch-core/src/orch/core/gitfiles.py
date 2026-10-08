@@ -122,7 +122,7 @@ class GitView:
 
 def _git(root: Path, *args: str) -> str | None:
     try:
-        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, check=False, timeout=20)
+        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "-C", str(root), *args], capture_output=True, check=False, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
@@ -304,7 +304,7 @@ def commit_records(ws, *, dry_run: bool = False, auto: bool = False) -> tuple[li
     full = [(root / p).as_posix() for p in paths]
     for args in (("add", "--", *full), ("commit", "-q", "--only", "-m", subject, "-m", body, "--", *full)):
         try:
-            r = subprocess.run(["git", "--literal-pathspecs", "-C", str(view.root), *args], capture_output=True,
+            r = subprocess.run(["git", "-c", "core.fsmonitor=false", "--literal-pathspecs", "-C", str(view.root), *args], capture_output=True,
                                check=False, timeout=120)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise OrchError(f"git {args[0]} failed: {e}") from e
@@ -321,7 +321,7 @@ def _run(top: Path, *args: str, timeout: float = 10, env: dict | None = None) ->
     import os
     e = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", **(env or {})}
     try:
-        r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), *args], capture_output=True, check=False,
+        r = subprocess.run(["git", "-c", "core.fsmonitor=false", "--literal-pathspecs", "-C", str(top), *args], capture_output=True, check=False,
                            timeout=max(1.0, timeout), stdin=subprocess.DEVNULL, env=e)
     except (OSError, subprocess.TimeoutExpired) as ex:
         return -1, str(ex)
@@ -351,7 +351,7 @@ def _unpushed(ws, top: Path, base: str, head: str) -> tuple[int, int] | None:
             other += 1
             continue
         try:
-            r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), "diff-tree", "--root", "--no-commit-id",
+            r = subprocess.run(["git", "-c", "core.fsmonitor=false", "--literal-pathspecs", "-C", str(top), "diff-tree", "--root", "--no-commit-id",
                                 "-r", "-z", "--raw", "--no-renames", shas[0]], capture_output=True, check=False,
                                timeout=20, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
@@ -370,35 +370,37 @@ def _unpushed(ws, top: Path, base: str, head: str) -> tuple[int, int] | None:
 
 # Transports orch's network calls may use; command-line -c beats repository config. Tests may add "file".
 NET_PROTOCOLS = ("https", "ssh")
-_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")  # ls-remote, fetch and rebase need none; commit and push keep theirs
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")  # ls-remote, fetch, rebase and push need none; commit keeps orch's own commit-msg hook
 
 
-_BAD_SECTIONS = frozenset({"url", "http", "credential", "protocol"})
-_BAD_CORE = frozenset({"sshcommand", "askpass", "gitproxy"})
+_BAD_SECTIONS = frozenset({"url", "http", "credential", "protocol", "filter"})
+_BAD_CORE = frozenset({"sshcommand", "askpass", "gitproxy", "fsmonitor"})
+# keys of the remote in use that change nothing about how a push connects (git lowercases variable names)
+_OK_REMOTE = frozenset({"url", "fetch", "gh-resolved", "prune", "prunetags", "tagopt", "skipdefaultupdate",
+                        "skipfetchall", "promisor", "partialclonefilter"})
 
 
-def _repo_config_redirects(top: Path, remote: str) -> bool:
-    """True when the repository itself (local or worktree scope; include files count as local) sets anything that
-    changes how a push connects: whole sections url, http, credential and protocol, core.sshCommand/askPass/gitProxy,
-    and for the remote in use anything but its url and fetch. An allowlist by section, not a list of keys."""
+def _repo_config_redirects(top: Path, remote: str) -> str | None:
+    """The first key the repository itself (local or worktree scope; include files count as local) sets that changes
+    how a push connects, else None: whole sections url, http, credential, protocol and filter, core.sshCommand/askPass/
+    gitProxy/fsmonitor, and for the remote in use anything but _OK_REMOTE. An allowlist by section, not a key list.
+    Local orch.* keys and core.hooksPath (orch's own hook install) are harmless: push runs without hooks."""
     rc, out = _run(top, "config", "--show-scope", "--show-origin", "--list")
     if rc != 0:
-        return True
+        return "(the repository git config could not be read)"
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        if parts[0] not in ("local", "worktree"):
+        if len(parts) < 3 or parts[0] not in ("local", "worktree"):
             continue
         key = parts[2].split("=", 1)[0].lower()
         section = key.split(".", 1)[0]
         if section in _BAD_SECTIONS or (section == "core" and key.split(".", 1)[1] in _BAD_CORE):
-            return True
-        if key.startswith(f"remote.{remote.lower()}.") and key.rsplit(".", 1)[1] not in ("url", "fetch"):
-            return True
-        if section == "remote" and key.count(".") >= 2 and key.rsplit(".", 1)[1] in ("pushurl", "proxy", "uploadpack", "receivepack", "vcs"):
-            return True
-    return False
+            return key
+        if section == "remote" and key.count(".") >= 2:
+            name, var = key[len("remote."):].rsplit(".", 1)
+            if var not in _OK_REMOTE and (name == remote.lower() or var in ("pushurl", "proxy", "uploadpack", "receivepack", "vcs")):
+                return key
+    return None
 
 
 def push_records(ws, *, auto: bool = False) -> dict:
@@ -423,7 +425,7 @@ def push_records(ws, *, auto: bool = False) -> dict:
             proto = ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never",
                      *(x for p in NET_PROTOCOLS for x in ("-c", f"protocol.{p}.allow=always"))]
             env = {**(env or {}), "GIT_ALLOW_PROTOCOL": ":".join(NET_PROTOCOLS)}  # overrides every protocol.* setting
-            args = (*proto, *(_NO_HOOKS if args[0] in ("ls-remote", "fetch") else ()), *args)
+            args = (*proto, *(_NO_HOOKS if args[0] in ("ls-remote", "fetch", "push") else ()), *args)
         elif args[0] == "rebase" or args[:1] == ("-c",):
             args = (*_NO_HOOKS, *args)
         return _run(top, *args, timeout=min(20 if net else 10, left), env=env)
@@ -449,8 +451,9 @@ def push_records(ws, *, auto: bool = False) -> dict:
         rc3, other_remote = run("config", key)
         if rc3 == 0 and other_remote and other_remote != remote:
             return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
-    if _repo_config_redirects(top, remote):
-        return no("repository git config changes how pushes connect; push by hand")
+    bad = _repo_config_redirects(top, remote)
+    if bad:
+        return no(f"repository git config sets {bad}, which changes how pushes connect; push by hand")
     rc, urls = run("config", "--get-all", f"remote.{remote}.url")
     if rc != 0 or len(urls.splitlines()) != 1:
         return no(f"remote {remote} must have exactly one URL; push by hand")
@@ -489,6 +492,7 @@ def push_records(ws, *, auto: bool = False) -> dict:
                 return no("nothing to push", False)
             if other:
                 return no(f"{other} other commit(s) wait; push them yourself", False)
+            # push.recurseSubmodules in repo config is harmless only because gitlinks are never records (see _unpushed)
             rc, out = run("push", "--no-follow-tags", f"--force-with-lease={merge}:{sha}", remote, f"{head}:{merge}",
                           net=True, env=env)
             if rc == 0:

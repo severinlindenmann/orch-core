@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, lazy, Suspense, useContext } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { withTheme } from '@rjsf/core'
 import validator from '@rjsf/validator-ajv8'
@@ -9,6 +9,7 @@ import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
@@ -24,6 +25,8 @@ import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 
 const ThemedForm = withTheme(darkTheme)
+// The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
+const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
 
 interface Runtime {
   addon: string
@@ -158,7 +161,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </AddonFrame>
       )
     case 'terminal':
-      return <TerminalNode />
+      return <TerminalNode session={n.session} />
     case 'link':
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
@@ -321,16 +324,18 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
   )
 }
 
-/** Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box. */
-function TerminalNode() {
+/**
+ * Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box.
+ * The session id is untrusted: TerminalView resolves it against this addon's own state (this workspace, this viewer).
+ */
+function TerminalNode({ session }: { session: string }) {
   const { addon } = useContext(RuntimeCtx)
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
-  // TODO(Task 21): render core's <TerminalView session=…/> here.
   return (
-    <div role="alert" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text-muted">
-      Terminal sessions arrive with the terminals addon
-    </div>
+    <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+      <TerminalView addon={addon} session={session} fallback={<AddonUnavailable addon={addon} />} />
+    </Suspense>
   )
 }

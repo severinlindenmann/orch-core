@@ -724,30 +724,11 @@
         "node": {
           "type": "stack",
           "children": [
-            {
-              "type": "markdown",
-              "text": "A real terminal arrives in a later iteration. These are the sessions on this machine."
-            },
-            {
-              "type": "list",
-              "items": [
-                {
-                  "title": "DEMO-0043 worktree",
-                  "subtitle": "zsh \u00b7 feat/DEMO-0043-tariff-seeds \u00b7 started 09:12",
-                  "badge": "running"
-                },
-                {
-                  "title": "DEMO-0041 worktree",
-                  "subtitle": "zsh \u00b7 feat/DEMO-0041-reconciliation \u00b7 started 08:40",
-                  "badge": "idle"
-                },
-                {
-                  "title": "Scratch",
-                  "subtitle": "zsh \u00b7 ~/work/acme \u00b7 started yesterday",
-                  "badge": "stopped"
-                }
-              ]
-            }
+            { "type": "markdown", "text": "Terminals are never granted to agents." },
+            { "type": "markdown", "text": "Agent sessions are view-only mirrors: you can watch them, not type in them." },
+            { "type": "list", "items": { "$ref": "addon.items" }, "empty": "No terminal sessions." },
+            { "type": "button", "label": "New terminal", "action": "new", "variant": "secondary" },
+            { "type": "terminal", "session": "${addon.current.id}" }
           ]
         }
       },
@@ -758,10 +739,18 @@
         "icon": "SquareTerminal",
         "node": {
           "type": "button",
-          "label": "Open terminal in worktree",
-          "action": "open",
+          "label": "Open terminal in this ticket's worktree",
+          "action": "open_ticket",
           "variant": "secondary"
         }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket-terminal",
+        "title": "Terminal session",
+        "icon": "SquareTerminal",
+        "when": "addon.sessionByTicket.$ticket",
+        "node": { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" }
       },
       {
         "slot": "settings",
@@ -776,6 +765,12 @@
               "shell": {
                 "type": "string",
                 "title": "Shell"
+              },
+              "font_size": {
+                "type": "integer",
+                "title": "Font size",
+                "minimum": 10,
+                "maximum": 20
               }
             }
           },
@@ -792,7 +787,7 @@
         "action": "open"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer" } },
     "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
     "update": null
   },

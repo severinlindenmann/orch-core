@@ -204,9 +204,9 @@ describe('new node types', () => {
     renderNode({ type: 'terminal', session: 't1' }, { addon: 'wiki' })
     expect(screen.getByText(/could not be shown/i)).toBeInTheDocument()
   })
-  it('shows the placeholder alert for a terminal node from an addon with pty', async () => {
+  it('a terminal node from an addon with pty naming a session that does not exist is not shown', async () => {
     renderNode({ type: 'terminal', session: 't1' }, { addon: 'terminals', withWorkspace: true })
-    expect(await screen.findByText(/Terminal sessions arrive with the terminals addon/)).toBeInTheDocument()
+    expect(await screen.findByText(/could not be shown/i)).toBeInTheDocument()
   })
   it('renders alert and progress', () => {
     renderNode({ type: 'stack', children: [{ type: 'alert', tone: 'warn', title: 'Budget at 80%' }, { type: 'progress', label: 'Children', value: 7, max: 25 }] }, { addon: 'usage' })

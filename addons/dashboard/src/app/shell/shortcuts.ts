@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
+import { useWorkspace } from '../workspace'
 
 export interface Shortcut {
   id: string
@@ -10,6 +11,15 @@ export interface Shortcut {
   run?: (go: (to: string) => void) => void
 }
 
+const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
+
+/** ⌘1–⌘9 (Ctrl+1–9 elsewhere) switch to the n-th workspace; bound in `useShortcuts`, shown by the palette. */
+const WORKSPACE_SHORTCUTS: Shortcut[] = Array.from({ length: 9 }, (_, i) => ({
+  id: `workspace.${i + 1}`,
+  keys: `${isMac ? '⌘' : 'Ctrl+'}${i + 1}`,
+  label: `Switch to workspace ${i + 1}`,
+}))
+
 /** The one list of keyboard shortcuts: the shell binds them, the palette shows them, the shortcuts guide can list them. */
 export const SHORTCUTS: Shortcut[] = [
   { id: 'new-ticket', keys: 'c', label: 'New ticket', run: (go) => go('/tickets/new') },
@@ -17,6 +27,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'go.board', keys: 'g b', label: 'Go to Board', run: (go) => go('/board') },
   { id: 'go.tickets', keys: 'g l', label: 'Go to Tickets', run: (go) => go('/tickets') },
   { id: 'go.agents', keys: 'g a', label: 'Go to Agents', run: (go) => go('/agents') },
+  ...WORKSPACE_SHORTCUTS,
   { id: 'sidebar', keys: '[', label: 'Collapse or expand the sidebar' },
 ]
 
@@ -34,6 +45,7 @@ export function keyboardBusy(target: EventTarget | null): boolean {
 /** Binds SHORTCUTS: single keys and `g x` sequences (second key within 1 s). Mount once, in the shell. */
 export function useShortcuts() {
   const router = useRouter()
+  const { workspaces, switchWorkspace } = useWorkspace()
   useEffect(() => {
     const go = (to: string) => void router.navigate({ to } as never)
     let armed: number | null = null
@@ -42,6 +54,14 @@ export function useShortcuts() {
       armed = null
     }
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        const target = workspaces[Number(e.key) - 1]
+        if (target && !e.defaultPrevented && !keyboardBusy(e.target)) {
+          e.preventDefault()
+          switchWorkspace(target.id)
+        }
+        return
+      }
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented || e.repeat) return
       if (keyboardBusy(e.target)) {
         disarm()
@@ -71,5 +91,5 @@ export function useShortcuts() {
       window.removeEventListener('keydown', onKey)
       disarm()
     }
-  }, [router])
+  }, [router, workspaces, switchWorkspace])
 }

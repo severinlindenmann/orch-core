@@ -3,7 +3,6 @@ import { Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
-  Check,
   ChevronsUpDown,
   LayoutDashboard,
   ListChecks,
@@ -22,7 +21,6 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -33,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { iconByName } from '../icons'
 import { useWorkspace } from '../workspace'
+import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 
 type Pref = 'auto' | 'wide' | 'narrow'
 const PREF_KEY = 'orch.sidebar'
@@ -122,7 +121,7 @@ const PEOPLE = [
 ]
 
 export function Sidebar() {
-  const { workspace, workspaces, setWorkspaceId } = useWorkspace()
+  const { workspace } = useWorkspace()
   const qc = useQueryClient()
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const navItems = useSlot('nav')
@@ -161,39 +160,7 @@ export function Sidebar() {
         )}
 
         <div className="px-2 pb-1">
-          <DropdownMenu>
-            <RailTip label={workspace ? `${workspace.prefix} · ${workspace.name}` : 'Workspace'}>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Switch workspace"
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-md border border-border bg-surface py-1.5 text-left text-[13px] hover:bg-surface-2',
-                    collapsed ? 'justify-center px-0' : 'px-2',
-                  )}
-                >
-                  <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
-                  <span className={cn('min-w-0 flex-1 truncate', label)}>{workspace?.name}</span>
-                  <ChevronsUpDown className={cn('size-3.5 text-text-faint', label)} />
-                </button>
-              </DropdownMenuTrigger>
-            </RailTip>
-            <DropdownMenuContent align="start" side="bottom" className="w-60">
-              <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-text-faint">Workspaces</DropdownMenuLabel>
-              {workspaces.map((w) => (
-                <DropdownMenuItem key={w.id} onSelect={() => setWorkspaceId(w.id)} className="gap-2">
-                  <span className="w-8 font-mono text-[11px] text-text-faint">{w.prefix}</span>
-                  <span className="flex-1 truncate">{w.name}</span>
-                  {w.needs_you > 0 && (
-                    <span aria-label={`${w.needs_you} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
-                      {w.needs_you}
-                    </span>
-                  )}
-                  {w.id === workspace?.id && <Check className="size-3.5 text-text-muted" />}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <WorkspaceSwitcher collapsed={collapsed} viewer={me?.person} />
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">

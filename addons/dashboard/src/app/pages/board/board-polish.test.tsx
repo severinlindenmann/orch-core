@@ -38,7 +38,7 @@ describe('board polish', () => {
     const { user } = renderApp('/board')
     await screen.findByTestId('card-DEMO-0043', {}, T)
     await user.click(screen.getByRole('button', { name: 'Switch workspace' }))
-    await user.click(await screen.findByRole('menuitem', { name: /CLI/ }))
+    await user.click(await screen.findByRole('button', { name: /CLI/ }))
     const backlog = await screen.findByRole('region', { name: 'Backlog' })
     await waitFor(() => expect(screen.queryByTestId('card-DEMO-0043')).toBeNull(), T)
     const empties = screen.getAllByText('Nothing here')

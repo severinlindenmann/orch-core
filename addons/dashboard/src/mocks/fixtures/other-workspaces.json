@@ -10,7 +10,7 @@
         "size": "xs",
         "labels": ["security"],
         "acceptance": [{ "id": "AC1", "text": "Old webhook revoked, alerts still arrive" }],
-        "tasks": [],
+        "tasks": [{ "id": "T1", "text": "Create the new webhook and store it in the secret store", "verify": null, "proves": ["AC1"] }],
         "addons": { "estimate": { "points": 1 } }
       },
       "body": { "summary": "The webhook was pasted into a public gist by mistake. Rotate it.", "requirements": "New webhook in the secret store, old one revoked." },

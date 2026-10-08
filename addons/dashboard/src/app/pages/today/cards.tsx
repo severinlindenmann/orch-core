@@ -163,9 +163,8 @@ export function QuestionCard({ item, ticket, dir, now, readOnly }: CommonProps &
           {q?.options?.map((o) => {
             const rec = q.recommended === o.key
             return (
-              <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
+              <DisabledReason key={o.key} reason={readOnly ? VIEWER_REASON : null}>
               <Button
-                key={o.key}
                 size="sm"
                 variant={rec ? 'default' : 'outline'}
                 className={cn(rec && PRIMARY)}
@@ -408,9 +407,8 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
           {d.detail && <p className="text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
           <div className="flex flex-wrap items-center gap-2">
             {d.options.map((o) => (
-              <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
+              <DisabledReason key={o.key} reason={readOnly ? VIEWER_REASON : null}>
               <Button
-                key={o.key}
                 size="sm"
                 variant={o.primary ? 'default' : 'outline'}
                 className={cn(o.primary && PRIMARY)}

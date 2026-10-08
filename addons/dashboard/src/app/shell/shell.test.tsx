@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 
 describe('app shell', () => {
@@ -136,6 +136,98 @@ describe('app shell', () => {
       await user.type(screen.getByPlaceholderText(/Search tickets/), '@mara')
       await user.click(await screen.findByRole('option', { name: /Mara/ }))
       expect(await screen.findByRole('heading', { name: 'Tickets' })).toBeInTheDocument()
+    })
+  })
+
+  describe('workspace switcher', () => {
+    it('shows needs-you previews per workspace and opens one directly', async () => {
+      const { user } = renderApp('/')
+      await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
+      const int = await screen.findByRole('group', { name: /INT/ })
+      await user.click((await within(int).findAllByRole('link'))[0])
+      // Today's h1 is still on screen until the navigation lands, so wait for the ticket heading.
+      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Rotate shared Slack webhook'))
+      // The ticket page's h1 is the title (the key is shown beside it), so the INT ticket is identified by its title.
+      expect(screen.getAllByText('INT-0007').length).toBeGreaterThan(0)
+      expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/)
+    })
+
+    it('shows role, needs-you count and a muted relay dot per workspace', async () => {
+      const { user } = renderApp('/')
+      await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
+      const demo = await screen.findByRole('group', { name: /DEMO/ })
+      expect(within(demo).getByText('owner')).toBeInTheDocument()
+      expect(within(demo).getByLabelText(/\d+ need you/)).toBeInTheDocument()
+      expect(within(demo).getByLabelText('Relay not connected')).toBeInTheDocument()
+    })
+
+    it('keeps the board when switching (waits on the topbar title: Board has no h1)', async () => {
+      const { user } = renderApp('/board')
+      await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board'))
+      await screen.findByRole('button', { name: 'Switch workspace' })
+      await user.keyboard('{Meta>}2{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/))
+      expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board')
+    })
+
+    it('does not switch with the number shortcut while typing', async () => {
+      const { user } = renderApp('/tickets/new')
+      const title = await screen.findByRole('textbox', { name: /title/i })
+      await user.click(title)
+      await user.keyboard('{Meta>}2{/Meta}')
+      expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/)
+    })
+
+    it('leaves a ticket page for the list when switching, with a toast naming the ticket workspace', async () => {
+      const { user } = renderApp('/ticket/DEMO-0043')
+      await screen.findByRole('heading', { level: 1 })
+      await user.keyboard('{Meta>}2{/Meta}')
+      expect(await screen.findByRole('table', { name: 'Tickets' })).toBeInTheDocument()
+      expect(await screen.findByText('DEMO-0043 is in Acme energy data')).toBeInTheDocument()
+    })
+
+    it('leaves an addon page the target workspace has not enabled, with a toast', async () => {
+      const { user } = renderApp('/addon/usage/overview')
+      await screen.findByRole('heading', { level: 1, name: /Usage/ })
+      await user.keyboard('{Meta>}2{/Meta}')
+      expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument()
+      expect(await screen.findByText(/Usage is not enabled in Internal/)).toBeInTheDocument()
+    })
+
+    it('remembers the workspace across reloads', async () => {
+      const { user } = renderApp('/agents')
+      await screen.findByRole('button', { name: 'Switch workspace' })
+      await user.keyboard('{Meta>}3{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Client VM/))
+      expect(localStorage.getItem('orch.workspace')).toMatch(/^c7d2b9e4/)
+    })
+
+    it('the palette lists the shortcut and switches with the same function', async () => {
+      const { user } = renderApp('/board')
+      await screen.findByRole('button', { name: 'Switch workspace' })
+      await user.keyboard('{Control>}k{/Control}')
+      const opt = await screen.findByRole('option', { name: /Switch to INT/ })
+      expect(within(opt).getByText(/^(⌘|Ctrl\+)2$/)).toBeInTheDocument()
+      await user.click(opt)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/))
+      expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board')
+    })
+
+    it('palette ticket actions follow the viewer role in the ticket workspace, not the current one', async () => {
+      // Tom is a viewer in DEMO (the current workspace) but a member in CLI.
+      const { user } = renderApp('/ticket/CLI-0003', { viewer: 'p_tom' })
+      await screen.findByRole('heading', { level: 1 })
+      await user.keyboard('{Control>}k{/Control}')
+      expect(await screen.findByRole('option', { name: /Comment/ })).toBeInTheDocument()
+    })
+
+    it('Today renders its option buttons without React key warnings', async () => {
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+      renderApp('/')
+      await screen.findByRole('heading', { name: 'Today' })
+      await screen.findAllByTestId(/^card-/)
+      expect(err.mock.calls.filter((c) => String(c[0]).includes('unique "key"'))).toEqual([])
+      err.mockRestore()
     })
   })
 })

@@ -37,7 +37,7 @@ const PLACEHOLDER = 'Search tickets or run a command...'
 /** Global command palette: ⌘K / Ctrl+K. `>` commands, `#` tickets, `@` people. */
 export function CommandPalette() {
   const { paletteOpen, setPaletteOpen } = useShellState()
-  const { workspace, workspaces, setWorkspaceId } = useWorkspace()
+  const { workspace, workspaces, switchWorkspace } = useWorkspace()
   const router = useRouter()
   const qc = useQueryClient()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -166,7 +166,9 @@ export function CommandPalette() {
 
   const onTicket = useMemo<Entry[]>(() => {
     const t = ticket.data
-    if (!ticketKey || !t || !viewer.ready || !canEdit) return []
+    // Gate on the viewer's role in the ticket's own workspace, which can differ from the current one.
+    const ticketRole = viewer.role
+    if (!ticketKey || !t || !viewer.ready || !ticketRole || ticketRole === 'viewer') return []
     const av = availableActions(t, viewer)
     const sign = (a: HumanAction) => {
       close()
@@ -176,22 +178,24 @@ export function CommandPalette() {
     // Claim and Release are for agents only (see the claim box on the ticket page): never offered to people.
     out.push({ id: 'comment', label: 'Comment', icon: <MessageSquare />, run: () => (setQ(''), setMode('comment')) })
     out.push({ id: 'ask', label: 'Ask a question', icon: <MessageSquareReply />, run: () => (setQ(''), setMode('ask-to')) })
-    if (role === 'owner' || role === 'maintainer') out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
+    if (ticketRole === 'owner' || ticketRole === 'maintainer') out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
     for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${GATE_LABEL[g].toLowerCase()}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
     return out
-  }, [ticket.data, ticketKey, viewer.ready, viewer.person, viewer.role, canEdit, role])
+  }, [ticket.data, ticketKey, viewer.ready, viewer.person, viewer.role])
 
   const switchWs: Entry[] = workspaces
-    .filter((w) => w.id !== workspace?.id)
-    .map((w) => ({
+    .map((w, i) => ({ w, i }))
+    .filter(({ w }) => w.id !== workspace?.id)
+    .map(({ w, i }) => ({
       id: w.id,
       label: `Switch to ${w.prefix}`,
       icon: <Building2 />,
       hint: w.name,
+      keys: keysFor(`workspace.${i + 1}`),
       run: () => {
         close()
-        setWorkspaceId(w.id)
+        switchWorkspace(w.id)
       },
     }))
 

@@ -58,6 +58,21 @@
         "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
         "capabilities": []
       },
+      "widgets": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+        "capabilities": []
+      },
       "estimate": {
         "enabled": true,
         "status": "active",

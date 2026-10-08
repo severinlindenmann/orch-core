@@ -133,12 +133,12 @@
     },
     "body": {
       "summary": "Tariff tables live in a shared drive as 40 CSV files. Load them into the warehouse as dbt seeds so billing models can join them and the data is reviewed in git.",
-      "context": "- Repo: `acme-energy-dbt`, seeds go to `seeds/tariffs/`.\n- Related: DEMO-0040 (epic), DEMO-0041 (reconciliation tests need these seeds).\n- The monthly CSV export is produced by finance on the 1st; the tariff API lags by one day.",
+      "context": "- Repo: `acme-energy-dbt`, seeds go to `seeds/tariffs/`.\n- Related: DEMO-0040 (epic), DEMO-0041 (reconciliation tests need these seeds).\n- The monthly CSV export is produced by finance on the 1st; the tariff API lags by one day.\n\n```orch\n{\"type\":\"bars\",\"id\":\"size\",\"title\":\"Bundle size, kB\",\"source\":\"size.txt\",\"caption\":\"Seed archive, main against this branch.\",\"unit\":\"kB\",\"data\":{\"main\":412,\"branch\":286},\"highlight\":\"branch\"}\n```",
       "requirements": "- All 40 tariff tables are loaded with explicit column types.\n- Seeds are refreshable with a single documented command.\n- `fct_billing` joins the seeds, tests cover tariff changes inside a month.",
       "out_of_scope": "- Live tariff API ingestion.\n- Historic tariffs before 2022.",
       "plan": "1. Export the CSVs (T1).\n2. Add `seeds/tariffs/schema.yml` with column types (T2).\n3. Join in `fct_billing` and add tests (T3).\n4. Document `make refresh-tariffs` in the README (T4).\n\nT2 and T3 run in parallel as subagent leases.",
       "decisions": "- **Chosen:** monthly CSV is the source of truth (Q1, Mara).\n- **Rejected:** API as source, because it lags one day and costs +1 day of work.",
-      "verification": "- `dbt seed --select tariffs` exits 0 and loads 40 tables.\n- `dbt test --select fct_billing` passes.",
+      "verification": "- `dbt seed --select tariffs` exits 0 and loads 40 tables.\n- `dbt test --select fct_billing` passes.\n\n```orch\n{\"type\":\"checks\",\"id\":\"ac-status\",\"title\":\"Acceptance criteria\",\"source\":\"agent-measured, run of 09:55\",\"rows\":[{\"ac\":\"AC1\",\"verdict\":\"unproven\",\"evidence\":\"Partial run loaded 31 of 40 tables; T2 waits on Q2.\"},{\"ac\":\"AC2\",\"verdict\":\"unproven\",\"evidence\":\"The billing join needs the valid_from type (Q2).\"},{\"ac\":\"AC3\",\"verdict\":\"not_met\",\"evidence\":\"README has no refresh section yet (T4).\"}]}\n```",
       "current_state": "T1 done, 40 CSVs exported. T2 (seed configs) and T3 (fct_billing join) are leased to two subagents. Both are blocked on Q2: DATE or TIMESTAMP for `valid_from`. T4 waits for Mara."
     },
     "events": [
@@ -270,7 +270,7 @@
         "at": "2026-10-09T10:21:30Z",
         "type": "handoff.written",
         "actor": "claude-code:s_77c2:p_sev",
-        "text": "T1 done. T2 and T3 run in parallel, both blocked on Q2 (valid_from type). T4 is Mara's."
+        "text": "T1 done. T2 and T3 run in parallel, both blocked on Q2 (valid_from type). T4 is Mara's.\n\n```orch\n{\"widget\":\"before-after@1\",\"sha256\":\"e2e536e9a838ca2a52a96dba9efbec81a7fa27c05eedb4561e1928a17f50dd1d\",\"id\":\"valid-from\",\"title\":\"Q2: valid_from column type\",\"source\":\"agent-measured on the 40 tariff tables\",\"caption\":\"Drag to compare DATE with TIMESTAMP.\",\"data\":{\"before\":{\"title\":\"DATE\",\"lines\":[\"valid_from  date\",\"-- a change at 14:00 on the 1st\",\"-- is rounded to midnight\",\"tables affected: 3 of 40\"]},\"after\":{\"title\":\"TIMESTAMP\",\"lines\":[\"valid_from  timestamp_ntz\",\"-- changes keep their time of day\",\"-- the billing join uses a range\",\"tables affected: 0 of 40\"]}}}\n```"
       },
       {
         "at": "2026-10-09T10:40:05Z",
@@ -575,7 +575,7 @@
     "body": {
       "summary": "Automate the monthly reconciliation of billed kWh against the finance total.",
       "requirements": "- A generic dbt test with a configurable tolerance (default 0.1 %).\n- Output names the biggest deltas.",
-      "verification": "Test passes on September data, fails on a seeded 1 % deviation (see screenshot).",
+      "verification": "Test passes on September data, fails on a seeded 1 % deviation (see screenshot).\n\n```orch\n{\"html\":\"artifact:reconciliation-demo.html\",\"sha256\":\"377811c248ac770376acec6c8a6531d563db83f1965e13ce74f32222afbdfcaf\",\"id\":\"proto\",\"title\":\"Failure output prototype\",\"source\":\"reconciliation-demo.html\",\"caption\":\"Click a row for the meter detail.\",\"height\":230}\n```\n\n```orch\n{\"html\":\"artifacts/DEMO-0041/tolerance-demo.html\",\"sha256\":\"30478746d794d29a99a122f3f7d89545319fb6e6b6c165af18fa4a4fa7e04091\",\"id\":\"proto-old\",\"title\":\"Tolerance setting prototype\",\"source\":\"tolerance-demo.html, first draft\",\"height\":160}\n```",
       "current_state": "Both tasks done, evidence attached, PR is green. Waiting for the reviewer verdict."
     },
     "events": [
@@ -668,6 +668,30 @@
         "bytes": 84213,
         "sha256": "3f9ab0c4e7d8",
         "ac": "AC2"
+      },
+      {
+        "at": "2026-10-06T11:33:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_5d10:p_sev",
+        "name": "reconciliation-demo.html",
+        "kind": "other",
+        "bytes": 1218,
+        "sha256": "377811c248ac770376acec6c8a6531d563db83f1965e13ce74f32222afbdfcaf",
+        "ac": "AC2",
+        "label": "Clickable prototype of the failure output",
+        "preview": "<style>body{font:12px/1.5 ui-sans-serif,system-ui,sans-serif}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid GrayText;padding:4px 8px;text-align:left}tr.row{cursor:pointer}tr.row:hover{background:Highlight;color:HighlightText}.d{display:none;color:GrayText}.d.on{display:table-row}</style>\n<h4 style=\"margin:0 0 6px\">Failure output when the tolerance is exceeded (1 %)</h4>\n<table id=\"t\"><tr><th>Customer</th><th>Billed kWh</th><th>Finance kWh</th><th>Delta</th></tr></table>\n<p id=\"hint\" style=\"color:GrayText\">Click a row for the meter detail.</p>\n<script>\nvar rows=[[\"C-10492\",18420,17102,\"+1318\"],[\"C-20871\",9210,8433,\"+777\"],[\"C-30115\",7788,7203,\"+585\"]];\nvar t=document.getElementById(\"t\");\nrows.forEach(function(r){var tr=document.createElement(\"tr\");tr.className=\"row\";r.forEach(function(v){var td=document.createElement(\"td\");td.textContent=v;tr.appendChild(td)});\nvar dt=document.createElement(\"tr\");dt.className=\"d\";var c=document.createElement(\"td\");c.colSpan=4;c.textContent=\"3 meters, 2 replaced in September; billed twice for the overlap day.\";dt.appendChild(c);\ntr.addEventListener(\"click\",function(){dt.classList.toggle(\"on\")});t.appendChild(tr);t.appendChild(dt)});\n</script>\n"
+      },
+      {
+        "at": "2026-10-06T11:34:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_5d10:p_sev",
+        "name": "tolerance-demo.html",
+        "kind": "other",
+        "bytes": 558,
+        "sha256": "5481e1fa445d8c4b7be9449657c669eda5232e362d7b5298ad6f1759ca7fb737",
+        "ac": "AC2",
+        "label": "Tolerance setting prototype (current version)",
+        "preview": "<style>body{font:12px ui-sans-serif,system-ui,sans-serif}</style><h4 style=\"margin:0 0 6px\">Tolerance setting</h4>\n<label>Tolerance <input id=\"r\" type=\"range\" min=\"1\" max=\"20\" value=\"1\"> <output id=\"o\">0.1 %</output></label>\n<p id=\"p\" style=\"color:GrayText\">Fails above 0.1 % of the finance total.</p>\n<script>\nvar r=document.getElementById(\"r\");r.addEventListener(\"input\",function(){var v=(r.value/10).toFixed(1)+\" %\";document.getElementById(\"o\").textContent=v;document.getElementById(\"p\").textContent=\"Fails above \"+v+\" of the finance total.\"});\n</script>\n"
       },
       {
         "at": "2026-10-06T11:40:00Z",
@@ -1047,9 +1071,10 @@
     },
     "body": {
       "summary": "Meter replacements create duplicate ids in `dim_meter`.",
-      "context": "Seen in the October build: 112 ids twice.",
-      "requirements": "- Unique `meter_id`.\n- Replacement history is kept in `dim_meter_history`.",
-      "current_state": "Root cause found (replacement records). Waiting for Mara's rule on which record wins."
+      "context": "Seen in the October build: 112 ids twice.\n\n```orch\n{\"type\":\"kv\",\"id\":\"incident\",\"title\":\"Incident facts\",\"source\":\"October build log\",\"items\":{\"Seen in\":\"October build\",\"Duplicate ids\":112,\"Tables affected\":3,\"First seen\":\"2026-10-05\",\"Caused by replacements\":true}}\n```\n\n```orch\n{\"type\":\"table\",\"id\":\"samples\",\"title\":\"Sample of the duplicated ids\",\"source\":\"select meter_id, count(*) from dim_meter group by 1 having count(*) > 1\",\"columns\":[\"meter_id\",\"rows\",\"latest valid_from\",\"source\"],\"rows\":[[\"M-88213\",2,\"2026-09-14\",\"crm\"],[\"M-88540\",2,\"2026-09-14\",\"crm\"],[\"M-90102\",2,\"2026-09-21\",\"billing\"],[\"M-90377\",3,\"2026-09-28\",\"crm\"]]}\n```",
+      "requirements": "- Unique `meter_id`.\n- Replacement history is kept in `dim_meter_history`.\n\n```orch\n{\"type\":\"bars\",\"id\":\"req-bars\",\"title\":\"Duplicates per source system\",\"data\":{\"crm\":71,\"billing\":41}}\n```",
+      "current_state": "Root cause found (replacement records). Waiting for Mara's rule on which record wins.\n\n```orch\n{\"widget\":\"line-chart@1\",\"sha256\":\"d1d0c8f2f6b2c05508b67c267f0b933384a53b34bc3b5e8420145555c1d20bae\",\"id\":\"dups\",\"title\":\"Duplicate ids per daily build\",\"source\":\"build logs, 1 to 9 October\",\"data\":{\"title\":\"Duplicate ids per daily build\",\"unit\":\"ids\",\"points\":[[1,0],[2,0],[3,0],[4,0],[5,34],[6,58],[7,81],[8,97],[9,112]]}}\n```\n\n```orch\n{\"widget\":\"option-prototype@1\",\"sha256\":\"ced693225d36dab14e52e75658547ff27f600732310d15fce220a8a37c2ebd40\",\"id\":\"winner\",\"title\":\"Which record wins?\",\"caption\":\"Needs Mara's rule (Q1).\",\"data\":{\"pick\":\"latest\",\"options\":[{\"id\":\"latest\",\"title\":\"Latest valid_from\",\"cost\":\"low\",\"risk\":\"low\",\"notes\":\"Keeps the newest replacement record; history stays in dim_meter_history.\"},{\"id\":\"crm\",\"title\":\"CRM record\",\"cost\":\"low\",\"risk\":\"medium\",\"notes\":\"Trusts the CRM; billing corrections would be lost.\"},{\"id\":\"manual\",\"title\":\"Manual review\",\"cost\":\"high\",\"risk\":\"low\",\"notes\":\"112 ids to review by hand before the next build.\"}]}}\n```\n\n```orch\n{\"widget\":\"heatmap@1\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"id\":\"heat\",\"title\":\"Duplicates by day and table\"}\n```\n\n```orch\n{\"widget\":\"before-after@1\",\"sha256\":\"b7e1c4a09d3f0000000000000000000000000000000000000000000000000000\",\"id\":\"rule-diff\",\"title\":\"Dedup rule, before and after\",\"data\":{\"before\":{\"title\":\"before\",\"lines\":[\"select * from meters\"]},\"after\":{\"title\":\"after\",\"lines\":[\"select distinct on (meter_id) *\"]}}}\n```",
+      "verification": "`dbt test --select dim_meter` fails with 112 rows today.\n\n```orch\n{\"type\":\"checks\",\"id\":\"ac-bug\",\"title\":\"Acceptance criteria\",\"rows\":[{\"ac\":\"AC1\",\"verdict\":\"not_met\",\"evidence\":\"unique_meter_id fails with 112 rows (09:30 run).\"}]}\n```\n\n```orch\n{\"type\":\"kv\",\"title\":\"Failing test\",\"items\":{\"failures\":112},\"colour\":\"red\"}\n```"
     },
     "events": [
       {
@@ -1158,7 +1183,8 @@
     },
     "body": {
       "summary": "Which orchestrator should run the nightly dbt jobs?",
-      "requirements": "- Compare Dagster and Airflow on asset awareness, local dev, hosting cost.\n- Recommend one."
+      "requirements": "- Compare Dagster and Airflow on asset awareness, local dev, hosting cost.\n- Recommend one.",
+      "verification": "Dagster fits the asset-oriented dbt jobs better; Airflow is cheaper to host and to learn.\n\n```orch\n{\"type\":\"kv\",\"id\":\"verdict\",\"title\":\"Recommendation\",\"items\":{\"Recommendation\":\"Dagster\",\"Confidence\":\"medium\",\"Migration estimate\":\"6 weeks\"}}\n```\n\n```orch\n{\"type\":\"table\",\"id\":\"compare\",\"title\":\"Dagster against Airflow\",\"source\":\"spike notes, 8 October\",\"columns\":[\"Criterion\",\"Dagster\",\"Airflow\",\"Weight\"],\"rows\":[[\"Asset-aware lineage\",\"Native\",\"Plugin\",3],[\"Local development\",\"dagster dev\",\"docker compose\",3],[\"dbt integration\",\"First class\",\"cosmos\",2],[\"Backfills\",\"Partition UI\",\"Per-DAG CLI\",2],[\"Hosting cost, CHF/month\",\"310\",\"280\",2],[\"Managed option\",\"Dagster+\",\"Astronomer, MWAA\",1],[\"Learning curve\",\"Medium\",\"Low (known)\",2],[\"Sensors and triggers\",\"Native\",\"Sensors\",1],[\"Testing of pipelines\",\"Unit test assets\",\"DAG tests\",2],[\"Observability\",\"Built in\",\"Add-ons\",2],[\"Secrets handling\",\"Resources\",\"Connections\",1],[\"Team familiarity\",\"None\",\"Mara\",2],[\"Community size\",\"Medium\",\"Large\",1],[\"Upgrade path\",\"Semver\",\"Provider matrix\",1],[\"Migration estimate, weeks\",\"6\",\"3\",3]]}\n```\n\n```orch\n{\"type\":\"bars\",\"id\":\"runtime\",\"title\":\"Nightly run time by job, min\",\"unit\":\"min\",\"source\":\"Airflow history, median of 14 nights\",\"data\":{\"stg_meters\":4,\"stg_tariffs\":3,\"dim_meter\":6,\"dim_customer\":5,\"fct_invoices\":22,\"fct_usage\":18,\"fct_outages\":9,\"snap_contracts\":7,\"seeds_tariffs\":2,\"tests_all\":14,\"docs_generate\":5,\"export_finance\":8,\"export_bi\":11,\"vacuum\":3},\"highlight\":\"fct_invoices\"}\n```\n\n```orch\n{\"type\":\"kv\",\"id\":\"notes\",\"title\":\"Notes (first copy)\",\"items\":{\"Owner\":\"Mara\"}}\n```\n\n```orch\n{\"type\":\"kv\",\"id\":\"notes\",\"title\":\"Notes (second copy)\",\"items\":{\"Owner\":\"Tom\"}}\n```\n\n```orch\n{\"type\":\"bars\",\"title\":\"Cost per run, CHF\",\"data\":{\"dagster\":0.42,\"airflow\":0.31,},\"id\":\"cost\"}\n```"
     },
     "events": [
       {

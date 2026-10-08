@@ -943,5 +943,33 @@
     "actions": { "save_settings": { "minRole": "owner" } },
     "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
     "update": null
+  },
+  {
+    "name": "widgets",
+    "title": "Widgets",
+    "version": "0.1.0",
+    "description": "Rich ticket sections: charts, check tables and sandboxed pages that agents write into a ticket.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "widgets",
+        "title": "Widgets",
+        "icon": "LayoutPanelTop",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "markdown", "text": "Agents put small visual blocks into the **Context**, **Current state** and **Verification** sections of a ticket. Core draws the four core types itself, without a script. Templates and one-off pages run only in a sandboxed frame that cannot reach this dashboard, the network or your files. Turning this addon off keeps the frames closed and shows each widget's text instead." },
+            { "type": "markdown", "text": "### Templates" },
+            { "type": "table", "columns": [{ "key": "ref", "label": "Template" }, { "key": "title", "label": "Shows" }, { "key": "moment", "label": "Moment" }, { "key": "pin", "label": "Pin (sha256)" }], "rows": { "$ref": "addon.templateRows" } },
+            { "type": "markdown", "text": "### Core types" },
+            { "type": "table", "columns": [{ "key": "type", "label": "Type" }, { "key": "shows", "label": "Shows" }], "rows": { "$ref": "addon.coreRows" } }
+          ]
+        }
+      }
+    ],
+    "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+    "update": null
   }
 ]

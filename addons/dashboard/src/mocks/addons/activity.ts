@@ -70,6 +70,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 const hhmm = (at: string) => at.slice(11, 16)
 
 function groupOf(type: string, ws: boolean): Group {
+  if (type === 'gate.policy_set') return 'workspace' // a workspace rule, not a ticket gate event
   if (type.startsWith('gate.') || type === 'verdict.given') return 'gates'
   if (type.startsWith('question.')) return 'questions'
   if (type.startsWith('lease.') || type.startsWith('claim.') || type === 'task.done' || type === 'agent.refused' || type === 'handoff.written') return 'tasks'
@@ -104,13 +105,15 @@ const filtered = (n: Nav) => n.groups.length > 0 || n.people.length > 0 || n.age
 function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
   const w = c.store.workspaces.find((x) => x.id === c.ws)
   const names = new Map((w?.members ?? []).map((m) => [m.person, m.name]))
+  // Someone removed later is no longer a member: their name is still in the member.added event.
+  for (const e of c.store.wsEventsOf(c.ws)) if (e.type === 'member.added' && typeof e.person === 'string' && typeof e.name === 'string' && !names.has(e.person)) names.set(e.person, e.name)
   const sees = atLeast(roleOf(w, c.viewer), 'maintainer')
   const who = (a: Actor) => (a.kind === 'person' ? (names.get(a.id) ?? a.id) : a.id)
   const out: Entry[] = []
   const push = (e: ReturnType<typeof c.store.eventsOf>[number], src: string, ticket: string | undefined) => {
     const actorId = e.actor.kind === 'person' || e.actor.kind === 'agent' ? e.actor.id : undefined
     // Names for the summary lines (member events carry person ids).
-    const named = { ...e, who: typeof e.person === 'string' ? (names.get(e.person) ?? e.person) : undefined }
+    const named = { ...e, who: typeof e.person === 'string' ? names.get(e.person) : undefined }
     const summary = describeEvent(named).trim() || e.type
     out.push({ at: e.at, seq: e.seq, src, day: e.at.slice(0, 10), actor: who(e.actor), actorId, kind: e.actor.kind, ticket, group: groupOf(e.type, !ticket), summary, type: e.type })
   }
@@ -127,7 +130,7 @@ function matches(e: Entry, n: Nav, titleOf: (k: string) => string): boolean {
   if ((n.people.length || n.agents.length) && !((e.kind === 'person' && n.people.includes(e.actorId!)) || (e.kind === 'agent' && n.agents.includes(e.actorId!)))) return false
   if (n.q) {
     const hay = `${e.actor} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase()
-    if (!hay.includes(n.q)) return false
+    if (!hay.includes(n.q.toLowerCase())) return false
   }
   return true
 }
@@ -311,7 +314,7 @@ registerAddon({
     },
     search(ctx) {
       const raw = (ctx.body.formData as { q?: unknown } | undefined)?.q
-      const q = typeof raw === 'string' ? raw.replace(/[\r\n]+/g, ' ').trim().slice(0, 80).toLowerCase() : ''
+      const q = typeof raw === 'string' ? raw.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : ''
       setNav(ctx.state, ctx.viewer, { q, pages: 1 })
       return { ok: true, message: q ? `Searching for "${q}".` : 'Search cleared.', changed: true }
     },

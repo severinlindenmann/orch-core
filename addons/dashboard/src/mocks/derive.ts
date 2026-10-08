@@ -429,7 +429,7 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'member.role_changed':
       return `made ${who} ${/^[aeiou]/.test(t(e.role, 'member')) ? 'an' : 'a'} ${t(e.role, 'member')}`
     case 'member.removed':
-      return `removed ${who}`
+      return `removed ${t(e.who ?? e.name, 'a member')}`
     case 'gate.policy_set':
       return `changed the ${t(e.gate, 'gate')} approval rule`
     case 'addon.installed':

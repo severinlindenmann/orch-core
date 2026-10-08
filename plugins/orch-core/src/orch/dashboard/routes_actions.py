@@ -49,13 +49,15 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
             dark: Annotated[str, Form()] = "", confirm_dark: Annotated[str, Form()] = "",
             start: Annotated[str, Form()] = "", release: Annotated[str, Form()] = "",
             rollback: Annotated[str, Form()] = "", confirm_production: Annotated[str, Form()] = "",
-            close: Annotated[str, Form()] = ""):
+            close: Annotated[str, Form()] = "", end_factory: Annotated[str, Form()] = ""):
     """`seen` is the hash of what the page showed (for an epic: its charter). `delegate` (epics, the checkbox in
     the confirm) opts in to delegation with `max_children` / `max_size`; Ops.approve checks the rest. `factory`
     (epics, Start as AI Factory) signs the factory charter with the factory's own limits (D5/D6) and wins over
     `delegate`; Ops refuses it while factory.enabled is off, and for any process under an agent harness. `dark`
     (Start as a Dark AI Factory) signs the same factory charter with `dark: True` and needs the word dark typed in
-    `confirm_dark`, as on the New ticket page; Ops refuses it while Dark is off."""
+    `confirm_dark`, as on the New ticket page; Ops refuses it while Dark is off. `end_factory` (the epic page's End
+    the factory run) is the only way to sign an epic with a factory run without a factory delegation: Ops refuses
+    that approval without it, so an old or forged form signs nothing."""
     if not seen:
         url = safe_next(next_url) or _ticket_url(request, ref)
         return back(url, err="reload the page and review again")
@@ -90,14 +92,35 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
         limits = {"max_children": max_children.strip() or None, "max_size": max_size.strip() or None}
     else:
         limits = None
+    end = end_factory in ("1", "on", "true")
+    if end and limits is not None:
+        return back(safe_next(next_url) or _ticket_url(request, ref),
+                    err="ending the factory run signs no delegation: nothing was signed")
 
     def action():
         if limits and limits.get("factory"):
             start_factory(request.app.state.ws, ref, seen, limits, despite, gate=gate)
         else:
-            _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
+            _ops(request).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits,
+                                  end_factory=end)
 
-    return _run(request, ref, action, f"{gate} approved", next_url)
+    return _run(request, ref, action, "factory run ended, epic approved" if end else f"{gate} approved", next_url)
+
+
+@router.post("/t/{ref}/resign")
+def resign(request: Request, ref: str, seen: Annotated[str, Form()] = "", charter: Annotated[str, Form()] = "",
+           next_url: Next = "", despite_open_question: Annotated[str, Form()] = ""):
+    """Re-sign the epic's factory charter as it is signed (Ops.resign_factory): `seen` is the content hash of the epic
+    and children the page showed, `charter` the factory delegation it showed. The runner is armed for the new one."""
+    if not seen or not charter:
+        return back(safe_next(next_url) or _ticket_url(request, ref), err="reload the page and review again")
+    ws = request.app.state.ws
+
+    def action():
+        _arm_runner(ws, Ops(ws, HUMAN).resign_factory(ref, expected_hash=seen, charter=charter,
+                                                      despite_open_question=despite_open_question in ("1", "on", "true")))
+
+    return _run(request, ref, action, "charter re-signed", next_url)
 
 
 def start_factory(ws, ref: str, seen: str, limits: dict, despite: bool = False, *, gate: str = "requirements"):

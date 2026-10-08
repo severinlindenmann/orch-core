@@ -225,6 +225,32 @@ def latest_charter(ws, epic_id: str, signed=None) -> dict | None:
     return None
 
 
+def factory_charter(ws, epic_id: str, signed=None) -> dict | None:
+    """The epic's latest signed charter when it carries a factory delegation: a run that a later charter has not
+    ended, whether it works, is paused, used up its budget or waits for its edited text to be re-signed. None
+    otherwise. An approval without a factory delegation ends it (Ops: only on purpose, `end_factory`)."""
+    e = latest_charter(ws, epic_id, signed)
+    d = (e or {}).get("delegate")
+    return e if isinstance(d, dict) and d.get("factory") and e.get("delegation") else None
+
+
+_RELEASE_LINE = {None: "Release: none, the run only builds and proves", "merge": "Release up to: merge",
+                 "dev": "Release up to: dev",
+                 "prod": "Release up to: production, never before its release window opens"}
+
+
+def charter_checklist(d: dict) -> list[str]:
+    """What a factory charter signs, one line each: the re-sign dialog and `orch approve` show the same lines."""
+    out = ["Mode: " + ("Dark AI Factory" if d.get("dark") else "AI Factory"),
+           _RELEASE_LINE.get(d.get("release"), f"Release up to: {d.get('release')}")]
+    if d.get("release") == "prod":
+        out.append("Rollback by itself when the production check fails: " + ("yes" if d.get("rollback") else "no"))
+    out.append("Closes the epic by itself when everything is proven" if d.get("close") else "You give the verdict")
+    out.append(f"Limits: up to {d.get('max_children')} children or {d.get('max_hours')} hours, children of size "
+               f"{d.get('max_size')} or smaller")
+    return out
+
+
 def ever_chartered(ws, epic_id: str, child_id: str, signed=None) -> bool:
     return any(e.get("kind") == "charter" and e.get("ticket") == epic_id
                and any(isinstance(c, dict) and c.get("id") == child_id for c in e.get("children") or [])

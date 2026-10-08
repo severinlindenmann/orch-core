@@ -183,7 +183,7 @@
         confirmed in full on the epic page; this card (and its keyboard primary) only opens that view. -#}
     <p class="dc-ff muted dc-wide">{{ d.excerpt }}</p>
     <div class="cluster dc-actions dc-wide">
-      <a class="btn btn-primary" href="/t/{{ d.ticket }}#epic-approve" data-key-primary>Review the epic and its children ›</a>
+      <a class="btn btn-primary" href="/t/{{ d.ticket }}#epic-approve" data-key-primary>{{ "Re-sign the charter ›" if d.resign else "Review the epic and its children ›" }}</a>
     </div>
 
   {% elif d.kind in ("approve-requirements", "approve-plan", "re-approve") %}

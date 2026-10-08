@@ -126,9 +126,16 @@
 {% macro charter_form(e, epic_question) %}
 {% set questions = ([epic_question] if epic_question else []) + (e.approve|map(attribute="question")|select|list) %}
 <section class="gate charter" id="epic-approve" aria-labelledby="epic-approve-h">
-  <div class="gate-head"><h3 id="epic-approve-h">{{ "Re-approve the epic" if e.approved else "Approve the epic" }}</h3>
+  <div class="gate-head"><h3 id="epic-approve-h">{{ ("Re-sign the " ~ e.run.name) if e.run else "Re-approve the epic" if e.approved else "Approve the epic" }}</h3>
     <span class="muted">charter {{ e.charter.content_hash[7:15] }}</span></div>
+  {% if e.run %}
+  {#- a factory run: the default re-signs the same charter; only End the factory run (below) signs one without it -#}
+  {% if e.run.why %}<p class="resign-why" role="status">{{ ui.status("warn", e.run.why) }}</p>{% endif %}
+  <p class="muted">You sign the same charter again, over the epic and its children as shown below:</p>
+  <ul class="resign-list">{% for x in e.run.checklist %}<li>{{ x }}</li>{% endfor %}</ul>
+  {% else %}
   <p class="muted">One decision: the epic's requirements above and, for every open child below, its requirements and plan as shown. Agents then work the covered children to testing without asking again. A child that changes, joins or leaves later waits for you.</p>
+  {% endif %}
   {% if e.approved %}<p class="muted">Only what changed since your last approval is open; unchanged children are folded.</p>{% endif %}
   {% if e.diff.epic_changed %}<p>{{ ui.status("warn", "the epic's own text changed since your approval") }}</p>{% endif %}
   {% for rid in e.diff.removed %}<p class="muted">{{ rid }} left the epic since your approval.</p>{% endfor %}
@@ -146,6 +153,20 @@
   <p class="muted">No open children yet: approving covers the epic only. Children added later need your approval.</p>
   {% endfor %}
   {% set base = "epic " ~ e.charter.content_hash[7:15] ~ " with " ~ e.approve|length ~ (" child" if e.approve|length == 1 else " children") %}
+  {% if e.run %}
+  {% set items = [] %}{% for x in e.run.checklist %}{% set _ = items.append({"icon": "check", "text": x}) %}{% endfor %}
+  <form method="post" action="/t/{{ t.id }}/resign" class="inline-confirm-form charter-form" autocomplete="off" data-confirm-title="Re-sign the {{ e.run.name }}?" data-confirm-body="You sign {{ base }}, exactly as shown above, under the same charter: the run goes on." data-confirm-items='{{ items|tojson }}' data-confirm-ok="Re-sign the {{ e.run.name }}" data-confirm-stays="End the factory run, Stop the run, and every verdict.">
+    <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
+    <input type="hidden" name="charter" value="{{ e.run.charter }}">
+    {% if questions %}
+    <p class="hint">A line reads as an open question for you: &ldquo;{{ questions[0][:80] }}&rdquo;. Request changes so the agent asks it with <code>orch ask</code>, or re-sign if it is not a question for you.</p>
+    <label class="override"><input type="checkbox" name="despite_open_question" value="1" required>
+      I read it: &ldquo;{{ questions[0][:80] }}&rdquo; is not a question for me</label>
+    {% endif %}
+    {% if e.unready %}<p class="hint" id="epic-approve-why">Cannot re-sign yet: {{ e.unready|join("; ") }}.</p>{% endif %}
+    <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}>Re-sign the {{ e.run.name }}</button>
+  </form>
+  {% else %}
   {#- confirm.js builds the dialog from the fields as they are when pressed, so it always says what is signed. -#}
   <form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form charter-form" autocomplete="off" data-confirm-build="start" data-confirm-epic="{{ base }}"{% if e.approved %} data-confirm-reapprove{% endif %}{% if e.factory %} data-factory-confirm="up to {{ e.factory.limits.max_children }} children or {{ e.factory.limits.max_hours }} hours, children of size {{ e.factory.limits.max_size }} or smaller"{% endif %}>
     <input type="hidden" name="gate" value="requirements">
@@ -187,8 +208,19 @@
     {% if e.unready %}<p class="hint" id="epic-approve-why">Cannot approve yet: {{ e.unready|join("; ") }}.</p>{% endif %}
     <button type="submit" class="btn btn-primary"{% if e.unready %} disabled aria-describedby="epic-approve-why"{% endif %}><span class="lbl-approve">{{ "Re-approve" if e.approved else "Approve" }} the epic{% if e.approve %} and {{ e.approve|length }} {{ "child" if e.approve|length == 1 else "children" }}{% endif %}</span>{% if e.factory %}<span class="lbl-factory">Start AI Factory</span><span class="lbl-dark">Start Dark AI Factory</span>{% endif %}</button>
   </form>
+  {% endif %}
   {{ changes_form("requirements") }}
 </section>
+{% endmacro %}
+
+{#- The one way to sign this epic without its factory delegation: on purpose, in its own care-toned dialog. -#}
+{% macro end_run_form(e) %}
+<form method="post" action="/t/{{ t.id }}/approve" class="inline-confirm-form end-run" autocomplete="off" data-confirm-title="End the factory run?" data-confirm-body="You approve epic {{ e.charter.content_hash[7:15] }} and its {{ e.approve|length }} open {{ 'child' if e.approve|length == 1 else 'children' }} as they are now, without the factory." data-confirm-items='[{"icon": "x", "tone": "care", "text": "The runner ends the sessions and starts no new ones"}, {"icon": "up", "tone": "care", "text": "Nothing more is released or closed by itself"}, {"icon": "check", "text": "The children stay, with every branch and note; they wait for you or an agent"}]' data-confirm-tone="care" data-confirm-ok="End the factory run" data-confirm-stays="Start a new run from this page, and every verdict.">
+  <input type="hidden" name="gate" value="requirements">
+  <input type="hidden" name="seen" value="{{ e.charter.content_hash }}">
+  <input type="hidden" name="end_factory" value="1">
+  <button type="submit" class="btn">End the factory run</button>
+</form>
 {% endmacro %}
 
 {% macro factory_panel(e) %}
@@ -202,6 +234,7 @@
   {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}.</p>{% endif %}
   <p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark and f.dark_on else "AI Factory" }} run view</a></p>
   {% endif %}
+  {% if e.run %}{{ end_run_form(e) }}{% elif e.run_ended %}<p><a class="lnk" href="/factory/{{ t.id }}">Open the ended run</a></p>{% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
   {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#factory", True) }}{% endfor %}

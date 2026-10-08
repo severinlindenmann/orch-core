@@ -193,7 +193,7 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "working": ("info", 1, "Working"), "planning": ("info", 1, "Planning"),
            "releasing": ("info", 1, "Releasing"), "window": ("neu", 1, "Release window"),
            "windowlook": ("you", 0, "Window needs a look"), "relhold": ("you", 0, "Release waits"),
-           "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("warn", 2, "Edited, start again"),
+           "closing": ("info", 1, "Closing by itself"), "held": ("warn", 0, "Held"), "slot": ("neu", 2, "Waiting"), "paused": ("neu", 2, "Paused"), "changed": ("you", 0, "Edited"),
            "blocked": ("warn", 2, "Blocked"), "unarmed": ("neu", 2, "Not running"), "nokids": ("neu", 2, "No children"),
            "idle": ("neu", 2, "Idle"), "asleep": ("neu", 1, "Idle at prompt"), "early": ("warn", 0, "Ended at start"), "noclone": ("warn", 0, "No clone"),
            "trust": ("you", 0, "Trust question"), "stalled": ("you", 0, "Stopped working"), "finished": ("ok", 3, "Finished"),
@@ -202,7 +202,7 @@ _STATES = {"waiting": ("you", 0, "Needs you"), "stopped": ("warn", 0, "Stopped")
            "children": ("warn", 0, "Children limit"), "accepted": ("you", 0, "Needs you"),
            "unready": ("you", 0, "Needs you")}
 NEEDS_YOU = ("waiting", "stopped", "budget", "trust", "stalled", "asks", "hung", "parked", "launches", "children",
-             "windowlook", "relhold", "accepted", "unready")
+             "windowlook", "relhold", "accepted", "unready", "changed")
 BUSY_MINUTES = 20  # a session busy this long with an unchanged screen (its spinner aside) gets a warning
 
 
@@ -319,7 +319,7 @@ def run_status(ws, epic, d, view, *, signed, events, entries, blocker=None, boun
         state, headline = (("budget", "Agents stopped on this epic") if only_budget
                            else ("stopped", "The agents cannot go on by themselves"))
     elif d["epic_changed"]:
-        state, headline = "changed", "The epic's text changed since you started it"
+        state, headline = "changed", "The epic's text changed: re-sign the charter to continue"
     elif trusting := [b for b in running if factory_sessions.at_trust_question(b["session"])]:
         state, headline = "trust", "; ".join(factory_runner.trust_line(b) for b in trusting)
     elif asks := _showing(running, "ask", factory_runner.IDLE_SECONDS):

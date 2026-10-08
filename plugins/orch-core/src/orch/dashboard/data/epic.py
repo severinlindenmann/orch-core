@@ -195,7 +195,28 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
              # there ended the run)
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
+    s.update(run=_run(ws, epic, s, rows))
     return s
+
+
+def _run(ws, epic, s, rows) -> dict | None:
+    """The epic's factory run while a later charter has not ended it (epics.factory_charter): what re-signing it
+    signs again, and why a re-signature is needed (only when `reapprove` says one is). None otherwise."""
+    run = epics.factory_charter(ws, epic.id)
+    if run is None or epic.status == "done":
+        return None
+    try:
+        d = epics.normalize_delegate(dict(run["delegate"]))
+    except Exception:
+        return None  # a charter orch cannot read again offers nothing to re-sign (Ops refuses it too)
+    why = None
+    if s["reapprove"]:
+        kids = [r["card"]["id"] for r in rows if r["state"] in ("changed", "new", "paused")]
+        why = ("The epic's text changed: re-sign the charter to continue" if s["diff"]["epic_changed"]
+               else f"{', '.join(kids)} changed since the charter: re-sign the charter to continue" if kids
+               else "The epic's children changed: re-sign the charter to continue")
+    return {"charter": run["delegation"], "dark": bool(d.get("dark")), "checklist": epics.charter_checklist(d),
+            "name": "Dark charter" if d.get("dark") else "AI Factory charter", "why": why}
 
 
 def _unreleased(ws, epic):

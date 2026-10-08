@@ -114,6 +114,13 @@ _WHY_TOGETHER = "The agent drafted the requirements and the plan; one approval l
 _WHY_LATER_TASK = "A task in the plan is yours; the agent still has its own work first."
 
 
+def resign_why(item: dict) -> str:
+    """The one banner of a factory epic whose charter needs signing again (Today, the move chip)."""
+    detail = str(item.get("detail") or "")
+    return ("The epic's text changed: re-sign the charter to continue" if item.get("epic_changed") or not detail
+            else f"{detail} changed since the charter: re-sign the charter to continue")
+
+
 def why_waiting(item: dict | None, *, together: bool | None = None) -> str:
     """Why a needs_you() item waits on the human, in one line."""
     if not item:
@@ -123,6 +130,8 @@ def why_waiting(item: dict | None, *, together: bool | None = None) -> str:
         return _WHY_TOGETHER
     if kind == "task" and item.get("scope") == "later":
         return _WHY_LATER_TASK
+    if kind == "approve-epic" and item.get("factory"):
+        return resign_why(item)
     if kind == "verdict" and item.get("factory_epic"):
         return f"Part of {item['factory_epic']}: the epic's release and verdict come first. Nothing for you to do yet."
     return _WHY.get(kind, "").format(gate=need_gate(item) or "gate")
@@ -200,6 +209,9 @@ def reapprove_hint(ticket, gate: str, moves) -> dict:
 def _candidate(ticket, item: dict, plan_skip_sizes, moves) -> dict:
     kind, detail = item.get("kind"), str(item.get("detail") or "")
     gate = need_gate(item)
+    if ticket.meta.get("type") == "epic" and kind == "approve-epic" and item.get("factory"):
+        return {"text": resign_why(item) + ".", "action": {"kind": "approve", "gate": "requirements",
+                                                          "label": "Re-sign the charter"}, "rank": 0}
     if ticket.meta.get("type") == "epic" and kind in ("approve-requirements", "approve-epic"):
         # an epic's approval is its charter: the epic and its children, read in full on the epic page
         text = ("Read the epic and every open child, then approve the epic (or request changes)."

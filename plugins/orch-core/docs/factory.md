@@ -60,6 +60,20 @@ page and Today offer no re-approval for them, and an agent's log line on the epi
 re-approval is offered only when one is missing: the epic's own text changed, a child the charter or its delegation
 covered changed, a child someone else added waits, or a child left the epic (a child that is done did not leave it).
 
+While the epic's latest charter is a factory one (running, paused, out of budget, or waiting for its edited text),
+approving it again **re-signs the same charter**: the same mode, release target, rollback, close and limits, over the
+epic and its children as they are now (a new content hash, a new delegation with a fresh time budget; the runner
+stays armed when the run was). The epic page then says "Re-sign the Dark charter" (or "Re-sign the AI Factory
+charter") with the checklist of what is signed, and the run view and Today show one banner, for example "The epic's
+text changed: re-sign the charter to continue", with one button to the re-sign. `orch approve <epic> requirements`
+prints the same checklist before the charter and asks for the typed epic id as before.
+
+The only way to sign such an epic **without** its factory delegation is **End the factory run**: the epic page's
+care-toned button (its dialog says what stops: the runner ends the sessions, nothing more is released or closed by
+itself, the children stay), or `orch approve <epic> requirements --end-factory`. It is signed into the charter entry
+as `ends_factory` (the delegation it ended). Any other approval without a factory delegation of such an epic is
+refused and signs nothing: an old or forged form, an addon's or a phone's approve intent, `--delegate`.
+
 ## What changes for agents in a factory epic
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never

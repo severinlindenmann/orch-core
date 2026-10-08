@@ -38,7 +38,7 @@ def test_planner_children_are_covered_by_the_running_charter_and_no_reapproval_i
     e = _epic(w)
     s = epics.summary(w.ws, e)
     assert {c["state"] for c in s["children"]} == {"delegated"}
-    assert s["delegation"]["active"] and not s["delegation"]["epic_changed"]
+    assert s["delegation"]["active"] and not s["delegation"]["epic_changed"]  # the planner's log line changed nothing
     entries = store.scan(w.ws)
     needs = needs_you(w.ws, entries=entries)
     assert not [n for n in needs if n["kind"] == "approve-epic"]  # Today asks nothing
@@ -46,3 +46,138 @@ def test_planner_children_are_covered_by_the_running_charter_and_no_reapproval_i
     page = epic_data.page_data(w.ws, e, entries=entries, needs=needs, events=read_events(w.ws),
                                builder=Cards(w.ws, entries=entries, needs=needs))
     assert page["reapprove"] is False  # the epic page offered "Re-approve the epic" here: the live trap
+
+
+# -- 1. re-approving a factory epic keeps its charter; ending the run is its own, explicit action -----------------
+
+def _client(w):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from orch.dashboard.app import create_app
+    c = TestClient(create_app(w.ws, "tok"))
+    assert c.get("/?token=tok").status_code == 200
+    return c
+
+
+def _text(r):
+    return " ".join(r.text.split())
+
+
+def _seen(w):
+    return epics.charter(w.ws, _epic(w))["content_hash"]
+
+
+def _charters(w):
+    from orch.core import ledger
+    return [e for e in ledger.entries(w.ws) if e.get("kind") == "charter" and e.get("ticket") == w.epic]
+
+
+def _edit_epic(w):
+    """The human edits the epic's own text: the one change that needs the charter signed again."""
+    from orch.core.ops import Ops
+    Ops(w.ws, w.human).set_section(w.epic, "Requirements", _epic(w).section("Requirements") + " Use grey.")
+
+
+def test_a_plain_approval_of_a_running_factory_epic_is_refused_and_signs_nothing(planned):
+    w = planned
+    from conftest import human_ops
+    from orch.errors import ValidationError
+    before = _charters(w)
+    with pytest.raises(ValidationError, match="would end the run"):
+        human_ops(w.ws, w.human).approve(w.epic, "requirements")  # the old Re-approve: no delegation
+    c = _client(w)
+    r = c.post(f"/t/{w.epic}/approve", data={"gate": "requirements", "seen": _seen(w), "start": ""},
+               follow_redirects=False)  # the old form, as the live run posted it
+    assert "err=" in r.headers["location"]
+    assert _charters(w) == before and epics.delegation(w.ws, _epic(w))["active"]
+    # an addon's approve intent never sends a delegation: it fails closed the same way
+    from orch.addons.api import Intent
+    from orch.addons.intents import execute
+    with pytest.raises(ValidationError):
+        execute(w.ws, Intent("approve", ref=w.epic, gate="requirements", expected_hash=_seen(w)),
+                allowed_ref=w.epic, tickets=False, actor=w.human, source="resolve")
+    assert _charters(w) == before
+
+
+def test_the_epic_page_offers_resign_with_its_checklist_only_when_the_text_changed(planned):
+    w = planned
+    c = _client(w)
+    page = _text(c.get(f"/t/{w.epic}"))
+    assert "Re-approve the epic" not in page and "Re-sign the" not in page  # nothing is missing: nothing offered
+    assert "End the factory run" in page  # the one explicit way to sign it without the factory
+    _edit_epic(w)
+    page = _text(c.get(f"/t/{w.epic}"))
+    assert "Re-sign the Dark charter" in page and "Re-approve the epic" not in page
+    assert "The epic&#39;s text changed: re-sign the charter to continue" in page
+    assert "Mode: Dark AI Factory" in page and "Release up to: merge" in page and "You give the verdict" in page
+    run = _text(c.get(f"/factory/{w.epic}"))
+    assert "The epic&#39;s text changed: re-sign the charter to continue" in run and "Re-sign the charter" in run
+    from orch.core.query import needs_you
+    from orch.dashboard.data.steps import why_waiting
+    (item,) = [n for n in needs_you(w.ws) if n["kind"] == "approve-epic"]
+    assert item["factory"] and why_waiting(item) == "The epic's text changed: re-sign the charter to continue"
+    assert "Re-sign the charter" in _text(c.get("/"))
+
+
+def test_resign_signs_the_same_charter_over_the_new_text_and_the_run_goes_on(planned):
+    w = planned
+    _edit_epic(w)
+    old = epics.delegation(w.ws, _epic(w))
+    assert old["epic_changed"] and not old["active"]
+    c = _client(w)
+    stale = c.post(f"/t/{w.epic}/resign", data={"seen": _seen(w), "charter": "sha256:other"}, follow_redirects=False)
+    assert "err=" in stale.headers["location"]  # a charter other than the one shown: nothing signed
+    r = c.post(f"/t/{w.epic}/resign", data={"seen": _seen(w), "charter": old["id"]}, follow_redirects=False)
+    assert "err=" not in r.headers["location"], r.headers["location"]
+    first, last = _charters(w)[0], _charters(w)[-1]
+    assert last["delegate"] == first["delegate"] and last["delegation"] != old["id"]
+    assert {k["id"] for k in last["children"]} == {k.id for k in epics.children(w.ws, w.epic)}
+    d = epics.delegation(w.ws, _epic(w))
+    assert d["active"] and fs.armed(w.ws, d["id"])
+    from orch.dashboard.data import factory as data
+    assert data.run_view(w.ws, _epic(w))["state"] != "changed"
+    assert "re-signed the factory charter" in _epic(w).section("Log")
+
+
+def test_end_the_factory_run_is_explicit_and_recorded(planned):
+    w = planned
+    c = _client(w)
+    did = epics.delegation(w.ws, _epic(w))["id"]
+    r = c.post(f"/t/{w.epic}/approve", data={"gate": "requirements", "seen": _seen(w), "end_factory": "1",
+                                              "start": "factory"}, follow_redirects=False)
+    assert "err=" in r.headers["location"]  # ending signs no delegation: a factory choice with it is refused
+    r = c.post(f"/t/{w.epic}/approve", data={"gate": "requirements", "seen": _seen(w), "end_factory": "1"},
+               follow_redirects=False)
+    assert "err=" not in r.headers["location"], r.headers["location"]
+    last = _charters(w)[-1]
+    assert last["ends_factory"] == did and not last.get("delegation")
+    assert epics.factory_charter(w.ws, w.epic) is None
+    from conftest import human_ops
+    from orch.errors import ValidationError
+    with pytest.raises(ValidationError, match="no factory run to end"):
+        human_ops(w.ws, w.human).approve(w.epic, "requirements", end_factory=True)
+
+
+def test_the_cli_resigns_by_default_prints_the_charter_and_ends_only_with_end_factory(planned, monkeypatch, capsys):
+    w = planned
+    from orch import actor
+    from orch.cli import run
+    monkeypatch.setattr(actor, "is_interactive", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": w.epic)
+    _edit_epic(w)
+    capsys.readouterr()
+    assert run(["approve", w.epic, "requirements"]) == 0
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "Re-sign the Dark charter" in text and "Mode: Dark AI Factory" in text and "--end-factory" in text
+    assert _charters(w)[-1]["delegate"] == _charters(w)[0]["delegate"]
+    assert epics.delegation(w.ws, _epic(w))["active"]
+    monkeypatch.setattr("builtins.input", lambda prompt="": "nope")  # the typed id is still required
+    assert run(["approve", w.epic, "requirements", "--end-factory"]) != 0
+    assert epics.factory_charter(w.ws, w.epic) is not None
+    monkeypatch.setattr("builtins.input", lambda prompt="": w.epic)
+    assert run(["approve", w.epic, "requirements", "--end-factory"]) == 0
+    out = capsys.readouterr()
+    assert "End the factory run" in out.out + out.err
+    assert epics.factory_charter(w.ws, w.epic) is None and _charters(w)[-1].get("ends_factory")
+

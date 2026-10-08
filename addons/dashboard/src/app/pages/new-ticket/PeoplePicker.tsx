@@ -42,12 +42,15 @@ const Row = ({ label, children }: { label: string; children: React.ReactNode }) 
 /** Owner, assignees, reviewers and who can see the ticket. */
 export function PeoplePicker({
   members,
+  creator,
   people,
   onPeople,
   visibility,
   onVisibility,
 }: {
   members: Member[]
+  /** The person creating the ticket: a restricted ticket always starts with them (and the owners). */
+  creator: string
   people: PeopleValue
   onPeople: (p: PeopleValue) => void
   visibility: Visibility
@@ -78,7 +81,7 @@ export function PeoplePicker({
           aria-label="Visibility"
           className={fieldCls}
           value={restricted ? 'restricted' : 'workspace'}
-          onChange={(e) => onVisibility(e.target.value === 'workspace' ? 'workspace' : { restricted: members.filter((m) => m.role === 'owner').map((m) => m.person) })}
+          onChange={(e) => onVisibility(e.target.value === 'workspace' ? 'workspace' : { restricted: [...new Set([creator, ...members.filter((m) => m.role === 'owner').map((m) => m.person)])] })}
         >
           <option value="workspace">Workspace</option>
           <option value="restricted">Restricted to…</option>

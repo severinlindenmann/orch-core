@@ -153,7 +153,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'frame':
       return (
         <AddonFrame addon={addon} title={n.title}>
-          <FrameNode node={n} />
+          <FrameNode node={n} fallback={<AddonUnavailable addon={addon} />} />
         </AddonFrame>
       )
     case 'terminal':

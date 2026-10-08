@@ -2,11 +2,6 @@
   "person": "p_sev",
   "name": "Severin",
   "role": "owner",
-  "grant": {
-    "id": "gr_01J9Z8",
-    "until": "2026-10-09T18:00:00Z",
-    "hours": 8
-  },
   "agents": [
     {
       "id": "claude-code",

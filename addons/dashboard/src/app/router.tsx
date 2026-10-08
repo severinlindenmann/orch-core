@@ -1,7 +1,7 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
 import { AddonPage } from './pages/AddonPage'
-import { SettingsPage } from './pages/settings'
+import { SETTINGS_TABS, SettingsPage } from './pages/settings'
 import { TodayPage } from './pages/today'
 import { BoardPage } from './pages/board'
 import { TicketPage } from './pages/ticket'
@@ -41,6 +41,10 @@ const settingsRoute = createRoute({
 const settingsTabRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/$tab',
+  // An unknown tab (or /settings/addon without a name) would render only the sub-nav: go to General instead.
+  beforeLoad: ({ params }) => {
+    if (!SETTINGS_TABS.includes(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+  },
   component: function SettingsTabRoute() {
     const { tab } = settingsTabRoute.useParams()
     return <SettingsPage tab={tab} />

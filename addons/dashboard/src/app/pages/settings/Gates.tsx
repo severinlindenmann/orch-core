@@ -1,3 +1,4 @@
+import { APPROVER_GROUPS, approversText, policySentence } from '@/api/gates'
 import type { GateName, Workspace } from '@/api/types'
 import { Section } from '../ticket/shared'
 import { cn } from '@/lib/utils'
@@ -10,17 +11,6 @@ const GATES: { id: GateName; label: string }[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'verify', label: 'Verify' },
 ]
-const APPROVERS = [
-  { value: 'owner', who: 'owners', label: 'Owners' },
-  { value: 'maintainer', who: 'owners or maintainers', label: 'Owners or maintainers' },
-  { value: 'reviewers', who: "the ticket's reviewers", label: "The ticket's reviewers" },
-]
-const whoOf = (approvers: string) => APPROVERS.find((a) => a.value === approvers)?.who ?? approvers
-
-/** "Plan needs 1 approval from owners or maintainers, not the assignees." */
-export function policySentence(label: string, p: Policy): string {
-  return `${label} needs ${p.count} approval${p.count === 1 ? '' : 's'} from ${whoOf(p.approvers)}${p.not === 'assignees' ? ', not the assignees' : ''}.`
-}
 
 export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const { ask, prompt } = useSettingsSign(workspace.id)
@@ -30,7 +20,7 @@ export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: b
       title: `Change the ${label.toLowerCase()} gate`,
       covers: [
         `Gate: ${label}`,
-        `Approvers: ${whoOf(next.approvers)}`,
+        `Approvers: ${approversText(next.approvers)}`,
         `Approvals needed: ${next.count}`,
         next.not === 'assignees' ? 'The ticket assignees cannot approve' : 'Assignees may approve',
         'Open approvals stay valid',
@@ -72,7 +62,7 @@ export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: b
                 onChange={(e) => change(id, label, { ...p, approvers: e.target.value })}
                 className="h-8 rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {APPROVERS.map((a) => (
+                {APPROVER_GROUPS.map((a) => (
                   <option key={a.value} value={a.value}>
                     {a.label}
                   </option>

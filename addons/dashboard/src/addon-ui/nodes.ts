@@ -6,7 +6,8 @@ import { z } from 'zod'
 const text = z.string().max(4000)
 const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
 const cell = scalar.nullable()
-const actionId = z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/)
+// Ends up as a URL path segment (.../actions/<id>): never `.`/`..` or a leading dot or dash.
+const actionId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
 const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
 
 export const MAX_DEPTH = 6

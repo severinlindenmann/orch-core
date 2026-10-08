@@ -14,6 +14,7 @@ import {
   SquareKanban,
 } from 'lucide-react'
 import { api } from '@/api/client'
+import { activeGrantOf } from '@/api/grants'
 import { useRole } from '../useRole'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { useSlot } from '@/addon-ui/slots'
@@ -127,7 +128,12 @@ export function Sidebar() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const navItems = useSlot('nav')
   const role = useRole() ?? me?.role
-  const grantTime = me?.grant?.until.slice(11, 16)
+  // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
+  const ws = workspace?.id
+  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
+  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
+  const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
+  const grantTime = grant?.until.slice(11, 16)
   const { collapsed, toggle } = useSidebarCollapsed()
 
   const link = cn(
@@ -229,16 +235,16 @@ export function Sidebar() {
             </Link>
           </RailTip>
 
-          <RailTip label={me?.grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
+          <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
             <div
               className={cn(
                 'flex items-center gap-2 py-1 text-[11px]',
                 collapsed ? 'justify-center px-0' : 'px-2.5',
-                me?.grant ? 'text-brand' : 'text-warning',
+                grant ? 'text-brand' : 'text-warning',
               )}
             >
-              {me?.grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
-              <span className={label}>{me?.grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
+              {grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
+              <span className={label}>{grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
             </div>
           </RailTip>
 

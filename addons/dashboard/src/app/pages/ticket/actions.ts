@@ -1,4 +1,5 @@
-import type { GateName, QuestionStatus, TicketDocument } from '@/api/types'
+import { policySentence } from '@/api/gates'
+import type { GateName, GateStatus, QuestionStatus, TicketDocument } from '@/api/types'
 import { roleMeets } from '@/api/roles'
 import { can } from '@/api/permissions'
 import type { Viewer } from './shared'
@@ -49,6 +50,7 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
 
 export const GATE_LABEL: Record<GateName, string> = { requirements: 'Requirements', plan: 'Plan', verify: 'Verification' }
 
-export function policyText(g: { approvers: string; needed: number; not?: string }): string {
-  return `${g.approvers}, ${g.needed} of ${g.needed}${g.not ? `, not ${g.not}` : ''}`
+/** The gate's policy in the same words as Settings: "Plan needs 1 approval from owners or maintainers." */
+export function policyText(gate: GateName, g: Pick<GateStatus, 'approvers' | 'needed' | 'not'>): string {
+  return policySentence(GATE_LABEL[gate], { approvers: g.approvers, count: g.needed, not: g.not })
 }

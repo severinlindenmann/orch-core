@@ -27,6 +27,32 @@ describe('workspace log', () => {
     expect(localStorage.getItem('orch-mock')).toBeNull()
   })
 
+  it('drops malformed persisted events on load instead of crashing the folds', () => {
+    const seed = createMockStore({ persist: false })
+    const ws = seed.workspaces[0].id
+    const good = { v: 2, id: 'x1', seq: 1, at: '2026-10-09T11:31:00Z', type: 'workspace.renamed', actor: { kind: 'person', id: 'p_sev' }, name: 'Renamed' }
+    const goodView = { ...good, id: 'x2', seq: 2, type: 'view.saved', view: 'v_9', name: 'Kept', shared: true, params: {} }
+    const bad = [
+      { ...good, id: 'b1', type: 'view.saved', actor: null, view: 'v_bad', name: 'Bad' },
+      { ...good, id: 'b2', type: 'view.saved', actor: { kind: 'person' }, view: 'v_bad2', name: 'Bad2' },
+      { ...good, id: 'b3', type: 42 },
+      null,
+      'junk',
+    ]
+    const ticketGood = { v: 2, id: 't1', seq: 999, at: '2026-10-09T11:32:00Z', type: 'log.added', actor: { kind: 'person', id: 'p_sev' }, text: 'kept' }
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ v: 2, ticketEvents: { 'DEMO-0043': [ticketGood, { type: 'log.added' }, null] }, created: {}, wsEvents: { [ws]: [good, ...bad, goodView] }, addonState: {} }),
+    )
+    const s = createMockStore({ persist: true })
+    expect(s.workspaceList()[0].name).toBe('Renamed')
+    expect(s.views(ws).map((v) => v.name)).toContain('Kept')
+    expect(s.views(ws).map((v) => v.name)).not.toContain('Bad')
+    expect(s.wsEventsOf(ws)).toHaveLength(2)
+    expect(s.eventsOf('DEMO-0043').filter((e) => e.type === 'log.added' && e.text === 'kept')).toHaveLength(1)
+    expect(() => s.ticket('DEMO-0043')).not.toThrow()
+  })
+
   it('reset() drops workspace events too', () => {
     const s = createMockStore({ persist: false })
     s.appendWs(s.workspaces[0].id, { type: 'workspace.renamed', name: 'X' })

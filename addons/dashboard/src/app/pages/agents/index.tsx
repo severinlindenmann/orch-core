@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '@/api/client'
+import { activeGrantOf } from '@/api/grants'
 import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -10,7 +11,7 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { Section } from '../ticket/shared'
 import { AgentActivity } from './AgentActivity'
 import { GrantDialog, useSignGrant, type GrantAction } from './GrantDialog'
-import { Grants, grantState } from './Grants'
+import { Grants } from './Grants'
 import { Sessions } from './Sessions'
 
 export function AgentsPage() {
@@ -44,7 +45,7 @@ export function AgentsPage() {
 
   const working = sessions.data.filter((s) => s.state === 'working').length
   const waiting = sessions.data.filter((s) => s.state === 'waiting' && s.for === viewer).length
-  const mine = grants.data.find((g) => g.person === viewer && g.scope === 'all' && grantState(g, Date.parse(now)) === 'active')
+  const mine = activeGrantOf(grants.data, viewer, Date.parse(now))
   const summary = [`${working} session${working === 1 ? '' : 's'} working`, ...(canAct ? [`${waiting} waiting on you`] : []), ...(mine ? [`grant until ${mine.until.slice(11, 16)}`] : [])].join(' · ')
 
   return (

@@ -1,7 +1,10 @@
 import { screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('Settings', () => {
   it('changes a member role after signing', async () => {
@@ -87,5 +90,20 @@ describe('Settings', () => {
   it('the mock refuses save_settings from a non-owner', async () => {
     mockStore.setViewer('p_mara')
     await expect(api.runAddonAction(mockStore.workspaces[0].id, 'estimate', 'save_settings', { formData: { scale: 't-shirt' } })).rejects.toThrow()
+  })
+  it.each(['/settings/bogus', '/settings/addon'])('redirects the unknown settings page %s to General', async (path) => {
+    renderApp(path)
+    expect(await screen.findByText(/Not connected/)).toBeInTheDocument() // the General tab
+    expect(screen.getByRole('link', { name: 'General' })).toHaveAttribute('aria-current', 'page')
+  })
+  it('shows a skeleton while addon settings load', async () => {
+    vi.spyOn(api, 'getAddonState').mockReturnValue(new Promise(() => {}))
+    renderApp('/settings/addon/estimate')
+    expect(await screen.findByLabelText('Loading addon settings')).toBeInTheDocument()
+  })
+  it('says so when addon settings fail to load', async () => {
+    vi.spyOn(api, 'getAddonState').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'Host is down', retryable: true }))
+    renderApp('/settings/addon/estimate')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load the Estimate settings.*Host is down/)
   })
 })

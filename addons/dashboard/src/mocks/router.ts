@@ -5,6 +5,7 @@ import { STATUSES } from '@/api/types'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
 import { can } from '@/api/permissions'
+import { APPROVER_GROUPS } from '@/api/gates'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -79,7 +80,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
   if (!a || typeof a !== 'object' || !('action' in a)) return fail(400, 'validation', 'Body must be {action, ...}')
   if (!can(role, 'ticket.act')) return fail(403, 'forbidden', 'Viewers cannot change tickets.', 'Ask an owner or maintainer.')
 
-  const finish = (event: OrchEvent) => ok({ ok: true, event, ticket: store.ticket(key)! })
+  const finish = (event: OrchEvent | null) => ok({ ok: true, event, ticket: store.ticket(key)! })
 
   switch (a.action) {
     case 'answer': {
@@ -158,7 +159,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!can(role, 'ticket.label')) return fail(403, 'forbidden', 'Only owners and maintainers label tickets.')
       const label = a.label?.trim().toLowerCase()
       if (!label) return fail(400, 'validation', 'Write a label first.')
-      if (t.labels.includes(label)) return finish(store.append(key, { type: 'labels.changed', add: [] }))
+      if (t.labels.includes(label)) return finish(null) // already there: nothing to record
       return finish(store.append(key, { type: 'labels.changed', add: [label] }))
     }
     default:
@@ -229,7 +230,6 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
 const GATES: GateName[] = ['requirements', 'plan', 'verify']
-const APPROVERS = ['owner', 'maintainer', 'reviewers']
 
 /** A stable, fake SHA256-style fingerprint derived from the workspace id. */
 function fingerprint(id: string): string {
@@ -287,7 +287,7 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
     }
     case 'gate.policy': {
       if (!GATES.includes(b.gate)) return fail(400, 'validation.gate', `Unknown gate ${String(b.gate)}`)
-      if (!APPROVERS.includes(b.approvers)) return fail(400, 'validation.approvers', `Unknown approvers ${String(b.approvers)}`)
+      if (!APPROVER_GROUPS.some((a) => a.value === b.approvers)) return fail(400, 'validation.approvers', `Unknown approvers ${String(b.approvers)}`)
       if (!Number.isInteger(b.count) || b.count < 1 || b.count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
       if (b.not != null && b.not !== 'assignees') return fail(400, 'validation', 'Only "assignees" can be excluded.')
       store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null })
@@ -331,6 +331,13 @@ export function buildRouter(): MockRouter {
       if (!body[name]) return fail(400, 'validation.section_missing', `${sectionLabel(b.type, name)} ${name === 'requirements' ? 'are' : 'is'} needed.`, 'Write it before creating the ticket.')
     }
     if (b.size !== null && !['xs', 's', 'm', 'l', 'xl'].includes(b.size as string)) return fail(400, 'validation.size', `Unknown size ${String(b.size)}.`)
+    // A restricted ticket always lists its creator: otherwise the creator would land on a ticket they cannot see.
+    let visibility: NewTicketRequest['visibility'] = 'workspace'
+    if (b.visibility && b.visibility !== 'workspace') {
+      const list = (b.visibility as { restricted?: unknown }).restricted
+      if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) return fail(400, 'validation.visibility', 'Visibility is "workspace" or {restricted: [person, ...]}.')
+      visibility = { restricted: list.includes(s.viewer) ? list : [...list, s.viewer] }
+    }
     if (b.parent) {
       const parent = s.hasTicket(b.parent) && s.workspaceOf(b.parent)?.id === wsId ? s.ticket(b.parent) : undefined
       if (!parent || parent.type !== 'epic') return fail(400, 'validation.parent', `${b.parent} is not an epic in this workspace.`)
@@ -345,7 +352,7 @@ export function buildRouter(): MockRouter {
         labels: [...new Set((b.labels ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean))],
         parent: b.parent ?? null,
         due: b.due ?? null,
-        visibility: b.visibility ?? 'workspace',
+        visibility,
         acceptance: (b.acceptance ?? []).map((t) => t.trim()).filter(Boolean).map((text, i) => ({ id: `AC${i + 1}`, text })),
       },
       body,

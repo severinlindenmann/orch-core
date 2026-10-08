@@ -27,7 +27,7 @@ describe('mock router', () => {
     const { api, store } = setup()
     const before = store.eventsOf('DEMO-0043').length
     const res = await api.postAction('DEMO-0043', { action: 'answer', question: 'Q2', option: 'date' })
-    expect(res.event.type).toBe('question.answered')
+    expect(res.event?.type).toBe('question.answered')
     expect(store.eventsOf('DEMO-0043')).toHaveLength(before + 1)
     expect(res.ticket.questions_state.find((q) => q.id === 'Q2')?.answer?.option).toBe('date')
     const today = await api.getToday(store.workspaces[0].id)
@@ -44,6 +44,19 @@ describe('mock router', () => {
     await expect(api.getTicket('DEMO-0044')).rejects.toBeInstanceOf(ApiError)
     const list = await api.listTickets(store.workspaces[0].id)
     expect(list.some((t) => t.key === 'DEMO-0044')).toBe(false)
+  })
+})
+
+describe('add_label', () => {
+  it('adding a label the ticket already has is a no-op: no event, the ticket back', async () => {
+    const { api, store } = setup()
+    const label = store.ticket('DEMO-0043')!.labels[0]
+    expect(label).toBeTruthy()
+    const before = store.eventsOf('DEMO-0043').length
+    const res = await api.postAction('DEMO-0043', { action: 'add_label', label: label.toUpperCase() })
+    expect(res.event).toBeNull()
+    expect(res.ticket.labels).toContain(label)
+    expect(store.eventsOf('DEMO-0043')).toHaveLength(before)
   })
 })
 
@@ -75,7 +88,7 @@ describe('mock tickets search', () => {
   it('add_label adds a label for owners and is refused for viewers', async () => {
     const { api, store } = setup()
     const res = await api.postAction('DEMO-0043', { action: 'add_label', label: 'q4' })
-    expect(res.event.type).toBe('labels.changed')
+    expect(res.event?.type).toBe('labels.changed')
     expect(res.ticket.labels).toContain('q4')
     store.setViewer('p_tom')
     await expect(api.postAction('DEMO-0043', { action: 'add_label', label: 'x' })).rejects.toMatchObject({ code: 'forbidden' })

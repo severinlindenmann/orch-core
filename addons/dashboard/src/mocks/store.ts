@@ -61,6 +61,14 @@ export type StoreFailure = { ok: false; status: number; code: string; message: s
 export type GrantResult = { ok: true; grant: GrantInfo } | StoreFailure
 /** Is `session` the root session itself or one of its subagents (`s_77c2.1` belongs to `s_77c2`; `s_77c21` does not)? */
 export const sessionBelongsTo = (session: string, root: string) => session === root || session.startsWith(root + '.')
+/** A persisted event the folds can read: an object with a string type, a string `at` and an actor {kind, id}. Anything else is dropped on load. */
+const wellFormed = (e: unknown): boolean => {
+  if (typeof e !== 'object' || e === null) return false
+  const { type, at, actor } = e as { type?: unknown; at?: unknown; actor?: unknown }
+  if (typeof type !== 'string' || typeof at !== 'string' || typeof actor !== 'object' || actor === null) return false
+  const { kind, id } = actor as { kind?: unknown; id?: unknown }
+  return typeof kind === 'string' && typeof id === 'string'
+}
 const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
 export interface StoreOptions {
@@ -176,16 +184,16 @@ export class MockStore {
     }
     for (const [key, evs] of Object.entries(p.ticketEvents)) {
       const list = this.events.get(key)
-      if (!list) continue
-      for (const e of evs) {
+      if (!list || !Array.isArray(evs)) continue
+      for (const e of evs.filter(wellFormed)) {
         list.push(e)
         latest = Math.max(latest, Date.parse(e.at))
       }
     }
     for (const [id, evs] of Object.entries(p.wsEvents)) {
       const list = this.wsEvents.get(id)
-      if (!list) continue
-      for (const e of evs) {
+      if (!list || !Array.isArray(evs)) continue
+      for (const e of evs.filter(wellFormed)) {
         list.push(e)
         latest = Math.max(latest, Date.parse(e.at))
       }
@@ -231,12 +239,10 @@ export class MockStore {
 
   me(): Me {
     const member = this.workspaces.flatMap((w) => w.members).find((m) => m.person === this.viewer)
-    const isSev = this.viewer === meFixture.person
     return {
       person: this.viewer,
       name: member?.name ?? this.viewer,
       role: this.roleIn(this.workspaces[0].id, this.viewer) ?? 'viewer',
-      grant: isSev && this.grantActive(this.workspaces[0].id, meFixture.grant.id) ? meFixture.grant : null,
     }
   }
 
@@ -409,11 +415,6 @@ export class MockStore {
   grants(wsId: string): GrantInfo[] {
     const seed = (grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
-  }
-
-  private grantActive(wsId: string, id: string): boolean {
-    const g = this.grants(wsId).find((x) => x.id === id)
-    return !!g && !g.revoked && g.until > this.now()
   }
 
   /**

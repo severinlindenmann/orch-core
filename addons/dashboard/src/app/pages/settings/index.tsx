@@ -23,6 +23,9 @@ const TABS = [
   { id: 'addons', label: 'Addons' },
 ] as const
 
+/** The known /settings/$tab values; anything else redirects to General. */
+export const SETTINGS_TABS: readonly string[] = TABS.map((t) => t.id)
+
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
 

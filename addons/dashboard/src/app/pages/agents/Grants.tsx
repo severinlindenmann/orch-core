@@ -1,10 +1,9 @@
+import { grantState } from '@/api/grants'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Mono, Pill } from '../ticket/shared'
 
-export type GrantState = 'active' | 'expired' | 'revoked'
-export const grantState = (g: GrantInfo, now: number): GrantState => (g.revoked ? 'revoked' : Date.parse(g.until) <= now ? 'expired' : 'active')
 
 const TONE = { active: 'brand', expired: 'neutral', revoked: 'danger' } as const
 const hm = (iso: string) => iso.slice(11, 16)

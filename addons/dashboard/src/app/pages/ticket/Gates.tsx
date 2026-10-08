@@ -26,7 +26,7 @@ function Gate({ name, gate, viewer }: { name: GateName; gate: GateStatus; viewer
           {s.label}
         </Pill>
       </div>
-      <p className="mt-1 text-[12px] text-text-muted">{policyText(gate)}</p>
+      <p className="mt-1 text-[12px] text-text-muted">{policyText(name, gate)}</p>
 
       {gate.state === 'invalidated' && gate.reason && (
         <p className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning-soft px-2 py-1.5 text-[12px] text-warning">

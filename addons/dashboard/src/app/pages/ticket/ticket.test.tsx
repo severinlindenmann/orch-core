@@ -79,6 +79,15 @@ describe('ticket page', () => {
   })
 })
 
+describe('ticket gate policy wording', () => {
+  it('uses the same sentence as Settings, not the raw approver value', async () => {
+    renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })
+    const plan = await screen.findByTestId('gate-plan')
+    expect(within(plan).getByText('Plan needs 1 approval from owners or maintainers.')).toBeInTheDocument()
+    expect(screen.queryByText(/maintainer, 1 of 1/)).toBeNull()
+  })
+})
+
 describe('WordDiff', () => {
   it('marks inserted and deleted words', () => {
     render(<WordDiff from="load the old tariffs" to="load the new tariffs today" />)

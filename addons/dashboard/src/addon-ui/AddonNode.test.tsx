@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Fragment } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -172,6 +172,14 @@ describe('new node types', () => {
     expect(f.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(f.srcdoc).toContain("default-src 'none'")
     expect(f.srcdoc.indexOf('Content-Security-Policy')).toBeLessThan(f.srcdoc.indexOf('<p>hi</p>'))
+  })
+  it('replaces a frame that navigates away (a second load) with the fallback box', () => {
+    renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })
+    fireEvent.load(screen.getByTitle('Bars'))
+    expect(screen.getByTitle('Bars')).toBeInTheDocument() // the first load is the srcdoc itself
+    fireEvent.load(screen.getByTitle('Bars'))
+    expect(screen.queryByTitle('Bars')).toBeNull()
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be shown/i)
   })
   it('refuses a terminal node from an addon without a pty grant', () => {
     renderNode({ type: 'terminal', session: 't1' }, { addon: 'wiki' })

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createAppRouter } from '@/app/router'
 import { describe, expect, it, vi } from 'vitest'
-import { api } from '@/api/client'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('new ticket page', () => {
@@ -74,5 +74,33 @@ describe('new ticket page', () => {
     expect(await screen.findByRole('heading', { level: 1, name: /Only once/ })).toBeInTheDocument()
     expect(spy).toHaveBeenCalledTimes(1)
     spy.mockRestore()
+  })
+  it('"Restricted to…" starts with the creator and the owners', async () => {
+    const { user } = renderApp('/tickets/new', { viewer: 'p_mara' })
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Visibility' }), 'restricted')
+    const group = screen.getByRole('group', { name: 'Can see this ticket' })
+    expect(within(group).getByRole('button', { name: 'Mara' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(group).getByRole('button', { name: 'Severin' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(group).getByRole('button', { name: 'Tom' })).toHaveAttribute('aria-pressed', 'false')
+  })
+  it.each([
+    ['an unknown type', { type: 'saga', title: 'Old draft' }],
+    ['an inherited property as type', { type: 'toString', title: 'Old draft' }],
+    ['null sections', { type: 'bug', title: 'Old draft', sections: null }],
+    ['a non-string title', { title: 42 }],
+    ['not an object', 'just text'],
+  ])('discards a stored draft with %s instead of crashing', async (_what, stored) => {
+    renderApp('/').unmount()
+    const key = Object.keys(localStorage).find((k) => k.includes('draft')) ?? `orch.dashboard.new-ticket.draft.p_sev.${mockStore.workspaces[0].id}`
+    localStorage.setItem(key, JSON.stringify(stored))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={createAppRouter('/tickets/new')} />
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByLabelText('Title')).toHaveValue('')
+    expect(screen.queryByText(/Draft restored/)).toBeNull()
+    expect(localStorage.getItem(key)).toBeNull()
   })
 })

@@ -28,7 +28,7 @@ function describe(ticket: TicketDocument, a: HumanAction): { title: string; gate
   const g = ticket.gates[gate]
   const title =
     a.kind === 'approve' ? `Approve ${GATE_LABEL[gate].toLowerCase()}` : a.kind === 'verdict' ? 'Give a verdict' : `Request changes on ${GATE_LABEL[gate].toLowerCase()}`
-  return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(g), verb: a.kind === 'approve' ? 'Approve' : a.kind === 'verdict' ? 'Verdict' : 'Request changes' }
+  return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g), verb: a.kind === 'approve' ? 'Approve' : a.kind === 'verdict' ? 'Verdict' : 'Request changes' }
 }
 
 export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument; action: HumanAction | null; onClose: () => void }) {
@@ -97,7 +97,8 @@ export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument
             <>
               <dt className="text-text-muted">Gate</dt>
               <dd>
-                {GATE_LABEL[d.gate]} <span className="text-text-faint">({d.policy})</span>
+                {GATE_LABEL[d.gate]}
+                {d.policy && <span className="block text-[12px] text-text-faint">{d.policy}</span>}
               </dd>
             </>
           )}

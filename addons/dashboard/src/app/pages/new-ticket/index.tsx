@@ -58,11 +58,45 @@ const hasText = (d: Draft) => !!d.title.trim() || d.acceptance.length > 0 || Obj
 
 const draftKey = (person: string, ws: string) => `orch.dashboard.new-ticket.draft.${person}.${ws}`
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')
+const isNullableString = (v: unknown) => v === null || typeof v === 'string'
+
+/** A stored draft, field by field over EMPTY; null when any stored field has the wrong shape (an old or foreign draft). */
+function parseDraft(raw: unknown): Draft | null {
+  if (!isObj(raw)) return null
+  const d = { ...EMPTY, ...raw } as Record<keyof Draft, unknown>
+  const p = d.people
+  const v = d.visibility
+  const ok =
+    TYPES.includes(d.type as TicketType) &&
+    typeof d.title === 'string' &&
+    PRIORITIES.includes(d.priority as Priority) &&
+    (d.size === null || SIZES.includes(d.size as Size)) &&
+    isStrings(d.labels) &&
+    isNullableString(d.parent) &&
+    typeof d.due === 'string' &&
+    isObj(p) && isNullableString(p.owner) && isStrings(p.assignees) && isStrings(p.reviewers) &&
+    (v === 'workspace' || (isObj(v) && isStrings(v.restricted))) &&
+    isObj(d.sections) && Object.values(d.sections).every((x) => x === undefined || typeof x === 'string') &&
+    isStrings(d.acceptance)
+  return ok ? (d as Draft) : null
+}
+
+/** The stored draft; a malformed one is removed and treated as no draft. */
 function readDraft(key: string): Draft | null {
   try {
     const raw = localStorage.getItem(key)
-    return raw ? { ...EMPTY, ...(JSON.parse(raw) as Partial<Draft>) } : null
+    if (!raw) return null
+    const draft = parseDraft(JSON.parse(raw))
+    if (!draft) localStorage.removeItem(key)
+    return draft
   } catch {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      /* storage unavailable */
+    }
     return null
   }
 }
@@ -343,7 +377,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
           <Field label="Due" htmlFor="nt-due">
             <Input id="nt-due" type="date" value={draft.due} onChange={(e) => patch({ due: e.target.value })} className="h-8 text-[13px]" />
           </Field>
-          <PeoplePicker members={workspace.members} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
+          <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
         </aside>
       </div>
       <div className="sticky bottom-0 -mx-6 mt-8 border-t border-border bg-bg px-6 py-3">

@@ -69,4 +69,11 @@ describe('create ticket', () => {
     await expect(api.createTicket(ws, { ...base, title: 'ab', sections: { requirements: 'x' } })).rejects.toMatchObject({ code: 'validation.title' })
     await expect(api.createTicket(ws, { ...base, size: 'huge' as never, sections: { requirements: 'x' } })).rejects.toMatchObject({ code: 'validation.size' })
   })
+  it('a restricted ticket always includes its creator, so the creator can open it', async () => {
+    const { api, store, ws } = setup()
+    store.setViewer('p_mara')
+    const r = await api.createTicket(ws, { ...base, sections: { requirements: 'R' }, visibility: { restricted: ['p_sev'] } })
+    expect(r.ticket.visibility).toEqual({ restricted: ['p_sev', 'p_mara'] })
+    expect((await api.getTicket(r.ticket.key)).key).toBe(r.ticket.key)
+  })
 })

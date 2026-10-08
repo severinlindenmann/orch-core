@@ -49,7 +49,6 @@ export interface Me {
   person: string
   name: string
   role: Role // role in the current workspace is in workspaces[].members; this is the highest
-  grant: { id: string; until: string; hours: number } | null
 }
 
 // ---------------------------------------------------------------- ticket.json (definitions)
@@ -489,7 +488,8 @@ export type ActionRequest =
 
 export interface ActionResult {
   ok: true
-  event: OrchEvent
+  /** The event the action appended; null for a no-op (e.g. adding a label the ticket already has). */
+  event: OrchEvent | null
   ticket: TicketDocument
 }
 

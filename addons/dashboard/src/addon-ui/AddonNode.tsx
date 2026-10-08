@@ -329,13 +329,13 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
  * The session id is untrusted: TerminalView resolves it against this addon's own state (this workspace, this viewer).
  */
 function TerminalNode({ session }: { session: string }) {
-  const { addon, compact } = useContext(RuntimeCtx)
+  const { addon, ctx } = useContext(RuntimeCtx)
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
   return (
     <Suspense fallback={<Skeleton className="h-64 w-full" />}>
-      <TerminalView addon={addon} session={session} compact={compact} fallback={<AddonUnavailable addon={addon} />} />
+      <TerminalView addon={addon} session={session} placement={ctx.ticket ? 'rail' : 'page'} fallback={<AddonUnavailable addon={addon} />} />
     </Suspense>
   )
 }

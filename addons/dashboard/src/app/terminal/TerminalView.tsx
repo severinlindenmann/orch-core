@@ -24,7 +24,7 @@ const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropert
 const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
 const ROWS = { page: 24, rail: 12 }
 
-export default function TerminalView({ addon, session, fallback, compact = false }: { addon: string; session: string; fallback: ReactNode; compact?: boolean }) {
+export default function TerminalView({ addon, session, fallback, placement = 'page' }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
@@ -36,7 +36,7 @@ export default function TerminalView({ addon, session, fallback, compact = false
   if (!s) return <>{fallback}</>
   const interactive = s.interactive && s.kind === 'person' && s.owner === me.data.person && can(role, 'addon.action')
   const fontSize = Number((state.settings as { font_size?: number } | undefined)?.font_size) || 13
-  return <XtermSession key={`${s.id}:${interactive}`} addon={addon} session={s} interactive={interactive} fontSize={fontSize} rows={compact ? ROWS.rail : ROWS.page} />
+  return <XtermSession key={`${s.id}:${interactive}`} addon={addon} session={s} interactive={interactive} fontSize={fontSize} rows={ROWS[placement]} />
 }
 
 function XtermSession({ addon, session, interactive, fontSize, rows }: { addon: string; session: TerminalSessionView; interactive: boolean; fontSize: number; rows: number }) {
@@ -84,10 +84,12 @@ function XtermSession({ addon, session, interactive, fontSize, rows }: { addon: 
     }
     const shell = createShell(() => ctx.current)
     term.write(shell.prompt())
+    let closed = false
     const sub = term.onData((d) => {
       const out = shell.feed(d)
       if (out) term.write(out)
-      if (shell.exited()) {
+      if (shell.exited() && !closed) {
+        closed = true // one-shot: later keystrokes neither re-print nor re-close
         term.write('\x1b[2m[process completed]\x1b[0m\r\n')
         // `exit` ends the session for real: close it (stopped, view-only from here on).
         if (wsId) void api.runAddonAction(wsId, addon, 'close', { session: session.id }).then(() => qc.invalidateQueries({ queryKey: ['addon-state'] }), () => {})
@@ -107,6 +109,7 @@ function XtermSession({ addon, session, interactive, fontSize, rows }: { addon: 
       aria-label={`Terminal: ${session.label}`}
       aria-readonly={interactive ? undefined : true}
       data-terminal-session={session.id}
+      data-terminal-rows={rows}
       style={{ height: `${Math.ceil(rows * fontSize * 1.25) + 16}px` }}
       className="w-full overflow-hidden rounded-md border border-border bg-bg p-2"
     />

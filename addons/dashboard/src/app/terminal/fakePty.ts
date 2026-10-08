@@ -86,7 +86,7 @@ function run(line: string, c: ShellCtx): CommandResult {
 export function replay(c: ShellCtx, commands: string[]): string {
   let out = ''
   for (const cmd of commands) {
-    out += promptOf(c) + cmd + '\r\n'
+    out += promptOf(c) + clean(cmd) + '\r\n'
     const r = runCommand(cmd, c)
     for (const l of r.lines) out += l + '\r\n'
     if (r.exit) return out

@@ -1,5 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { vi } from 'vitest'
+import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 8000 }
@@ -84,10 +86,18 @@ describe('terminals hostile text and exit', () => {
     expect(term.querySelector('a[href]')).toBeNull()
     expect(rows()).not.toMatch(/\u001b|[\u0080-\u009f]/)
   })
-  it('exit in your own shell closes the session', async () => {
+  it('exit in your own shell closes the session once, however many keys follow', async () => {
+    const spy = vi.spyOn(api, 'runAddonAction')
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
     const box = await screen.findByRole('textbox', {}, T)
     await user.type(box, 'exit{enter}')
+    await user.type(box, 'ab')
+    await user.keyboard('{enter}')
+    await new Promise((r) => setTimeout(r, 200))
+    expect(spy.mock.calls.filter((c) => c[2] === 'close')).toHaveLength(1)
+    const term = document.querySelector('[data-terminal-session="shell1"]')
+    if (term) expect((term.querySelector('.xterm-rows')?.textContent ?? '').match(/process completed/g)?.length ?? 0).toBeLessThanOrEqual(1)
+    spy.mockRestore()
     await waitFor(() => {
       const li = screen.getByText('Severin · DEMO-0043 worktree').closest('li')!
       expect(within(li).getByText('stopped')).toBeInTheDocument()
@@ -103,7 +113,8 @@ describe('terminals hostile text and exit', () => {
     await screen.findByRole('textbox', {}, T)
     const term = document.querySelector('[data-terminal-session="shell1"]') as HTMLElement
     expect(term.className).not.toMatch(/overflow-x-auto/)
-    expect(parseInt(term.style.height)).toBeGreaterThan(300) // ~24 rows on the page
+    expect(term.dataset.terminalRows).toBe('24') // page sizing
+    expect(parseInt(term.style.height)).toBeGreaterThan(300)
   })
 })
 
@@ -118,5 +129,8 @@ describe('terminals ticket panel', () => {
     }, T)
     await user.click(within(frame).getByRole('button', { name: "Open terminal in this ticket's worktree" }))
     await waitFor(() => expect(panel.querySelector('[data-terminal-session]')).not.toBeNull(), T)
+    const rail = panel.querySelector('[data-terminal-session]') as HTMLElement
+    expect(rail.dataset.terminalRows).toBe('12') // rail sizing
+    expect(parseInt(rail.style.height)).toBeLessThan(250)
   })
 })

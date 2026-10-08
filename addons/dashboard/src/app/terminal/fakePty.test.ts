@@ -97,6 +97,10 @@ describe('untrusted text never reaches the terminal as control sequences', () =>
     sh.feed('orch status')
     expect(sh.feed('\r').replace(/\r\n/g, '')).not.toMatch(CONTROL)
   })
+  it('replay cleans the transcript commands too', () => {
+    const out = replay(ctx(), ['pwd\x1b]8;;https://evil\x07x\x1b]8;;\x07\x9b'])
+    expect(out).not.toMatch(/\x1b|[\u0080-\u009f]|\x07/)
+  })
   it('a multi-line current_state is split into lines written with CRLF (no staircase)', () => {
     const c = ctx({ ticket: { ...TICKET, current_state: 'one\ntwo\r\nthree' } })
     expect(runCommand('orch show DEMO-0043 --section current_state', c).lines).toEqual(['DEMO-0043 · Current state', 'one', 'two', 'three'])

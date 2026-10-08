@@ -25,7 +25,7 @@ import type {
   WorkspaceEvent,
 } from '@/api/types'
 import { addonActive, pendingUpdate, sameSet } from '@/api/addons'
-import { getAddon } from './addons'
+import { actionMinRole, actionRun, getAddon } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
@@ -36,7 +36,7 @@ import otherFixture from './fixtures/other-workspaces.json'
 import viewsFixture from './fixtures/views.json'
 import workspacesFixture from './fixtures/workspaces.json'
 import { roleMeets } from '@/api/roles'
-import { can, canRevokeGrant, roleOf } from '@/api/permissions'
+import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
@@ -606,8 +606,12 @@ export class MockStore {
     }
     // A disabled addon, or one whose installed version has no grant, runs nothing.
     if (!addonActive(w, name)) return refuse(409, 'addon.inactive', `${name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
-    if (id === 'save_settings' && this.roleIn(ws, this.viewer) !== 'owner') return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
-    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    // Viewers run nothing; each action may ask for more than a member (the registry's minRole, e.g. save_settings: owner).
+    const role = this.roleIn(ws, this.viewer)
+    if (!can(role, 'addon.action')) return refuse(403, 'forbidden', 'Viewers cannot run addon actions.', 'Ask an owner or maintainer.')
+    const min = actionMinRole(action)
+    if (!atLeast(role, min)) return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
+    const res = actionRun(action)({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
     return res

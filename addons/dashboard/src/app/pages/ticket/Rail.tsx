@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import type { NeedsYouItem, TicketDocument } from '@/api/types'
 import { addonActive } from '@/api/addons'
 import { workspaceOfTicket } from '@/api/workspaces'
+import { can } from '@/api/permissions'
 import { AddonSlotStack, AddonBadge, useAddons } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
@@ -202,7 +203,8 @@ export function Rail({ ticket, viewer, sign, jump }: { ticket: TicketDocument; v
         )}
       </Section>
 
-      <AddonSlotStack name="ticket.panel" ctx={{ ticket }} />
+      {/* The page made the ticket's workspace current, so viewer.role is the role these actions run under. */}
+      <AddonSlotStack name="ticket.panel" ctx={{ ticket }} readOnly={!can(viewer.role, 'addon.action')} />
       <InactiveAddonData ticket={ticket} />
     </aside>
   )

@@ -1,4 +1,4 @@
-import type { AddonActionResult } from '@/api/types'
+import type { AddonActionResult, Role } from '@/api/types'
 import type { MockStore } from '../store'
 
 export interface AddonCtx {
@@ -11,13 +11,24 @@ export interface AddonCtx {
   state: Record<string, unknown>
 }
 
+export type AddonActionFn = (ctx: AddonCtx) => AddonActionResult
+
+/**
+ * An action: a plain function (members and up may run it), or `{ minRole, run }` for a higher bar.
+ * Viewers never run addon actions (`addon.action` in src/api/permissions.ts).
+ */
+export type AddonAction = AddonActionFn | { minRole: Exclude<Role, 'viewer'>; run: AddonActionFn }
+
+export const actionMinRole = (a: AddonAction): Exclude<Role, 'viewer'> => (typeof a === 'function' ? 'member' : a.minRole)
+export const actionRun = (a: AddonAction): AddonActionFn => (typeof a === 'function' ? a : a.run)
+
 export interface MockAddon {
   name: string
   /** Initial state per workspace (seed). */
   seed(ws: string, store: MockStore): Record<string, unknown>
   /** Optional derived fields merged into GET .../state (e.g. counts). */
   view?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Record<string, unknown>
-  actions: Record<string, (ctx: AddonCtx) => AddonActionResult>
+  actions: Record<string, AddonAction>
 }
 
 const registry = new Map<string, MockAddon>()

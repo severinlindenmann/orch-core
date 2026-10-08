@@ -5,8 +5,11 @@ import { api } from '@/api/client'
 import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { DisabledReason, VIEWER_REASON } from '@/components/DisabledReason'
 import { iconByName } from '@/app/icons'
 import { useWorkspace } from '@/app/workspace'
+import { useRole } from '@/app/useRole'
+import { can } from '@/api/permissions'
 import { toastApiError } from '@/app/toast'
 
 interface LaneItem {
@@ -22,6 +25,7 @@ function laneItems(c: ResolvedContribution): LaneItem[] {
 
 function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
   const { workspace } = useWorkspace()
+  const canRun = can(useRole(), 'addon.action')
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
   async function run() {
     if (!workspace) return
@@ -48,10 +52,12 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
           </Badge>
         )}
       </div>
-      <Button size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={state !== 'idle'} onClick={run}>
-        <Download className="size-3.5" />
-        {state === 'done' ? 'Imported' : 'Import as ticket'}
-      </Button>
+      <DisabledReason reason={canRun ? null : VIEWER_REASON}>
+        <Button size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={state !== 'idle' || !canRun} onClick={run}>
+          <Download className="size-3.5" />
+          {state === 'done' ? 'Imported' : 'Import as ticket'}
+        </Button>
+      </DisabledReason>
     </li>
   )
 }

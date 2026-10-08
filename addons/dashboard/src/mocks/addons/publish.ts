@@ -19,21 +19,27 @@ registerAddon({
       store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Shared ${ticket} as a secret link for 7 days.`, changed: true }
     },
-    decide({ store, body }) {
-      const option = String(body.option ?? '')
-      const decisions = store.addons.find((a) => a.name === 'publish')?.decisions
-      if (decisions) {
-        const i = decisions.findIndex((d) => d.id === body.id)
-        if (i >= 0) {
-          const [done] = decisions.splice(i, 1)
-          if (done.ticket && store.hasTicket(done.ticket)) store.append(done.ticket, { type: 'publish.decided', actor: { kind: 'addon', id: 'publish' }, option })
+    decide: {
+      minRole: 'maintainer', // deciding is addon.decide (Today shows decisions to owners and maintainers)
+      run({ store, body }) {
+        const option = String(body.option ?? '')
+        const decisions = store.addons.find((a) => a.name === 'publish')?.decisions
+        if (decisions) {
+          const i = decisions.findIndex((d) => d.id === body.id)
+          if (i >= 0) {
+            const [done] = decisions.splice(i, 1)
+            if (done.ticket && store.hasTicket(done.ticket)) store.append(done.ticket, { type: 'publish.decided', actor: { kind: 'addon', id: 'publish' }, option })
+          }
         }
-      }
-      return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
+        return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
+      },
     },
-    save_settings: ({ state, body }) => {
-      state.settings = body.formData ?? {}
-      return { ok: true, message: 'Settings saved.', changed: true }
+    save_settings: {
+      minRole: 'owner',
+      run: ({ state, body }) => {
+        state.settings = body.formData ?? {}
+        return { ok: true, message: 'Settings saved.', changed: true }
+      },
     },
   },
 })

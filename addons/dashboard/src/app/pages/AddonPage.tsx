@@ -51,7 +51,7 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
         <AddonBadge name={c.addon} className="size-5 text-xs" />
         {c.title}
       </h1>
-      <AddonContributionView c={c} ctx={{ workspace, addon }} />
+      <AddonContributionView c={c} ctx={{ workspace, addon }} readOnly={!can(role, 'addon.action')} />
     </div>
   )
 }

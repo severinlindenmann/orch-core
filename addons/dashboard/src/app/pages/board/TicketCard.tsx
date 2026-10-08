@@ -2,6 +2,8 @@ import { useDraggable } from '@dnd-kit/core'
 import { Bot, Layers, Lock } from 'lucide-react'
 import type { TicketSummary } from '@/api/types'
 import { AddonContributionView, useSlot } from '@/addon-ui'
+import { can } from '@/api/permissions'
+import { useRole } from '@/app/useRole'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -14,6 +16,7 @@ export interface BoardPeople {
 
 export function CardFields({ ticket }: { ticket: TicketSummary }) {
   const items = useSlot('board.card_field', { ticket })
+  const readOnly = !can(useRole(), 'addon.action')
   const shown = items.filter((c) => {
     const data = ticket.addons?.[c.addon]
     return data && Object.keys(data).length > 0
@@ -22,7 +25,7 @@ export function CardFields({ ticket }: { ticket: TicketSummary }) {
   return (
     <>
       {shown.map((c) => (
-        <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact />
+        <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact readOnly={readOnly} />
       ))}
     </>
   )

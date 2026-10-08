@@ -126,7 +126,7 @@ export function TodayPage() {
 
               <aside className="min-w-0 space-y-4">
                 <AgentsAtWork agents={agentsQ.data} tickets={byKey} dir={dir} now={now} />
-                <AddonSlotStack name="today.card" />
+                <AddonSlotStack name="today.card" readOnly={!can(role, 'addon.action')} />
                 <Recently recent={today.data.recent} now={now} />
               </aside>
             </div>

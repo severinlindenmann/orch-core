@@ -144,8 +144,9 @@ export function CommandPalette() {
     },
   ]
 
+  // Viewers run no addon actions (the host refuses them too), so they get no addon commands.
   const addonCommands: Entry[] = addons
-    .filter((a) => addonActive(workspace, a.name))
+    .filter((a) => can(role, 'addon.action') && addonActive(workspace, a.name))
     .flatMap((a) => (a.commands ?? []).map((c) => ({ addon: a.name, ...c })))
     .map((c) => ({
       id: `${c.addon}/${c.id}`,

@@ -230,4 +230,41 @@ describe('addon action route', () => {
     expect(store.eventsOf('INT-0007')).toHaveLength(before)
     expect((await api.runAddonAction(demo, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 3 } })).ok).toBe(true)
   })
+  describe('roles', () => {
+    const run = (api: ReturnType<typeof setup>['api'], ws: string, addon: string, action: string, body: Record<string, unknown> = {}) =>
+      api.runAddonAction(ws, addon, action, body).then(
+        () => 'ok',
+        (e: ApiError) => `${e.status} ${e.code}`,
+      )
+    it('refuses every action to a viewer (403)', async () => {
+      const { api, store } = setup()
+      const demo = store.workspaces[0].id
+      store.setViewer('p_tom')
+      const before = store.eventsOf('DEMO-0043').length
+      expect(await run(api, demo, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 13 } })).toBe('403 forbidden')
+      expect(await run(api, demo, 'publish', 'share', { ticket: 'DEMO-0043' })).toBe('403 forbidden')
+      expect(await run(api, demo, 'github', 'refresh')).toBe('403 forbidden')
+      expect(store.ticket('DEMO-0043')!.addons.estimate?.points).not.toBe(13)
+      expect(store.eventsOf('DEMO-0043')).toHaveLength(before)
+    })
+    it('lets a member run member actions (Tom is a member in CLI)', async () => {
+      const { api, store } = setup()
+      const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+      store.setViewer('p_tom')
+      expect(await run(api, cli, 'estimate', 'set', { ticket: 'CLI-0003', formData: { points: 2 } })).toBe('ok')
+    })
+    it('honours a per-action minimum role: save_settings owner, decide maintainer', async () => {
+      const { api, store } = setup()
+      const demo = store.workspaces[0].id
+      store.appendWs(demo, { type: 'member.added', person: 'p_mem', name: 'Mem', role: 'member' })
+      store.setViewer('p_mara')
+      expect(await run(api, demo, 'estimate', 'save_settings', { formData: {} })).toBe('403 forbidden')
+      expect(await run(api, demo, 'publish', 'decide', { option: 'no', id: 'nope' })).toBe('ok')
+      store.setViewer('p_mem')
+      expect(await run(api, demo, 'publish', 'decide', { option: 'no', id: 'nope' })).toBe('403 forbidden')
+      expect(await run(api, demo, 'publish', 'share', { ticket: 'DEMO-0043' })).toBe('ok')
+      store.setViewer('p_sev')
+      expect(await run(api, demo, 'estimate', 'save_settings', { formData: {} })).toBe('ok')
+    })
+  })
 })

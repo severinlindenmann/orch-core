@@ -25,6 +25,16 @@ def _clean_env(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _release_not_stopping():
+    """`terminate_all` (the dashboard's shutdown, run by any test that starts and stops the app) sets a process-wide
+    flag that refuses every later release command and child clone in that worker. No test may inherit it."""
+    from orch.core import factory_release
+    factory_release._STOPPING.clear()
+    yield
+    factory_release._STOPPING.clear()
+
+
+@pytest.fixture(autouse=True)
 def _factory_pane_pid(monkeypatch):
     """The AI Factory hook trusts a session binding only for a process under the pid the runner recorded; tests that
     bind a session record 4242 and run "under" it, and say otherwise by replacing this themselves."""

@@ -1,6 +1,7 @@
 import { Outlet } from '@tanstack/react-router'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useLiveUpdates } from '../live'
 import { WorkspaceProvider } from '../workspace'
 import { CommandPalette } from './CommandPalette'
 import { NewTicketDialog } from './NewTicketDialog'
@@ -8,9 +9,15 @@ import { ShellUiProvider } from './ShellUi'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
+function LiveUpdates() {
+  useLiveUpdates()
+  return null
+}
+
 export function Shell() {
   return (
     <WorkspaceProvider>
+      <LiveUpdates />
       <ShellUiProvider>
         <TooltipProvider delayDuration={250}>
           <div className="flex h-full min-w-[1024px]">

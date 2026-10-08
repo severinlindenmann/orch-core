@@ -179,6 +179,9 @@ export function buildRouter(): MockRouter {
       .map((t) => s.summary(t))
     return ok(list)
   })
+  r.add('GET', '/api/workspaces/:ws/cursor', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),
+  )
   r.add('GET', '/api/workspaces/:ws/agents', (s, c) => ok(s.agents(c.params.ws)))
   r.add('GET', '/api/tickets/:key', (s, c) => {
     const t = visibleTicket(s, c.params.key)

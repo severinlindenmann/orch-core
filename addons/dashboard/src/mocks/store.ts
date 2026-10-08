@@ -25,6 +25,7 @@ import demoFixture from './fixtures/demo.json'
 import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
 import workspacesFixture from './fixtures/workspaces.json'
+import { Simulator } from './sim'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldWorkspace } from './workspace-log'
 
@@ -86,6 +87,8 @@ export class MockStore {
   private clockBase = Date.parse(MOCK_EPOCH)
   viewer = meFixture.person
   private persist: boolean
+  private cursors = new Map<string, number>()
+  readonly sim = new Simulator(this)
 
   constructor(opts: StoreOptions = {}) {
     this.persist = opts.persist ?? true
@@ -183,6 +186,7 @@ export class MockStore {
   }
 
   reset() {
+    this.sim.stopAll()
     this.seed()
     this.viewer = meFixture.person
     this.startedAt = Date.now()
@@ -305,8 +309,20 @@ export class MockStore {
       prev: 'sha256:' + fnvHex(def.uid + (seq - 1), 12) + '…',
     } as OrchEvent
     list.push(event)
+    this.bump(this.wsOfKey.get(key))
     this.save()
     return event
+  }
+
+  // ------------------------------------------------------------ live cursor
+
+  /** Counter that increases on every ticket/workspace append (and addon action) in the workspace. */
+  cursor(wsId: string): number {
+    return this.cursors.get(wsId) ?? 0
+  }
+
+  private bump(wsId: string | undefined) {
+    if (wsId) this.cursors.set(wsId, this.cursor(wsId) + 1)
   }
 
   // ------------------------------------------------------------ workspace log
@@ -330,6 +346,7 @@ export class MockStore {
       actor: typeof actor === 'string' ? parseActor(actor) : (actor ?? ({ kind: 'person', id: this.viewer } as const)),
     } as WorkspaceEvent
     list.push(event)
+    this.bump(wsId)
     this.refoldWorkspaces()
     this.save()
     return event
@@ -420,6 +437,7 @@ export class MockStore {
     const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
     const ws = typeof body.ws === 'string' ? body.ws : (ticket && this.wsOfKey.get(ticket)) || this.workspaces[0].id
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
     return res
   }

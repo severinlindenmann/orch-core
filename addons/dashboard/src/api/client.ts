@@ -51,6 +51,7 @@ export function createApi(transport: Transport) {
     getMe: () => call<Me>('GET', '/api/me'),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
+    getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),
     listTickets: (workspaceId: string, p: ListTicketsParams = {}) =>
       call<TicketSummary[]>(
         'GET',

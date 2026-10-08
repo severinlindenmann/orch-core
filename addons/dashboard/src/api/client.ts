@@ -22,6 +22,8 @@ import {
   type TicketSummary,
   type TodayDocument,
   type Workspace,
+  type WorkspaceIdentity,
+  type SettingsRequest,
 } from './types'
 
 export interface ListTicketsParams {
@@ -101,6 +103,9 @@ export function createApi(transport: Transport) {
     /** Human only, signed in the dashboard. */
     issueGrant: (ws: string, req: { hours: number; scope: 'all' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
     revokeGrant: (ws: string, id: string) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants/${id}/revoke`),
+    getIdentity: (ws: string) => call<WorkspaceIdentity>('GET', `/api/workspaces/${ws}/identity`),
+    /** Owner only. Everything except rename is signed in the dashboard. */
+    postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data. */

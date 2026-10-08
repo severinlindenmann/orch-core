@@ -56,3 +56,27 @@ Format: date, decision, why, how to revert.
 - **Decision:** Clicking "Sign with Touch ID" closes the grant dialog at once; `useSignGrant` shows a loading toast, waits for the simulated Touch ID, calls the API, then replaces the toast with success or the error message.
 - **Why:** The brief's test queries the grants row right after clicking Sign, and an open Radix modal hides the page from assistive tech (aria-hidden), so the row would not be found; the result also belongs on the page.
 - **Revert:** Move the phase/error state back into `GrantDialog` (as in `SignDialog`) and keep it open until the request finishes; adapt the test to wait for the dialog to close.
+
+## 2026-10-09 Settings: one shared signing primitive (`SignPrompt` + `useSignedAction`)
+
+- **Decision:** Ticket-independent signatures (grants, workspace settings) share `src/components/sign/SignPrompt.tsx`: `SignPrompt` (the "what you sign" dialog, button "Sign with Touch ID", closes on Sign) and `useSignedAction` (loading toast, 600 ms simulated Touch ID, request, refetch, success or error toast). `GrantDialog` was refactored onto it; `SignDialog` (ticket-bound, phases inside the dialog) only imports the shared `TOUCH_ID_MS`.
+- **Why:** The brief forbids a third copy of the Touch ID simulation. `SignDialog` keeps its own phases because its tests and error display live inside the dialog.
+- **Revert:** Inline the prompt back into `GrantDialog.tsx` (git history before "settings:") and inline `useSettingsSign` in the settings tabs.
+
+## 2026-10-09 Settings: gate approvers are `owner`, `maintainer` (owners or maintainers) or `reviewers`; no per-person approvers
+
+- **Decision:** The gate policy UI offers three approver groups. `maintainer` means "owners or maintainers" (`roleMeets` in `store.ts`, mirrored in `ticket/actions.ts`); the fixtures' `owner` and `reviewers` keep their meaning. Approving by named people is not built. The policy sentence is built from the policy (`Plan needs 1 approval from owners or maintainers, not the assignees.`). Each change (count, approvers, "Not the assignees") opens its own sign prompt; the sentence shows the saved policy and updates after signing. The "Open approvals stay valid; new approvals use the new policy." note is shown once at the top of the page.
+- **Why:** The fixture shape is `{approvers, count, not?}` with a role string; a role group needs no new data. People-based approvers would need a list field on the gate and the ticket UI.
+- **Revert:** Drop `maintainer` from `APPROVERS` in `Gates.tsx` and `APPROVERS` in `mocks/router.ts`; restore `role !== policy.approvers` in `store.canApprove` and `ticket/actions.ts`.
+
+## 2026-10-09 Settings: owner-only is enforced in the mock, last-owner and self rules return 409
+
+- **Decision:** `POST /api/workspaces/:ws/settings` returns 403 `forbidden` ("Only owners change settings.") to any non-owner, for every op. Demoting the last owner is 409 `member.last_owner`, removing yourself 409 `member.self`, `member.add` with role `owner` 400 (promote afterwards with `member.role`), `gate.policy` count outside 1..3 is 400. In the UI non-owners see all controls disabled plus the text "Only owners change settings."; the last owner's Role select is disabled with a tooltip ("You cannot demote the last owner. ..."). Rename is not signed (the brief signs every op except rename).
+- **Why:** The UI is a convenience; the mock stands in for the host that must refuse regardless.
+- **Revert:** Remove `postSettings` and the `/settings` and `/identity` routes in `src/mocks/router.ts`.
+
+## 2026-10-09 Settings: extra `archive` op, member devices and last seen from fixtures, fake identity
+
+- **Decision:** (1) Archiving is `{op:'archive', prefix}`: wrong prefix is 400, right prefix is always 409 `cli_only` with "Archiving is CLI-only: `orch workspace archive`" (the UI types the prefix first). (2) `Member` got optional `devices` and `last_seen`; the fixture sets them for the three people, members added in the UI start at 0 and "never". (3) Identity: `uuid` is the workspace id, `created_at` is fixed `2026-08-14T07:42:10Z`, `epoch` 1, `key_fingerprint` a stable fake `SHA256:...` derived from the id. (4) Export workspace builds a JSON download in the browser. (5) `/settings` redirects to `/settings/general`; `/settings/addon/:name` is a placeholder until Task 12; the Addons tab is a placeholder "Addon manager" until Task 11.
+- **Why:** The brief lists the table columns and the archive behaviour but no data source for them.
+- **Revert:** Remove the `archive` case and `Member.devices/last_seen`; edit the fixture lines in `workspaces.json`.

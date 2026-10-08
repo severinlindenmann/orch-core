@@ -4,14 +4,13 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { ApiError, type ActionRequest, type GateName, type TicketDocument } from '@/api/types'
+import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { GATE_LABEL, policyText } from './actions'
 import { Mono, type HumanAction } from './shared'
-
-const TOUCH_ID_MS = 600
 
 /** What the signature covers, shown before anything is signed. */
 function describe(ticket: TicketDocument, a: HumanAction): { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string; verb: string } {

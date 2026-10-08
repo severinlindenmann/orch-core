@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { ActionRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
@@ -226,6 +226,80 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
   return rows.map(({ t, match }) => ({ ...s.summary(t), ...(match ? { match } : {}) }))
 }
 
+const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
+const GATES: GateName[] = ['requirements', 'plan', 'verify']
+const APPROVERS = ['owner', 'maintainer', 'reviewers']
+
+/** A stable, fake SHA256-style fingerprint derived from the workspace id. */
+function fingerprint(id: string): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let h = 2166136261
+  let out = ''
+  for (let i = 0; i < 43; i++) {
+    h = Math.imul(h ^ id.charCodeAt(i % id.length), 16777619) >>> 0
+    out += alphabet[(h >>> 7) % 64]
+  }
+  return 'SHA256:' + out
+}
+
+/** Owner-only workspace settings. Every op is checked here, whatever the UI shows. */
+function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
+  const wsId = ctx.params.ws
+  const ws = store.workspaces.find((w) => w.id === wsId)
+  if (!ws) return fail(404, 'not_found', 'No such workspace')
+  if (store.roleIn(wsId, store.viewer) !== 'owner') return fail(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
+  const b = ctx.body as SettingsRequest | null
+  if (!b || typeof b !== 'object' || !('op' in b)) return fail(400, 'validation', 'Body must be {op, ...}')
+  const done = () => ok({ ok: true, workspace: store.workspaceList().find((w) => w.id === wsId)! })
+  const member = (person: string) => ws.members.find((m) => m.person === person)
+  switch (b.op) {
+    case 'rename': {
+      const name = String(b.name ?? '').trim()
+      if (name.length < 1 || name.length > 60) return fail(400, 'validation.name', 'The name needs 1 to 60 characters.')
+      store.appendWs(wsId, { type: 'workspace.renamed', name })
+      return done()
+    }
+    case 'member.add': {
+      const person = String(b.person ?? '').trim()
+      const name = String(b.name ?? '').trim()
+      if (!person || !name) return fail(400, 'validation', 'Give the person an id and a name.')
+      if (!ROLES.includes(b.role) || b.role === 'owner') return fail(400, 'validation.role', 'New members can be maintainer, member or viewer.', 'Promote to owner afterwards.')
+      if (member(person)) return fail(409, 'member.exists', `${person} is already a member.`)
+      store.appendWs(wsId, { type: 'member.added', person, name, role: b.role })
+      return done()
+    }
+    case 'member.role': {
+      const m = member(b.person)
+      if (!m) return fail(404, 'not_found', `No member ${b.person}`)
+      if (!ROLES.includes(b.role)) return fail(400, 'validation.role', `Unknown role ${String(b.role)}`)
+      if (m.role === 'owner' && b.role !== 'owner' && ws.members.filter((x) => x.role === 'owner').length === 1)
+        return fail(409, 'member.last_owner', 'You cannot demote the last owner.', 'Make someone else an owner first.')
+      if (m.role !== b.role) store.appendWs(wsId, { type: 'member.role_changed', person: b.person, role: b.role, from: m.role })
+      return done()
+    }
+    case 'member.remove': {
+      if (b.person === store.viewer) return fail(409, 'member.self', 'You cannot remove yourself.', 'Ask another owner.')
+      const m = member(b.person)
+      if (!m) return fail(404, 'not_found', `No member ${b.person}`)
+      store.appendWs(wsId, { type: 'member.removed', person: b.person })
+      return done()
+    }
+    case 'gate.policy': {
+      if (!GATES.includes(b.gate)) return fail(400, 'validation.gate', `Unknown gate ${String(b.gate)}`)
+      if (!APPROVERS.includes(b.approvers)) return fail(400, 'validation.approvers', `Unknown approvers ${String(b.approvers)}`)
+      if (!Number.isInteger(b.count) || b.count < 1 || b.count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
+      if (b.not != null && b.not !== 'assignees') return fail(400, 'validation', 'Only "assignees" can be excluded.')
+      store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null })
+      return done()
+    }
+    case 'archive':
+      if (b.prefix !== ws.prefix) return fail(400, 'validation.prefix', `Type ${ws.prefix} to confirm.`)
+      return fail(409, 'cli_only', 'Archiving is CLI-only: `orch workspace archive`', 'Run it in a terminal; the dashboard cannot archive.')
+    default:
+      return fail(400, 'validation', `Unknown op ${(b as { op: string }).op}`)
+  }
+}
+
 export function buildRouter(): MockRouter {
   const r = new MockRouter()
   r.add('GET', '/api/me', (s) => ok(s.me()))
@@ -305,6 +379,12 @@ export function buildRouter(): MockRouter {
     s.appendWs(ws, { type: 'view.deleted', view: v.id })
     return ok({ ok: true })
   })
+  r.add('GET', '/api/workspaces/:ws/identity', (s, c) => {
+    const ws = s.workspaces.find((w) => w.id === c.params.ws)
+    if (!ws) return fail(404, 'not_found', 'No such workspace')
+    return ok({ uuid: ws.id, prefix: ws.prefix, created_at: '2026-08-14T07:42:10Z', key_fingerprint: fingerprint(ws.id), epoch: 1 } satisfies WorkspaceIdentity)
+  })
+  r.add('POST', '/api/workspaces/:ws/settings', postSettings)
   r.add('GET', '/api/workspaces/:ws/cursor', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),
   )

@@ -35,6 +35,9 @@ import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from '
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
+/** Gate approver groups: 'maintainer' means owners and maintainers, any other value is an exact role. */
+export const roleMeets = (role: string, approvers: string) => (approvers === 'maintainer' ? role === 'owner' || role === 'maintainer' : role === approvers)
+
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
 
 interface FixtureEvent {
@@ -537,8 +540,12 @@ export class MockStore {
     const policy = ws.gates[gate]
     const role = this.roleIn(ws.id, person)
     if (!role || role === 'viewer') return 'Viewers cannot approve.'
-    if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : role !== policy.approvers)
-      return policy.approvers === 'reviewers' ? 'Only a reviewer of this ticket can approve this gate.' : `Only the ${policy.approvers} can approve this gate.`
+    if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
+      return policy.approvers === 'reviewers'
+        ? 'Only a reviewer of this ticket can approve this gate.'
+        : policy.approvers === 'maintainer'
+          ? 'Only an owner or a maintainer can approve this gate.'
+          : `Only the ${policy.approvers} can approve this gate.`
     if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
     if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
     return null

@@ -5,9 +5,9 @@
     "name": "Acme energy data",
     "demo": true,
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner" },
-      { "person": "p_mara", "name": "Mara", "role": "maintainer" },
-      { "person": "p_tom", "name": "Tom", "role": "viewer" }
+      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
+      { "person": "p_mara", "name": "Mara", "role": "maintainer", "devices": 1, "last_seen": "2026-10-09T09:12:00Z" },
+      { "person": "p_tom", "name": "Tom", "role": "viewer", "devices": 1, "last_seen": "2026-10-08T16:40:00Z" }
     ],
     "gates": {
       "requirements": { "approvers": "owner", "count": 1 },
@@ -29,8 +29,8 @@
     "prefix": "INT",
     "name": "Internal",
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner" },
-      { "person": "p_mara", "name": "Mara", "role": "maintainer" }
+      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
+      { "person": "p_mara", "name": "Mara", "role": "maintainer", "devices": 1, "last_seen": "2026-10-09T09:12:00Z" }
     ],
     "gates": {
       "requirements": { "approvers": "owner", "count": 1 },
@@ -44,8 +44,8 @@
     "prefix": "CLI",
     "name": "Client VM",
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner" },
-      { "person": "p_tom", "name": "Tom", "role": "member" }
+      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
+      { "person": "p_tom", "name": "Tom", "role": "member", "devices": 1, "last_seen": "2026-10-08T16:40:00Z" }
     ],
     "gates": {
       "requirements": { "approvers": "owner", "count": 1 },

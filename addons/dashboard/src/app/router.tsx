@@ -1,7 +1,7 @@
-import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
 import { AddonPage } from './pages/AddonPage'
-import { Placeholder } from './pages/Placeholders'
+import { SettingsPage } from './pages/settings'
 import { TodayPage } from './pages/today'
 import { BoardPage } from './pages/board'
 import { TicketPage } from './pages/ticket'
@@ -31,7 +31,29 @@ const ticketRoute = createRoute({
   },
 })
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage })
-const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'settings', component: () => <Placeholder title="Settings" /> })
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings',
+  beforeLoad: () => {
+    throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+  },
+})
+const settingsTabRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/$tab',
+  component: function SettingsTabRoute() {
+    const { tab } = settingsTabRoute.useParams()
+    return <SettingsPage tab={tab} />
+  },
+})
+const settingsAddonRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/addon/$name',
+  component: function SettingsAddonRoute() {
+    const { name } = settingsAddonRoute.useParams()
+    return <SettingsPage addon={name} />
+  },
+})
 const addonRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'addon/$name/$page',
@@ -41,7 +63,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, addonRoute])
 
 export function createAppRouter(initialPath = '/') {
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) })

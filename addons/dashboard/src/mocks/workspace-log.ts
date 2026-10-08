@@ -8,7 +8,7 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'member.added': {
         const person = String(e.person)
         if (!ws.members.some((m) => m.person === person))
-          ws.members.push({ person, name: typeof e.name === 'string' ? e.name : person, role: e.role as Role })
+          ws.members.push({ person, name: typeof e.name === 'string' ? e.name : person, role: e.role as Role, devices: 0, last_seen: null })
         break
       }
       case 'member.role_changed': {

@@ -17,6 +17,8 @@ export interface Member {
   person: string // p_sev
   name: string
   role: Role
+  devices?: number
+  last_seen?: string | null
 }
 
 export interface Workspace {
@@ -351,6 +353,25 @@ export interface TodayDocument {
   recent: (Pick<OrchEvent, 'seq' | 'at' | 'type' | 'actor'> & { ticket: string; title: string; summary: string })[]
   counts: Partial<Record<Status, number>>
 }
+
+// ---------------------------------------------------------------- workspace settings
+
+export interface WorkspaceIdentity {
+  uuid: string
+  prefix: string
+  created_at: string
+  key_fingerprint: string
+  epoch: number
+}
+
+/** POST /api/workspaces/:ws/settings. Owner only; every op except rename is signed in the UI. */
+export type SettingsRequest =
+  | { op: 'rename'; name: string }
+  | { op: 'member.add'; person: string; name: string; role: Role }
+  | { op: 'member.role'; person: string; role: Role }
+  | { op: 'member.remove'; person: string }
+  | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null }
+  | { op: 'archive'; prefix: string }
 
 // ---------------------------------------------------------------- addons.json
 

@@ -403,6 +403,51 @@
         "label": "Secret link to the seed report",
         "addon": "publish",
         "ref": "share/demo-0043-preview"
+      },
+      {
+        "at": "2026-10-09T09:32:10Z",
+        "type": "agent.refused",
+        "actor": "codex:s_a41:p_mara",
+        "code": "claim.held",
+        "message": "DEMO-0043 is claimed by claude-code (s_77c2).",
+        "retryable": false,
+        "op": "claim"
+      },
+      {
+        "at": "2026-10-09T10:50:03Z",
+        "type": "agent.refused",
+        "actor": "claude-code:s_77c2:p_sev",
+        "code": "human_only",
+        "message": "Approving a gate is a human action; sign it from the dashboard.",
+        "retryable": false,
+        "op": "approve"
+      },
+      {
+        "at": "2026-10-09T10:55:10Z",
+        "type": "agent.refused",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "code": "lease.held",
+        "message": "T2 is leased by s_77c2.1.",
+        "retryable": true,
+        "op": "lease T2"
+      },
+      {
+        "at": "2026-10-09T10:56:20Z",
+        "type": "agent.refused",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "code": "lease.held",
+        "message": "T2 is leased by s_77c2.1.",
+        "retryable": true,
+        "op": "lease T2"
+      },
+      {
+        "at": "2026-10-09T10:57:30Z",
+        "type": "agent.refused",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "code": "lease.held",
+        "message": "T2 is leased by s_77c2.1.",
+        "retryable": true,
+        "op": "lease T2"
       }
     ]
   },

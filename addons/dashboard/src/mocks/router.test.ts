@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
+import { parseActor } from './derive'
 import { createMockStore } from './store'
 
 function setup() {
@@ -108,6 +109,82 @@ describe('mock tickets search', () => {
       await api.deleteView(ws, shared.id)
       expect((await api.listViews(ws)).map((v) => v.name)).toEqual(['My open work'])
       expect(store.wsEventsOf(ws).some((e) => e.type === 'view.deleted')).toBe(true)
+    })
+  })
+
+  describe('grants', () => {
+    it('revoking releases the claim on DEMO-0043 and ends the leases', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      expect((await api.getTicket('DEMO-0043')).claim).not.toBeNull()
+      const g = await api.revokeGrant(ws, 'gr_01J9Z8')
+      expect(g.revoked?.by).toBe('p_sev')
+      const t = await api.getTicket('DEMO-0043')
+      expect(t.claim).toBeNull()
+      expect(t.tasks_state.every((x) => x.lease === null)).toBe(true)
+      const released = store.eventsOf('DEMO-0043').filter((e) => e.type === 'claim.released').pop()
+      expect(released).toMatchObject({ reason: 'grant revoked' })
+      const sessions = await api.getAgents(ws)
+      expect(sessions.filter((s) => s.grant?.id === 'gr_01J9Z8').every((s) => s.state === 'stopped')).toBe(true)
+      await expect(api.revokeGrant(ws, 'gr_01J9Z8')).rejects.toMatchObject({ status: 409 })
+    })
+    it('Mara cannot revoke Severin\'s grant, a viewer cannot revoke or issue', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      store.setViewer('p_mara')
+      await expect(api.revokeGrant(ws, 'gr_01J9Z8')).rejects.toMatchObject({ status: 403 })
+      store.setViewer('p_tom')
+      await expect(api.revokeGrant(ws, 'gr_01J9Y4')).rejects.toMatchObject({ status: 403 })
+      await expect(api.issueGrant(ws, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403 })
+      expect((await api.listGrants(ws)).find((g) => g.id === 'gr_01J9Z8')?.revoked).toBeNull()
+    })
+    it('the owner may revoke Mara\'s grant; Mara may revoke her own', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      expect((await api.revokeGrant(ws, 'gr_01J9Y4')).revoked?.by).toBe('p_sev')
+      const other = setup()
+      other.store.setViewer('p_mara')
+      expect((await other.api.revokeGrant(other.store.workspaces[0].id, 'gr_01J9Y4')).revoked?.by).toBe('p_mara')
+    })
+    it('issues a grant for the viewer and validates the hours', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      await expect(api.issueGrant(ws, { hours: 13, scope: 'all' })).rejects.toMatchObject({ status: 400 })
+      await expect(api.issueGrant(ws, { hours: 0, scope: 'all' })).rejects.toMatchObject({ status: 400 })
+      const g = await api.issueGrant(ws, { hours: 4, scope: 'all' })
+      expect(g).toMatchObject({ person: 'p_sev', scope: 'all', revoked: null })
+      expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(4 * 3600_000)
+      expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' && e.grant === g.id)).toBe(true)
+    })
+    it('an agent actor cannot issue or revoke a grant (human_only)', () => {
+      const store = createMockStore({ persist: false })
+      const ws = store.workspaces[0].id
+      const agent = parseActor('claude-code:s_77c2:p_sev')
+      expect(store.issueGrant(ws, { hours: 4, scope: 'all' }, agent)).toMatchObject({ ok: false, status: 403, code: 'human_only' })
+      expect(store.revokeGrant(ws, 'gr_01J9Z8', agent)).toMatchObject({ ok: false, status: 403, code: 'human_only' })
+      expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' || e.type === 'grant.revoked')).toBe(false)
+    })
+  })
+
+  describe('agents', () => {
+    it('lists sessions with subagents, models and states', async () => {
+      const { api, store } = setup()
+      const list = await api.getAgents(store.workspaces[0].id)
+      const sub = list.find((s) => s.session === 's_77c2.1')!
+      expect(sub).toMatchObject({ parent: 's_77c2', harness: 'claude-code', state: 'waiting' })
+      expect(sub.waiting_on).toMatchObject({ kind: 'question', ticket: 'DEMO-0043' })
+      expect(list.filter((s) => s.state === 'working')).toHaveLength(3)
+    })
+    it('activity: newest first, refusals carry the stop rule on the third same code', async () => {
+      const { api, store } = setup()
+      const feed = await api.getAgentActivity(store.workspaces[0].id)
+      expect(feed.length).toBeGreaterThanOrEqual(25)
+      expect(feed.length).toBeLessThanOrEqual(50)
+      expect([...feed].sort((a, b) => b.at.localeCompare(a.at))).toEqual(feed)
+      const refusals = feed.filter((f) => f.refusal)
+      expect(refusals.map((r) => r.refusal!.code).sort()).toEqual(['claim.held', 'human_only', 'lease.held', 'lease.held', 'lease.held'])
+      expect(refusals.filter((r) => r.refusal!.stop)).toHaveLength(1)
+      expect(refusals.find((r) => r.refusal!.stop)!.refusal!.code).toBe('lease.held')
     })
   })
 })

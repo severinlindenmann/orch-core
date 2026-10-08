@@ -358,7 +358,11 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'claim.taken':
       return 'took the claim'
     case 'claim.released':
-      return 'released the claim'
+      return e.reason ? `released the claim (${String(e.reason)})` : 'released the claim'
+    case 'lease.released':
+      return e.reason ? `released ${e.task} (${String(e.reason)})` : `released ${e.task}`
+    case 'agent.refused':
+      return `was refused: ${e.code}`
     case 'lease.taken':
       return `started ${e.task}`
     case 'task.done':

@@ -306,6 +306,25 @@ export interface AgentInfo {
   last_seen: string
 }
 
+/** A session in the agents tree: top-level sessions and their subagents (`s_77c2.2` has parent `s_77c2`). */
+export interface AgentSession extends AgentInfo {
+  parent: string | null
+  harness: 'claude-code' | 'codex' | 'ci'
+  model?: string
+  state: 'working' | 'waiting' | 'idle' | 'stopped'
+  waiting_on?: { kind: 'question' | 'approval' | 'verdict'; ticket: string; ref?: string }
+}
+export interface AgentActivityItem {
+  at: string
+  ticket: string
+  session: string
+  agent: string
+  for: string
+  type: string // task.started, task.done, ask, claim.taken, refused, ...
+  summary: string
+  refusal?: { code: string; message: string; retryable: boolean; stop: boolean } // stop: the third same refusal
+}
+
 // ---------------------------------------------------------------- today
 
 export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring'

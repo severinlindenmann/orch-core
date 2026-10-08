@@ -2,9 +2,76 @@
   "person": "p_sev",
   "name": "Severin",
   "role": "owner",
-  "grant": { "id": "gr_01J9Z8", "until": "2026-10-09T18:00:00Z", "hours": 8 },
+  "grant": {
+    "id": "gr_01J9Z8",
+    "until": "2026-10-09T18:00:00Z",
+    "hours": 8
+  },
   "agents": [
-    { "id": "claude-code", "name": "Claude Code", "for": "p_sev", "session": "s_77c2", "grant": "gr_01J9Z8", "last_seen": "2026-10-09T11:28:40Z" },
-    { "id": "codex", "name": "Codex", "for": "p_mara", "session": "s_a41", "grant": "gr_01J9Y4", "last_seen": "2026-10-09T11:26:10Z" }
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "for": "p_sev",
+      "session": "s_77c2",
+      "grant": "gr_01J9Z8",
+      "last_seen": "2026-10-09T11:28:40Z",
+      "parent": null,
+      "harness": "claude-code",
+      "model": "claude-opus-4-5",
+      "state": "working"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "for": "p_sev",
+      "session": "s_77c2.1",
+      "grant": "gr_01J9Z8",
+      "last_seen": "2026-10-09T11:20:05Z",
+      "parent": "s_77c2",
+      "harness": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "state": "waiting",
+      "waiting_on": {
+        "kind": "question",
+        "ticket": "DEMO-0043",
+        "ref": "Q2"
+      }
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "for": "p_sev",
+      "session": "s_77c2.2",
+      "grant": "gr_01J9Z8",
+      "last_seen": "2026-10-09T11:27:52Z",
+      "parent": "s_77c2",
+      "harness": "claude-code",
+      "model": "claude-sonnet-4-5",
+      "state": "working"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "for": "p_sev",
+      "session": "s_9e3f",
+      "grant": "gr_01J9Z8",
+      "last_seen": "2026-10-09T10:57:30Z",
+      "parent": null,
+      "harness": "claude-code",
+      "model": "claude-opus-4-5",
+      "state": "stopped"
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "for": "p_mara",
+      "session": "s_a41",
+      "grant": "gr_01J9Y4",
+      "last_seen": "2026-10-09T11:26:10Z",
+      "parent": null,
+      "harness": "codex",
+      "model": "gpt-5-codex",
+      "state": "working"
+    }
   ]
 }

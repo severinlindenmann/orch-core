@@ -7,7 +7,9 @@ import {
   type AddonActionResult,
   type AddonDecision,
   type AddonManifest,
-  type AgentInfo,
+  type AgentActivityItem,
+  type AgentSession,
+  type GrantInfo,
   type ApiErrorBody,
   type Me,
   type NewTicketRequest,
@@ -93,7 +95,12 @@ export function createApi(transport: Transport) {
     runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),
     getAddonState: (ws: string, name: string) => call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state`),
-    getAgents: (workspaceId: string) => call<AgentInfo[]>('GET', `/api/workspaces/${workspaceId}/agents`),
+    getAgents: (workspaceId: string) => call<AgentSession[]>('GET', `/api/workspaces/${workspaceId}/agents`),
+    getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
+    listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
+    /** Human only, signed in the dashboard. */
+    issueGrant: (ws: string, req: { hours: number; scope: 'all' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
+    revokeGrant: (ws: string, id: string) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants/${id}/revoke`),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data. */

@@ -6,6 +6,7 @@ import { TodayPage } from './pages/today'
 import { BoardPage } from './pages/board'
 import { TicketPage } from './pages/ticket'
 import { NewTicketPage } from './pages/new-ticket'
+import { AgentsPage } from './pages/agents'
 import { TicketsPage } from './pages/tickets'
 import { validateTicketsSearch } from './pages/tickets/search'
 
@@ -29,7 +30,7 @@ const ticketRoute = createRoute({
     return <TicketPage ticketKey={key} />
   },
 })
-const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: () => <Placeholder title="Agents" /> })
+const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage })
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'settings', component: () => <Placeholder title="Settings" /> })
 const addonRoute = createRoute({
   getParentRoute: () => rootRoute,

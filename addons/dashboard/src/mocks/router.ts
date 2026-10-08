@@ -309,6 +309,25 @@ export function buildRouter(): MockRouter {
     s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),
   )
   r.add('GET', '/api/workspaces/:ws/agents', (s, c) => ok(s.agents(c.params.ws)))
+  r.add('GET', '/api/workspaces/:ws/agents/activity', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.agentActivity(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
+  r.add('GET', '/api/workspaces/:ws/grants', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.grants(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
+  // Issuing and revoking are human-only: the actor is always the viewer, a person.
+  const person = (s: MockStore) => ({ kind: 'person', id: s.viewer, device: 'd_mac' }) as const
+  r.add('POST', '/api/workspaces/:ws/grants', (s, c) => {
+    if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+    const b = c.body as { hours?: number; scope?: 'all' } | null
+    const res = s.issueGrant(c.params.ws, { hours: Number(b?.hours), scope: b?.scope ?? 'all' }, person(s))
+    return res.ok ? ok(res.grant, 201) : fail(res.status, res.code, res.message, res.hint)
+  })
+  r.add('POST', '/api/workspaces/:ws/grants/:id/revoke', (s, c) => {
+    if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+    const res = s.revokeGrant(c.params.ws, c.params.id, person(s))
+    return res.ok ? ok(res.grant) : fail(res.status, res.code, res.message, res.hint)
+  })
   r.add('GET', '/api/tickets/:key', (s, c) => {
     const t = visibleTicket(s, c.params.key)
     return isResponse(t) ? t : ok(t)

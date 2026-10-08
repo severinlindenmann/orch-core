@@ -3,7 +3,9 @@
 import type {
   AddonActionResult,
   AddonManifest,
-  AgentInfo,
+  Actor,
+  AgentActivityItem,
+  AgentSession,
   SavedView,
   BodySections,
   GateName,
@@ -23,6 +25,7 @@ import { getAddon } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import demoFixture from './fixtures/demo.json'
+import grantsFixture from './fixtures/grants.json'
 import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
 import viewsFixture from './fixtures/views.json'
@@ -45,6 +48,11 @@ interface FixtureTicket {
   body: BodySections
   events: FixtureEvent[]
 }
+
+/** A failed store operation, mapped to an HTTP error by the router. */
+export type StoreFailure = { ok: false; status: number; code: string; message: string; hint?: string }
+export type GrantResult = { ok: true; grant: GrantInfo } | StoreFailure
+const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
 export interface StoreOptions {
   /** Persist appended events to localStorage. Default true; tests pass false. */
@@ -84,7 +92,7 @@ export class MockStore {
   private wsOfKey = new Map<string, string>() // key -> workspace id
   private events = new Map<string, OrchEvent[]>()
   private seeded = new Map<string, number>() // key -> number of seeded events
-  private agentRegistry = meFixture.agents
+  private agentRegistry = meFixture.agents as unknown as (Omit<AgentSession, 'grant' | 'claims' | 'leases'> & { grant: string })[]
   private startedAt = Date.now()
   private clockBase = Date.parse(MOCK_EPOCH)
   viewer = meFixture.person
@@ -218,7 +226,7 @@ export class MockStore {
       person: this.viewer,
       name: member?.name ?? this.viewer,
       role: this.roleIn(this.workspaces[0].id, this.viewer) ?? 'viewer',
-      grant: isSev ? meFixture.grant : null,
+      grant: isSev && this.grantActive(this.workspaces[0].id, meFixture.grant.id) ? meFixture.grant : null,
     }
   }
 
@@ -387,23 +395,58 @@ export class MockStore {
     return event
   }
 
-  /** Grants of a workspace: the seed (the demo grant lives in the first workspace) folded with the log. */
+  /** Grants of a workspace: the seed folded with the log. */
   grants(wsId: string): GrantInfo[] {
-    const seed: GrantInfo[] =
-      wsId === this.seedWorkspaces[0]?.id
-        ? [
-            {
-              id: meFixture.grant.id,
-              person: meFixture.person,
-              scope: 'all',
-              issued_at: new Date(Date.parse(meFixture.grant.until) - meFixture.grant.hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
-              until: meFixture.grant.until,
-              revoked: null,
-              sessions: this.agentRegistry.filter((a) => a.grant === meFixture.grant.id).map((a) => a.session),
-            },
-          ]
-        : []
+    const seed = (grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
+  }
+
+  private grantActive(wsId: string, id: string): boolean {
+    const g = this.grants(wsId).find((x) => x.id === id)
+    return !!g && !g.revoked && g.until > this.now()
+  }
+
+  /**
+   * Issue a grant for `actor`. Human only: an agent actor is refused with `human_only`, whatever its role.
+   * Owners and maintainers may issue; viewers may not.
+   */
+  issueGrant(wsId: string, req: { hours: number; scope: 'all' }, actor: Actor): GrantResult {
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can issue a grant.', 'Run orch grant yourself, or issue it from the dashboard.')
+    const role = this.roleIn(wsId, actor.id)
+    if (!role || role === 'viewer') return refuse(403, 'forbidden', 'Viewers cannot issue grants.', 'Ask an owner or maintainer.')
+    if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > 12) return refuse(400, 'validation', 'A grant lasts 1 to 12 hours.')
+    if (req.scope !== 'all') return refuse(400, 'validation', 'Only the scope "all" can be issued here.')
+    const id = `gr_01JA${String(this.grants(wsId).length).padStart(2, '0')}`
+    const until = new Date(Date.parse(this.now()) + req.hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    this.appendWs(wsId, { type: 'grant.issued', actor, grant: id, person: actor.id, scope: req.scope, until, hours: req.hours, sessions: [], presence: 'touchid' })
+    return { ok: true, grant: this.grants(wsId).find((g) => g.id === id)! }
+  }
+
+  /**
+   * Revoke a grant: only the grant's person or a workspace owner, and only a person. Ends the claims and
+   * leases of the sessions that use it (`reason: 'grant revoked'`); those sessions then derive as stopped.
+   */
+  revokeGrant(wsId: string, id: string, actor: Actor): GrantResult {
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can revoke a grant.')
+    const g = this.grants(wsId).find((x) => x.id === id)
+    if (!g) return refuse(404, 'not_found', `No grant ${id}`)
+    const role = this.roleIn(wsId, actor.id)
+    if (!role || role === 'viewer') return refuse(403, 'forbidden', 'Viewers cannot revoke grants.')
+    if (g.person !== actor.id && role !== 'owner') return refuse(403, 'forbidden', `Only ${g.person} or an owner can revoke ${id}.`)
+    if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
+    this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
+    const sessions = new Set(g.sessions)
+    const reason = 'grant revoked'
+    for (const [key, ws] of this.wsOfKey) {
+      if (ws !== wsId) continue
+      const doc = this.ticket(key)
+      if (!doc) continue
+      for (const t of doc.tasks_state)
+        if (t.lease && sessions.has(t.lease.session)) this.append(key, { type: 'lease.released', actor: `${t.lease.agent}:${t.lease.session}:${g.person}`, task: t.id, reason })
+      if (doc.claim && sessions.has(doc.claim.session))
+        this.append(key, { type: 'claim.released', actor: `${doc.claim.agent}:${doc.claim.session}:${doc.claim.for}`, reason })
+    }
+    return { ok: true, grant: this.grants(wsId).find((x) => x.id === id)! }
   }
 
   /** Saved views the viewer can see: their own and the shared ones. */
@@ -587,20 +630,58 @@ export class MockStore {
     })
   }
 
-  agents(workspaceId: string): AgentInfo[] {
+  /** Sessions (and subagents) whose grant belongs to the workspace. A revoked or expired grant stops them. */
+  agents(workspaceId: string): AgentSession[] {
     const tickets = this.listTickets(workspaceId)
-    return this.agentRegistry.map((a) => {
-      const claims = tickets
-        .filter((t) => t.claim?.agent === a.id && t.claim.for === a.for)
-        .map((t) => ({ ticket: t.key, since: t.claim!.since, expires: t.claim!.expires }))
-      const leases = tickets.flatMap((t) =>
-        t.tasks_state
-          .filter((x) => x.lease && x.lease.agent === a.id && x.lease.session.startsWith(a.session))
-          .map((x) => ({ ticket: t.key, task: x.id, session: x.lease!.session })),
-      )
-      const grantUntil = a.for === meFixture.person ? meFixture.grant.until : '2026-10-09T17:00:00Z'
-      return { ...a, grant: { id: a.grant, until: grantUntil }, claims, leases }
-    })
+    const grants = this.grants(workspaceId)
+    const now = this.now()
+    return this.agentRegistry
+      .filter((a) => grants.some((g) => g.id === a.grant))
+      .map((a) => {
+        const g = grants.find((x) => x.id === a.grant)!
+        const claims = tickets
+          .filter((t) => t.claim?.agent === a.id && t.claim.for === a.for && t.claim.session === a.session)
+          .map((t) => ({ ticket: t.key, since: t.claim!.since, expires: t.claim!.expires }))
+        const leases = tickets.flatMap((t) =>
+          t.tasks_state
+            .filter((x) => x.lease && x.lease.agent === a.id && x.lease.session.startsWith(a.session))
+            .map((x) => ({ ticket: t.key, task: x.id, session: x.lease!.session })),
+        )
+        const stopped = !!g.revoked || g.until <= now || a.state === 'stopped'
+        const { waiting_on, ...rest } = a
+        return { ...rest, grant: { id: g.id, until: g.until }, claims, leases, state: stopped ? 'stopped' : a.state, ...(!stopped && waiting_on ? { waiting_on } : {}) } satisfies AgentSession
+      })
+  }
+
+  /** Agent-attributed ticket events of the workspace, newest first (50). The third same refusal by a session is the stop. */
+  agentActivity(workspaceId: string): AgentActivityItem[] {
+    const items: AgentActivityItem[] = []
+    for (const [key, ws] of this.wsOfKey) {
+      if (ws !== workspaceId || !this.isVisible(key)) continue
+      for (const e of this.eventsOf(key)) {
+        if (e.actor.kind !== 'agent') continue
+        const refused = e.type === 'agent.refused'
+        items.push({
+          at: e.at,
+          ticket: key,
+          session: e.actor.session,
+          agent: e.actor.id,
+          for: e.actor.for,
+          type: refused ? 'refused' : e.type,
+          summary: describeEvent(e),
+          ...(refused ? { refusal: { code: String(e.code), message: String(e.message ?? ''), retryable: e.retryable === true, stop: false } } : {}),
+        })
+      }
+    }
+    const seen = new Map<string, number>()
+    for (const it of [...items].sort((a, b) => a.at.localeCompare(b.at))) {
+      if (!it.refusal) continue
+      const k = `${it.session}|${it.refusal.code}`
+      const n = (seen.get(k) ?? 0) + 1
+      seen.set(k, n)
+      it.refusal.stop = n === 3
+    }
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50)
   }
 }
 

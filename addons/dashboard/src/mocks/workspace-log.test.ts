@@ -64,7 +64,7 @@ describe('workspace log', () => {
   it('folds grants: seed grant, issue and revoke', () => {
     const s = createMockStore({ persist: false })
     const ws = s.workspaces[0].id
-    expect(s.grants(ws).map((g) => g.id)).toEqual(['gr_01J9Z8'])
+    expect(s.grants(ws).map((g) => g.id)).toEqual(['gr_01J9Z8', 'gr_01J9Y4', 'gr_01J9C1', 'gr_01J9X2'])
     s.appendWs(ws, { type: 'grant.issued', grant: 'gr_new', person: 'p_mara', scope: 'ci', until: '2026-10-10T00:00:00Z' })
     s.appendWs(ws, { type: 'grant.revoked', grant: 'gr_01J9Z8' })
     const g = s.grants(ws)

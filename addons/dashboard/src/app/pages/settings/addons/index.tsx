@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '@/api/client'
-import type { AddonManifest, AddonOpRequest, Workspace } from '@/api/types'
-import { useAddons } from '@/addon-ui/slots'
+import { addonActive, pendingUpdate } from '@/api/addons'
+import type { AddonOpRequest, InstalledAddon, Workspace } from '@/api/types'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -19,10 +19,9 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
   const qc = useQueryClient()
   const signed = useSignedAction()
   const installed = useQuery({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) })
-  const { data: global = [] } = useAddons()
   const [browsing, setBrowsing] = useState(false)
   const [ask, setAsk] = useState<GrantAsk | null>(null)
-  const [removing, setRemoving] = useState<AddonManifest | null>(null)
+  const [removing, setRemoving] = useState<InstalledAddon | null>(null)
 
   /** Unsigned ops (install, enable, disable, uninstall): run, refetch, toast the refusal. */
   const run = async (name: string, req: AddonOpRequest) => {
@@ -36,7 +35,8 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
   const sign = (a: GrantAsk) => {
     setAsk(null)
     // Send exactly what the prompt showed; the host refuses if the package changed in between.
-    const t = a.kind === 'update' && a.addon.update ? a.addon.update : a.addon
+    const update = a.kind === 'update' ? pendingUpdate(a.addon) : null
+    const t = update ?? a.addon.ws
     const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities }
     void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, () => api.postAddonOp(ws, a.addon.name, req))
   }
@@ -72,8 +72,9 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
                 <AddonRow
                   key={a.name}
                   addon={a}
+                  active={addonActive(workspace, a.name)}
                   canEdit={canEdit}
-                  hasSettings={(global.find((g) => g.name === a.name)?.contributions ?? []).some((c) => c.slot === 'settings')}
+                  hasSettings={a.contributions.some((c) => c.slot === 'settings')}
                   actions={{
                     grant: () => setAsk({ kind: 'grant', addon: a }),
                     update: () => setAsk({ kind: 'update', addon: a }),

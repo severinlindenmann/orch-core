@@ -151,7 +151,7 @@ export function TicketsPage() {
   const addonColumns = useMemo<AddonColumn[]>(
     () =>
       addons
-        .filter((a) => a.enabled && addonActive(workspace, a.name))
+        .filter((a) => addonActive(workspace, a.name))
         .flatMap((a) => a.contributions.filter((c) => c.slot === 'board.card_field').map((c) => ({ addon: a.name, title: c.title }))),
     [addons, workspace],
   )

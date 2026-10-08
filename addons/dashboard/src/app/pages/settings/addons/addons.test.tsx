@@ -30,6 +30,16 @@ describe('Addon manager', () => {
     await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /Enable/ }))
     await waitFor(() => expect(screen.queryByRole('link', { name: /Apps & shares/ })).toBeNull())
   })
+  it('an uninstalled seeded addon shows up in Browse addons and can be installed again', async () => {
+    const { user } = renderApp('/settings/addons')
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Uninstall' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Uninstall' }))
+    await waitFor(() => expect(screen.queryByRole('row', { name: /Estimate/ })).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'Browse addons' }))
+    await user.click(within(await screen.findByRole('article', { name: /Estimate/ })).getByRole('button', { name: 'Install' }))
+    const row = await screen.findByRole('row', { name: /Estimate/ })
+    expect(within(row).getByText('Needs grant')).toBeInTheDocument()
+  })
   it('only the owner grants', async () => {
     renderApp('/settings/addons', { viewer: 'p_mara' })
     expect(await screen.findByText('Only owners change settings.')).toBeInTheDocument()

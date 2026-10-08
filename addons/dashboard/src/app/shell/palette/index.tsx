@@ -145,7 +145,7 @@ export function CommandPalette() {
   ]
 
   const addonCommands: Entry[] = addons
-    .filter((a) => a.enabled && addonActive(workspace, a.name))
+    .filter((a) => addonActive(workspace, a.name))
     .flatMap((a) => (a.commands ?? []).map((c) => ({ addon: a.name, ...c })))
     .map((c) => ({
       id: `${c.addon}/${c.id}`,

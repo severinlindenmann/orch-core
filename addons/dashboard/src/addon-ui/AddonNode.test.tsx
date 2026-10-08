@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Fragment } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import type { AddonManifest, Workspace } from '@/api/types'
+import type { AddonPackage, Workspace } from '@/api/types'
 import workspacesFixture from '@/mocks/fixtures/workspaces.json'
 import addonsFixture from '@/mocks/fixtures/addons.json'
 import { WorkspaceProvider } from '@/app/workspace'
@@ -94,7 +94,7 @@ describe('bindings', () => {
 })
 
 describe('SlotRegistry', () => {
-  const addons = addonsFixture as unknown as AddonManifest[]
+  const addons = addonsFixture as unknown as AddonPackage[]
   const workspace = workspacesFixture[0] as unknown as Workspace
 
   it('selects nothing without a workspace (deny by default)', () => {
@@ -109,9 +109,11 @@ describe('SlotRegistry', () => {
     expect((lanes[0].node as { items: unknown[] }).items).toHaveLength(3)
   })
 
-  it('skips disabled addons and contributions whose `when` binding is empty', () => {
-    const off = addons.map((a) => (a.name === 'github' ? { ...a, enabled: false } : a))
-    expect(selectContributions(off, 'board.lane', { workspace })).toHaveLength(0)
+  it('skips addons inactive in the workspace and contributions whose `when` binding is empty', () => {
+    const off = { ...workspace, addons: { ...workspace.addons, github: { ...workspace.addons.github, enabled: false } } }
+    expect(selectContributions(addons, 'board.lane', { workspace: off })).toHaveLength(0)
+    const ungranted = { ...workspace, addons: { ...workspace.addons, github: { ...workspace.addons.github, status: 'needs_grant' as const } } }
+    expect(selectContributions(addons, 'board.lane', { workspace: ungranted })).toHaveLength(0)
     const withPr = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: { github: { pr: { number: 3 } } } } as never })
     expect(withPr.some((c) => c.addon === 'github')).toBe(true)
     const without = selectContributions(addons, 'ticket.panel', { workspace, ticket: { key: 'T', addons: {} } as never })

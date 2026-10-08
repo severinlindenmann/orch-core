@@ -1,9 +1,9 @@
-// SlotRegistry: reads /api/addons and hands each surface (nav, today card, ticket panel, board lane...) the
-// contributions of enabled addons, with bindings resolved against the slot context.
+// SlotRegistry: reads the addon packages (/api/addons) and hands each surface (nav, today card, ticket panel, board
+// lane...) the contributions of the addons active in the workspace, with bindings resolved against the slot context.
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
-import type { AddonContribution, AddonManifest, AddonSlot, TicketDocument, TicketSummary, Workspace } from '@/api/types'
+import type { AddonContribution, AddonPackage, AddonSlot, TicketDocument, TicketSummary, Workspace } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
 import { getPath, resolveBindings } from './bindings'
 
@@ -25,12 +25,11 @@ export interface ResolvedContribution {
   node: unknown
 }
 
-/** Pure selection (used by the hook and by tests). `workspace` filters by per-workspace enablement. */
-export function selectContributions(addons: AddonManifest[], slot: AddonSlot, ctx: SlotContext = {}): ResolvedContribution[] {
+/** Pure selection (used by the hook and by tests). Only addons active in `ctx.workspace` contribute. */
+export function selectContributions(addons: AddonPackage[], slot: AddonSlot, ctx: SlotContext = {}): ResolvedContribution[] {
   const out: ResolvedContribution[] = []
   if (!ctx.workspace) return out // deny by default: no workspace, no per-workspace enablement to check
   for (const a of addons) {
-    if (!a.enabled) continue
     if (!addonActive(ctx.workspace, a.name)) continue
     for (const c of a.contributions as AddonContribution[]) {
       if (c.slot !== slot) continue
@@ -49,7 +48,7 @@ export function useAddons() {
 export function useSlot(name: AddonSlot, ctx: Omit<SlotContext, 'workspace' | 'addon'> = {}): ResolvedContribution[] {
   const { data = [] } = useAddons()
   const { workspace } = useWorkspace()
-  const states = useAddonStates(workspace?.id, data.filter((a) => a.enabled && addonActive(workspace, a.name) && a.contributions.some((c) => c.slot === name)).map((a) => a.name))
+  const states = useAddonStates(workspace?.id, data.filter((a) => addonActive(workspace, a.name) && a.contributions.some((c) => c.slot === name)).map((a) => a.name))
   const out: ResolvedContribution[] = []
   for (const a of data) {
     out.push(...selectContributions([a], name, { ...ctx, workspace, addon: states[a.name] }))

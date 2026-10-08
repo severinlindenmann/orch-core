@@ -3,9 +3,9 @@
 import type {
   AddonActionResult,
   AddonDecision,
-  AddonManifest,
+  AddonPackage,
+  InstalledAddon,
   AddonOpRequest,
-  WorkspaceAddon,
   Actor,
   AgentActivityItem,
   AgentSession,
@@ -24,7 +24,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, sameSet } from '@/api/addons'
+import { addonActive, pendingUpdate, sameSet } from '@/api/addons'
 import { getAddon } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
@@ -95,8 +95,8 @@ export class MockStore {
   private wsEvents = new Map<string, WorkspaceEvent[]>()
   private created: PersistedV2['created'] = {}
   private addonStates: PersistedV2['addonState'] = {}
-  /** Global manifests of every addon installed in at least one workspace (seeded + installed from the catalog). */
-  addons: AddonManifest[] = []
+  /** Every known addon package (seeded and catalog). Global: per-workspace state lives in `workspaces[].addons`. */
+  addons: AddonPackage[] = []
   private defs = new Map<string, TicketDefinition>()
   private bodies = new Map<string, BodySections>()
   private wsOfKey = new Map<string, string>() // key -> workspace id
@@ -124,7 +124,7 @@ export class MockStore {
     this.events.clear()
     this.seeded.clear()
     this.wsOfKey.clear()
-    this.addons = structuredClone(addonsFixture) as unknown as AddonManifest[]
+    this.addons = structuredClone([...addonsFixture, ...catalogFixture]) as unknown as AddonPackage[]
     this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
@@ -164,14 +164,6 @@ export class MockStore {
 
   private refoldWorkspaces() {
     this.workspaces = this.seedWorkspaces.map((w) => foldWorkspace(w, this.wsEvents.get(w.id) ?? []))
-    // A catalog addon becomes a global manifest once any workspace installs it (its nav etc. then resolve).
-    for (const c of this.catalog()) {
-      if (!this.addons.some((a) => a.name === c.name) && this.workspaces.some((w) => w.addons[c.name])) this.addons.push({ ...structuredClone(c), enabled: true }) // listed as off in the catalog; installed somewhere, it is a live manifest
-    }
-  }
-
-  private catalog(): AddonManifest[] {
-    return catalogFixture as unknown as AddonManifest[]
   }
 
   private load() {
@@ -525,55 +517,41 @@ export class MockStore {
 
   // ------------------------------------------------------------ addon manager
 
-  private addonView(m: AddonManifest, st: WorkspaceAddon): AddonManifest {
-    const atUpdate = !!m.update && st.version === m.update.version
-    return {
-      ...m,
-      version: st.version,
-      capabilities: st.capabilities,
-      package_sha256: st.package_sha256,
-      enabled: st.enabled,
-      installed: true,
-      granted: st.granted,
-      status: st.status,
-      update: atUpdate ? null : m.update,
-    }
-  }
-
-  /** Addons installed in `wsId`, with that workspace's version, grant and status. */
-  workspaceAddons(wsId: string): AddonManifest[] {
+  /** Addons installed in `wsId`: the package plus that workspace's version, grant and status under `ws`. */
+  workspaceAddons(wsId: string): InstalledAddon[] {
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w) return []
-    return this.addons.filter((m) => w.addons[m.name]).map((m) => this.addonView(m, w.addons[m.name]))
+    return this.addons.filter((p) => w.addons[p.name]).map((p) => ({ ...p, ws: w.addons[p.name] }))
   }
 
-  /** Catalog entries not installed in `wsId`. */
-  workspaceCatalog(wsId: string): AddonManifest[] {
+  /** Every known package that is not installed in `wsId` (an uninstalled seeded addon comes back here). */
+  workspaceCatalog(wsId: string): AddonPackage[] {
     const w = this.workspaces.find((x) => x.id === wsId)
-    return this.catalog().filter((c) => !w?.addons[c.name])
+    return this.addons.filter((p) => !w?.addons[p.name])
   }
 
   /**
    * Owner-only addon lifecycle. A person only: an agent never installs, grants or enables (`human_only`).
    * `grant` and `update` are signed (presence 'touchid'). Enabling is refused until the installed version has a grant.
    */
-  addonOp(wsId: string, name: string, req: AddonOpRequest, actor: Actor): { ok: true; addon: AddonManifest } | StoreFailure {
+  addonOp(wsId: string, name: string, req: AddonOpRequest, actor: Actor): { ok: true; addon: InstalledAddon } | StoreFailure {
     if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can change addons.', 'Agents never install, grant or enable addons.')
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w) return refuse(404, 'not_found', 'No such workspace')
     if (!can(this.roleIn(wsId, actor.id), 'addon.manage')) return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
     const st = w.addons[name]
-    const done = () => ({ ok: true as const, addon: this.workspaceAddons(wsId).find((a) => a.name === name) ?? ({ name } as AddonManifest) })
+    const pkg = this.addons.find((a) => a.name === name)
+    const done = () => ({ ok: true as const, addon: this.workspaceAddons(wsId).find((a) => a.name === name)! })
     if (req.op === 'install') {
       if (st) return refuse(409, 'addon.installed', `${name} is already installed.`)
-      const c = this.catalog().find((x) => x.name === name)
+      const c = pkg
       if (!c) return refuse(404, 'not_found', `No addon ${name} in the catalog`)
       this.appendWs(wsId, { type: 'addon.installed', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities })
       return done()
     }
-    const m = this.addons.find((a) => a.name === name)
-    if (!st || !m) return refuse(404, 'not_found', `${name} is not installed in this workspace.`)
-    const v = this.addonView(m, st)
+    if (!st || !pkg) return refuse(404, 'not_found', `${name} is not installed in this workspace.`)
+    const v: InstalledAddon = { ...pkg, ws: st }
+    const update = pendingUpdate(v)
     switch (req.op) {
       case 'grant':
         if (req.op !== 'grant') break
@@ -591,10 +569,10 @@ export class MockStore {
         break
       case 'update':
         if (req.op !== 'update') break
-        if (!v.update) return refuse(409, 'addon.no_update', `${v.title} is up to date.`)
-        if (req.version !== v.update.version || req.package_sha256 !== v.update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, v.update.capabilities))
+        if (!update) return refuse(409, 'addon.no_update', `${v.title} is up to date.`)
+        if (req.version !== update.version || req.package_sha256 !== update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, update.capabilities))
           return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
-        this.appendWs(wsId, { type: 'addon.updated', actor, name, version: v.update.version, from: st.version, package_sha256: v.update.package_sha256, capabilities: v.update.capabilities, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, presence: 'touchid' })
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
         this.appendWs(wsId, { type: 'addon.uninstalled', actor, name })
@@ -710,7 +688,7 @@ export class MockStore {
   addonDecisions(wsId: string): AddonDecision[] {
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w || !this.canDecide(wsId)) return []
-    return this.addons.filter((a) => a.enabled && addonActive(w, a.name)).flatMap((a) => a.decisions ?? [])
+    return this.addons.filter((a) => addonActive(w, a.name)).flatMap((a) => a.decisions ?? [])
   }
 
   today(workspaceId: string): TodayDocument {

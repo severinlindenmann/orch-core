@@ -6,7 +6,8 @@ import {
   type ActionResult,
   type AddonActionResult,
   type AddonDecision,
-  type AddonManifest,
+  type AddonPackage,
+  type InstalledAddon,
   type AddonOpRequest,
   type AgentActivityItem,
   type AgentSession,
@@ -93,12 +94,14 @@ export function createApi(transport: Transport) {
     getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
-    getAddons: () => call<AddonManifest[]>('GET', '/api/addons'),
-    /** Addons installed in a workspace, with that workspace's version, grant and status. */
-    getWorkspaceAddons: (ws: string) => call<AddonManifest[]>('GET', `/api/workspaces/${ws}/addons`),
-    getAddonCatalog: (ws: string) => call<AddonManifest[]>('GET', `/api/workspaces/${ws}/addons/catalog`),
-    /** Owner only. grant and update are signed in the dashboard; agents are refused (human_only). */
-    postAddonOp: (ws: string, name: string, req: AddonOpRequest) => call<AddonManifest>('POST', `/api/workspaces/${ws}/addons/${name}`, req),
+    /** Every known addon package (global; no per-workspace state). */
+    getAddons: () => call<AddonPackage[]>('GET', '/api/addons'),
+    /** Addons installed in a workspace: the package plus that workspace's version, grant and status under `ws`. */
+    getWorkspaceAddons: (ws: string) => call<InstalledAddon[]>('GET', `/api/workspaces/${ws}/addons`),
+    /** Packages not installed in this workspace. */
+    getAddonCatalog: (ws: string) => call<AddonPackage[]>('GET', `/api/workspaces/${ws}/addons/catalog`),
+    /** Owner only. grant and update are signed in the dashboard; agents are refused (human_only). Returns the addon as it is now (as it was, for uninstall). */
+    postAddonOp: (ws: string, name: string, req: AddonOpRequest) => call<InstalledAddon>('POST', `/api/workspaces/${ws}/addons/${name}`, req),
     getAddonDecisions: (ws: string) => call<AddonDecision[]>('GET', `/api/workspaces/${ws}/addons/decisions`),
     runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),

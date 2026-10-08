@@ -423,7 +423,7 @@ export interface AddonDecision {
   question: string
   detail?: string
   options: { key: string; label: string; primary?: boolean }[]
-  /** Posted to POST /api/addons/:addon/actions/:action with { option, ticket }. */
+  /** Posted to POST /api/workspaces/:ws/addons/:addon/actions/:action with { option, ticket }. */
   action: string
 }
 
@@ -445,26 +445,26 @@ export interface AddonUpdate {
   changelog: string
 }
 
-export interface AddonManifest {
+/** A published addon package: global, the same in every workspace. Per-workspace state is `WorkspaceAddon`. */
+export interface AddonPackage {
   name: string
   title: string
+  /** The published version (what installing gets). */
   version: string
   description: string
   capabilities: string[]
-  enabled: boolean
   first_party: boolean
-  installed: boolean
   package_sha256: string
-  /** The grant for the installed version, null when missing. */
-  granted: AddonGrant | null
+  /** A newer published version, if any. */
   update: AddonUpdate | null
-  /** Derived: needs_grant when granted?.version !== version. */
-  status: AddonStatus
   contributions: AddonContribution[]
   decisions?: AddonDecision[]
-  /** Command palette entries; each runs POST /api/addons/:name/actions/:action. */
+  /** Command palette entries; each runs POST /api/workspaces/:ws/addons/:name/actions/:action. */
   commands?: { id: string; title: string; action: string }[]
 }
+
+/** An addon installed in one workspace: the package plus that workspace's state (installed version, grant, status). */
+export type InstalledAddon = AddonPackage & { ws: WorkspaceAddon }
 
 export interface AddonActionResult {
   ok: true

@@ -1,5 +1,5 @@
 // Pure addon-state rules shared by the mock and the UI (part of the API contract).
-import type { AddonGrant, AddonStatus, Workspace, WorkspaceAddon } from './types'
+import type { AddonGrant, AddonStatus, AddonUpdate, InstalledAddon, Workspace, WorkspaceAddon } from './types'
 
 /** Does this grant cover exactly the installed package: same version and hash, and every installed capability? */
 export function grantCovers(a: Pick<WorkspaceAddon, 'version' | 'package_sha256' | 'capabilities'>, g: AddonGrant | null): g is AddonGrant {
@@ -16,6 +16,11 @@ export function addonStatus(a: Pick<WorkspaceAddon, 'version' | 'package_sha256'
 export function addonActive(workspace: Pick<Workspace, 'addons'> | undefined, name: string): boolean {
   const a = workspace?.addons[name]
   return !!a && a.enabled && a.status !== 'needs_grant'
+}
+
+/** The package's newer version, unless this workspace already runs it. */
+export function pendingUpdate(a: Pick<InstalledAddon, 'update' | 'ws'>): AddonUpdate | null {
+  return a.update && a.update.version !== a.ws.version ? a.update : null
 }
 
 /** Equal as sets: order and duplicates do not matter. */

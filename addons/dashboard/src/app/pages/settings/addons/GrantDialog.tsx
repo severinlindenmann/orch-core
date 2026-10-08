@@ -1,11 +1,12 @@
-import type { AddonManifest } from '@/api/types'
+import { pendingUpdate } from '@/api/addons'
+import type { InstalledAddon } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { CopyButton } from '../General'
 import { addedCapabilities, explain, removedCapabilities } from './capabilities'
 
 export const shortSha = (sha: string) => `${sha.slice(0, 8)}…${sha.slice(-6)}`
 
-export type GrantAsk = { kind: 'grant'; addon: AddonManifest } | { kind: 'update'; addon: AddonManifest }
+export type GrantAsk = { kind: 'grant'; addon: InstalledAddon } | { kind: 'update'; addon: InstalledAddon }
 
 /**
  * Core's signing prompt for a capability grant or an update: name, version, package hash and what it may do.
@@ -13,12 +14,13 @@ export type GrantAsk = { kind: 'grant'; addon: AddonManifest } | { kind: 'update
  */
 export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: () => void; onClose: () => void }) {
   const { addon } = ask
-  const update = ask.kind === 'update' ? addon.update : null
-  const version = update?.version ?? addon.version
-  const sha = update?.package_sha256 ?? addon.package_sha256
-  const caps = update?.capabilities ?? addon.capabilities
-  const added = update ? addedCapabilities(addon.capabilities, caps) : []
-  const removed = update ? removedCapabilities(addon.capabilities, caps) : []
+  const installed = addon.ws
+  const update = ask.kind === 'update' ? pendingUpdate(addon) : null
+  const version = update?.version ?? installed.version
+  const sha = update?.package_sha256 ?? installed.package_sha256
+  const caps = update?.capabilities ?? installed.capabilities
+  const added = update ? addedCapabilities(installed.capabilities, caps) : []
+  const removed = update ? removedCapabilities(installed.capabilities, caps) : []
   const title = update ? `Update ${addon.title} to ${version}` : `Grant ${addon.title} ${version}`
 
   return (

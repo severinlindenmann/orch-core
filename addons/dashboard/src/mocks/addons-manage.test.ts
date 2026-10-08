@@ -3,7 +3,10 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
 import { canUsePty } from '@/addon-ui/capabilities'
+import { pendingUpdate } from '@/api/addons'
 import { createMockStore } from './store'
+import addonsFixture from './fixtures/addons.json'
+import catalogFixture from './fixtures/catalog.json'
 
 function setup(viewer = 'p_sev') {
   const store = createMockStore({ persist: false })
@@ -13,7 +16,7 @@ function setup(viewer = 'p_sev') {
 }
 const grantReq = (store: ReturnType<typeof createMockStore>, ws: string, name: string) => {
   const a = store.workspaceAddons(ws).find((x) => x.name === name)!
-  return { op: 'grant' as const, version: a.version, package_sha256: a.package_sha256, capabilities: a.capabilities }
+  return { op: 'grant' as const, version: a.ws.version, package_sha256: a.ws.package_sha256, capabilities: a.ws.capabilities }
 }
 const updateReq = (store: ReturnType<typeof createMockStore>) => {
   const u = store.addons.find((a) => a.name === 'github')!.update!
@@ -27,6 +30,39 @@ const code = async (p: Promise<unknown>) => {
     return e instanceof ApiError ? `${e.status} ${e.code}` : 'err'
   }
 }
+
+const PER_WORKSPACE = ['enabled', 'installed', 'granted', 'status']
+
+describe('addon packages vs per-workspace state', () => {
+  it('GET /api/addons lists every known package (seeded and catalog) with no per-workspace fields', async () => {
+    const { api } = setup()
+    const pkgs = await api.getAddons()
+    expect(pkgs.map((p) => p.name)).toEqual(expect.arrayContaining(['publish', 'github', 'estimate', 'quick', 'models']))
+    for (const p of pkgs) for (const k of PER_WORKSPACE) expect(p, `${p.name}.${k}`).not.toHaveProperty(k)
+  })
+  it('the fixtures carry no per-workspace fields', () => {
+    for (const p of [...addonsFixture, ...catalogFixture] as Record<string, unknown>[]) for (const k of PER_WORKSPACE) expect(p, `${String(p.name)}.${k}`).not.toHaveProperty(k)
+  })
+  it('GET /api/workspaces/:ws/addons returns installed packages with this workspace state under ws', async () => {
+    const { store, api, ws } = setup()
+    await api.postAddonOp(ws, 'github', updateReq(store))
+    const gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
+    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant', enabled: true })
+    expect(pendingUpdate(gh)).toBeNull()
+    const other = (await api.getWorkspaceAddons(store.workspaces[1].id)).find((a) => a.name === 'github')!
+    expect(other.ws.version).toBe('0.5.2')
+    expect(pendingUpdate(other)?.version).toBe('0.6.0')
+  })
+  it('a seeded addon, once uninstalled, is in the catalog and can be installed again (needs a new grant)', async () => {
+    const { api, ws } = setup()
+    expect((await api.getAddonCatalog(ws)).map((a) => a.name)).not.toContain('estimate')
+    await api.postAddonOp(ws, 'estimate', { op: 'uninstall' })
+    expect((await api.getAddonCatalog(ws)).map((a) => a.name)).toContain('estimate')
+    await api.postAddonOp(ws, 'estimate', { op: 'install' })
+    const est = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'estimate')!
+    expect(est.ws).toMatchObject({ version: '0.2.0', status: 'needs_grant', enabled: false, granted: null })
+  })
+})
 
 describe('addon manager API', () => {
   it('lists the catalog of not-yet-installed addons', async () => {
@@ -66,12 +102,13 @@ describe('addon manager API', () => {
     const { store, api, ws } = setup()
     await api.postAddonOp(ws, 'github', updateReq(store))
     let gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh).toMatchObject({ version: '0.6.0', status: 'needs_grant', update: null })
+    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant' })
+    expect(pendingUpdate(gh)).toBeNull()
     expect(store.addonStateView(ws, 'github')).toBeNull()
     await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'] })
     gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh.status).toBe('active')
-    expect(gh.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })
+    expect(gh.ws.status).toBe('active')
+    expect(gh.ws.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })
     const before = JSON.stringify(store.listTickets(ws))
     await api.postAddonOp(ws, 'estimate', { op: 'uninstall' })
     expect(JSON.stringify(store.listTickets(ws))).toBe(before)
@@ -88,7 +125,7 @@ describe('addon manager API', () => {
     expect(canUsePty(t, { ...w, granted: { ...w.granted!, capabilities: [] } })).toBe(false)
     expect(canUsePty(t, { ...w, enabled: false })).toBe(false)
     expect(canUsePty(t, undefined)).toBe(false) // not installed in this workspace
-    expect(canUsePty({ ...t, enabled: false }, w)).toBe(false)
+    expect(canUsePty(undefined, w)).toBe(false) // unknown package
   })
 
   it('refuses a grant whose capabilities or hash differ from the installed package (409 addon.changed)', async () => {
@@ -97,7 +134,7 @@ describe('addon manager API', () => {
     const g = grantReq(store, ws, 'models')
     expect(await code(api.postAddonOp(ws, 'models', { ...g, capabilities: ['launch', 'pty'] }))).toBe('409 addon.changed')
     expect(await code(api.postAddonOp(ws, 'models', { ...g, package_sha256: 'e'.repeat(64) }))).toBe('409 addon.changed')
-    expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.status).toBe('needs_grant')
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.ws.status).toBe('needs_grant')
   })
   it('refuses an update whose target differs from the offered one (409 addon.changed)', async () => {
     const { store, api, ws } = setup()
@@ -109,7 +146,7 @@ describe('addon manager API', () => {
   it('same version but a different package hash is needs_grant', () => {
     const { store, ws } = setup()
     store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
-    expect(store.workspaceAddons(ws).find((a) => a.name === 'wiki')!.status).toBe('needs_grant')
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'wiki')!.ws.status).toBe('needs_grant')
   })
   it('runs no action and shows no decision for a needs_grant or disabled addon', async () => {
     const { store, api, ws } = setup()

@@ -174,10 +174,7 @@
               }
             }
           },
-          "formData": {
-            "default_expiry_days": 7,
-            "allow_artifacts": false
-          },
+          "formData": { "$ref": "addon.settings" },
           "action": "save_settings",
           "submitLabel": "Save"
         }
@@ -434,10 +431,7 @@
               }
             }
           },
-          "formData": {
-            "org": "acme",
-            "link_prs": true
-          },
+          "formData": { "$ref": "addon.settings" },
           "action": "save_settings",
           "submitLabel": "Save"
         }
@@ -656,9 +650,7 @@
               }
             }
           },
-          "formData": {
-            "weekly_budget_chf": 50
-          },
+          "formData": { "$ref": "addon.settings" },
           "action": "save_settings",
           "submitLabel": "Save"
         }
@@ -750,9 +742,7 @@
               }
             }
           },
-          "formData": {
-            "shell": "/bin/zsh"
-          },
+          "formData": { "$ref": "addon.settings" },
           "action": "save_settings",
           "submitLabel": "Save"
         }
@@ -907,15 +897,14 @@
                 "type": "string",
                 "title": "Scale",
                 "enum": [
+                  "linear",
                   "fibonacci",
                   "t-shirt"
                 ]
               }
             }
           },
-          "formData": {
-            "scale": "fibonacci"
-          },
+          "formData": { "$ref": "addon.settings" },
           "action": "save_settings",
           "submitLabel": "Save"
         }

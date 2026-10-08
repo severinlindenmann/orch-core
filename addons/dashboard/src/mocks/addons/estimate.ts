@@ -2,7 +2,7 @@ import { registerAddon } from './registry'
 
 registerAddon({
   name: 'estimate',
-  seed: () => ({}),
+  seed: () => ({ settings: { scale: 'linear' } }),
   actions: {
     set({ store, ticket, body }) {
       const points = Number((body.formData as { points?: unknown } | undefined)?.points)
@@ -11,6 +11,9 @@ registerAddon({
       store.append(ticket, { type: 'estimate.set', actor: { kind: 'addon', id: 'estimate' }, points })
       return { ok: true, message: `${ticket} estimated at ${points} points.`, changed: true }
     },
-    save_settings: () => ({ ok: true, message: 'Settings saved (mock).' }),
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
+    },
   },
 })

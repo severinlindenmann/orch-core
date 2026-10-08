@@ -7,7 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
-import { Placeholder } from '../Placeholders'
+import { AddonSettings } from './AddonSettings'
 import { General } from './General'
 import { AddonManager } from './addons'
 import { Gates } from './Gates'
@@ -67,7 +67,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
         {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} />}
-        {addon && <Placeholder title={addons.find((c) => c.addon === addon)?.title ?? addon} addon={addon} />}
+        {addon && <AddonSettings name={addon} workspace={workspace} canEdit={isOwner} />}
       </div>
     </div>
   )

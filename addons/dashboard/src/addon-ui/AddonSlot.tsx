@@ -4,10 +4,10 @@ import { AddonNode } from './AddonNode'
 import { useSlot, type ResolvedContribution, type SlotContext } from './slots'
 
 /** One contribution inside its frame. */
-export function AddonContributionView({ c, ctx = {}, compact = false }: { c: ResolvedContribution; ctx?: SlotContext; compact?: boolean }) {
+export function AddonContributionView({ c, ctx = {}, compact = false, readOnly = false }: { c: ResolvedContribution; ctx?: SlotContext; compact?: boolean; readOnly?: boolean }) {
   return (
     <AddonFrame addon={c.addon} title={c.title} slot={c.slot} compact={compact}>
-      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} />
+      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} />
     </AddonFrame>
   )
 }

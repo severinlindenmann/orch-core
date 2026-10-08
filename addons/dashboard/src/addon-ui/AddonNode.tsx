@@ -27,8 +27,10 @@ interface Runtime {
   addon: string
   ctx: SlotContext
   compact: boolean
+  /** Core says the viewer may not change anything: forms render disabled. */
+  readOnly: boolean
 }
-const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false })
+const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false })
 
 /** Box shown instead of anything that is not one of the allowed node types or fails validation. */
 export function AddonUnavailable({ addon }: { addon: string }) {
@@ -45,9 +47,9 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  * Renders one declarative node tree from an addon. The node is untrusted: it is validated against the closed
  * set of node types (nodes.ts) and anything unknown or malformed becomes the "could not be shown" box.
  */
-export function AddonNode({ node, addon, ctx = {}, compact = false }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean }) {
+export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean }) {
   return (
-    <RuntimeCtx.Provider value={{ addon, ctx, compact }}>
+    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly }}>
       <NodeView node={node} depth={0} />
     </RuntimeCtx.Provider>
   )
@@ -228,11 +230,13 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const { run, pending } = useAddonAction()
+  const { readOnly } = useContext(RuntimeCtx)
   return (
     <ThemedForm
+      disabled={readOnly}
       key={JSON.stringify(node.formData ?? null)}
       schema={node.schema}
-      uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending } } }}
+      uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || readOnly } } }}
       formData={node.formData ?? undefined}
       validator={validator}
       noHtml5Validate

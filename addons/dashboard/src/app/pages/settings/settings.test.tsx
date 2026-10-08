@@ -1,5 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('Settings', () => {
@@ -65,5 +66,26 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: 'Add' }))
     await user.click(await screen.findByRole('button', { name: /Sign with Touch ID/ }))
     expect(await screen.findByRole('row', { name: /Ida/ })).toBeInTheDocument()
+  })
+  it('saves an addon settings form and the value is in the addon state', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 'fibonacci')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText(/Settings saved/)).toBeInTheDocument()
+    const state = await api.getAddonState(mockStore.workspaces[0].id, 'estimate')
+    expect((state.settings as { scale: string }).scale).toBe('fibonacci')
+  })
+  it('a disabled addon asks to be enabled first', async () => {
+    renderApp('/settings/addon/estimate', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'estimate' }) })
+    expect(await screen.findByText(/Enable Estimate to change its settings/)).toBeInTheDocument()
+  })
+  it('non-owners see the addon form disabled', async () => {
+    renderApp('/settings/addon/estimate', { viewer: 'p_mara' })
+    expect(await screen.findByLabelText(/Scale/)).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+  it('the mock refuses save_settings from a non-owner', async () => {
+    mockStore.setViewer('p_mara')
+    await expect(api.runAddonAction('estimate', 'save_settings', { ws: mockStore.workspaces[0].id, formData: { scale: 't-shirt' } })).rejects.toThrow()
   })
 })

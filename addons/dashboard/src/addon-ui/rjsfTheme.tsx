@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 function BaseInputTemplate(props: BaseInputTemplateProps) {
@@ -41,26 +40,25 @@ function TextareaWidget({ id, value, disabled, readonly, placeholder, onChange }
   )
 }
 
+/** Native <select>: keyboard and screen-reader friendly, and what forms/tests expect for enums. */
 function SelectWidget({ id, value, options, disabled, readonly, placeholder, onChange }: WidgetProps) {
   const opts = (options.enumOptions ?? []) as { value: unknown; label: string }[]
-  const current = value === undefined || value === null ? undefined : String(value)
+  const current = value === undefined || value === null ? '' : String(value)
   return (
-    <Select
+    <select
+      id={id}
       value={current}
       disabled={disabled || readonly}
-      onValueChange={(v) => onChange(opts.find((o) => String(o.value) === v)?.value)}
+      className="h-8 w-full rounded-md border border-input bg-surface-2 px-2 text-[13px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+      onChange={(e) => onChange(opts.find((o) => String(o.value) === e.target.value)?.value)}
     >
-      <SelectTrigger id={id} size="sm" className="w-full bg-surface-2 text-[13px]">
-        <SelectValue placeholder={placeholder || 'Choose'} />
-      </SelectTrigger>
-      <SelectContent>
-        {opts.map((o) => (
-          <SelectItem key={String(o.value)} value={String(o.value)}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      {current === '' && <option value="">{placeholder || 'Choose'}</option>}
+      {opts.map((o) => (
+        <option key={String(o.value)} value={String(o.value)}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -106,9 +104,10 @@ function ObjectFieldTemplate({ properties, title, description }: ObjectFieldTemp
 }
 
 function SubmitButton({ uiSchema }: SubmitButtonProps) {
-  const label = (uiSchema?.['ui:submitButtonOptions'] as { submitText?: string } | undefined)?.submitText ?? 'Save'
+  const o = (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions as { submitText?: string; props?: { disabled?: boolean } } | undefined
+  const label = o?.submitText ?? 'Save'
   return (
-    <Button type="submit" size="sm">
+    <Button type="submit" size="sm" disabled={o?.props?.disabled}>
       {label}
     </Button>
   )

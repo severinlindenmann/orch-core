@@ -2,7 +2,7 @@ import { registerAddon } from './registry'
 
 registerAddon({
   name: 'publish',
-  seed: () => ({ apps: [], shares: [] }),
+  seed: () => ({ apps: [], shares: [], settings: { default_expiry_days: 7, allow_artifacts: false } }),
   actions: {
     share({ store, ticket, state }) {
       if (!ticket || !store.hasTicket(ticket)) return { ok: true, message: 'Pick a ticket first.' }
@@ -31,6 +31,9 @@ registerAddon({
       }
       return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
     },
-    save_settings: () => ({ ok: true, message: 'Settings saved (mock).' }),
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
+    },
   },
 })

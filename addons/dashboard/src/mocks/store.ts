@@ -624,6 +624,7 @@ export class MockStore {
     if (!w) return refuse(404, 'not_found', 'No such workspace')
     // A disabled addon, or one whose installed version has no grant, runs nothing.
     if (!addonActive(w, name)) return refuse(409, 'addon.inactive', `${name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
+    if (id === 'save_settings' && this.roleIn(ws, this.viewer) !== 'owner') return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()

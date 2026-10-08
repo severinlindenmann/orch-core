@@ -2,6 +2,12 @@ import { registerAddon } from './registry'
 
 registerAddon({
   name: 'wiki',
-  seed: () => ({}),
-  actions: { open: () => ({ ok: true, message: 'Wiki editor arrives in a later iteration.' }) },
+  seed: () => ({ settings: {} }),
+  actions: {
+    open: () => ({ ok: true, message: 'Wiki editor arrives in a later iteration.' }),
+    save_settings: ({ state, body }) => {
+      state.settings = body.formData ?? {}
+      return { ok: true, message: 'Settings saved.', changed: true }
+    },
+  },
 })

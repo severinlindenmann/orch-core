@@ -165,4 +165,4 @@ def test_every_quick_route_has_a_remote_tag():
     for route in routes_quick.router.routes:
         for method in route.methods:
             assert (method, route.path) in remote_gate.TAGS, (method, route.path)
-    assert remote_gate.TAGS[("POST", "/quick/{qid}/agent/start")] is remote_gate.TYPE
+    assert remote_gate.TAGS[("POST", "/quick/{qid}/agent/start")] == remote_gate.Tag(remote_gate.Scope.TYPE, fresh=True)

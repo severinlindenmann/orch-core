@@ -412,31 +412,35 @@ def permit_grant(ws, actor, rid: str, scope: str, *, expected_sha: str | None) -
     """Human only: grant request `rid` for this exact command, `once` or for the epic (while its factory delegation
     is active). `expected_sha`: the sha256 of the command text the human was shown."""
     from orch.core.events import append_event
+    from orch.core.locks import lock
     _human_check(actor, "granting a permission")
     if scope not in SCOPES:
         raise UsageError(f"scope must be one of {', '.join(SCOPES)}")
-    r = _open_request(ws, rid, expected_sha)
-    why = never_grantable(ws, r["command"])
-    if why:
-        raise ValidationError(f"{r['id']} can never be granted: {why}")
-    epic = store.read_ticket(store.resolve(ws, str(r["epic"])).path)
-    d = factory_delegation(ws, epic) if enabled(ws) else None
-    if d is None or not d["active"]:
-        raise ValidationError(f"the factory delegation of {epic.id} is not active; a grant would answer nothing",
-                              hint=f"orch epic show {epic.id}")
-    entry = _sign(ws, actor, epic.id, "grant", grant=secrets.token_hex(8), request=r["id"], scope=scope,
-                  epic=epic.id, delegation=d["id"], command=r["command"], command_sha=r["sha"])
-    append_event(ws, r["ticket"], "permit.granted", actor, {"request": r["id"], "scope": scope, "grant": entry["grant"]})
-    return entry
+    with lock(ws, "permits"):
+        r = _open_request(ws, rid, expected_sha)
+        why = never_grantable(ws, r["command"])
+        if why:
+            raise ValidationError(f"{r['id']} can never be granted: {why}")
+        epic = store.read_ticket(store.resolve(ws, str(r["epic"])).path)
+        d = factory_delegation(ws, epic) if enabled(ws) else None
+        if d is None or not d["active"]:
+            raise ValidationError(f"the factory delegation of {epic.id} is not active; a grant would answer nothing",
+                                  hint=f"orch epic show {epic.id}")
+        entry = _sign(ws, actor, epic.id, "grant", grant=secrets.token_hex(8), request=r["id"], scope=scope,
+                      epic=epic.id, delegation=d["id"], command=r["command"], command_sha=r["sha"])
+        append_event(ws, r["ticket"], "permit.granted", actor, {"request": r["id"], "scope": scope, "grant": entry["grant"]})
+        return entry
 
 
 def permit_deny(ws, actor, rid: str, *, expected_sha: str | None) -> dict:
     """Human only: answer request `rid` with no (signed, so an agent cannot close a card)."""
     from orch.core.events import append_event
+    from orch.core.locks import lock
     _human_check(actor, "denying a permission")
-    r = _open_request(ws, rid, expected_sha)
-    entry = _sign(ws, actor, str(r["epic"]), "permit_deny", request=r["id"], command_sha=r["sha"])
-    append_event(ws, r["ticket"], "permit.denied", actor, {"request": r["id"]})
+    with lock(ws, "permits"):
+        r = _open_request(ws, rid, expected_sha)
+        entry = _sign(ws, actor, str(r["epic"]), "permit_deny", request=r["id"], command_sha=r["sha"])
+        append_event(ws, r["ticket"], "permit.denied", actor, {"request": r["id"]})
     return entry
 
 

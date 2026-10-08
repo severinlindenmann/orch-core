@@ -489,6 +489,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D49 | Human signatures on the iPhone | On the iPhone app, the device signing key works whenever the phone is unlocked: a Secure Enclave key with `WhenPasscodeSetThisDeviceOnly` and no per-signature Face ID (the owner accepts that anyone holding the unlocked phone can sign). It signs decisions, relay logins and bridge requests alike, so no key split is needed. The Mac keeps D41: Touch ID per human signature, showing action and hash. Spike S1 (orch-relay#28) has the custody details. |
 | D50 | Person key from the recovery code | `PK` is derived from the 24-word recovery code (§5.2) instead of a wrapped copy on the relay. Same code, same `PK`: identity and pins survive the loss of every device as long as the code is kept. |
 | D51 | Dev override in the v2 core | The dev-only "test human" override (#265) is built into the v2 core in P1 with the human operations (C2, C7), not into v1 in P0. P0 exits without it; demo workspaces get it in P1. |
+| D52 | P0 exit without demo workspaces | P0 ends with the kit, the VPS, the relay deployed over HTTPS, spikes S1/S2 and the e2e harness (`hello` also checks the public relay), plus `bin/reset`. Starting the demo workspaces (`bin/ws1`, `bin/ws2`, `demo/create.sh`), dev mode, the fake relay (#267) and the guard over `ORCH_*` (#266) move to P1, where the v2 core exists. |
 
 ---
 

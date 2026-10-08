@@ -64,4 +64,42 @@ describe('Tickets page', () => {
     expect(box).toHaveValue('jx')
     expect(screen.queryByRole('button', { name: 'Set status' })).toBeNull()
   })
+
+  describe('saved views', () => {
+    it('applies a seeded shared view', async () => {
+      const { user } = renderApp('/tickets')
+      await user.click(await screen.findByRole('tab', { name: 'Release blockers' }))
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'Release blockers' })).toHaveAttribute('aria-selected', 'true'))
+      await waitFor(() => {
+        const rows = within(screen.getByRole('table', { name: 'Tickets' })).getAllByRole('row').slice(1)
+        expect(rows.length).toBeGreaterThan(0)
+        rows.forEach((r) => expect(within(r).getByRole('img', { name: /^Priority (urgent|high)$/ })).toBeInTheDocument())
+      })
+    })
+    it('saves the current filters as a view', async () => {
+      const { user } = renderApp('/tickets')
+      await user.click(await screen.findByRole('button', { name: /^testing/i }))
+      await user.click(screen.getByRole('button', { name: 'Save view…' }))
+      await user.type(screen.getByLabelText('Name'), 'Bugs')
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+      expect(await screen.findByRole('tab', { name: 'Bugs' })).toHaveAttribute('aria-selected', 'true')
+    })
+    it('the viewer cannot share a view', async () => {
+      const { user } = renderApp('/tickets', { viewer: 'p_tom' })
+      await user.click(await screen.findByRole('button', { name: 'Save view…' }))
+      expect(screen.getByLabelText('Share with the workspace')).toBeDisabled()
+    })
+    it('keeps a personal view private and shows Modified when filters change', async () => {
+      const { user, unmount } = renderApp('/tickets')
+      await user.click(await screen.findByRole('tab', { name: 'My open work' }))
+      await user.click(await screen.findByRole('button', { name: /^testing/i }))
+      expect(await screen.findByText(/Modified/)).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Revert' }))
+      await waitFor(() => expect(screen.queryByText(/Modified/)).toBeNull())
+      unmount()
+      renderApp('/tickets', { viewer: 'p_mara' })
+      await screen.findByRole('tab', { name: 'Release blockers' })
+      expect(screen.queryByRole('tab', { name: 'My open work' })).toBeNull()
+    })
+  })
 })

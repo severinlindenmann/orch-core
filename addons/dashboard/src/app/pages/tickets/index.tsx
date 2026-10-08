@@ -15,6 +15,7 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
 import { Filters } from './Filters'
+import { SavedViews } from './SavedViews'
 import { TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 
@@ -239,6 +240,16 @@ export function TicketsPage() {
           {shown.length === (everything.length || shown.length) ? `${shown.length} tickets` : `${shown.length} of ${everything.length}`}
         </span>
       </div>
+      {wsId && (
+        <SavedViews
+          wsId={wsId}
+          search={search}
+          me={me?.person}
+          canShare={!!role && role !== 'viewer'}
+          onApply={(params) => void navigate({ search: params })}
+          onClear={clear}
+        />
+      )}
       <Filters
         search={search}
         onSearch={(p) => setSearch(p)}

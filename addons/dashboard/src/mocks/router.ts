@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, ApiErrorBody, BodySections, OrchEvent, Priority, Status, TicketDocument, TicketSummary } from '@/api/types'
+import type { ActionRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 
@@ -235,6 +235,32 @@ export function buildRouter(): MockRouter {
   r.add('GET', '/api/workspaces/:ws/tickets', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     return ok(searchTickets(s, c.params.ws, c.query))
+  })
+  r.add('GET', '/api/workspaces/:ws/views', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.views(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
+  r.add('POST', '/api/workspaces/:ws/views', (s, c) => {
+    const ws = c.params.ws
+    if (!s.workspaces.some((w) => w.id === ws)) return fail(404, 'not_found', 'No such workspace')
+    const role = s.roleIn(ws, s.viewer)
+    if (!role) return fail(403, 'forbidden', 'Not a member of this workspace.')
+    const b = c.body as { name?: string; shared?: boolean; params?: ViewParams } | null
+    const name = b?.name?.trim()
+    if (!name) return fail(400, 'validation', 'Name the view.')
+    if (b?.shared && role === 'viewer') return fail(403, 'forbidden', 'Viewers can only save personal views.', 'Uncheck "Share with the workspace".')
+    const n = s.wsEventsOf(ws).length + 1
+    const view = `v_${n}`
+    s.appendWs(ws, { type: 'view.saved', view, name, shared: !!b?.shared, params: b?.params ?? {} })
+    return ok(s.views(ws).find((v) => v.id === view) satisfies SavedView | undefined)
+  })
+  r.add('POST', '/api/workspaces/:ws/views/:id/delete', (s, c) => {
+    const ws = c.params.ws
+    if (!s.workspaces.some((w) => w.id === ws)) return fail(404, 'not_found', 'No such workspace')
+    const v = s.views(ws).find((x) => x.id === c.params.id)
+    if (!v) return fail(404, 'not_found', 'No such view')
+    if (v.owner !== s.viewer) return fail(403, 'forbidden', 'Only the owner of a view can delete it.')
+    s.appendWs(ws, { type: 'view.deleted', view: v.id })
+    return ok({ ok: true })
   })
   r.add('GET', '/api/workspaces/:ws/cursor', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),

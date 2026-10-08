@@ -4,6 +4,7 @@ import type {
   AddonActionResult,
   AddonManifest,
   AgentInfo,
+  SavedView,
   BodySections,
   GateName,
   Me,
@@ -24,10 +25,11 @@ import addonsFixture from './fixtures/addons.json'
 import demoFixture from './fixtures/demo.json'
 import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
+import viewsFixture from './fixtures/views.json'
 import workspacesFixture from './fixtures/workspaces.json'
 import { Simulator } from './sim'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
-import { foldGrants, foldWorkspace } from './workspace-log'
+import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -369,6 +371,12 @@ export class MockStore {
           ]
         : []
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
+  }
+
+  /** Saved views the viewer can see: their own and the shared ones. */
+  views(wsId: string): SavedView[] {
+    const seed = (viewsFixture as unknown as Record<string, SavedView[]>)[wsId] ?? []
+    return foldViews(seed, this.wsEvents.get(wsId) ?? []).filter((v) => v.shared || v.owner === this.viewer)
   }
 
   // ------------------------------------------------------------ addon actions (mock)

@@ -1,5 +1,5 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
-import type { GateName, GrantInfo, Role, Workspace, WorkspaceEvent } from '@/api/types'
+import type { GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
   const ws: Workspace = structuredClone(seed)
@@ -80,4 +80,17 @@ export function foldGrants(seed: GrantInfo[], events: WorkspaceEvent[]): GrantIn
     }
   }
   return grants
+}
+
+/** Saved views: the seeds folded with view.saved / view.deleted events. */
+export function foldViews(seed: SavedView[], events: WorkspaceEvent[]): SavedView[] {
+  let views = structuredClone(seed)
+  for (const e of events) {
+    if (e.type === 'view.saved') {
+      views.push({ id: String(e.view), name: String(e.name), owner: e.actor.id, shared: e.shared === true, params: (e.params ?? {}) as ViewParams })
+    } else if (e.type === 'view.deleted') {
+      views = views.filter((v) => v.id !== e.view)
+    }
+  }
+  return views
 }

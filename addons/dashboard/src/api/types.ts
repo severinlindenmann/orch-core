@@ -440,3 +440,22 @@ export interface GrantInfo {
   revoked: { at: string; by: string } | null
   sessions: string[] // agent sessions currently using it
 }
+
+/** The filters of the tickets list (same names as its router search params). */
+export interface ViewParams {
+  q?: string
+  status?: Status[]
+  type?: string
+  priority?: Priority[]
+  person?: string
+  needs?: 'me' | 'agent' | 'nobody'
+  label?: string
+  sort?: 'updated' | 'priority' | 'key' | 'status'
+}
+export interface SavedView {
+  id: string
+  name: string
+  owner: string
+  shared: boolean
+  params: ViewParams
+}

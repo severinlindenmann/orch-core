@@ -79,4 +79,35 @@ describe('mock tickets search', () => {
     store.setViewer('p_tom')
     await expect(api.postAction('DEMO-0043', { action: 'add_label', label: 'x' })).rejects.toMatchObject({ code: 'forbidden' })
   })
+
+  describe('saved views', () => {
+    it('lists seeded views by visibility', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      expect((await api.listViews(ws)).map((v) => v.name)).toEqual(['My open work', 'Release blockers'])
+      store.setViewer('p_mara')
+      expect((await api.listViews(ws)).map((v) => v.name)).toEqual(['Release blockers'])
+    })
+    it('saves a view as a view.saved event; viewers cannot share', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      const v = await api.saveView(ws, { name: 'Bugs', shared: true, params: { type: 'bug' } })
+      expect(v).toMatchObject({ name: 'Bugs', owner: 'p_sev', shared: true })
+      expect(store.wsEventsOf(ws).some((e) => e.type === 'view.saved')).toBe(true)
+      store.setViewer('p_tom')
+      await expect(api.saveView(ws, { name: 'X', shared: true, params: {} })).rejects.toMatchObject({ code: 'forbidden' })
+      expect((await api.saveView(ws, { name: 'Mine', shared: false, params: {} })).owner).toBe('p_tom')
+    })
+    it('only the owner deletes a view', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      const shared = (await api.listViews(ws)).find((v) => v.name === 'Release blockers')!
+      store.setViewer('p_mara')
+      await expect(api.deleteView(ws, shared.id)).rejects.toMatchObject({ code: 'forbidden' })
+      store.setViewer('p_sev')
+      await api.deleteView(ws, shared.id)
+      expect((await api.listViews(ws)).map((v) => v.name)).toEqual(['My open work'])
+      expect(store.wsEventsOf(ws).some((e) => e.type === 'view.deleted')).toBe(true)
+    })
+  })
 })

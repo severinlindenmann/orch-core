@@ -284,15 +284,37 @@ export interface TodayDocument {
 
 // ---------------------------------------------------------------- addons.json
 
-export type AddonSlot = 'nav' | 'today.card' | 'ticket.panel' | 'board.lane' | 'settings'
+export type AddonSlot = 'nav' | 'today.card' | 'ticket.panel' | 'board.lane' | 'board.card_field' | 'settings'
+export const ADDON_SLOTS: AddonSlot[] = ['nav', 'today.card', 'ticket.panel', 'board.lane', 'board.card_field', 'settings']
 
 export interface AddonContribution {
   slot: AddonSlot
   id: string
   title: string
-  icon?: string // lucide icon name
-  /** Declarative description; the dashboard renders it, the addon never ships code into the page. */
-  spec: Record<string, unknown>
+  icon?: string // lucide icon name (fixed set, see app/icons.tsx)
+  /**
+   * Declarative node tree (see addon-ui/nodes.ts). Validated at render time, never trusted.
+   * String values may use `${path}` and `{"$ref": "path"}` bindings against the slot context
+   * (`ticket`, `workspace`); the addon never ships code into the page.
+   * nav: the page body. board.lane: a `list` node (items become cards). board.card_field: a small `stat`/`kv`.
+   */
+  node: unknown
+  /** Binding path (e.g. `ticket.addons.github.pr`): the contribution is skipped when it resolves to nothing. */
+  when?: string
+}
+
+/** Data an addon hands to core when it needs a human decision. Core renders it (never an addon node). */
+export interface AddonDecision {
+  kind: 'decision'
+  id: string
+  addon: string
+  ticket?: string
+  title: string
+  question: string
+  detail?: string
+  options: { key: string; label: string; primary?: boolean }[]
+  /** Posted to POST /api/addons/:addon/actions/:action with { option, ticket }. */
+  action: string
 }
 
 export interface AddonManifest {
@@ -304,6 +326,16 @@ export interface AddonManifest {
   enabled: boolean
   first_party: boolean
   contributions: AddonContribution[]
+  decisions?: AddonDecision[]
+  /** Command palette entries; each runs POST /api/addons/:name/actions/:action. */
+  commands?: { id: string; title: string; action: string }[]
+}
+
+export interface AddonActionResult {
+  ok: true
+  message: string
+  /** True when the action changed addon data: the client refetches. */
+  changed?: boolean
 }
 
 // ---------------------------------------------------------------- actions & errors

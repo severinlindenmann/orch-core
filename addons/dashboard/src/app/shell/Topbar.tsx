@@ -1,46 +1,75 @@
-import { useQuery } from '@tanstack/react-query'
+import { useRouterState } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { Plus, RotateCcw, Search } from 'lucide-react'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useWorkspace } from '../workspace'
+import { Button } from '@/components/ui/button'
+import { useShellActions, useShellState } from './ShellUi'
+
+const TITLES: Record<string, string> = {
+  '/': 'Today',
+  '/board': 'Board',
+  '/tickets': 'Tickets',
+  '/agents': 'Agents',
+  '/settings': 'Settings',
+}
+
+const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
 
 export function Topbar() {
-  const { workspace, workspaces, setWorkspaceId } = useWorkspace()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { header } = useShellState()
+  const { openPalette, openNewTicket } = useShellActions()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const qc = useQueryClient()
+
+  const fallback = TITLES[pathname] ?? (pathname.startsWith('/ticket/') ? pathname.slice('/ticket/'.length) : '')
+  const reset = async () => {
+    try {
+      await api.resetDemo()
+      await qc.invalidateQueries()
+      toast.success('Demo data reset')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Reset failed')
+    }
+  }
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-bg px-4">
-      {workspace && (
-        <Select value={workspace.id} onValueChange={setWorkspaceId}>
-          <SelectTrigger size="sm" className="w-[220px] bg-surface" aria-label="Workspace">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {workspaces.map((w) => (
-              <SelectItem key={w.id} value={w.id}>
-                <span className="font-mono text-[11px] text-text-faint">{w.prefix}</span> {w.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      {workspace?.prefix === 'DEMO' && (
-        <Badge variant="outline" className="border-warning/40 text-warning">
-          Demo data
-        </Badge>
-      )}
-      <div className="flex-1" />
-      {me?.grant && (
-        <span className="font-mono text-[11px] text-text-faint">
-          grant {me.grant.id} until {me.grant.until.slice(11, 16)}
+      <div className="flex min-w-0 items-center gap-2 text-[13px]">
+        {header.breadcrumb}
+        <span className="truncate font-medium text-text" data-testid="topbar-title">
+          {header.title ?? fallback}
         </span>
-      )}
-      {me && (
-        <Avatar className="size-7">
-          <AvatarFallback className="bg-surface-3 text-[11px]">{me.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-        </Avatar>
-      )}
+      </div>
+      <div className="flex-1" />
+      <div className="flex items-center gap-1">
+        <Badge variant="outline" className="gap-1 border-warning/40 pr-1 font-normal text-warning">
+          Demo data
+          <button
+            type="button"
+            onClick={reset}
+            className="inline-flex items-center gap-1 rounded-sm px-1 text-[11px] text-text-muted hover:bg-surface-3 hover:text-text"
+            aria-label="Reset demo"
+          >
+            <RotateCcw className="size-3" />
+            Reset demo
+          </button>
+        </Badge>
+      </div>
+      <button
+        type="button"
+        onClick={openPalette}
+        className="flex h-8 w-[300px] items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-text-faint hover:border-border-strong hover:text-text-muted"
+      >
+        <Search className="size-3.5" />
+        <span className="flex-1 text-left">Search or run a command</span>
+        <kbd className="rounded border border-border bg-surface-2 px-1.5 font-mono text-[10px] text-text-muted">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+      </button>
+      <Button size="sm" onClick={openNewTicket}>
+        <Plus />
+        New ticket
+      </Button>
     </header>
   )
 }

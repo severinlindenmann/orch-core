@@ -4,6 +4,8 @@ import {
   ApiError,
   type ActionRequest,
   type ActionResult,
+  type AddonActionResult,
+  type AddonDecision,
   type AddonManifest,
   type AgentInfo,
   type ApiErrorBody,
@@ -64,7 +66,12 @@ export function createApi(transport: Transport) {
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
     getAddons: () => call<AddonManifest[]>('GET', '/api/addons'),
+    getAddonDecisions: () => call<AddonDecision[]>('GET', '/api/addons/decisions'),
+    runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
+      call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),
     getAgents: (workspaceId: string) => call<AgentInfo[]>('GET', `/api/workspaces/${workspaceId}/agents`),
+    /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
+    setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data. */
     resetDemo: () => call<{ ok: true }>('POST', '/api/dev/reset'),
   }

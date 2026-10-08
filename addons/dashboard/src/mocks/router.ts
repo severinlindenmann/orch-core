@@ -204,6 +204,13 @@ export function buildRouter(): MockRouter {
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
   r.add('GET', '/api/addons', (s) => ok(s.addons))
+  r.add('GET', '/api/addons/decisions', (s) => ok(s.addons.filter((a) => a.enabled).flatMap((a) => a.decisions ?? [])))
+  r.add('POST', '/api/addons/:name/actions/:id', (s, c) => {
+    const addon = s.addons.find((a) => a.name === c.params.name && a.enabled)
+    if (!addon) return fail(404, 'not_found', 'No such addon')
+    const res = s.addonAction(addon.name, c.params.id, (c.body ?? {}) as Record<string, unknown>)
+    return res ? ok(res) : fail(404, 'not_found', `Addon ${addon.name} has no action ${c.params.id}`)
+  })
   r.add('POST', '/api/dev/reset', (s) => {
     s.reset()
     return ok({ ok: true })

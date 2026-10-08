@@ -1,6 +1,7 @@
 // In-memory mock store seeded from fixtures. Mutations append events; state is re-derived from events.
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
 import type {
+  AddonActionResult,
   AddonManifest,
   AgentInfo,
   BodySections,
@@ -95,7 +96,7 @@ export class MockStore {
     this.events.clear()
     this.seeded.clear()
     this.wsOfKey.clear()
-    this.addons = addonsFixture as unknown as AddonManifest[]
+    this.addons = structuredClone(addonsFixture) as unknown as AddonManifest[]
     this.workspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...w, counts: {}, needs_you: 0 }))
     const byPrefix: Record<string, FixtureTicket[]> = {
       DEMO: demoFixture as unknown as FixtureTicket[],
@@ -103,7 +104,7 @@ export class MockStore {
     }
     for (const ws of this.workspaces) {
       for (const t of byPrefix[ws.prefix] ?? []) {
-        const def = fillDefinition(t.definition)
+        const def = fillDefinition(structuredClone(t.definition))
         this.defs.set(def.key, def)
         this.bodies.set(def.key, t.body)
         this.wsOfKey.set(def.key, ws.id)
@@ -292,6 +293,59 @@ export class MockStore {
     list.push(event)
     this.save()
     return event
+  }
+
+  // ------------------------------------------------------------ addon actions (mock)
+
+  private setAddonData(key: string, addon: string, fn: (data: Record<string, unknown>) => void) {
+    const def = this.defs.get(key)
+    if (!def) return
+    const data = (def.addons[addon] ??= {})
+    fn(data)
+  }
+
+  /** Mock of POST /api/addons/:name/actions/:id. Returns null for an unknown action. */
+  addonAction(addon: string, id: string, body: Record<string, unknown>): AddonActionResult | null {
+    const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
+    switch (`${addon}/${id}`) {
+      case 'publish/share': {
+        if (!ticket || !this.defs.has(ticket)) return { ok: true, message: 'Pick a ticket first.' }
+        this.setAddonData(ticket, 'publish', (d) => {
+          const shares = (d.shares as unknown[] | undefined) ?? []
+          shares.unshift({ title: `share/${ticket.toLowerCase()}-${shares.length + 1}`, subtitle: 'expires in 7 days · 0 views', badge: 'secret link' })
+          d.shares = shares
+        })
+        return { ok: true, message: `Shared ${ticket} as a secret link for 7 days.`, changed: true }
+      }
+      case 'publish/decide': {
+        const option = String(body.option ?? '')
+        const decisions = this.addons.find((a) => a.name === 'publish')?.decisions
+        if (decisions) {
+          const i = decisions.findIndex((d) => d.id === body.id)
+          if (i >= 0) decisions.splice(i, 1)
+        }
+        return { ok: true, message: option === 'yes' ? 'Published as a secret link for 7 days.' : 'Not published.', changed: true }
+      }
+      case 'estimate/set': {
+        const points = Number((body.formData as { points?: unknown } | undefined)?.points)
+        if (!ticket || !Number.isFinite(points)) return { ok: true, message: 'Nothing to save.' }
+        this.setAddonData(ticket, 'estimate', (d) => (d.points = points))
+        return { ok: true, message: `${ticket} estimated at ${points} points.`, changed: true }
+      }
+      case 'estimate/save_settings':
+      case 'publish/save_settings':
+      case 'usage/save_settings':
+      case 'terminals/save_settings':
+        return { ok: true, message: 'Settings saved (mock).' }
+      case 'terminals/open':
+        return { ok: true, message: 'Terminals arrive in a later iteration.' }
+      case 'github/refresh':
+        return { ok: true, message: 'Checked GitHub: 2 pull requests updated.' }
+      case 'wiki/open':
+        return { ok: true, message: 'Wiki editor arrives in a later iteration.' }
+      default:
+        return null
+    }
   }
 
   // ------------------------------------------------------------ workspace views

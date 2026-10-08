@@ -4,21 +4,154 @@
     "title": "Publish",
     "version": "0.3.0",
     "description": "Share a read-only view of a ticket or artifact through a signed link.",
-    "capabilities": ["serve_http", "network"],
-    "enabled": false,
+    "capabilities": [
+      "serve_http",
+      "network"
+    ],
+    "enabled": true,
     "first_party": true,
     "contributions": [
       {
-        "slot": "ticket.panel",
-        "id": "publish.shares",
+        "slot": "nav",
+        "id": "shares",
+        "title": "Apps & shares",
+        "icon": "Share2",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Live shares",
+                  "value": 2,
+                  "hint": "expire within 7 days"
+                },
+                {
+                  "type": "stat",
+                  "label": "Views this week",
+                  "value": 19,
+                  "hint": "all shares"
+                },
+                {
+                  "type": "stat",
+                  "label": "Apps",
+                  "value": 2,
+                  "hint": "1 running"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Shares\nRead-only links with an expiry. Revoke one with `orch publish revoke <id>`."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "what",
+                  "label": "What"
+                },
+                {
+                  "key": "expires",
+                  "label": "Expires"
+                },
+                {
+                  "key": "views",
+                  "label": "Views"
+                }
+              ],
+              "rows": [
+                {
+                  "ticket": "DEMO-0041",
+                  "what": "Before/after report",
+                  "expires": "in 6 days",
+                  "views": 14
+                },
+                {
+                  "ticket": "DEMO-0042",
+                  "what": "UTC migration summary",
+                  "expires": "in 3 days",
+                  "views": 5
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Apps\nSmall apps served from a workspace folder."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "name",
+                  "label": "App"
+                },
+                {
+                  "key": "path",
+                  "label": "Folder"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": [
+                {
+                  "name": "tariff-explorer",
+                  "path": "apps/tariff-explorer",
+                  "state": "running"
+                },
+                {
+                  "name": "meter-map",
+                  "path": "apps/meter-map",
+                  "state": "stopped"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "shares.today",
         "title": "Shares",
         "icon": "Share2",
-        "spec": {
-          "type": "list",
-          "source": "addons.publish.shares",
-          "empty": "Not shared yet.",
-          "item": { "title": "{url}", "meta": "expires {expires} · {views} views" },
-          "actions": [{ "id": "publish.share", "label": "Share ticket", "requires": "publish.create" }]
+        "node": {
+          "type": "stat",
+          "label": "Live shares",
+          "value": "2 live shares",
+          "hint": "19 views this week"
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "shares.ticket",
+        "title": "Shares",
+        "icon": "Share2",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "list",
+              "items": {
+                "$ref": "ticket.addons.publish.shares"
+              },
+              "empty": "Not shared yet."
+            },
+            {
+              "type": "button",
+              "label": "Share ticket",
+              "action": "share",
+              "variant": "secondary"
+            }
+          ]
         }
       },
       {
@@ -26,13 +159,58 @@
         "id": "publish.settings",
         "title": "Publish",
         "icon": "Share2",
-        "spec": {
+        "node": {
           "type": "form",
-          "fields": [
-            { "key": "default_expiry_days", "label": "Link expiry (days)", "kind": "number", "value": 7 },
-            { "key": "allow_artifacts", "label": "Include artifacts", "kind": "boolean", "value": false }
-          ]
+          "schema": {
+            "type": "object",
+            "properties": {
+              "default_expiry_days": {
+                "type": "integer",
+                "title": "Link expiry (days)"
+              },
+              "allow_artifacts": {
+                "type": "boolean",
+                "title": "Include artifacts"
+              }
+            }
+          },
+          "formData": {
+            "default_expiry_days": 7,
+            "allow_artifacts": false
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
+      }
+    ],
+    "decisions": [
+      {
+        "kind": "decision",
+        "id": "dec_publish_report",
+        "addon": "publish",
+        "ticket": "DEMO-0041",
+        "title": "Publish report",
+        "question": "Publish Before/after report as secret link for 7 days?",
+        "detail": "The link is read-only and unlisted. 3 screenshots and the reconciliation table are included.",
+        "options": [
+          {
+            "key": "yes",
+            "label": "Publish",
+            "primary": true
+          },
+          {
+            "key": "no",
+            "label": "Not now"
+          }
+        ],
+        "action": "decide"
+      }
+    ],
+    "commands": [
+      {
+        "id": "share",
+        "title": "Share current ticket",
+        "action": "share"
       }
     ]
   },
@@ -41,74 +219,221 @@
     "title": "GitHub",
     "version": "0.5.2",
     "description": "Links branches and pull requests to tickets and shows their check status.",
-    "capabilities": ["network"],
+    "capabilities": [
+      "network"
+    ],
     "enabled": true,
     "first_party": true,
     "contributions": [
       {
         "slot": "nav",
-        "id": "github.prs",
-        "title": "Pull requests",
+        "id": "reviews",
+        "title": "Code reviews",
         "icon": "GitPullRequest",
-        "spec": {
-          "type": "table",
-          "source": "tickets",
-          "filter": "addons.github.pr",
-          "columns": [
-            { "label": "Ticket", "path": "key" },
-            { "label": "PR", "path": "addons.github.pr.number", "format": "#{value}" },
-            { "label": "State", "path": "addons.github.pr.state", "format": "badge" },
-            { "label": "Checks", "path": "addons.github.pr.checks", "format": "badge" }
-          ]
-        }
-      },
-      {
-        "slot": "ticket.panel",
-        "id": "github.pr",
-        "title": "Pull request",
-        "icon": "GitPullRequest",
-        "spec": {
-          "type": "kv",
-          "source": "addons.github.pr",
-          "fields": [
-            { "label": "Repository", "path": "repo", "format": "mono" },
-            { "label": "Branch", "path": "branch", "format": "mono" },
-            { "label": "PR", "path": "number", "format": "#{value}" },
-            { "label": "State", "path": "state", "format": "badge" },
-            { "label": "Checks", "path": "checks", "format": "badge" }
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Open PRs",
+                  "value": 3
+                },
+                {
+                  "type": "stat",
+                  "label": "Need review",
+                  "value": 2
+                },
+                {
+                  "type": "stat",
+                  "label": "Checks failing",
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "pr",
+                  "label": "PR"
+                },
+                {
+                  "key": "title",
+                  "label": "Title"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                },
+                {
+                  "key": "checks",
+                  "label": "Checks"
+                }
+              ],
+              "rows": [
+                {
+                  "ticket": "DEMO-0043",
+                  "pr": "#31",
+                  "title": "Tariff seeds",
+                  "state": "draft",
+                  "checks": "pending"
+                },
+                {
+                  "ticket": "DEMO-0041",
+                  "pr": "#29",
+                  "title": "Reconciliation tests",
+                  "state": "open",
+                  "checks": "passing"
+                },
+                {
+                  "ticket": "DEMO-0042",
+                  "pr": "#27",
+                  "title": "UTC timestamps",
+                  "state": "merged",
+                  "checks": "passing"
+                }
+              ]
+            },
+            {
+              "type": "button",
+              "label": "Refresh from GitHub",
+              "action": "refresh",
+              "variant": "secondary"
+            }
           ]
         }
       },
       {
         "slot": "today.card",
-        "id": "github.attention",
-        "title": "PRs needing attention",
+        "id": "reviews.today",
+        "title": "PRs needing review",
         "icon": "GitPullRequest",
-        "spec": {
-          "type": "ticket-list",
-          "filter": { "path": "addons.github.pr.checks", "in": ["failing", "pending"] },
-          "meta": "PR #{addons.github.pr.number} · checks {addons.github.pr.checks}"
+        "node": {
+          "type": "list",
+          "items": [
+            {
+              "title": "#29 Reconciliation tests",
+              "subtitle": "acme/energy-dbt · DEMO-0041",
+              "badge": "checks passing"
+            },
+            {
+              "title": "#31 Tariff seeds",
+              "subtitle": "acme/energy-dbt · DEMO-0043",
+              "badge": "checks pending"
+            }
+          ]
         }
       },
       {
         "slot": "board.lane",
-        "id": "github.in-review",
-        "title": "In review",
+        "id": "issues",
+        "title": "External · GitHub issues",
+        "icon": "Github",
+        "node": {
+          "type": "list",
+          "items": [
+            {
+              "title": "Seed loader fails on BOM files",
+              "subtitle": "acme/energy-dbt#118",
+              "badge": "bug"
+            },
+            {
+              "title": "Document tariff naming",
+              "subtitle": "acme/energy-dbt#121",
+              "badge": "docs"
+            },
+            {
+              "title": "Bump dbt-utils",
+              "subtitle": "acme/energy-dbt#124",
+              "badge": "chore"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "pr",
+        "title": "Pull request",
         "icon": "GitPullRequest",
-        "spec": { "type": "lane", "after": "testing", "filter": { "path": "addons.github.pr.state", "equals": "open" } }
+        "when": "ticket.addons.github.pr",
+        "node": {
+          "type": "kv",
+          "pairs": [
+            {
+              "label": "Repository",
+              "value": {
+                "$ref": "ticket.addons.github.pr.repo"
+              },
+              "mono": true
+            },
+            {
+              "label": "Branch",
+              "value": {
+                "$ref": "ticket.addons.github.pr.branch"
+              },
+              "mono": true
+            },
+            {
+              "label": "PR",
+              "value": "#${ticket.addons.github.pr.number}"
+            },
+            {
+              "label": "State",
+              "value": {
+                "$ref": "ticket.addons.github.pr.state"
+              }
+            },
+            {
+              "label": "Checks",
+              "value": {
+                "$ref": "ticket.addons.github.pr.checks"
+              }
+            }
+          ]
+        }
       },
       {
         "slot": "settings",
         "id": "github.settings",
         "title": "GitHub",
         "icon": "Github",
-        "spec": {
+        "node": {
           "type": "form",
-          "fields": [
-            { "key": "org", "label": "Organisation", "kind": "text", "value": "acme" },
-            { "key": "link_prs", "label": "Link PRs from branch names", "kind": "boolean", "value": true }
-          ]
+          "schema": {
+            "type": "object",
+            "properties": {
+              "org": {
+                "type": "string",
+                "title": "Organisation"
+              },
+              "link_prs": {
+                "type": "boolean",
+                "title": "Link PRs from branch names"
+              }
+            }
+          },
+          "formData": {
+            "org": "acme",
+            "link_prs": true
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
+      }
+    ],
+    "commands": [
+      {
+        "id": "refresh",
+        "title": "Refresh pull requests",
+        "action": "refresh"
       }
     ]
   },
@@ -123,40 +448,160 @@
     "contributions": [
       {
         "slot": "nav",
-        "id": "usage.overview",
+        "id": "overview",
         "title": "Usage",
         "icon": "Gauge",
-        "spec": {
-          "type": "table",
-          "source": "tickets",
-          "filter": "addons.usage",
-          "columns": [
-            { "label": "Ticket", "path": "key" },
-            { "label": "Sessions", "path": "addons.usage.sessions" },
-            { "label": "Time", "path": "addons.usage.ms", "format": "duration" },
-            { "label": "Cost", "path": "addons.usage.cents", "format": "cents:CHF" }
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "This week",
+                  "value": "CHF 31.40",
+                  "hint": "of CHF 50.00 budget"
+                },
+                {
+                  "type": "stat",
+                  "label": "Agent time",
+                  "value": "11 h 20 min",
+                  "hint": "7 sessions"
+                },
+                {
+                  "type": "stat",
+                  "label": "Tokens",
+                  "value": "2.4 M",
+                  "hint": "in + out"
+                }
+              ]
+            },
+            {
+              "type": "chart",
+              "kind": "bar",
+              "xKey": "day",
+              "series": [
+                {
+                  "key": "chf",
+                  "label": "CHF per day"
+                }
+              ],
+              "points": [
+                {
+                  "day": "Mon",
+                  "chf": 4.2
+                },
+                {
+                  "day": "Tue",
+                  "chf": 5.1
+                },
+                {
+                  "day": "Wed",
+                  "chf": 3.8
+                },
+                {
+                  "day": "Thu",
+                  "chf": 6.9
+                },
+                {
+                  "day": "Fri",
+                  "chf": 2.6
+                },
+                {
+                  "day": "Sat",
+                  "chf": 5.4
+                },
+                {
+                  "day": "Sun",
+                  "chf": 3.4
+                }
+              ]
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "sessions",
+                  "label": "Sessions"
+                },
+                {
+                  "key": "time",
+                  "label": "Time"
+                },
+                {
+                  "key": "cost",
+                  "label": "Cost"
+                }
+              ],
+              "rows": [
+                {
+                  "ticket": "DEMO-0040",
+                  "sessions": 9,
+                  "time": "4 h 50 min",
+                  "cost": "CHF 12.80"
+                },
+                {
+                  "ticket": "DEMO-0043",
+                  "sessions": 3,
+                  "time": "1 h 31 min",
+                  "cost": "CHF 4.12"
+                },
+                {
+                  "ticket": "DEMO-0041",
+                  "sessions": 2,
+                  "time": "1 h 05 min",
+                  "cost": "CHF 2.98"
+                }
+              ]
+            }
           ]
         }
       },
       {
         "slot": "today.card",
-        "id": "usage.today",
+        "id": "week",
         "title": "Agent spend",
         "icon": "Gauge",
-        "spec": { "type": "stat", "sum": "addons.usage.cents", "format": "cents:CHF", "caption": "this week, all tickets" }
+        "node": {
+          "type": "stat",
+          "label": "This week",
+          "value": "CHF 31.40 this week",
+          "hint": "budget CHF 50.00"
+        }
       },
       {
         "slot": "ticket.panel",
-        "id": "usage.ticket",
+        "id": "ticket",
         "title": "Usage",
         "icon": "Gauge",
-        "spec": {
+        "when": "ticket.addons.usage",
+        "node": {
           "type": "kv",
-          "source": "addons.usage",
-          "fields": [
-            { "label": "Cost", "path": "cents", "format": "cents:CHF" },
-            { "label": "Sessions", "path": "sessions" },
-            { "label": "Agent time", "path": "ms", "format": "duration" }
+          "pairs": [
+            {
+              "label": "Cost",
+              "value": "CHF ${ticket.addons.usage.cents|cents}"
+            },
+            {
+              "label": "Sessions",
+              "value": {
+                "$ref": "ticket.addons.usage.sessions"
+              }
+            },
+            {
+              "label": "Agent time",
+              "value": "${ticket.addons.usage.ms|duration}"
+            },
+            {
+              "label": "Tokens",
+              "value": "${ticket.addons.usage.cents|tokens}"
+            }
           ]
         }
       },
@@ -165,9 +610,22 @@
         "id": "usage.settings",
         "title": "Usage",
         "icon": "Gauge",
-        "spec": {
+        "node": {
           "type": "form",
-          "fields": [{ "key": "weekly_budget_cents", "label": "Weekly budget (CHF)", "kind": "number", "value": 50 }]
+          "schema": {
+            "type": "object",
+            "properties": {
+              "weekly_budget_chf": {
+                "type": "number",
+                "title": "Weekly budget (CHF)"
+              }
+            }
+          },
+          "formData": {
+            "weekly_budget_chf": 50
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
       }
     ]
@@ -177,27 +635,88 @@
     "title": "Terminals",
     "version": "0.4.0",
     "description": "Interactive terminals next to a ticket. Never granted to agents.",
-    "capabilities": ["pty"],
+    "capabilities": [
+      "pty"
+    ],
     "enabled": true,
     "first_party": true,
     "contributions": [
-      { "slot": "nav", "id": "terminals.list", "title": "Terminals", "icon": "SquareTerminal", "spec": { "type": "terminal-list" } },
+      {
+        "slot": "nav",
+        "id": "sessions",
+        "title": "Terminals",
+        "icon": "SquareTerminal",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "A real terminal arrives in a later iteration. These are the sessions on this machine."
+            },
+            {
+              "type": "list",
+              "items": [
+                {
+                  "title": "DEMO-0043 worktree",
+                  "subtitle": "zsh · feat/DEMO-0043-tariff-seeds · started 09:12",
+                  "badge": "running"
+                },
+                {
+                  "title": "DEMO-0041 worktree",
+                  "subtitle": "zsh · feat/DEMO-0041-reconciliation · started 08:40",
+                  "badge": "idle"
+                },
+                {
+                  "title": "Scratch",
+                  "subtitle": "zsh · ~/work/acme · started yesterday",
+                  "badge": "stopped"
+                }
+              ]
+            }
+          ]
+        }
+      },
       {
         "slot": "ticket.panel",
-        "id": "terminals.ticket",
+        "id": "ticket",
         "title": "Terminal",
         "icon": "SquareTerminal",
-        "spec": { "type": "action", "label": "Open terminal in worktree", "requires": "terminals.open" }
+        "node": {
+          "type": "button",
+          "label": "Open terminal in worktree",
+          "action": "open",
+          "variant": "secondary"
+        }
       },
       {
         "slot": "settings",
         "id": "terminals.settings",
         "title": "Terminals",
         "icon": "SquareTerminal",
-        "spec": {
+        "node": {
           "type": "form",
-          "fields": [{ "key": "shell", "label": "Shell", "kind": "text", "value": "/bin/zsh" }]
+          "schema": {
+            "type": "object",
+            "properties": {
+              "shell": {
+                "type": "string",
+                "title": "Shell"
+              }
+            }
+          },
+          "formData": {
+            "shell": "/bin/zsh"
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
+      }
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open terminal",
+        "action": "open"
       }
     ]
   },
@@ -210,13 +729,38 @@
     "enabled": true,
     "first_party": true,
     "contributions": [
-      { "slot": "nav", "id": "wiki.pages", "title": "Wiki", "icon": "BookOpen", "spec": { "type": "page-tree" } },
+      {
+        "slot": "nav",
+        "id": "pages",
+        "title": "Wiki",
+        "icon": "BookOpen",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "# Tariff data conventions\n\nHow we name, version and review tariff data in the **Acme energy data** workspace.\n\n## Rules\n\n- One seed file per tariff table, named `tariff_<region>_<year>.csv`.\n- Every table has a `valid_from` date; never edit a past row, add a new one.\n- Changes go through a pull request with a reconciliation run attached.\n\n## Checks\n\n| Check | Where | Tolerance |\n| --- | --- | --- |\n| Row count | dbt test | exact |\n| Billed kWh vs finance | reconciliation | 0.1 % |\n\nSee the [dbt seeds guide](https://docs.getdbt.com/docs/build/seeds) for the loader.\n\n> Seeds are for small, slow-changing reference data only.\n\n![diagram](https://example.com/tracker.png)\n"
+            },
+            {
+              "type": "code",
+              "language": "sql",
+              "text": "select tariff_id, valid_from, price_per_kwh\nfrom {{ ref('tariff_ch_2026') }}\nwhere valid_from <= current_date;"
+            }
+          ]
+        }
+      },
       {
         "slot": "ticket.panel",
-        "id": "wiki.related",
+        "id": "related",
         "title": "Related pages",
         "icon": "BookOpen",
-        "spec": { "type": "list", "source": "addons.wiki.pages", "empty": "No linked pages." }
+        "node": {
+          "type": "list",
+          "items": {
+            "$ref": "ticket.addons.wiki.pages"
+          },
+          "empty": "No linked pages."
+        }
       }
     ]
   },
@@ -231,31 +775,79 @@
     "contributions": [
       {
         "slot": "ticket.panel",
-        "id": "estimate.points",
+        "id": "points",
         "title": "Estimate",
         "icon": "Ruler",
-        "spec": {
-          "type": "kv",
-          "source": "addons.estimate",
-          "fields": [{ "label": "Points", "path": "points" }],
-          "editable": [{ "path": "points", "kind": "select", "options": [1, 2, 3, 5, 8, 13, 21] }]
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "points": {
+                "type": "integer",
+                "title": "Points",
+                "enum": [
+                  1,
+                  2,
+                  3,
+                  5,
+                  8,
+                  13,
+                  21
+                ]
+              }
+            }
+          },
+          "uiSchema": {
+            "points": {
+              "ui:placeholder": "Choose"
+            }
+          },
+          "formData": {
+            "$ref": "ticket.addons.estimate"
+          },
+          "action": "set",
+          "submitLabel": "Save estimate"
         }
       },
       {
-        "slot": "board.lane",
-        "id": "estimate.badge",
+        "slot": "board.card_field",
+        "id": "points",
         "title": "Points",
         "icon": "Ruler",
-        "spec": { "type": "card-badge", "path": "addons.estimate.points", "format": "{value} pt" }
+        "node": {
+          "type": "stat",
+          "label": "pt",
+          "value": {
+            "$ref": "ticket.addons.estimate.points"
+          }
+        }
       },
       {
         "slot": "settings",
         "id": "estimate.settings",
         "title": "Estimate",
         "icon": "Ruler",
-        "spec": {
+        "node": {
           "type": "form",
-          "fields": [{ "key": "scale", "label": "Scale", "kind": "select", "options": ["fibonacci", "t-shirt"], "value": "fibonacci" }]
+          "schema": {
+            "type": "object",
+            "properties": {
+              "scale": {
+                "type": "string",
+                "title": "Scale",
+                "enum": [
+                  "fibonacci",
+                  "t-shirt"
+                ]
+              }
+            }
+          },
+          "formData": {
+            "scale": "fibonacci"
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
       }
     ]

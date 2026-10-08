@@ -7,23 +7,78 @@
       "type": "feature",
       "priority": "high",
       "size": "m",
-      "labels": ["dbt", "tariffs"],
+      "labels": [
+        "dbt",
+        "tariffs"
+      ],
       "parent": "DEMO-0040",
       "links": {
-        "repos": ["acme-energy-dbt"],
-        "branches": { "acme-energy-dbt": "feat/DEMO-0043-tariff-seeds" },
-        "prs": [{ "repo": "acme-energy-dbt", "url": "https://github.com/acme/energy-dbt/pull/31" }]
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "branches": {
+          "acme-energy-dbt": "feat/DEMO-0043-tariff-seeds"
+        },
+        "prs": [
+          {
+            "repo": "acme-energy-dbt",
+            "url": "https://github.com/acme/energy-dbt/pull/31"
+          }
+        ]
       },
       "acceptance": [
-        { "id": "AC1", "text": "`dbt seed` loads all 40 tariff tables without errors" },
-        { "id": "AC2", "text": "Model `fct_billing` joins the seeds and its tests pass" },
-        { "id": "AC3", "text": "The refresh command is documented in README" }
+        {
+          "id": "AC1",
+          "text": "`dbt seed` loads all 40 tariff tables without errors"
+        },
+        {
+          "id": "AC2",
+          "text": "Model `fct_billing` joins the seeds and its tests pass"
+        },
+        {
+          "id": "AC3",
+          "text": "The refresh command is documented in README"
+        }
       ],
       "tasks": [
-        { "id": "T1", "text": "Export CSVs into seeds/tariffs", "verify": { "cmd": "ls seeds/tariffs | wc -l" }, "proves": [] },
-        { "id": "T2", "text": "Seed configs with types", "verify": { "cmd": "dbt seed --select tariffs" }, "proves": ["AC1"] },
-        { "id": "T3", "text": "Join in fct_billing, add tests", "verify": { "cmd": "dbt test --select fct_billing" }, "proves": ["AC2"], "assignee": "p_sev" },
-        { "id": "T4", "text": "Document the refresh command", "verify": null, "proves": ["AC3"], "assignee": "p_mara" }
+        {
+          "id": "T1",
+          "text": "Export CSVs into seeds/tariffs",
+          "verify": {
+            "cmd": "ls seeds/tariffs | wc -l"
+          },
+          "proves": []
+        },
+        {
+          "id": "T2",
+          "text": "Seed configs with types",
+          "verify": {
+            "cmd": "dbt seed --select tariffs"
+          },
+          "proves": [
+            "AC1"
+          ]
+        },
+        {
+          "id": "T3",
+          "text": "Join in fct_billing, add tests",
+          "verify": {
+            "cmd": "dbt test --select fct_billing"
+          },
+          "proves": [
+            "AC2"
+          ],
+          "assignee": "p_sev"
+        },
+        {
+          "id": "T4",
+          "text": "Document the refresh command",
+          "verify": null,
+          "proves": [
+            "AC3"
+          ],
+          "assignee": "p_mara"
+        }
       ],
       "questions": [
         {
@@ -32,8 +87,15 @@
           "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
           "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
           "options": [
-            { "key": "csv", "label": "Monthly CSV" },
-            { "key": "api", "label": "Tariff API", "cost": "+1 day" }
+            {
+              "key": "csv",
+              "label": "Monthly CSV"
+            },
+            {
+              "key": "api",
+              "label": "Tariff API",
+              "cost": "+1 day"
+            }
           ],
           "recommended": "csv",
           "blocking": true
@@ -44,18 +106,55 @@
           "text": "Should `valid_from` in the seeds be a DATE or a TIMESTAMP?",
           "why": "Tariffs change at midnight local time, but the meter readings join on UTC timestamps. DATE is simpler, TIMESTAMP avoids a cast in fct_billing.",
           "options": [
-            { "key": "date", "label": "DATE (local midnight)" },
-            { "key": "timestamp", "label": "TIMESTAMP (UTC)", "cost": "+2 tests" }
+            {
+              "key": "date",
+              "label": "DATE (local midnight)"
+            },
+            {
+              "key": "timestamp",
+              "label": "TIMESTAMP (UTC)",
+              "cost": "+2 tests"
+            }
           ],
           "recommended": "date",
           "blocking": true
         }
       ],
       "addons": {
-        "estimate": { "points": 5 },
-        "github": { "pr": { "repo": "acme/energy-dbt", "number": 31, "state": "open", "draft": true, "checks": "pending", "branch": "feat/DEMO-0043-tariff-seeds" } },
-        "usage": { "cents": 412, "sessions": 3, "ms": 5460000 },
-        "publish": { "shares": [] }
+        "estimate": {
+          "points": 5
+        },
+        "github": {
+          "pr": {
+            "repo": "acme/energy-dbt",
+            "number": 31,
+            "state": "open",
+            "draft": true,
+            "checks": "pending",
+            "branch": "feat/DEMO-0043-tariff-seeds"
+          }
+        },
+        "usage": {
+          "cents": 412,
+          "sessions": 3,
+          "ms": 5460000
+        },
+        "publish": {
+          "shares": []
+        },
+        "wiki": {
+          "pages": [
+            {
+              "title": "Tariff data conventions",
+              "subtitle": "wiki/data/tariffs.md",
+              "badge": "updated 2d ago"
+            },
+            {
+              "title": "dbt seeds: when to use them",
+              "subtitle": "wiki/dbt/seeds.md"
+            }
+          ]
+        }
       }
     },
     "body": {
@@ -69,24 +168,139 @@
       "current_state": "T1 done, 40 CSVs exported. T2 (seed configs) and T3 (fct_billing join) are leased to two subagents. Both are blocked on Q2: DATE or TIMESTAMP for `valid_from`. T4 waits for Mara."
     },
     "events": [
-      { "at": "2026-10-07T14:02:10Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-07T14:02:11Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev", "p_mara"], "reviewers": ["p_mara"], "watchers": ["p_tom"] },
-      { "at": "2026-10-07T14:10:40Z", "type": "question.asked", "actor": "claude-code:s_70b1:p_sev", "question": "Q1" },
-      { "at": "2026-10-08T08:31:02Z", "type": "question.answered", "actor": "p_mara", "question": "Q1", "option": "csv", "text": "CSV. Finance signs it off on the 1st." },
-      { "at": "2026-10-08T09:10:11Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-08T09:44:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "plan" },
-      { "at": "2026-10-08T09:44:05Z", "type": "status.changed", "actor": "host", "to": "open" },
-      { "at": "2026-10-09T08:05:30Z", "type": "claim.taken", "actor": "claude-code:s_77c2:p_sev", "expires": "2026-10-09T18:00:00Z" },
-      { "at": "2026-10-09T08:05:31Z", "type": "status.changed", "actor": "claude-code:s_77c2:p_sev", "to": "in-progress" },
-      { "at": "2026-10-09T08:41:12Z", "type": "task.done", "actor": "claude-code:s_77c2:p_sev", "task": "T1", "receipt": { "exit": 0, "ms": 1800, "commit": "a41c9d3" } },
-      { "at": "2026-10-09T08:41:40Z", "type": "artifact.added", "actor": "claude-code:s_77c2:p_sev", "name": "tariff-export.log", "kind": "log", "bytes": 5120, "sha256": "9b1e44c07ad2", "task": "T1" },
-      { "at": "2026-10-09T08:52:00Z", "type": "artifact.added", "actor": "claude-code:s_77c2:p_sev", "name": "tariff-source-diff.csv", "kind": "dataset", "bytes": 1342, "sha256": "e07a8815bb30", "label": "The 3 tariffs where CSV and API differ" },
-      { "at": "2026-10-09T09:10:20Z", "type": "lease.taken", "actor": "claude-code:s_77c2.1:p_sev", "task": "T2" },
-      { "at": "2026-10-09T09:10:24Z", "type": "lease.taken", "actor": "claude-code:s_77c2.2:p_sev", "task": "T3" },
-      { "at": "2026-10-09T10:20:44Z", "type": "question.asked", "actor": "claude-code:s_77c2.1:p_sev", "question": "Q2" },
-      { "at": "2026-10-09T10:21:30Z", "type": "handoff.written", "actor": "claude-code:s_77c2:p_sev", "text": "T1 done. T2 and T3 run in parallel, both blocked on Q2 (valid_from type). T4 is Mara's." },
-      { "at": "2026-10-09T10:40:05Z", "type": "github.pr_linked", "actor": "claude-code:s_77c2:p_sev", "number": 31 },
-      { "at": "2026-10-09T11:02:00Z", "type": "usage.recorded", "actor": "host", "cents": 412 }
+      {
+        "at": "2026-10-07T14:02:10Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-07T14:02:11Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_sev",
+          "p_mara"
+        ],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": [
+          "p_tom"
+        ]
+      },
+      {
+        "at": "2026-10-07T14:10:40Z",
+        "type": "question.asked",
+        "actor": "claude-code:s_70b1:p_sev",
+        "question": "Q1"
+      },
+      {
+        "at": "2026-10-08T08:31:02Z",
+        "type": "question.answered",
+        "actor": "p_mara",
+        "question": "Q1",
+        "option": "csv",
+        "text": "CSV. Finance signs it off on the 1st."
+      },
+      {
+        "at": "2026-10-08T09:10:11Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T09:44:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-08T09:44:05Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "open"
+      },
+      {
+        "at": "2026-10-09T08:05:30Z",
+        "type": "claim.taken",
+        "actor": "claude-code:s_77c2:p_sev",
+        "expires": "2026-10-09T18:00:00Z"
+      },
+      {
+        "at": "2026-10-09T08:05:31Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_77c2:p_sev",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T08:41:12Z",
+        "type": "task.done",
+        "actor": "claude-code:s_77c2:p_sev",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 1800,
+          "commit": "a41c9d3"
+        }
+      },
+      {
+        "at": "2026-10-09T08:41:40Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_77c2:p_sev",
+        "name": "tariff-export.log",
+        "kind": "log",
+        "bytes": 5120,
+        "sha256": "9b1e44c07ad2",
+        "task": "T1"
+      },
+      {
+        "at": "2026-10-09T08:52:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_77c2:p_sev",
+        "name": "tariff-source-diff.csv",
+        "kind": "dataset",
+        "bytes": 1342,
+        "sha256": "e07a8815bb30",
+        "label": "The 3 tariffs where CSV and API differ"
+      },
+      {
+        "at": "2026-10-09T09:10:20Z",
+        "type": "lease.taken",
+        "actor": "claude-code:s_77c2.1:p_sev",
+        "task": "T2"
+      },
+      {
+        "at": "2026-10-09T09:10:24Z",
+        "type": "lease.taken",
+        "actor": "claude-code:s_77c2.2:p_sev",
+        "task": "T3"
+      },
+      {
+        "at": "2026-10-09T10:20:44Z",
+        "type": "question.asked",
+        "actor": "claude-code:s_77c2.1:p_sev",
+        "question": "Q2"
+      },
+      {
+        "at": "2026-10-09T10:21:30Z",
+        "type": "handoff.written",
+        "actor": "claude-code:s_77c2:p_sev",
+        "text": "T1 done. T2 and T3 run in parallel, both blocked on Q2 (valid_from type). T4 is Mara's."
+      },
+      {
+        "at": "2026-10-09T10:40:05Z",
+        "type": "github.pr_linked",
+        "actor": "claude-code:s_77c2:p_sev",
+        "number": 31
+      },
+      {
+        "at": "2026-10-09T11:02:00Z",
+        "type": "usage.recorded",
+        "actor": "host",
+        "cents": 412
+      }
     ]
   },
   {
@@ -97,14 +311,32 @@
       "type": "epic",
       "priority": "high",
       "size": "xl",
-      "labels": ["billing", "q4"],
+      "labels": [
+        "billing",
+        "q4"
+      ],
       "due": "2026-10-31",
       "acceptance": [
-        { "id": "AC1", "text": "Billing run for October uses the seeded tariffs end to end" },
-        { "id": "AC2", "text": "Reconciliation against finance totals is within 0.1 %" }
+        {
+          "id": "AC1",
+          "text": "Billing run for October uses the seeded tariffs end to end"
+        },
+        {
+          "id": "AC2",
+          "text": "Reconciliation against finance totals is within 0.1 %"
+        }
       ],
       "tasks": [],
-      "addons": { "estimate": { "points": 21 }, "usage": { "cents": 1280, "sessions": 9, "ms": 17400000 } }
+      "addons": {
+        "estimate": {
+          "points": 21
+        },
+        "usage": {
+          "cents": 1280,
+          "sessions": 9,
+          "ms": 17400000
+        }
+      }
     },
     "body": {
       "summary": "Replace the spreadsheet-based tariff handling with versioned dbt seeds and reconcile the billing run against finance totals.",
@@ -115,10 +347,37 @@
       "current_state": "UTC normalisation is done. Seeds in progress (DEMO-0043). Reconciliation tests wait for your verdict."
     },
     "events": [
-      { "at": "2026-10-01T09:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-01T09:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": [], "reviewers": ["p_mara"], "watchers": ["p_tom"] },
-      { "at": "2026-10-01T09:30:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-02T08:00:00Z", "type": "status.changed", "actor": "p_sev", "to": "in-progress" }
+      {
+        "at": "2026-10-01T09:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-01T09:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": [
+          "p_tom"
+        ]
+      },
+      {
+        "at": "2026-10-01T09:30:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-02T08:00:00Z",
+        "type": "status.changed",
+        "actor": "p_sev",
+        "to": "in-progress"
+      }
     ]
   },
   {
@@ -129,25 +388,93 @@
       "type": "feature",
       "priority": "high",
       "size": "s",
-      "labels": ["dbt", "tests"],
+      "labels": [
+        "dbt",
+        "tests"
+      ],
       "parent": "DEMO-0040",
       "links": {
-        "repos": ["acme-energy-dbt"],
-        "branches": { "acme-energy-dbt": "feat/DEMO-0041-reconciliation" },
-        "prs": [{ "repo": "acme-energy-dbt", "url": "https://github.com/acme/energy-dbt/pull/29" }]
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "branches": {
+          "acme-energy-dbt": "feat/DEMO-0041-reconciliation"
+        },
+        "prs": [
+          {
+            "repo": "acme-energy-dbt",
+            "url": "https://github.com/acme/energy-dbt/pull/29"
+          }
+        ]
       },
       "acceptance": [
-        { "id": "AC1", "text": "Test compares monthly billed kWh with the finance total and fails above 0.1 %" },
-        { "id": "AC2", "text": "Failures print the three largest customer deltas" }
+        {
+          "id": "AC1",
+          "text": "Test compares monthly billed kWh with the finance total and fails above 0.1 %"
+        },
+        {
+          "id": "AC2",
+          "text": "Failures print the three largest customer deltas"
+        }
       ],
       "tasks": [
-        { "id": "T1", "text": "Write `assert_billing_reconciles` generic test", "verify": { "cmd": "dbt test --select assert_billing_reconciles" }, "proves": ["AC1"] },
-        { "id": "T2", "text": "Print top-3 deltas on failure", "verify": { "cmd": "dbt test --select assert_billing_reconciles --store-failures" }, "proves": ["AC2"] }
+        {
+          "id": "T1",
+          "text": "Write `assert_billing_reconciles` generic test",
+          "verify": {
+            "cmd": "dbt test --select assert_billing_reconciles"
+          },
+          "proves": [
+            "AC1"
+          ]
+        },
+        {
+          "id": "T2",
+          "text": "Print top-3 deltas on failure",
+          "verify": {
+            "cmd": "dbt test --select assert_billing_reconciles --store-failures"
+          },
+          "proves": [
+            "AC2"
+          ]
+        }
       ],
       "addons": {
-        "estimate": { "points": 3 },
-        "github": { "pr": { "repo": "acme/energy-dbt", "number": 29, "state": "open", "draft": false, "checks": "passing", "branch": "feat/DEMO-0041-reconciliation" } },
-        "usage": { "cents": 298, "sessions": 2, "ms": 3900000 }
+        "estimate": {
+          "points": 3
+        },
+        "github": {
+          "pr": {
+            "repo": "acme/energy-dbt",
+            "number": 29,
+            "state": "open",
+            "draft": false,
+            "checks": "passing",
+            "branch": "feat/DEMO-0041-reconciliation"
+          }
+        },
+        "usage": {
+          "cents": 298,
+          "sessions": 2,
+          "ms": 3900000
+        },
+        "publish": {
+          "shares": [
+            {
+              "title": "Before/after report",
+              "subtitle": "expires in 6 days · 14 views",
+              "badge": "secret link"
+            }
+          ]
+        },
+        "wiki": {
+          "pages": [
+            {
+              "title": "Reconciliation tolerance",
+              "subtitle": "wiki/billing/reconciliation.md"
+            }
+          ]
+        }
       }
     },
     "body": {
@@ -157,19 +484,108 @@
       "current_state": "Both tasks done, evidence attached, PR is green. Waiting for the reviewer verdict."
     },
     "events": [
-      { "at": "2026-10-03T10:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-03T10:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": [], "reviewers": ["p_sev"], "watchers": ["p_mara"] },
-      { "at": "2026-10-03T10:20:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-03T10:40:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "plan" },
-      { "at": "2026-10-06T08:00:00Z", "type": "claim.taken", "actor": "claude-code:s_5d10:p_sev", "expires": "2026-10-06T18:00:00Z" },
-      { "at": "2026-10-06T08:00:01Z", "type": "status.changed", "actor": "claude-code:s_5d10:p_sev", "to": "in-progress" },
-      { "at": "2026-10-06T10:15:00Z", "type": "task.done", "actor": "claude-code:s_5d10:p_sev", "task": "T1", "receipt": { "exit": 0, "ms": 22400, "commit": "5be3d10" } },
-      { "at": "2026-10-06T10:16:00Z", "type": "artifact.added", "actor": "claude-code:s_5d10:p_sev", "name": "reconcile-pass.log", "kind": "log", "bytes": 3108, "sha256": "71f0aa23c9e1", "ac": "AC1" },
-      { "at": "2026-10-06T11:30:00Z", "type": "task.done", "actor": "claude-code:s_5d10:p_sev", "task": "T2", "receipt": { "exit": 0, "ms": 31000, "commit": "c90e7a1" } },
-      { "at": "2026-10-06T11:32:00Z", "type": "artifact.added", "actor": "claude-code:s_5d10:p_sev", "name": "top3-deltas.png", "kind": "screenshot", "bytes": 84213, "sha256": "3f9ab0c4e7d8", "ac": "AC2" },
-      { "at": "2026-10-06T11:40:00Z", "type": "claim.released", "actor": "claude-code:s_5d10:p_sev" },
-      { "at": "2026-10-06T11:41:00Z", "type": "status.changed", "actor": "host", "to": "testing" },
-      { "at": "2026-10-07T09:00:00Z", "type": "handoff.written", "actor": "claude-code:s_5d10:p_sev", "text": "Both tasks done, evidence attached, PR green. Waiting for the verdict." }
+      {
+        "at": "2026-10-03T10:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-03T10:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [
+          "p_sev"
+        ],
+        "watchers": [
+          "p_mara"
+        ]
+      },
+      {
+        "at": "2026-10-03T10:20:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-03T10:40:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-06T08:00:00Z",
+        "type": "claim.taken",
+        "actor": "claude-code:s_5d10:p_sev",
+        "expires": "2026-10-06T18:00:00Z"
+      },
+      {
+        "at": "2026-10-06T08:00:01Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_5d10:p_sev",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-06T10:15:00Z",
+        "type": "task.done",
+        "actor": "claude-code:s_5d10:p_sev",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 22400,
+          "commit": "5be3d10"
+        }
+      },
+      {
+        "at": "2026-10-06T10:16:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_5d10:p_sev",
+        "name": "reconcile-pass.log",
+        "kind": "log",
+        "bytes": 3108,
+        "sha256": "71f0aa23c9e1",
+        "ac": "AC1"
+      },
+      {
+        "at": "2026-10-06T11:30:00Z",
+        "type": "task.done",
+        "actor": "claude-code:s_5d10:p_sev",
+        "task": "T2",
+        "receipt": {
+          "exit": 0,
+          "ms": 31000,
+          "commit": "c90e7a1"
+        }
+      },
+      {
+        "at": "2026-10-06T11:32:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_5d10:p_sev",
+        "name": "top3-deltas.png",
+        "kind": "screenshot",
+        "bytes": 84213,
+        "sha256": "3f9ab0c4e7d8",
+        "ac": "AC2"
+      },
+      {
+        "at": "2026-10-06T11:40:00Z",
+        "type": "claim.released",
+        "actor": "claude-code:s_5d10:p_sev"
+      },
+      {
+        "at": "2026-10-06T11:41:00Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-07T09:00:00Z",
+        "type": "handoff.written",
+        "actor": "claude-code:s_5d10:p_sev",
+        "text": "Both tasks done, evidence attached, PR green. Waiting for the verdict."
+      }
     ]
   },
   {
@@ -180,31 +596,160 @@
       "type": "feature",
       "priority": "medium",
       "size": "s",
-      "labels": ["dbt", "meters"],
+      "labels": [
+        "dbt",
+        "meters"
+      ],
       "parent": "DEMO-0040",
-      "links": { "repos": ["acme-energy-dbt"], "prs": [{ "repo": "acme-energy-dbt", "url": "https://github.com/acme/energy-dbt/pull/27" }] },
-      "acceptance": [{ "id": "AC1", "text": "All staging models expose `read_at_utc`; DST days have 23/25 hours" }],
-      "tasks": [{ "id": "T1", "text": "Add `read_at_utc` to stg_meter_readings", "verify": { "cmd": "dbt test --select stg_meter_readings" }, "proves": ["AC1"] }],
+      "links": {
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "prs": [
+          {
+            "repo": "acme-energy-dbt",
+            "url": "https://github.com/acme/energy-dbt/pull/27"
+          }
+        ]
+      },
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "All staging models expose `read_at_utc`; DST days have 23/25 hours"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Add `read_at_utc` to stg_meter_readings",
+          "verify": {
+            "cmd": "dbt test --select stg_meter_readings"
+          },
+          "proves": [
+            "AC1"
+          ]
+        }
+      ],
       "addons": {
-        "estimate": { "points": 3 },
-        "github": { "pr": { "repo": "acme/energy-dbt", "number": 27, "state": "merged", "draft": false, "checks": "passing", "branch": "feat/DEMO-0042-utc" } },
-        "usage": { "cents": 187, "sessions": 1, "ms": 2100000 }
+        "estimate": {
+          "points": 3
+        },
+        "github": {
+          "pr": {
+            "repo": "acme/energy-dbt",
+            "number": 27,
+            "state": "merged",
+            "draft": false,
+            "checks": "passing",
+            "branch": "feat/DEMO-0042-utc"
+          }
+        },
+        "usage": {
+          "cents": 187,
+          "sessions": 1,
+          "ms": 2100000
+        },
+        "publish": {
+          "shares": [
+            {
+              "title": "UTC migration summary",
+              "subtitle": "expires in 3 days · 5 views",
+              "badge": "secret link"
+            }
+          ]
+        }
       }
     },
-    "body": { "summary": "Meter readings arrive in local time. Convert to UTC in staging.", "requirements": "- Single `read_at_utc` column.\n- DST transitions covered by tests.", "current_state": "Merged and verified." },
+    "body": {
+      "summary": "Meter readings arrive in local time. Convert to UTC in staging.",
+      "requirements": "- Single `read_at_utc` column.\n- DST transitions covered by tests.",
+      "current_state": "Merged and verified."
+    },
     "events": [
-      { "at": "2026-10-02T09:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-02T09:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": ["p_mara"], "watchers": [] },
-      { "at": "2026-10-02T09:15:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-02T09:20:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "plan" },
-      { "at": "2026-10-02T10:00:00Z", "type": "claim.taken", "actor": "claude-code:s_31aa:p_sev", "expires": "2026-10-02T18:00:00Z" },
-      { "at": "2026-10-02T10:00:01Z", "type": "status.changed", "actor": "claude-code:s_31aa:p_sev", "to": "in-progress" },
-      { "at": "2026-10-02T11:10:00Z", "type": "task.done", "actor": "claude-code:s_31aa:p_sev", "task": "T1", "receipt": { "exit": 0, "ms": 18200, "commit": "d02b7f5" } },
-      { "at": "2026-10-02T11:12:00Z", "type": "claim.released", "actor": "claude-code:s_31aa:p_sev" },
-      { "at": "2026-10-02T11:12:01Z", "type": "status.changed", "actor": "host", "to": "testing" },
-      { "at": "2026-10-03T08:30:00Z", "type": "gate.approved", "actor": "p_mara", "gate": "verify" },
-      { "at": "2026-10-03T08:31:00Z", "type": "verdict.given", "actor": "p_mara", "result": "pass", "text": "DST days check out." },
-      { "at": "2026-10-03T08:31:01Z", "type": "status.changed", "actor": "host", "to": "done" }
+      {
+        "at": "2026-10-02T09:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-02T09:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_sev"
+        ],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-02T09:15:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-02T09:20:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-02T10:00:00Z",
+        "type": "claim.taken",
+        "actor": "claude-code:s_31aa:p_sev",
+        "expires": "2026-10-02T18:00:00Z"
+      },
+      {
+        "at": "2026-10-02T10:00:01Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_31aa:p_sev",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-02T11:10:00Z",
+        "type": "task.done",
+        "actor": "claude-code:s_31aa:p_sev",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 18200,
+          "commit": "d02b7f5"
+        }
+      },
+      {
+        "at": "2026-10-02T11:12:00Z",
+        "type": "claim.released",
+        "actor": "claude-code:s_31aa:p_sev"
+      },
+      {
+        "at": "2026-10-02T11:12:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-03T08:30:00Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify"
+      },
+      {
+        "at": "2026-10-03T08:31:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "DST days check out."
+      },
+      {
+        "at": "2026-10-03T08:31:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      }
     ]
   },
   {
@@ -215,21 +760,83 @@
       "type": "chore",
       "priority": "urgent",
       "size": "xs",
-      "labels": ["security"],
-      "visibility": { "restricted": ["p_sev", "p_mara"] },
-      "acceptance": [{ "id": "AC1", "text": "Old credentials are revoked and the nightly job still succeeds" }],
-      "tasks": [
-        { "id": "T1", "text": "Create new service principal", "verify": null, "proves": [], "assignee": "p_sev" },
-        { "id": "T2", "text": "Update secret in CI and verify nightly run", "verify": { "cmd": "gh workflow run nightly" }, "proves": ["AC1"], "assignee": "p_mara" }
+      "labels": [
+        "security"
       ],
-      "addons": { "estimate": { "points": 1 } }
+      "visibility": {
+        "restricted": [
+          "p_sev",
+          "p_mara"
+        ]
+      },
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "Old credentials are revoked and the nightly job still succeeds"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Create new service principal",
+          "verify": null,
+          "proves": [],
+          "assignee": "p_sev"
+        },
+        {
+          "id": "T2",
+          "text": "Update secret in CI and verify nightly run",
+          "verify": {
+            "cmd": "gh workflow run nightly"
+          },
+          "proves": [
+            "AC1"
+          ],
+          "assignee": "p_mara"
+        }
+      ],
+      "addons": {
+        "estimate": {
+          "points": 1
+        }
+      }
     },
-    "body": { "summary": "Restricted ticket: the quarterly rotation of the warehouse credentials. Only the listed people can see it.", "requirements": "- Rotate within the week.\n- No downtime of the nightly load.", "current_state": "Not started." },
+    "body": {
+      "summary": "Restricted ticket: the quarterly rotation of the warehouse credentials. Only the listed people can see it.",
+      "requirements": "- Rotate within the week.\n- No downtime of the nightly load.",
+      "current_state": "Not started."
+    },
     "events": [
-      { "at": "2026-10-08T15:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-08T15:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev", "p_mara"], "reviewers": [], "watchers": [] },
-      { "at": "2026-10-08T15:05:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-08T15:06:00Z", "type": "status.changed", "actor": "host", "to": "open" }
+      {
+        "at": "2026-10-08T15:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T15:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_sev",
+          "p_mara"
+        ],
+        "reviewers": [],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T15:05:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T15:06:00Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "open"
+      }
     ]
   },
   {
@@ -240,16 +847,45 @@
       "type": "feature",
       "priority": "medium",
       "size": "l",
-      "labels": ["forecast"],
+      "labels": [
+        "forecast"
+      ],
       "parent": "DEMO-0040",
-      "acceptance": [{ "id": "AC1", "text": "Forecast excludes planned outage windows from the grid operator calendar" }],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "Forecast excludes planned outage windows from the grid operator calendar"
+        }
+      ],
       "tasks": [],
-      "addons": { "estimate": { "points": 8 } }
+      "addons": {
+        "estimate": {
+          "points": 8
+        }
+      }
     },
-    "body": { "summary": "Planned outages distort the usage forecast. Pull the operator calendar and mask the windows.", "requirements": "Not refined yet." },
+    "body": {
+      "summary": "Planned outages distort the usage forecast. Pull the operator calendar and mask the windows.",
+      "requirements": "Not refined yet."
+    },
     "events": [
-      { "at": "2026-10-05T13:00:00Z", "type": "ticket.created", "actor": "p_mara", "status": "backlog" },
-      { "at": "2026-10-05T13:00:01Z", "type": "people.set", "actor": "p_mara", "owner": "p_mara", "assignees": [], "reviewers": [], "watchers": ["p_sev"] }
+      {
+        "at": "2026-10-05T13:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_mara",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-05T13:00:01Z",
+        "type": "people.set",
+        "actor": "p_mara",
+        "owner": "p_mara",
+        "assignees": [],
+        "reviewers": [],
+        "watchers": [
+          "p_sev"
+        ]
+      }
     ]
   },
   {
@@ -260,12 +896,42 @@
       "type": "bug",
       "priority": "high",
       "size": "s",
-      "labels": ["dbt", "meters", "bug"],
-      "links": { "repos": ["acme-energy-dbt"], "branches": { "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes" } },
-      "acceptance": [{ "id": "AC1", "text": "`dim_meter` has a unique `meter_id` and a uniqueness test" }],
+      "labels": [
+        "dbt",
+        "meters",
+        "bug"
+      ],
+      "links": {
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "branches": {
+          "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes"
+        }
+      },
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "`dim_meter` has a unique `meter_id` and a uniqueness test"
+        }
+      ],
       "tasks": [
-        { "id": "T1", "text": "Find the source of the 112 duplicate ids", "verify": null, "proves": [] },
-        { "id": "T2", "text": "Dedupe and add `unique` test", "verify": { "cmd": "dbt test --select dim_meter" }, "proves": ["AC1"] }
+        {
+          "id": "T1",
+          "text": "Find the source of the 112 duplicate ids",
+          "verify": null,
+          "proves": []
+        },
+        {
+          "id": "T2",
+          "text": "Dedupe and add `unique` test",
+          "verify": {
+            "cmd": "dbt test --select dim_meter"
+          },
+          "proves": [
+            "AC1"
+          ]
+        }
       ],
       "questions": [
         {
@@ -274,26 +940,100 @@
           "text": "When a meter was replaced, which record wins: the latest install or the one with readings?",
           "why": "112 meter ids appear twice after replacements.",
           "options": [
-            { "key": "latest", "label": "Latest install" },
-            { "key": "readings", "label": "The one with readings" }
+            {
+              "key": "latest",
+              "label": "Latest install"
+            },
+            {
+              "key": "readings",
+              "label": "The one with readings"
+            }
           ],
           "recommended": "latest",
           "blocking": true
         }
       ],
-      "addons": { "estimate": { "points": 3 }, "usage": { "cents": 96, "sessions": 1, "ms": 1100000 } }
+      "addons": {
+        "estimate": {
+          "points": 3
+        },
+        "usage": {
+          "cents": 96,
+          "sessions": 1,
+          "ms": 1100000
+        }
+      }
     },
-    "body": { "summary": "Meter replacements create duplicate ids in `dim_meter`.", "context": "Seen in the October build: 112 ids twice.", "requirements": "- Unique `meter_id`.\n- Replacement history is kept in `dim_meter_history`.", "current_state": "Root cause found (replacement records). Waiting for Mara's rule on which record wins." },
+    "body": {
+      "summary": "Meter replacements create duplicate ids in `dim_meter`.",
+      "context": "Seen in the October build: 112 ids twice.",
+      "requirements": "- Unique `meter_id`.\n- Replacement history is kept in `dim_meter_history`.",
+      "current_state": "Root cause found (replacement records). Waiting for Mara's rule on which record wins."
+    },
     "events": [
-      { "at": "2026-10-06T14:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-06T14:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_mara"], "reviewers": [], "watchers": [] },
-      { "at": "2026-10-06T14:10:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-07T08:00:00Z", "type": "claim.taken", "actor": "codex:s_b02e:p_mara", "expires": "2026-10-07T18:00:00Z" },
-      { "at": "2026-10-07T08:00:01Z", "type": "status.changed", "actor": "codex:s_b02e:p_mara", "to": "in-progress" },
-      { "at": "2026-10-07T09:20:00Z", "type": "task.done", "actor": "codex:s_b02e:p_mara", "task": "T1", "receipt": { "exit": 0, "ms": 900, "commit": "f7d1103" } },
-      { "at": "2026-10-07T09:30:00Z", "type": "question.asked", "actor": "codex:s_b02e:p_mara", "question": "Q1" },
-      { "at": "2026-10-07T09:31:00Z", "type": "claim.released", "actor": "codex:s_b02e:p_mara" },
-      { "at": "2026-10-07T09:31:01Z", "type": "status.changed", "actor": "host", "to": "waiting" }
+      {
+        "at": "2026-10-06T14:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-06T14:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_mara"
+        ],
+        "reviewers": [],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-06T14:10:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-07T08:00:00Z",
+        "type": "claim.taken",
+        "actor": "codex:s_b02e:p_mara",
+        "expires": "2026-10-07T18:00:00Z"
+      },
+      {
+        "at": "2026-10-07T08:00:01Z",
+        "type": "status.changed",
+        "actor": "codex:s_b02e:p_mara",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-07T09:20:00Z",
+        "type": "task.done",
+        "actor": "codex:s_b02e:p_mara",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 900,
+          "commit": "f7d1103"
+        }
+      },
+      {
+        "at": "2026-10-07T09:30:00Z",
+        "type": "question.asked",
+        "actor": "codex:s_b02e:p_mara",
+        "question": "Q1"
+      },
+      {
+        "at": "2026-10-07T09:31:00Z",
+        "type": "claim.released",
+        "actor": "codex:s_b02e:p_mara"
+      },
+      {
+        "at": "2026-10-07T09:31:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "waiting"
+      }
     ]
   },
   {
@@ -304,15 +1044,42 @@
       "type": "spike",
       "priority": "low",
       "size": "m",
-      "labels": ["orchestration"],
-      "acceptance": [{ "id": "AC1", "text": "Recommendation with a comparison table and a migration estimate" }],
+      "labels": [
+        "orchestration"
+      ],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "Recommendation with a comparison table and a migration estimate"
+        }
+      ],
       "tasks": [],
-      "addons": { "estimate": { "points": 5 } }
+      "addons": {
+        "estimate": {
+          "points": 5
+        }
+      }
     },
-    "body": { "summary": "Which orchestrator should run the nightly dbt jobs?", "requirements": "- Compare Dagster and Airflow on asset awareness, local dev, hosting cost.\n- Recommend one." },
+    "body": {
+      "summary": "Which orchestrator should run the nightly dbt jobs?",
+      "requirements": "- Compare Dagster and Airflow on asset awareness, local dev, hosting cost.\n- Recommend one."
+    },
     "events": [
-      { "at": "2026-10-04T11:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-10-04T11:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": [], "reviewers": [], "watchers": [] }
+      {
+        "at": "2026-10-04T11:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-04T11:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [],
+        "reviewers": [],
+        "watchers": []
+      }
     ]
   },
   {
@@ -323,17 +1090,68 @@
       "type": "chore",
       "priority": "low",
       "size": "xs",
-      "labels": ["dbt", "deps"],
-      "acceptance": [{ "id": "AC1", "text": "CI is green on dbt-core 1.9 with no new deprecation warnings" }],
-      "tasks": [{ "id": "T1", "text": "Bump pin and fix deprecations", "verify": { "cmd": "dbt build --select state:modified+" }, "proves": ["AC1"] }],
-      "addons": { "estimate": { "points": 2 } }
+      "labels": [
+        "dbt",
+        "deps"
+      ],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "CI is green on dbt-core 1.9 with no new deprecation warnings"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Bump pin and fix deprecations",
+          "verify": {
+            "cmd": "dbt build --select state:modified+"
+          },
+          "proves": [
+            "AC1"
+          ]
+        }
+      ],
+      "addons": {
+        "estimate": {
+          "points": 2
+        }
+      }
     },
-    "body": { "summary": "Stay on a supported dbt version.", "requirements": "Bump the pin, fix deprecation warnings." },
+    "body": {
+      "summary": "Stay on a supported dbt version.",
+      "requirements": "Bump the pin, fix deprecation warnings."
+    },
     "events": [
-      { "at": "2026-10-08T10:00:00Z", "type": "ticket.created", "actor": "p_mara", "status": "backlog" },
-      { "at": "2026-10-08T10:00:01Z", "type": "people.set", "actor": "p_mara", "owner": "p_mara", "assignees": ["p_mara"], "reviewers": [], "watchers": [] },
-      { "at": "2026-10-08T10:10:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-08T10:11:00Z", "type": "status.changed", "actor": "host", "to": "open" }
+      {
+        "at": "2026-10-08T10:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_mara",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T10:00:01Z",
+        "type": "people.set",
+        "actor": "p_mara",
+        "owner": "p_mara",
+        "assignees": [
+          "p_mara"
+        ],
+        "reviewers": [],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T10:10:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T10:11:00Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "open"
+      }
     ]
   },
   {
@@ -344,15 +1162,32 @@
       "type": "feature",
       "priority": "low",
       "size": null,
-      "labels": ["idea"],
+      "labels": [
+        "idea"
+      ],
       "acceptance": [],
       "tasks": [],
       "addons": {}
     },
-    "body": { "summary": "Notify billing when a tariff row changes between two seed commits." },
+    "body": {
+      "summary": "Notify billing when a tariff row changes between two seed commits."
+    },
     "events": [
-      { "at": "2026-10-09T07:30:00Z", "type": "ticket.created", "actor": "p_tom", "status": "backlog" },
-      { "at": "2026-10-09T07:30:01Z", "type": "people.set", "actor": "p_tom", "owner": "p_tom", "assignees": [], "reviewers": [], "watchers": [] }
+      {
+        "at": "2026-10-09T07:30:00Z",
+        "type": "ticket.created",
+        "actor": "p_tom",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-09T07:30:01Z",
+        "type": "people.set",
+        "actor": "p_tom",
+        "owner": "p_tom",
+        "assignees": [],
+        "reviewers": [],
+        "watchers": []
+      }
     ]
   },
   {
@@ -363,31 +1198,124 @@
       "type": "feature",
       "priority": "medium",
       "size": "s",
-      "labels": ["dbt", "quality"],
-      "links": { "repos": ["acme-energy-dbt"], "branches": { "acme-energy-dbt": "feat/DEMO-0037-freshness" } },
+      "labels": [
+        "dbt",
+        "quality"
+      ],
+      "links": {
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "branches": {
+          "acme-energy-dbt": "feat/DEMO-0037-freshness"
+        }
+      },
       "acceptance": [
-        { "id": "AC1", "text": "Every source has a `freshness` block with warn after 12 h and error after 24 h" },
-        { "id": "AC2", "text": "`dbt source freshness` runs in the nightly job" }
+        {
+          "id": "AC1",
+          "text": "Every source has a `freshness` block with warn after 12 h and error after 24 h"
+        },
+        {
+          "id": "AC2",
+          "text": "`dbt source freshness` runs in the nightly job"
+        }
       ],
       "tasks": [
-        { "id": "T1", "text": "Add freshness to all sources", "verify": { "cmd": "dbt source freshness" }, "proves": ["AC1"] },
-        { "id": "T2", "text": "Run freshness in nightly workflow", "verify": null, "proves": ["AC2"] }
+        {
+          "id": "T1",
+          "text": "Add freshness to all sources",
+          "verify": {
+            "cmd": "dbt source freshness"
+          },
+          "proves": [
+            "AC1"
+          ]
+        },
+        {
+          "id": "T2",
+          "text": "Run freshness in nightly workflow",
+          "verify": null,
+          "proves": [
+            "AC2"
+          ]
+        }
       ],
       "addons": {
-        "estimate": { "points": 3 },
-        "github": { "pr": { "repo": "acme/energy-dbt", "number": 33, "state": "open", "draft": true, "checks": "failing", "branch": "feat/DEMO-0037-freshness" } },
-        "usage": { "cents": 143, "sessions": 1, "ms": 1500000 }
+        "estimate": {
+          "points": 3
+        },
+        "github": {
+          "pr": {
+            "repo": "acme/energy-dbt",
+            "number": 33,
+            "state": "open",
+            "draft": true,
+            "checks": "failing",
+            "branch": "feat/DEMO-0037-freshness"
+          }
+        },
+        "usage": {
+          "cents": 143,
+          "sessions": 1,
+          "ms": 1500000
+        }
       }
     },
-    "body": { "summary": "Catch stale source data before the billing run.", "requirements": "- Freshness on all 14 sources.\n- Nightly job runs it.", "current_state": "T1 in progress, 9 of 14 sources done. Codex is working for Mara." },
+    "body": {
+      "summary": "Catch stale source data before the billing run.",
+      "requirements": "- Freshness on all 14 sources.\n- Nightly job runs it.",
+      "current_state": "T1 in progress, 9 of 14 sources done. Codex is working for Mara."
+    },
     "events": [
-      { "at": "2026-10-08T11:00:00Z", "type": "ticket.created", "actor": "p_mara", "status": "backlog" },
-      { "at": "2026-10-08T11:00:01Z", "type": "people.set", "actor": "p_mara", "owner": "p_mara", "assignees": ["p_mara"], "reviewers": ["p_sev"], "watchers": [] },
-      { "at": "2026-10-08T11:10:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
-      { "at": "2026-10-08T11:30:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "plan" },
-      { "at": "2026-10-09T09:00:00Z", "type": "claim.taken", "actor": "codex:s_a41:p_mara", "expires": "2026-10-09T17:00:00Z" },
-      { "at": "2026-10-09T09:00:01Z", "type": "status.changed", "actor": "codex:s_a41:p_mara", "to": "in-progress" },
-      { "at": "2026-10-09T09:01:00Z", "type": "lease.taken", "actor": "codex:s_a41:p_mara", "task": "T1" }
+      {
+        "at": "2026-10-08T11:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_mara",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-10-08T11:00:01Z",
+        "type": "people.set",
+        "actor": "p_mara",
+        "owner": "p_mara",
+        "assignees": [
+          "p_mara"
+        ],
+        "reviewers": [
+          "p_sev"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-08T11:10:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-08T11:30:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-09T09:00:00Z",
+        "type": "claim.taken",
+        "actor": "codex:s_a41:p_mara",
+        "expires": "2026-10-09T17:00:00Z"
+      },
+      {
+        "at": "2026-10-09T09:00:01Z",
+        "type": "status.changed",
+        "actor": "codex:s_a41:p_mara",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T09:01:00Z",
+        "type": "lease.taken",
+        "actor": "codex:s_a41:p_mara",
+        "task": "T1"
+      }
     ]
   },
   {
@@ -398,19 +1326,93 @@
       "type": "bug",
       "priority": "high",
       "size": "s",
-      "labels": ["bug", "import"],
-      "acceptance": [{ "id": "AC1", "text": "March import has no negative kWh rows; reversal readings are flagged" }],
-      "tasks": [{ "id": "T1", "text": "Flag reversal readings, exclude from totals", "verify": { "cmd": "dbt test --select stg_meter_readings" }, "proves": ["AC1"] }],
-      "addons": { "estimate": { "points": 2 }, "usage": { "cents": 74, "sessions": 1, "ms": 900000 } }
+      "labels": [
+        "bug",
+        "import"
+      ],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "March import has no negative kWh rows; reversal readings are flagged"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Flag reversal readings, exclude from totals",
+          "verify": {
+            "cmd": "dbt test --select stg_meter_readings"
+          },
+          "proves": [
+            "AC1"
+          ]
+        }
+      ],
+      "addons": {
+        "estimate": {
+          "points": 2
+        },
+        "usage": {
+          "cents": 74,
+          "sessions": 1,
+          "ms": 900000
+        }
+      }
     },
-    "body": { "summary": "Reversal readings were imported as negative consumption.", "current_state": "Fixed and verified." },
+    "body": {
+      "summary": "Reversal readings were imported as negative consumption.",
+      "current_state": "Fixed and verified."
+    },
     "events": [
-      { "at": "2026-09-28T09:00:00Z", "type": "ticket.created", "actor": "p_mara", "status": "backlog" },
-      { "at": "2026-09-28T09:00:01Z", "type": "people.set", "actor": "p_mara", "owner": "p_mara", "assignees": ["p_mara"], "reviewers": ["p_sev"], "watchers": [] },
-      { "at": "2026-09-29T10:00:00Z", "type": "task.done", "actor": "codex:s_2c9d:p_mara", "task": "T1", "receipt": { "exit": 0, "ms": 14000, "commit": "0a1b2c3" } },
-      { "at": "2026-09-29T10:05:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "verify" },
-      { "at": "2026-09-29T10:06:00Z", "type": "verdict.given", "actor": "p_sev", "result": "pass", "text": "Looks right." },
-      { "at": "2026-09-29T10:06:01Z", "type": "status.changed", "actor": "host", "to": "done" }
+      {
+        "at": "2026-09-28T09:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_mara",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-09-28T09:00:01Z",
+        "type": "people.set",
+        "actor": "p_mara",
+        "owner": "p_mara",
+        "assignees": [
+          "p_mara"
+        ],
+        "reviewers": [
+          "p_sev"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-09-29T10:00:00Z",
+        "type": "task.done",
+        "actor": "codex:s_2c9d:p_mara",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 14000,
+          "commit": "0a1b2c3"
+        }
+      },
+      {
+        "at": "2026-09-29T10:05:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "verify"
+      },
+      {
+        "at": "2026-09-29T10:06:00Z",
+        "type": "verdict.given",
+        "actor": "p_sev",
+        "result": "pass",
+        "text": "Looks right."
+      },
+      {
+        "at": "2026-09-29T10:06:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      }
     ]
   },
   {
@@ -421,16 +1423,50 @@
       "type": "chore",
       "priority": "low",
       "size": "xs",
-      "labels": ["docs"],
-      "acceptance": [{ "id": "AC1", "text": "CONVENTIONS.md covers schemas, prefixes and snake_case rules" }],
+      "labels": [
+        "docs"
+      ],
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "CONVENTIONS.md covers schemas, prefixes and snake_case rules"
+        }
+      ],
       "tasks": [],
-      "addons": { "estimate": { "points": 1 } }
+      "addons": {
+        "estimate": {
+          "points": 1
+        }
+      }
     },
-    "body": { "summary": "Write down the conventions we already follow.", "current_state": "Done." },
+    "body": {
+      "summary": "Write down the conventions we already follow.",
+      "current_state": "Done."
+    },
     "events": [
-      { "at": "2026-09-30T08:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-09-30T08:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": [], "watchers": [] },
-      { "at": "2026-10-01T16:00:00Z", "type": "status.changed", "actor": "p_sev", "to": "done" }
+      {
+        "at": "2026-09-30T08:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-09-30T08:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_sev"
+        ],
+        "reviewers": [],
+        "watchers": []
+      },
+      {
+        "at": "2026-10-01T16:00:00Z",
+        "type": "status.changed",
+        "actor": "p_sev",
+        "to": "done"
+      }
     ]
   },
   {
@@ -441,20 +1477,82 @@
       "type": "chore",
       "priority": "medium",
       "size": "s",
-      "labels": ["ci"],
-      "links": { "repos": ["acme-energy-dbt"], "prs": [{ "repo": "acme-energy-dbt", "url": "https://github.com/acme/energy-dbt/pull/21" }] },
-      "acceptance": [{ "id": "AC1", "text": "Pull requests run `dbt build` against a CI schema" }],
-      "tasks": [{ "id": "T1", "text": "Add GitHub workflow", "verify": null, "proves": ["AC1"] }],
+      "labels": [
+        "ci"
+      ],
+      "links": {
+        "repos": [
+          "acme-energy-dbt"
+        ],
+        "prs": [
+          {
+            "repo": "acme-energy-dbt",
+            "url": "https://github.com/acme/energy-dbt/pull/21"
+          }
+        ]
+      },
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "Pull requests run `dbt build` against a CI schema"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Add GitHub workflow",
+          "verify": null,
+          "proves": [
+            "AC1"
+          ]
+        }
+      ],
       "addons": {
-        "estimate": { "points": 2 },
-        "github": { "pr": { "repo": "acme/energy-dbt", "number": 21, "state": "merged", "draft": false, "checks": "passing", "branch": "chore/DEMO-0036-ci" } }
+        "estimate": {
+          "points": 2
+        },
+        "github": {
+          "pr": {
+            "repo": "acme/energy-dbt",
+            "number": 21,
+            "state": "merged",
+            "draft": false,
+            "checks": "passing",
+            "branch": "chore/DEMO-0036-ci"
+          }
+        }
       }
     },
-    "body": { "summary": "PRs should run the dbt tests.", "current_state": "Done." },
+    "body": {
+      "summary": "PRs should run the dbt tests.",
+      "current_state": "Done."
+    },
     "events": [
-      { "at": "2026-09-24T09:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
-      { "at": "2026-09-24T09:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": ["p_mara"], "watchers": [] },
-      { "at": "2026-09-26T17:00:00Z", "type": "status.changed", "actor": "p_mara", "to": "done" }
+      {
+        "at": "2026-09-24T09:00:00Z",
+        "type": "ticket.created",
+        "actor": "p_sev",
+        "status": "backlog"
+      },
+      {
+        "at": "2026-09-24T09:00:01Z",
+        "type": "people.set",
+        "actor": "p_sev",
+        "owner": "p_sev",
+        "assignees": [
+          "p_sev"
+        ],
+        "reviewers": [
+          "p_mara"
+        ],
+        "watchers": []
+      },
+      {
+        "at": "2026-09-26T17:00:00Z",
+        "type": "status.changed",
+        "actor": "p_mara",
+        "to": "done"
+      }
     ]
   }
 ]

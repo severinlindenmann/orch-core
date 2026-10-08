@@ -17,7 +17,7 @@
     "addons": {
       "dashboard": { "enabled": true },
       "estimate": { "enabled": true },
-      "publish": { "enabled": false },
+      "publish": { "enabled": true },
       "github": { "enabled": true },
       "usage": { "enabled": true },
       "terminals": { "enabled": true },

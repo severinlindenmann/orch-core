@@ -17,6 +17,6 @@ describe('AddonBadge', () => {
       </AddonFrame>,
     )
     expect(screen.getByRole('img', { name: 'From addon: usage' })).toBeInTheDocument()
-    expect(screen.getByText('Usage')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Usage' })).toBeInTheDocument()
   })
 })

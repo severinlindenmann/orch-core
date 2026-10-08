@@ -1,0 +1,91 @@
+// The CLOSED set of declarative node types an addon may use. Anything else is rejected at render time.
+// Children of `stack` stay `unknown` here: every child is validated again when it is rendered, so one bad
+// child shows the "could not be shown" box instead of taking the whole panel down.
+import { z } from 'zod'
+
+const text = z.string().max(4000)
+const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
+const cell = scalar.nullable()
+const actionId = z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/)
+const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
+
+export const MAX_DEPTH = 6
+
+export const stackNode = z.object({
+  type: z.literal('stack'),
+  direction: z.enum(['col', 'row']).default('col'),
+  children: z.array(z.unknown()).max(50),
+})
+export const statNode = z.object({
+  type: z.literal('stat'),
+  label: text,
+  value: z.union([z.string().max(200), z.number()]).nullable(),
+  hint: text.optional(),
+})
+export const kvNode = z.object({
+  type: z.literal('kv'),
+  pairs: z.array(z.object({ label: text, value: cell, mono: z.boolean().optional() })).max(50),
+})
+export const listNode = z.object({
+  type: z.literal('list'),
+  items: orEmpty(z.object({ title: text, subtitle: text.optional(), badge: text.optional() })),
+  empty: text.optional(),
+})
+export const tableNode = z.object({
+  type: z.literal('table'),
+  columns: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(12),
+  rows: orEmpty(z.record(z.string(), cell)),
+})
+export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000) })
+export const codeNode = z.object({ type: z.literal('code'), language: z.string().max(32).default('text'), text: z.string().max(20000) })
+export const chartNode = z.object({
+  type: z.literal('chart'),
+  kind: z.enum(['bar', 'line']),
+  xKey: z.string().max(64).default('x'),
+  series: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(5),
+  points: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).max(366),
+})
+export const formNode = z.object({
+  type: z.literal('form'),
+  schema: z
+    .record(z.string(), z.unknown())
+    .refine((s) => !/"\$(ref|id)"\s*:\s*"https?:/i.test(JSON.stringify(s)), 'remote schema references are not allowed'),
+  uiSchema: z.record(z.string(), z.unknown()).optional(),
+  formData: z.record(z.string(), z.unknown()).nullish(),
+  action: actionId,
+  submitLabel: z.string().max(60).optional(),
+})
+export const buttonNode = z.object({
+  type: z.literal('button'),
+  label: z.string().max(60),
+  action: actionId,
+  variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('secondary'),
+})
+export const linkNode = z.object({
+  type: z.literal('link'),
+  label: z.string().max(120),
+  href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h), 'only http(s) links'),
+})
+
+export const nodeSchema = z.discriminatedUnion('type', [
+  stackNode,
+  statNode,
+  kvNode,
+  listNode,
+  tableNode,
+  markdownNode,
+  codeNode,
+  chartNode,
+  formNode,
+  buttonNode,
+  linkNode,
+])
+
+export type AddonNodeData = z.output<typeof nodeSchema>
+export type NodeOf<T extends AddonNodeData['type']> = Extract<AddonNodeData, { type: T }>
+export const NODE_TYPES = nodeSchema.options.map((o) => o.shape.type.value)
+
+export function parseNode(raw: unknown): { ok: true; node: AddonNodeData } | { ok: false; error: string } {
+  const r = nodeSchema.safeParse(raw)
+  return r.success ? { ok: true, node: r.data } : { ok: false, error: r.error.issues[0]?.message ?? 'invalid node' }
+}

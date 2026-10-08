@@ -1,5 +1,6 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
+import { AddonPage } from './pages/AddonPage'
 import { Placeholder, TodayPlaceholder } from './pages/Placeholders'
 
 // Code-based route tree. Memory history on purpose: the app also runs inside a sandboxed viewer
@@ -21,10 +22,10 @@ const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'settings', component: () => <Placeholder title="Settings" /> })
 const addonRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: 'addon/$name/$id',
+  path: 'addon/$name/$page',
   component: function AddonRoute() {
-    const { name, id } = addonRoute.useParams()
-    return <Placeholder title={id} addon={name} />
+    const { name, page } = addonRoute.useParams()
+    return <AddonPage name={name} page={page} />
   },
 })
 

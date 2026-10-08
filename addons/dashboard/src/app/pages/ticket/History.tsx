@@ -17,6 +17,7 @@ const SIGNED_TYPES = new Set(['gate.approved', 'gate.changes_requested', 'verdic
 type Who = 'person' | 'agent' | 'host' | 'addon'
 
 export function addonOf(e: OrchEvent): string | null {
+  if (e.actor.kind === 'addon') return e.actor.id
   const prefix = e.type.split('.')[0]
   return CORE_PREFIXES.has(prefix) ? null : prefix
 }
@@ -117,10 +118,10 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
             return (
               <li key={e.seq} className="relative pb-4 last:pb-0" data-who={who}>
                 <span className="absolute -left-[30px] top-0.5 flex size-5 items-center justify-center rounded-full border border-border bg-surface text-text-muted">
-                  {addon ? <AddonBadge name={addon} className="size-3.5 text-[9px]" /> : <ActorIcon kind={e.actor.kind} />}
+                  {addon ? <AddonBadge name={addon} className="size-3.5 text-[9px]" /> : <ActorIcon kind={e.actor.kind === 'addon' ? 'host' : e.actor.kind} />}
                 </span>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
-                  <span className="text-[13px] font-medium text-text">{e.actor.kind === 'agent' ? `${agentName(e.actor.id)} for ${viewer.name(e.actor.for)}` : e.actor.kind === 'host' ? 'orch' : viewer.name(e.actor.id)}</span>
+                  <span className="text-[13px] font-medium text-text">{e.actor.kind === 'agent' ? `${agentName(e.actor.id)} for ${viewer.name(e.actor.for)}` : e.actor.kind === 'host' ? 'orch' : e.actor.kind === 'addon' ? e.actor.id : viewer.name(e.actor.id)}</span>
                   <Pill>{e.type}</Pill>
                   <span className="text-text-faint">{fmtTime(e.at)}</span>
                   <Mono className="text-[11px] text-text-faint">seq {e.seq}</Mono>

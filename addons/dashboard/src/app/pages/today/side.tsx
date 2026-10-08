@@ -55,10 +55,10 @@ export function AgentsAtWork({ agents, tickets, dir, now }: { agents: AgentInfo[
   )
 }
 
-function ActorIcon({ kind }: { kind: string }) {
+function ActorIcon({ kind, id }: { kind: string; id?: string }) {
   if (kind === 'person') return <User className="size-3.5" aria-label="person" />
   if (kind === 'agent') return <Bot className="size-3.5" aria-label="agent" />
-  if (kind === 'addon') return <AddonBadge name="addon" className="size-3.5 text-[9px]" />
+  if (kind === 'addon') return <AddonBadge name={id ?? 'addon'} className="size-3.5 text-[9px]" />
   return <Server className="size-3.5" aria-label="host" />
 }
 
@@ -72,7 +72,7 @@ export function Recently({ recent, now }: { recent: TodayDocument['recent']; now
         {recent.slice(0, 6).map((e) => (
           <li key={`${e.ticket}-${e.seq}`} className="flex items-start gap-2.5 px-4 py-2.5">
             <span className="mt-0.5 text-text-muted">
-              <ActorIcon kind={(e.actor as { kind: string }).kind} />
+              <ActorIcon kind={e.actor.kind} id={e.actor.id} />
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-[13px] leading-snug text-text">{e.summary}</p>

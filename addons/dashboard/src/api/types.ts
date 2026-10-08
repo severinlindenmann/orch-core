@@ -113,6 +113,7 @@ export type Actor =
   | { kind: 'person'; id: string; device?: string }
   | { kind: 'agent'; id: string; session: string; for: string; grant?: string }
   | { kind: 'host'; id: 'orch' }
+  | { kind: 'addon'; id: string }
 
 export interface OrchEvent {
   v: 2
@@ -299,6 +300,8 @@ export interface NeedsYouItem {
   text: string
   since: string
   ref?: string // Q2, gate name, ...
+  /** Gate hash an approval item covers (approval items only). */
+  hash?: string
   blocking?: boolean
 }
 
@@ -306,6 +309,8 @@ export interface TodayDocument {
   now: string
   workspace: string
   needs_you: NeedsYouItem[]
+  /** Viewers get an empty needs_you; this lists what is open in the workspace, read only. */
+  read_only_open: NeedsYouItem[]
   working: TicketSummary[]
   recent: (Pick<OrchEvent, 'seq' | 'at' | 'type' | 'actor'> & { ticket: string; title: string; summary: string })[]
   counts: Partial<Record<Status, number>>

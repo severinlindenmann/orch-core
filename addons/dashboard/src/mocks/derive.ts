@@ -34,7 +34,7 @@ export function fnvHex(input: string, len = 12): string {
 
 export function actorLabel(a: Actor): string {
   if (a.kind === 'person') return a.id
-  if (a.kind === 'agent') return a.id
+  if (a.kind === 'agent' || a.kind === 'addon') return a.id
   return 'orch'
 }
 
@@ -378,6 +378,14 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'logged a note'
     case 'github.pr_linked':
       return `linked PR #${e.number}`
+    case 'publish.shared':
+      return 'shared a secret link'
+    case 'publish.decided':
+      return `decided to publish: ${e.option}`
+    case 'estimate.set':
+      return `estimated ${e.points} points`
+    case 'github.imported':
+      return `imported ${e.external} from GitHub`
     case 'usage.recorded':
       return 'recorded usage'
     default:

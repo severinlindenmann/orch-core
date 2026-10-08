@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, ApiErrorBody, GateName, OrchEvent, Status, TicketDocument } from '@/api/types'
+import type { ActionRequest, ApiErrorBody, OrchEvent, Status, TicketDocument } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 
@@ -65,19 +65,6 @@ function visibleTicket(store: MockStore, key: string): TicketDocument | Transpor
 }
 const isResponse = (x: unknown): x is TransportResponse => typeof x === 'object' && x !== null && 'status' in x && 'json' in x
 
-/** Gate policy: `approvers` is a role ("owner") or "reviewers"; `not` excludes assignees. */
-function canApprove(store: MockStore, t: TicketDocument, gate: GateName, person: string): string | null {
-  const ws = store.workspaceOf(t.key)!
-  const policy = ws.gates[gate]
-  const role = store.roleIn(ws.id, person)
-  if (!role || role === 'viewer') return 'Viewers cannot approve.'
-  if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : role !== policy.approvers)
-    return policy.approvers === 'reviewers' ? 'Only a reviewer of this ticket can approve this gate.' : `Only the ${policy.approvers} can approve this gate.`
-  if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
-  if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
-  return null
-}
-
 function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
   const t0 = visibleTicket(store, ctx.params.key)
   if (isResponse(t0)) return t0
@@ -106,7 +93,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       return finish(event)
     }
     case 'approve': {
-      const why = canApprove(store, t, a.gate, me)
+      const why = store.canApprove(t, a.gate, me)
       if (why) return fail(403, 'gate.not_eligible', why, 'See the gate policy in the workspace settings.')
       const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid' })
       if (a.gate === 'plan' && t.status === 'backlog') store.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
@@ -114,7 +101,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
     }
     case 'request_changes': {
       if (!a.text?.trim()) return fail(400, 'validation', 'Say what should change.')
-      const why = canApprove(store, t, a.gate, me)
+      const why = store.canApprove(t, a.gate, me)
       if (why && !/already/.test(why)) return fail(403, 'gate.not_eligible', why)
       const event = store.append(key, { type: 'gate.changes_requested', gate: a.gate, text: a.text.trim() })
       if (a.gate === 'verify' && t.status === 'testing') store.append(key, { type: 'status.changed', actor: 'host', to: 'in-progress' })
@@ -123,7 +110,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
     case 'verdict': {
       if (t.status !== 'testing') return fail(409, 'transition.not_allowed', `${key} is ${t.status}, not testing.`)
       if (t.verdict) return fail(409, 'verdict.exists', 'A verdict was already given.')
-      const why = canApprove(store, t, 'verify', me)
+      const why = store.canApprove(t, 'verify', me)
       if (why) return fail(403, 'gate.not_eligible', why)
       const event = store.append(key, { type: 'verdict.given', result: a.result, text: a.text?.trim() || undefined })
       if (a.result === 'pass') {
@@ -162,6 +149,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
     case 'set_status': {
       if (!STATUSES.includes(a.status as Status)) return fail(400, 'validation', `Unknown status ${a.status}`)
       if (role !== 'owner' && role !== 'maintainer') return fail(403, 'forbidden', 'Only owners and maintainers move tickets.')
+      if (a.status === 'done') return fail(409, 'human_only', 'Done is reached by a verdict', 'Give the verdict on the ticket page', false)
       return finish(store.append(key, { type: 'status.changed', to: a.status }))
     }
     default:
@@ -204,7 +192,7 @@ export function buildRouter(): MockRouter {
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
   r.add('GET', '/api/addons', (s) => ok(s.addons))
-  r.add('GET', '/api/addons/decisions', (s) => ok(s.addons.filter((a) => a.enabled).flatMap((a) => a.decisions ?? [])))
+  r.add('GET', '/api/addons/decisions', (s) => ok(s.canDecide() ? s.addons.filter((a) => a.enabled).flatMap((a) => a.decisions ?? []) : []))
   r.add('POST', '/api/addons/:name/actions/:id', (s, c) => {
     const addon = s.addons.find((a) => a.name === c.params.name && a.enabled)
     if (!addon) return fail(404, 'not_found', 'No such addon')

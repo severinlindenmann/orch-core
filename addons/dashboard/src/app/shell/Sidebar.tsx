@@ -121,7 +121,7 @@ export function Sidebar() {
             {navItems.map((item) => {
               const Icon = iconByName(item.icon)
               return (
-                <RailTip key={`${item.addon}/${item.id}`} label={`${item.title} (addon: ${item.addon})`}>
+                <RailTip key={`${item.addon}/${item.id}`} label={`${item.title} · from addon ${item.addon}`}>
                   <Link
                     to="/addon/$name/$page"
                     params={{ name: item.addon, page: item.id }}
@@ -129,7 +129,14 @@ export function Sidebar() {
                     activeProps={activeProps}
                     aria-label={item.title}
                   >
-                    <Icon className="size-4" />
+                    <span className="relative">
+                      <Icon className="size-4" />
+                      {/* Icon rail: the corner badge keeps the orange "A" visible when the label is hidden. */}
+                      <AddonBadge
+                        name={item.addon}
+                        className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px] xl:hidden"
+                      />
+                    </span>
                     <span className="flex-1 truncate max-xl:hidden">{item.title}</span>
                     <AddonBadge name={item.addon} className="max-xl:hidden" />
                   </Link>

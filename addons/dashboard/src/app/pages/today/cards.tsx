@@ -217,7 +217,7 @@ export function ApprovalCard({ item, ticket, now, readOnly }: CommonProps & { it
     gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
       : `Plan · ${ticket?.tasks.length ?? 0} tasks · ${ticket?.acceptance.length ?? 0} acceptance criteria`
-  const hash = ticket?.head.hash ?? ''
+  const hash = item.hash ?? ticket?.gates[gate].hash ?? ''
 
   const approve = async () => {
     setPresence(true)

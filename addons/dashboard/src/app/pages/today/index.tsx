@@ -29,19 +29,11 @@ export function TodayPage() {
   const role = workspace?.members.find((m) => m.person === me.data?.person)?.role
   const readOnly = role === undefined || role === 'viewer'
 
-  // Viewers get no personal queue from the API; show what is open in the workspace, read only.
-  const tickets = useQuery({
-    queryKey: ['tickets', ws, 'open-questions'],
-    queryFn: () => api.listTickets(ws!),
-    enabled: !!ws && readOnly && !!me.data,
-  })
-  const items: NeedsYouItem[] = useMemo(() => {
-    if (!today.data) return []
-    if (!readOnly) return today.data.needs_you
-    return (tickets.data ?? [])
-      .filter((t) => t.open_questions > 0)
-      .map((t) => ({ kind: 'question' as const, ticket: t.key, title: t.title, text: '', since: t.updated_at, ref: undefined, blocking: t.blocking_questions > 0 }))
-  }, [today.data, readOnly, tickets.data])
+  // Viewers get no personal queue from the API; it sends what is open in the workspace instead, read only.
+  const items: NeedsYouItem[] = useMemo(
+    () => (today.data ? (readOnly ? today.data.read_only_open : today.data.needs_you) : []),
+    [today.data, readOnly],
+  )
 
   const claimTickets = (agentsQ.data ?? []).flatMap((a) => a.claims.map((c) => c.ticket))
   const keys = [...new Set([...items.map((i) => i.ticket), ...claimTickets])]
@@ -51,18 +43,7 @@ export function TodayPage() {
 
   const dir: Directory = { workspace, agents: agentsQ.data ?? [] }
 
-  // Read-only view: expand each ticket's open questions into question items.
-  const shown: NeedsYouItem[] = useMemo(() => {
-    if (!readOnly) return items
-    return items.flatMap((i) =>
-      (byKey[i.ticket]?.questions_state ?? [])
-        .filter((q) => q.state === 'open')
-        .map((q) => ({ ...i, text: q.text, ref: q.id, blocking: q.blocking, since: q.asked_at })),
-    )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, readOnly, ticketQs.map((q) => q.dataUpdatedAt).join()])
-
-  const ordered = [...shown].sort((a, b) => Number(!!b.blocking) - Number(!!a.blocking))
+  const ordered = [...items].sort((a, b) => Number(!!b.blocking) - Number(!!a.blocking))
   const agentsWorking = (agentsQ.data ?? []).filter((a) => a.claims.length > 0).length
 
   if (!today.data || !agentsQ.data || !me.data) {

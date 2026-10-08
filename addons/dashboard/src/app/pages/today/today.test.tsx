@@ -7,6 +7,7 @@ vi.mock('sonner', async (orig) => {
 })
 
 import { toast } from 'sonner'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('Today page', () => {
@@ -33,5 +34,15 @@ describe('Today page', () => {
     const buttons = await within(card).findAllByRole('button', {}, { timeout: 4000 })
     expect(buttons.length).toBeGreaterThan(0)
     buttons.forEach((b) => expect(b).toBeDisabled())
+  })
+
+  it('addon decisions post the current workspace id', async () => {
+    const spy = vi.spyOn(api, 'runAddonAction')
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const card = await screen.findByTestId(/^card-addon:/, {}, { timeout: 4000 })
+    await user.click((await within(card).findAllByRole('button'))[0])
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    expect(spy.mock.calls[0][2]).toEqual(expect.objectContaining({ ws: mockStore.workspaces[0].id }))
+    spy.mockRestore()
   })
 })

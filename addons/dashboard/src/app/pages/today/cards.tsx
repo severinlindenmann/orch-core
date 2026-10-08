@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useWorkspace } from '@/app/workspace'
 import { Link } from '@tanstack/react-router'
 import { Check, Copy, FileSearch, Fingerprint, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
@@ -386,6 +387,7 @@ export function VerdictCard({ item, ticket, now, readOnly }: CommonProps & { ite
 
 export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly: boolean }) {
   const act = useAct()
+  const { workspace } = useWorkspace()
   const id = `addon:${d.id}`
   return (
     <div data-testid={`card-${id}`}>
@@ -402,7 +404,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
                 className={cn(o.primary && PRIMARY)}
                 disabled={readOnly}
                 onClick={() =>
-                  void act(id, () => api.runAddonAction(d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket }), {
+                  void act(id, () => api.runAddonAction(d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket, ws: workspace?.id }), {
                     toast: `${d.title}: ${o.label}`,
                     note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed by orch` },
                   })

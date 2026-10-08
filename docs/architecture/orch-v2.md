@@ -27,14 +27,14 @@ amendment.
 | D6 | Phone onboarding | Scanning a workspace's QR code does both: the first time, it makes the phone one of your devices; every time, it seals that workspace's `WK` to the phone. No passphrase on the phone. |
 | D7 | Logout | Logging out on the phone wipes that workspace locally and deregisters the phone. Revoking from another device also rotates the epoch. |
 | D8 | Migration | Start fresh. Nothing is imported from TIX. TIX keeps running untouched until it is switched off. |
-| D9 | Names | Server: **orch-relay** (new repo) with modules *directory*, *relay*, *drop*, *push*. Phone: **orch mobile** (a PWA served by orch-relay). Publishing: **orch-publish**. User-facing nouns: Workspace, Device, Drop. |
+| D9 | Names | Server: **orch-relay** (new repo) with modules *directory*, *relay*, *drop*, *push*. Phone: **orch mobile**, a native iPhone app (D45). Publishing: **orch-publish**. User-facing nouns: Workspace, Device, Drop. |
 | D10 | Publishing | orch-publish publishes over HTTPS, authenticated by workspace identity. Every share and app has an owner and a `/<workspace>/` namespace. SSH is for admin only. |
 | D11 | Networks | Carrier by URL: `spool:` (same machine), an internal relay URL, or the public relay URL. No LAN-direct path. `--lan` is retired. |
 | D12 | ws→ws routing | The agent suggests a peer from the local address book. The first send to a new peer needs a human to confirm and pin its key. |
 | D13 | ws→ws receiving | An incoming ticket lands in the inbox as untrusted data. The receiver's signed charter can allow auto-start per peer and ticket type, with restricted permissions. Depth is 1. |
 | D14 | Shared documents | A Drop *document* is a series of encrypted versions. A write needs the current version (`If-Match`), and an edit lease is optional. |
 | D15 | Web agents | A web agent enrolls as a *scoped agent device*: one Drop space, with an expiry, and no workspaces or tickets. |
-| D16 | Mobile tech | A PWA now, reusing the TIX vanilla-JS and WebCrypto code. A native shell later, if needed. |
+| D16 | Mobile tech | ~~A PWA~~ Superseded by D45: a native iPhone app in Swift/SwiftUI. TIX's PWA screens are UI reference only. |
 | D17 | In-flight work | #237 landed. The Dark Factory stack #79→#143 and #254 are closed as reference (D38). Freeze TIX #96/#97 and port their good parts into orch-relay. |
 | D18 | Stack | Python, FastAPI and SQLite (WAL), under systemd behind Caddy. The same as orch-core and TIX. |
 | D19 | Process | Spec, then review, then phased issues, then one PR per task group into `develop`. The owner merges `develop` → `main` (D33). |
@@ -65,7 +65,7 @@ Non-goals for v2:
 ## 3. Components
 
 ```
- orch mobile (PWA) ─┐                                 ┌─ orch-publish  (pub API + apps origin)
+ orch mobile (iOS) ─┐                                 ┌─ orch-publish  (pub API + apps origin)
  web agent ─────────┤   HTTPS, sealed envelopes       │        ▲ HTTPS, workspace-signed
                     ├──────────► orch-relay ◄─────────┤        │
                     │   directory · relay · drop · push│   workspace host (orch serve)
@@ -78,15 +78,15 @@ Non-goals for v2:
 | `orch` CLI + workspace + Mission Control | orch-core | each workspace machine | Workspace signing key and `WK` epochs, through the host process |
 | Host process (`orch serve`, also headless as `orch host`) | orch-core | each workspace machine | Yes: the only process that loads keys |
 | orch-relay: directory, relay, drop, push | orch-relay | VPS (public), or a company server (internal) | No. Wrapped blobs and public keys only |
-| orch mobile | orch-relay (`/app`) | phone browser, installed to the home screen | Device key (non-extractable) and the `WK`s sealed to it |
+| orch mobile | orch-mobile (new repo) | native iPhone app (Swift/SwiftUI), TestFlight | Device key in the Secure Enclave (Face ID per signature) and the `WK`s sealed to it |
 | orch-publish: publish API + apps origin | orch-publish | VPS (a separate origin from the relay) | Only the sealed-share loader key, which is in the URL fragment and never on the server |
 
 ## 4. Threat model
 
 - **The relay** is honest-but-curious for confidentiality and untrusted for integrity: it may drop, delay, replay or
   reorder. Every envelope is authenticated, sequence-numbered and idempotent.
-- **Web-delivered JS** is trusted at load time. This is accepted for v2 and narrowed by: installed PWA only, pairing
-  confirmed on the host's screen, and a signed asset manifest as a later option.
+- **The phone app** is a signed native app (TestFlight). There is no web-delivered code on the phone. Its device key
+  sits in the Secure Enclave and every human signature needs Face ID.
 - **The workspace host process and the human's machine** are trusted.
 - **Agents** are semi-trusted. They use the host socket API and run under a separate UID wherever the platform
   allows: on the VPS always, on a personal Mac from kernel wave 2 (P1b, D37). **Until then, agents on macOS run as
@@ -115,7 +115,7 @@ Non-goals for v2:
 | Key | Kind | Where it lives | Purpose |
 |---|---|---|---|
 | Person key `PK` | signing | your primary device's keychain, plus a recovery kit | Signs device certificates. Peers pin it. |
-| Device key `DK` | signing + key agreement | each device (keychain, or non-extractable WebCrypto) | Signs requests. `WK`s are sealed to it. |
+| Device key `DK` | signing + key agreement | each device: the Secure Enclave on iPhone and Apple-silicon Macs, otherwise the keychain | Signs requests. `WK`s are sealed to it. |
 | Workspace key `WSK` | signing | the workspace host's keychain | Signs envelopes, member lists, directory cards and publish requests |
 | Workspace exchange key `WXK` | key agreement | the workspace host's keychain; public half in the card | Receives ws→ws bodies, Drop wraps addressed to the workspace, and `SK` wraps. Rotates with the 90-day epoch; its version is in the card. |
 | Workspace content key `WK_e` | symmetric, 256-bit, random per epoch | the host's keychain; sealed copies on the relay, one per member device | Seals everything belonging to the workspace |
@@ -123,14 +123,14 @@ Non-goals for v2:
 | Drop space key `SK_e` | symmetric, per epoch | sealed to the space's member devices | Shared Drop spaces |
 | Personal vault key | symmetric | your devices | Personal settings only. Never derives anything else. |
 
-**Algorithms (decided, confirmed by spike S1).** The suite:
+**Algorithms (D46).** One suite everywhere, protocol v2 suite 2:
 
-- Ed25519 for signatures and X25519 for key agreement, through WebCrypto.
+- ECDSA P-256 for signatures and ECDH P-256 for key agreement;
 - HKDF-SHA-256, and AES-256-GCM in authenticated chunks (as in TIX today).
 
-If S1 shows Ed25519 or X25519 in WebCrypto is not reliable on the oldest iOS we support, everything uses
-ECDSA/ECDH P-256 (proven in the TIX bridge) with the same structure. A single suite is used across all components,
-never a mix.
+P-256 is what the Secure Enclave supports, so device keys on iPhone and Apple-silicon Macs are created inside it,
+can never be exported, and sign only after Face ID or Touch ID. Python (`cryptography`) and the relay use the same
+suite and the same vectors. A single suite is used across all components, never a mix.
 
 **Sealing to a device** is HPKE-shaped:
 
@@ -246,7 +246,7 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 ### 6.2 Relay (bridge v2)
 
 - **Base:** the TIX bridge protocol v1 (`orch-tix/docs/bridge-protocol.md`). Its framing, sequence numbers, idempotency,
-  replay store, scopes (Look/Decide/Operate/Type), WebAuthn assertions and typing lease carry over.
+  replay store, scopes (Look/Decide/Operate/Type) and the typing lease carry over. WebAuthn assertions are replaced by a Secure Enclave signature with biometric presence (D45).
 - **What changes:**
   - the key source: `K_bridge = HKDF(WK_e, info = "orch/v2/bridge|" + ws + "|" + epoch)` replaces `HKDF(MK, ws)`,
     and `K_msg` is derived from `K_bridge` as in v1. `WK_e` is never used directly for any purpose; every use goes
@@ -263,13 +263,15 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 
 ### 6.3 Push
 
-- Web Push (VAPID). A **subscription is per (device, workspace)**, stored with the membership and deleted with it.
+- **APNs** (D47). The relay holds the APNs auth key (`.p8`, kept on the VPS). A **registration is per (device,
+  workspace)**: the device token is stored with the membership and deleted with it.
 - **Payload.** The host seals `{kind, id, label}` under the push subkey `HKDF(WK_e, "orch/v2/push|"+ws+"|"+epoch)`.
-  The relay sees only `{v:2, ws, epoch}` plus opaque bytes, and forwards them.
-  - The service worker opens the payload and sets `tag = id`.
+  The relay sees only `{v:2, ws, epoch}` plus opaque bytes, and sends them as a `mutable-content` push.
+  - The app's **notification service extension** opens the payload on the device, shows the real text, and sets
+    `thread-id` and `apns-collapse-id` to the id.
   - It drops any payload for a `ws` it holds no key for.
-- **Removing a workspace** deletes only that workspace's relay record. The browser unsubscribes entirely only when
-  no workspace is left.
+- **Removing a workspace** deletes only that workspace's relay record. The app unregisters entirely only when no
+  workspace is left.
 - Kinds: `question`, `question.closed`, `ticket.update`, `drop.new`, `peer.ticket`, `join`.
 - `question.closed` replaces the notification with "Answered on <device label>", rendered from the sealed fetch.
   iOS has no silent push, so a visible replacement is the design.
@@ -307,19 +309,22 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 
 ## 7. orch mobile
 
-- A PWA served at `https://<relay>/app`, built from the TIX static code (`fileshare/static/`). The TIX ports are:
-
-  | Port from TIX | Source |
-  |---|---|
-  | Bridge client, sandboxed dashboard frame, streams viewer | TIX #96 |
-  | Unlock sheet and WebAuthn | TIX #97 |
-  | Crypto helpers | TIX |
+- A **native iPhone app** (D45): Swift and SwiftUI, iOS 18+, repo `orch-mobile`, shipped through TestFlight.
+  - **Core:** protocol v2 in Swift (CryptoKit, Secure Enclave), tested against the same vectors as the relay and the
+    CLI.
+  - **Notification service extension:** decrypts sealed pushes on the device (§6.3).
+  - **Share extension:** "Share to orch" from any app sends a file to a workspace (Drop basics, D43).
+  - **Unlock sheet:** shows the exact text being approved, then asks for Face ID, which makes the Secure Enclave
+    signature. TIX #97 is the UI reference.
+  - TIX's PWA screens (needs-you, files, workspaces) are UI reference only; no code is ported. There is no
+    dashboard frame on the phone (the dashboard is desktop only).
 - **Home** is a list of **Workspace cards** plus **Drop**. Each card has the tabs Questions, Tickets/Factory, Files and
   Terminal (scope permitting).
-- **Storage** is partitioned per workspace: one IndexedDB database `ws-<id>` and one Cache Storage bucket per
-  workspace. Removing a card deletes both, the sealed `WK`s and the push subscription, then deregisters.
+- **Storage** is partitioned per workspace: one data-protected container (files and a SQLite store) per workspace,
+  with its keys in the keychain. Removing a card deletes the container, the sealed `WK`s and the push registration,
+  then deregisters.
 - **Pairing (D6):**
-  1. The host's Remote tab shows a QR code for `https://<relay>/app/pair#v2.<ws>.<offer>.<secret>.<wsk_pin>`
+  1. The host shows a QR code with `orch://pair#v2.<ws>.<offer>.<secret>.<wsk_pin>` (the universal link `https://<relay>/pair#…` opens the app too), and the app scans it with the camera
      (10 minutes, single use).
   2. The phone generates `DK` and sends a join request through the relay.
   3. Both screens show a 6-character fingerprint. The human confirms on the host.
@@ -337,9 +342,9 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
        say "Open orch on <primary>".
      - **No `WK` is sealed before a valid certificate exists.**
      - A phone that already has a certificate presents it. The host checks
-       `cert.person_id == card.owner_person_id` and otherwise refuses with `other_person` (D1 C is out of scope).
-  5. The host adds the phone to the member list and seals `WK_e` to it. A platform passkey is registered for
-     Type and Factory actions.
+       `cert.person_id == card.owner_person_id`, or that the person is in the signed member list (D39), and otherwise refuses with `other_person`.
+  5. The host adds the phone to the member list and seals `WK_e` to it. Type and Factory actions need a fresh Face ID
+     signature from the Secure Enclave key.
 - **Starting work:** a "New ticket" action (a sealed request applied by the host), start/move through the Operate
   scope, and the AI Factory through the bridge (as merged in core R13).
 
@@ -370,7 +375,7 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
     `{kind, in_reply_to, depth, deadline, ticket, attachments}`.
   - The signature (`WSK`, domain `orch/v2/ws-envelope`) covers the header and the ciphertext.
   - **Human co-signature.** When a human authorized the envelope, it is co-signed over the envelope hash with a
-    WebAuthn assertion or a phone `DK` signature. Receivers verify the chain `DK → certificate → pinned PK`.
+    Secure Enclave signature with biometric presence from a phone or Mac `DK`. Receivers verify the chain `DK → certificate → pinned PK`.
 - **Receiving (D13):**
   - The receiver verifies the pin, the signature, `depth ≤ 1` and the deadline, and deduplicates on `id`.
   - The ticket lands in the inbox, marked `from-peer`.
@@ -439,11 +444,11 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 
 | Phase | Content | Exit criteria |
 |---|---|---|
-| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, the dev override for human-only CLI checks with the state-dir dev marker (D34), `develop` branches and branch protection on `main` (D33), an orch-relay skeleton (health, deploy), the e2e harness, and spikes S1 (WebCrypto suite on iOS) and S2 (PWA push and passkeys in the iOS Simulator). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
+| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, the dev override for human-only CLI checks with the state-dir dev marker (D34), `develop` branches and branch protection on `main` (D33), an orch-relay skeleton (health, deploy), the e2e harness, and spikes S1 (Secure Enclave P-256 keys on iPhone and Mac: sign, ECDH, and interop with the Python and relay vectors) and S2 (APNs with a notification service extension that decrypts a sealed payload, in the Simulator and on TestFlight). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
 | **P1 Core** | The minimal core per [orch-v2-core.md](orch-v2-core.md), task groups C1–C11: schemas and canon, crypto/custody/identity, store, state derivation, operation registry and CLI contract, agent and human operations, instructions, addon mechanism, import v1 and doctor. No web server, no daemon. | The core e2e scenarios pass; context budget tests pass; the owner uses it on one real workspace. |
 | **P2 Frontend** | The host process (registry behind a socket, holding the workspace key); agent UID on macOS (#287); the dashboard addon (FastAPI, desktop only, new look and feel); the UI addons: start agent, terminals, worktrees, quick tasks, records, activity, widgets, guide, doctor/setup, update, feedback. **Ends with the cutover (D44).** | Daily work runs on v2: `orch import v1` moved the owner's workspaces, `develop` is merged into `main`. |
 | **P3 Relay** | Directory, bridge v2, members and epochs, signed checkpoints on the relay, protocol change orch-relay #24, the host's bridge client. | Desktop browser ↔ workspace over the dev relay, with epoch rotation and checkpoints tested. |
-| **P4 Mobile** | The PWA: pairing v2, workspace cards, partitioned storage, logout and revoke, passkeys, questions and needs-you, push with question.closed, **Drop basics** (a file from the phone to a workspace and back, D43). | Simulator e2e; iPhone sessions 1 and 2. |
+| **P4 Mobile** | The native iPhone app (orch-mobile, D45): pairing v2 with QR scan, workspace cards, per-workspace storage, logout and revoke, Face ID signatures, questions and needs-you, APNs push with question.closed through the notification service extension, **Drop basics** with a share extension (D43). TestFlight builds. | XCUITest e2e in the Simulator; iPhone sessions 1 and 2 on a TestFlight build. |
 | **P5 Apps** | orch-publish: rename done, signed HTTPS API, namespaces, per-recipient tokens, the dashboard pages. | Each demo workspace publishes in its own namespace and cannot touch the other's apps. |
 | **P6 The rest** | Drop in full (inbox claim, documents, links, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off. | Persona "colleague" exchanges a ticket and a document; iPhone session 3. |
 
@@ -452,7 +457,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | # | Item | Decision |
 |---|---|---|
 | D21 | Recovery | A 24-word recovery code only (§5.2). No backup device. |
-| D22 | Crypto suite | Ed25519 and X25519 through WebCrypto. If spike S1 shows they are unreliable on the oldest supported iOS, P-256 everywhere. Always a single suite. |
+| D22 | Crypto suite | ~~Ed25519/X25519~~ Superseded by D46: **P-256 everywhere** (ECDSA, ECDH), so device keys can live in the Secure Enclave. Always a single suite. |
 | D23 | Dev domains | `*.dev.severin.io`: `relay.dev`, `relay-internal.dev`, `pub.dev`, `apps.dev`. |
 | D24 | Rotation | Every 90 days, plus every revoke or removal. |
 | D25 | Transcription | Kept as an opt-in, off by default, and stated in the threat model (§4) as the one exception. |
@@ -461,7 +466,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D28 | Peer auto-start permissions | Peer tickets run only under a Dark AI Factory profile, intersected with the peer rule. One permission system (§9). |
 | D29 | Client-hosted workspaces | Readable by that machine's admins, and only that workspace. Stated in §4 and on the workspace card. |
 | D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
-| D31 | Oldest supported iOS | iOS 18. Spike S1 checks the Ed25519/X25519 suite there (D22). |
+| D31 | Oldest supported iOS | iOS 18 (native app, D45). |
 | D32 | Where e2e lives | Scenarios, runner and iPhone checklists live in orch-dev-kit `e2e/`. orch-core holds only `orch.testing.fake_relay` and the hooks the scenarios need. |
 | D33 | Branches | Only `main` is protected; only the owner merges into it. `develop` and feature branches belong to the bot: it merges a group's feature branch into `develop` itself after T2 and the reviews pass. The owner merges `develop` → `main` at phase ends (or more often). |
 | D34 | Guard in development | The orch-core Claude Code plugin (the guard hook) is disabled in dev sessions. The `orch` CLI's human-only checks stay in the product; on the dev machine a dev-only override lets agents act as the test human in workspaces marked dev in the state dir. Real workspaces ignore it. The guard is still tested by its own tests in T1/T2. |
@@ -475,6 +480,9 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D42 | Phase order | Core → frontend → relay → mobile → apps → the rest (P1–P6, §13). The minimal core is specified in [orch-v2-core.md](orch-v2-core.md). |
 | D43 | Drop basics early | Sending a file from the phone to a workspace and back comes with mobile (P4); inbox claim, documents, links and web agents stay in P6. |
 | D44 | Cutover | v2 replaces v1 for daily work right after P2: `orch import v1` moves the workspaces and `develop` is merged into `main`. |
+| D45 | Native iPhone app | orch mobile is a native app in Swift/SwiftUI (iOS 18+), new repo `orch-mobile`: Core package with protocol v2, notification service extension, share extension, XCUITest. Replaces the PWA (D16). |
+| D46 | P-256 everywhere | The one crypto suite is P-256 (protocol v2 suite 2), so device keys live in the Secure Enclave on iPhone and Apple-silicon Macs. Replaces D22. |
+| D47 | TestFlight and APNs | Apple Developer Program account; builds go out through TestFlight; push goes through APNs with the auth key on the relay. App Store later, if ever. |
 
 ---
 
@@ -631,7 +639,7 @@ agents. On the dev machine, a **dev override** lets an agent act as the scripted
 - Its certificates carry `dev: true`, and real workspaces refuse to pin a person or device with that flag.
 - A real workspace ignores the override completely. A test proves this in every T2.
 
-No secrets in repos. VAPID keys and the like are generated on the VPS and kept there.
+No secrets in repos. The APNs auth key (`.p8`) and signing material stay on the VPS and in the dev machine's keychain, never in a repo.
 
 **Changing the dev kit.** Agents don't edit the live `~/orch-dev` checkout in place: that would change the running
 environment mid-session. Kit changes are made in a separate clone at `~/orch-dev/src/orch-dev-kit` (gitignored), on a
@@ -660,7 +668,7 @@ ports 22/80/443 reachable, root SSH by key, and, if the provider offers it, a sn
 **Packages:** Caddy, uv, Python 3.11+, Node 24 (for node apps in publish), sqlite3, git, ufw, fail2ban,
 unattended-upgrades and **chrony** (the bridge checks timestamps, so clocks must be synced).
 
-**Network:** outbound 443 must reach the Apple and FCM Web Push endpoints.
+**Network:** outbound 443 must reach APNs (`api.push.apple.com`, `api.sandbox.push.apple.com`).
 
 **Certificates:** `/var/lib/caddy` survives `bin/reset`. Let's Encrypt allows 5 duplicate certificates per week, so
 re-provisioning must not request new ones every time. Alternatively, use a DNS-01 wildcard certificate if a DNS
@@ -669,7 +677,7 @@ token is available.
 **Workspace 2 on the VPS:** provisioning installs the orch-core wheel and the `orch-demo-workspace-2` repo for
 `orch-host-ws2`.
 
-**VAPID:** keys are generated on the VPS, with a subject email (the owner's, or a dev alias).
+**APNs:** the owner creates an APNs auth key in the Apple Developer account. It is copied to the VPS (mode 0600) and never committed.
 
 **Services:**
 
@@ -698,25 +706,25 @@ Caddy gets certificates automatically (HTTP-01) for:
 
 | Host | Serves |
 |---|---|
-| `relay.dev.severin.io` | orch-relay (public) and orch mobile at `/app` |
+| `relay.dev.severin.io` | orch-relay (public), plus the universal-link file `/.well-known/apple-app-site-association` |
 | `relay-internal.dev.severin.io` | the second relay instance (stands in for a company relay) |
 | `pub.dev.severin.io` | the orch-publish API |
 | `apps.dev.severin.io` | published shares and apps (its own origin) |
 
-Real HTTPS is required, not a convenience: the PWA install, service workers, Web Push and passkeys all refuse an
-IP address or a self-signed certificate on the phone.
+Real HTTPS is required: iOS refuses plain HTTP for the app's network calls (App Transport Security), and universal
+links need the association file on a valid certificate.
 
 ## 22. Mobile testing
 
 | Layer | Tool | Covers | When |
 |---|---|---|---|
-| Logic | Playwright WebKit and Chromium, phone viewport, CDP virtual authenticator | Pairing via the link (no camera), storage partitioning, sealed fetches, notification replacement through the service worker API | T1/T2, fully automated |
-| iOS behaviour | iOS Simulator (Xcode) with Safari, Add to Home Screen, enrolled Face ID | Installed-PWA behaviour, passkey prompts, Web Push where the Simulator supports it (spike S2), layout | T2 for P3/P4 groups, driven by `xcrun simctl` scripts |
-| Real device | The owner's iPhone, guided session | Camera QR scan, Face ID, Web Push delivery and replacement, logout wipe | End of P3, P4 and P8. About 20 minutes each, run from `e2e/iphone/session-N.md` |
+| Logic | `swift test` on the Core package, against the shared protocol vectors | Crypto, sealing, envelopes, state | T0/T1, fully automated |
+| App behaviour | XCUITest in the iOS Simulator (`xcodebuild test`), enrolled Face ID (`simctl`), simulated push (`xcrun simctl push` with a sealed payload) | Pairing via a pasted link (no camera), workspace cards, questions, notification extension, share extension, logout wipe | T2 for P4 groups |
+| Real device | The owner's iPhone with a TestFlight build, guided session | Camera QR scan, Face ID with the Secure Enclave, real APNs delivery and replacement, share from Photos/Files | End of P4 and P6. About 20 minutes each, run from `e2e/iphone/session-N.md` |
 
 Before an iPhone session, the agent:
 
-1. deploys the build;
+1. deploys the relay build and uploads a TestFlight build;
 2. resets the demo data;
 3. sends the owner the checklist and the relay URL.
 

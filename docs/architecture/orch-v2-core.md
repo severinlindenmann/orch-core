@@ -29,8 +29,8 @@ The core is rebuilt fresh on `develop` (D36). v1 on `main` stays the reference f
 plugins/orch-core/src/orch/
 ├── schema/        JSON Schemas: ticket, body sections, event, workspace, addon manifest, operation I/O
 ├── canon/         JCS (RFC 8785), NFC/LF text normalisation, hash helpers (hash_v)
-├── crypto/        the suite (Ed25519/X25519 per D22, P-256 fallback), sealing, signatures, domain labels
-├── custody/       key backends: macOS keychain (with user-presence access control), libsecret, file (VPS)
+├── crypto/        the suite (P-256 per D46), sealing, signatures, domain labels
+├── custody/       key backends: Secure Enclave on Apple-silicon Macs (user presence), keychain, libsecret, file (VPS)
 ├── identity/      person key, device certificates, recovery code, session grants, member list
 ├── store/         Store.append (the only write path), file lock, keys.jsonl, events, checkpoints,
 │                  projection repair, external-edit detection, .state/index.sqlite
@@ -121,7 +121,7 @@ Each group is one PR into `develop` (or a short stack), and ends with T2.
 | C10 Import and doctor | `import v1` (tickets, history, artifacts), `doctor`, `check`, a commit check | C6 | — |
 | C11 Core exit | The core e2e scenarios, context budget tests, and the owner's daily use on one real workspace | all | — |
 
-C1, C4 and C5 can start in parallel. C2 waits for spike S1, which tests the crypto suite on iOS 18.
+C1, C4 and C5 can start in parallel. C2 waits for spike S1, which tests Secure Enclave P-256 keys and their interop with the shared vectors.
 
 ## 7. New phase order
 
@@ -133,7 +133,7 @@ The owner's build order: **core → frontend → relay → mobile → apps → t
 | **P1 Core** | P1a, part of P1b | This document: C1–C11. |
 | **P2 Frontend** | parts of P1a, P1b | The host process: the registry behind a socket, holding the workspace key. Agents get their own OS user on macOS (#287). The dashboard addon (FastAPI, desktop only, new look and feel). The first-party addons that need a UI or start agents: start agent, terminals, worktrees, quick tasks, records, activity, widgets, guide, doctor/setup, update, feedback. Ends with the cutover (D44). |
 | **P3 Relay** | P2 | orch-relay directory and bridge v2, members and epochs, checkpoints on the relay, desktop-browser e2e, protocol change #24 (members' devices). |
-| **P4 Mobile** | P3, P4 | The PWA with pairing v2, workspace cards, questions and needs-you, push with "answered elsewhere", passkeys, Drop basics (D43). iPhone sessions 1 and 2. |
+| **P4 Mobile** | P3, P4 | The native iPhone app (D45, repo orch-mobile): pairing v2 with QR scan, workspace cards, questions and needs-you, APNs push with "answered elsewhere", Face ID signatures from the Secure Enclave, Drop basics with a share extension (D43). TestFlight; iPhone sessions 1 and 2. |
 | **P5 Apps** | P7 | orch-publish: signed HTTPS API, namespaces, the dashboard pages. |
 | **P6 The rest** | P5, P6, P8, Phase 2 list | Drop (files, inbox claim, documents, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off, iPhone session 3. |
 

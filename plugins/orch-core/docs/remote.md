@@ -5,6 +5,10 @@ it through TIX, end to end encrypted. Nothing listens on the internet: the host 
 sealed requests, answers each by running the dashboard in memory, and posts sealed answers back. The protocol is the
 orch-tix bridge protocol (`docs/bridge-protocol.md` in orch-tix).
 
+To check the whole path, `docs/remote-validation.md` has the automated end-to-end run (two dashboards, a local TIX and
+one Chromium; `-m e2e_remote`, not in the default test run) and the short list to repeat on a real phone. A relay on
+this machine (`http://localhost:<port>`) is accepted for that; any other relay must be `https`.
+
 ## Running it
 
 ```

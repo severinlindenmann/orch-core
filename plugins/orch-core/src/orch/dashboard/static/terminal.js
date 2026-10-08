@@ -133,6 +133,23 @@
   };
   // Only a page served through a host batches; the local page posts as it always did.
   const keySender = (host, deps) => (host.remote ? makeBatcher(deps) : null);
+  // Asking the session for a size is a typing-lease route over the bridge: watching must stay read-only there, so a
+  // bridged page posts a size only for something the person did (a view or zoom button), never for the page opening,
+  // a resize, a rotation or the keyboard. Locally every fit posts, as ever.
+  const makeSizer = ({ remote, gone, want, current, post }) => {
+    let sent = null;  // the last size asked for, so a burst of resize events asks once
+    return (explicit) => {
+      if (remote && !explicit) return;
+      if (gone()) return;
+      const w = want();
+      if (!w) return;
+      const c = current();
+      if (w.cols === c.cols && w.rows === c.rows) return;  // already that size
+      if (sent && sent.cols === w.cols && sent.rows === w.rows) return;
+      sent = w;
+      post(w);
+    };
+  };
   // batcher:end
 
   // ---- sizes: "whole" scales the whole tmux window into its box; "readable" keeps a chosen font and follows the bottom
@@ -286,19 +303,18 @@
   // The tmux window takes the size that fills this view at the chosen font, watching or typing, so the agent draws for
   // this screen (with two browsers on one session, the last one to resize wins). The phone keyboard shrinks the view:
   // the visual viewport says so.
-  const sizeTmux = () => {
-    if (term.dataset.mode === "gone") return;
-    const m = charBox(pre);
-    const font = view === "readable" ? size : 13;
-    const box = inner(pre);
-    if (box.w <= 0 || box.h <= 0) return;
-    const want = { cols: Math.floor(box.w / (font * m.w)), rows: Math.floor(box.h / (font * m.h)) };
-    if (want.cols === Number(pre.dataset.cols) && want.rows === Number(pre.dataset.rows)) return; // already that size
-    if (sent && sent.cols === want.cols && sent.rows === want.rows) return;
-    sent = want;
-    post("/size", want);
-  };
-  let sent = null; // the last size asked for, so a burst of resize events asks once
+  const sizeTmux = makeSizer({
+    remote: Boolean(host.remote), gone: () => term.dataset.mode === "gone",
+    want: () => {
+      const m = charBox(pre);
+      const font = view === "readable" ? size : 13;
+      const box = inner(pre);
+      if (box.w <= 0 || box.h <= 0) return null;
+      return { cols: Math.floor(box.w / (font * m.w)), rows: Math.floor(box.h / (font * m.h)) };
+    },
+    current: () => ({ cols: Number(pre.dataset.cols), rows: Number(pre.dataset.rows) }),
+    post: (want) => post("/size", want),
+  });
   let fitTimer = null;
   const refit = () => { clearTimeout(fitTimer); fitTimer = setTimeout(() => { layout(); sizeTmux(); }, 150); };
   window.addEventListener("resize", refit);
@@ -311,14 +327,14 @@
     follow = true;
     paint();
     layout();
-    sizeTmux();
+    sizeTmux(true);
   }));
   document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("click", () => {
     size = Math.max(9, Math.min(22, size + Number(b.dataset.zoom)));
     store.set("orch.terminals.size", size);
     if (view !== "readable") { view = "readable"; store.set("orch.terminals.view", view); paint(); }
     layout();
-    sizeTmux();
+    sizeTmux(true);
   }));
 
   let lastScreen = null;

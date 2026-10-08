@@ -368,24 +368,37 @@ def _unpushed(ws, top: Path, base: str, head: str) -> tuple[int, int] | None:
     return total, other
 
 
-_CONFIG_GUARD = (r"^(remote\..*\.(pushurl|proxy|uploadpack|receivepack|vcs)|url\..*\.(insteadof|pushinsteadof)"
-                 r"|core\.(sshcommand|askpass|gitproxy)|http\.(.*\.)?(proxy|extraheader)|credential\..*helper)$")
 # Transports orch's network calls may use; command-line -c beats repository config. Tests may add "file".
 NET_PROTOCOLS = ("https", "ssh")
 _NO_HOOKS = ("-c", "core.hooksPath=/dev/null")  # ls-remote, fetch and rebase need none; commit and push keep theirs
 
 
-def _repo_config_redirects(top: Path) -> str | None:
-    """A key set by the repository itself (local or worktree scope, includes too) that changes where a push goes or how
-    it authenticates; None when there is none."""
-    rc, out = _run(top, "config", "--show-origin", "--show-scope", "--get-regexp", _CONFIG_GUARD)
-    if rc not in (0, 1):
-        return "cannot read the repository git config"
+_BAD_SECTIONS = frozenset({"url", "http", "credential", "protocol"})
+_BAD_CORE = frozenset({"sshcommand", "askpass", "gitproxy"})
+
+
+def _repo_config_redirects(top: Path, remote: str) -> bool:
+    """True when the repository itself (local or worktree scope; include files count as local) sets anything that
+    changes how a push connects: whole sections url, http, credential and protocol, core.sshCommand/askPass/gitProxy,
+    and for the remote in use anything but its url and fetch. An allowlist by section, not a list of keys."""
+    rc, out = _run(top, "config", "--show-scope", "--show-origin", "--list")
+    if rc != 0:
+        return True
     for line in out.splitlines():
-        scope = line.split("\t", 1)[0]
-        if scope in ("local", "worktree"):
-            return line.split("\t")[-1].split()[0] if line.split("\t")[-1].split() else "a setting"
-    return None
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        if parts[0] not in ("local", "worktree"):
+            continue
+        key = parts[2].split("=", 1)[0].lower()
+        section = key.split(".", 1)[0]
+        if section in _BAD_SECTIONS or (section == "core" and key.split(".", 1)[1] in _BAD_CORE):
+            return True
+        if key.startswith(f"remote.{remote.lower()}.") and key.rsplit(".", 1)[1] not in ("url", "fetch"):
+            return True
+        if section == "remote" and key.count(".") >= 2 and key.rsplit(".", 1)[1] in ("pushurl", "proxy", "uploadpack", "receivepack", "vcs"):
+            return True
+    return False
 
 
 def push_records(ws, *, auto: bool = False) -> dict:
@@ -407,7 +420,9 @@ def push_records(ws, *, auto: bool = False) -> dict:
         if left <= 0:
             return -1, "timed out"
         if net:
-            proto = ["-c", "protocol.allow=never", *(x for p in NET_PROTOCOLS for x in ("-c", f"protocol.{p}.allow=always"))]
+            proto = ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never",
+                     *(x for p in NET_PROTOCOLS for x in ("-c", f"protocol.{p}.allow=always"))]
+            env = {**(env or {}), "GIT_ALLOW_PROTOCOL": ":".join(NET_PROTOCOLS)}  # overrides every protocol.* setting
             args = (*proto, *(_NO_HOOKS if args[0] in ("ls-remote", "fetch") else ()), *args)
         elif args[0] == "rebase" or args[:1] == ("-c",):
             args = (*_NO_HOOKS, *args)
@@ -434,8 +449,8 @@ def push_records(ws, *, auto: bool = False) -> dict:
         rc3, other_remote = run("config", key)
         if rc3 == 0 and other_remote and other_remote != remote:
             return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
-    if _repo_config_redirects(top):
-        return no("repository git config changes where pushes go or how they sign in; push by hand")
+    if _repo_config_redirects(top, remote):
+        return no("repository git config changes how pushes connect; push by hand")
     rc, urls = run("config", "--get-all", f"remote.{remote}.url")
     if rc != 0 or len(urls.splitlines()) != 1:
         return no(f"remote {remote} must have exactly one URL; push by hand")
@@ -484,14 +499,14 @@ def push_records(ws, *, auto: bool = False) -> dict:
         rc, out = run("fetch", "--no-tags", remote, merge, net=True, env=env)  # objects only; no tracking ref is trusted
         if rc != 0 or run("cat-file", "-e", f"{sha}^{{commit}}")[0] != 0:
             return no(f"{remote} has commits this clone lacks and they could not be fetched; fetch and rebase yourself")
-        if run("rev-parse", "--verify", "HEAD") != (0, head):
-            return no("HEAD changed while pushing; try again")
         counts = _unpushed(ws, top, sha, head)
         if counts is None or counts[1] or not counts[0]:
             return no("the remote moved and the branch holds other commits; fetch and rebase it yourself")
         rc, dirty = run("status", "--porcelain", "--untracked-files=no")
         if rc != 0 or dirty:
             return no("the remote moved; tracked changes in the working tree block a rebase onto it")
+        if run("rev-parse", "--verify", "HEAD") != (0, head):
+            return no("HEAD changed while pushing; try again")
         rc, out = run("-c", "rebase.updateRefs=false", "-c", "rebase.autoSquash=false", "-c", "rebase.autoStash=false",
                       "rebase", sha)
         if rc != 0:

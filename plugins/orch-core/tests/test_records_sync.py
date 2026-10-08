@@ -192,9 +192,9 @@ def test_push_target_is_only_the_upstream(repo, ws, put, remote, tmp_path):
     result = gitfiles.sync_records(ws, push=True)
     assert result["committed"] and not result["pushed"] and "pushRemote" in result["reason"]
     _git(repo, "config", "--unset", "branch.main.pushRemote")
-    _git(repo, "config", "remote.origin.push", "+refs/heads/*:refs/heads/*")  # repo config cannot widen the refspec
+    _git(repo, "config", "remote.origin.push", "+refs/heads/*:refs/heads/*")  # a widened refspec in repo config
     _git(repo, "branch", "unrelated")
-    assert gitfiles.push_records(ws)["pushed"]
+    assert "push by hand" in gitfiles.push_records(ws)["reason"]  # is refused outright
     assert _git(bare, "branch", "--list", "unrelated").stdout.strip() == ""
 
 
@@ -469,3 +469,48 @@ def test_a_remote_with_two_urls_is_refused(repo, ws, put, remote):
     _git(repo, "config", "--add", "remote.origin.url", "/elsewhere.git")
     result = gitfiles.sync_records(ws, push=True)
     assert not result["pushed"] and "exactly one URL" in result["reason"]
+
+
+@needs_git
+def test_repo_config_cannot_allow_a_transport(repo, ws, put, remote, monkeypatch):
+    bare, _ = remote
+    monkeypatch.setattr(gitfiles, "NET_PROTOCOLS", ("https", "ssh"))
+    put("backlog", size="m")
+    gitfiles.commit_records(ws)
+    for proto, url in (("ext", "ext::sh -c touch% /tmp/orch-ext-marker2"), ("file", f"file://{bare}")):
+        _git(repo, "config", f"protocol.{proto}.allow", "always")
+        _git(repo, "remote", "set-url", "origin", url)
+        result = gitfiles.push_records(ws)
+        assert not result["pushed"]
+    assert not os.path.exists("/tmp/orch-ext-marker2") and _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+@pytest.mark.parametrize("key", ["http.somethingnew", "credential.https://h.username", "protocol.allow",
+                                 "remote.origin.foo", "url.x.whatever"])
+def test_any_local_key_in_a_connection_section_is_refused(repo, ws, put, remote, key):
+    put("backlog", size="m")
+    _git(repo, "config", key, "1")
+    result = gitfiles.sync_records(ws, push=True)
+    assert not result["pushed"] and "push by hand" in result["reason"]
+
+
+@needs_git
+def test_head_must_not_move_before_a_rebase(repo, ws, put, remote, monkeypatch):
+    bare, other = remote
+    _touch(other / "src" / "x.py")
+    _git(other, "add", "-A")
+    _git(other, "commit", "-qm", "theirs")
+    _git(other, "push", "-q", "origin", "main")
+    put("backlog", size="m")
+    gitfiles.commit_records(ws)
+    real = gitfiles._unpushed
+
+    def moving(*a):
+        out = real(*a)
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "sneaky")
+        return out
+
+    monkeypatch.setattr(gitfiles, "_unpushed", moving)
+    result = gitfiles.push_records(ws)
+    assert not result["pushed"] and "HEAD changed" in result["reason"]

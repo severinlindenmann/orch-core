@@ -1,26 +1,17 @@
 [project]
 name = "orch-core"
-version = "0.4.5"
-description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses"
+version = "2.0.0.dev0"
+description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses (v2 core)"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
-dependencies = ["typer>=0.12", "pyyaml>=6.0", "jsonschema>=4.21", "filelock>=3.13", "markdown-it-py>=3.0"]
-
-[project.optional-dependencies]
-dashboard = [
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
-    "jinja2>=3.1",
-    "markdown-it-py>=3.0",
-    "watchfiles>=0.21",
-    "python-multipart>=0.0.9",
-    "segno>=1.6",
-    "cryptography>=42",  # Orch Remote's bridge (orch.remote.bridge_host), imported only when the bridge is used
-]
-dev = ["pytest>=8", "httpx>=0.27", "pytest-xdist>=3.6"]
+dependencies = ["cryptography>=43"]
 
 [project.scripts]
-orch = "orch.cli:main"
+orch = "orch.cli.main:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -29,16 +20,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/orch"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"skills" = "orch/instructions/skills"
-"addons" = "orch/default_addons"
-"docs/tasks-view.schema.json" = "orch/schemas/tasks-view.schema.json"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The 15 slowest tests are listed after every run (#229).
 addopts = "--durations=15"
 markers = [
-    "e2e_remote: Orch Remote end to end (two dashboards, a local TIX and one Chromium); skipped unless selected with -m e2e_remote, see docs/remote-validation.md",
-    "slow: builds wheels or venvs, re-runs cases against mutants or measures a performance budget; a quick loop skips them with -m 'not slow' (CI runs everything)",
+    "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

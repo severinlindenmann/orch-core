@@ -14,6 +14,7 @@ import {
   SquareKanban,
 } from 'lucide-react'
 import { api } from '@/api/client'
+import { useRole } from '../useRole'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { useSlot } from '@/addon-ui/slots'
 import { OrbitMark } from '@/brand/OrbitMark'
@@ -125,7 +126,7 @@ export function Sidebar() {
   const qc = useQueryClient()
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const navItems = useSlot('nav')
-  const role = workspace?.members.find((m) => m.person === me?.person)?.role ?? me?.role
+  const role = useRole() ?? me?.role
   const grantTime = me?.grant?.until.slice(11, 16)
   const { collapsed, toggle } = useSidebarCollapsed()
 

@@ -4,12 +4,14 @@ import { useRouter, useRouterState } from '@tanstack/react-router'
 import { Bot, Check, Clock, FileText, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
+import { can } from '@/api/permissions'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
 import { CommandDialog, CommandEmpty, CommandInput, CommandList } from '@/components/ui/command'
 import { iconByName } from '../../icons'
 import { useWorkspace } from '../../workspace'
+import { useRole } from '../../useRole'
 import { STATUS_LABEL } from '../../pages/board/lib'
 import { availableActions, GATE_LABEL } from '../../pages/ticket/actions'
 import { SignDialog } from '../../pages/ticket/SignDialog'
@@ -49,8 +51,7 @@ export function CommandPalette() {
   const addonNav = useSlot('nav')
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const person = me?.person
-  const role = workspace?.members.find((m) => m.person === person)?.role
-  const canEdit = !!role && role !== 'viewer'
+  const role = useRole()
 
   // Recent items: every visited ticket and page, per viewer.
   const [recent, setRecent] = useState<RecentItem[]>([])
@@ -131,7 +132,7 @@ export function CommandPalette() {
   ]
 
   const create: Entry[] = [
-    ...(canEdit || !role ? [{ id: 'new-ticket', label: 'New ticket', icon: <Plus />, hint: 'create', keys: keysFor('new-ticket'), run: () => go('/tickets/new') }] : []),
+    ...(can(role, 'ticket.create') || !role ? [{ id: 'new-ticket', label: 'New ticket', icon: <Plus />, hint: 'create', keys: keysFor('new-ticket'), run: () => go('/tickets/new') }] : []),
     {
       id: 'save-view',
       label: 'Save view…',
@@ -168,7 +169,7 @@ export function CommandPalette() {
     const t = ticket.data
     // Gate on the viewer's role in the ticket's own workspace, which can differ from the current one.
     const ticketRole = viewer.role
-    if (!ticketKey || !t || !viewer.ready || !ticketRole || ticketRole === 'viewer') return []
+    if (!ticketKey || !t || !viewer.ready || !can(ticketRole, 'ticket.act')) return []
     const av = availableActions(t, viewer)
     const sign = (a: HumanAction) => {
       close()
@@ -178,7 +179,7 @@ export function CommandPalette() {
     // Claim and Release are for agents only (see the claim box on the ticket page): never offered to people.
     out.push({ id: 'comment', label: 'Comment', icon: <MessageSquare />, run: () => (setQ(''), setMode('comment')) })
     out.push({ id: 'ask', label: 'Ask a question', icon: <MessageSquareReply />, run: () => (setQ(''), setMode('ask-to')) })
-    if (ticketRole === 'owner' || ticketRole === 'maintainer') out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
+    if (can(ticketRole, 'ticket.move')) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
     for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${GATE_LABEL[g].toLowerCase()}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
     return out

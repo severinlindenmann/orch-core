@@ -4,6 +4,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
+import { can } from '@/api/permissions'
 import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { useAddons } from '@/addon-ui'
 import { Button } from '@/components/ui/button'
@@ -11,6 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useWorkspace } from '@/app/workspace'
+import { useRole } from '@/app/useRole'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
@@ -111,8 +113,8 @@ export function TicketsPage() {
   const { data: addons = [] } = useAddons()
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const role = workspace?.members.find((m) => m.person === me?.person)?.role
-  const canBulk = role === 'owner' || role === 'maintainer'
+  const role = useRole()
+  const canBulk = can(role, 'ticket.move')
 
   // Status is filtered here (not on the server) so the status chips can show counts for the other filters.
   const serverParams = useMemo(
@@ -249,7 +251,7 @@ export function TicketsPage() {
           wsId={wsId}
           search={search}
           me={me?.person}
-          canShare={!!role && role !== 'viewer'}
+          canShare={can(role, 'view.share')}
           onApply={(params) => void navigate({ search: params })}
           onClear={clear}
         />

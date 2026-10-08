@@ -166,6 +166,15 @@ describe('mock tickets search', () => {
       expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(4 * 3600_000)
       expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' && e.grant === g.id)).toBe(true)
     })
+    it('a member cannot issue a grant or revoke their own (owners and maintainers only)', async () => {
+      const { api, store } = setup()
+      const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+      expect(store.roleIn(cli, 'p_tom')).toBe('member')
+      store.appendWs(cli, { type: 'grant.issued', actor: 'p_tom', grant: 'gr_tom', person: 'p_tom', scope: 'all', until: '2026-10-09T18:00:00Z', hours: 4, sessions: [] })
+      store.setViewer('p_tom')
+      await expect(api.issueGrant(cli, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      await expect(api.revokeGrant(cli, 'gr_tom')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+    })
     it('an agent actor cannot issue or revoke a grant (human_only)', () => {
       const store = createMockStore({ persist: false })
       const ws = store.workspaces[0].id

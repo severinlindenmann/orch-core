@@ -36,6 +36,7 @@ import otherFixture from './fixtures/other-workspaces.json'
 import viewsFixture from './fixtures/views.json'
 import workspacesFixture from './fixtures/workspaces.json'
 import { roleMeets } from '@/api/roles'
+import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
@@ -248,7 +249,7 @@ export class MockStore {
   }
 
   roleIn(workspaceId: string, person: string) {
-    return this.workspaces.find((w) => w.id === workspaceId)?.members.find((m) => m.person === person)?.role
+    return roleOf(this.workspaces.find((w) => w.id === workspaceId), person)
   }
 
   workspaceOf(key: string): Workspace | undefined {
@@ -425,12 +426,12 @@ export class MockStore {
 
   /**
    * Issue a grant for `actor`. Human only: an agent actor is refused with `human_only`, whatever its role.
-   * Owners and maintainers may issue; viewers may not.
+   * Owners and maintainers may issue (`grant.issue`); members and viewers may not.
    */
   issueGrant(wsId: string, req: { hours: number; scope: 'all' }, actor: Actor): GrantResult {
     if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can issue a grant.', 'Run orch grant yourself, or issue it from the dashboard.')
     const role = this.roleIn(wsId, actor.id)
-    if (!role || role === 'viewer') return refuse(403, 'forbidden', 'Viewers cannot issue grants.', 'Ask an owner or maintainer.')
+    if (!can(role, 'grant.issue')) return refuse(403, 'forbidden', 'Only owners and maintainers issue grants.', 'Ask an owner or maintainer.')
     if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > 12) return refuse(400, 'validation', 'A grant lasts 1 to 12 hours.')
     if (req.scope !== 'all') return refuse(400, 'validation', 'Only the scope "all" can be issued here.')
     const id = `gr_01JA${String(this.grants(wsId).length).padStart(2, '0')}`
@@ -440,7 +441,7 @@ export class MockStore {
   }
 
   /**
-   * Revoke a grant: only the grant's person or a workspace owner, and only a person. Ends the claims and
+   * Revoke a grant: an owner, or a maintainer their own (`canRevokeGrant`), and only a person. Ends the claims and
    * leases of the sessions that use it (`reason: 'grant revoked'`); those sessions then derive as stopped.
    */
   revokeGrant(wsId: string, id: string, actor: Actor): GrantResult {
@@ -448,8 +449,8 @@ export class MockStore {
     const g = this.grants(wsId).find((x) => x.id === id)
     if (!g) return refuse(404, 'not_found', `No grant ${id}`)
     const role = this.roleIn(wsId, actor.id)
-    if (!role || role === 'viewer') return refuse(403, 'forbidden', 'Viewers cannot revoke grants.')
-    if (g.person !== actor.id && role !== 'owner') return refuse(403, 'forbidden', `Only ${g.person} or an owner can revoke ${id}.`)
+    if (!canRevokeGrant(role, g.person, actor.id))
+      return refuse(403, 'forbidden', can(role, 'grant.issue') ? `Only ${g.person} or an owner can revoke ${id}.` : 'Only owners and maintainers revoke grants.')
     if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
     this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
     const roots = g.sessions
@@ -560,7 +561,7 @@ export class MockStore {
     if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can change addons.', 'Agents never install, grant or enable addons.')
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w) return refuse(404, 'not_found', 'No such workspace')
-    if (this.roleIn(wsId, actor.id) !== 'owner') return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
+    if (!can(this.roleIn(wsId, actor.id), 'addon.manage')) return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
     const st = w.addons[name]
     const done = () => ({ ok: true as const, addon: this.workspaceAddons(wsId).find((a) => a.name === name) ?? ({ name } as AddonManifest) })
     if (req.op === 'install') {
@@ -638,7 +639,7 @@ export class MockStore {
     const ws = this.workspaceOf(t.key)!
     const policy = ws.gates[gate]
     const role = this.roleIn(ws.id, person)
-    if (!role || role === 'viewer') return 'Viewers cannot approve.'
+    if (!can(role, 'ticket.act')) return 'Viewers cannot approve.'
     if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
       return policy.approvers === 'reviewers'
         ? 'Only a reviewer of this ticket can approve this gate.'
@@ -691,21 +692,18 @@ export class MockStore {
 
   /** What needs `person`: viewers (and non-members) get an empty list. */
   needsYou(workspaceId: string, person = this.viewer): NeedsYouItem[] {
-    const role = this.roleIn(workspaceId, person)
-    if (!role || role === 'viewer') return []
+    if (!can(this.roleIn(workspaceId, person), 'ticket.act')) return []
     return this.openItems(workspaceId, person)
   }
 
   /** Everything open in the workspace, for the read-only view (viewers only). */
   readOnlyOpen(workspaceId: string, person = this.viewer): NeedsYouItem[] {
-    const role = this.roleIn(workspaceId, person)
-    return !role || role === 'viewer' ? this.openItems(workspaceId) : []
+    return can(this.roleIn(workspaceId, person), 'ticket.act') ? [] : this.openItems(workspaceId)
   }
 
   /** May the current viewer decide addon decisions in `wsId`? */
   canDecide(wsId: string): boolean {
-    const role = this.roleIn(wsId, this.viewer)
-    return role === 'owner' || role === 'maintainer'
+    return can(this.roleIn(wsId, this.viewer), 'addon.decide')
   }
 
   /** Open decisions of the addons that are active in `wsId`; none for a viewer. */

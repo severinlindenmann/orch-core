@@ -1,12 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
+import { can } from '@/api/permissions'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useAddonStates, selectContributions } from '@/addon-ui/slots'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../workspace'
+import { useRole } from '../useRole'
 import { usePageHeader } from '../shell/ShellUi'
 
 /** Renders the `nav` contribution `page` of addon `name` (declarative, inside the addon frame). */
@@ -14,14 +14,14 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
   const { data: addons, isLoading } = useAddons()
   const { workspace } = useWorkspace()
   const { [name]: addon } = useAddonStates(workspace?.id, addonActive(workspace, name) ? [name] : [])
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const role = useRole()
   const c = selectContributions(addons ?? [], 'nav', { workspace, addon }).find((x) => x.addon === name && x.id === page)
   usePageHeader(c ? c.title : name)
 
   if (isLoading || !workspace) return <Skeleton className="h-40 w-full max-w-3xl" />
   if (!addonActive(workspace, name)) {
     const title = addons?.find((x) => x.name === name)?.title ?? name
-    const isOwner = workspace.members.find((m) => m.person === me.data?.person)?.role === 'owner'
+    const isOwner = can(role, 'addon.manage')
     return (
       <div className="space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">{title}</h1>

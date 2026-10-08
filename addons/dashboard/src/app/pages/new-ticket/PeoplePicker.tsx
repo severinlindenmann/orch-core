@@ -1,4 +1,5 @@
 import type { Member, Visibility } from '@/api/types'
+import { can } from '@/api/permissions'
 import { cn } from '@/lib/utils'
 
 export interface PeopleValue {
@@ -52,7 +53,7 @@ export function PeoplePicker({
   visibility: Visibility
   onVisibility: (v: Visibility) => void
 }) {
-  const doers = members.filter((m) => m.role !== 'viewer')
+  const doers = members.filter((m) => can(m.role, 'ticket.act'))
   const restricted = typeof visibility === 'object'
   return (
     <div className="space-y-3">

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '@/api/client'
+import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -36,10 +37,10 @@ export function AgentsPage() {
 
   const now = today.data.now
   const viewer = me.data.person
-  const role = workspace?.members.find((m) => m.person === viewer)?.role
-  const canAct = role === 'owner' || role === 'maintainer'
+  const role = roleOf(workspace, viewer)
+  const canAct = can(role, 'grant.issue')
   const name = (id: string) => workspace?.members.find((m) => m.person === id)?.name ?? id
-  const canRevoke = (g: GrantInfo) => canAct && (role === 'owner' || g.person === viewer)
+  const canRevoke = (g: GrantInfo) => canRevokeGrant(role, g.person, viewer)
 
   const working = sessions.data.filter((s) => s.state === 'working').length
   const waiting = sessions.data.filter((s) => s.state === 'waiting' && s.for === viewer).length

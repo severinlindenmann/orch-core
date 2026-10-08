@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, Copy, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
+import { can } from '@/api/permissions'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -54,7 +55,7 @@ function PeopleRow({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer 
 function ClaimBox({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const c = ticket.claim
   const leases = ticket.tasks_state.filter((t) => t.lease)
-  const readOnly = !viewer.role || viewer.role === 'viewer'
+  const readOnly = !can(viewer.role, 'ticket.act')
   const agentOnly = (verb: string) => `Only agents ${verb} tickets: run "orch ${verb} ${ticket.key}". People cannot ${verb} for an agent.`
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-surface px-3 py-2 text-[13px]" data-testid="claim-box">

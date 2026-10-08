@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Bot, Cpu, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '@/api/client'
+import { roleOf } from '@/api/permissions'
 import type { Member, Priority, Role, Status, TicketDocument } from '@/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
@@ -27,7 +28,7 @@ export function useViewer(ticketKey: string): Viewer {
   const person = me.data?.person ?? ''
   return {
     person,
-    role: members.find((m) => m.person === person)?.role,
+    role: roleOf(workspace, person),
     members,
     name: (id) => displayName(members, id),
     ready: !ws.isPending && !me.isPending,

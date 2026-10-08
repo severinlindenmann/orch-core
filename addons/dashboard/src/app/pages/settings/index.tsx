@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
+import { can, roleOf } from '@/api/permissions'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { useSlot } from '@/addon-ui/slots'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -41,7 +42,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
       </div>
     )
   }
-  const isOwner = workspace.members.find((m) => m.person === me.data.person)?.role === 'owner'
+  const isOwner = can(roleOf(workspace, me.data.person), 'settings')
   const current = addon ? `addon/${addon}` : (tab ?? 'general')
 
   return (

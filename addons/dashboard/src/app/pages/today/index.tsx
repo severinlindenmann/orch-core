@@ -2,10 +2,12 @@ import { useMemo } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { CircleCheck, Eye } from 'lucide-react'
 import { api } from '@/api/client'
+import { can } from '@/api/permissions'
 import type { NeedsYouItem, TicketDocument } from '@/api/types'
 import { AddonSlotStack } from '@/addon-ui'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
+import { useRole } from '../../useRole'
 import { usePageHeader } from '../../shell/ShellUi'
 import { AddonDecisionCard, ApprovalCard, QuestionCard, VerdictCard } from './cards'
 import { AgentsAtWork, Recently } from './side'
@@ -26,8 +28,8 @@ export function TodayPage() {
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const decisionsQ = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
 
-  const role = workspace?.members.find((m) => m.person === me.data?.person)?.role
-  const readOnly = role === undefined || role === 'viewer'
+  const role = useRole()
+  const readOnly = !can(role, 'ticket.act')
 
   // Viewers get no personal queue from the API; it sends what is open in the workspace instead, read only.
   const items: NeedsYouItem[] = useMemo(

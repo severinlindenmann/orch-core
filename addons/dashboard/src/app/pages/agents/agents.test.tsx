@@ -46,6 +46,15 @@ describe('Agents page', () => {
     expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
   })
+  it('a member cannot issue or revoke grants either (owners and maintainers only)', async () => {
+    renderApp('/agents', {
+      viewer: 'p_tom',
+      setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'member.role_changed', person: 'p_tom', role: 'member', from: 'viewer' }),
+    })
+    await screen.findByRole('tree', { name: 'Sessions' })
+    expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
+  })
   it('issues a grant after signing', async () => {
     const { user } = renderApp('/agents')
     await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))

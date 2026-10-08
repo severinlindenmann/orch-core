@@ -5,6 +5,7 @@ import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { can, roleOf } from '@/api/permissions'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -179,8 +180,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
   const [serverError, setServerError] = useState<string | null>(null)
   const leaving = useRef(false)
   const titleRef = useRef<HTMLInputElement>(null)
-  const role = workspace.members.find((m) => m.person === me.person)?.role
-  const canCreate = !!role && role !== 'viewer'
+  const canCreate = can(roleOf(workspace, me.person), 'ticket.create')
   const dirty = hasText(draft)
   const check = problems(draft)
 

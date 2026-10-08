@@ -4,6 +4,7 @@ import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, Wo
 import { STATUSES } from '@/api/types'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
+import { can } from '@/api/permissions'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -76,7 +77,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
   const role = store.roleIn(ws.id, me)
   const a = ctx.body as ActionRequest | null
   if (!a || typeof a !== 'object' || !('action' in a)) return fail(400, 'validation', 'Body must be {action, ...}')
-  if (!role || role === 'viewer') return fail(403, 'forbidden', 'Viewers cannot change tickets.', 'Ask an owner or maintainer.')
+  if (!can(role, 'ticket.act')) return fail(403, 'forbidden', 'Viewers cannot change tickets.', 'Ask an owner or maintainer.')
 
   const finish = (event: OrchEvent) => ok({ ok: true, event, ticket: store.ticket(key)! })
 
@@ -85,7 +86,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       const q = t.questions_state.find((x) => x.id === a.question)
       if (!q) return fail(404, 'question.not_found', `No question ${a.question} on ${key}`)
       if (q.state === 'answered') return fail(409, 'question.already_answered', `${q.id} was already answered by ${q.answer?.by}.`, 'The first valid answer wins.')
-      if (q.to !== me && role !== 'owner') return fail(403, 'question.not_addressee', `${q.id} is addressed to ${q.to}.`)
+      if (q.to !== me && !can(role, 'question.answer.any')) return fail(403, 'question.not_addressee', `${q.id} is addressed to ${q.to}.`)
       if (a.option && !q.options?.some((o) => o.key === a.option)) return fail(400, 'validation', `Unknown option ${a.option}`)
       if (!a.option && !a.text?.trim()) return fail(400, 'validation', 'Pick an option or write an answer.')
       const event = store.append(key, { type: 'question.answered', question: q.id, option: a.option, text: a.text?.trim() || undefined })
@@ -149,12 +150,12 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
     }
     case 'set_status': {
       if (!STATUSES.includes(a.status as Status)) return fail(400, 'validation', `Unknown status ${a.status}`)
-      if (role !== 'owner' && role !== 'maintainer') return fail(403, 'forbidden', 'Only owners and maintainers move tickets.')
+      if (!can(role, 'ticket.move')) return fail(403, 'forbidden', 'Only owners and maintainers move tickets.')
       if (a.status === 'done') return fail(409, 'human_only', 'Done is reached by a verdict', 'Give the verdict on the ticket page', false)
       return finish(store.append(key, { type: 'status.changed', to: a.status }))
     }
     case 'add_label': {
-      if (role !== 'owner' && role !== 'maintainer') return fail(403, 'forbidden', 'Only owners and maintainers label tickets.')
+      if (!can(role, 'ticket.label')) return fail(403, 'forbidden', 'Only owners and maintainers label tickets.')
       const label = a.label?.trim().toLowerCase()
       if (!label) return fail(400, 'validation', 'Write a label first.')
       if (t.labels.includes(label)) return finish(store.append(key, { type: 'labels.changed', add: [] }))
@@ -247,7 +248,7 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
   const wsId = ctx.params.ws
   const ws = store.workspaces.find((w) => w.id === wsId)
   if (!ws) return fail(404, 'not_found', 'No such workspace')
-  if (store.roleIn(wsId, store.viewer) !== 'owner') return fail(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
+  if (!can(store.roleIn(wsId, store.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')
   const b = ctx.body as SettingsRequest | null
   if (!b || typeof b !== 'object' || !('op' in b)) return fail(400, 'validation', 'Body must be {op, ...}')
   const done = () => ok({ ok: true, workspace: store.workspaceList().find((w) => w.id === wsId)! })
@@ -315,8 +316,7 @@ export function buildRouter(): MockRouter {
     const wsId = c.params.ws
     const ws = s.workspaces.find((w) => w.id === wsId)
     if (!ws) return fail(404, 'not_found', 'No such workspace')
-    const role = s.roleIn(wsId, s.viewer)
-    if (!role || role === 'viewer') return fail(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
+    if (!can(s.roleIn(wsId, s.viewer), 'ticket.create')) return fail(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
     const b = c.body as NewTicketRequest | null
     if (!b || typeof b !== 'object' || !(b.type in SECTIONS_BY_TYPE)) return fail(400, 'validation', 'Body must be a new ticket.')
     const title = (b.title ?? '').trim()
@@ -364,7 +364,7 @@ export function buildRouter(): MockRouter {
     const b = c.body as { name?: string; shared?: boolean; params?: ViewParams } | null
     const name = b?.name?.trim()
     if (!name) return fail(400, 'validation', 'Name the view.')
-    if (b?.shared && role === 'viewer') return fail(403, 'forbidden', 'Viewers can only save personal views.', 'Uncheck "Share with the workspace".')
+    if (b?.shared && !can(role, 'view.share')) return fail(403, 'forbidden', 'Viewers can only save personal views.', 'Uncheck "Share with the workspace".')
     const n = s.wsEventsOf(ws).length + 1
     const view = `v_${n}`
     s.appendWs(ws, { type: 'view.saved', view, name, shared: !!b?.shared, params: b?.params ?? {} })

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { api } from '@/api/client'
+import { roleOf } from '@/api/permissions'
 import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -47,7 +48,7 @@ function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; ind
         <RelayDot />
       </div>
       <div className="flex items-center gap-2 px-1.5 text-[11px] text-text-faint">
-        <span>{w.members.find((m) => m.person === viewer)?.role}</span>
+        <span>{roleOf(w, viewer)}</span>
         {keys && <kbd className="ml-auto rounded bg-surface-3 px-1 font-mono text-[10px]">{keys}</kbd>}
       </div>
       {previews.length > 0 && (

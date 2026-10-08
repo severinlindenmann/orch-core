@@ -8,7 +8,7 @@ import { installAndGrant } from '@/test/installAddon'
 // Security sweep: an addon's state and actions must not reveal a ticket the viewer cannot see.
 // DEMO-0041 and DEMO-0043 are restricted to Severin; Mara (a maintainer) is outside the list.
 const HIDDEN = ['DEMO-0041', 'DEMO-0043']
-const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory']
+const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules']
 
 const setup = (viewer: string) => {
   const store = createMockStore({ persist: false })

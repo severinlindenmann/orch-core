@@ -583,13 +583,71 @@
     "name": "schedules",
     "title": "Schedules",
     "version": "0.1.0",
-    "description": "Run a recurring ticket template on a schedule.",
+    "preview": true,
+    "description": "Preview: agent work that starts without anyone typing. A skill on a clock, on an event, or a recurring ticket.",
     "capabilities": [
       "spawn_agent"
     ],
     "first_party": true,
     "package_sha256": "4211d991c66141d1f3871f1fbc2392eadf9942efa5a6c6d301831b56f650ed28",
     "update": null,
-    "contributions": []
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "schedules",
+        "title": "Schedules",
+        "icon": "CalendarClock",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "${addon.findingsLine}"
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.items"
+              },
+              "empty": "No schedules yet."
+            },
+            {
+              "type": "markdown",
+              "text": "### Recent runs"
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.runItems"
+              },
+              "empty": "No runs yet."
+            },
+            {
+              "$ref": "addon.reportNode"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "arm": {
+        "minRole": "maintainer",
+        "confirm": "sign",
+        "label": "Arm a schedule"
+      },
+      "disarm": {
+        "minRole": "maintainer",
+        "confirm": "sign",
+        "label": "Disarm a schedule"
+      },
+      "run_now": {
+        "minRole": "member",
+        "label": "Run now"
+      },
+      "open_run": {
+        "minRole": "viewer",
+        "label": "Open run"
+      }
+    }
   }
 ]

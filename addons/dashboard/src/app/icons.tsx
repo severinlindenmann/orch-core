@@ -1,6 +1,7 @@
 import {
   Bot,
   BookOpen,
+  CalendarClock,
   CircleHelp,
   Factory,
   Gauge,
@@ -22,6 +23,7 @@ import {
 const ICONS: Record<string, LucideIcon> = {
   Bot,
   BookOpen,
+  CalendarClock,
   Factory,
   Gauge,
   Github: GitBranch,

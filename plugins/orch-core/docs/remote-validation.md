@@ -23,6 +23,19 @@ Run against a local TIX server, the real relay tool, two workspaces started with
 | A real Face ID, Touch ID, Windows Hello or PIN answer | **needs a real device** |
 | The phone's own browser, home-screen app, cellular network, lock screen | **needs a real device** |
 
+### Next, when the unlock sheet and the streams are in orch-tix
+
+Two tests in `tests/e2e_remote/test_remote_e2e.py` are written as skips: `test_typing_after_an_unlock` and
+`test_the_factory_start_needs_a_fresh_confirmation`. Their skip check looks for an `unlock*.js` file in the orch-tix
+checkout, so once the unlock sheet (orch-tix #97) and the streams work (orch-tix #96) are on orch-tix main they stop
+skipping by themselves and fail until their bodies are written: give the Type device a Chromium virtual authenticator
+(CDP `WebAuthn.addVirtualAuthenticator`, platform, user-verifying) before pairing so the host registers a credential,
+answer the sheet, then type into the `BRAVO-1` session and read it back from the private tmux server; for the Factory,
+make a Factory epic in a workspace (the repo's fakes, no API credit), and answer the sheet for the permission card and
+for Start. Also switch `test_a_type_device_without_an_unlock_is_refused_and_types_nothing` to expect `lease_required`
+once a credential exists (today the browser has none, so the host answers `assertion_failed`). Then steps 6 and 7
+below are proved by the run, and only the real Face ID prompt stays for a person.
+
 ## Before you start
 
 1. On the computer: the relay addon enabled and trusted in the workspace, `sharing_path` set, a space for the

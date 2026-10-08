@@ -1,8 +1,0 @@
-/* diff: +/- stay in the text; the tint only repeats them */
-.w-diff-f { margin: 0 0 var(--s-1); overflow-wrap: anywhere; }
-.w-diff { margin: 0; font: var(--type-meta); font-family: var(--font-mono); background: var(--surface2); border-radius: var(--r-sm);
-  padding: var(--s-1) 0; min-width: min-content; }
-.w-dl { display: block; padding: 0 var(--s-2); white-space: pre; }
-.w-dl-add { background: var(--ok-bg); color: var(--ok-fg); }
-.w-dl-del { background: var(--err-bg); color: var(--err-fg); }
-.w-dl-hunk { background: var(--info-bg); color: var(--info-fg); }

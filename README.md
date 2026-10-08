@@ -1,3 +1,5 @@
+> **develop = orch v2 in progress; v1 lives on `main`.** This README describes v1.
+
 # orch-core
 
 **Let coding agents do the work. Keep every decision yours.**

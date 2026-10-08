@@ -1,8 +1,0 @@
-[
-  {"argv": ["git", "-C", "*", "status", "--porcelain=v2", "--branch"],
-   "stdout": "# branch.oid 99e394fd8b4d42fac1742d8d863a9eaf4d5e136b\n# branch.head feature/DEMO-0009-late-arriving-exports\n# branch.upstream origin/feature/DEMO-0009-late-arriving-exports\n# branch.ab +0 -0\n1 .M N... 100644 100644 100644 1a2b 1a2b src/acme/ingest.py\n? notes.txt\n"},
-  {"argv": ["git", "-C", "*", "remote", "get-url", "origin"], "stdout": "git@github.com:acme/ticket-orch-demo.git\n"},
-  {"argv": ["git", "-C", "*", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], "stdout": "origin/main\n"},
-  {"argv": ["git", "-C", "*", "rev-list", "--left-right", "--count", "origin/main...HEAD"], "stdout": "1\t3\n"},
-  {"argv": ["git", "-C", "*", "rev-parse", "--git-path", "hooks"], "stdout": ".git/hooks\n"}
-]

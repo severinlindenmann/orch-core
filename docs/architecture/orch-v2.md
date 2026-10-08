@@ -35,7 +35,7 @@ amendment.
 | D14 | Shared documents | A Drop *document* is a series of encrypted versions. A write needs the current version (`If-Match`), and an edit lease is optional. |
 | D15 | Web agents | A web agent enrolls as a *scoped agent device*: one Drop space, with an expiry, and no workspaces or tickets. |
 | D16 | Mobile tech | A PWA now, reusing the TIX vanilla-JS and WebCrypto code. A native shell later, if needed. |
-| D17 | In-flight work | Land the core work (Dark Factory stack #79→#143, #237, the Remote fixes). Freeze TIX #96/#97 and port their good parts into orch-relay. |
+| D17 | In-flight work | #237 landed. The Dark Factory stack #79→#143 and #254 are closed as reference (D38). Freeze TIX #96/#97 and port their good parts into orch-relay. |
 | D18 | Stack | Python, FastAPI and SQLite (WAL), under systemd behind Caddy. The same as orch-core and TIX. |
 | D19 | Process | Spec, then review, then phased issues, then one PR per task group into `develop`. The owner merges `develop` → `main` (D33). |
 | D20 | Repos | orch-relay and orch-publish are public. |
@@ -90,8 +90,9 @@ Non-goals for v2:
   confirmed on the host's screen, and a signed asset manifest as a later option.
 - **The workspace host process and the human's machine** are trusted.
 - **Agents** are semi-trusted. They use the host socket API and run under a separate UID wherever the platform
-  allows: on the VPS always, on a personal Mac from phase P8. **Until P8, agents on macOS run as the host's UID and
-  can reach the keychain and the socket. "Agents never read keys" holds only on the VPS until then.**
+  allows: on the VPS always, on a personal Mac from kernel wave 2 (P1b, D37). **Until then, agents on macOS run as
+  the host's UID and can reach the keychain and the socket. "Agents never read keys" holds only on the VPS until
+  then. Terminals and agent starts are built only in wave 2, after this is fixed.**
 - **Peer workspaces** are pinned, and everything they send is untrusted data. A valid signature proves origin, not
   safety.
 - **A workspace on someone else's machine** (e.g. a client's VM) is readable by that machine's administrators. They
@@ -417,7 +418,10 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 - A workspace can be registered with more than one relay. Each peer entry names its carrier.
 - `orch serve --lan` is removed. Loopback stays the only direct binding.
 
-## 12. Changes in orch-core
+## 12. The new orch kernel
+
+v2 rebuilds orch-core from scratch on `develop` (D36). The feature scope is
+[orch-v2-carryover.md](orch-v2-carryover.md). This table lists what the new kernel does differently from v1.
 
 | Area | Change |
 |---|---|
@@ -436,15 +440,16 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 
 | Phase | Content | Exit criteria |
 |---|---|---|
-| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, the dev override for human-only CLI checks with the state-dir dev marker (D34), `develop` branches and branch protection on `main` (D33), an orch-relay skeleton (health, deploy), the e2e harness, landing the in-flight core work (D17), and spikes S1 (WebCrypto suite on iOS) and S2 (PWA push and passkeys in the iOS Simulator). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
-| **P1 Identity** | Workspace UUID, person id in Actor, the custody backends, the host socket API, `orch keys`, and device certificates. | Unit and contract tests pass. No key material is readable by an agent-UID process on the VPS. |
+| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, the dev override for human-only CLI checks with the state-dir dev marker (D34), `develop` branches and branch protection on `main` (D33), an orch-relay skeleton (health, deploy), the e2e harness, and spikes S1 (WebCrypto suite on iOS) and S2 (PWA push and passkeys in the iOS Simulator). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
+| **P1a Kernel wave 1** | The fresh kernel on `develop`. Identity: workspace UUID, person id in Actor, custody backends, host socket API, `orch keys`, device certificates. Then the wave 1 features from [orch-v2-carryover.md](orch-v2-carryover.md): tickets, lifecycle, tasks, artifacts, links, epics, questions, gates, verdicts, event log, `wait`, check/init, instructions, skills, and Mission Control core with a new look and feel. | Every wave 1 feature has a passing e2e scenario. No key material is readable by an agent-UID process on the VPS. |
+| **P1b Kernel wave 2** | Agent UID on macOS (moved from P8). Then the wave 2 features: start agent, terminals, worktrees, quick tasks, records commit and push, doctor and setup, commit check, update, feedback, activity, widgets, guide. | An agent started from the dashboard cannot read key material on macOS. Every wave 2 feature has a passing e2e scenario. |
 | **P2 Relay core** | Directory, bridge v2 with protocol and vectors, members and epochs, and the core bridge host on v2. | Desktop browser ↔ workspace A over the dev relay, with epoch rotation tested. |
 | **P3 Mobile + pairing** | The PWA port, pairing v2, workspace cards, partitioned storage, logout and revoke, and WebAuthn. | Simulator e2e passes. **iPhone session 1:** camera QR, Face ID passkey, logout wipes. |
 | **P4 Questions + push** | Push per workspace, `question.closed`, reconcile on open. | Answering on the laptop clears the phone. **iPhone session 2:** push arrives, gets replaced, and a late answer is refused. |
 | **P5 Drop** | Spaces, recipients, claim, documents, scoped agent devices, links. | Two workspaces race to claim and one wins. A document conflict gives 409. A scoped agent cannot see workspaces. |
 | **P6 Linked workspaces** | Address book, `spool:` then relay carrier, envelopes, charter auto-start, `orch wait`, deadlines. | WS1 sends a ticket to WS2 (on the VPS), WS2's stub agent works it, and WS1 resumes with the result. Depth 2 is refused. |
 | **P7 orch-publish** | Rename, the signed HTTPS API, namespaces, per-recipient tokens, and the migration from orch-apps branches. | Each demo workspace publishes in its own namespace, and one cannot touch the other's apps. |
-| **P8 Colleagues + internal** | Second account (D1 B), cross-person peers and Drop, the internal relay install, `--lan` removal, agent UID on macOS, TIX switch-off plan. | Persona "colleague" on WS2 exchanges a ticket and a document with WS1. **iPhone session 3:** full regression. |
+| **P8 Colleagues + internal** | Second account (D1 B), cross-person peers and Drop, the internal relay install, `--lan` removal, the v1 → v2 cutover on `main`, TIX switch-off plan. | Persona "colleague" on WS2 exchanges a ticket and a document with WS1. **iPhone session 3:** full regression. |
 
 ## 14. Former open items (decided 8 Oct 2026)
 
@@ -465,6 +470,9 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D33 | Branches | Only `main` is protected; only the owner merges into it. `develop` and feature branches belong to the bot: it merges a group's feature branch into `develop` itself after T2 and the reviews pass. The owner merges `develop` → `main` at phase ends (or more often). |
 | D34 | Guard in development | The orch-core Claude Code plugin (the guard hook) is disabled in dev sessions. The `orch` CLI's human-only checks stay in the product; on the dev machine a dev-only override lets agents act as the test human in workspaces marked dev in the state dir. Real workspaces ignore it. The guard is still tested by its own tests in T1/T2. |
 | D35 | No chains on the dev machine | The dev machine may push, merge into `develop`, deploy and test freely, end to end. The only fence is `main`. The orch-core plugin is not installed for dev sessions; e2e starts workspace agents with `claude --plugin-dir <orch-core working copy>/plugins/orch-core`. |
+| D36 | Green-field kernel | v2 is a fresh codebase on `develop` in orch-core: same repo and plugin name, rebuilt with the old code and its tests as reference, never copied as is. `main` stays today's v1 for daily use until the cutover merge. What is carried over is fixed in [orch-v2-carryover.md](orch-v2-carryover.md). |
+| D37 | Kernel in two waves | Wave 1 (P1a) builds the core you use daily. Wave 2 (P1b) adds the extras that start agents or touch shells (start agent, terminals, worktrees and others), once key custody exists. Agent UID on macOS moves from P8 into wave 2. |
+| D38 | Dark stack | The rebased PRs #79→#143 and #254 are closed with their branches kept. The Phase 2 Factory rebuild and the wave 2 records feature use them as reference. |
 
 ---
 

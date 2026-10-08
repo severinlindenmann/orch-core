@@ -287,3 +287,9 @@ Format: date, decision, why, how to revert.
 - **Recorded limits:** Members who have no grant cannot start an agent: grants are issued by owners and maintainers, so the dialog tells a member to ask one. `confirmed` is a plain boolean in the mock. A real host needs a server-issued, single-use confirmation token, bound to the person, ticket and launch, that only core's dialog can obtain, so that a client cannot simply set the flag.
 - **Why:** Task 28 review (Opus).
 - **Revert:** Show `c.line` as the Model fact again; remove the step guard in `sessionScript`, `endRun`, and the second `plan.error` check (not recommended).
+
+## 2026-10-08 Task 28 carry: a claim past its expiry has lapsed
+
+- **Decision:** `deriveTicket` takes the clock (`DeriveContext.now`, passed by `store.ticket`) and drops a claim whose `expires` is not after it, before the turn is computed. A session that waits after its script ended, whose grant then expires, therefore no longer holds the ticket: the ticket shows no claim, Agents shows the session stopped (its grant is over), and a new start is no longer refused with `claim.held`.
+- **Why:** Task 28 review: the only release paths were the script steps and an explicit stop, so a waiting session's claim stayed forever.
+- **Revert:** Remove the `ctx.now` line in derive.ts and the `now` argument in `store.ticket`.

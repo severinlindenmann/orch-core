@@ -288,7 +288,7 @@ export class MockStore {
     const def = this.defs.get(key)
     const ws = this.workspaceOf(key)
     if (!def || !ws) return undefined
-    const doc = deriveTicket(def, this.bodies.get(key) ?? {}, this.eventsOf(key), { gates: ws.gates })
+    const doc = deriveTicket(def, this.bodies.get(key) ?? {}, this.eventsOf(key), { gates: ws.gates, now: this.now() })
     if (def.type === 'epic') {
       doc.children = [...this.defs.values()].filter((d) => d.parent === key && this.isVisible(d.key)).map((d) => d.key)
     }

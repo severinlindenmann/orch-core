@@ -49,6 +49,8 @@ export function parseActor(s: string): Actor {
 
 export interface DeriveContext {
   gates: Workspace['gates']
+  /** The clock. A claim whose `expires` has passed has lapsed (its grant is over): the ticket shows no claim. */
+  now?: string
 }
 
 const EMPTY_PEOPLE: People = { owner: null, assignees: [], reviewers: [], watchers: [] }
@@ -281,6 +283,8 @@ export function deriveTicket(
       list.push({ rev: list.length + 1, at: list[list.length - 1]?.at ?? created, by: people.owner ?? 'unknown', text } satisfies SectionRevision)
     history[name] = list
   }
+
+  if (claim && ctx.now && claim.expires <= ctx.now) claim = null // lapsed: nobody holds the ticket any more
 
   const openBlocking = questions_state.find((q) => q.state === 'open' && q.blocking)
   const turn = computeTurn(status, people, claim, openBlocking, verdict)

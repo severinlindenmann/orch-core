@@ -290,6 +290,21 @@ describe('review fixes: the run stops when it may no longer work', () => {
     expect(s.store.sim.running()).not.toContain(session)
     expect(g.id).toBeTruthy()
   })
+  it('a claim whose grant expires while the session is waiting lapses: no claim, session stopped, a new start is not refused', async () => {
+    const s = setup()
+    await s.api.revokeGrant(s.ws, 'gr_01J9Z8')
+    await s.api.issueGrant(s.ws, { hours: 1, scope: 'all' })
+    await start(s)
+    const session = sessionOn(s, 'DEMO-0044')
+    vi.advanceTimersByTime(15_000) // the script ended at its question; the session waits
+    expect(s.store.ticket('DEMO-0044')!.claim?.session).toBe(session)
+    expect(s.store.agents(s.ws).find((a) => a.session === session)?.state).toBe('waiting')
+    vi.setSystemTime(Date.now() + 3600_000) // the grant's hour passes; no step runs any more
+    expect(s.store.ticket('DEMO-0044')!.claim).toBeNull()
+    expect(s.store.agents(s.ws).find((a) => a.session === session)).toMatchObject({ state: 'stopped', claims: [] })
+    await s.api.issueGrant(s.ws, { hours: 1, scope: 'all' })
+    expect(await fail(start(s))).toBe('ok')
+  })
   it('if someone else claims the ticket first, the run ends instead of working on it', async () => {
     const s = setup()
     await start(s)

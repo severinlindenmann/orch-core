@@ -48,7 +48,16 @@ MUTANTS = {
     "bitmap_off_by_one": ("((bitmap << shift) | 1)", "((bitmap << (shift - 1)) | 1)"),
     "no_stream_ownership": ("if h.stream != ZERO_ID and self.streams.get(h.stream.hex()) != did:", "if False:"),
     "no_mailbox_id_check": ("if mailbox_id != h.rid.hex():", "if False:"),
-    "revoked_not_refused": ("        if dev.revoked:\n            return self._unverified(now, \"revoked\")\n", ""),
+    "revoked_not_refused": (
+        "        if dev.revoked:\n"
+        "            try:\n"
+        "                is_pair = unframe(pt)[0].get(\"op\") == \"pair\"\n"
+        "            except Malformed:\n"
+        "                is_pair = False\n"
+        "            # §6.2: every refusal to an op = \"pair\" request carries host_pub, or the device drops it as no answer and\n"
+        "            # waits out its 60 s. A revoked device is still refused: it does not pair again under its old key.\n"
+        "            return self._unverified(now, \"revoked\", **({\"host_pub\": self.host_pub.hex()} if is_pair else {}))\n",
+        ""),
 }
 
 

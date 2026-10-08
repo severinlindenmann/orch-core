@@ -13,6 +13,9 @@ export interface ColumnSumItem {
   total: number
 }
 
+/** "13 pts", "1 pt". */
+export const withUnit = (total: number, unit: string) => `${total} ${unit === 'pt' && total !== 1 ? 'pts' : unit}`
+
 const num = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
 
 /**
@@ -54,7 +57,7 @@ export function ColumnSums({ tickets }: { tickets: TicketSummary[] }) {
       {sums.map((s) => (
         <span key={`${s.addon}/${s.id}`} aria-label={`Sum of ${s.title}`} className="inline-flex items-center gap-1 font-mono text-[11px] text-text-muted">
           <AddonBadge name={s.addon} />
-          {s.total} {s.unit}
+          {withUnit(s.total, s.unit)}
         </span>
       ))}
     </>

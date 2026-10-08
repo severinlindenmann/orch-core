@@ -85,3 +85,64 @@ describe('signed grant payload covers the viewer-level actions', () => {
     expect(await api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['refresh'] })).toMatchObject({ name: 'github' })
   })
 })
+
+describe('the signed manifest is the one enforced after an update', () => {
+  const ok = async (p: Promise<unknown>) => ((await fail(p)) ? 'refused' : 'ok')
+  it('an update that removes a viewer action takes it away from viewers after the re-grant', async () => {
+    const { store, api, ws } = setup()
+    const wiki = store.addons.find((a) => a.name === 'wiki')!
+    wiki.update = { version: '0.2.0', capabilities: [], package_sha256: 'd'.repeat(64), changelog: 'x', actions: { save_settings: { minRole: 'owner' }, open: { minRole: 'viewer', label: 'Open page' } } }
+    const base = { version: '0.2.0', package_sha256: 'd'.repeat(64), capabilities: [] as string[], viewer_actions: ['open'] }
+    await api.postAddonOp(ws, 'wiki', { op: 'update', ...base })
+    await api.postAddonOp(ws, 'wiki', { op: 'grant', ...base })
+    store.setViewer('p_tom')
+    expect(await ok(api.runAddonAction(ws, 'wiki', 'search', { query: 'a' }))).toBe('refused')
+    expect(await fail(api.runAddonAction(ws, 'wiki', 'search', { query: 'a' }))).toMatchObject({ status: 403 })
+    expect(await ok(api.runAddonAction(ws, 'wiki', 'open', { slug: 'x' }))).toBe('ok')
+  })
+  it('an update that adds one lets viewers run it after the re-grant, not before', async () => {
+    const { store, api, ws } = setup()
+    const gh = store.addons.find((a) => a.name === 'github')!
+    gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh' } }
+    store.setViewer('p_tom')
+    expect(await fail(api.runAddonAction(ws, 'github', 'refresh', {}))).toMatchObject({ status: 403 })
+    store.setViewer('p_sev')
+    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['refresh'] }
+    await api.postAddonOp(ws, 'github', { op: 'update', ...u })
+    await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
+    store.setViewer('p_tom')
+    expect(await ok(api.runAddonAction(ws, 'github', 'refresh', {}))).toBe('ok')
+  })
+  it('a grant request without viewer_actions at all is refused (409)', async () => {
+    const { store, api, ws } = setup()
+    store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
+    const g = { op: 'grant', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }
+    expect(await fail(api.postAddonOp(ws, 'wiki', g as never))).toMatchObject({ status: 409, code: 'addon.changed' })
+  })
+  it('records the signed viewer_actions in addon.granted and addon.updated', async () => {
+    const { store, api, ws } = setup()
+    const gh = store.addons.find((a) => a.name === 'github')!
+    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: [] as string[] }
+    await api.postAddonOp(ws, 'github', { op: 'update', ...u })
+    await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
+    const evs = store.wsEventsOf(ws).filter((e) => e.type === 'addon.updated' || e.type === 'addon.granted').slice(-2)
+    expect(evs.map((e) => e.type)).toEqual(['addon.updated', 'addon.granted'])
+    for (const e of evs) expect(e.viewer_actions).toEqual([])
+    const w = store.addons.find((a) => a.name === 'wiki')!
+    store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
+    await api.postAddonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [], viewer_actions: viewerActions(w).map((a) => a.id) })
+    expect(store.wsEventsOf(ws).filter((e) => e.type === 'addon.granted').at(-1)!.viewer_actions).toEqual(['open', 'search'])
+  })
+})
+
+describe('workspace reads need membership', () => {
+  it.each([
+    ['addon state', (api: ReturnType<typeof setup>['api'], ws: string) => api.getAddonState(ws, 'estimate')],
+    ['today', (api: ReturnType<typeof setup>['api'], ws: string) => api.getToday(ws)],
+    ['tickets', (api: ReturnType<typeof setup>['api'], ws: string) => api.listTickets(ws)],
+    ['addons', (api: ReturnType<typeof setup>['api'], ws: string) => api.getWorkspaceAddons(ws)],
+  ])('a non-member gets 403 for %s', async (_n, call) => {
+    const { api, ws } = setup('p_stranger')
+    expect(await fail(call(api, ws))).toMatchObject({ status: 403 })
+  })
+})

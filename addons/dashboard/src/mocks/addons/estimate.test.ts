@@ -38,6 +38,12 @@ describe('estimate addon', () => {
     await s.api.runAddonAction(s.ws, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 'L' } })
     expect(s.store.ticket('DEMO-0043')!.addons.estimate).toMatchObject({ points: 'L', weight: 5 })
   })
+  it('string estimates read "estimated at L." without "points"', async () => {
+    const s = setup()
+    await s.api.runAddonAction(s.ws, 'estimate', 'save_settings', { formData: { scale: 't-shirt' } })
+    const r = await s.api.runAddonAction(s.ws, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 'L' } })
+    expect(r.message).toBe('DEMO-0043 estimated at L.')
+  })
   it('refuses a value that is not on the current scale and changes nothing', async () => {
     const s = setup()
     const before = JSON.stringify(s.store.ticket('DEMO-0043')!.addons.estimate)

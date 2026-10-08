@@ -1,5 +1,5 @@
 // Pure addon-state rules shared by the mock and the UI (part of the API contract).
-import type { ActionMeta, AddonGrant, AddonStatus, AddonUpdate, InstalledAddon, Workspace, WorkspaceAddon } from './types'
+import type { ActionMeta, AddonGrant, AddonPackage, AddonStatus, AddonUpdate, InstalledAddon, Workspace, WorkspaceAddon } from './types'
 
 /** Does this grant cover exactly the installed package: same version and hash, and every installed capability? */
 export function grantCovers(a: Pick<WorkspaceAddon, 'version' | 'package_sha256' | 'capabilities'>, g: AddonGrant | null): g is AddonGrant {
@@ -31,4 +31,13 @@ export function viewerActions(pkg: { actions?: Record<string, ActionMeta> }): { 
   return Object.entries(pkg.actions ?? {})
     .filter(([, m]) => m.minRole === 'viewer')
     .map(([id, m]) => ({ id, label: m.label ?? id }))
+}
+
+/**
+ * The manifest the workspace actually runs: the update's when the installed version is the update's version,
+ * otherwise the package's own. Who may run what (and what the owner signed) is read from here, never from `pkg.actions` directly.
+ */
+export function manifestFor(pkg: Pick<AddonPackage, 'actions' | 'update'>, installedVersion: string): { actions?: Record<string, ActionMeta> } {
+  const u = pkg.update
+  return u && u.version === installedVersion && u.actions ? { actions: u.actions } : { actions: pkg.actions }
 }

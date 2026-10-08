@@ -45,7 +45,7 @@ registerAddon({
         d.weight = weightOf(points)
       })
       store.append(ticket, { type: 'estimate.set', actor: { kind: 'addon', id: 'estimate' }, points })
-      return { ok: true, message: `${ticket} estimated at ${points} points.`, changed: true }
+      return { ok: true, message: `${ticket} estimated at ${points}${typeof points === 'number' ? ' points' : ''}.`, changed: true }
     },
     save_settings: ({ state, body }) => {
       state.settings = body.formData ?? {}

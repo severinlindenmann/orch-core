@@ -24,7 +24,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, pendingUpdate, sameSet, viewerActions } from '@/api/addons'
+import { addonActive, pendingUpdate, manifestFor, sameSet, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
@@ -554,9 +554,9 @@ export class MockStore {
       case 'grant':
         if (req.op !== 'grant') break
         if (req.version !== st.version) return refuse(409, 'addon.version_mismatch', `The installed version is ${st.version}; a grant for ${String(req.version)} was refused.`, 'Review the installed version and grant again.')
-        if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(pkg).map((a) => a.id)))
+        if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(manifestFor(pkg, st.version)).map((a) => a.id)))
           return refuse(409, 'addon.changed', `${v.title} changed since you reviewed it; nothing was signed.`, 'Open the grant again and review the current package.')
-        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
         break
       case 'enable':
         if (st.status === 'needs_grant') return refuse(409, 'addon.needs_grant', `${v.title} ${st.version} has no grant yet.`, 'Review its capabilities and grant them first.')
@@ -570,7 +570,7 @@ export class MockStore {
         if (!update) return refuse(409, 'addon.no_update', `${v.title} is up to date.`)
         if (req.version !== update.version || req.package_sha256 !== update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, update.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions({ actions: update.actions ?? pkg.actions }).map((a) => a.id)))
           return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
-        this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, presence: 'touchid' })
+        this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
         this.appendWs(wsId, { type: 'addon.uninstalled', actor, name })
@@ -609,7 +609,8 @@ export class MockStore {
     // Non-members run nothing; a viewer runs only the actions the package marks 'viewer' (e.g. navigation).
     const role = this.roleIn(ws, this.viewer)
     const pkg = this.addons.find((a) => a.name === name)
-    const min = pkg?.actions?.[id]?.minRole ?? 'member'
+    const installed = w.addons[name]
+    const min = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]?.minRole ?? 'member'
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
     if (!atLeast(role, min)) {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')

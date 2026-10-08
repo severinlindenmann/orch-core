@@ -303,12 +303,19 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
 
 export function buildRouter(): MockRouter {
   const r = new MockRouter()
+  // Workspace reads are for members only: 404 for an unknown workspace, 403 for someone who is not in it.
+  const readOf = (path: string, h: (s: MockStore, c: Parameters<Parameters<MockRouter['add']>[2]>[1]) => TransportResponse) =>
+    r.add('GET', path, (s, c) => {
+      if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+      if (!s.roleIn(c.params.ws, s.viewer)) return fail(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
+      return h(s, c)
+    })
   r.add('GET', '/api/me', (s) => ok(s.me()))
   r.add('GET', '/api/workspaces', (s) => ok(s.workspaceList()))
-  r.add('GET', '/api/workspaces/:ws/today', (s, c) =>
+  readOf('/api/workspaces/:ws/today', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.today(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
-  r.add('GET', '/api/workspaces/:ws/tickets', (s, c) => {
+  readOf('/api/workspaces/:ws/tickets', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     return ok(searchTickets(s, c.params.ws, c.query))
   })
@@ -360,7 +367,7 @@ export function buildRouter(): MockRouter {
     )
     return ok({ ok: true, ticket }, 201)
   })
-  r.add('GET', '/api/workspaces/:ws/views', (s, c) =>
+  readOf('/api/workspaces/:ws/views', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.views(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
   r.add('POST', '/api/workspaces/:ws/views', (s, c) => {
@@ -386,20 +393,20 @@ export function buildRouter(): MockRouter {
     s.appendWs(ws, { type: 'view.deleted', view: v.id })
     return ok({ ok: true })
   })
-  r.add('GET', '/api/workspaces/:ws/identity', (s, c) => {
+  readOf('/api/workspaces/:ws/identity', (s, c) => {
     const ws = s.workspaces.find((w) => w.id === c.params.ws)
     if (!ws) return fail(404, 'not_found', 'No such workspace')
     return ok({ uuid: ws.id, prefix: ws.prefix, created_at: '2026-08-14T07:42:10Z', key_fingerprint: fingerprint(ws.id), epoch: 1 } satisfies WorkspaceIdentity)
   })
   r.add('POST', '/api/workspaces/:ws/settings', postSettings)
-  r.add('GET', '/api/workspaces/:ws/cursor', (s, c) =>
+  readOf('/api/workspaces/:ws/cursor', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),
   )
-  r.add('GET', '/api/workspaces/:ws/agents', (s, c) => ok(s.agents(c.params.ws)))
-  r.add('GET', '/api/workspaces/:ws/agents/activity', (s, c) =>
+  readOf('/api/workspaces/:ws/agents', (s, c) => ok(s.agents(c.params.ws)))
+  readOf('/api/workspaces/:ws/agents/activity', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.agentActivity(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
-  r.add('GET', '/api/workspaces/:ws/grants', (s, c) =>
+  readOf('/api/workspaces/:ws/grants', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.grants(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
   // Issuing and revoking are human-only: the actor is always the viewer, a person.
@@ -427,10 +434,10 @@ export function buildRouter(): MockRouter {
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
   r.add('GET', '/api/addons', (s) => ok(s.addons))
-  r.add('GET', '/api/workspaces/:ws/addons', (s, c) =>
+  readOf('/api/workspaces/:ws/addons', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.workspaceAddons(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
-  r.add('GET', '/api/workspaces/:ws/addons/catalog', (s, c) =>
+  readOf('/api/workspaces/:ws/addons/catalog', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.workspaceCatalog(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
   r.add('POST', '/api/workspaces/:ws/addons/:name', (s, c) => {
@@ -439,10 +446,10 @@ export function buildRouter(): MockRouter {
     const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
     return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
   })
-  r.add('GET', '/api/workspaces/:ws/addons/decisions', (s, c) =>
+  readOf('/api/workspaces/:ws/addons/decisions', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.addonDecisions(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
   )
-  r.add('GET', '/api/workspaces/:ws/addons/:name/state', (s, c) => {
+  readOf('/api/workspaces/:ws/addons/:name/state', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     const v = s.addonStateView(c.params.ws, c.params.name)
     return v ? ok(v) : fail(404, 'not_found', 'Addon is not enabled in this workspace')

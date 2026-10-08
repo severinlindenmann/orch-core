@@ -156,9 +156,13 @@ export function parseSection(text: string, section: string): Segment[] {
     const m = OPEN.exec(lines[i])
     // A backtick fence's info string cannot contain a backtick.
     if (!m || (m[1][0] === '`' && m[2].includes('`'))) {
-      if (/^ {0,3}([-*+]|\d{1,9}[.)])( |$)/.test(lines[i])) inList = true
-      else if (lines[i].trim() && !lines[i].startsWith(' ')) inList = false
-      prose.push(lines[i])
+      const line = lines[i]
+      // A line at the margin right after a non-blank line is a lazy continuation of the item's paragraph (CommonMark),
+      // unless it starts a block of its own (heading, quote, thematic break): the list item stays open.
+      const lazy = i > 0 && lines[i - 1].trim() !== '' && !/^(#{1,6}( |$)|>|([-*_])( *\3){2,} *$)/.test(line)
+      if (/^ {0,3}([-*+]|\d{1,9}[.)])( |$)/.test(line)) inList = true
+      else if (line.trim() && !line.startsWith(' ') && !lazy) inList = false
+      prose.push(line)
       continue
     }
     if (!lines[i].startsWith(' ')) inList = false

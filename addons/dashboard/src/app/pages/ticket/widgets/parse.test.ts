@@ -223,6 +223,14 @@ describe('review fixes', () => {
     expect(blocksOf('- item\n\nPlain paragraph.\n\n' + fence(bars))).toHaveLength(1)
     expect(blocksOf('- item\n' + fence(bars))).toHaveLength(1)
   })
+  it('a lazy continuation line keeps the list item open, so an indented fence after it stays code', () => {
+    const indented = '  ' + fence(bars).replace(/\n/g, '\n  ')
+    expect(blocksOf('- item\nlazy text\n' + indented)).toHaveLength(0) // the reviewer's probe
+    expect(blocksOf('- item\nlazy one\nlazy two\n' + indented)).toHaveLength(0)
+    // A blank line, then a paragraph at the margin, ends the list; a heading is never a lazy line.
+    expect(blocksOf('- item\n\nnot lazy\n' + indented)).toHaveLength(1)
+    expect(blocksOf('- item\n# Heading\n' + indented)).toHaveLength(1)
+  })
   it('refuses negative bar values with a reason', () => {
     expect(one({ type: 'bars', data: { a: 3, b: -1 } }).reason).toMatch(/"b" is negative/)
     expect(one({ type: 'bars', data: [['a', -2]] }).reason).toMatch(/negative/)

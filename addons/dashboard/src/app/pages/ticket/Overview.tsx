@@ -49,7 +49,8 @@ function SectionBody({ segments, ticket, agentHtml, label, drawnTotal }: { segme
         s.kind === 'markdown' ? (
           s.text.trim() ? <SafeMarkdown key={i} text={s.text} /> : null
         ) : (
-          <ErrorBoundary key={i} fallback={() => <BlockProblem what="This widget" />}>
+          // Reset when the block's text changes (another ticket, or a live update that fixed it).
+          <ErrorBoundary key={i} resetKey={`${ticket.key}\n${s.block.raw}`} fallback={() => <BlockProblem what="This widget" />}>
             <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} drawnTotal={drawnTotal} />
           </ErrorBoundary>
         ),

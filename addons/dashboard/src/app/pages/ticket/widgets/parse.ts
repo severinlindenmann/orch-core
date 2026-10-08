@@ -150,13 +150,18 @@ export function parseSection(text: string, section: string): Segment[] {
     if (prose.length) out.push({ kind: 'markdown', text: prose.join('\n') })
     prose = []
   }
+  // Inside a list item (an indented fence under a bullet) a fence is code, not a block (widgets.md).
+  let inList = false
   for (let i = 0; i < lines.length; i++) {
     const m = OPEN.exec(lines[i])
     // A backtick fence's info string cannot contain a backtick.
     if (!m || (m[1][0] === '`' && m[2].includes('`'))) {
+      if (/^ {0,3}([-*+]|\d{1,9}[.)])( |$)/.test(lines[i])) inList = true
+      else if (lines[i].trim() && !lines[i].startsWith(' ')) inList = false
       prose.push(lines[i])
       continue
     }
+    if (!lines[i].startsWith(' ')) inList = false
     const ch = m[1][0]
     let end = -1
     for (let j = i + 1; j < lines.length; j++)
@@ -165,7 +170,7 @@ export function parseSection(text: string, section: string): Segment[] {
         break
       }
     const last = end === -1 ? lines.length - 1 : end
-    if (m[2].trim() !== 'orch') {
+    if (m[2].trim() !== 'orch' || (inList && lines[i].startsWith(' '))) {
       prose.push(...lines.slice(i, last + 1))
       i = last
       continue
@@ -209,8 +214,13 @@ function longString(v: unknown): boolean {
 }
 
 export function parseBlock(raw: string): Pick<Block, 'spec' | 'reason'> {
-  const r = check(raw)
-  return r.ok ? { spec: r.value } : { reason: r.reason }
+  // Agent-written text must never throw into the page: whatever goes wrong, the block is refused.
+  try {
+    const r = check(raw)
+    return r.ok ? { spec: r.value } : { reason: r.reason }
+  } catch {
+    return { reason: 'block could not be read' }
+  }
 }
 
 function check(raw: string): Checked<WidgetSpec> {
@@ -233,7 +243,7 @@ function check(raw: string): Checked<WidgetSpec> {
     const t = v.type
     if (typeof t !== 'string') return bad('type must be a string')
     if (OTHER_TYPES.has(t)) return bad(`type "${t}" is not drawn in this mockup`)
-    if (!CORE[t]) return bad(`unknown widget type "${t}"`)
+    if (!Object.hasOwn(CORE, t)) return bad(`unknown widget type "${t}"`)
     typeKeys = CORE[t].keys
   }
   for (const k of Object.keys(v)) if (![...COMMON, ...own, ...typeKeys].includes(k)) return bad(`unknown key "${k}"`)
@@ -323,6 +333,7 @@ const CORE: Record<string, CoreType> = {
       for (const [k, x] of pairs) {
         if (!label(k)) return `a label is longer than ${MAX_LABEL} characters`
         if (typeof x !== 'number') return `value of "${k}" must be a number`
+        if (x < 0) return `value of "${k}" is negative; bars show sizes, so negative values are not drawn`
       }
       if ('unit' in v && (typeof v.unit !== 'string' || v.unit.length > 20)) return 'unit must be a short string'
       if ('highlight' in v && !pairs.some(([k]) => k === v.highlight)) return `highlight "${String(v.highlight)}" is not a label in data`
@@ -395,7 +406,7 @@ export function resolveTicketWidgets(
   opts: { order?: readonly string[]; label?: (section: string) => string } = {},
 ): Record<string, Segment[]> {
   const order = opts.order ?? DEFAULT_ORDER
-  const labelOf = opts.label ?? ((s: string) => DEFAULT_LABELS[s] ?? s)
+  const labelOf = opts.label ?? ((s: string) => (Object.hasOwn(DEFAULT_LABELS, s) ? DEFAULT_LABELS[s] : s))
   const out: Record<string, Segment[]> = {}
   for (const key of order) if (body[key]?.trim()) out[key] = parseSection(body[key]!, key)
   const blocks = order.flatMap((k) => (out[k] ?? []).flatMap((s) => (s.kind === 'widget' ? [s.block] : [])))

@@ -73,7 +73,7 @@ describe('widgets in the ticket Overview (DEMO-0043)', () => {
 
 describe('html widgets (DEMO-0041)', () => {
   it('runs a one-off page whose sha256 matches the artifact content, and shows a mismatch as code', async () => {
-    renderApp('/ticket/DEMO-0041')
+    const { user } = renderApp('/ticket/DEMO-0041')
     await waitFor(() => expect(widget('proto')).toBeTruthy(), T)
     const ok = widget('proto')
     expect(ok.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
@@ -86,7 +86,9 @@ describe('html widgets (DEMO-0041)', () => {
     expect(bad).toBeTruthy()
     expect(bad.querySelector('iframe')).toBeNull()
     expect(bad).toHaveTextContent('sha256 does not match')
-    expect(bad).toHaveTextContent('tolerance-demo.html') // the raw block is shown as code
+    expect(bad).not.toHaveTextContent('"html"') // the raw block is behind "Show block"
+    await user.click(within(bad).getByRole('button', { name: 'Show block' }))
+    expect(bad).toHaveTextContent('tolerance-demo.html')
     expect(frames()).toHaveLength(1)
   })
 })
@@ -132,5 +134,17 @@ describe('mixed tickets', () => {
     await waitFor(() => expect(widget('size')).toBeTruthy(), T)
     await user.click(within(widget('size')).getByRole('button', { name: 'Show text' }))
     expect(within(widget('size')).getByText(/main: 412/)).toBeInTheDocument()
+  })
+  it('shows a drift or mismatch refusal even when agent HTML is off; a valid frame gets the "off" card', async () => {
+    renderApp('/ticket/DEMO-0041', {
+      setup: (s) => {
+        const ws = s.workspaces.find((w) => w.prefix === 'DEMO')!.id
+        s.addonOp(ws, 'widgets', { op: 'disable' }, { kind: 'person', id: 'p_sev' })
+      },
+    })
+    await waitFor(() => expect(widget('proto-old')).toBeTruthy(), T)
+    expect(widget('proto-old')).toHaveTextContent('sha256 does not match')
+    expect(widget('proto')).toHaveTextContent(/agent HTML is off/i)
+    expect(frames()).toHaveLength(0)
   })
 })

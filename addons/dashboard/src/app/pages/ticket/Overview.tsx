@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { BodySections, TicketDocument, TicketType } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
+import { BlockProblem, ErrorBoundary } from '@/components/ErrorBoundary'
 import { cn } from '@/lib/utils'
 import { ago, Pill, type TabProps } from './shared'
 import { resolveTicketWidgets, type Segment } from './widgets/parse'
@@ -48,7 +49,9 @@ function SectionBody({ segments, ticket, agentHtml, label, drawnTotal }: { segme
         s.kind === 'markdown' ? (
           s.text.trim() ? <SafeMarkdown key={i} text={s.text} /> : null
         ) : (
-          <WidgetBlock key={i} block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} drawnTotal={drawnTotal} />
+          <ErrorBoundary key={i} fallback={() => <BlockProblem what="This widget" />}>
+            <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} drawnTotal={drawnTotal} />
+          </ErrorBoundary>
         ),
       )}
     </>

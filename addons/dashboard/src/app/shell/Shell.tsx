@@ -1,4 +1,5 @@
-import { Outlet } from '@tanstack/react-router'
+import { Outlet, useRouterState } from '@tanstack/react-router'
+import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useLiveUpdates } from '../live'
@@ -21,6 +22,7 @@ function LiveUpdates() {
 }
 
 export function Shell() {
+  const path = useRouterState({ select: (s) => s.resolvedLocation?.href ?? s.location.href })
   return (
     <WorkspaceProvider>
       <LiveUpdates />
@@ -32,7 +34,9 @@ export function Shell() {
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
               <main className="min-h-0 flex-1 overflow-y-auto p-6">
-                <Outlet />
+                <ErrorBoundary resetKey={path} fallback={(retry) => <PageProblem retry={retry} />}>
+                  <Outlet />
+                </ErrorBoundary>
               </main>
             </div>
           </div>

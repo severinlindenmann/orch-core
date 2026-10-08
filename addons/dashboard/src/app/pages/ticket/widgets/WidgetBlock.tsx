@@ -38,6 +38,7 @@ const keyOf = (b: Block) => b.spec?.id ?? `${b.section}-${b.line}`
 
 /** A block that cannot be drawn: one line saying where and why, then the raw block as code. */
 function Refused({ block, reason, sectionLabel }: { block: Block; reason: string; sectionLabel: string }) {
+  const [shown, setShown] = useState(false)
   return (
     <figure data-widget={keyOf(block)} data-state="refused" className="my-3 rounded-lg border border-warning/40 bg-surface">
       <div data-widget-error role="note" className="flex items-start gap-2 px-3 py-2 text-[12px] text-text">
@@ -49,8 +50,15 @@ function Refused({ block, reason, sectionLabel }: { block: Block; reason: string
           {reason}
         </span>
       </div>
-      <div className="max-h-48 overflow-auto px-3 pb-3 [&_pre]:text-[11px]">
-        <CodeBlock language="json" text={block.raw} />
+      <div className="px-3 pb-2">
+        <button type="button" aria-expanded={shown} onClick={() => setShown(!shown)} className="text-[11px] text-text-muted underline-offset-2 hover:text-text hover:underline">
+          {shown ? 'Hide block' : 'Show block'}
+        </button>
+        {shown && (
+          <div className="mt-1 max-h-48 overflow-auto [&_pre]:text-[11px]">
+            <CodeBlock language="json" text={block.raw} />
+          </div>
+        )}
       </div>
     </figure>
   )
@@ -73,7 +81,8 @@ export function WidgetBlock({
   const spec = block.spec
   if (!spec || block.reason) return <Refused block={block} reason={block.reason ?? 'not a widget'} sectionLabel={sectionLabel} />
   const framed = spec.layer !== 'type'
-  const res = framed && agentHtml ? resolveFrame(spec, ticket) : undefined
+  // The verdict on the pin comes first, also when agent HTML is off: a refused block is never shown as merely "off".
+  const res = framed ? resolveFrame(spec, ticket) : undefined
   if (res && !res.ok) return <Refused block={block} reason={res.reason} sectionLabel={sectionLabel} />
   return <Drawn block={block} spec={spec} res={res?.ok ? res : undefined} agentHtml={agentHtml} drawnTotal={drawnTotal} />
 }
@@ -87,7 +96,7 @@ function Drawn({ block, spec, res, agentHtml, drawnTotal }: { block: Block; spec
   const layer = framed ? `agent HTML · ${spec.layer === 'widget' ? spec.widget : 'one-off'}` : 'core'
   const alt = framed ? (spec.caption ?? 'No text alternative given.') : widgetText(spec)
   let body: ReactNode
-  if (framed && !res)
+  if (framed && !agentHtml)
     body = <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-text-muted">Agent HTML is off in this workspace, so this widget is not drawn. {spec.caption ?? 'No text alternative given.'}</p>
   else if (framed && res) body = <AddonNode addon="widgets" node={{ type: 'frame', title: `Sandboxed frame · ${res.layerLabel}`, html: res.html, height: Math.min(1200, Math.max(80, res.height)) }} />
   else body = <CoreWidget spec={spec} />

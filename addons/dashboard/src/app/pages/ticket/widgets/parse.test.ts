@@ -201,3 +201,31 @@ describe('ticket-wide rules', () => {
     expect(bs.filter((b) => !b.reason).map((b) => b.index)).toEqual([0, 1, 2])
   })
 })
+
+describe('review fixes', () => {
+  it('refuses Object.prototype names as a type, in any section, without throwing', () => {
+    for (const name of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+      for (const section of ['context', 'current_state', 'verification', 'summary']) {
+        const segs = resolveTicketWidgets({ [section]: fence(`{"type":"${name}"}`) })
+        const b = (segs[section][0] as { block: Block }).block
+        expect(b.reason, `${name} in ${section}`).toBeTruthy()
+        expect(b.spec).toBeUndefined()
+      }
+      expect(one({ type: name }).reason).toMatch(/unknown widget type/)
+    }
+  })
+  it('a section key named like an Object.prototype member does not break labels', () => {
+    expect(() => resolveTicketWidgets({ constructor: fence(bars) }, { order: ['constructor'] })).not.toThrow()
+  })
+  it('keeps a fence indented under a list item as code (2-space case), but not after the list ends', () => {
+    expect(blocksOf('- item\n  ' + fence(bars).replace(/\n/g, '\n  '))).toHaveLength(0)
+    expect(blocksOf('1. item\n\n   ' + fence(bars).replace(/\n/g, '\n   '))).toHaveLength(0)
+    expect(blocksOf('- item\n\nPlain paragraph.\n\n' + fence(bars))).toHaveLength(1)
+    expect(blocksOf('- item\n' + fence(bars))).toHaveLength(1)
+  })
+  it('refuses negative bar values with a reason', () => {
+    expect(one({ type: 'bars', data: { a: 3, b: -1 } }).reason).toMatch(/"b" is negative/)
+    expect(one({ type: 'bars', data: [['a', -2]] }).reason).toMatch(/negative/)
+    expect(one({ type: 'bars', data: { a: 0 } }).reason).toBeUndefined()
+  })
+})

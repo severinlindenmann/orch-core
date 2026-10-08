@@ -6,7 +6,8 @@ import { toastApiError } from '@/app/toast'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
-export const TOUCH_ID_MS = 600
+// Simulated sensor wait. Zero under vitest: 600 ms of real sleep per signing tipped the 5 s test timeout under parallel load.
+export const TOUCH_ID_MS = import.meta.env.MODE === 'test' ? 0 : 600
 
 /**
  * Touch ID simulation for signatures that are not bound to a ticket (grants, workspace settings).

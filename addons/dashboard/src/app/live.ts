@@ -11,7 +11,8 @@ export function useLiveUpdates() {
   const qc = useQueryClient()
   const wsId = useWorkspace().workspace?.id
   useEffect(() => {
-    if (!wsId) return
+    // Tests do not need the poll; it only adds refetch/re-render churn under parallel load.
+    if (!wsId || import.meta.env.MODE === 'test') return
     let last: number | undefined
     let stopped = false
     const tick = async () => {

@@ -31,7 +31,7 @@ describe('AI Factory page', () => {
   it('Pause factory is signed in core\'s dialog; the paused state is calm (info), and Resume brings it back', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Pause the AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
     await user.click(within(dialog).getByRole('button', { name: /Sign with Touch ID/ }))
     const alert = (await screen.findByText(/^Paused by/, {}, T)).closest('[role="status"]')!
@@ -39,23 +39,23 @@ describe('AI Factory page', () => {
     expect(alert.className).not.toMatch(/warning|danger/)
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('paused'), T)
     await user.click(await screen.findByRole('button', { name: 'Resume' }, T))
-    await user.click(within(await screen.findByRole('dialog', { name: /Resume the AI Factory/ }, T)).getByRole('button', { name: /Sign with Touch ID/ }))
+    await user.click(within(await screen.findByRole('dialog', { name: /Sign: resume · AI Factory/ }, T)).getByRole('button', { name: /Sign with Touch ID/ }))
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running'), T)
   })
   it('cancelling the signing dialog changes nothing', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Pause the AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.paused')).toBe(false)
   })
-  it('a viewer sees Pause disabled but can press Watch live', async () => {
+  it('a viewer sees Pause and Watch live disabled', async () => {
     renderApp('/addon/factory/factory', { viewer: 'p_tom', setup: on })
     const pause = await screen.findByRole('button', { name: 'Pause factory' }, T)
     await waitFor(() => expect(pause).toBeDisabled(), T)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Watch live' })).toBeEnabled(), T)
+    expect(screen.getByRole('button', { name: 'Watch live' })).toBeDisabled()
   })
 })
 

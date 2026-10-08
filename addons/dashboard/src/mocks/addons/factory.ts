@@ -1,3 +1,4 @@
+import { addonActive } from '@/api/addons'
 import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
@@ -20,10 +21,10 @@ const EPIC_TITLE = 'Monthly billing v2'
 const MAX_CHILDREN = 25
 const MAX_HOURS = 72
 const MAX_SIZE = 'm'
-const WATCH_STEPS = 10
+const WATCH_STEPS = 10 // simulated steps per workspace per hour
 const STEP_MS = 20_000
 const SIZES = ['xs', 's', 'm', 'l', 'xl']
-const AGENT = 'claude-code:s_f101:p_sev'
+const WATCH_WINDOW_MS = 3_600_000 // the cap below counts per workspace over this window
 const HOUR = 3_600_000
 
 type Ctx = Pick<AddonCtx, 'store' | 'ws' | 'viewer'>
@@ -124,31 +125,57 @@ function readyReport(c: Ctx, epic: string, keys: string[]): string {
   ].join('\n')
 }
 
-/** One simulated step: an agent writes a child, auto-approves it, and asks for a permission. Returns false when nothing was added. */
+/** Simulated steps in the last hour (the cap is per workspace, so pressing Watch live again cannot go past it). */
+const recentSteps = (state: Record<string, unknown>, now: string) => ((state.simTimes as string[]) ?? []).filter((t) => Date.parse(now) - Date.parse(t) < WATCH_WINDOW_MS)
+
+/**
+ * One simulated step: an agent working for the person who pressed Watch live writes a child (through core's
+ * createFromRequest, so ticket.create applies), auto-approves it, and asks for a permission.
+ * Returns false when nothing was added (addon off, factory not running, cap used, or the person may no longer create).
+ */
 function simulateStep(store: MockStore, ws: string): boolean {
+  const w = store.workspaces.find((x) => x.id === ws)
+  if (!addonActive(w, 'factory')) return false
   const state = store.addonState(ws, 'factory')
   const epic = state.epic as string | null
-  if (!epic || modeOf(state, store.now()) !== 'running') return false
+  const now = store.now()
+  if (!epic || modeOf(state, now) !== 'running' || recentSteps(state, now).length >= WATCH_STEPS) return false
+  const person = state.simBy as string
+  const agent = `claude-code:s_demo:${person}` // a simulated agent that belongs to the person who pressed Watch live
   const n = (state.simSteps as number) ?? 0
   const [title, size] = TITLES[n % TITLES.length]
-  const at = store.now()
-  const child = store.createTicket(
+  const made = store.createFromRequest(
     ws,
-    { title, type: 'feature', priority: 'medium', size, labels: ['billing'], parent: epic, due: null, visibility: 'workspace', acceptance: [{ id: 'AC1', text: `${title}: done and covered by a test` }] },
-    { summary: title, requirements: `- ${title}.\n- Covered by a test.` },
-    { owner: null, assignees: [], reviewers: ['p_mara'] },
-    AGENT,
+    {
+      type: 'feature',
+      title,
+      priority: 'medium',
+      size,
+      labels: ['billing'],
+      parent: epic,
+      due: null,
+      visibility: 'workspace',
+      people: { owner: null, assignees: [], reviewers: ['p_mara'] },
+      sections: { summary: title, requirements: `- ${title}.\n- Covered by a test.` },
+      acceptance: [`${title}: done and covered by a test`],
+    },
+    { actor: agent, person },
   )
-  store.append(child.key, { type: 'gate.approved', actor: AGENT, gate: 'requirements' })
-  store.append(child.key, { type: 'gate.approved', actor: AGENT, gate: 'plan' })
+  if (!made.ok) return false
+  const child = made.ticket
+  store.append(child.key, { type: 'gate.approved', actor: agent, gate: 'requirements' })
+  store.append(child.key, { type: 'gate.approved', actor: agent, gate: 'plan' })
   store.append(child.key, { type: 'status.changed', actor: 'host', to: 'open' })
   state.used = (state.used as number) + 1
   state.simSteps = n + 1
+  state.simTimes = [...recentSteps(state, now), now]
   const seq = ((state.seq as number) ?? 0) + 1
   state.seq = seq
   const ask = COMMANDS[seq % COMMANDS.length]
   const standing = (state.epicGrants as string[]).includes(ask.command)
-  permitsOf(state).unshift({ id: `P-${seq}`, command: ask.command, reason: ask.reason, ticket: child.key, state: standing ? 'granted for this epic' : 'open', at })
+  permitsOf(state).unshift({ id: `P-${seq}`, command: ask.command, reason: ask.reason, ticket: child.key, state: standing ? 'granted for this epic' : 'open', at: now })
+  // A standing grant answers at once; it is still logged on the epic, marked as standing.
+  if (standing) store.append(epic, { type: 'permit.granted', actor: 'host', permit: `P-${seq}`, scope: 'epic', standing: true, child: child.key, command: ask.command })
   return true
 }
 
@@ -159,7 +186,6 @@ function endWatching(store: MockStore, ws: string, state: Record<string, unknown
 }
 
 function startScript(store: MockStore, ws: string) {
-  store.addonState(ws, 'factory').simSteps = 0
   const steps = Array.from({ length: WATCH_STEPS }, (_, i) => ({
     afterMs: STEP_MS,
     run: (st: MockStore) => {
@@ -185,6 +211,8 @@ registerAddon({
       used: kids.length,
       seq: 2,
       simSteps: 0,
+      simTimes: [],
+      simBy: null,
       epicGrants: [],
       permits: epic
         ? ([
@@ -266,6 +294,8 @@ registerAddon({
       readyNode: report ? { type: 'markdown', text: report } : { type: 'markdown', text: 'The Ready report appears here once every child is in testing or done.' },
       watching,
       simSteps: undefined,
+      simTimes: undefined,
+      simBy: undefined,
       epicGrants: undefined,
       startedBy: undefined,
       seq: undefined,
@@ -303,13 +333,14 @@ registerAddon({
       const open = openDecisions(getAddon('factory'), state, [], ctx).find((d) => d.id === id)
       const permit = open && permitsOf(state).find((p) => `factory.permit:${p.id}` === id)
       if (!open || !permit || !canSeeTicket(ctx, permit.ticket)) return { ok: true, message: 'That decision is closed.' }
+      if (body.option !== 'once' && body.option !== 'epic' && body.option !== 'refuse') return { ok: false, status: 400, code: 'validation.option', message: 'Choose Grant once, Grant for this epic or Refuse.' }
       const epic = state.epic as string
       if (body.option === 'refuse') {
         permit.state = 'refused'
         store.append(epic, { type: 'permit.refused', permit: permit.id, child: permit.ticket, command: permit.command })
         return { ok: true, message: `Refused ${permit.id}.`, changed: true }
       }
-      const scope = body.option === 'epic' ? 'epic' : 'once'
+      const scope = body.option
       permit.state = scope === 'epic' ? 'granted for this epic' : 'granted once'
       if (scope === 'epic') (state.epicGrants as string[]).push(permit.command)
       store.append(epic, { type: 'permit.granted', permit: permit.id, scope, child: permit.ticket, command: permit.command })
@@ -341,9 +372,13 @@ registerAddon({
     watch({ state, store, viewer, ws }) {
       if (!state.epic) return { ok: true, message: 'There is no factory epic to watch here.' }
       if (modeOf(state, store.now()) !== 'running') return { ok: true, message: 'The factory is not running; there is nothing to watch.' }
+      if (recentSteps(state, store.now()).length >= WATCH_STEPS) return { ok: true, message: `Demo limit reached: ${WATCH_STEPS} simulated steps per hour in this workspace. Try again later.` }
       setNav(state, viewer, { watching: true })
-      if (!store.sim.running().includes(scriptId(ws))) startScript(store, ws)
-      return { ok: true, message: `Watching live: a new child and permit request about every ${STEP_MS / 1000} s, ${WATCH_STEPS} at most.`, changed: true }
+      if (!store.sim.running().includes(scriptId(ws))) {
+        state.simBy = viewer
+        startScript(store, ws)
+      }
+      return { ok: true, message: `Watching live: a new child and permit request about every ${STEP_MS / 1000} s, ${WATCH_STEPS} at most per hour.`, changed: true }
     },
 
     stop_watching({ state, store, viewer, ws }) {

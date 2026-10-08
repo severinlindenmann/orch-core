@@ -48,6 +48,11 @@ export class Simulator {
     this.timers.delete(id)
   }
 
+  /** Stop `prefix` and every script named `prefix:...` (an addon's scripts are named `<addon>:<workspace>[:...]`). */
+  stopPrefix(prefix: string): void {
+    for (const id of [...this.timers.keys()]) if (id === prefix || id.startsWith(`${prefix}:`)) this.stop(id)
+  }
+
   stopAll(): void {
     for (const id of [...this.timers.keys()]) this.stop(id)
   }

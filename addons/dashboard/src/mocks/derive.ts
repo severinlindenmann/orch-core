@@ -430,8 +430,10 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'pushed the records'
     case 'quick.made_ticket':
       return 'made a quick task into a ticket'
+    case 'addon.action_signed':
+      return `signed ${t(e.action, 'an action')} of ${t(e.name, 'an addon')}`
     case 'permit.granted':
-      return `granted ${t(e.permit, 'a permit')} ${e.scope === 'epic' ? 'for this epic' : 'once'}`
+      return `granted ${t(e.permit, 'a permit')} ${e.scope === 'epic' ? (e.standing ? 'for this epic (standing grant)' : 'for this epic') : 'once'}`
     case 'permit.refused':
       return `refused ${t(e.permit, 'a permit')}`
     case 'factory.paused':

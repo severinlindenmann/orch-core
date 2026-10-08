@@ -25,6 +25,9 @@ describe('PreviewChip', () => {
   })
   it('is not orange (orange is reserved for the A badge)', () => {
     draw(true)
-    expect(screen.getByText('Preview').className).not.toMatch(/addon/)
+    const cls = screen.getByText('Preview').className
+    expect(cls).not.toMatch(/addon|orange|amber/)
+    expect(cls).toContain('border-border')
+    expect(cls).toContain('text-text-muted')
   })
 })

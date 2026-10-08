@@ -570,11 +570,11 @@
         "minRole": "maintainer"
       },
       "watch": {
-        "minRole": "viewer",
+        "minRole": "member",
         "label": "Watch live"
       },
       "stop_watching": {
-        "minRole": "viewer",
+        "minRole": "member",
         "label": "Stop watching"
       }
     }

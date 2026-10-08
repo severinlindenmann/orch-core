@@ -586,7 +586,7 @@ export type WorkspaceEventType =
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'
-  | 'addon.settings_saved'
+  | 'addon.settings_saved' | 'addon.action_signed'
   | 'grant.issued' | 'grant.revoked'
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'

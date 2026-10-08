@@ -23,7 +23,7 @@ import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { darkTheme } from './rjsfTheme'
 import { SafeMarkdown } from './SafeMarkdown'
-import { SignConfirm } from './SignConfirm'
+import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { useAddons, type SlotContext } from './slots'
@@ -256,27 +256,35 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
   }
   // `confirm: 'sign'`: core's signing prompt first; only after Touch ID is the action posted, with core's `confirmed` flag.
   const [signing, setSigning] = useState<{ action: string; extra?: Record<string, unknown> } | null>(null)
+  const [signPending, setSignPending] = useState(false)
   const signed = useSignedAction()
-  const signDialog = signing && (
+  const { data: packages } = useAddons()
+  const addonTitle = packages?.find((p) => p.name === addon)?.title ?? addon
+  const signDialog = signing && workspace && (
     <SignConfirm
       addon={addon}
-      label={actions?.[signing.action]?.label ?? signing.action}
+      addonTitle={addonTitle}
+      action={signing.action}
+      workspace={{ prefix: workspace.prefix, name: workspace.name }}
+      label={actions?.[signing.action]?.label}
       args={withoutReservedKeys(signing.extra)}
       onClose={() => setSigning(null)}
       onSign={() => {
         const s = signing
         setSigning(null)
-        if (!workspace) return
-        void signed(actions?.[s.action]?.label ?? s.action, () =>
-          api.runAddonAction(workspace.id, addon, s.action, { ...withoutReservedKeys(s.extra), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}), confirmed: true }),
-        )
+        setSignPending(true)
+        void signed(signTitle(s.action, addonTitle), async () => {
+          const res = await api.runAddonAction(workspace.id, addon, s.action, { ...withoutReservedKeys(s.extra), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}), confirmed: true })
+          toast.success(res.message)
+          openResultUrl(res)
+        }).finally(() => setSignPending(false))
       }}
     />
   )
   const dialog = signDialog || (confirming && (
     <SpawnConfirm addon={addon} ticketKey={ctx.ticket?.key} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   ))
-  return { run, pending: m.isPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a), dialog }
+  return { run, pending: m.isPending || signPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a), dialog }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const

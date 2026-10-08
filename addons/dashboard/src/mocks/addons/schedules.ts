@@ -38,6 +38,8 @@ interface Schedule {
   armed: boolean
   armedBy?: string
   armedAt?: string
+  disarmedBy?: string
+  disarmedAt?: string
 }
 interface Run {
   id: string
@@ -193,7 +195,7 @@ registerAddon({
       const s = schedules.find((x) => x.id === r.id)!
       return {
         title: r.name,
-        subtitle: `${KIND_LABEL[s.kind]} · ${r.trigger}${s.skill ? ` · skill ${s.skill}` : ''}`,
+        subtitle: `${KIND_LABEL[s.kind]} · ${r.trigger}${s.skill ? ` · skill ${s.skill}` : ''} · last: ${r.last}`,
         badge: s.armed ? `next: ${r.next}` : 'not armed',
         status: s.armed ? ('ok' as const) : ('idle' as const),
         actions: [
@@ -263,7 +265,7 @@ registerAddon({
       const s = schedulesOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!s) return fail(404, 'not_found', 'No such schedule.')
       if (!s.armed) return { ok: true, message: `${s.name} is not armed.` }
-      s.armed = false
+      Object.assign(s, { armed: false, disarmedBy: ctx.viewer, disarmedAt: ctx.store.now() })
       return { ok: true, message: `Disarmed ${s.name}.`, changed: true }
     },
 
@@ -297,6 +299,7 @@ registerAddon({
       const open = openDecisions(getAddon('schedules'), state, [], ctx).find((d) => d.id === id)
       const run = open && runsOf(state).find((r) => decisionId(r) === id)
       if (!open || !run?.finding) return { ok: true, message: 'That decision is closed.' }
+      if (body.option !== 'file' && body.option !== 'dismiss') return fail(400, 'validation.option', 'Choose File ticket in backlog or Dismiss.')
       if (body.option === 'dismiss') {
         run.findingState = 'dismissed'
         return { ok: true, message: 'Dismissed.', changed: true }

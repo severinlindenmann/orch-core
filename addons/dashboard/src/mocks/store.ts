@@ -388,10 +388,12 @@ export class MockStore {
   }
 
   /** Mock of POST /api/workspaces/:ws/tickets: role check, validation and creation in one place (the router and addons share it). */
-  createFromRequest(wsId: string, b: NewTicketRequest | null): { ok: true; ticket: TicketDocument } | StoreFailure {
+  createFromRequest(wsId: string, b: NewTicketRequest | null, opts: { actor?: string; person?: string } = {}): { ok: true; ticket: TicketDocument } | StoreFailure {
+    // `person` is who the ticket is created for (role check); `actor` writes the events (an agent working for that person).
+    const person = opts.person ?? this.viewer
     const ws = this.workspaces.find((w) => w.id === wsId)
     if (!ws) return refuse(404, 'not_found', 'No such workspace')
-    if (!can(this.roleIn(wsId, this.viewer), 'ticket.create')) return refuse(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
+    if (!can(this.roleIn(wsId, person), 'ticket.create')) return refuse(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
     if (!b || typeof b !== 'object' || !Object.hasOwn(SECTIONS_BY_TYPE, b.type)) return refuse(400, 'validation', 'Body must be a new ticket.')
     const title = (b.title ?? '').trim()
     if (title.length < 3 || title.length > 120) return refuse(400, 'validation.title', 'The title needs 3 to 120 characters.')
@@ -431,6 +433,7 @@ export class MockStore {
       },
       body,
       b.people ?? { owner: null, assignees: [], reviewers: [] },
+      opts.actor,
     )
     return { ok: true, ticket }
   }
@@ -776,6 +779,7 @@ export class MockStore {
         break
       case 'disable':
         this.appendWs(wsId, { type: 'addon.disabled', actor, name })
+        this.sim.stopPrefix(`${name}:${wsId}`) // the addon's simulator scripts stop writing
         break
       case 'update':
         if (req.op !== 'update') break
@@ -786,6 +790,7 @@ export class MockStore {
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
         this.appendWs(wsId, { type: 'addon.uninstalled', actor, name })
+        this.sim.stopPrefix(`${name}:${wsId}`)
         return { ok: true, addon: v }
       default:
         return refuse(400, 'validation', `Unknown op ${(req as { op: string }).op}`)
@@ -836,6 +841,16 @@ export class MockStore {
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
     if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only.
+    if (meta?.confirm === 'sign' && res.ok && res.changed) {
+      const args: Record<string, string | number | boolean> = {}
+      for (const [k, v] of Object.entries(body).slice(0, 12)) {
+        if (k === 'confirmed' || k === 'ticket') continue
+        if (typeof v === 'string') args[k.slice(0, 40)] = v.slice(0, 120)
+        else if (typeof v === 'number' || typeof v === 'boolean') args[k.slice(0, 40)] = v
+      }
+      this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, presence: 'touchid' })
+    }
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
     return res

@@ -25,7 +25,7 @@ describe('Schedules page', () => {
     const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
     await screen.findByText('Smoke test on testing', {}, T)
     await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Arm' }))
-    const dialog = await screen.findByRole('dialog', { name: /Arm a schedule/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: arm · Schedules/ }, T)
     expect(within(dialog).getByText(/smoke-on-testing/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: /Sign with Touch ID/ }))
     await waitFor(() => expect(within(itemOf('Smoke test on testing')).getByText(/on the next ticket moved to testing/)).toBeInTheDocument(), T)

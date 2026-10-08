@@ -49,7 +49,7 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('factory package and seed', () => {
-  it('starts in the catalog as a preview; pause/resume are signed and maintainer-only, watching is viewer-level', () => {
+  it('starts in the catalog as a preview; pause/resume are signed and maintainer-only, watching changes shared state so it needs a member', () => {
     const { store, ws } = setup('p_sev', false)
     expect(store.workspaces.find((w) => w.id === ws)!.addons.factory).toBeUndefined()
     const pkg = store.addons.find((a) => a.name === 'factory')!
@@ -57,8 +57,8 @@ describe('factory package and seed', () => {
     expect(pkg.actions).toMatchObject({
       pause: { minRole: 'maintainer', confirm: 'sign' },
       resume: { minRole: 'maintainer', confirm: 'sign' },
-      watch: { minRole: 'viewer' },
-      stop_watching: { minRole: 'viewer' },
+      watch: { minRole: 'member' },
+      stop_watching: { minRole: 'member' },
     })
   })
   it('DEMO has the epic "Monthly billing v2" with children of several statuses and sizes, some auto-approved by an agent', async () => {
@@ -247,16 +247,118 @@ describe('Watch live simulator', () => {
     s.store.setViewer('p_sev')
     expect((await state(s)).watching).toBe(true)
   })
-  it('a viewer may watch; a paused factory adds nothing', async () => {
-    const s = setup('p_tom')
+  it('a viewer cannot watch live: it would change shared state', async () => {
+    const t = setup('p_tom')
+    expect(await fail(run(t, 'watch'))).toBe('403 forbidden')
+    expect(await fail(run(t, 'stop_watching'))).toBe('403 forbidden')
+    expect(t.store.sim.running()).toEqual([])
+  })
+  it('children are created through core by the watcher\'s own simulated agent', async () => {
+    const s = setup('p_mara')
     await run(s, 'watch')
-    expect((await state(s)).watching).toBe(true)
-    s.store.setViewer('p_sev')
+    vi.advanceTimersByTime(20_000)
+    const added = (await state(s)).children.find((c) => c.ticket > 'DEMO-0054')!
+    const created = s.store.eventsOf(added.ticket).find((e) => e.type === 'ticket.created')!
+    expect(created.actor).toMatchObject({ kind: 'agent', for: 'p_mara' })
+    expect(s.store.eventsOf(added.ticket).filter((e) => e.type === 'gate.approved').every((e) => e.actor.kind === 'agent' && (e.actor as { for: string }).for === 'p_mara')).toBe(true)
+  })
+  it('pressing Watch live again cannot go past the cap within the hour, and the cap lifts later', async () => {
+    const s = setup()
+    const n = (await state(s)).children.length
+    await run(s, 'watch')
+    vi.advanceTimersByTime(20_000 * 12)
+    expect((await state(s)).children).toHaveLength(n + 10)
+    expect((await run(s, 'watch')).message).toMatch(/limit reached/i)
+    vi.advanceTimersByTime(20_000 * 12)
+    expect((await state(s)).children).toHaveLength(n + 10)
+    expect((await state(s)).watching).toBe(false)
+    vi.advanceTimersByTime(3_600_000)
+    await run(s, 'watch')
+    vi.advanceTimersByTime(20_000)
+    expect((await state(s)).children).toHaveLength(n + 11)
+  })
+  it('a paused factory adds nothing', async () => {
+    const s = setup()
     await run(s, 'pause', { confirmed: true })
     const n = (await state(s)).children.length
     vi.advanceTimersByTime(60_000)
     expect((await state(s)).children).toHaveLength(n)
     expect((await state(s)).watching).toBe(false)
+  })
+  it('stops writing when the addon is disabled or uninstalled', async () => {
+    for (const op of ['disable', 'uninstall'] as const) {
+      const s = setup()
+      await run(s, 'watch')
+      s.store.addonOp(s.ws, 'factory', { op }, { kind: 'person', id: 'p_sev' })
+      expect(s.store.sim.running()).toEqual([])
+      const n = s.store.ticketKeys(s.ws).length
+      vi.advanceTimersByTime(60_000)
+      expect(s.store.ticketKeys(s.ws)).toHaveLength(n)
+    }
+  })
+  it('the step itself refuses while the addon is inactive', async () => {
+    const s = setup()
+    await run(s, 'watch')
+    // A script that survived (e.g. restored state) still writes nothing once the addon is off.
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    w.addons.factory.enabled = false
+    const n = s.store.ticketKeys(s.ws).length
+    vi.advanceTimersByTime(60_000)
+    expect(s.store.ticketKeys(s.ws)).toHaveLength(n)
+  })
+})
+
+describe('minors', () => {
+  it('an unknown permit option is a 400 and changes nothing', async () => {
+    const s = setup()
+    const [d] = await permitsOf(s)
+    expect(await fail(run(s, 'permit', { id: d.id, option: 'whatever', ticket: d.ticket }))).toBe('400 validation.option')
+    expect((await permitsOf(s)).length).toBeGreaterThan(0)
+    expect(s.store.eventsOf(EPIC).some((e) => e.type === 'permit.granted')).toBe(false)
+  })
+  it('a standing grant answering a later request is logged on the epic as standing', async () => {
+    const s = setup()
+    const [d] = await permitsOf(s)
+    await run(s, 'permit', { id: d.id, option: 'epic', ticket: d.ticket })
+    await run(s, 'watch')
+    vi.advanceTimersByTime(20_000 * 10)
+    const standing = s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.granted' && e.standing === true)
+    expect(standing.length).toBeGreaterThan(0)
+    expect(standing[0]).toMatchObject({ scope: 'epic' })
+    expect(describeEvent(standing[0])).toMatch(/standing grant/)
+  })
+  it('the view carries no watcher map', async () => {
+    const s = setup()
+    await run(s, 'watch')
+    expect(JSON.stringify(await state(s))).not.toContain('p_mara')
+    expect(Object.keys(await state(s))).not.toContain('nav')
+  })
+})
+
+describe('signed actions leave a core record', () => {
+  it('pause appends addon.action_signed with scalar args only; a no-op or a refusal does not', async () => {
+    const s = setup()
+    expect(await fail(run(s, 'pause'))).toBe('409 confirm.required')
+    expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'addon.action_signed')).toBe(false)
+    await run(s, 'pause', { confirmed: true, id: 'x'.repeat(500), nested: { a: 1 } })
+    const ev = s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')
+    expect(ev).toHaveLength(1)
+    expect(ev[0]).toMatchObject({ name: 'factory', action: 'pause', presence: 'touchid', actor: { kind: 'person', id: 'p_sev' } })
+    expect((ev[0].args as Record<string, string>).id).toHaveLength(120)
+    expect(ev[0].args).not.toHaveProperty('nested')
+    expect(ev[0].args).not.toHaveProperty('confirmed')
+    await run(s, 'pause', { confirmed: true })
+    expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')).toHaveLength(1)
+    expect(describeEvent(ev[0])).toBe('signed pause of factory')
+  })
+  it('Activity shows the record to owners and maintainers only', async () => {
+    const s = setup()
+    installAndGrant(s.store, s.ws, 'activity')
+    await run(s, 'pause', { confirmed: true })
+    const text = async () => JSON.stringify(await s.api.getAddonState(s.ws, 'activity'))
+    expect(await text()).toContain('signed pause of factory')
+    s.store.setViewer('p_tom')
+    expect(await text()).not.toContain('signed pause')
   })
 })
 

@@ -9,19 +9,44 @@ const cap = (v: unknown) => {
 
 /**
  * Core's signing prompt for an addon action the manifest marks `confirm: 'sign'` (arm a schedule, pause the factory).
- * The title is the manifest's label, the covers are core's own words; what the addon sent with the action (an id) is
- * shown apart, as capped plain text. Only core posts the action afterwards, with its `confirmed` flag.
+ * Trust split (as for the start dialog): the title and the covers are core's own words, built from what core knows
+ * (the action id, the addon's title, the workspace). Everything the addon wrote (the manifest label, the args it sent)
+ * is shown apart, as capped plain text, in the dashed "From addon" region. Only core posts the action afterwards.
  */
-export function SignConfirm({ addon, label, args, onSign, onClose }: { addon: string; label: string; args?: Record<string, unknown>; onSign: () => void; onClose: () => void }) {
+export function SignConfirm({
+  addon,
+  addonTitle,
+  action,
+  workspace,
+  label,
+  args,
+  onSign,
+  onClose,
+}: {
+  addon: string
+  addonTitle: string
+  action: string
+  workspace: { prefix: string; name: string }
+  label?: string
+  args?: Record<string, unknown>
+  onSign: () => void
+  onClose: () => void
+}) {
   const sent = Object.entries(args ?? {}).filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
   return (
-    <SignPrompt title={label} covers={[`${label}, in this workspace`, 'Signed as you, with your own key']} confirmLabel="Sign with Touch ID" onSign={onSign} onClose={onClose}>
-      <section aria-label={`From addon ${addon}`} className="space-y-1 text-[13px] text-text-muted">
+    <SignPrompt
+      title={signTitle(action, addonTitle)}
+      covers={[`Runs the action "${action}" of the addon ${addonTitle}`, `In workspace ${workspace.prefix} · ${workspace.name}`, 'Signed as you, with your own key']}
+      confirmLabel="Sign with Touch ID"
+      onSign={onSign}
+      onClose={onClose}
+    >
+      <section aria-label={`From addon ${addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
         <p className="flex items-center gap-1.5">
           <AddonBadge name={addon} />
-          Requested by addon <span className="font-mono">{addon}</span>
-          {sent.length > 0 ? ':' : '.'}
+          From addon <span className="font-mono">{addon}</span>
         </p>
+        {label && <p className="break-words text-text">{cap(label)}</p>}
         {sent.map(([k, v]) => (
           <p key={k} className="break-all font-mono text-[12px] text-text">
             {cap(k)} = {cap(v)}
@@ -31,3 +56,6 @@ export function SignConfirm({ addon, label, args, onSign, onClose }: { addon: st
     </SignPrompt>
   )
 }
+
+/** The dialog title and toast title: core's words only. */
+export const signTitle = (action: string, addonTitle: string) => `Sign: ${action} · ${addonTitle}`

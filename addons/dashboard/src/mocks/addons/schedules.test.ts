@@ -187,3 +187,29 @@ describe('a recurring finding lands on Today', () => {
     expect(json).not.toContain(key)
   })
 })
+
+describe('review fixes', () => {
+  it('each schedule shows its last run', async () => {
+    const { items } = await state(setup())
+    expect(items.find((i) => i.title === 'Check inbox')!.subtitle).toContain('last: Fri 09 Oct 11:00 UTC, quiet')
+    expect(items.find((i) => i.title === 'Smoke test on testing')!.subtitle).toContain('last: never')
+  })
+  it('arm and disarm leave a core record, and the schedule remembers who disarmed', async () => {
+    const s = setup('p_mara')
+    await run(s, 'disarm', { id: 'check-inbox', confirmed: true })
+    const ev = s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')
+    expect(ev).toHaveLength(1)
+    expect(ev[0]).toMatchObject({ name: 'schedules', action: 'disarm', args: { id: 'check-inbox' }, actor: { id: 'p_mara' } })
+    const sched = (s.store.addonState(s.ws, 'schedules').schedules as { id: string; disarmedBy?: string }[]).find((x) => x.id === 'check-inbox')!
+    expect(sched.disarmedBy).toBe('p_mara')
+  })
+  it('an unknown finding option is a 400 and files nothing', async () => {
+    const s = setup()
+    const [d] = await decisions(s)
+    const n = s.store.ticketKeys(s.ws).length
+    expect(await fail(run(s, 'finding', { id: d.id, option: 'maybe' }))).toBe('400 validation.option')
+    expect(s.store.ticketKeys(s.ws)).toHaveLength(n)
+    expect(await decisions(s)).toHaveLength(1)
+  })
+})
+

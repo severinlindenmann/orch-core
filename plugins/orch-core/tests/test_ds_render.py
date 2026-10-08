@@ -81,6 +81,16 @@ def test_consecutive_actions_share_one_cluster_and_quiet_is_quiet():
     assert '<button type="submit" class="btn">Rerun checks</button>' in html
 
 
+def test_actions_are_not_wrapped_in_paragraphs():
+    """A <form> inside a <p> closes the paragraph in every HTML parser: the buttons would leave the cluster's row
+    and sit between empty paragraphs (INT-0035)."""
+    html = render(Card("App", (Text("running"), Action("restart", "Restart", "a"), Action("stop", "Stop", "a", quiet=True),
+                               Action("delete", "Delete", "a", quiet=True))))
+    assert "<p><form" not in html and "</form></p>" not in html
+    cluster = html.split('<div class="cluster widget-actions">', 1)[1].split("</div>", 1)[0]
+    assert cluster.startswith("<form") and cluster.count("<form") == 3
+
+
 def test_tabs_render_as_core_tab_pills():
     html = render(Tabs((Link("Files", "/addons/x/", current=True), Link("Messages", "/addons/x/?v=m")), label="View"))
     assert '<nav class="widget-tabs" aria-label="View"><ul class="tabs">' in html

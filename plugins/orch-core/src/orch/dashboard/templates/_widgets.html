@@ -69,6 +69,9 @@
   {%- elif x.kind == "chart" %}<section class="card addon-chart">{{ draw_chart(x.spec(), x.title) }}</section>
   {%- elif x.kind == "markdown" %}<div class="addon-markdown">{{ x.text|md_page(g.addon, x.here, x.pages, (g.ws if x.widgets and g.ws is defined else none), x.files)|safe }}</div>
   {%- elif x.kind == "time" %}<p>{{ time(x) }}</p>
+  {#- An Action is a <form>, which may not sit in a <p>: a parser would close the paragraph and the button would leave
+      its cluster's row (INT-0035). -#}
+  {%- elif x.kind == "action" %}{{ action(x, g) }}
   {%- else %}<p>{{ cell(x, g) }}</p>
   {%- endif %}
 {%- endmacro %}

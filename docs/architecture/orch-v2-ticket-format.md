@@ -51,7 +51,7 @@ orchestrator/
 {
   "schema": "orch.workspace/2",
   "workspace": {"id": "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11", "prefix": "DEMO", "name": "Acme energy data"},
-  "host": {"id": "h_01J9Z7", "wsk_pub": "ed25519:…"},
+  "host": {"id": "h_01J9Z7", "wsk_pub": "p256:…"},
   "members": [
     {"person": "p_sev", "name": "Severin", "role": "owner"},
     {"person": "p_mara", "name": "Mara", "role": "maintainer"},
@@ -155,9 +155,9 @@ One JSON object per line. Each event has:
 - `sig` for human events, and `host_sig` (WSK) on every appended event.
 
 ```json
-{"v":2,"id":"01J9ZP…","seq":5,"at":"2026-10-09T09:10:11Z","type":"gate.approved","gate":"requirements","hash":"sha256:fa37…","hash_v":1,"policy_hash":"sha256:31c2…","list_seq":7,"actor":{"kind":"person","id":"p_sev","device":"d_mac"},"presence":"touchid","based_on":"sha256:aa91…","prev":"sha256:aa91…","sig":"ed25519:…","host_sig":"ed25519:…"}
-{"v":2,"id":"01J9ZQ…","seq":9,"at":"2026-10-09T10:40:22Z","type":"task.done","task":"T2","receipt":{"exit":0,"ms":38200,"commit":"b7e1f02"},"actor":{"kind":"agent","id":"claude-code","session":"s_77c2","for":"p_sev","grant":"gr_01J9…"},"based_on":"sha256:51e0…","prev":"sha256:51e0…","host_sig":"ed25519:…"}
-{"v":2,"id":"01J9ZR…","seq":10,"at":"2026-10-09T10:41:03Z","type":"artifact.added","name":"seeds-in-warehouse.png","kind":"screenshot","sha256":"3f9a…","bytes":84213,"ac":"AC1","actor":{"kind":"agent","id":"claude-code","session":"s_77c2","for":"p_sev","grant":"gr_01J9…"},"based_on":"sha256:98ac…","prev":"sha256:98ac…","host_sig":"ed25519:…"}
+{"v":2,"id":"01J9ZP…","seq":5,"at":"2026-10-09T09:10:11Z","type":"gate.approved","gate":"requirements","hash":"sha256:fa37…","hash_v":1,"policy_hash":"sha256:31c2…","list_seq":7,"actor":{"kind":"person","id":"p_sev","device":"d_mac"},"presence":"touchid","based_on":"sha256:aa91…","prev":"sha256:aa91…","sig":"p256:…","host_sig":"p256:…"}
+{"v":2,"id":"01J9ZQ…","seq":9,"at":"2026-10-09T10:40:22Z","type":"task.done","task":"T2","receipt":{"exit":0,"ms":38200,"commit":"b7e1f02"},"actor":{"kind":"agent","id":"claude-code","session":"s_77c2","for":"p_sev","grant":"gr_01J9…"},"based_on":"sha256:51e0…","prev":"sha256:51e0…","host_sig":"p256:…"}
+{"v":2,"id":"01J9ZR…","seq":10,"at":"2026-10-09T10:41:03Z","type":"artifact.added","name":"seeds-in-warehouse.png","kind":"screenshot","sha256":"3f9a…","bytes":84213,"ac":"AC1","actor":{"kind":"agent","id":"claude-code","session":"s_77c2","for":"p_sev","grant":"gr_01J9…"},"based_on":"sha256:98ac…","prev":"sha256:98ac…","host_sig":"p256:…"}
 ```
 
 Rules:

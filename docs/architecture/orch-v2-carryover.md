@@ -73,7 +73,7 @@ keys (D37).
 | Phase | Taken over |
 |---|---|
 | P2 relay | T21 security headers, CSP and rate limits; T16 presence (with P3) |
-| P3 mobile | T49 PWA shell, service worker and offline; T38 workspaces page (it becomes the home cards); T37 ticket page on the phone (rebuilt); T39 remote dashboard frame; T42 streams viewer (#96); T43 unlock sheet and passkeys (#97); T17 settings (reduced); T36 needs-you screen (with P4) |
+| P3 mobile (now P4, native app per D45: these TIX items are **UI reference only**, no code is ported) | T49 PWA shell, service worker and offline; T38 workspaces page (it becomes the home cards); T37 ticket page on the phone (rebuilt); T39 remote dashboard frame; T42 streams viewer (#96); T43 unlock sheet and passkeys (#97); T17 settings (reduced); T36 needs-you screen (with P4) |
 | P4 push | T18 push (VAPID worker) |
 | P5 Drop | T02 encrypted files, expiry and ack; T07 public links; T08 upload links; T60 sharing CLI verbs as the host Drop client; T30 files list, preview, upload, paste and voice notes; T34 voice transcription (opt-in, D25); T35 encrypted outbox |
 | P7 publish | P01p shares (public, secret, sealed); P04 share lifecycle and backups; P05 app runtime; P07 stacks and templates; P09 CLI with staging and show-once links; P13 Mission Control pages and decisions (needs the addon runtime, so it lands with Phase 2's A01) |

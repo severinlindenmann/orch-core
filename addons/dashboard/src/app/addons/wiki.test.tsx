@@ -1,0 +1,63 @@
+import { screen, waitFor, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { renderApp } from '@/test/renderApp'
+
+const T = { timeout: 4000 }
+
+describe('wiki page', () => {
+  it('lists pages, opens one, edits and saves it', async () => {
+    const { user, container } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    const item = (await screen.findByText('On-call runbook', {}, T)).closest('li')!
+    await user.click(within(item).getByRole('button', { name: 'Open' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'On-call runbook' })).toBeInTheDocument(), T)
+    const body = await screen.findByLabelText('Markdown', {}, T)
+    await user.clear(body)
+    await user.type(body, 'Page the secondary after 15 minutes.')
+    await user.click(screen.getByRole('button', { name: 'Save page' }))
+    await waitFor(() => expect(container.querySelector('.addon-md')).toHaveTextContent('Page the secondary after 15 minutes.'), T)
+  })
+  it('searches the list', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await screen.findByText('On-call runbook', {}, T)
+    await user.type(screen.getByLabelText('Search'), 'glossary')
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(screen.queryByText('On-call runbook')).not.toBeInTheDocument(), T)
+    expect(screen.getAllByText('Glossary').length).toBeGreaterThan(0)
+  })
+  it('renders the imported page inert: no script, no handlers, no javascript: or data: links', async () => {
+    const { user, container } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    const item = (await screen.findByText('Imported from old wiki', {}, T)).closest('li')!
+    await user.click(within(item).getByRole('button', { name: 'Open' }))
+    await screen.findByRole('heading', { name: 'Imported from old wiki' }, T)
+    await waitFor(() => expect(screen.getByText('x')).toBeInTheDocument(), T)
+    const md = container.querySelector('.addon-md')!
+    expect(md.querySelector('script')).toBeNull()
+    expect(md.querySelector('img')).toBeNull()
+    expect(md.innerHTML).not.toMatch(/\son\w+=/i)
+    expect(md.innerHTML).not.toMatch(/javascript:|data:text/i)
+    for (const a of md.querySelectorAll('a')) expect(a.getAttribute('href')).toMatch(/^https?:\/\//)
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined()
+  })
+  it('viewers see the form disabled', async () => {
+    renderApp('/addon/wiki/pages', { viewer: 'p_tom' })
+    expect(await screen.findByLabelText('Markdown', {}, T)).toBeDisabled()
+  })
+})
+
+describe('wiki ticket panel', () => {
+  it('shows the pages linked to DEMO-0043 and links another one', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
+    const frame = await waitFor(() => {
+      const f = panel.querySelector('[data-addon="wiki"]')
+      expect(f).not.toBeNull()
+      return f as HTMLElement
+    }, T)
+    const titles = () => within(frame).getAllByRole('listitem').map((li) => li.textContent ?? '')
+    await waitFor(() => expect(titles().some((t) => t.includes('Reconciliation tolerance'))).toBe(true), T)
+    expect(titles().some((t) => t.includes('Glossary'))).toBe(false)
+    await user.selectOptions(within(frame).getByLabelText('Page'), 'Glossary')
+    await user.click(within(frame).getByRole('button', { name: 'Link page' }))
+    await waitFor(() => expect(titles().some((t) => t.includes('Glossary'))).toBe(true), T)
+  })
+})

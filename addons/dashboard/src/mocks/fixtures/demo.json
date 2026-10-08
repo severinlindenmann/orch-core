@@ -128,19 +128,6 @@
           "cents": 412,
           "sessions": 3,
           "ms": 5460000
-        },
-        "wiki": {
-          "pages": [
-            {
-              "title": "Tariff data conventions",
-              "subtitle": "wiki/data/tariffs.md",
-              "badge": "updated 2d ago"
-            },
-            {
-              "title": "dbt seeds: when to use them",
-              "subtitle": "wiki/dbt/seeds.md"
-            }
-          ]
         }
       }
     },
@@ -582,14 +569,6 @@
           "cents": 298,
           "sessions": 2,
           "ms": 3900000
-        },
-        "wiki": {
-          "pages": [
-            {
-              "title": "Reconciliation tolerance",
-              "subtitle": "wiki/billing/reconciliation.md"
-            }
-          ]
         }
       }
     },

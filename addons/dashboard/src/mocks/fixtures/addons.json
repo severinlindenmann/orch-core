@@ -809,13 +809,28 @@
           "type": "stack",
           "children": [
             {
-              "type": "markdown",
-              "text": "# Tariff data conventions\n\nHow we name, version and review tariff data in the **Acme energy data** workspace.\n\n## Rules\n\n- One seed file per tariff table, named `tariff_<region>_<year>.csv`.\n- Every table has a `valid_from` date; never edit a past row, add a new one.\n- Changes go through a pull request with a reconciliation run attached.\n\n## Checks\n\n| Check | Where | Tolerance |\n| --- | --- | --- |\n| Row count | dbt test | exact |\n| Billed kWh vs finance | reconciliation | 0.1 % |\n\nSee the [dbt seeds guide](https://docs.getdbt.com/docs/build/seeds) for the loader.\n\n> Seeds are for small, slow-changing reference data only.\n\n![diagram](https://example.com/tracker.png)\n"
+              "type": "form",
+              "schema": { "type": "object", "properties": { "query": { "type": "string", "title": "Search" } } },
+              "formData": { "$ref": "addon.searchForm" },
+              "action": "search",
+              "submitLabel": "Search"
             },
+            { "type": "list", "items": { "$ref": "addon.items" }, "empty": "No pages match." },
+            { "type": "markdown", "text": { "$ref": "addon.current.markdown" } },
             {
-              "type": "code",
-              "language": "sql",
-              "text": "select tariff_id, valid_from, price_per_kwh\nfrom {{ ref('tariff_ch_2026') }}\nwhere valid_from <= current_date;"
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                  "title": { "type": "string", "title": "Title" },
+                  "markdown": { "type": "string", "title": "Markdown" }
+                }
+              },
+              "uiSchema": { "markdown": { "ui:widget": "textarea" } },
+              "formData": { "$ref": "addon.editForm" },
+              "action": "save",
+              "submitLabel": "Save page"
             }
           ]
         }
@@ -826,11 +841,19 @@
         "title": "Related pages",
         "icon": "BookOpen",
         "node": {
-          "type": "list",
-          "items": {
-            "$ref": "ticket.addons.wiki.pages"
-          },
-          "empty": "No linked pages."
+          "type": "stack",
+          "children": [
+            { "type": "list", "items": { "$ref": "addon.byTicket.$ticket" }, "empty": "No linked pages." },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": { "page": { "type": "string", "title": "Page", "enum": { "$ref": "addon.titles" } } }
+              },
+              "action": "link",
+              "submitLabel": "Link page"
+            }
+          ]
         }
       }
     ],

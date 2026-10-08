@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext } from 'react'
+import { createContext, lazy, Suspense, useContext, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { withTheme } from '@rjsf/core'
 import validator from '@rjsf/validator-ajv8'
@@ -23,6 +23,7 @@ import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { darkTheme } from './rjsfTheme'
 import { SafeMarkdown } from './SafeMarkdown'
+import { SpawnConfirm } from './SpawnConfirm'
 import { useAddons, type SlotContext } from './slots'
 
 const ThemedForm = withTheme(darkTheme)
@@ -197,26 +198,39 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
  * declares with minRole 'viewer' (navigation). The server stays the authority; this only decides what looks clickable.
  */
 function useActionAllowed(): (action?: string) => boolean {
-  const { addon, readOnly } = useContext(RuntimeCtx)
+  const { readOnly } = useContext(RuntimeCtx)
+  const actions = useManifestActions()
+  return (action) => !readOnly || (!!action && actions?.[action]?.minRole === 'viewer')
+}
+
+/** The action manifest this workspace runs for the current addon (the installed version's). */
+function useManifestActions() {
+  const { addon } = useContext(RuntimeCtx)
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   const pkg = data?.find((a) => a.name === addon)
   // Same manifest the server enforces: the installed version's, so an update that removed a viewer action disables it here.
-  const actions = pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions : undefined
-  return (action) => !readOnly || (!!action && actions?.[action]?.minRole === 'viewer')
+  return pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions : undefined
 }
 
-/** Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only. */
-function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean } {
+/**
+ * Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only.
+ * An action the manifest marks `confirm: 'spawn_agent'` is not posted directly: core's start dialog (`dialog`, render
+ * it) opens first and posts it with `confirmed` only when the person confirms there.
+ */
+function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean; dialog: ReactNode } {
   const { addon, ctx } = useContext(RuntimeCtx)
   const allowed = useActionAllowed()
+  const actions = useManifestActions()
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
+  const [confirming, setConfirming] = useState<{ action: string; extra?: Record<string, unknown> } | null>(null)
   const m = useMutation({
-    mutationFn: ({ action, extra }: { action: string; extra?: Record<string, unknown> }) => {
+    mutationFn: ({ action, extra, confirmed }: { action: string; extra?: Record<string, unknown>; confirmed?: boolean }) => {
       if (!workspace) throw new Error('No workspace')
       return api.runAddonAction(workspace.id, addon, action, {
         ...withoutReservedKeys(extra),
+        ...(confirmed ? { confirmed: true } : {}),
         ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}),
       })
     },
@@ -230,37 +244,45 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
     },
     onError: (err) => toastApiError(err, 'Action failed'),
   })
-  return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a) }
+  const run = (action: string, extra?: Record<string, unknown>) => (actions?.[action]?.confirm === 'spawn_agent' ? setConfirming({ action, extra }) : m.mutate({ action, extra }))
+  const dialog = confirming && (
+    <SpawnConfirm addon={addon} ticketKey={ctx.ticket?.key} onClose={() => setConfirming(null)} onStart={() => m.mutate({ ...confirming, confirmed: true })} />
+  )
+  return { run, pending: m.isPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a), dialog }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog } = useAddonAction(node.action)
   return (
     <div>
       <Button size="sm" variant={BUTTON_VARIANT[node.variant]} disabled={pending || blocked} onClick={() => run(node.action)}>
         {node.label}
       </Button>
+      {dialog}
     </div>
   )
 }
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
-  const { run, pending, blocked } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog } = useAddonAction(node.action)
   const readOnly = !useActionAllowed()(node.action)
   return (
-    <ThemedForm
-      disabled={readOnly}
-      key={JSON.stringify(node.formData ?? null)}
-      schema={node.schema}
-      uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
-      formData={node.formData ?? undefined}
-      validator={validator}
-      noHtml5Validate
-      showErrorList={false}
-      onSubmit={({ formData }) => run(node.action, { formData })}
-    />
+    <>
+      {dialog}
+      <ThemedForm
+        disabled={readOnly}
+        key={JSON.stringify(node.formData ?? null)}
+        schema={node.schema}
+        uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
+        formData={node.formData ?? undefined}
+        validator={validator}
+        noHtml5Validate
+        showErrorList={false}
+        onSubmit={({ formData }) => run(node.action, { formData })}
+      />
+    </>
   )
 }
 
@@ -283,9 +305,10 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
 }
 
 function ItemActions({ actions, row }: { actions: ItemAction[]; row?: Record<string, unknown> }) {
-  const { run, pending, blockedFor } = useAddonAction()
+  const { run, pending, blockedFor, dialog } = useAddonAction()
   return (
     <div className="flex shrink-0 items-center gap-1">
+      {dialog}
       {actions.map((a, i) => (
         <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending || blockedFor(a.action)} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
           {a.label}

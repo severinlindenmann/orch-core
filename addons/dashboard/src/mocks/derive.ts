@@ -450,6 +450,10 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'issued a grant'
     case 'grant.revoked':
       return 'revoked a grant'
+    case 'agent.started':
+      return e.agent === 'codex' ? 'started an agent session (Codex)' : e.agent === 'claude-code' ? 'started an agent session (Claude Code)' : 'started an agent session'
+    case 'agent.stopped':
+      return e.reason ? `stopped an agent session (${t(e.reason, '')})` : 'stopped an agent session'
     case 'view.saved':
       return e.name ? `saved view "${t(e.name, '')}"` : 'saved a view'
     case 'view.deleted':

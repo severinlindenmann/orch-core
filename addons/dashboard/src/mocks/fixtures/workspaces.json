@@ -58,6 +58,25 @@
         "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
         "capabilities": []
       },
+      "start-agent": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "spawn_agent"
+          ],
+          "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+        "capabilities": [
+          "spawn_agent"
+        ]
+      },
       "widgets": {
         "enabled": true,
         "status": "active",

@@ -339,6 +339,30 @@ export interface AgentActivityItem {
   refusal?: { code: string; message: string; retryable: boolean; stop: boolean } // stop: the third same refusal
 }
 
+// ---------------------------------------------------------------- starting agents
+
+export type LaunchMode = 'refine' | 'work' | 'fix' | 'continue'
+export type LaunchHarness = 'claude-code' | 'codex'
+export type LaunchWhere = 'terminals' | 'background'
+
+/**
+ * What core will start for one ticket, as the start-agent addon's state carries it (`previews[ticket]`): the labels
+ * of the person's choice, the exact command and, when model routing is on, its one-line model summary. Core's
+ * start dialog shows this; the start itself resolves it again with the same resolver.
+ */
+export interface LaunchPreview {
+  ticket: string
+  title: string
+  mode: string
+  harness: string
+  where: string
+  command: string
+  /** "Model · work runs on standard: Standard (sonnet); subagents on haiku" (model routing on). */
+  model?: string
+  /** Why Start is blocked (a setting that is not a model name), as one sentence. */
+  blocked?: string
+}
+
 // ---------------------------------------------------------------- today
 
 export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring'
@@ -441,6 +465,12 @@ export interface AddonGrant {
 export interface ActionMeta {
   minRole: Role
   label?: string
+  /**
+   * Core confirms this action in its own dialog before it is posted (the addon's node cannot skip it).
+   * 'spawn_agent': the start-agent dialog (signs a grant first when the person has none). The host refuses the
+   * action without core's `confirmed` flag (409 confirm.required).
+   */
+  confirm?: 'spawn_agent'
 }
 
 export interface AddonUpdate {
@@ -531,6 +561,7 @@ export type WorkspaceEventType =
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'
   | 'addon.settings_saved'
   | 'grant.issued' | 'grant.revoked'
+  | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'
   | 'workspace.renamed'
 export interface WorkspaceEvent {

@@ -219,7 +219,7 @@ registerAddon({
       const id = String(body.id ?? '')
       const option = String(body.option ?? '')
       // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
-      const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? []).find((d) => d.id === id)
+      const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? [], ctx).find((d) => d.id === id)
       if (!open || (open.ticket && !canSeeTicket(ctx, open.ticket))) return { ok: true, message: 'That decision is closed.' }
       markDecided(state, id)
       if (id === 'dec_publish_failed_build') {

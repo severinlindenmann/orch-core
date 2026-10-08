@@ -1,9 +1,12 @@
 // Shared by every surface that runs an addon action (AddonNode, the board lane): what core lets an action carry
 // in, and what core opens out. One place, so the two cannot drift.
 
-/** The workspace and `ticket` come from core's render context only; addon-authored args may never set them. */
+/**
+ * The workspace and `ticket` come from core's render context only, and `confirmed` only from core's own confirmation
+ * dialog (starting an agent); addon-authored args may never set them.
+ */
 export function withoutReservedKeys(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  const { ws: _ws, ticket: _ticket, ...rest } = extra
+  const { ws: _ws, ticket: _ticket, confirmed: _confirmed, ...rest } = extra
   return rest
 }
 

@@ -971,5 +971,92 @@
     ],
     "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
     "update": null
+  },
+  {
+    "name": "start-agent",
+    "title": "Start agent",
+    "version": "0.1.0",
+    "description": "Start an agent session on a ticket: pick the mode, the harness and where it runs, see the exact command, and confirm. orch runs it under your grant.",
+    "capabilities": ["spawn_agent"],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "ticket.panel",
+        "id": "start-agent.ticket",
+        "title": "Start agent",
+        "icon": "Bot",
+        "when": "addon.byTicket.$ticket",
+        "node": {
+          "type": "stack",
+          "children": [{ "$ref": "addon.byTicket.$ticket.run" }, { "$ref": "addon.byTicket.$ticket.setup" }]
+        }
+      },
+      {
+        "slot": "nav",
+        "id": "start",
+        "title": "Start agent",
+        "icon": "Bot",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "markdown", "text": "Start an agent session on a ticket. orch confirms every start in its own dialog and runs it under your grant; revoking the grant stops it." },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "required": ["ticket"],
+                "properties": {
+                  "ticket": { "type": "string", "title": "Ticket", "oneOf": { "$ref": "addon.ticketOptions" } },
+                  "mode": { "type": "string", "title": "Mode", "default": "work", "oneOf": [{ "const": "refine", "title": "Refine" }, { "const": "work", "title": "Work on ticket" }, { "const": "fix", "title": "Fix failing checks" }, { "const": "continue", "title": "Continue after feedback" }] },
+                  "harness": { "type": "string", "title": "Harness", "default": "claude-code", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
+                  "where": { "type": "string", "title": "Where", "default": "background", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+                }
+              },
+              "formData": { "$ref": "addon.page.form" },
+              "action": "configure",
+              "submitLabel": "Update command"
+            },
+            { "$ref": "addon.page.preview" },
+            { "type": "markdown", "text": "### Running" },
+            {
+              "type": "table",
+              "columns": [{ "key": "ticket", "label": "Ticket" }, { "key": "title", "label": "Title" }, { "key": "harness", "label": "Harness" }, { "key": "model", "label": "Model" }, { "key": "state", "label": "State" }, { "key": "started", "label": "Started" }],
+              "rows": { "$ref": "addon.runs" },
+              "rowActions": [{ "label": "Stop", "action": "stop", "args": { "session": "$row.session" }, "variant": "danger" }]
+            },
+            { "type": "markdown", "text": "### Ended" },
+            { "type": "list", "items": { "$ref": "addon.ended" }, "empty": "No run has ended yet." }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "start-agent.settings",
+        "title": "Start agent",
+        "icon": "Bot",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "harness": { "type": "string", "title": "Default harness", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
+              "where": { "type": "string", "title": "Default place to run", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "configure": { "minRole": "member" },
+      "start": { "minRole": "member", "confirm": "spawn_agent" },
+      "stop": { "minRole": "member" },
+      "save_settings": { "minRole": "owner" }
+    },
+    "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+    "update": null
   }
 ]

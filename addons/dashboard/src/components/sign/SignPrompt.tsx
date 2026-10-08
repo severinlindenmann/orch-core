@@ -44,6 +44,7 @@ export function SignPrompt({
   children,
   destructive,
   confirmLabel = 'Sign with Touch ID',
+  disabled,
   onSign,
   onClose,
 }: {
@@ -54,6 +55,8 @@ export function SignPrompt({
   destructive?: boolean
   /** Button text; the default says what happens (Touch ID). Use a verb for the action being signed. */
   confirmLabel?: string
+  /** The sign button is off (something blocks what would be signed; say why in `children`). */
+  disabled?: boolean
   onSign: () => void
   onClose: () => void
 }) {
@@ -85,7 +88,7 @@ export function SignPrompt({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant={destructive ? 'destructive' : 'default'} onClick={onSign}>
+          <Button variant={destructive ? 'destructive' : 'default'} disabled={disabled} onClick={onSign}>
             <Fingerprint />
             {confirmLabel}
           </Button>

@@ -348,7 +348,7 @@ describe('every event type has a one-line summary', () => {
     'log.added', 'comment.added', 'people.set', 'agent.refused', 'github.pr_linked', 'github.imported', 'publish.shared', 'publish.revoked', 'publish.decided',
     'estimate.set', 'usage.recorded', 'records.committed', 'records.pushed', 'quick.made_ticket', 'wiki.linked',
     'member.added', 'member.role_changed', 'member.removed', 'gate.policy_set', 'addon.installed', 'addon.granted', 'addon.enabled', 'addon.disabled', 'addon.updated',
-    'addon.uninstalled', 'addon.settings_saved', 'grant.issued', 'grant.revoked', 'view.saved', 'view.deleted', 'workspace.renamed', 'bogus.type',
+    'addon.uninstalled', 'addon.settings_saved', 'grant.issued', 'grant.revoked', 'agent.started', 'agent.stopped', 'view.saved', 'view.deleted', 'workspace.renamed', 'bogus.type',
   ]
   it('never returns an empty, undefined or trailing-blank summary, even for sparse events', () => {
     for (const type of types) {

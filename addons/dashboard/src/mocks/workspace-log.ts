@@ -80,6 +80,8 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'addon.settings_saved':
       case 'grant.issued':
       case 'grant.revoked':
+      case 'agent.started':
+      case 'agent.stopped':
       case 'view.saved':
       case 'view.deleted':
         break
@@ -108,6 +110,11 @@ export function foldGrants(seed: GrantInfo[], events: WorkspaceEvent[]): GrantIn
     } else if (e.type === 'grant.revoked') {
       const g = grants.find((x) => x.id === e.grant)
       if (g && !g.revoked) g.revoked = { at: e.at, by: e.actor.id }
+    } else if (e.type === 'agent.started') {
+      // A session started under a grant is registered on it, so revoking the grant stops it.
+      const g = grants.find((x) => x.id === e.grant)
+      const session = String(e.session)
+      if (g && !g.sessions.includes(session)) g.sessions.push(session)
     }
   }
   return grants

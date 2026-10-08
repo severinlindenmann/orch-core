@@ -40,6 +40,8 @@ import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } 
 import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
+import { activeGrantOf } from '@/api/grants'
+import { HARNESSES, MODES, WHERES, commandFor, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
@@ -502,6 +504,9 @@ export class MockStore {
     if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
     this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
     const roots = g.sessions
+    // Runs started from the dashboard under this grant end now: their scripts stop and they are recorded as stopped.
+    for (const r of roots) this.sim.stop(r)
+    for (const st of this.startedSessions(wsId)) if (st.grant === id && !st.stopped) this.appendWs(wsId, { type: 'agent.stopped', actor, session: st.session, reason: 'grant revoked' })
     const uses = (session: string) => roots.some((r) => sessionBelongsTo(session, r))
     const reason = 'grant revoked'
     for (const [key, ws] of this.wsOfKey) {
@@ -514,6 +519,98 @@ export class MockStore {
         this.append(key, { type: 'claim.released', actor: `${doc.claim.agent}:${doc.claim.session}:${doc.claim.for}`, reason })
     }
     return { ok: true, grant: this.grants(wsId).find((x) => x.id === id)! }
+  }
+
+  // ------------------------------------------------------------ agent sessions started from the dashboard
+
+  /** Sessions started from the dashboard in a workspace (folded from agent.started / agent.stopped). */
+  startedSessions(wsId: string): StartedSession[] {
+    return foldSessions(this.wsEvents.get(wsId) ?? [])
+  }
+
+  /** The person's active `all` grant in a workspace (not revoked, not expired), if any. */
+  activeGrant(wsId: string, person: string): GrantInfo | undefined {
+    return activeGrantOf(this.grants(wsId), person, Date.parse(this.now()))
+  }
+
+  /**
+   * One resolver for the preview and the start: the plan of the active addon that holds a `launch` grant (model
+   * routing), then the exact command. `commit` is the real start (one-shot choices such as "next start on Strong" are used up).
+   */
+  resolveLaunch(wsId: string, req: LaunchRequest, commit = false): { plan: LaunchPlan; command: string } {
+    const w = this.workspaces.find((x) => x.id === wsId)
+    let plan: LaunchPlan = {}
+    for (const pkg of this.addons) {
+      const mod = getAddon(pkg.name)
+      if (!mod?.launch || !addonActive(w, pkg.name) || !w?.addons[pkg.name]?.granted?.capabilities.includes('launch')) continue
+      const lastTier = this.startedSessions(wsId).filter((x) => x.ticket === req.ticket).at(-1)?.tier
+      plan = mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier })
+      break
+    }
+    return { plan, command: commandFor(req, plan) }
+  }
+
+  /**
+   * Start an agent session on a ticket for `actor` (core; an addon with a `spawn_agent` grant asks for it).
+   * A person only: agents never start agents. Member or above, a ticket of this workspace the person can see and
+   * nobody claims, and an active grant of their own; the session is registered on that grant and the simulated run plays.
+   */
+  startSession(wsId: string, req: LaunchRequest & { addon: string }, actor: Actor): { ok: true; session: StartedSession } | StoreFailure {
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can start an agent.', 'Agents never start agents.')
+    const w = this.workspaces.find((x) => x.id === wsId)
+    if (!w) return refuse(404, 'not_found', 'No such workspace')
+    if (!can(this.roleIn(wsId, actor.id), 'ticket.act')) return refuse(403, 'forbidden', 'Viewers cannot start agents.', 'Ask an owner or maintainer.')
+    if (!addonActive(w, req.addon) || !w.addons[req.addon]?.granted?.capabilities.includes('spawn_agent'))
+      return refuse(403, 'capability.missing', `${req.addon} may not start agents in this workspace.`, 'An owner grants spawn_agent in Settings > Addons.')
+    if (!MODES.includes(req.mode) || !HARNESSES.includes(req.harness) || !WHERES.includes(req.where)) return refuse(400, 'validation', 'Pick a mode, a harness and where it runs.')
+    if (!this.hasTicket(req.ticket) || this.wsOfKey.get(req.ticket) !== wsId || !this.isVisible(req.ticket, actor.id)) return refuse(404, 'not_found', `No ticket ${req.ticket}`)
+    const doc = this.ticket(req.ticket)!
+    if (doc.status === 'done') return refuse(409, 'ticket.done', `${req.ticket} is done.`)
+    const pending = this.startedSessions(wsId).find((x) => x.ticket === req.ticket && !x.stopped && this.sim.running().includes(x.session))
+    if (doc.claim || pending)
+      return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
+    const grant = this.activeGrant(wsId, actor.id)
+    if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
+    const blocked = this.resolveLaunch(wsId, req).plan.error
+    if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the Model routing settings.')
+    const { plan, command } = this.resolveLaunch(wsId, req, true)
+    const session = 's_' + fnvHex(`${req.ticket}|${this.now()}|${this.wsEventsOf(wsId).length}`, 4)
+    this.appendWs(wsId, {
+      type: 'agent.started',
+      actor,
+      session,
+      agent: req.harness,
+      for: actor.id,
+      grant: grant.id,
+      ticket: req.ticket,
+      mode: req.mode,
+      where: req.where,
+      ...(plan.model ? { model: plan.model } : {}),
+      ...(plan.tier ? { tier: plan.tier } : {}),
+      command,
+      addon: req.addon,
+    })
+    const started = this.startedSessions(wsId).find((x) => x.session === session)!
+    this.sim.play(session, sessionScript(started, grant.until))
+    return { ok: true, session: started }
+  }
+
+  /** Stop a session started from the dashboard: its script ends, its claim and leases are released. The person it works for, or an owner. */
+  stopSession(wsId: string, session: string, actor: Actor): { ok: true; session: StartedSession } | StoreFailure {
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can stop an agent from here.')
+    const role = this.roleIn(wsId, actor.id)
+    if (!can(role, 'ticket.act')) return refuse(403, 'forbidden', 'Viewers cannot stop agents.', 'Ask an owner or maintainer.')
+    const s = this.startedSessions(wsId).find((x) => x.session === session)
+    if (!s || !this.isVisible(s.ticket, actor.id)) return refuse(404, 'not_found', `No session ${session}`)
+    if (s.for !== actor.id && !can(role, 'grant.revoke.any')) return refuse(403, 'forbidden', `Only the person it works for or an owner can stop ${session}.`)
+    if (s.stopped) return refuse(409, 'session.stopped', `${session} has already stopped.`)
+    this.sim.stop(session)
+    const doc = this.ticket(s.ticket)
+    const agent = `${s.agent}:${s.session}:${s.for}`
+    for (const t of doc?.tasks_state ?? []) if (t.lease && sessionBelongsTo(t.lease.session, session)) this.append(s.ticket, { type: 'lease.released', actor: agent, task: t.id, reason: 'stopped' })
+    if (doc?.claim && doc.claim.session === session) this.append(s.ticket, { type: 'claim.released', actor: agent, reason: 'stopped' })
+    this.appendWs(wsId, { type: 'agent.stopped', actor, session, reason: 'stopped' })
+    return { ok: true, session: this.startedSessions(wsId).find((x) => x.session === session)! }
   }
 
   /** Saved views the viewer can see: their own and the shared ones. */
@@ -665,15 +762,18 @@ export class MockStore {
     const role = this.roleIn(ws, this.viewer)
     const pkg = this.addons.find((a) => a.name === name)
     const installed = w.addons[name]
-    const min = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]?.minRole ?? 'member'
+    const meta = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]
+    const min = meta?.minRole ?? 'member'
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
     if (!atLeast(role, min)) {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
     }
+    // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
+    if (meta?.confirm && body.confirmed !== true) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
     // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
-    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? []).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }
+    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
@@ -761,7 +861,7 @@ export class MockStore {
     // A decision about a ticket is shown only to people who can see that ticket.
     return this.addons
       .filter((a) => addonActive(w, a.name))
-      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? []))
+      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? [], { store: this, ws: wsId, viewer: this.viewer }))
       .filter((d) => !d.ticket || (this.wsOfKey.get(d.ticket) === wsId && this.isVisible(d.ticket)))
   }
 
@@ -801,7 +901,7 @@ export class MockStore {
     const tickets = this.listTickets(workspaceId)
     const grants = this.grants(workspaceId)
     const now = this.now()
-    return this.agentRegistry
+    const seeded: AgentSession[] = this.agentRegistry
       .filter((a) => grants.some((g) => g.id === a.grant))
       .map((a) => {
         const g = grants.find((x) => x.id === a.grant)!
@@ -817,6 +917,34 @@ export class MockStore {
         const { waiting_on, ...rest } = a
         return { ...rest, grant: { id: g.id, until: g.until }, claims, leases, state: stopped ? 'stopped' : a.state, ...(!stopped && waiting_on ? { waiting_on } : {}) } satisfies AgentSession
       })
+    return [...seeded, ...this.startedSessions(workspaceId).map((s) => this.startedAgent(s, tickets, grants, now))]
+  }
+
+  /** A session started from the dashboard, as the Agents page and Today see it. Ticket details only for tickets the viewer sees (`tickets`). */
+  private startedAgent(s: StartedSession, tickets: TicketDocument[], grants: GrantInfo[], now: string): AgentSession {
+    const g = grants.find((x) => x.id === s.grant)
+    const doc = tickets.find((t) => t.key === s.ticket)
+    const claims = doc?.claim?.session === s.session ? [{ ticket: doc.key, since: doc.claim.since, expires: doc.claim.expires }] : []
+    const leases = (doc?.tasks_state ?? []).filter((t) => t.lease && sessionBelongsTo(t.lease.session, s.session)).map((t) => ({ ticket: doc!.key, task: t.id, session: t.lease!.session }))
+    const stopped = !!s.stopped || !g || !!g.revoked || g.until <= now
+    const mine = doc ? this.eventsOf(doc.key).filter((e) => e.actor.kind === 'agent' && e.actor.session === s.session) : []
+    const asked = mine.filter((e) => e.type === 'question.asked').map((e) => doc!.questions_state.find((q) => q.id === e.question)).find((q) => q?.state === 'open' && q.blocking)
+    const waiting = !stopped && !!asked
+    return {
+      id: s.agent,
+      name: s.name,
+      for: s.for,
+      session: s.session,
+      grant: g ? { id: g.id, until: g.until } : null,
+      claims,
+      leases,
+      last_seen: s.stopped?.at ?? mine.at(-1)?.at ?? s.started_at,
+      parent: null,
+      harness: s.agent,
+      ...(s.model ? { model: s.model } : {}),
+      state: stopped ? 'stopped' : waiting ? 'waiting' : 'working',
+      ...(waiting ? { waiting_on: { kind: 'question' as const, ticket: doc!.key, ref: asked!.id } } : {}),
+    }
   }
 
   /** Agent-attributed ticket events of the workspace, newest first (50). The third same refusal by a session is the stop. */

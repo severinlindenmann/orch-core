@@ -394,10 +394,25 @@ def test_revoking_a_device_ends_its_stream_with_a_readable_refusal(stack):
     assert '"revoked"' in audit                                    # the host recorded it
 
 
-@pytest.mark.xfail(strict=True, reason="a revoked browser cannot pair again: the host answers its pair request with a "
-                   "plain `revoked` refusal (host_check._check) that carries no host_pub, which the browser drops, so "
-                   "it waits 60 s and says the link was used, while the Remote tab says 'pair it again' (orch-core#256)")
-def test_a_revoked_browser_can_pair_again(stack):
+def test_a_revoked_browser_is_refused_at_once_and_needs_a_new_key_to_pair_again(stack):
+    """orch-core#256: the refusal to a revoked browser's pair request is one it can verify, so it says so at once
+    instead of waiting out 60 s. The browser stays revoked under its old key; to be paired again it needs a NEW key
+    (here: the browser's bridge database is deleted, as a sign-out does), a fresh pairing link and the owner's approval,
+    exactly like a new device."""
     if stack.b.dash.devices():
-        pytest.skip("runs after the revoke test, which leaves bravo's device revoked")
-    B.pair(stack, stack.b, "operate")
+        pytest.skip("runs after the revoke test, which leaves the browser revoked")
+    page = stack.page
+    page.goto(f"{stack.tix.url}/remote")
+    page.goto(stack.b.dash.offer("operate"))
+    started = time.monotonic()
+    page.locator("#pair-go").click()
+    expect(page.locator("#pair-state")).to_contain_text("refused the pairing link", timeout=25_000)
+    assert time.monotonic() - started < 25, "the refusal came late: it was waited out, not answered"
+    assert page.locator("#pair-fp").is_hidden()
+    assert stack.b.dash.pending() == [] and stack.b.dash.devices() == [], "a revoked browser became pending or paired"
+    # a new key, a fresh link and the owner's approval: the same ceremony as for any new device
+    page.goto(f"{stack.tix.url}/workspaces")
+    page.evaluate("""() => new Promise((resolve) => { const r = indexedDB.deleteDatabase("fileshare-bridge");
+      r.onsuccess = r.onerror = r.onblocked = () => resolve(true); })""")
+    did = B.pair(stack, stack.b, "operate")
+    assert stack.b.dash.devices() == [did], "the new key is listed as the one live device"

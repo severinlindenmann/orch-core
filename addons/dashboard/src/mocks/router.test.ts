@@ -45,3 +45,38 @@ describe('mock router', () => {
     expect(list.some((t) => t.key === 'DEMO-0044')).toBe(false)
   })
 })
+
+describe('mock tickets search', () => {
+  it('q searches body sections and returns a snippet', async () => {
+    const { api, store } = setup()
+    const ws = store.workspaces[0].id
+    const hits = await api.listTickets(ws, { q: 'fct_billing' })
+    const t = hits.find((x) => x.key === 'DEMO-0043')
+    expect(t?.match?.section).toBeTruthy()
+    expect(t!.match!.snippet).toContain('«fct_billing»')
+    expect(t!.match!.snippet.length).toBeLessThanOrEqual(140)
+  })
+  it('sort=priority puts urgent first; filters narrow the list', async () => {
+    const { api, store } = setup()
+    const ws = store.workspaces[0].id
+    const list = await api.listTickets(ws, { sort: 'priority' })
+    expect(list[0].priority).toBe('urgent')
+    const high = await api.listTickets(ws, { priority: ['urgent'] })
+    expect(high.length).toBeGreaterThan(0)
+    expect(high.every((x) => x.priority === 'urgent')).toBe(true)
+    const mine = await api.listTickets(ws, { needs: 'me' })
+    expect(mine.every((x) => x.turn.who === 'p_sev')).toBe(true)
+    const restricted = await api.listTickets(ws, { restricted: true })
+    expect(restricted.every((x) => x.restricted)).toBe(true)
+    const person = await api.listTickets(ws, { person: 'p_mara' })
+    expect(person.every((x) => x.owner === 'p_mara' || x.assignees.includes('p_mara') || x.claim?.for === 'p_mara')).toBe(true)
+  })
+  it('add_label adds a label for owners and is refused for viewers', async () => {
+    const { api, store } = setup()
+    const res = await api.postAction('DEMO-0043', { action: 'add_label', label: 'q4' })
+    expect(res.event.type).toBe('labels.changed')
+    expect(res.ticket.labels).toContain('q4')
+    store.setViewer('p_tom')
+    await expect(api.postAction('DEMO-0043', { action: 'add_label', label: 'x' })).rejects.toMatchObject({ code: 'forbidden' })
+  })
+})

@@ -10,6 +10,7 @@ import {
   type AgentInfo,
   type ApiErrorBody,
   type Me,
+  type Priority,
   type OrchEvent,
   type Status,
   type TicketDocument,
@@ -23,6 +24,14 @@ export interface ListTicketsParams {
   q?: string
   type?: string
   parent?: string
+  priority?: Priority[]
+  label?: string
+  /** Owner, assignee or claim `for`. */
+  person?: string
+  /** Whose turn it is: the viewer, an agent, or nobody. */
+  needs?: 'me' | 'agent' | 'nobody'
+  sort?: 'updated' | 'priority' | 'key' | 'status'
+  restricted?: boolean
 }
 
 export function createApi(transport: Transport) {
@@ -61,6 +70,12 @@ export function createApi(transport: Transport) {
             q: p.q,
             type: p.type,
             parent: p.parent,
+            priority: p.priority?.join(','),
+            label: p.label,
+            person: p.person,
+            needs: p.needs,
+            sort: p.sort,
+            restricted: p.restricted === undefined ? undefined : String(p.restricted),
           }),
       ),
     getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),

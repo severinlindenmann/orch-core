@@ -268,6 +268,8 @@ export interface TicketSummary {
   restricted: boolean
   addons: Record<string, Record<string, unknown>>
   updated_at: string
+  /** Set by list search (`q`) when a body section matched: the hit is wrapped in «». */
+  match?: { section: keyof BodySections; snippet: string }
 }
 
 // ---------------------------------------------------------------- agents
@@ -384,6 +386,7 @@ export type ActionRequest =
   | { action: 'claim' }
   | { action: 'release' }
   | { action: 'set_status'; status: Status }
+  | { action: 'add_label'; label: string }
 
 export interface ActionResult {
   ok: true

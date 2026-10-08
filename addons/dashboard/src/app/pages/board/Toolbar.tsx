@@ -7,7 +7,7 @@ import { NO_FILTERS, type Filters } from './lib'
 
 export type View = 'board' | 'list'
 
-function FilterSelect({
+export function FilterSelect({
   label,
   value,
   onChange,

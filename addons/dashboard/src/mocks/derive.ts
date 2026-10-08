@@ -77,6 +77,7 @@ export function deriveTicket(
   const answers = new Map<string, NonNullable<QuestionStatus['answer']>>()
   const extraQuestions: QuestionDef[] = []
   let created = events[0]?.at ?? ''
+  let labels = def.labels
 
   for (const e of events) {
     switch (e.type) {
@@ -86,6 +87,9 @@ export function deriveTicket(
         break
       case 'status.changed':
         status = e.to as Status
+        break
+      case 'labels.changed':
+        labels = [...new Set([...labels, ...((e.add as string[] | undefined) ?? [])])].filter((l) => !((e.remove as string[] | undefined) ?? []).includes(l))
         break
       case 'people.set':
         people = {
@@ -284,6 +288,7 @@ export function deriveTicket(
   const last = events[events.length - 1]
   return {
     ...def,
+    labels,
     status,
     people,
     claim,
@@ -348,6 +353,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'created the ticket'
     case 'status.changed':
       return `moved to ${e.to}`
+    case 'labels.changed':
+      return `labelled ${((e.add as string[] | undefined) ?? []).join(', ')}`
     case 'claim.taken':
       return 'took the claim'
     case 'claim.released':

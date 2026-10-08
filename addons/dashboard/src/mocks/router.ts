@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, ApiErrorBody, OrchEvent, Status, TicketDocument } from '@/api/types'
+import type { ActionRequest, ApiErrorBody, BodySections, OrchEvent, Priority, Status, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 
@@ -152,9 +152,77 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (a.status === 'done') return fail(409, 'human_only', 'Done is reached by a verdict', 'Give the verdict on the ticket page', false)
       return finish(store.append(key, { type: 'status.changed', to: a.status }))
     }
+    case 'add_label': {
+      if (role !== 'owner' && role !== 'maintainer') return fail(403, 'forbidden', 'Only owners and maintainers label tickets.')
+      const label = a.label?.trim().toLowerCase()
+      if (!label) return fail(400, 'validation', 'Write a label first.')
+      if (t.labels.includes(label)) return finish(store.append(key, { type: 'labels.changed', add: [] }))
+      return finish(store.append(key, { type: 'labels.changed', add: [label] }))
+    }
     default:
       return fail(400, 'validation', `Unknown action ${(a as { action: string }).action}`)
   }
+}
+
+const PRIORITY_ORDER: Priority[] = ['urgent', 'high', 'medium', 'low']
+const BODY_ORDER: (keyof BodySections)[] = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'current_state']
+
+/** First body-section hit for `needle` (lower case), as a snippet of at most 140 characters with the hit in «». */
+function bodyMatch(body: BodySections, needle: string): TicketSummary['match'] {
+  for (const section of BODY_ORDER) {
+    const text = body[section]?.replace(/\s+/g, ' ')
+    const at = text ? text.toLowerCase().indexOf(needle) : -1
+    if (!text || at < 0) continue
+    const hit = text.slice(at, at + Math.min(needle.length, 40))
+    const from = Math.max(0, at - 50)
+    const to = Math.min(text.length, at + hit.length + 40)
+    return { section, snippet: `${from > 0 ? '…' : ''}${text.slice(from, at)}«${hit}»${text.slice(at + hit.length, to)}${to < text.length ? '…' : ''}` }
+  }
+  return undefined
+}
+
+function searchTickets(s: MockStore, ws: string, query: URLSearchParams): TicketSummary[] {
+  const list = (k: string) => query.get(k)?.split(',').filter(Boolean)
+  const statuses = list('status')
+  const priorities = list('priority')
+  const q = query.get('q')?.trim().toLowerCase()
+  const type = query.get('type')
+  const parent = query.get('parent')
+  const label = query.get('label')
+  const person = query.get('person')
+  const needs = query.get('needs')
+  const restricted = query.get('restricted')
+  const sort = query.get('sort') ?? 'updated'
+  const rows = s
+    .listTickets(ws)
+    .filter((t) => !statuses?.length || statuses.includes(t.status))
+    .filter((t) => !priorities?.length || priorities.includes(t.priority))
+    .filter((t) => !type || t.type === type)
+    .filter((t) => !parent || t.parent === parent)
+    .filter((t) => !label || t.labels.includes(label))
+    .filter((t) => !person || t.people.owner === person || t.people.assignees.includes(person) || t.claim?.for === person)
+    .filter((t) => !needs || (needs === 'me' ? t.turn.who === s.viewer : needs === 'agent' ? t.turn.who.startsWith('agent:') : t.turn.who === 'nobody'))
+    .filter((t) => restricted === null || t.restricted === (restricted === 'true'))
+    .map((t) => ({
+      t,
+      direct: !q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || t.labels.some((l) => l.toLowerCase().includes(q)),
+      match: q ? bodyMatch(t.body, q) : undefined,
+    }))
+    .filter((r) => r.direct || r.match)
+  const byUpdated = (a: TicketDocument, b: TicketDocument) => b.updated_at.localeCompare(a.updated_at)
+  rows.sort((a, b) => {
+    switch (sort) {
+      case 'priority':
+        return PRIORITY_ORDER.indexOf(a.t.priority) - PRIORITY_ORDER.indexOf(b.t.priority) || byUpdated(a.t, b.t)
+      case 'key':
+        return a.t.key.localeCompare(b.t.key)
+      case 'status':
+        return STATUSES.indexOf(a.t.status) - STATUSES.indexOf(b.t.status) || byUpdated(a.t, b.t)
+      default:
+        return byUpdated(a.t, b.t)
+    }
+  })
+  return rows.map(({ t, match }) => ({ ...s.summary(t), ...(match ? { match } : {}) }))
 }
 
 export function buildRouter(): MockRouter {
@@ -166,18 +234,7 @@ export function buildRouter(): MockRouter {
   )
   r.add('GET', '/api/workspaces/:ws/tickets', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
-    const statuses = c.query.get('status')?.split(',').filter(Boolean)
-    const q = c.query.get('q')?.toLowerCase()
-    const type = c.query.get('type')
-    const parent = c.query.get('parent')
-    const list = s
-      .listTickets(c.params.ws)
-      .filter((t) => !statuses?.length || statuses.includes(t.status))
-      .filter((t) => !type || t.type === type)
-      .filter((t) => !parent || t.parent === parent)
-      .filter((t) => !q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || t.labels.some((l) => l.includes(q)))
-      .map((t) => s.summary(t))
-    return ok(list)
+    return ok(searchTickets(s, c.params.ws, c.query))
   })
   r.add('GET', '/api/workspaces/:ws/cursor', (s, c) =>
     s.workspaces.some((w) => w.id === c.params.ws) ? ok({ cursor: s.cursor(c.params.ws) }) : fail(404, 'not_found', 'No such workspace'),

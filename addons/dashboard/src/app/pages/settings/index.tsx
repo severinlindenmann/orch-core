@@ -9,6 +9,7 @@ import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { Placeholder } from '../Placeholders'
 import { General } from './General'
+import { AddonManager } from './addons'
 import { Gates } from './Gates'
 import { Members } from './Members'
 
@@ -65,7 +66,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
         {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
-        {current === 'addons' && <Placeholder title="Addon manager" />}
+        {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} />}
         {addon && <Placeholder title={addons.find((c) => c.addon === addon)?.title ?? addon} addon={addon} />}
       </div>
     </div>

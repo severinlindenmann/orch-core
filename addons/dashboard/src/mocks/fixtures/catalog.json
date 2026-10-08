@@ -1,0 +1,124 @@
+[
+  {
+    "name": "worktrees",
+    "title": "Worktrees",
+    "version": "0.1.0",
+    "description": "Give each ticket its own git worktree, created and cleaned up for you.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "e160706069101712e0d86be0baaf7a2f93b0217beb27013e01a771a76fce5930",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  },
+  {
+    "name": "quick",
+    "title": "Quick tasks",
+    "version": "0.1.0",
+    "description": "Jot a task in one line and turn it into a ticket later.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "54a93267b64f1a580a0efaa1b5649db3a75ee4530769da54202cc720d982ce02",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "quick",
+        "title": "Quick tasks",
+        "icon": "ListChecks",
+        "node": {
+          "type": "markdown",
+          "text": "Quick tasks arrive in iteration 3."
+        }
+      }
+    ]
+  },
+  {
+    "name": "records",
+    "title": "Records",
+    "version": "0.1.0",
+    "description": "Keep decision records and meeting notes next to the tickets they touch.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "02749a91b9e031f5dd09fca28091eadc437565deab515f89e26e40edd7f0a7d6",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  },
+  {
+    "name": "activity",
+    "title": "Activity",
+    "version": "0.1.0",
+    "description": "A workspace-wide timeline of who did what, with filters.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "57ba3d3fd04fdcdbf5166164a769ac4780ffa35c86d70c2f39aeb607803ce86c",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  },
+  {
+    "name": "models",
+    "title": "Model routing",
+    "version": "0.1.0",
+    "description": "Choose which model each kind of ticket starts with.",
+    "capabilities": [
+      "launch"
+    ],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "ad96d9b164b51e92b576dbae14dad1c4d015f1af4e9d340834a22caa9c8a3beb",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  },
+  {
+    "name": "factory",
+    "title": "AI Factory",
+    "version": "0.1.0",
+    "description": "Turn a requirements-approved ticket into a batch of agent sessions.",
+    "capabilities": [
+      "spawn_agent"
+    ],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "0ad0db68f941e070652de5c0e942fdf847b32899b110fb155e9fff63296dcaa8",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  },
+  {
+    "name": "schedules",
+    "title": "Schedules",
+    "version": "0.1.0",
+    "description": "Run a recurring ticket template on a schedule.",
+    "capabilities": [
+      "spawn_agent"
+    ],
+    "enabled": true,
+    "first_party": true,
+    "installed": false,
+    "package_sha256": "4211d991c66141d1f3871f1fbc2392eadf9942efa5a6c6d301831b56f650ed28",
+    "granted": null,
+    "update": null,
+    "status": "needs_grant",
+    "contributions": []
+  }
+]

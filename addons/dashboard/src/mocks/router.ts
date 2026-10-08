@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
@@ -420,6 +420,18 @@ export function buildRouter(): MockRouter {
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
   r.add('GET', '/api/addons', (s) => ok(s.addons))
+  r.add('GET', '/api/workspaces/:ws/addons', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.workspaceAddons(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
+  r.add('GET', '/api/workspaces/:ws/addons/catalog', (s, c) =>
+    s.workspaces.some((w) => w.id === c.params.ws) ? ok(s.workspaceCatalog(c.params.ws)) : fail(404, 'not_found', 'No such workspace'),
+  )
+  r.add('POST', '/api/workspaces/:ws/addons/:name', (s, c) => {
+    const b = c.body as AddonOpRequest | null
+    if (!b || typeof b !== 'object' || !('op' in b)) return fail(400, 'validation', 'Body must be {op, ...}')
+    const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
+    return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
+  })
   r.add('GET', '/api/addons/decisions', (s) => ok(s.canDecide() ? s.addons.filter((a) => a.enabled).flatMap((a) => a.decisions ?? []) : []))
   r.add('GET', '/api/workspaces/:ws/addons/:name/state', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')

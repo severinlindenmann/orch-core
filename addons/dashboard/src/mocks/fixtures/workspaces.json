@@ -5,23 +5,142 @@
     "name": "Acme energy data",
     "demo": true,
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
-      { "person": "p_mara", "name": "Mara", "role": "maintainer", "devices": 1, "last_seen": "2026-10-09T09:12:00Z" },
-      { "person": "p_tom", "name": "Tom", "role": "viewer", "devices": 1, "last_seen": "2026-10-08T16:40:00Z" }
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_mara",
+        "name": "Mara",
+        "role": "maintainer",
+        "devices": 1,
+        "last_seen": "2026-10-09T09:12:00Z"
+      },
+      {
+        "person": "p_tom",
+        "name": "Tom",
+        "role": "viewer",
+        "devices": 1,
+        "last_seen": "2026-10-08T16:40:00Z"
+      }
     ],
     "gates": {
-      "requirements": { "approvers": "owner", "count": 1 },
-      "plan": { "approvers": "owner", "count": 1 },
-      "verify": { "approvers": "reviewers", "count": 1, "not": "assignees" }
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "reviewers",
+        "count": 1,
+        "not": "assignees"
+      }
     },
     "addons": {
-      "dashboard": { "enabled": true },
-      "estimate": { "enabled": true },
-      "publish": { "enabled": true },
-      "github": { "enabled": true },
-      "usage": { "enabled": true },
-      "terminals": { "enabled": true },
-      "wiki": { "enabled": true }
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0"
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0"
+      },
+      "publish": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.3.0",
+          "capabilities": [
+            "serve_http",
+            "network"
+          ],
+          "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.3.0"
+      },
+      "github": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.5.2",
+          "capabilities": [
+            "network"
+          ],
+          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.5.2"
+      },
+      "usage": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.1",
+          "capabilities": [],
+          "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.1"
+      },
+      "terminals": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.4.0",
+          "capabilities": [
+            "pty"
+          ],
+          "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.4.0"
+      },
+      "wiki": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.4",
+          "capabilities": [],
+          "package_sha256": "b7d76fb138a9d11a83fee724900e7badb09ac744fe7b9c703017da4039ee5639",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.4"
+      }
     }
   },
   {
@@ -29,29 +148,169 @@
     "prefix": "INT",
     "name": "Internal",
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
-      { "person": "p_mara", "name": "Mara", "role": "maintainer", "devices": 1, "last_seen": "2026-10-09T09:12:00Z" }
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_mara",
+        "name": "Mara",
+        "role": "maintainer",
+        "devices": 1,
+        "last_seen": "2026-10-09T09:12:00Z"
+      }
     ],
     "gates": {
-      "requirements": { "approvers": "owner", "count": 1 },
-      "plan": { "approvers": "owner", "count": 1 },
-      "verify": { "approvers": "reviewers", "count": 1, "not": "assignees" }
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "reviewers",
+        "count": 1,
+        "not": "assignees"
+      }
     },
-    "addons": { "dashboard": { "enabled": true }, "estimate": { "enabled": true }, "github": { "enabled": true }, "wiki": { "enabled": true } }
+    "addons": {
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0"
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0"
+      },
+      "github": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.5.2",
+          "capabilities": [
+            "network"
+          ],
+          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.5.2"
+      },
+      "wiki": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.4",
+          "capabilities": [],
+          "package_sha256": "b7d76fb138a9d11a83fee724900e7badb09ac744fe7b9c703017da4039ee5639",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.4"
+      }
+    }
   },
   {
     "id": "c7d2b9e4-6f13-4a85-b0c8-1e9a3d5f7b66",
     "prefix": "CLI",
     "name": "Client VM",
     "members": [
-      { "person": "p_sev", "name": "Severin", "role": "owner", "devices": 2, "last_seen": "2026-10-09T11:28:00Z" },
-      { "person": "p_tom", "name": "Tom", "role": "member", "devices": 1, "last_seen": "2026-10-08T16:40:00Z" }
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_tom",
+        "name": "Tom",
+        "role": "member",
+        "devices": 1,
+        "last_seen": "2026-10-08T16:40:00Z"
+      }
     ],
     "gates": {
-      "requirements": { "approvers": "owner", "count": 1 },
-      "plan": { "approvers": "owner", "count": 1 },
-      "verify": { "approvers": "owner", "count": 1 }
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "owner",
+        "count": 1
+      }
     },
-    "addons": { "dashboard": { "enabled": true }, "estimate": { "enabled": true }, "terminals": { "enabled": true } }
+    "addons": {
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0"
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0"
+      },
+      "terminals": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.4.0",
+          "capabilities": [
+            "pty"
+          ],
+          "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.4.0"
+      }
+    }
   }
 ]

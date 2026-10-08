@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import { Bot, Check, Clock, FileText, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { ApiError, STATUSES, type ActionRequest } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -142,7 +143,7 @@ export function CommandPalette() {
   ]
 
   const addonCommands: Entry[] = addons
-    .filter((a) => a.enabled && workspace?.addons[a.name]?.enabled)
+    .filter((a) => a.enabled && addonActive(workspace, a.name))
     .flatMap((a) => (a.commands ?? []).map((c) => ({ addon: a.name, ...c })))
     .map((c) => ({
       id: `${c.addon}/${c.id}`,

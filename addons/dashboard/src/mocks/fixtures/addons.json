@@ -212,7 +212,21 @@
         "title": "Share current ticket",
         "action": "share"
       }
-    ]
+    ],
+    "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+    "installed": true,
+    "granted": {
+      "version": "0.3.0",
+      "capabilities": [
+        "serve_http",
+        "network"
+      ],
+      "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": null
   },
   {
     "name": "github",
@@ -321,12 +335,12 @@
           "items": [
             {
               "title": "#29 Reconciliation tests",
-              "subtitle": "acme/energy-dbt · DEMO-0041",
+              "subtitle": "acme/energy-dbt \u00b7 DEMO-0041",
               "badge": "checks passing"
             },
             {
               "title": "#31 Tariff seeds",
-              "subtitle": "acme/energy-dbt · DEMO-0043",
+              "subtitle": "acme/energy-dbt \u00b7 DEMO-0043",
               "badge": "checks pending"
             }
           ]
@@ -335,7 +349,7 @@
       {
         "slot": "board.lane",
         "id": "issues",
-        "title": "External · GitHub issues",
+        "title": "External \u00b7 GitHub issues",
         "icon": "Github",
         "node": {
           "type": "list",
@@ -435,7 +449,28 @@
         "title": "Refresh pull requests",
         "action": "refresh"
       }
-    ]
+    ],
+    "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+    "installed": true,
+    "granted": {
+      "version": "0.5.2",
+      "capabilities": [
+        "network"
+      ],
+      "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": {
+      "version": "0.6.0",
+      "capabilities": [
+        "network",
+        "spawn_agent"
+      ],
+      "package_sha256": "59332aa879d44085369f04919255e071d27e293b4c2d5f000fcd478e507684ee",
+      "changelog": "Review requests can now start an agent session that opens a fix branch. Adds the spawn_agent capability."
+    }
   },
   {
     "name": "usage",
@@ -628,7 +663,18 @@
           "submitLabel": "Save"
         }
       }
-    ]
+    ],
+    "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+    "installed": true,
+    "granted": {
+      "version": "0.2.1",
+      "capabilities": [],
+      "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": null
   },
   {
     "name": "terminals",
@@ -658,17 +704,17 @@
               "items": [
                 {
                   "title": "DEMO-0043 worktree",
-                  "subtitle": "zsh · feat/DEMO-0043-tariff-seeds · started 09:12",
+                  "subtitle": "zsh \u00b7 feat/DEMO-0043-tariff-seeds \u00b7 started 09:12",
                   "badge": "running"
                 },
                 {
                   "title": "DEMO-0041 worktree",
-                  "subtitle": "zsh · feat/DEMO-0041-reconciliation · started 08:40",
+                  "subtitle": "zsh \u00b7 feat/DEMO-0041-reconciliation \u00b7 started 08:40",
                   "badge": "idle"
                 },
                 {
                   "title": "Scratch",
-                  "subtitle": "zsh · ~/work/acme · started yesterday",
+                  "subtitle": "zsh \u00b7 ~/work/acme \u00b7 started yesterday",
                   "badge": "stopped"
                 }
               ]
@@ -718,7 +764,20 @@
         "title": "Open terminal",
         "action": "open"
       }
-    ]
+    ],
+    "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+    "installed": true,
+    "granted": {
+      "version": "0.4.0",
+      "capabilities": [
+        "pty"
+      ],
+      "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": null
   },
   {
     "name": "wiki",
@@ -762,7 +821,18 @@
           "empty": "No linked pages."
         }
       }
-    ]
+    ],
+    "package_sha256": "b7d76fb138a9d11a83fee724900e7badb09ac744fe7b9c703017da4039ee5639",
+    "installed": true,
+    "granted": {
+      "version": "0.1.4",
+      "capabilities": [],
+      "package_sha256": "b7d76fb138a9d11a83fee724900e7badb09ac744fe7b9c703017da4039ee5639",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": null
   },
   {
     "name": "estimate",
@@ -850,6 +920,17 @@
           "submitLabel": "Save"
         }
       }
-    ]
+    ],
+    "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+    "installed": true,
+    "granted": {
+      "version": "0.2.0",
+      "capabilities": [],
+      "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+      "at": "2026-09-02T09:00:00Z",
+      "by": "p_sev"
+    },
+    "status": "active",
+    "update": null
   }
 ]

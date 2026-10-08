@@ -51,13 +51,13 @@ describe('workspace log', () => {
     s.appendWs(ws, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 2 })
     s.appendWs(ws, { type: 'member.added', person: 'p_new', name: 'New', role: 'viewer' })
     s.appendWs(ws, { type: 'member.removed', person: 'p_tom' })
-    s.appendWs(ws, { type: 'addon.installed', name: 'extra' })
+    s.appendWs(ws, { type: 'addon.installed', name: 'extra', version: '1.0.0' })
     s.appendWs(ws, { type: 'addon.uninstalled', name: 'wiki' })
     s.appendWs(ws, { type: 'bogus.type' as never })
     const w = s.workspaceList()[0]
     expect(w.gates.plan).toEqual({ approvers: 'maintainer', count: 2 })
     expect(w.members.map((m) => m.person)).toEqual(['p_sev', 'p_mara', 'p_new'])
-    expect(w.addons.extra).toEqual({ enabled: false })
+    expect(w.addons.extra).toEqual({ enabled: false, status: 'needs_grant', installed: true, granted: null, version: '1.0.0' })
     expect(w.addons.wiki).toBeUndefined()
   })
 

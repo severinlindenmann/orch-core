@@ -1,4 +1,5 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
+import { addonStatus } from '@/api/addons'
 import type { GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
@@ -28,15 +29,38 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       }
       case 'addon.installed': {
         const name = String(e.name)
-        ws.addons[name] ??= { enabled: false }
+        const version = String(e.version ?? '')
+        ws.addons[name] ??= { enabled: false, status: 'needs_grant', installed: true, granted: null, version }
+        break
+      }
+      case 'addon.granted': {
+        const a = ws.addons[String(e.name)]
+        if (!a) break
+        a.granted = {
+          version: String(e.version),
+          capabilities: Array.isArray(e.capabilities) ? (e.capabilities as string[]) : [],
+          package_sha256: String(e.package_sha256),
+          at: e.at,
+          by: e.actor.id,
+        }
+        a.status = addonStatus(a.version, a.granted, a.enabled)
+        break
+      }
+      case 'addon.updated': {
+        const a = ws.addons[String(e.name)]
+        if (!a) break
+        a.version = String(e.version)
+        a.status = addonStatus(a.version, a.granted, a.enabled) // a new version needs a new grant
         break
       }
       case 'addon.enabled':
-        if (ws.addons[String(e.name)]) ws.addons[String(e.name)].enabled = true
+      case 'addon.disabled': {
+        const a = ws.addons[String(e.name)]
+        if (!a) break
+        a.enabled = e.type === 'addon.enabled'
+        a.status = addonStatus(a.version, a.granted, a.enabled)
         break
-      case 'addon.disabled':
-        if (ws.addons[String(e.name)]) ws.addons[String(e.name)].enabled = false
-        break
+      }
       case 'addon.uninstalled':
         delete ws.addons[String(e.name)]
         break
@@ -44,8 +68,6 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
         ws.name = String(e.name)
         break
       // Recorded in the log but not part of Workspace state (later tasks read them directly).
-      case 'addon.granted':
-      case 'addon.updated':
       case 'addon.settings_saved':
       case 'grant.issued':
       case 'grant.revoked':

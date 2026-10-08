@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { fmtTime, Mono, Section } from '../ticket/shared'
 import { DangerZone } from './DangerZone'
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
   return (
     <Button

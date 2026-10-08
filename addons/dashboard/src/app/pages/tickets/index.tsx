@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { useAddons } from '@/addon-ui'
@@ -145,7 +146,7 @@ export function TicketsPage() {
   const addonColumns = useMemo<AddonColumn[]>(
     () =>
       addons
-        .filter((a) => a.enabled && workspace?.addons[a.name]?.enabled)
+        .filter((a) => a.enabled && addonActive(workspace, a.name))
         .flatMap((a) => a.contributions.filter((c) => c.slot === 'board.card_field').map((c) => ({ addon: a.name, title: c.title }))),
     [addons, workspace],
   )

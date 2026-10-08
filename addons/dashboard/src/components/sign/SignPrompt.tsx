@@ -42,6 +42,7 @@ export function SignPrompt({
   covers,
   children,
   destructive,
+  confirmLabel = 'Sign with Touch ID',
   onSign,
   onClose,
 }: {
@@ -50,6 +51,8 @@ export function SignPrompt({
   covers: string[]
   children?: ReactNode
   destructive?: boolean
+  /** Button text; the default says what happens (Touch ID). Use a verb for the action being signed. */
+  confirmLabel?: string
   onSign: () => void
   onClose: () => void
 }) {
@@ -83,7 +86,7 @@ export function SignPrompt({
           </Button>
           <Button variant={destructive ? 'destructive' : 'default'} onClick={onSign}>
             <Fingerprint />
-            Sign with Touch ID
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

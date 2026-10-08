@@ -1,6 +1,7 @@
 // SlotRegistry: reads /api/addons and hands each surface (nav, today card, ticket panel, board lane...) the
 // contributions of enabled addons, with bindings resolved against the slot context.
 import { useQueries, useQuery } from '@tanstack/react-query'
+import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import type { AddonContribution, AddonManifest, AddonSlot, TicketDocument, TicketSummary, Workspace } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
@@ -29,7 +30,7 @@ export function selectContributions(addons: AddonManifest[], slot: AddonSlot, ct
   const out: ResolvedContribution[] = []
   for (const a of addons) {
     if (!a.enabled) continue
-    if (ctx.workspace && !ctx.workspace.addons[a.name]?.enabled) continue
+    if (ctx.workspace && !addonActive(ctx.workspace, a.name)) continue
     for (const c of a.contributions as AddonContribution[]) {
       if (c.slot !== slot) continue
       if (c.when && (getPath(ctx, c.when) ?? null) === null) continue

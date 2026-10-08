@@ -21,13 +21,23 @@ export interface Member {
   last_seen?: string | null
 }
 
+/** Per-workspace state of an installed addon (folded from addon.* workspace events). */
+export interface WorkspaceAddon {
+  enabled: boolean
+  status: AddonStatus
+  installed: boolean
+  /** The grant for the installed version; null until the owner signs one. */
+  granted: AddonGrant | null
+  version: string
+}
+
 export interface Workspace {
   id: string
   prefix: string // DEMO
   name: string
   members: Member[]
   gates: Record<GateName, { approvers: string; count: number; not?: string }>
-  addons: Record<string, { enabled: boolean }>
+  addons: Record<string, WorkspaceAddon>
   counts: Partial<Record<Status, number>>
   needs_you: number
 }
@@ -373,6 +383,9 @@ export type SettingsRequest =
   | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null }
   | { op: 'archive'; prefix: string }
 
+/** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
+export type AddonOpRequest = { op: 'install' | 'enable' | 'disable' | 'update' | 'uninstall' } | { op: 'grant'; version: string }
+
 // ---------------------------------------------------------------- addons.json
 
 export type AddonSlot = 'nav' | 'today.card' | 'ticket.panel' | 'board.lane' | 'board.card_field' | 'settings'
@@ -408,6 +421,24 @@ export interface AddonDecision {
   action: string
 }
 
+export type AddonStatus = 'active' | 'disabled' | 'needs_grant'
+
+/** The owner's signed addon.granted: what an addon may do at one version, bound to its package hash. */
+export interface AddonGrant {
+  version: string
+  capabilities: string[]
+  package_sha256: string
+  at: string
+  by: string
+}
+
+export interface AddonUpdate {
+  version: string
+  capabilities: string[]
+  package_sha256: string
+  changelog: string
+}
+
 export interface AddonManifest {
   name: string
   title: string
@@ -416,6 +447,13 @@ export interface AddonManifest {
   capabilities: string[]
   enabled: boolean
   first_party: boolean
+  installed: boolean
+  package_sha256: string
+  /** The grant for the installed version, null when missing. */
+  granted: AddonGrant | null
+  update: AddonUpdate | null
+  /** Derived: needs_grant when granted?.version !== version. */
+  status: AddonStatus
   contributions: AddonContribution[]
   decisions?: AddonDecision[]
   /** Command palette entries; each runs POST /api/addons/:name/actions/:action. */

@@ -7,6 +7,7 @@ import {
   type AddonActionResult,
   type AddonDecision,
   type AddonManifest,
+  type AddonOpRequest,
   type AgentActivityItem,
   type AgentSession,
   type GrantInfo,
@@ -93,6 +94,11 @@ export function createApi(transport: Transport) {
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
     getAddons: () => call<AddonManifest[]>('GET', '/api/addons'),
+    /** Addons installed in a workspace, with that workspace's version, grant and status. */
+    getWorkspaceAddons: (ws: string) => call<AddonManifest[]>('GET', `/api/workspaces/${ws}/addons`),
+    getAddonCatalog: (ws: string) => call<AddonManifest[]>('GET', `/api/workspaces/${ws}/addons/catalog`),
+    /** Owner only. grant and update are signed in the dashboard; agents are refused (human_only). */
+    postAddonOp: (ws: string, name: string, req: AddonOpRequest) => call<AddonManifest>('POST', `/api/workspaces/${ws}/addons/${name}`, req),
     getAddonDecisions: () => call<AddonDecision[]>('GET', '/api/addons/decisions'),
     runAddonAction: (addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/addons/${addon}/actions/${action}`, body),

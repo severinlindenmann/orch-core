@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ago, displayName, shortHash, useAct, type Directory } from './shared'
+import { addonRule } from '@/addon-ui/addonClasses'
 
 interface CommonProps {
   dir: Directory
@@ -435,7 +436,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
               </Link>
             )}
           </div>
-          <p className="border-t border-addon-border/60 pt-2 text-xs text-text-faint">
+          <p className={cn('border-t pt-2 text-xs text-text-faint', addonRule)}>
             requested by addon <span className="font-mono">{d.addon}</span> · confirmed and signed by orch
           </p>
         </div>

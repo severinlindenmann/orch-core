@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cn } from '@/lib/utils'
 import { useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,6 +14,7 @@ import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 import { can } from '@/api/permissions'
 import { toastApiError } from '@/app/toast'
+import { addonLane } from '@/addon-ui/addonClasses'
 
 interface LaneItem {
   title: string
@@ -88,7 +90,7 @@ export function AddonLanes() {
             key={`${c.addon}/${c.id}`}
             aria-label={c.title}
             data-addon={c.addon}
-            className="flex min-h-0 w-[300px] shrink-0 flex-col rounded-lg border border-addon-border bg-addon-soft/40"
+            className={cn('flex min-h-0 w-[300px] shrink-0 flex-col rounded-lg border', addonLane)}
           >
             <header className="flex items-center gap-2 px-3 py-2">
               <AddonBadge name={c.addon} />

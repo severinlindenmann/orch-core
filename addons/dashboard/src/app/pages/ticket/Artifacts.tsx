@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { agentName, fmtBytes, fmtTime, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
+import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 
 const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -196,7 +197,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
             <>
               <div className="relative">
                 {a.addon ? (
-                  <div className="flex h-[120px] w-full items-center justify-center rounded-md border border-addon-border bg-addon-soft">
+                  <div className={cn('flex h-[120px] w-full items-center justify-center rounded-md border', addonTile)}>
                     <AddonBadge name={a.addon} className="size-8 text-lg" />
                   </div>
                 ) : (
@@ -224,7 +225,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
               key={a.name}
               id={`artifact-${a.name}`}
               data-kind={a.kind}
-              className={cn('scroll-mt-4 rounded-lg border bg-surface p-2.5 transition-colors', a.addon ? 'border-addon-border' : 'border-border hover:border-border-strong')}
+              className={cn('scroll-mt-4 rounded-lg border bg-surface p-2.5 transition-colors', a.addon ? addonHairline : 'border-border hover:border-border-strong')}
             >
               {external ? (
                 <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" className={frame}>

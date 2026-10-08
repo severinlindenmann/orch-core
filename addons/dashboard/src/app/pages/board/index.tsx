@@ -106,7 +106,7 @@ function Column({
         {humanOnly && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span tabIndex={0} aria-label="Human-only" className="rounded outline-none focus-visible:ring-2 focus-visible:ring-brand">
+              <span tabIndex={0} role="img" aria-label="Human-only" className="rounded outline-none focus-visible:ring-2 focus-visible:ring-brand">
                 <Lock className="size-3.5 text-text-faint" />
               </span>
             </TooltipTrigger>

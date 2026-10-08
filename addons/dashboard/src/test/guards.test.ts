@@ -20,12 +20,7 @@ describe('layout guard (the real 1024 px check is the browser pass)', () => {
 })
 
 describe('orange guard (orange is reserved for addons)', () => {
-  // Files that legitimately draw the addon marker (orange hairline / soft fill) around addon-owned content.
-  const ADDON_MARKER_OWNERS = new Set([
-    'app/pages/board/AddonLane.tsx', // the board lane an addon contributes
-    'app/pages/ticket/Artifacts.tsx', // artifacts produced by an addon
-    'app/pages/today/cards.tsx', // the addon-requested confirmation card, inside AddonFrame
-  ])
+  // Nothing outside src/addon-ui may spell the addon orange; addon-marker classes come from addon-ui/addonClasses.ts.
   const ORANGE = [
     /(?<![\w-])(?:[a-z0-9-]+:)*[a-z]+-orange-\d/, // Tailwind palette: bg-orange-500, text-orange-300 ...
     /(?<![\w-])(?:[a-z0-9-]+:)*(?:bg|text|border|ring|fill|stroke|outline|from|to|via|shadow|divide|decoration|accent|caret)-(?:on-)?addon(?:-soft|-border)?(?![\w-])/, // the addon token as a utility
@@ -34,21 +29,14 @@ describe('orange guard (orange is reserved for addons)', () => {
     /#f07a2e/i,
     /240,\s*122,\s*46/,
   ]
-  it('no file outside src/addon-ui and the addon-marker owners uses the addon orange', () => {
+  it('no file outside src/addon-ui uses the addon orange', () => {
     const hits: string[] = []
     for (const { file, text } of FILES) {
-      if (file.startsWith('addon-ui/') || ADDON_MARKER_OWNERS.has(file)) continue
+      if (file.startsWith('addon-ui/')) continue
       text.split('\n').forEach((line, i) => {
         if (ORANGE.some((re) => re.test(line))) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 120)}`)
       })
     }
     expect(hits).toEqual([])
-  })
-  it('the whitelist only lists files that exist and really use the addon orange', () => {
-    for (const f of ADDON_MARKER_OWNERS) {
-      const hit = FILES.find((x) => x.file === f)
-      expect(hit, `${f} exists`).toBeDefined()
-      expect(ORANGE.some((re) => re.test(hit!.text)), `${f} uses it`).toBe(true)
-    }
   })
 })

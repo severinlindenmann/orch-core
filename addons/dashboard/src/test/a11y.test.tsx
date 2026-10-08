@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import axe from 'axe-core'
 import { describe, expect, it } from 'vitest'
 import type { MockStore } from '@/mocks/store'
@@ -9,11 +9,25 @@ import { renderApp } from './renderApp'
 const T = { timeout: 8000 }
 const demo = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 
-const ADDON_PAGES = [
-  'publish/shares', 'github/reviews', 'usage/overview', 'wiki/pages', 'terminals/sessions', 'worktrees/worktrees', 'quick/quick',
-  'records/records', 'activity/activity', 'widgets/widgets', 'start-agent/start', 'guide/guide', 'factory/factory', 'schedules/schedules',
+// [path, h1 title, text that only the loaded page content shows]. A mistyped page id lands on "Page not found",
+// so every case names its title and a content marker, and the run waits for the skeletons to go before axe looks.
+const ADDON_PAGES: [string, RegExp, RegExp][] = [
+  ['publish/shares', /Apps & shares/, /Live shares/],
+  ['github/reviews', /Code reviews/, /Open PRs/],
+  ['usage/overview', /Usage/, /Month to date/],
+  ['wiki/pages', /Wiki/, /Tariff data conventions/],
+  ['terminals/sessions', /Terminals/, /view-only mirrors/],
+  ['worktrees/worktrees', /Worktrees/, /With changes/],
+  ['quick/quick', /Quick tasks/, /Add a quick task/],
+  ['records/records', /Records/, /Commit records/],
+  ['activity/activity', /Activity/, /By ticket, today/],
+  ['widgets/widgets', /Widgets/, /small visual blocks/],
+  ['start-agent/start', /Start agent/, /Start an agent session on a ticket/],
+  ['guide/guide', /Guide/, /Getting around/],
+  ['factory/factory', /AI Factory/, /Children used/],
+  ['schedules/schedules', /Schedules/, /Check inbox/],
 ]
-const ADDONS = [...new Set(ADDON_PAGES.map((p) => p.split('/')[0]))]
+const ADDONS = [...new Set(ADDON_PAGES.map(([p]) => p.split('/')[0]))]
 
 /** Every catalog addon installed, granted and enabled (the ones already installed are left alone). */
 function installAll(s: MockStore) {
@@ -39,10 +53,17 @@ async function violations() {
     .map((v) => `${v.impact} ${v.id}: ${v.help}\n${v.nodes.map((n) => `  ${n.target.join(' ')}  ${n.html.slice(0, 160)}`).join('\n')}`)
 }
 
-async function check(path: string, heading?: string | RegExp, open?: (user: ReturnType<typeof renderApp>['user']) => Promise<void>) {
+type User = ReturnType<typeof renderApp>['user']
+
+/** Renders the route, waits for its title and content marker and for every loading skeleton to go, then runs axe. */
+async function check(path: string, title: RegExp, marker: RegExp, open?: (user: User) => Promise<void>) {
   const { user } = renderApp(path, { viewer: 'p_sev', setup: installAll })
-  await screen.findByRole('heading', { level: 1, ...(heading ? { name: heading } : {}) }, T)
+  await screen.findByRole('heading', { level: 1, name: title }, T)
   await open?.(user)
+  await screen.findAllByText(marker, {}, T)
+  await waitFor(() => expect(document.querySelectorAll('[data-slot="skeleton"], [aria-busy="true"]')).toHaveLength(0), T)
+  expect(screen.queryByText('Page not found')).toBeNull()
+  expect(screen.queryByText(/is not enabled in/)).toBeNull()
   expect(await violations()).toEqual([])
 }
 
@@ -54,31 +75,43 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     expect(found).toMatch(/label/)
   })
 
-  const routes: [string, string | RegExp | undefined][] = [
-    ['/', undefined],
-    ['/board', undefined],
-    ['/tickets', undefined],
-    ['/tickets/new', undefined],
-    ['/agents', undefined],
-    ['/settings/general', undefined],
-    ['/settings/members', undefined],
-    ['/settings/gates', undefined],
-    ['/settings/addons', undefined],
-    ['/settings/addon/estimate', undefined],
-  ]
-  it.each(routes)('%s', async (path, heading) => {
-    await check(path, heading)
+  it('a mistyped addon page id fails the check instead of passing on "Page not found"', async () => {
+    await expect(check('/addon/quick/nope', /Quick tasks/, /Add a quick task/)).rejects.toThrow()
   })
 
-  const tabs = ['Overview', 'Acceptance', 'Questions', 'Artifacts', 'History', 'Raw']
-  it.each(tabs)('ticket DEMO-0043, %s tab', async (tab) => {
-    await check('/ticket/DEMO-0043', /DEMO-0043|./, async (user) => {
-      await user.click(await screen.findByRole('tab', { name: new RegExp(`^${tab}`) }, T))
-      await screen.findByRole('tabpanel', undefined, T)
+  const routes: [string, RegExp, RegExp][] = [
+    ['/', /^Today$/, /need you/],
+    ['/board', /^Board$/, /Backlog/],
+    ['/tickets', /^Tickets$/, /All tickets/],
+    ['/tickets/new', /^New ticket$/, /Out of scope/],
+    ['/agents', /^Agents$/, /Issue grant/],
+    ['/settings/general', /^Settings$/, /Key fingerprint/],
+    ['/settings/members', /^Settings$/, /Add member/],
+    ['/settings/gates', /^Settings$/, /Open approvals stay valid/],
+    ['/settings/addons', /^Settings$/, /Browse addons/],
+    ['/settings/addon/estimate', /^Settings$/, /Scale/],
+  ]
+  it.each(routes)('%s', async (path, title, marker) => {
+    await check(path, title, marker)
+  })
+
+  const tabs: [string, RegExp][] = [
+    ['Overview', /Tariff tables live in a shared drive/],
+    ['Acceptance', /Acceptance criteria/],
+    ['Questions', /Should .valid_from. in the seeds be a DATE/],
+    ['Artifacts', /tariff-export\.log/],
+    ['History', /Timeline/],
+    ['Raw', /Ticket document/],
+  ]
+  it.each(tabs)('ticket DEMO-0043, %s tab', async (tab, marker) => {
+    await check('/ticket/DEMO-0043', /^Load tariff tables as dbt seeds$/, marker, async (user) => {
+      const t = await screen.findByRole('tab', { name: new RegExp(`^${tab}`) }, T)
+      await user.click(t)
+      await waitFor(() => expect(t).toHaveAttribute('aria-selected', 'true'))
     })
   })
 
-  it.each(ADDON_PAGES)('addon page %s', async (p) => {
-    await check(`/addon/${p}`)
+  it.each(ADDON_PAGES)('addon page %s', async (p, title, marker) => {
+    await check(`/addon/${p}`, title, marker)
   })
 })

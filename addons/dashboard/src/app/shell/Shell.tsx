@@ -4,6 +4,7 @@ import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { retryFailedPageLoads } from '../pages/lazyPage'
 import { useLiveUpdates } from '../live'
 import { WorkspaceProvider } from '../workspace'
 import { HelpSheet } from './HelpSheet'
@@ -47,7 +48,14 @@ export function Shell() {
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
               <main className="min-h-0 flex-1 overflow-y-auto p-6">
-                <ErrorBoundary resetKey={path} fallback={(retry) => <PageProblem retry={retry} />}>
+                <ErrorBoundary resetKey={path} fallback={(retry) => (
+                    <PageProblem
+                      retry={() => {
+                        retryFailedPageLoads()
+                        retry()
+                      }}
+                    />
+                  )}>
                   <Suspense fallback={<PageSkeleton />}>
                     <Outlet />
                   </Suspense>

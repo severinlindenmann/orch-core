@@ -24,7 +24,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, pendingUpdate, sameSet } from '@/api/addons'
+import { addonActive, pendingUpdate, sameSet, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
@@ -554,7 +554,7 @@ export class MockStore {
       case 'grant':
         if (req.op !== 'grant') break
         if (req.version !== st.version) return refuse(409, 'addon.version_mismatch', `The installed version is ${st.version}; a grant for ${String(req.version)} was refused.`, 'Review the installed version and grant again.')
-        if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities))
+        if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(pkg).map((a) => a.id)))
           return refuse(409, 'addon.changed', `${v.title} changed since you reviewed it; nothing was signed.`, 'Open the grant again and review the current package.')
         this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, presence: 'touchid' })
         break
@@ -568,7 +568,7 @@ export class MockStore {
       case 'update':
         if (req.op !== 'update') break
         if (!update) return refuse(409, 'addon.no_update', `${v.title} is up to date.`)
-        if (req.version !== update.version || req.package_sha256 !== update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, update.capabilities))
+        if (req.version !== update.version || req.package_sha256 !== update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, update.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions({ actions: update.actions ?? pkg.actions }).map((a) => a.id)))
           return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
         this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, presence: 'touchid' })
         break
@@ -587,13 +587,14 @@ export class MockStore {
     const w = this.workspaces.find((x) => x.id === ws)
     if (!addon || !addonActive(w, name)) return null
     const state = this.addonState(ws, name)
-    return { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer }) ?? {}) }
+    const { nav: _perViewer, ...shared } = { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer }) ?? {}) } // `nav` is the per-viewer map (convention): never sent raw
+    return shared
   }
 
   /** Mock of POST /api/workspaces/:ws/addons/:name/actions/:id. A `ticket` in the body must belong to `ws`. Null for an unknown action. */
   runAddon(ws: string, name: string, id: string, body: Record<string, unknown>): AddonActionResult | StoreFailure | null {
     const addon = getAddon(name)
-    const action = addon?.actions[id]
+    const action = addon && Object.hasOwn(addon.actions, id) ? addon.actions[id] : undefined
     if (!addon || !action) return null
     const w = this.workspaces.find((x) => x.id === ws)
     if (!w) return refuse(404, 'not_found', 'No such workspace')
@@ -611,7 +612,7 @@ export class MockStore {
     const min = pkg?.actions?.[id]?.minRole ?? 'member'
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
     if (!atLeast(role, min)) {
-      if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot run addon actions.', 'Ask an owner or maintainer.')
+      if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
     }
     // A decision that is no longer open (already decided, or its condition went away) is closed for every addon.

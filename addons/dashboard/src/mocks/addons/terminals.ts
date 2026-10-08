@@ -96,7 +96,8 @@ registerAddon({
       ctx: shellCtx(c, s),
       transcript: s.kind === 'agent' ? AGENT_TRANSCRIPT : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
     }))
-    const cur = shown.find((s) => s.id === navOf(state)[viewer]?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
+    const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
+    const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
     const sessionByTicket: Record<string, string> = {}
     for (const s of shown) if (mine(s) && s.status === 'running' && s.ticket && !sessionByTicket[s.ticket]) sessionByTicket[s.ticket] = s.id
     return {

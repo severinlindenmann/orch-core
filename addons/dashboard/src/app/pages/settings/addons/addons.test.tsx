@@ -62,3 +62,33 @@ describe('Addon manager', () => {
     await waitFor(() => expect(screen.queryByText(/Publish report/)).toBeNull())
   })
 })
+
+describe('Grant and update dialogs list what viewers can run', () => {
+  it('the grant dialog says "Viewers can: Open page, Search" for the wiki', async () => {
+    const { user } = renderApp('/settings/addons', {
+      setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
+    })
+    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getAllByText('Viewers can: Open page, Search').length).toBeGreaterThan(0)
+  })
+  it('an addon without viewer actions says viewers can only read', async () => {
+    const { user } = renderApp('/settings/addons', {
+      setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'estimate', version: '0.2.0', package_sha256: 'c'.repeat(64), capabilities: [] }),
+    })
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Grant…' }))
+    expect(within(await screen.findByRole('dialog')).getAllByText('Viewers can: nothing').length).toBeGreaterThan(0)
+  })
+  it('an update that adds a viewer action shows it in the diff and the grant still signs', async () => {
+    const { user } = renderApp('/settings/addons', {
+      setup: (s) => {
+        const gh = s.addons.find((a) => a.name === 'github')!
+        gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh pull requests' } }
+      },
+    })
+    await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
+    expect(await screen.findByText('+ Viewers can: Refresh pull requests')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    expect(await screen.findByText(/grant again to turn it back on/)).toBeInTheDocument()
+  })
+})

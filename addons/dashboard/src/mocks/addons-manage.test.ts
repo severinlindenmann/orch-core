@@ -3,7 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
 import { canUsePty } from '@/addon-ui/capabilities'
-import { pendingUpdate } from '@/api/addons'
+import { pendingUpdate, viewerActions } from '@/api/addons'
 import { createMockStore } from './store'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
@@ -16,11 +16,11 @@ function setup(viewer = 'p_sev') {
 }
 const grantReq = (store: ReturnType<typeof createMockStore>, ws: string, name: string) => {
   const a = store.workspaceAddons(ws).find((x) => x.name === name)!
-  return { op: 'grant' as const, version: a.ws.version, package_sha256: a.ws.package_sha256, capabilities: a.ws.capabilities }
+  return { op: 'grant' as const, version: a.ws.version, package_sha256: a.ws.package_sha256, capabilities: a.ws.capabilities, viewer_actions: viewerActions(store.addons.find((x) => x.name === name)!).map((x) => x.id) }
 }
 const updateReq = (store: ReturnType<typeof createMockStore>) => {
   const u = store.addons.find((a) => a.name === 'github')!.update!
-  return { op: 'update' as const, version: u.version, package_sha256: u.package_sha256, capabilities: u.capabilities }
+  return { op: 'update' as const, version: u.version, package_sha256: u.package_sha256, capabilities: u.capabilities, viewer_actions: [] }
 }
 const code = async (p: Promise<unknown>) => {
   try {
@@ -78,7 +78,7 @@ describe('addon manager API', () => {
   it('refuses a grant for a version other than the installed one', async () => {
     const { api, ws } = setup()
     await api.postAddonOp(ws, 'quick', { op: 'install' })
-    expect(await code(api.postAddonOp(ws, 'quick', { op: 'grant', version: '9.9.9', package_sha256: 'x', capabilities: [] }))).toBe('409 addon.version_mismatch')
+    expect(await code(api.postAddonOp(ws, 'quick', { op: 'grant', version: '9.9.9', package_sha256: 'x', capabilities: [], viewer_actions: [] }))).toBe('409 addon.version_mismatch')
   })
   it('the grant event carries the package hash and the capabilities, signed with touchid', async () => {
     const { store, api, ws } = setup()
@@ -96,7 +96,7 @@ describe('addon manager API', () => {
     const { store, ws } = setup()
     const agent = { kind: 'agent', id: 'a_1' } as never
     expect(store.addonOp(ws, 'wiki', { op: 'enable' }, agent)).toMatchObject({ ok: false, code: 'human_only' })
-    expect(store.addonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'x', capabilities: [] }, agent)).toMatchObject({ ok: false, code: 'human_only' })
+    expect(store.addonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'x', capabilities: [], viewer_actions: [] }, agent)).toMatchObject({ ok: false, code: 'human_only' })
   })
   it('update makes the addon needs_grant and inactive until re-granted; uninstall keeps ticket data', async () => {
     const { store, api, ws } = setup()
@@ -105,7 +105,7 @@ describe('addon manager API', () => {
     expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant' })
     expect(pendingUpdate(gh)).toBeNull()
     expect(store.addonStateView(ws, 'github')).toBeNull()
-    await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'] })
+    await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'], viewer_actions: [] })
     gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
     expect(gh.ws.status).toBe('active')
     expect(gh.ws.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })

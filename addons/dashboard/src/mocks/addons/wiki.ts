@@ -190,7 +190,7 @@ registerAddon({
   seed: () => ({ settings: {}, pages: structuredClone(PAGES), nav: {} }),
   view(state, { viewer }) {
     const pages = pagesOf(state)
-    const nav = navOf(state)[viewer] ?? {}
+    const nav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] ?? {} // read-only: never create state.nav here
     const query = nav.query ?? ''
     const q = query.trim().toLowerCase()
     const shown = q ? pages.filter((p) => `${p.title}\n${p.markdown}`.toLowerCase().includes(q)) : pages

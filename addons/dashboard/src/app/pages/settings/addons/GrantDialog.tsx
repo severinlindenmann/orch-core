@@ -1,4 +1,4 @@
-import { pendingUpdate } from '@/api/addons'
+import { pendingUpdate, viewerActions } from '@/api/addons'
 import type { InstalledAddon } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { CopyButton } from '../General'
@@ -21,6 +21,11 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
   const caps = update?.capabilities ?? installed.capabilities
   const added = update ? addedCapabilities(installed.capabilities, caps) : []
   const removed = update ? removedCapabilities(installed.capabilities, caps) : []
+  const viewerNow = viewerActions(addon)
+  const viewerNext = update ? viewerActions({ actions: update.actions ?? addon.actions }) : viewerNow
+  const viewerAdded = viewerNext.filter((a) => !viewerNow.some((b) => b.id === a.id))
+  const viewerRemoved = viewerNow.filter((a) => !viewerNext.some((b) => b.id === a.id))
+  const viewersCan = `Viewers can: ${viewerNext.length ? viewerNext.map((a) => a.label).join(', ') : 'nothing'}`
   const title = update ? `Update ${addon.title} to ${version}` : `Grant ${addon.title} ${version}`
 
   return (
@@ -30,6 +35,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
       covers={[
         `Addon: ${addon.name} ${version}`,
         caps.length ? `Capabilities: ${caps.join(', ')}` : 'Capabilities: none',
+        viewersCan,
         `Package: sha256 ${shortSha(sha)}`,
         'Agents never enable addons and never get pty',
       ]}
@@ -57,6 +63,17 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
             ))}
             {removed.map((c) => (
               <li key={c} className="text-danger">{`- ${c}`}</li>
+            ))}
+          </ul>
+        )}
+        <p className="text-text-muted">{viewersCan}</p>
+        {(viewerAdded.length > 0 || viewerRemoved.length > 0) && (
+          <ul aria-label="Viewer action changes" className="space-y-0.5 font-mono">
+            {viewerAdded.map((a) => (
+              <li key={a.id} className="text-success">{`+ Viewers can: ${a.label}`}</li>
+            ))}
+            {viewerRemoved.map((a) => (
+              <li key={a.id} className="text-danger">{`- Viewers can: ${a.label}`}</li>
             ))}
           </ul>
         )}

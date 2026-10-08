@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '@/api/client'
-import { addonActive, pendingUpdate } from '@/api/addons'
+import { addonActive, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonOpRequest, InstalledAddon, Workspace } from '@/api/types'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
@@ -37,7 +37,7 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
     // Send exactly what the prompt showed; the host refuses if the package changed in between.
     const update = a.kind === 'update' ? pendingUpdate(a.addon) : null
     const t = update ?? a.addon.ws
-    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities }
+    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities, viewer_actions: viewerActions({ actions: update?.actions ?? a.addon.actions }).map((x) => x.id) }
     void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, () => api.postAddonOp(ws, a.addon.name, req))
   }
 

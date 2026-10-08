@@ -389,7 +389,7 @@ export type SettingsRequest =
 export type AddonOpRequest =
   | { op: 'install' | 'enable' | 'disable' | 'uninstall' }
   /** grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now. */
-  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[] }
+  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[] }
 
 // ---------------------------------------------------------------- addons.json
 
@@ -437,11 +437,19 @@ export interface AddonGrant {
   by: string
 }
 
+/** An action's manifest entry: its minimum role and, for viewer-level actions, the name shown when the owner signs a grant. */
+export interface ActionMeta {
+  minRole: Role
+  label?: string
+}
+
 export interface AddonUpdate {
   version: string
   capabilities: string[]
   package_sha256: string
   changelog: string
+  /** The update's action manifest, when it differs from the installed package's (viewer-level actions are part of the grant). */
+  actions?: Record<string, ActionMeta>
 }
 
 /** A published addon package: global, the same in every workspace. Per-workspace state is `WorkspaceAddon`. */
@@ -461,7 +469,7 @@ export interface AddonPackage {
   /** Command palette entries; each runs POST /api/workspaces/:ws/addons/:name/actions/:action. */
   commands?: { id: string; title: string; action: string }[]
   /** Who may run an action: its minimum role (default 'member'; 'viewer' for read-only navigation). The one source of truth. */
-  actions?: Record<string, { minRole: Role }>
+  actions?: Record<string, ActionMeta>
 }
 
 /** An addon installed in one workspace: the package plus that workspace's state (installed version, grant, status). */

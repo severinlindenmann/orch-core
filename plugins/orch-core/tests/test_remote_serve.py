@@ -214,8 +214,10 @@ def test_a_page_at_look_comes_back_sealed_and_signed(ws, fake, put):
         await until(lambda: any(x[0].flags & E.F_LAST for x in fake.chunks(rid)))
         chunks = fake.chunks(rid)
         assert chunks[0][1]["status"] == 200 and b"<html" in b"".join(c[2] for c in chunks)
+        assert chunks[0][1]["page"] is True  # the device draws only a page the host tags (found by the end-to-end run)
         assert not any(c[0].flags & E.F_REFUSAL for c in chunks)
-        assert all("set-cookie" not in k.lower() for k, _ in chunks[0][1]["headers"])
+        assert chunks[0][1]["headers"]["content-type"].startswith("text/html")  # a mapping, not a list of pairs
+        assert all("set-cookie" not in k.lower() for k in chunks[0][1]["headers"])
         await finish(loop, task)
     arun(main())
 
@@ -782,6 +784,21 @@ def test_preflight_names_each_missing_piece_with_its_fix(ws, ready, fake, monkey
     err = _missing(ws)
     assert err.exit_code == 8 and expect in err.hint, err.hint
     assert err.hint.count("\n") + 1 == int(err.message.split(": ")[1].split()[0])  # the count matches the list
+
+
+@pytest.mark.parametrize("server,ok", [
+    ("http://localhost:8123", True), ("http://127.0.0.1:8123", True), ("http://[::1]:8123", True),
+    ("http://tix.example", False), ("http://localhost.evil.example", False), ("ftp://localhost", False),
+    ("https://tix.example", True), ("http://localhost:99999", False),
+    ("http://127.0.0.1.evil.com", False), ("http://localhost.evil.com:8123", False), ("http://evil.com#@localhost", False),
+    ("http://localhost@evil.com", False), ("http://127.1", False), ("http://[::2]:8123", False),
+    ("http://0.0.0.0:8123", False), ("HTTP://LOCALHOST:8123", True)])
+def test_preflight_takes_http_only_for_this_machine(ws, ready, fake, server, ok):
+    (fake.dir / "space.json").write_text(json.dumps({"space_id": WS_HEX, "owner": True, "server": server}))
+    if ok:
+        assert remote_start.preflight(ws)["server"] == server
+    else:
+        assert "the relay server address" in _missing(ws).hint
 
 
 def test_preflight_lists_everything_missing_at_once(ws, ready, monkeypatch, tmp_path):

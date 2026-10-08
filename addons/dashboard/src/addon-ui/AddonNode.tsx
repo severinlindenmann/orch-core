@@ -4,6 +4,7 @@ import { withTheme } from '@rjsf/core'
 import validator from '@rjsf/validator-ajv8'
 import { ExternalLink, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
+import { toastApiError } from '@/app/toast'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -210,7 +211,7 @@ function useAddonAction(): { run: (action: string, extra?: Record<string, unknow
       void qc.invalidateQueries({ queryKey: ['today'] })
       if (res.changed) void qc.invalidateQueries()
     },
-    onError: (err) => toast.error(err instanceof Error ? err.message : 'Action failed'),
+    onError: (err) => toastApiError(err, 'Action failed'),
   })
   return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending }
 }

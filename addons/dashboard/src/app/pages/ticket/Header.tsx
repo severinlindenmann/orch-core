@@ -6,7 +6,7 @@ import { api } from '@/api/client'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { DisabledReason, VIEWER_REASON } from '@/components/DisabledReason'
 import { availableActions, GATE_LABEL } from './actions'
 import { agentName, ago, fmtTime, Mono, PersonChip, Pill, PriorityLabel, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
 
@@ -51,8 +51,6 @@ function PeopleRow({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer 
   )
 }
 
-const VIEWER_REASON = 'Viewers cannot change tickets.'
-
 function ClaimBox({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const c = ticket.claim
   const leases = ticket.tasks_state.filter((t) => t.lease)
@@ -81,37 +79,18 @@ function ClaimBox({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }
       ) : (
         <p className="min-w-0 flex-1 text-text-muted">No agent has claimed this ticket.</p>
       )}
-      <TooltipProvider delayDuration={150}>
         <div className="flex gap-1.5">
           {[
             { label: 'Claim', verb: 'claim' },
             { label: 'Release', verb: 'release' },
           ].map(({ label, verb }) => (
-            <Tooltip key={label}>
-              <TooltipTrigger asChild>
-                <span tabIndex={0} className="inline-flex rounded-md focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled
-                    aria-disabled="true"
-                    aria-label={readOnly ? label : `${label} (agents only)`}
-                    aria-describedby={readOnly ? `${verb}-reason` : undefined}
-                  >
-                    {label}
-                  </Button>
-                  {readOnly && (
-                    <span id={`${verb}-reason`} className="sr-only">
-                      {VIEWER_REASON}
-                    </span>
-                  )}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">{readOnly ? VIEWER_REASON : agentOnly(verb)}</TooltipContent>
-            </Tooltip>
+            <DisabledReason key={label} reason={readOnly ? VIEWER_REASON : agentOnly(verb)} label={readOnly ? label : `${label} (agents only)`}>
+              <Button size="sm" variant="outline">
+                {label}
+              </Button>
+            </DisabledReason>
           ))}
         </div>
-      </TooltipProvider>
     </div>
   )
 }

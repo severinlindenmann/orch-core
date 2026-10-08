@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import type { AddonDecision, GateName, NeedsYouItem, TicketDocument } from '@/api/types'
 import { AddonFrame } from '@/addon-ui'
+import { DisabledReason, VIEWER_REASON } from '@/components/DisabledReason'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
@@ -162,6 +163,7 @@ export function QuestionCard({ item, ticket, dir, now, readOnly }: CommonProps &
           {q?.options?.map((o) => {
             const rec = q.recommended === o.key
             return (
+              <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
               <Button
                 key={o.key}
                 size="sm"
@@ -173,6 +175,7 @@ export function QuestionCard({ item, ticket, dir, now, readOnly }: CommonProps &
                 {o.label}
                 {rec && <span className="text-[11px] font-normal opacity-80">★ recommended</span>}
               </Button>
+              </DisabledReason>
             )
           })}
           {q && !q.options?.length && (
@@ -247,12 +250,16 @@ export function ApprovalCard({ item, ticket, now, readOnly }: CommonProps & { it
       chips={<Chip tone="brand">approve {gate}</Chip>}
       footer={
         <>
+          <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
           <Button size="sm" className={PRIMARY} disabled={readOnly || !ticket} onClick={() => setReview(true)}>
             Review and approve
           </Button>
+          </DisabledReason>
+          <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
           <Button size="sm" variant="outline" disabled={readOnly || !ticket} onClick={() => setChanges(true)}>
             Request changes
           </Button>
+          </DisabledReason>
         </>
       }
     >
@@ -345,12 +352,16 @@ export function VerdictCard({ item, ticket, now, readOnly }: CommonProps & { ite
       chips={<Chip tone="brand">verdict</Chip>}
       footer={
         <>
+          <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
           <Button size="sm" className={PRIMARY} disabled={readOnly || !ticket} onClick={() => void give('pass')}>
             Done
           </Button>
+          </DisabledReason>
+          <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
           <Button size="sm" variant="outline" disabled={readOnly || !ticket} onClick={() => setChanges(true)}>
             Changes
           </Button>
+          </DisabledReason>
           <Button asChild size="sm" variant="ghost" className="ml-auto">
             <Link to="/ticket/$key" params={{ key: item.ticket }}>
               Open evidence
@@ -397,6 +408,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
           {d.detail && <p className="text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
           <div className="flex flex-wrap items-center gap-2">
             {d.options.map((o) => (
+              <DisabledReason reason={readOnly ? VIEWER_REASON : null}>
               <Button
                 key={o.key}
                 size="sm"
@@ -412,6 +424,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
               >
                 {o.label}
               </Button>
+              </DisabledReason>
             ))}
             {d.ticket && (
               <Link

@@ -29,12 +29,15 @@ describe('Today page', () => {
   })
 
   it('shows Tom read-only cards with disabled actions', async () => {
-    renderApp('/', { viewer: 'p_tom' })
+    const { user } = renderApp('/', { viewer: 'p_tom' })
     expect(await screen.findByText('viewer · read only', {}, { timeout: 4000 })).toBeInTheDocument()
     const card = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, { timeout: 4000 })
     const buttons = await within(card).findAllByRole('button', {}, { timeout: 4000 })
     expect(buttons.length).toBeGreaterThan(0)
     buttons.forEach((b) => expect(b).toBeDisabled())
+    buttons.forEach((b) => expect(b).toHaveAccessibleDescription('Viewers cannot change tickets.'))
+    await user.hover(buttons[0].parentElement!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Viewers cannot change tickets.')
   })
 
   it('addon decisions post the current workspace id', async () => {

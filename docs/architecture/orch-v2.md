@@ -19,7 +19,7 @@ amendment.
 
 | # | Topic | Decision |
 |---|---|---|
-| D1 | Multi-user scope | **A**: one person, isolated workspaces and devices. **B**: colleagues, each with their own workspaces, handing tickets and files to each other. **C** (several humans in one workspace on a shared server) is out of scope for v2. |
+| D1 | Multi-user scope | **A**: one person, isolated workspaces and devices. **B**: colleagues, each with their own workspaces, handing tickets and files to each other. **C**: several people in one workspace, supported by the ticket format, events, signatures, roles and the relay protocol from day one; the flows for colleagues are built in P8 (amended by D39). |
 | D2 | Workspace keys | A random workspace key `WK` per epoch, sealed to each member device. Revoking a device starts a new epoch. The account master key no longer exists as a derivation root. |
 | D3 | Key custody | Keys live in the OS keychain and are loaded only by the workspace host process (`orch serve`). Agents reach it through a narrow local socket API. |
 | D4 | Identity | Each person has an identity key that signs their device keys. Peers pin the person key. |
@@ -57,7 +57,6 @@ Goals:
 
 Non-goals for v2:
 
-- Several humans in one workspace (D1 C).
 - Forward secrecy for stored content. Revocation protects new content only.
 - Protection against a compromised endpoint, or against traffic analysis by the relay.
 - A native mobile app.
@@ -473,6 +472,9 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D36 | Green-field kernel | v2 is a fresh codebase on `develop` in orch-core: same repo and plugin name, rebuilt with the old code and its tests as reference, never copied as is. `main` stays today's v1 for daily use until the cutover merge. What is carried over is fixed in [orch-v2-carryover.md](orch-v2-carryover.md). |
 | D37 | Kernel in two waves | Wave 1 (P1a) builds the core you use daily. Wave 2 (P1b) adds the extras that start agents or touch shells (start agent, terminals, worktrees and others), once key custody exists. Agent UID on macOS moves from P8 into wave 2. |
 | D38 | Dark stack | The rebased PRs #79→#143 and #254 are closed with their branches kept. The Phase 2 Factory rebuild and the wave 2 records feature use them as reference. |
+| D39 | Several people in one workspace | D1 C is in scope at the format and protocol level now. A member device of another person is accepted when the signed member list includes that person (protocol v2 §7.2 check 8 is amended, orch-relay issue). Invitations, roles UI and colleague flows are built in P8. |
+| D40 | Ticket format | [orch-v2-ticket-format.md](orch-v2-ticket-format.md) T1–T16: `ticket.json` plus `body.md`, no YAML; folders by uid with a key registry; events are the only truth for state; one host writes and publishes signed checkpoints; restricted tickets are enforced by the host and sealed in transit, not encrypted on disk; everything optional is an out-of-process addon with signed capability grants. |
+| D41 | Human signatures on a Mac | Until agents run under their own OS user (P1b), every human signature needs user presence: the device key sits in the keychain with Touch ID or password access control. Host appends use a separate key without prompts. |
 
 ---
 

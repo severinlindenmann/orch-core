@@ -475,9 +475,9 @@ export class MockStore {
     fn(data)
   }
 
-  /** github/import: a lane issue becomes a new backlog ticket in the first workspace. */
-  importGithubIssue(item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
-    const ws = this.workspaces[0]
+  /** github/import: a lane issue becomes a new backlog ticket in workspace `wsId`. */
+  importGithubIssue(wsId: string, item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
+    const ws = this.workspaces.find((w) => w.id === wsId)!
     const title = item.title?.trim()
     const m = /^(.*)#(\d+)$/.exec(item.subtitle ?? '')
     if (!title || !m) return { ok: true, message: 'Nothing to import.' }
@@ -592,15 +592,18 @@ export class MockStore {
     return { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer }) ?? {}) }
   }
 
-  /** Mock of POST /api/addons/:name/actions/:id. `ws` defaults to the ticket's workspace, else the first one. Null for an unknown action. */
-  runAddon(name: string, id: string, body: Record<string, unknown>): AddonActionResult | StoreFailure | null {
+  /** Mock of POST /api/workspaces/:ws/addons/:name/actions/:id. A `ticket` in the body must belong to `ws`. Null for an unknown action. */
+  runAddon(ws: string, name: string, id: string, body: Record<string, unknown>): AddonActionResult | StoreFailure | null {
     const addon = getAddon(name)
     const action = addon?.actions[id]
     if (!addon || !action) return null
-    const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
-    const ws = typeof body.ws === 'string' ? body.ws : (ticket && this.wsOfKey.get(ticket)) || this.workspaces[0].id
     const w = this.workspaces.find((x) => x.id === ws)
     if (!w) return refuse(404, 'not_found', 'No such workspace')
+    const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
+    if (ticket !== undefined) {
+      if (!this.hasTicket(ticket) || !this.isVisible(ticket)) return refuse(404, 'not_found', `No ticket ${ticket}`)
+      if (this.wsOfKey.get(ticket) !== ws) return refuse(409, 'ticket.other_workspace', `${ticket} is not in ${w.prefix}.`, 'Run the action in the ticket\'s own workspace.')
+    }
     // A disabled addon, or one whose installed version has no grant, runs nothing.
     if (!addonActive(w, name)) return refuse(409, 'addon.inactive', `${name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
     if (id === 'save_settings' && this.roleIn(ws, this.viewer) !== 'owner') return refuse(403, 'forbidden', 'Only owners change settings.', 'Ask an owner.')

@@ -186,6 +186,21 @@ describe('app shell', () => {
       expect(await screen.findByText('DEMO-0043 is in Acme energy data')).toBeInTheDocument()
     })
 
+    it('opening a ticket of another workspace (palette Recent) switches to its home workspace', async () => {
+      const { user } = renderApp('/ticket/DEMO-0043')
+      await screen.findByRole('heading', { level: 1 })
+      await user.keyboard('{Meta>}2{/Meta}')
+      expect(await screen.findByRole('table', { name: 'Tickets' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/)
+      await user.keyboard('{Control>}k{/Control}')
+      const recent = await screen.findByRole('group', { name: 'Recent' })
+      await user.click(within(recent).getByRole('option', { name: /DEMO-0043/ }))
+      await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ })
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/))
+      // DEMO's addons (Publish is not installed in INT) render in the rail.
+      await waitFor(() => expect(screen.getByRole('complementary', { name: 'Ticket details' }).querySelector('[data-addon="publish"]')).not.toBeNull())
+    })
+
     it('leaves an addon page the target workspace has not enabled, with a toast', async () => {
       const { user } = renderApp('/addon/usage/overview')
       await screen.findByRole('heading', { level: 1, name: /Usage/ })

@@ -1,6 +1,6 @@
 import { screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/api/client'
+import { api, mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
 
@@ -51,6 +51,6 @@ describe('inactive addons', () => {
     const lane = await screen.findByRole('region', { name: /GitHub issues/ })
     await user.click(within(lane).getAllByRole('button', { name: /Import as ticket/ })[0])
     await vi.waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(spy.mock.calls[0][2]).toEqual(expect.objectContaining({ ws: expect.any(String) }))
+    expect(spy.mock.calls[0][0]).toBe(mockStore.workspaces[0].id)
   })
 })

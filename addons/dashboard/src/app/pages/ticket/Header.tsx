@@ -4,6 +4,7 @@ import { Bot, Check, ChevronDown, Copy, Lock, MessageSquareReply, Tag, Timer } f
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
+import { workspaceOfTicket } from '@/api/workspaces'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -144,7 +145,7 @@ export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDoc
   const children = useQuery({
     queryKey: ['ticket-children', ticket.key],
     queryFn: async () => {
-      const ws = (await api.getWorkspaces()).find((w) => w.prefix === ticket.key.split('-')[0])
+      const ws = workspaceOfTicket(ticket.key, await api.getWorkspaces())
       return ws ? api.listTickets(ws.id, { parent: ticket.key }) : []
     },
     enabled: ticket.type === 'epic',

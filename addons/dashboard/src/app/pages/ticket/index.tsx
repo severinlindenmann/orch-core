@@ -4,6 +4,8 @@ import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
+import { workspaceOfTicket } from '@/api/workspaces'
+import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -70,7 +72,22 @@ function NotFound({ ticketKey, message, retry }: { ticketKey: string; message: s
   )
 }
 
+/**
+ * A ticket lives in one workspace. Opened from another one (a link, palette Recent), the page makes the ticket's
+ * home the current workspace first (no "leaving" redirect), so every slot, addon state and action uses it.
+ */
+function useHomeWorkspace(ticketKey: string): { ready: boolean } {
+  const { workspace, workspaces, setWorkspaceId } = useWorkspace()
+  const home = workspaceOfTicket(ticketKey, workspaces)
+  useEffect(() => {
+    if (home && home.id !== workspace?.id) setWorkspaceId(home.id)
+    // Only when the ticket (or its home) changes: a later switch away is the user's, and leaves the page.
+  }, [ticketKey, home?.id])
+  return { ready: !home || home.id === workspace?.id }
+}
+
 export function TicketPage({ ticketKey }: { ticketKey: string }) {
+  const home = useHomeWorkspace(ticketKey)
   const viewer = useViewer(ticketKey)
   const q = useQuery({
     queryKey: ['ticket', ticketKey],
@@ -115,7 +132,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     return () => clearTimeout(t)
   }, [focus, tab])
 
-  if (q.isLoading || !viewer.ready) return <TicketSkeleton />
+  if (q.isLoading || !viewer.ready || !home.ready) return <TicketSkeleton />
   if (q.error) {
     if (q.error instanceof ApiError && q.error.code === 'not_visible') return <NotVisible ticketKey={ticketKey} />
     if (q.error instanceof ApiError && q.error.status === 404) return <NotFound ticketKey={ticketKey} message="There is no ticket with this key in your workspaces." />

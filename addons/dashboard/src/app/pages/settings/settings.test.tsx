@@ -86,6 +86,6 @@ describe('Settings', () => {
   })
   it('the mock refuses save_settings from a non-owner', async () => {
     mockStore.setViewer('p_mara')
-    await expect(api.runAddonAction('estimate', 'save_settings', { ws: mockStore.workspaces[0].id, formData: { scale: 't-shirt' } })).rejects.toThrow()
+    await expect(api.runAddonAction(mockStore.workspaces[0].id, 'estimate', 'save_settings', { formData: { scale: 't-shirt' } })).rejects.toThrow()
   })
 })

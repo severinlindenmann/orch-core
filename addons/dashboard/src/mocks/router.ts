@@ -440,10 +440,10 @@ export function buildRouter(): MockRouter {
     const v = s.addonStateView(c.params.ws, c.params.name)
     return v ? ok(v) : fail(404, 'not_found', 'Addon is not enabled in this workspace')
   })
-  r.add('POST', '/api/addons/:name/actions/:id', (s, c) => {
+  r.add('POST', '/api/workspaces/:ws/addons/:name/actions/:id', (s, c) => {
     const addon = s.addons.find((a) => a.name === c.params.name)
     if (!addon) return fail(404, 'not_found', 'No such addon')
-    const res = s.runAddon(addon.name, c.params.id, (c.body ?? {}) as Record<string, unknown>)
+    const res = s.runAddon(c.params.ws, addon.name, c.params.id, (c.body ?? {}) as Record<string, unknown>)
     if (res && !res.ok) return fail(res.status, res.code, res.message, res.hint)
     return res ? ok(res) : fail(404, 'not_found', `Addon ${addon.name} has no action ${c.params.id}`)
   })

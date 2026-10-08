@@ -3,6 +3,7 @@ import { Bot, Cpu, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
+import { workspaceOfTicket } from '@/api/workspaces'
 import type { Member, Priority, Role, Status, TicketDocument } from '@/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
@@ -18,12 +19,11 @@ export interface Viewer {
   ready: boolean
 }
 
-/** The viewer's role in the ticket's workspace (matched by key prefix) and a name lookup for person ids. */
+/** The viewer's role in the ticket's home workspace (`workspaceOfTicket`) and a name lookup for person ids. */
 export function useViewer(ticketKey: string): Viewer {
   const ws = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const prefix = ticketKey.split('-')[0]
-  const workspace = ws.data?.find((w) => w.prefix === prefix) ?? ws.data?.[0]
+  const workspace = workspaceOfTicket(ticketKey, ws.data ?? [])
   const members = workspace?.members ?? []
   const person = me.data?.person ?? ''
   return {

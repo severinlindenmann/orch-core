@@ -414,7 +414,8 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
                 className={cn(o.primary && PRIMARY)}
                 disabled={readOnly}
                 onClick={() =>
-                  void act(id, () => api.runAddonAction(d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket, ws: workspace?.id }), {
+                  workspace &&
+                  void act(id, () => api.runAddonAction(workspace.id, d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket }), {
                     toast: `${d.title}: ${o.label}`,
                     note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed by orch` },
                   })

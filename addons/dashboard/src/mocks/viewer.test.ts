@@ -41,7 +41,7 @@ describe('mock router: viewer-aware views and addon actions', () => {
     const lane = () =>
       JSON.stringify(store.addons.find((a) => a.name === 'github')?.contributions.find((c) => c.slot === 'board.lane')?.node)
     const item = { title: 'Seed loader fails on BOM files', subtitle: 'acme/energy-dbt#118', badge: 'bug' }
-    const res = await api.runAddonAction('github', 'import', { item })
+    const res = await api.runAddonAction(store.workspaces[0].id, 'github', 'import', { item })
     expect(res).toMatchObject({ ok: true, message: 'Imported GH-118 as DEMO-0050', changed: true })
     const t = await api.getTicket('DEMO-0050')
     expect(t).toMatchObject({ status: 'backlog', type: 'bug', title: item.title })

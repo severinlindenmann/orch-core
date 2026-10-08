@@ -16,7 +16,7 @@ describe('addon registry', () => {
   })
   it('an action mutates state and the next read sees it', async () => {
     const { api, ws } = setup()
-    await api.runAddonAction('publish', 'share', { ws, ticket: 'DEMO-0043' })
+    await api.runAddonAction(ws, 'publish', 'share', { ticket: 'DEMO-0043' })
     const s = await api.getAddonState(ws, 'publish')
     expect((s.shares as unknown[]).length).toBeGreaterThan(0)
   })
@@ -28,6 +28,6 @@ describe('addon registry', () => {
   it('keeps the six iteration-1 actions working', async () => {
     const { api, ws } = setup()
     for (const [a, id] of [['publish', 'decide'], ['estimate', 'save_settings'], ['github', 'refresh'], ['terminals', 'save_settings'], ['usage', 'save_settings'], ['wiki', 'open']] as const)
-      expect((await api.runAddonAction(a, id, { ws })).ok).toBe(true)
+      expect((await api.runAddonAction(ws, a, id)).ok).toBe(true)
   })
 })

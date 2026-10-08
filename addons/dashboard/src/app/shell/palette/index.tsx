@@ -156,7 +156,7 @@ export function CommandPalette() {
       run: async () => {
         close()
         try {
-          const res = await api.runAddonAction(c.addon, c.action, { ws: workspace!.id, ...(ticketKey ? { ticket: ticketKey } : {}) })
+          const res = await api.runAddonAction(workspace!.id, c.addon, c.action, ticketKey ? { ticket: ticketKey } : {})
           toast.success(res.message)
           if (res.changed) void qc.invalidateQueries()
         } catch (e) {

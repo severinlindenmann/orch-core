@@ -4,6 +4,7 @@ import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
+import { workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
 
 interface SwitchOptions {
@@ -75,7 +76,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspaceId(next)
       if (ticketKey) {
         // A ticket lives in one workspace: stay only when that is the one we are switching to.
-        const home = all.find((w) => w.prefix === ticketKey.split('-')[0]) ?? current
+        const home = workspaceOfTicket(ticketKey, all) ?? current
         if (home && home.id !== next) {
           void router.navigate({ to: '/tickets' })
           toast(`${ticketKey} is in ${home.name}`)

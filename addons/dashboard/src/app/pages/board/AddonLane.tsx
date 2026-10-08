@@ -24,9 +24,10 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
   const { workspace } = useWorkspace()
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
   async function run() {
+    if (!workspace) return
     setState('busy')
     try {
-      const res = await api.runAddonAction(c.addon, 'import', { item, ws: workspace?.id })
+      const res = await api.runAddonAction(workspace.id, c.addon, 'import', { item })
       toast.success(res.message)
       setState('done')
     } catch (e) {

@@ -5,6 +5,7 @@ import { BadgeCheck, CalendarClock, CircleHelp, ExternalLink, GitBranch, GitPull
 import { api } from '@/api/client'
 import type { NeedsYouItem, TicketDocument } from '@/api/types'
 import { addonActive } from '@/api/addons'
+import { workspaceOfTicket } from '@/api/workspaces'
 import { AddonSlotStack, AddonBadge, useAddons } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
@@ -23,7 +24,7 @@ const isHttp = (u: string) => /^https?:\/\//i.test(u)
 
 function NeedsYou({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
   const ws = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
-  const wsId = ws.data?.find((w) => w.prefix === ticket.key.split('-')[0])?.id
+  const wsId = workspaceOfTicket(ticket.key, ws.data ?? [])?.id
   const today = useQuery({ queryKey: ['today', wsId], queryFn: () => api.getToday(wsId!), enabled: !!wsId })
   const items = (today.data?.needs_you ?? []).filter((n) => n.ticket === ticket.key)
   const av = availableActions(ticket, viewer)

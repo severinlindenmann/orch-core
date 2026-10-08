@@ -46,7 +46,7 @@ describe('Today page', () => {
     const card = await screen.findByTestId(/^card-addon:/, {}, { timeout: 4000 })
     await user.click((await within(card).findAllByRole('button'))[0])
     await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(spy.mock.calls[0][2]).toEqual(expect.objectContaining({ ws: mockStore.workspaces[0].id }))
+    expect(spy.mock.calls[0][0]).toBe(mockStore.workspaces[0].id)
     spy.mockRestore()
   })
 

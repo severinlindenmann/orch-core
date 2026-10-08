@@ -211,8 +211,23 @@ describe('mock tickets search', () => {
 describe('addon action route', () => {
   it('404s for an unknown workspace and creates no state', async () => {
     const { api, store } = setup()
-    await expect(api.runAddonAction('estimate', 'save_settings', { ws: 'bogus', formData: {} })).rejects.toMatchObject({ status: 404 })
+    await expect(api.runAddonAction('bogus', 'estimate', 'save_settings', { formData: {} })).rejects.toMatchObject({ status: 404 })
     const states = (store as unknown as { addonStates: Record<string, unknown> }).addonStates
     expect(Object.keys(states).some((k) => k.startsWith('bogus'))).toBe(false)
+  })
+  it('is scoped to a workspace: the old global route is gone', async () => {
+    const { store } = setup()
+    const transport = createMockTransport(store, { latency: false })
+    expect((await transport.request('POST', '/api/addons/estimate/actions/set', { ws: store.workspaces[0].id })).status).toBe(404)
+    const ws = store.workspaces[0].id
+    expect((await transport.request('POST', `/api/workspaces/${ws}/addons/github/actions/refresh`, {})).status).toBe(200)
+  })
+  it('refuses a ticket from another workspace with 409 ticket.other_workspace', async () => {
+    const { api, store } = setup()
+    const demo = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    const before = store.eventsOf('INT-0007').length
+    await expect(api.runAddonAction(demo, 'estimate', 'set', { ticket: 'INT-0007', formData: { points: 3 } })).rejects.toMatchObject({ status: 409, code: 'ticket.other_workspace' })
+    expect(store.eventsOf('INT-0007')).toHaveLength(before)
+    expect((await api.runAddonAction(demo, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 3 } })).ok).toBe(true)
   })
 })

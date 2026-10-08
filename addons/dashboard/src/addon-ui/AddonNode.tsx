@@ -28,7 +28,7 @@ interface Runtime {
   addon: string
   ctx: SlotContext
   compact: boolean
-  /** Core says the viewer may not change anything: forms render disabled. */
+  /** Core says the viewer may not change anything: forms, buttons and item actions render disabled. */
   readOnly: boolean
 }
 const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false })
@@ -187,23 +187,26 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   )
 }
 
-/** `ws` and `ticket` come from core's render context only; addon-authored args may never set them. */
+/** The workspace and `ticket` come from core's render context only; addon-authored args may never set them. */
 function withoutReservedKeys(extra: Record<string, unknown> = {}): Record<string, unknown> {
   const { ws: _ws, ticket: _ticket, ...rest } = extra
   return rest
 }
 
-function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean } {
+/** Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only. */
+function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean } {
+  const { readOnly } = useContext(RuntimeCtx)
   const { addon, ctx } = useContext(RuntimeCtx)
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const m = useMutation({
-    mutationFn: ({ action, extra }: { action: string; extra?: Record<string, unknown> }) =>
-      api.runAddonAction(addon, action, {
+    mutationFn: ({ action, extra }: { action: string; extra?: Record<string, unknown> }) => {
+      if (!workspace) throw new Error('No workspace')
+      return api.runAddonAction(workspace.id, addon, action, {
         ...withoutReservedKeys(extra),
-        ...(workspace ? { ws: workspace.id } : {}),
         ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}),
-      }),
+      })
+    },
     onSuccess: (res) => {
       toast.success(res.message)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
@@ -213,16 +216,16 @@ function useAddonAction(): { run: (action: string, extra?: Record<string, unknow
     },
     onError: (err) => toastApiError(err, 'Action failed'),
   })
-  return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending }
+  return { run: (action, extra) => m.mutate({ action, extra }), pending: m.isPending, blocked: !workspace || readOnly }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending } = useAddonAction()
+  const { run, pending, blocked } = useAddonAction()
   return (
     <div>
-      <Button size="sm" variant={BUTTON_VARIANT[node.variant]} disabled={pending} onClick={() => run(node.action)}>
+      <Button size="sm" variant={BUTTON_VARIANT[node.variant]} disabled={pending || blocked} onClick={() => run(node.action)}>
         {node.label}
       </Button>
     </div>
@@ -230,14 +233,14 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
 }
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
-  const { run, pending } = useAddonAction()
+  const { run, pending, blocked } = useAddonAction()
   const { readOnly } = useContext(RuntimeCtx)
   return (
     <ThemedForm
       disabled={readOnly}
       key={JSON.stringify(node.formData ?? null)}
       schema={node.schema}
-      uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || readOnly } } }}
+      uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
       formData={node.formData ?? undefined}
       validator={validator}
       noHtml5Validate
@@ -266,11 +269,11 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
 }
 
 function ItemActions({ actions, row }: { actions: ItemAction[]; row?: Record<string, unknown> }) {
-  const { run, pending } = useAddonAction()
+  const { run, pending, blocked } = useAddonAction()
   return (
     <div className="flex shrink-0 items-center gap-1">
       {actions.map((a, i) => (
-        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
+        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending || blocked} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
           {a.label}
         </Button>
       ))}

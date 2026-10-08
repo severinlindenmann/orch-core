@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Fragment } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -22,6 +22,15 @@ function renderNode(node: unknown, { addon, ctx, withWorkspace }: { addon: strin
       </Wrap>
     </QueryClientProvider>,
   )
+}
+
+/** The id of the first workspace (WorkspaceProvider's default). */
+const WS = workspacesFixture[0].id
+/** Action buttons stay disabled until the workspace is known; click once enabled. */
+async function clickWhenEnabled(name: string) {
+  const b = screen.getByRole('button', { name })
+  await waitFor(() => expect(b).toBeEnabled())
+  await userEvent.click(b)
 }
 
 const show = (node: unknown) => render(<AddonNode node={node} addon="demo" />)
@@ -124,26 +133,27 @@ describe('SlotRegistry', () => {
 describe('new node types', () => {
   it('renders list item actions and posts the args', async () => {
     const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
-    renderNode({ type: 'list', items: [{ title: 'share/a', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'a' }, variant: 'danger' }] }] }, { addon: 'publish' })
-    await userEvent.click(screen.getByRole('button', { name: 'Revoke' }))
-    expect(post).toHaveBeenCalledWith('publish', 'revoke', expect.objectContaining({ id: 'a' }))
+    renderNode({ type: 'list', items: [{ title: 'share/a', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'a' }, variant: 'danger' }] }] }, { addon: 'publish', withWorkspace: true })
+    await clickWhenEnabled('Revoke')
+    expect(post).toHaveBeenCalledWith(WS, 'publish', 'revoke', expect.objectContaining({ id: 'a' }))
   })
   it('resolves $row.<key> in table row action args', async () => {
     const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
     renderNode(
       { type: 'table', columns: [{ key: 'id', label: 'Id' }], rows: [{ id: 'r7' }], rowActions: [{ label: 'Drop', action: 'drop', args: { id: '$row.id', fixed: 'x' } }] },
-      { addon: 'publish' },
+      { addon: 'publish', withWorkspace: true },
     )
-    await userEvent.click(screen.getByRole('button', { name: 'Drop' }))
-    expect(post).toHaveBeenCalledWith('publish', 'drop', expect.objectContaining({ id: 'r7', fixed: 'x' }))
+    await clickWhenEnabled('Drop')
+    expect(post).toHaveBeenCalledWith(WS, 'publish', 'drop', expect.objectContaining({ id: 'r7', fixed: 'x' }))
   })
   const evilList = { type: 'list', items: [{ title: 'x', actions: [{ label: 'Go', action: 'go', args: { ticket: 'X-1', ws: 'evil', keep: 'k' } }] }] }
   it('drops ws/ticket from addon args when core has no such context', async () => {
     const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
     post.mockClear()
-    renderNode(evilList, { addon: 'publish' })
-    await userEvent.click(screen.getByRole('button', { name: 'Go' }))
-    const body = post.mock.calls[0][2]
+    renderNode(evilList, { addon: 'publish', withWorkspace: true })
+    await clickWhenEnabled('Go')
+    expect(post.mock.calls[0][0]).toBe(WS)
+    const body = post.mock.calls[0][3]
     expect(body).toEqual({ keep: 'k' })
     expect(body).not.toHaveProperty('ticket')
     expect(body).not.toHaveProperty('ws')
@@ -151,9 +161,9 @@ describe('new node types', () => {
   it('lets only core set ticket when a ticket context exists', async () => {
     const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
     post.mockClear()
-    renderNode(evilList, { addon: 'publish', ctx: { ticket: { key: 'DEMO-1' } as never } })
-    await userEvent.click(screen.getByRole('button', { name: 'Go' }))
-    expect(post.mock.calls[0][2]).toEqual({ keep: 'k', ticket: 'DEMO-1' })
+    renderNode(evilList, { addon: 'publish', withWorkspace: true, ctx: { ticket: { key: 'DEMO-1' } as never } })
+    await clickWhenEnabled('Go')
+    expect(post.mock.calls[0][3]).toEqual({ keep: 'k', ticket: 'DEMO-1' })
   })
   it('renders a frame sandboxed without same-origin', () => {
     renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })

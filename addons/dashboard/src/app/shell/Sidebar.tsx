@@ -1,7 +1,19 @@
-import type { ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, Check, ChevronsUpDown, LayoutDashboard, ListChecks, Settings, ShieldCheck, ShieldOff, SquareKanban } from 'lucide-react'
+import {
+  Bot,
+  Check,
+  ChevronsUpDown,
+  LayoutDashboard,
+  ListChecks,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  ShieldCheck,
+  ShieldOff,
+  SquareKanban,
+} from 'lucide-react'
 import { api } from '@/api/client'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { useSlot } from '@/addon-ui/slots'
@@ -22,24 +34,82 @@ import { cn } from '@/lib/utils'
 import { iconByName } from '../icons'
 import { useWorkspace } from '../workspace'
 
-const linkClass =
-  'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text max-xl:justify-center max-xl:px-0 max-xl:py-2'
-const activeProps = { className: 'bg-surface-2 !text-text' }
+type Pref = 'auto' | 'wide' | 'narrow'
+const PREF_KEY = 'orch.sidebar'
+const RailContext = createContext(false)
 
-const CORE_NAV = [
-  { to: '/', label: 'Today', icon: LayoutDashboard },
-  { to: '/board', label: 'Board', icon: SquareKanban },
-  { to: '/tickets', label: 'Tickets', icon: ListChecks },
-  { to: '/agents', label: 'Agents', icon: Bot },
-] as const
+function readPref(): Pref {
+  try {
+    const v = localStorage.getItem(PREF_KEY)
+    return v === 'wide' || v === 'narrow' ? v : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
 
-/** Below 1280 px the sidebar is an icon rail: the label is hidden and a tooltip carries it. */
+/** Wide or narrow (icon rail). The user's choice wins; without one, the rail is used below 1280 px. */
+export function useSidebarCollapsed() {
+  const [pref, setPref] = useState<Pref>(readPref)
+  const [narrowWindow, setNarrowWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1280)
+  useEffect(() => {
+    const onResize = () => setNarrowWindow(window.innerWidth < 1280)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const collapsed = pref === 'auto' ? narrowWindow : pref === 'narrow'
+  const toggle = useCallback(() => {
+    const next: Pref = collapsed ? 'wide' : 'narrow'
+    setPref(next)
+    try {
+      localStorage.setItem(PREF_KEY, next)
+    } catch {
+      /* storage unavailable: the choice lasts for this page only */
+    }
+  }, [collapsed])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '[' || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+      e.preventDefault()
+      toggle()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggle])
+  return { collapsed, toggle }
+}
+
+/** In the icon rail the label is hidden and a tooltip carries it. */
 function RailTip({ label, children }: { label: string; children: ReactNode }) {
+  const collapsed = useContext(RailContext)
+  if (!collapsed) return <>{children}</>
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="right" className="xl:hidden">
-        {label}
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function ToggleButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar'
+  const Icon = collapsed ? PanelLeftOpen : PanelLeftClose
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={label}
+          aria-expanded={!collapsed}
+          className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <Icon className="size-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {label} <kbd className="ml-1 rounded bg-surface-3 px-1 font-mono text-[10px]">[</kbd>
       </TooltipContent>
     </Tooltip>
   )
@@ -58,155 +128,200 @@ export function Sidebar() {
   const navItems = useSlot('nav')
   const role = workspace?.members.find((m) => m.person === me?.person)?.role ?? me?.role
   const grantTime = me?.grant?.until.slice(11, 16)
+  const { collapsed, toggle } = useSidebarCollapsed()
+
+  const link = cn(
+    'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text',
+    collapsed ? 'justify-center px-0 py-2' : 'px-2.5 py-1.5',
+  )
+  const activeProps = { className: 'bg-surface-2 !text-text' }
+  const label = collapsed ? 'hidden' : ''
 
   return (
-    <aside className="flex w-14 shrink-0 flex-col border-r border-border bg-sidebar xl:w-[232px]">
-      <div className="flex h-12 items-center gap-2 px-3.5 max-xl:justify-center max-xl:px-0">
-        <OrbitMark size={24} />
-        <span className="font-bold tracking-[-0.02em] text-text max-xl:hidden" style={{ fontSize: 18 }}>
-          orch
-        </span>
-      </div>
-
-      <div className="px-2 pb-1">
-        <DropdownMenu>
-          <RailTip label={workspace ? `${workspace.prefix} · ${workspace.name}` : 'Workspace'}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Switch workspace"
-                className="flex w-full items-center gap-2 rounded-md border border-border bg-surface px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 max-xl:justify-center max-xl:px-0"
-              >
-                <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
-                <span className="min-w-0 flex-1 truncate max-xl:hidden">{workspace?.name}</span>
-                <ChevronsUpDown className="size-3.5 text-text-faint max-xl:hidden" />
-              </button>
-            </DropdownMenuTrigger>
-          </RailTip>
-          <DropdownMenuContent align="start" side="bottom" className="w-60">
-            <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-text-faint">Workspaces</DropdownMenuLabel>
-            {workspaces.map((w) => (
-              <DropdownMenuItem key={w.id} onSelect={() => setWorkspaceId(w.id)} className="gap-2">
-                <span className="w-8 font-mono text-[11px] text-text-faint">{w.prefix}</span>
-                <span className="flex-1 truncate">{w.name}</span>
-                {w.needs_you > 0 && (
-                  <span aria-label={`${w.needs_you} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
-                    {w.needs_you}
-                  </span>
-                )}
-                {w.id === workspace?.id && <Check className="size-3.5 text-text-muted" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-        {CORE_NAV.map(({ to, label, icon: Icon }) => (
-          <RailTip key={to} label={label}>
-            <Link to={to} className={linkClass} activeProps={activeProps} activeOptions={{ exact: to === '/' }} aria-label={label}>
-              <Icon className="size-4" />
-              <span className="flex-1 max-xl:hidden">{label}</span>
-              {to === '/' && workspace && workspace.needs_you > 0 && (
-                <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand max-xl:hidden">{workspace.needs_you}</span>
-              )}
-            </Link>
-          </RailTip>
-        ))}
-
-        {navItems.length > 0 && (
-          <div className="mt-4">
-            <div className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-text-faint max-xl:hidden">Addons</div>
-            <div className="mx-2 mb-1 border-t border-border xl:hidden" />
-            {navItems.map((item) => {
-              const Icon = iconByName(item.icon)
-              return (
-                <RailTip key={`${item.addon}/${item.id}`} label={`${item.title} · from addon ${item.addon}`}>
-                  <Link
-                    to="/addon/$name/$page"
-                    params={{ name: item.addon, page: item.id }}
-                    className={linkClass}
-                    activeProps={activeProps}
-                    aria-label={item.title}
-                  >
-                    <span className="relative">
-                      <Icon className="size-4" />
-                      {/* Icon rail: the corner badge keeps the orange "A" visible when the label is hidden. */}
-                      <AddonBadge
-                        name={item.addon}
-                        className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px] xl:hidden"
-                      />
-                    </span>
-                    <span className="flex-1 truncate max-xl:hidden">{item.title}</span>
-                    <AddonBadge name={item.addon} className="max-xl:hidden" />
-                  </Link>
-                </RailTip>
-              )
-            })}
+    <RailContext.Provider value={collapsed}>
+      <aside
+        data-collapsed={collapsed}
+        className={cn('flex shrink-0 flex-col border-r border-border bg-sidebar transition-[width] duration-150', collapsed ? 'w-14' : 'w-[232px]')}
+      >
+        <div className={cn('flex h-12 items-center gap-2', collapsed ? 'justify-center' : 'px-3.5')}>
+          <OrbitMark size={24} />
+          {!collapsed && (
+            <>
+              <span className="flex-1 font-bold tracking-[-0.02em] text-text" style={{ fontSize: 18 }}>
+                orch
+              </span>
+              <ToggleButton collapsed={collapsed} onToggle={toggle} />
+            </>
+          )}
+        </div>
+        {collapsed && (
+          <div className="flex justify-center pb-1">
+            <ToggleButton collapsed={collapsed} onToggle={toggle} />
           </div>
         )}
-      </nav>
 
-      <div className="space-y-1 border-t border-border p-2">
-        <RailTip label="Settings">
-          <Link to="/settings" className={linkClass} activeProps={activeProps} aria-label="Settings">
-            <Settings className="size-4" />
-            <span className="max-xl:hidden">Settings</span>
-          </Link>
-        </RailTip>
-
-        <RailTip label={me?.grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
-          <div
-            className={cn(
-              'flex items-center gap-2 px-2.5 py-1 text-[11px] max-xl:justify-center max-xl:px-0',
-              me?.grant ? 'text-brand' : 'text-warning',
-            )}
-          >
-            {me?.grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
-            <span className="max-xl:hidden">{me?.grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
-          </div>
-        </RailTip>
-
-        <DropdownMenu>
-          <RailTip label={me ? `${me.name} (${role})` : 'Viewer'}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="Viewing as"
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-2 max-xl:justify-center max-xl:px-0"
-              >
-                <Avatar className="size-7">
-                  <AvatarFallback className="bg-surface-3 text-[11px]">{me?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
-                </Avatar>
-                <span className="min-w-0 flex-1 max-xl:hidden">
-                  <span className="block truncate text-[13px] text-text">{me?.name}</span>
-                  <span className="block truncate text-[11px] text-text-faint">
-                    {role} · viewing as <ChevronsUpDown className="inline size-3" />
-                  </span>
-                </span>
-              </button>
-            </DropdownMenuTrigger>
-          </RailTip>
-          <DropdownMenuContent align="start" side="top" className="w-48">
-            <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-text-faint">Viewing as (dev)</DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={me?.person}
-              onValueChange={async (person) => {
-                await api.setViewer(person)
-                await qc.invalidateQueries()
-              }}
-            >
-              {PEOPLE.map((p) => (
-                <DropdownMenuRadioItem key={p.id} value={p.id}>
-                  {p.name}
-                </DropdownMenuRadioItem>
+        <div className="px-2 pb-1">
+          <DropdownMenu>
+            <RailTip label={workspace ? `${workspace.prefix} · ${workspace.name}` : 'Workspace'}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Switch workspace"
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md border border-border bg-surface py-1.5 text-left text-[13px] hover:bg-surface-2',
+                    collapsed ? 'justify-center px-0' : 'px-2',
+                  )}
+                >
+                  <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
+                  <span className={cn('min-w-0 flex-1 truncate', label)}>{workspace?.name}</span>
+                  <ChevronsUpDown className={cn('size-3.5 text-text-faint', label)} />
+                </button>
+              </DropdownMenuTrigger>
+            </RailTip>
+            <DropdownMenuContent align="start" side="bottom" className="w-60">
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-text-faint">Workspaces</DropdownMenuLabel>
+              {workspaces.map((w) => (
+                <DropdownMenuItem key={w.id} onSelect={() => setWorkspaceId(w.id)} className="gap-2">
+                  <span className="w-8 font-mono text-[11px] text-text-faint">{w.prefix}</span>
+                  <span className="flex-1 truncate">{w.name}</span>
+                  {w.needs_you > 0 && (
+                    <span aria-label={`${w.needs_you} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
+                      {w.needs_you}
+                    </span>
+                  )}
+                  {w.id === workspace?.id && <Check className="size-3.5 text-text-muted" />}
+                </DropdownMenuItem>
               ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <div className="px-2 py-1 text-[11px] text-text-faint">Mock only. Changes what Today and permissions show.</div>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </aside>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
+          {CORE_NAV.map(({ to, label: text, icon: Icon }) => (
+            <RailTip key={to} label={text}>
+              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' }} aria-label={text}>
+                <span className="relative">
+                  <Icon className="size-4" />
+                  {collapsed && to === '/' && workspace && workspace.needs_you > 0 && (
+                    <span className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-brand" aria-hidden />
+                  )}
+                </span>
+                <span className={cn('flex-1', label)}>{text}</span>
+                {!collapsed && to === '/' && workspace && workspace.needs_you > 0 && (
+                  <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">{workspace.needs_you}</span>
+                )}
+              </Link>
+            </RailTip>
+          ))}
+
+          {navItems.length > 0 && (
+            <div className="mt-4">
+              {collapsed ? (
+                <div className="mx-2 mb-1 border-t border-border" />
+              ) : (
+                <div className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-text-faint">Addons</div>
+              )}
+              {navItems.map((item) => {
+                const Icon = iconByName(item.icon)
+                return (
+                  <RailTip key={`${item.addon}/${item.id}`} label={`${item.title} · from addon ${item.addon}`}>
+                    <Link
+                      to="/addon/$name/$page"
+                      params={{ name: item.addon, page: item.id }}
+                      className={link}
+                      activeProps={activeProps}
+                      aria-label={item.title}
+                    >
+                      <span className="relative">
+                        <Icon className="size-4" />
+                        {/* Icon rail: the corner badge keeps the orange "A" visible when the label is hidden. */}
+                        {collapsed && (
+                          <AddonBadge name={item.addon} className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px]" />
+                        )}
+                      </span>
+                      {!collapsed && (
+                        <>
+                          <span className="flex-1 truncate">{item.title}</span>
+                          <AddonBadge name={item.addon} />
+                        </>
+                      )}
+                    </Link>
+                  </RailTip>
+                )
+              })}
+            </div>
+          )}
+        </nav>
+
+        <div className="space-y-1 border-t border-border p-2">
+          <RailTip label="Settings">
+            <Link to="/settings" className={link} activeProps={activeProps} aria-label="Settings">
+              <Settings className="size-4" />
+              <span className={label}>Settings</span>
+            </Link>
+          </RailTip>
+
+          <RailTip label={me?.grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
+            <div
+              className={cn(
+                'flex items-center gap-2 py-1 text-[11px]',
+                collapsed ? 'justify-center px-0' : 'px-2.5',
+                me?.grant ? 'text-brand' : 'text-warning',
+              )}
+            >
+              {me?.grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
+              <span className={label}>{me?.grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
+            </div>
+          </RailTip>
+
+          <DropdownMenu>
+            <RailTip label={me ? `${me.name} (${role})` : 'Viewer'}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Viewing as"
+                  className={cn('flex w-full items-center gap-2 rounded-md py-1.5 text-left hover:bg-surface-2', collapsed ? 'justify-center px-0' : 'px-2')}
+                >
+                  <Avatar className="size-7">
+                    <AvatarFallback className="bg-surface-3 text-[11px]">{me?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <span className={cn('min-w-0 flex-1', label)}>
+                    <span className="block truncate text-[13px] text-text">{me?.name}</span>
+                    <span className="block truncate text-[11px] text-text-faint">
+                      {role} · viewing as <ChevronsUpDown className="inline size-3" />
+                    </span>
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+            </RailTip>
+            <DropdownMenuContent align="start" side="top" className="w-48">
+              <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-text-faint">Viewing as (dev)</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={me?.person}
+                onValueChange={async (person) => {
+                  await api.setViewer(person)
+                  await qc.invalidateQueries()
+                }}
+              >
+                {PEOPLE.map((p) => (
+                  <DropdownMenuRadioItem key={p.id} value={p.id}>
+                    {p.name}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <div className="px-2 py-1 text-[11px] text-text-faint">Mock only. Changes what Today and permissions show.</div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </aside>
+    </RailContext.Provider>
   )
 }
+
+const CORE_NAV = [
+  { to: '/', label: 'Today', icon: LayoutDashboard },
+  { to: '/board', label: 'Board', icon: SquareKanban },
+  { to: '/tickets', label: 'Tickets', icon: ListChecks },
+  { to: '/agents', label: 'Agents', icon: Bot },
+] as const

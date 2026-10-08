@@ -35,6 +35,18 @@ describe('app shell', () => {
     expect(await screen.findByText('Refresh pull requests')).toBeInTheDocument()
   })
 
+  it('toggles the sidebar between wide and narrow with the button and with [', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    const aside = document.querySelector('aside')!
+    const start = aside.getAttribute('data-collapsed')
+    await user.click(screen.getByRole('button', { name: /(Expand|Collapse) sidebar/ }))
+    expect(aside.getAttribute('data-collapsed')).not.toBe(start)
+    await user.keyboard('[[')
+    expect(aside.getAttribute('data-collapsed')).toBe(start)
+  })
+
   it('renders an addon page with the badge in the page title', async () => {
     renderApp('/addon/usage/overview')
     const title = await screen.findByRole('heading', { level: 1, name: /Usage/ })

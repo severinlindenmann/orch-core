@@ -145,8 +145,13 @@ export interface QuestionStatus extends QuestionDef {
   state: 'open' | 'answered'
   asked_at: string
   asked_by: string
-  answer: { option?: string; text?: string; by: string; at: string } | null
+  answer: { option?: string; text?: string; by: string; at: string; via?: Via; presence?: Presence } | null
+  /** Hash an answer signs (the question text, options and recommendation). */
+  hash?: string
 }
+
+export type Via = 'cli' | 'dashboard' | 'phone'
+export type Presence = 'touchid' | 'passkey' | 'password'
 
 export interface Artifact {
   name: string
@@ -168,6 +173,13 @@ export interface Artifact {
   label?: string
   added_by: string
   at: string
+  /** Inline content for logs, receipts, reports and datasets (mock only; the real host serves the file). */
+  preview?: string
+  /** link artifacts. */
+  url?: string
+  /** Addon artifacts have an addon + ref instead of a file. */
+  addon?: string
+  ref?: string
 }
 
 export interface Claim {
@@ -180,11 +192,26 @@ export interface Claim {
 }
 
 export interface GateStatus {
-  state: 'pending' | 'approved' | 'changes_requested'
-  approvals: { by: string; at: string }[]
+  state: 'pending' | 'approved' | 'invalidated' | 'changes_requested'
+  approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean }[]
   needed: number
   approvers: string
+  /** Excluded group, e.g. "assignees". */
+  not?: string
   note?: string
+  /** Hash of the gated content as it is now. */
+  hash?: string
+  /** What an approval covers, in words. */
+  covers?: string[]
+  /** Why an approval was invalidated (state === 'invalidated'). */
+  reason?: string
+}
+
+export interface SectionRevision {
+  rev: number
+  at: string
+  by: string
+  text: string
 }
 
 export interface People {
@@ -216,6 +243,8 @@ export interface TicketDocument extends TicketDefinition {
   updated_at: string
   restricted: boolean
   children?: string[] // epic: child keys
+  /** Revisions per body section (oldest first), derived from section.edited events. */
+  section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
 }
 
 export interface TicketSummary {

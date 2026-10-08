@@ -11,6 +11,9 @@ import type {
   People,
   QuestionDef,
   QuestionStatus,
+  SectionRevision,
+  Presence,
+  Via,
   Status,
   TaskStatus,
   TicketDefinition,
@@ -62,14 +65,16 @@ export function deriveTicket(
   let verdict: TicketDocument['verdict'] = null
   let handoff: string | null = null
   const artifacts: Artifact[] = []
-  const gateApprovals: Record<GateName, { by: string; at: string }[]> = { requirements: [], plan: [], verify: [] }
+  const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  const gateInvalid: Partial<Record<GateName, { reason: string; at: string }>> = {}
+  const history: NonNullable<TicketDocument['section_history']> = {}
   const gateChanges: Partial<Record<GateName, { text?: string; at: string }>> = {}
   const taskDone = new Map<string, { exit: number; ms: number; commit?: string; at: string }>()
   const taskBlocked = new Set<string>()
   const taskSkipped = new Set<string>()
   const leases = new Map<string, { session: string; agent: string; since: string }>()
   const asked = new Map<string, { at: string; by: string }>()
-  const answers = new Map<string, { option?: string; text?: string; by: string; at: string }>()
+  const answers = new Map<string, NonNullable<QuestionStatus['answer']>>()
   const extraQuestions: QuestionDef[] = []
   let created = events[0]?.at ?? ''
 
@@ -130,7 +135,11 @@ export function deriveTicket(
           task: e.task as string | undefined,
           ac: e.ac as string | undefined,
           label: e.label as string | undefined,
-          added_by: actorLabel(e.actor),
+          preview: e.preview as string | undefined,
+          url: e.url as string | undefined,
+          addon: e.addon as string | undefined,
+          ref: e.ref as string | undefined,
+          added_by: (e.addon as string | undefined) ?? actorLabel(e.actor),
           at: e.at,
         })
         break
@@ -144,12 +153,32 @@ export function deriveTicket(
           text: e.text as string | undefined,
           by: actorLabel(e.actor),
           at: e.at,
+          via: (e.via as Via | undefined) ?? 'dashboard',
+          presence: (e.presence as Presence | undefined) ?? 'touchid',
         })
         break
       case 'gate.approved': {
         const g = e.gate as GateName
-        gateApprovals[g].push({ by: actorLabel(e.actor), at: e.at })
+        gateApprovals[g].push({
+          by: actorLabel(e.actor),
+          at: e.at,
+          via: (e.via as Via | undefined) ?? 'dashboard',
+          presence: (e.presence as Presence | undefined) ?? 'touchid',
+          sig_ok: (e.sig_ok as boolean | undefined) ?? true,
+        })
         delete gateChanges[g]
+        delete gateInvalid[g]
+        break
+      }
+      case 'gate.invalidated': {
+        const g = e.gate as GateName
+        gateInvalid[g] = { reason: (e.reason as string) ?? 'Gated content changed after approval', at: e.at }
+        break
+      }
+      case 'section.edited': {
+        const sec = e.section as keyof BodySections
+        const list = (history[sec] ??= [])
+        list.push({ rev: list.length + 1, at: e.at, by: actorLabel(e.actor), text: e.text as string })
         break
       }
       case 'gate.changes_requested': {
@@ -161,9 +190,12 @@ export function deriveTicket(
       case 'verdict.given':
         verdict = { result: e.result as 'pass' | 'fail', by: actorLabel(e.actor), at: e.at, text: e.text as string | undefined }
         break
-      case 'handoff.written':
+      case 'handoff.written': {
         handoff = e.text as string
+        const list = (history.current_state ??= [])
+        list.push({ rev: list.length + 1, at: e.at, by: actorLabel(e.actor), text: handoff })
         break
+      }
       default:
         break
     }
@@ -204,24 +236,46 @@ export function deriveTicket(
     return {
       ...q,
       state: answer ? 'answered' : 'open',
+      hash: 'sha256:' + fnvHex(def.uid + q.id + q.text + JSON.stringify(q.options ?? []), 12) + '…',
       asked_at: a?.at ?? created,
       asked_by: a?.by ?? (people.owner ?? 'unknown'),
       answer,
     }
   })
 
+  const finalBody: BodySections = { ...body, current_state: handoff ?? body.current_state }
   const gates = {} as Record<GateName, GateStatus>
   for (const g of ['requirements', 'plan', 'verify'] as GateName[]) {
     const policy = ctx.gates[g]
     const approvals = gateApprovals[g]
     const changes = gateChanges[g]
+    const invalid = gateInvalid[g]
+    const gated = gateContent(g, def, finalBody, artifacts)
     gates[g] = {
-      state: changes ? 'changes_requested' : approvals.length >= policy.count ? 'approved' : 'pending',
+      state: changes
+        ? 'changes_requested'
+        : invalid
+          ? 'invalidated'
+          : approvals.length >= policy.count
+            ? 'approved'
+            : 'pending',
       approvals,
       needed: policy.count,
       approvers: policy.approvers,
+      not: policy.not,
       note: changes?.text,
+      reason: invalid?.reason,
+      hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
+      covers: gated.covers,
     }
+  }
+
+  // Section history: events give the revisions; the live text is always the last one.
+  for (const [name, text] of Object.entries(finalBody) as [keyof BodySections, string][]) {
+    const list = history[name] ?? []
+    if (!list.length || list[list.length - 1].text !== text)
+      list.push({ rev: list.length + 1, at: list[list.length - 1]?.at ?? created, by: people.owner ?? 'unknown', text } satisfies SectionRevision)
+    history[name] = list
   }
 
   const openBlocking = questions_state.find((q) => q.state === 'open' && q.blocking)
@@ -240,11 +294,33 @@ export function deriveTicket(
     artifacts,
     verdict,
     turn,
-    body: { ...body, current_state: handoff ?? body.current_state },
+    body: finalBody,
+    section_history: history,
     head: { seq: last?.seq ?? 0, hash: 'sha256:' + fnvHex(def.uid + (last?.seq ?? 0), 12) + '…' },
     created_at: created,
     updated_at: last?.at ?? created,
     restricted: def.visibility !== 'workspace',
+  }
+}
+
+/** What a gate hash covers (spec section 5, "Gate hash"), as words plus the material the mock hashes. */
+function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[]): { covers: string[]; material: string } {
+  switch (g) {
+    case 'requirements':
+      return {
+        covers: ['Section: Requirements', 'Section: Out of scope', `Acceptance criteria (${def.acceptance.length})`, 'Type and size'],
+        material: JSON.stringify([body.requirements, body.out_of_scope, def.acceptance, def.type, def.size]),
+      }
+    case 'plan':
+      return {
+        covers: ['Section: Plan', `Tasks (${def.tasks.length}): ids, text, verify, proves`, 'Section: Decisions'],
+        material: JSON.stringify([body.plan, def.tasks, body.decisions]),
+      }
+    case 'verify':
+      return {
+        covers: ['Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],
+        material: JSON.stringify([body.verification, artifacts.map((a) => a.sha256), def.acceptance]),
+      }
   }
 }
 
@@ -294,6 +370,10 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `gave verdict: ${e.result}`
     case 'handoff.written':
       return 'wrote a handoff'
+    case 'section.edited':
+      return `edited ${String(e.section).replace('_', ' ')}`
+    case 'gate.invalidated':
+      return `invalidated the ${e.gate} approval`
     case 'log.added':
       return 'logged a note'
     case 'github.pr_linked':

@@ -202,19 +202,25 @@
         "actor": "p_mara",
         "question": "Q1",
         "option": "csv",
-        "text": "CSV. Finance signs it off on the 1st."
+        "text": "CSV. Finance signs it off on the 1st.",
+        "via": "phone",
+        "presence": "passkey"
       },
       {
         "at": "2026-10-08T09:10:11Z",
         "type": "gate.approved",
         "actor": "p_sev",
-        "gate": "requirements"
+        "gate": "requirements",
+        "via": "cli",
+        "presence": "touchid"
       },
       {
         "at": "2026-10-08T09:44:00Z",
         "type": "gate.approved",
         "actor": "p_sev",
-        "gate": "plan"
+        "gate": "plan",
+        "via": "dashboard",
+        "presence": "touchid"
       },
       {
         "at": "2026-10-08T09:44:05Z",
@@ -253,7 +259,8 @@
         "kind": "log",
         "bytes": 5120,
         "sha256": "9b1e44c07ad2",
-        "task": "T1"
+        "task": "T1",
+        "preview": "$ python scripts/export_tariffs.py --out seeds/tariffs\nreading finance share: /mnt/finance/tariffs/2026-10/\nexported tariff_residential_basic.csv      812 rows\nexported tariff_residential_green.csv      812 rows\nexported tariff_business_small.csv        1204 rows\nexported tariff_business_large.csv        1204 rows\n... 36 more files\ndone: 40 files, 31 482 rows, 0 warnings\n$ ls seeds/tariffs | wc -l\n40\n"
       },
       {
         "at": "2026-10-09T08:52:00Z",
@@ -263,7 +270,9 @@
         "kind": "dataset",
         "bytes": 1342,
         "sha256": "e07a8815bb30",
-        "label": "The 3 tariffs where CSV and API differ"
+        "label": "The 3 tariffs where CSV and API differ",
+        "preview": "tariff_id,csv_rate_chf_kwh,api_rate_chf_kwh,delta\nT-0112,0.2184,0.2190,0.0006\nT-0207,0.1763,0.1763,0.0000\nT-0318,0.2455,0.2471,0.0016\n",
+        "rows_note": "3 of 40 tariffs differ"
       },
       {
         "at": "2026-10-09T09:10:20Z",
@@ -300,6 +309,100 @@
         "type": "usage.recorded",
         "actor": "host",
         "cents": 412
+      },
+      {
+        "at": "2026-10-07T14:20:00Z",
+        "type": "section.edited",
+        "actor": "p_sev",
+        "section": "requirements",
+        "text": "- All tariff tables are loaded as seeds.\n- Seeds are refreshable by hand."
+      },
+      {
+        "at": "2026-10-07T14:25:00Z",
+        "type": "section.edited",
+        "actor": "p_sev",
+        "section": "decisions",
+        "text": "- Source of truth: open, see Q1."
+      },
+      {
+        "at": "2026-10-07T14:30:00Z",
+        "type": "section.edited",
+        "actor": "claude-code:s_70b1:p_sev",
+        "section": "plan",
+        "text": "1. Export the CSVs (T1).\n2. Add `seeds/tariffs/schema.yml` with column types (T2).\n3. Join in `fct_billing` and add tests (T3)."
+      },
+      {
+        "at": "2026-10-08T08:40:00Z",
+        "type": "section.edited",
+        "actor": "p_sev",
+        "section": "decisions",
+        "text": "- **Chosen:** monthly CSV is the source of truth (Q1, Mara).\n- **Rejected:** API as source, because it lags one day and costs +1 day of work."
+      },
+      {
+        "at": "2026-10-08T08:50:00Z",
+        "type": "section.edited",
+        "actor": "p_sev",
+        "section": "requirements",
+        "text": "- All 40 tariff tables are loaded with explicit column types.\n- Seeds are refreshable with a single documented command.\n- `fct_billing` joins the seeds, tests cover tariff changes inside a month."
+      },
+      {
+        "at": "2026-10-08T09:30:00Z",
+        "type": "section.edited",
+        "actor": "claude-code:s_70b1:p_sev",
+        "section": "plan",
+        "text": "1. Export the CSVs (T1).\n2. Add `seeds/tariffs/schema.yml` with column types (T2).\n3. Join in `fct_billing` and add tests (T3).\n4. Document `make refresh-tariffs` in the README (T4).\n\nT2 and T3 run in parallel as subagent leases."
+      },
+      {
+        "at": "2026-10-08T09:50:00Z",
+        "type": "handoff.written",
+        "actor": "claude-code:s_77c2:p_sev",
+        "text": "Plan approved. Starting with T1, then T2 and T3 in parallel."
+      },
+      {
+        "at": "2026-10-09T08:41:41Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_77c2:p_sev",
+        "name": "T1.receipt.json",
+        "kind": "receipt",
+        "bytes": 214,
+        "sha256": "c44e20b1f7a9",
+        "task": "T1",
+        "preview": "{\n  \"task\": \"T1\",\n  \"cmd\": \"ls seeds/tariffs | wc -l\",\n  \"exit\": 0,\n  \"ms\": 1800,\n  \"commit\": \"a41c9d3\",\n  \"stdout\": \"40\"\n}"
+      },
+      {
+        "at": "2026-10-09T09:55:10Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_77c2.1:p_sev",
+        "name": "seeds-in-warehouse.png",
+        "kind": "screenshot",
+        "bytes": 84213,
+        "sha256": "3f9ab0c4e7d8",
+        "task": "T2",
+        "ac": "AC1",
+        "label": "Seeded tariff tables in the warehouse (partial run)"
+      },
+      {
+        "at": "2026-10-09T10:02:00Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_77c2:p_sev",
+        "name": "dbt docs: tariffs",
+        "kind": "link",
+        "bytes": 0,
+        "sha256": "a07d51e9c3b2",
+        "label": "Generated docs for the seeds",
+        "url": "https://docs.acme.example/dbt/tariffs"
+      },
+      {
+        "at": "2026-10-09T10:45:00Z",
+        "type": "artifact.added",
+        "actor": "host",
+        "name": "share/demo-0043-preview",
+        "kind": "other",
+        "bytes": 0,
+        "sha256": "5be07c19d4aa",
+        "label": "Secret link to the seed report",
+        "addon": "publish",
+        "ref": "share/demo-0043-preview"
       }
     ]
   },
@@ -507,13 +610,17 @@
         "at": "2026-10-03T10:20:00Z",
         "type": "gate.approved",
         "actor": "p_sev",
-        "gate": "requirements"
+        "gate": "requirements",
+        "via": "dashboard",
+        "presence": "touchid"
       },
       {
         "at": "2026-10-03T10:40:00Z",
         "type": "gate.approved",
         "actor": "p_sev",
-        "gate": "plan"
+        "gate": "plan",
+        "via": "dashboard",
+        "presence": "touchid"
       },
       {
         "at": "2026-10-06T08:00:00Z",
@@ -546,7 +653,8 @@
         "kind": "log",
         "bytes": 3108,
         "sha256": "71f0aa23c9e1",
-        "ac": "AC1"
+        "ac": "AC1",
+        "preview": "$ dbt test --select assert_billing_reconciles\n11:02:14  1 of 1 START test assert_billing_reconciles ........... [RUN]\n11:02:36  1 of 1 PASS assert_billing_reconciles ................. [PASS in 22.40s]\nDone. PASS=1 WARN=0 ERROR=0 SKIP=0 TOTAL=1\n"
       },
       {
         "at": "2026-10-06T11:30:00Z",
@@ -1033,6 +1141,21 @@
         "type": "status.changed",
         "actor": "host",
         "to": "waiting"
+      },
+      {
+        "at": "2026-10-06T14:30:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan",
+        "via": "phone",
+        "presence": "passkey"
+      },
+      {
+        "at": "2026-10-07T09:25:00Z",
+        "type": "gate.invalidated",
+        "actor": "host",
+        "gate": "plan",
+        "reason": "Plan changed after approval: T2 added"
       }
     ]
   },

@@ -74,6 +74,17 @@ itself, the children stay), or `orch approve <epic> requirements --end-factory`.
 as `ends_factory` (the delegation it ended). Any other approval without a factory delegation of such an epic is
 refused and signs nothing: an old or forged form, an addon's or a phone's approve intent, `--delegate`.
 
+**An ended run stays visible.** Factories (`/factory`) and the run view (`/factory/<epic>`) show the epic's last
+factory run whether or not its charter is still the latest, derived from the signed ledger alone (no new record):
+the last charter with a factory delegation and the charter after it, if any. A run that ended is listed last as
+"Ended" with how: Finished (you gave the verdict, you closed it, or it closed by itself), Stopped (its time budget
+is used up), Ended by you (you ended the factory run, or, for runs signed before this, approved the epic again
+without the factory), or Paused (Stop the run). The list header counts them apart ("1 working, 1 ended"), and the
+run view shows a summary tile (children done, release stages proven, how long, permission requests and how they were
+answered) with one sentence for why it ended, a link to the epic and, for a run you ended, Start a new run (the
+epic page's approval, with the Start choice). The epic page links to the ended run, and the Board's factory group
+links each lane to its run view.
+
 ## What changes for agents in a factory epic
 
 - `orch ask` is refused. The agent decides within the epic's text and records why in the ticket log (a note, never

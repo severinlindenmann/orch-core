@@ -227,14 +227,15 @@
 {% set f, p = e.factory, e.permits %}
 <section class="epic-factory" id="factory" aria-labelledby="factory-h">
   <h3 id="factory-h">AI Factory</h3>
-  {% if not f.factory %}<p class="muted">Not started as a factory. Start it when you approve the epic, above.</p>
+  {% if not f.factory and e.run_ended %}<p class="muted">Its factory run ended. <a class="lnk" href="/factory/{{ t.id }}">Open the ended run</a>{% if e.restart %}; start a new one when you approve the epic, above{% endif %}.</p>
+  {% elif not f.factory %}<p class="muted">Not started as a factory. Start it when you approve the epic, above.</p>
   {% else %}
   <p>{{ ui.status("info" if f.state == "running" else "warn", f.state) }}
     <span class="factory-budget">children <b>{{ f.children }}/{{ f.max_children }}</b> · <b>{{ f.hours_left|round(1) }}</b> of {{ f.max_hours }} hours left</span></p>
   {% if f.runner_blocker %}<p class="muted">The runner starts nothing: {{ f.runner_blocker }}.</p>{% endif %}
   <p><a class="lnk" href="/factory/{{ t.id }}">Open the {{ "Dark AI Factory" if f.dark and f.dark_on else "AI Factory" }} run view</a></p>
   {% endif %}
-  {% if e.run %}{{ end_run_form(e) }}{% elif e.run_ended %}<p><a class="lnk" href="/factory/{{ t.id }}">Open the ended run</a></p>{% endif %}
+  {% if e.run %}{{ end_run_form(e) }}{% endif %}
   {% for s in p.suspect %}{{ pm.suspect_note(s) }}{% endfor %}
   {% for s in p.stopped %}{{ pm.stopped_card(s, True) }}{% endfor %}
   {% for r in p.ready %}{{ pm.ready_card(r, "/t/" ~ t.id ~ "#factory", True) }}{% endfor %}
@@ -495,7 +496,7 @@
       <div class="cluster story-actions">{{ together_form(req, plan) }}{{ changes_form("plan") }}</div>
     </section>
     {% endif %}
-    {% if epic and t.status in ("backlog", "open") and (actions.approve_requirements or epic.reapprove) %}{{ charter_form(epic, req.question) }}{% endif %}
+    {% if epic and t.status in ("backlog", "open") and (actions.approve_requirements or epic.reapprove or epic.restart) %}{{ charter_form(epic, req.question) }}{% endif %}
     {% set answered = questions|selectattr("answered_flag")|list %}
     {% set still_open = questions|rejectattr("answered_flag")|list %}
     {% if questions %}

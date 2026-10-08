@@ -196,6 +196,9 @@ def page_data(ws, epic, *, entries, needs, events, builder) -> dict:
              reapprove=s["approved"] and (bool(s["diff"]["removed"]) or s["diff"]["epic_changed"]
                                           or any(r["state"] in ("changed", "new", "paused") for r in rows)))
     s.update(run=_run(ws, epic, s, rows))
+    fr = epics.factory_run(ws, epic) if s["run"] is None else None
+    # an ended run keeps its run view (linked here), and one ended by you offers a new start in the approval
+    s.update(run_ended=fr is not None, restart=bool(fr and fr.get("ended_by") and epic.status == "open"))
     return s
 
 

@@ -171,11 +171,13 @@
 {% if run.summary %}{% set s = run.summary %}
 <section class="card run-summary" id="run-summary" aria-labelledby="run-summary-h">
   <h2 id="run-summary-h">Summary</h2>
+  {% if run.ended %}<p data-ended>{{ ui.status("neu", "Ended") }} {{ run.ended.kind }}: {{ run.ended.why }}. <a class="lnk" href="/t/{{ run.epic }}">Open the epic</a>{% if run.ended.restart %} · <a class="btn" href="/t/{{ run.epic }}#epic-approve">Start a new run</a>{% endif %}</p>{% endif %}
   <ul class="plain">
+    {% if run.ended %}<li>{{ s.done }} of {{ s.children }} {{ "child" if s.children == 1 else "children" }} done{% if s.stages %}; release stages proven: {{ s.stages|join(", ") }}{% endif %}</li>{% endif %}
     <li>{{ s.children }} {{ "child" if s.children == 1 else "children" }}, {{ s.tasks }} {{ "task" if s.tasks == 1 else "tasks" }} done, as the agents report it</li>
     <li>{{ s.requests }} permission {{ "request" if s.requests == 1 else "requests" }}: {{ s.card }} answered on a card, {{ s.profile }} added to the Dark profile{% if s.open %}, {{ s.open }} never answered{% endif %}</li>
     {% if s.auto %}<li data-auto-summary>Closed by itself under your charter with {{ s.auto.children|length if s.auto.children else 0 }} {{ "child" if (s.auto.children or [])|length == 1 else "children" }} in testing, {{ s.auto.proven }} of {{ s.auto.total }} criteria cited as the agents wrote them{% if s.auto.stages %}, release stages proven by their checks: {{ s.auto.stages|join(", ") }}{% endif %}</li>{% endif %}
-    {% if run.elapsed %}<li>{{ run.elapsed|capitalize }} from your start to {{ "the close" if s.auto else "your verdict" }}</li>{% endif %}
+    {% if run.elapsed %}<li>{{ run.elapsed|capitalize }} from your start to {{ "the close" if s.auto else "your verdict" if run.state == "finished" else "its end" }}</li>{% endif %}
   </ul>
   <p class="muted permit-meta">Commands the Dark profile allowed directly leave no record and are not counted.</p>
 </section>

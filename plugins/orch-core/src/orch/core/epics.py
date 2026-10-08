@@ -270,7 +270,10 @@ def delegation(ws, epic, signed=None) -> dict | None:
     epic_changed, expired} (a factory delegation also `factory`, `max_hours`). Active only while not paused, the
     epic's requirements still hash as signed and a factory's time budget is not used up."""
     signed = _signed(ws, signed)
-    entry = latest_charter(ws, epic.id, signed)
+    return _delegation_of(epic, latest_charter(ws, epic.id, signed), signed)
+
+
+def _delegation_of(epic, entry, signed) -> dict | None:
     if not entry or not isinstance(entry.get("delegate"), dict) or not entry.get("delegation"):
         return None
     did = entry["delegation"]
@@ -281,7 +284,24 @@ def delegation(ws, epic, signed=None) -> dict | None:
     kept = [k for k in (pause or {}).get("kept") or [] if isinstance(k, dict) and k.get("id")]
     expired = budget_used_up(entry, d)
     return {"id": did, **d, "paused": pause is not None, "epic_changed": changed, "expired": expired,
-            "active": pause is None and not changed and not expired, "kept": kept, "at": entry.get("at")}
+            "active": pause is None and not changed and not expired, "kept": kept, "at": entry.get("at"),
+            "paused_at": (pause or {}).get("at")}
+
+
+def factory_run(ws, epic, signed=None) -> dict | None:
+    """The epic's last factory run, live or ended, from the signed ledger alone: delegation()'s dict for the last
+    charter that signed a factory delegation, with `ended_by`, the next charter of the epic (signed without the
+    factory: it ended the run; `ends_factory` in it when ended on purpose), or None while that charter is the latest.
+    An ended run is never active. None when the epic never had a factory charter."""
+    signed = _signed(ws, signed)
+    mine = [e for e in signed if e.get("kind") == "charter" and e.get("ticket") == epic.id]
+    for i in range(len(mine) - 1, -1, -1):
+        dl = mine[i].get("delegate")
+        if isinstance(dl, dict) and dl.get("factory") and mine[i].get("delegation"):
+            d = _delegation_of(epic, mine[i], signed)
+            nxt = mine[i + 1] if i + 1 < len(mine) else None
+            return {**d, "ended_by": nxt, **({"active": False} if nxt else {})}
+    return None
 
 
 def _covered(ws, epic, child, gate: str, h, signed) -> bool:

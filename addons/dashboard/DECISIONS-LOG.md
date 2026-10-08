@@ -38,3 +38,9 @@ Format: date, decision, why, how to revert.
 - **Decision:** The brief's `getByText('backlog')` after creating became `findByText('Backlog')`, because the ticket page's `StatusChip` renders `STATUS_LABEL` ("Backlog").
 - **Why:** No lowercase "backlog" text exists on the ticket page.
 - **Revert:** Lowercase the chip label (not recommended).
+
+## 2026-10-08 Full command palette: save-view hand-off, ticket actions, test adjustments
+
+- **Decision:** (1) "Save view…" navigates to `/tickets` and opens the dialog through a one-shot request (`src/app/pages/tickets/saveViewRequest.ts`) that `SavedViews` consumes on mount or on an event, not through a `?saveView=1` URL param, because saved views are exactly the search params and a flag would leak into every view. (2) "On this ticket" shows Comment and Ask a question to anyone who is not a viewer, Move to… to owners/maintainers, and Approve/Give verdict from `availableActions`; Claim and Release are never offered, since the ticket page says only agents claim and release. Comment, Ask and Move use sub-prompts inside the palette (type the text, Enter; Backspace on empty goes back). Approve and Give verdict open core's `SignDialog` (rendered by the palette). (3) Shortcuts live in `src/app/shell/shortcuts.ts` (`g t`, `g b`, `g l`, `g a`, `c`, `[` display only). (4) The brief's tests were adapted: DEMO-0043's title is "Load tariff tables as dbt seeds" (found by body text "billing"), the Board page has no h1 (topbar title is asserted), and the sign-dialog test uses DEMO-0041 which has a verdict pending.
+- **Why:** Keeps saved views clean; matches the existing permission rules; the brief's assertions did not match the fixtures.
+- **Revert:** Delete `saveViewRequest.ts` and its use in `SavedViews.tsx`; restore `CommandPalette.tsx` and `NewTicketShortcut` from the commit before "palette: tickets, ticket actions".

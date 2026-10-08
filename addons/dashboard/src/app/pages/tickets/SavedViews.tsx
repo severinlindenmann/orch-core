@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { onSaveViewRequest, takeSaveViewRequest } from './saveViewRequest'
 import type { TicketsSearch } from './search'
 
 /** Canonical form for comparing filters: no empty values, lists sorted. */
@@ -80,6 +81,12 @@ export function SavedViews({
     setDialog({ name, replace })
   }
   const nothingActive = !active
+
+  // "Save view…" from the command palette.
+  useEffect(() => {
+    if (takeSaveViewRequest()) openDialog('')
+    return onSaveViewRequest(() => openDialog(''))
+  }, [])
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">

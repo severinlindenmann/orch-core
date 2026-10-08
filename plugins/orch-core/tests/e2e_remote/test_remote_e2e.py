@@ -288,46 +288,6 @@ def test_the_factory_start_needs_a_fresh_confirmation(stack):
     pytest.skip("written when the unlock sheet lands: the permission card and Start, each with a fresh assertion")
 
 
-# -- revoking a device mid-stream -----------------------------------------------------------------------------------
-
-def test_revoking_a_device_ends_its_stream_with_a_readable_refusal(stack):
-    did = ensure_paired(stack, stack.b)
-    stack.b.dash.set_scope(did, "operate")
-    B.open_workspace(stack, stack.b)
-    go(stack, "/board")
-    frame_has(stack, OP_TITLES["bravo"])                          # the page holds its live-update stream open
-    if stack.tmux:
-        go(stack, "/terminals/BRAVO-1")                           # and a terminal stream, checked before every frame
-        frame_has(stack, "BRAVO-1")
-    stack.page.evaluate("document.getElementById('remote-notice').textContent = ''")   # only what the revoke causes
-    r = stack.b.dash.revoke(did)
-    assert r.status_code == 303 and "Device revoked" in r.headers["location"].replace("+", " ").replace("%20", " "), r.headers
-    try:
-        try:   # the open stream is ended by the host and the refusal reaches the page by itself ...
-            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=25_000)
-        except AssertionError:   # ... or, if the page happened to be between two requests, at the person's next click
-            go(stack, "/board")
-            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=60_000)
-    except AssertionError as e:
-        probe = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"}, timeout_ms=20_000)
-        raise AssertionError(f"{e}\nraw request after the revoke: {probe}\nconsole: {B.CONSOLE[-8:]}\n"
-                             f"host log: {stack.b.text()[-500:]}") from None
-    raw = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"})
-    assert raw.get("refusal") == "revoked", raw
-    assert did not in stack.b.dash.devices(), "the device is still listed as live"
-    audit = next((stack.b.state_dir / "permits" / "bridge" / stack.b.space).glob("audit.jsonl")).read_text()
-    assert '"revoked"' in audit                                    # the host recorded it
-
-
-@pytest.mark.xfail(strict=True, reason="a revoked browser cannot pair again: the host answers its pair request with a "
-                   "plain `revoked` refusal (host_check._check) that carries no host_pub, which the browser drops, so "
-                   "it waits 60 s and says the link was used, while the Remote tab says 'pair it again' (orch-core#256)")
-def test_a_revoked_browser_can_pair_again(stack):
-    if stack.b.dash.devices():
-        pytest.skip("runs after the revoke test, which leaves bravo's device revoked")
-    B.pair(stack, stack.b, "operate")
-
-
 # -- the computer stops, restarts, vanishes -------------------------------------------------------------------------
 
 def test_a_clean_stop_shows_stopped_and_a_restart_serves_the_same_device(stack):
@@ -398,3 +358,46 @@ def test_a_host_that_really_goes_quiet_shows_not_answering(stack):
     expect(stack.page.locator("#remote-notice")).to_contain_text(re.compile("Not answering|Lost"), timeout=40_000)
     stack.a.stop()
     stack.a.start(take_over=True)
+
+
+# -- revoking a device mid-stream (LAST on purpose) -----------------------------------------------------------------
+# Revoking a device revokes the same browser key in every workspace on this computer (protocol D7), so after these
+# tests the browser is no longer paired with either workspace: nothing that needs a paired browser may come after.
+
+def test_revoking_a_device_ends_its_stream_with_a_readable_refusal(stack):
+    did = ensure_paired(stack, stack.b)
+    stack.b.dash.set_scope(did, "operate")
+    B.open_workspace(stack, stack.b)
+    go(stack, "/board")
+    frame_has(stack, OP_TITLES["bravo"])                          # the page holds its live-update stream open
+    if stack.tmux:
+        go(stack, "/terminals/BRAVO-1")                           # and a terminal stream, checked before every frame
+        frame_has(stack, "BRAVO-1")
+    stack.page.evaluate("document.getElementById('remote-notice').textContent = ''")   # only what the revoke causes
+    r = stack.b.dash.revoke(did)
+    assert r.status_code == 303 and "Device revoked" in r.headers["location"].replace("+", " ").replace("%20", " "), r.headers
+    try:
+        try:   # the open stream is ended by the host and the refusal reaches the page by itself ...
+            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=25_000)
+        except AssertionError:   # ... or, if the page happened to be between two requests, at the person's next click
+            go(stack, "/board")
+            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=60_000)
+    except AssertionError as e:
+        probe = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"}, timeout_ms=20_000)
+        raise AssertionError(f"{e}\nraw request after the revoke: {probe}\nconsole: {B.CONSOLE[-8:]}\n"
+                             f"host log: {stack.b.text()[-500:]}") from None
+    raw = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"})
+    assert raw.get("refusal") == "revoked", raw
+    assert did not in stack.b.dash.devices(), "the device is still listed as live"
+    assert stack.a.dash.devices() == [], "the same browser key is revoked in the other workspace on this computer (D7)"
+    audit = next((stack.b.state_dir / "permits" / "bridge" / stack.b.space).glob("audit.jsonl")).read_text()
+    assert '"revoked"' in audit                                    # the host recorded it
+
+
+@pytest.mark.xfail(strict=True, reason="a revoked browser cannot pair again: the host answers its pair request with a "
+                   "plain `revoked` refusal (host_check._check) that carries no host_pub, which the browser drops, so "
+                   "it waits 60 s and says the link was used, while the Remote tab says 'pair it again' (orch-core#256)")
+def test_a_revoked_browser_can_pair_again(stack):
+    if stack.b.dash.devices():
+        pytest.skip("runs after the revoke test, which leaves bravo's device revoked")
+    B.pair(stack, stack.b, "operate")

@@ -118,7 +118,7 @@ const STATUS_TONE: Record<Status, string> = {
   open: 'border-info/40 bg-info-soft text-info',
   'in-progress': 'border-brand/40 bg-brand-soft text-brand',
   waiting: 'border-warning/40 bg-warning-soft text-warning',
-  testing: 'border-addon-border bg-addon-soft text-addon',
+  testing: 'border-text-muted/50 bg-surface-3 text-text',
   done: 'border-success/40 bg-success-soft text-success',
 }
 

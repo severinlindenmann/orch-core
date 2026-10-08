@@ -330,3 +330,9 @@ Format: date, decision, why, how to revert.
 - **Decision:** `addon.action_signed` is appended for every successful `confirm: 'sign'` action, with `changed: !!res.changed` as a field, so an addon cannot hide the record by not reporting a change. The `ticket` key stays in the args (the record is owner/maintainer-only in Activity). A signed action shows one success toast, the action's message (`useSignedAction` uses a returned sentence as its toast).
 - **Why:** Task 30 re-review.
 - **Revert:** Gate on `res.changed` again (not recommended).
+
+## 2026-10-09 Task 31 iteration-3 gate
+
+- **Decision:** (1) The "Testing" status chip no longer uses the addon orange; it is neutral (`border-text-muted/50 bg-surface-3 text-text`), because orange is reserved for addons and the new orange guard found the chip. (2) Board gets an `sr-only` h1 "Board" (the title lived only in the topbar span). (3) Pages and the heavy renderers (react-markdown, recharts, rjsf) load lazily; vendor chunks (react, router, ui) are split in `vite.config.ts` so the entry is ~61 kB. (4) Orange guard whitelist: `src/addon-ui/`, `board/AddonLane.tsx`, `ticket/Artifacts.tsx`, `today/cards.tsx` (they draw the addon marker around addon-owned content). (5) The a11y smoke excludes sandboxed addon iframes from axe (jsdom cannot hand them to axe) and asserts each has a title; colour contrast is left to the browser pass.
+- **Why:** Task 31 gate.
+- **Revert:** Restore the old `testing` tone in `StatusChip` (not recommended); remove entries from the whitelist or the guards in `src/test/guards.test.ts`.

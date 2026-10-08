@@ -368,7 +368,11 @@ def _unpushed(ws, top: Path, base: str, head: str) -> tuple[int, int] | None:
     return total, other
 
 
-_CONFIG_GUARD = r"^(remote\..*\.pushurl|url\..*\.(insteadof|pushinsteadof)|core\.sshcommand|credential\..*helper|credential\.helper)$"
+_CONFIG_GUARD = (r"^(remote\..*\.(pushurl|proxy|uploadpack|receivepack|vcs)|url\..*\.(insteadof|pushinsteadof)"
+                 r"|core\.(sshcommand|askpass|gitproxy)|http\.(.*\.)?(proxy|extraheader)|credential\..*helper)$")
+# Transports orch's network calls may use; command-line -c beats repository config. Tests may add "file".
+NET_PROTOCOLS = ("https", "ssh")
+_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")  # ls-remote, fetch and rebase need none; commit and push keep theirs
 
 
 def _repo_config_redirects(top: Path) -> str | None:
@@ -402,6 +406,11 @@ def push_records(ws, *, auto: bool = False) -> dict:
         left = end - time.monotonic()
         if left <= 0:
             return -1, "timed out"
+        if net:
+            proto = ["-c", "protocol.allow=never", *(x for p in NET_PROTOCOLS for x in ("-c", f"protocol.{p}.allow=always"))]
+            args = (*proto, *(_NO_HOOKS if args[0] in ("ls-remote", "fetch") else ()), *args)
+        elif args[0] == "rebase" or args[:1] == ("-c",):
+            args = (*_NO_HOOKS, *args)
         return _run(top, *args, timeout=min(20 if net else 10, left), env=env)
 
     top = repo_top(ws)
@@ -427,6 +436,9 @@ def push_records(ws, *, auto: bool = False) -> dict:
             return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
     if _repo_config_redirects(top):
         return no("repository git config changes where pushes go or how they sign in; push by hand")
+    rc, urls = run("config", "--get-all", f"remote.{remote}.url")
+    if rc != 0 or len(urls.splitlines()) != 1:
+        return no(f"remote {remote} must have exactly one URL; push by hand")
     env = {}
     if not os.environ.get("GIT_SSH_COMMAND") and run("config", "core.sshCommand")[1] == "":
         env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
@@ -472,6 +484,8 @@ def push_records(ws, *, auto: bool = False) -> dict:
         rc, out = run("fetch", "--no-tags", remote, merge, net=True, env=env)  # objects only; no tracking ref is trusted
         if rc != 0 or run("cat-file", "-e", f"{sha}^{{commit}}")[0] != 0:
             return no(f"{remote} has commits this clone lacks and they could not be fetched; fetch and rebase yourself")
+        if run("rev-parse", "--verify", "HEAD") != (0, head):
+            return no("HEAD changed while pushing; try again")
         counts = _unpushed(ws, top, sha, head)
         if counts is None or counts[1] or not counts[0]:
             return no("the remote moved and the branch holds other commits; fetch and rebase it yourself")

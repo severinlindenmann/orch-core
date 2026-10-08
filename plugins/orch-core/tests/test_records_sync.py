@@ -44,6 +44,12 @@ def repo(ws_root, ws):
     return ws_root
 
 
+@pytest.fixture(autouse=True)
+def _local_remotes(monkeypatch):
+    """The tests push to bare repositories on disk: allow the file transport (production allows https and ssh only)."""
+    monkeypatch.setattr(gitfiles, "NET_PROTOCOLS", ("https", "ssh", "file"))
+
+
 @pytest.fixture
 def remote(repo, tmp_path):
     """The repo with a bare origin it tracks, plus a second clone for someone else's pushes."""
@@ -429,3 +435,37 @@ def test_a_broken_head_record_leaves_auto_off(ws, human):
     assert ledger.records_auto_state(ws) == "on"
     ledger.head_path().write_text("garbage\n")
     assert ledger.records_auto_state(ws) == "off"
+
+
+@needs_git
+def test_only_https_and_ssh_remotes_are_used(repo, ws, put, remote, monkeypatch):
+    bare, _ = remote
+    monkeypatch.setattr(gitfiles, "NET_PROTOCOLS", ("https", "ssh"))
+    put("backlog", size="m")
+    result = gitfiles.sync_records(ws, push=True)  # origin is a local path
+    assert result["committed"] and not result["pushed"]
+    _git(repo, "remote", "set-url", "origin", f"file://{bare}")
+    assert not gitfiles.push_records(ws)["pushed"]
+    _git(repo, "remote", "set-url", "origin", "ext::sh -c touch% /tmp/orch-ext-marker")
+    assert not gitfiles.push_records(ws)["pushed"] and not os.path.exists("/tmp/orch-ext-marker")
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+@pytest.mark.parametrize("key,value", [("core.askPass", "true"), ("core.gitProxy", "true"), ("http.proxy", "http://x"),
+                                       ("http.https://h/.proxy", "http://x"), ("remote.origin.proxy", "http://x"),
+                                       ("http.extraHeader", "X: y"), ("remote.origin.uploadpack", "true"),
+                                       ("remote.origin.receivepack", "true"), ("remote.origin.vcs", "x")])
+def test_more_repository_config_that_redirects_is_refused(repo, ws, put, remote, key, value):
+    put("backlog", size="m")
+    _git(repo, "config", key, value)
+    result = gitfiles.sync_records(ws, push=True)
+    assert not result["pushed"] and "push by hand" in result["reason"]
+
+
+@needs_git
+def test_a_remote_with_two_urls_is_refused(repo, ws, put, remote):
+    put("backlog", size="m")
+    _git(repo, "config", "--add", "remote.origin.url", "/elsewhere.git")
+    result = gitfiles.sync_records(ws, push=True)
+    assert not result["pushed"] and "exactly one URL" in result["reason"]

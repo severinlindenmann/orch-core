@@ -447,6 +447,8 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D28 | Peer auto-start permissions | Peer tickets run only under a Dark AI Factory profile, intersected with the peer rule. One permission system (§9). |
 | D29 | Client-hosted workspaces | Readable by that machine's admins, and only that workspace. Stated in §4 and on the workspace card. |
 | D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
+| D31 | Oldest supported iOS | iOS 18. Spike S1 checks the Ed25519/X25519 suite there (D22). |
+| D32 | Where e2e lives | Scenarios, runner and iPhone checklists live in orch-dev-kit `e2e/`. orch-core holds only `orch.testing.fake_relay` and the hooks the scenarios need. |
 
 ---
 

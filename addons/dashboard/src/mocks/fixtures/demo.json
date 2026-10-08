@@ -962,7 +962,24 @@
           "text": "Forecast excludes planned outage windows from the grid operator calendar"
         }
       ],
-      "tasks": [],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Load the grid operator outage calendar as a source",
+          "verify": null,
+          "proves": []
+        },
+        {
+          "id": "T2",
+          "text": "Mask outage windows in fct_usage_forecast",
+          "verify": {
+            "cmd": "dbt test -s fct_usage_forecast"
+          },
+          "proves": [
+            "AC1"
+          ]
+        }
+      ],
       "addons": {
         "estimate": {
           "points": 8
@@ -971,7 +988,13 @@
     },
     "body": {
       "summary": "Planned outages distort the usage forecast. Pull the operator calendar and mask the windows.",
-      "requirements": "Not refined yet."
+      "context": "The grid operator publishes planned outages a week ahead. Forecast days with an outage show a dip that is not demand.",
+      "requirements": "- Load the operator calendar daily.\n- Exclude outage windows from the forecast training data.",
+      "out_of_scope": "Unplanned outages.",
+      "plan": "1. Source for the outage calendar.\n2. Mask the windows in fct_usage_forecast and test it.",
+      "decisions": "Mask by hour, not by day.",
+      "verification": "dbt test on fct_usage_forecast proves AC1.",
+      "current_state": "T1 is done. T2's check fails: the mask drops the whole day when a window crosses midnight."
     },
     "events": [
       {
@@ -990,6 +1013,108 @@
         "watchers": [
           "p_sev"
         ]
+      },
+      {
+        "at": "2026-10-06T09:10:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "requirements"
+      },
+      {
+        "at": "2026-10-06T09:20:00Z",
+        "type": "gate.approved",
+        "actor": "p_sev",
+        "gate": "plan"
+      },
+      {
+        "at": "2026-10-06T09:20:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "open"
+      },
+      {
+        "at": "2026-10-08T13:00:00Z",
+        "type": "claim.taken",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "expires": "2026-10-08T18:00:00Z"
+      },
+      {
+        "at": "2026-10-08T13:00:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "in-progress"
+      },
+      {
+        "at": "2026-10-08T13:20:00Z",
+        "type": "task.done",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "task": "T1",
+        "receipt": {
+          "exit": 0,
+          "ms": 2100
+        }
+      },
+      {
+        "at": "2026-10-08T14:05:00Z",
+        "type": "task.run",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "task": "T2",
+        "receipt": {
+          "exit": 1,
+          "ms": 48200
+        },
+        "log": "t2-check-s_9e3f.log"
+      },
+      {
+        "at": "2026-10-08T14:05:01Z",
+        "type": "artifact.added",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "name": "t2-check-s_9e3f.log",
+        "kind": "log",
+        "bytes": 2210,
+        "sha256": "4c0e9a17b2d3",
+        "task": "T2",
+        "preview": "$ dbt test -s fct_usage_forecast\n14:04:12  Running 3 tests\n14:04:59  FAIL 1 assert_outage_hours_masked\n14:04:59    Got 24 rows masked for 2026-10-03, expected 6\n14:05:00  Done. PASS=2 WARN=0 ERROR=1\n"
+      },
+      {
+        "at": "2026-10-08T14:10:00Z",
+        "type": "claim.released",
+        "actor": "claude-code:s_9e3f:p_sev",
+        "reason": "check failed"
+      },
+      {
+        "at": "2026-10-09T08:40:00Z",
+        "type": "claim.taken",
+        "actor": "codex:s_a41:p_mara",
+        "expires": "2026-10-09T17:00:00Z"
+      },
+      {
+        "at": "2026-10-09T09:25:00Z",
+        "type": "task.run",
+        "actor": "codex:s_a41:p_mara",
+        "task": "T2",
+        "receipt": {
+          "exit": 1,
+          "ms": 51800
+        },
+        "log": "t2-check-s_a41.log"
+      },
+      {
+        "at": "2026-10-09T09:25:01Z",
+        "type": "artifact.added",
+        "actor": "codex:s_a41:p_mara",
+        "name": "t2-check-s_a41.log",
+        "kind": "log",
+        "bytes": 2318,
+        "sha256": "8f31d06ce4a5",
+        "task": "T2",
+        "preview": "$ dbt test -s fct_usage_forecast\n09:24:08  Running 3 tests\n09:24:59  FAIL 1 assert_outage_hours_masked\n09:24:59    Got 24 rows masked for 2026-10-03, expected 6\n09:25:00  Done. PASS=2 WARN=0 ERROR=1\n"
+      },
+      {
+        "at": "2026-10-09T09:30:00Z",
+        "type": "claim.released",
+        "actor": "codex:s_a41:p_mara",
+        "reason": "check failed"
       }
     ]
   },

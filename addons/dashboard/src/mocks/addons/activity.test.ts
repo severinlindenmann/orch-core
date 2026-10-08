@@ -343,7 +343,7 @@ describe('activity workspace events', () => {
 
 describe('every event type has a one-line summary', () => {
   const types = [
-    'ticket.created', 'status.changed', 'labels.changed', 'claim.taken', 'claim.released', 'lease.taken', 'lease.released', 'task.done', 'artifact.added',
+    'ticket.created', 'status.changed', 'labels.changed', 'claim.taken', 'claim.released', 'lease.taken', 'lease.released', 'task.done', 'task.run', 'artifact.added',
     'question.asked', 'question.answered', 'gate.approved', 'gate.changes_requested', 'gate.invalidated', 'verdict.given', 'handoff.written', 'section.edited',
     'log.added', 'comment.added', 'people.set', 'agent.refused', 'github.pr_linked', 'github.imported', 'publish.shared', 'publish.revoked', 'publish.decided',
     'estimate.set', 'usage.recorded', 'records.committed', 'records.pushed', 'quick.made_ticket', 'wiki.linked',

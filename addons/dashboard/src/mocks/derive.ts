@@ -377,6 +377,11 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `started ${t(e.task, 'a task')}`
     case 'task.done':
       return `finished ${t(e.task, 'a task')}`
+    case 'task.run': {
+      const exit = (e.receipt as { exit?: unknown } | undefined)?.exit
+      if (typeof exit !== 'number') return `ran the check of ${t(e.task, 'a task')}`
+      return exit === 0 ? `ran the check of ${t(e.task, 'a task')}: passed` : `ran the check of ${t(e.task, 'a task')}: failed (exit ${exit})`
+    }
     case 'artifact.added':
       return `added ${t(e.name, 'an artifact')}`
     case 'question.asked':

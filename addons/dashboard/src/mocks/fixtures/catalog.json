@@ -380,14 +380,50 @@
     "name": "models",
     "title": "Model routing",
     "version": "0.1.0",
-    "description": "Choose which model each kind of ticket starts with.",
+    "description": "Start each agent session on a model chosen by its Start agent mode, give its subagents a model, and offer Strong when a task keeps failing its check.",
     "capabilities": [
       "launch"
     ],
     "first_party": true,
     "package_sha256": "ad96d9b164b51e92b576dbae14dad1c4d015f1af4e9d340834a22caa9c8a3beb",
     "update": null,
-    "contributions": []
+    "contributions": [
+      {
+        "slot": "settings",
+        "id": "models.settings",
+        "title": "Model routing",
+        "icon": "Gauge",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "$ref": "addon.settingsAlert" },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "light": { "type": "string", "title": "Light model", "maxLength": 80 },
+                  "standard": { "type": "string", "title": "Standard model", "maxLength": 80 },
+                  "strong": { "type": "string", "title": "Strong model", "maxLength": 80 },
+                  "refine": { "type": "string", "title": "Refine runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "work": { "type": "string", "title": "Work on ticket runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "fix": { "type": "string", "title": "Fix failing checks runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "continue": { "type": "string", "title": "Continue after feedback runs on", "oneOf": [{ "const": "same", "title": "Same as the last start" }, { "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "subagent": { "type": "string", "title": "Subagent model", "maxLength": 80 }
+                }
+              },
+              "formData": { "$ref": "addon.settings" },
+              "action": "save_settings",
+              "submitLabel": "Save"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "save_settings": { "minRole": "owner" },
+      "escalate": { "minRole": "maintainer" }
+    }
   },
   {
     "name": "factory",

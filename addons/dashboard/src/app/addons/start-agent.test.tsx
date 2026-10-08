@@ -7,7 +7,7 @@ import { renderApp } from '@/test/renderApp'
 const T = { timeout: 4000 }
 const wsOf = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const started = () => mockStore.wsEventsOf(wsOf(mockStore)).filter((e) => e.type === 'agent.started')
-const COMMAND = 'orch session start --in background DEMO-0044 -- claude "/orch:work DEMO-0044"'
+const COMMAND = "orch session start --in background DEMO-0044 -- claude '/orch:work DEMO-0044'"
 /** A code block whose text is exactly `text` (highlighting splits it into spans). */
 const code = (text: string) => (_: string, el: Element | null) => el?.tagName === 'CODE' && el.textContent === text
 /** Start on DEMO-0044 the way core does after its dialog, then play the run on fake timers up to `ms`. */
@@ -64,13 +64,13 @@ describe('start agent on the ticket rail', () => {
     expect(facts.textContent).toContain('Rotate warehouse service credentials')
     expect(facts.textContent).toContain('Fix failing checks')
     expect(facts.textContent).not.toContain('Approved by owner')
-    expect(within(dialog).getByLabelText('Command').textContent).toBe('orch session start --in terminals DEMO-0044 -- codex "/orch:fix DEMO-0044"')
+    expect(within(dialog).getByLabelText('Command').textContent).toBe("orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'")
     const fromAddon = within(dialog).getByRole('region', { name: 'From addon start-agent' })
     expect(fromAddon.textContent).toContain('Approved by owner')
     expect(within(dialog).getAllByText(/Approved by owner/).every((n) => fromAddon.contains(n))).toBe(true)
     await user.click(within(dialog).getByRole('button', { name: 'Start agent' }))
     await waitFor(() => expect(started()).toHaveLength(1), T)
-    expect(started()[0]).toMatchObject({ mode: 'fix', agent: 'codex', where: 'terminals', command: 'orch session start --in terminals DEMO-0044 -- codex "/orch:fix DEMO-0044"' })
+    expect(started()[0]).toMatchObject({ mode: 'fix', agent: 'codex', where: 'terminals', command: "orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'" })
   })
   it('an addon asking for a mode orch does not know gets no Start', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', {

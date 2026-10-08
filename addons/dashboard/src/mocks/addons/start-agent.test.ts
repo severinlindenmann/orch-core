@@ -43,7 +43,7 @@ describe('start-agent package', () => {
   it('previews the exact command for the viewer\'s choice (default: work on ticket, Claude Code, background)', async () => {
     const p = (await state(setup())).previews['DEMO-0044']
     expect(p).toMatchObject({ ticket: 'DEMO-0044', mode: 'Work on ticket', harness: 'Claude Code', where: 'Background' })
-    expect(p.command).toBe('orch session start --in background DEMO-0044 -- claude "/orch:work DEMO-0044"')
+    expect(p.command).toBe("orch session start --in background DEMO-0044 -- claude '/orch:work DEMO-0044'")
     expect(p.blocked).toBeUndefined()
   })
   it('configure stores the choice per viewer and per ticket', async () => {
@@ -51,7 +51,7 @@ describe('start-agent package', () => {
     await run(s, 'configure', { ticket: 'DEMO-0044', formData: { mode: 'fix', harness: 'codex', where: 'terminals' } })
     const p = (await state(s)).previews['DEMO-0044']
     expect(p).toMatchObject({ mode: 'Fix failing checks', harness: 'Codex', where: 'Terminals' })
-    expect(p.command).toBe('orch session start --in terminals DEMO-0044 -- codex "/orch:fix DEMO-0044"')
+    expect(p.command).toBe("orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'")
     expect((await state(s)).previews['DEMO-0048'].mode).toBe('Work on ticket')
     s.store.setViewer('p_mara')
     expect((await state(s)).previews['DEMO-0044'].mode).toBe('Work on ticket')
@@ -256,5 +256,17 @@ describe('core computes what starts (the addon cannot spoof it)', () => {
   it('addon-authored args cannot carry confirmed or launch (core strips them)', async () => {
     const { withoutReservedKeys } = await import('@/addon-ui/actionRuntime')
     expect(withoutReservedKeys({ confirmed: true, launch: LAUNCH, ticket: 'X', ws: 'Y', keep: 1 })).toEqual({ keep: 1 })
+  })
+})
+
+describe('the launch is structured and checked by core', () => {
+  it('launchSpec refuses a ticket key, place or model outside the allowed forms; the prompt is one argv element', async () => {
+    const { launchSpec } = await import('@/mocks/sessions')
+    const ok = { ticket: 'DEMO-0044', mode: 'work', harness: 'claude-code', where: 'background' } as const
+    expect(launchSpec(ok, {}).argv.at(-1)).toBe('/orch:work DEMO-0044')
+    expect(() => launchSpec({ ...ok, ticket: 'DEMO-0044; id' }, {})).toThrow()
+    expect(() => launchSpec({ ...ok, where: 'x$(id)' as never }, {})).toThrow()
+    expect(() => launchSpec(ok, { model: '-x' })).toThrow()
+    expect(() => launchSpec(ok, { subagentModel: 'a b' })).toThrow()
   })
 })

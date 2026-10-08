@@ -45,7 +45,8 @@ import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { activeGrantOf } from '@/api/grants'
-import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, commandFor, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
+import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
+import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
@@ -541,7 +542,7 @@ export class MockStore {
    * One resolver for the preview and the start: the plan of the active addon that holds a `launch` grant (model
    * routing), then the exact command. `commit` is the real start (one-shot choices such as "next start on Strong" are used up).
    */
-  resolveLaunch(wsId: string, req: LaunchRequest, commit = false): { plan: LaunchPlan; command: string } {
+  resolveLaunch(wsId: string, req: LaunchRequest, commit = false): { plan: LaunchPlan; spec: LaunchSpec; command: string } {
     const w = this.workspaces.find((x) => x.id === wsId)
     let plan: LaunchPlan = {}
     for (const pkg of this.addons) {
@@ -551,7 +552,16 @@ export class MockStore {
       plan = { ...mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier }), by: pkg.name }
       break
     }
-    return { plan, command: commandFor(req, plan) }
+    // Core checks the addon's model names itself (shared allowlist); a bad one blocks the start and never reaches argv.
+    const bad = [plan.model, plan.subagentModel].find((m) => m !== undefined && !isModelName(m))
+    if (bad !== undefined) {
+      plan = {
+        error: plan.error ?? `The model "${String(bad)}" from ${plan.by ?? 'an addon'} is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.`,
+        by: plan.by,
+      }
+    }
+    const spec = launchSpec(req, plan)
+    return { plan, spec, command: renderCommand(spec) }
   }
 
   /**
@@ -607,7 +617,7 @@ export class MockStore {
     if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
     const blocked = this.resolveLaunch(wsId, req).plan.error
     if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the Model routing settings.')
-    const { plan, command } = this.resolveLaunch(wsId, req, true)
+    const { plan, spec, command } = this.resolveLaunch(wsId, req, true)
     const session = 's_' + fnvHex(`${req.ticket}|${this.now()}|${this.wsEventsOf(wsId).length}`, 4)
     this.appendWs(wsId, {
       type: 'agent.started',
@@ -621,6 +631,8 @@ export class MockStore {
       where: req.where,
       ...(plan.model ? { model: plan.model } : {}),
       ...(plan.tier ? { tier: plan.tier } : {}),
+      argv: spec.argv,
+      env: spec.env,
       command,
       addon: req.addon,
     })

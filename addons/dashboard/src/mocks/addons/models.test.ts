@@ -5,6 +5,7 @@ import type { LaunchPreview } from '@/api/types'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { getAddon } from './registry'
 
 // model routing (`models`, capability `launch`): picks the model a start-agent session starts on.
 const setup = (viewer = 'p_sev', install = true) => {
@@ -25,7 +26,10 @@ const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; c
 const QUESTION = 'T2 failed its check in two sessions: start the next session on Strong?'
 
 beforeEach(() => vi.useFakeTimers())
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('model routing package', () => {
   it('starts in the catalog with the launch capability; settings are owner-only, escalate maintainer', () => {
@@ -46,7 +50,7 @@ describe('the start-agent preview with model routing on', () => {
   it('work runs on Standard: the model line, --model sonnet and the subagent model in the environment', async () => {
     const p = await preview(setup())
     expect(p.model).toBe('Model · work runs on standard: Standard (sonnet); subagents on haiku')
-    expect(p.command).toBe('CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model sonnet "/orch:work DEMO-0044"')
+    expect(p.command).toBe("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model sonnet '/orch:work DEMO-0044'")
   })
   it('refine runs on Strong; a tier set to none uses the harness default', async () => {
     const s = setup()
@@ -105,6 +109,32 @@ describe('settings that are not model names', () => {
     await save(s, { ...(await models(s)).settings, subagent: 'haiku', strong: 'sonnet[1m]' })
     expect((await preview(s)).blocked).toBeUndefined()
     expect((await models(s)).settingsAlert.type).toBe('stack')
+  })
+  it('shell or flag text in a model name is refused with the sentence (the host checks again)', async () => {
+    const s = setup()
+    for (const bad of ['sonnet; rm -rf ~', '$(id)', '-x', 'a b', 'son\nnet']) {
+      await save(s, { ...(await models(s)).settings, standard: bad })
+      expect((await preview(s)).blocked, JSON.stringify(bad)).toBe(`The Standard model "${bad}" is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.`)
+      expect(await fail(startOn(s, 'DEMO-0044'))).toMatch(/^409 launch.invalid_model/)
+    }
+    expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'agent.started')).toBe(false)
+  })
+  it('core refuses a bad model from a launch addon even if the addon did not check it', async () => {
+    const s = setup()
+    const mod = getAddon('models')!
+    vi.spyOn(mod, 'launch').mockReturnValue({ model: 'sonnet; rm -rf ~', subagentModel: 'haiku', line: 'Model · fine' })
+    const p = await preview(s)
+    expect(p.blocked).toBe('The model "sonnet; rm -rf ~" from models is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.')
+    expect(p.command).not.toContain('rm -rf')
+    expect(await fail(startOn(s, 'DEMO-0044'))).toMatch(/^409 launch.invalid_model/)
+    vi.restoreAllMocks()
+  })
+  it('a valid name gives the expected argv and env; the display string quotes it', () => {
+    const s = setup()
+    s.store.runAddon(s.ws, 'models', 'save_settings', { formData: { ...(s.store.addonStateView(s.ws, 'models')!.settings as object), standard: 'sonnet[1m]' } })
+    const { spec, command } = s.store.resolveLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'work', harness: 'claude-code', where: 'background' })
+    expect(spec).toEqual({ argv: ['orch', 'session', 'start', '--in', 'background', 'DEMO-0044', '--', 'claude', '--model', 'sonnet[1m]', '/orch:work DEMO-0044'], env: { CLAUDE_CODE_SUBAGENT_MODEL: 'haiku' } })
+    expect(command).toBe("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model 'sonnet[1m]' '/orch:work DEMO-0044'")
   })
   it('only an owner saves settings', async () => {
     const s = setup('p_mara')

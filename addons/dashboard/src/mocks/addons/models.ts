@@ -1,3 +1,4 @@
+import { isModelName } from '@/api/launch'
 import type { AddonDecision } from '@/api/types'
 import { canSeeTicket, getAddon, markDecided, openDecisions, registerAddon, type AddonCtx } from './registry'
 import type { LaunchPlan } from '../sessions'
@@ -32,8 +33,6 @@ const MODEL_FIELDS: { key: 'light' | 'standard' | 'strong' | 'subagent'; label: 
   { key: 'strong', label: 'Strong' },
   { key: 'subagent', label: 'subagent' },
 ]
-/** A model name or alias: no whitespace, no leading "-" (it would be read as a flag), at most 64 characters. */
-const isModelName = (v: string) => /^[^\s-]\S{0,63}$/.test(v)
 const str = (v: unknown, max = 80) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
 const settingsOf = (state: Record<string, unknown>): Settings => {

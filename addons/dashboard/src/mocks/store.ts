@@ -14,7 +14,9 @@ import type {
   TicketDocument,
   TicketSummary,
   TodayDocument,
+  GrantInfo,
   Workspace,
+  WorkspaceEvent,
 } from '@/api/types'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
@@ -22,8 +24,9 @@ import demoFixture from './fixtures/demo.json'
 import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
 import workspacesFixture from './fixtures/workspaces.json'
+import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
+import { foldGrants, foldWorkspace } from './workspace-log'
 
-const STORAGE_KEY = 'orch.dashboard.mock.v1'
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
 
@@ -37,11 +40,6 @@ interface FixtureTicket {
   definition: Partial<TicketDefinition> & { key: string; uid: string; title: string }
   body: BodySections
   events: FixtureEvent[]
-}
-
-interface Persisted {
-  events: Record<string, OrchEvent[]>
-  viewer?: string
 }
 
 export interface StoreOptions {
@@ -70,7 +68,12 @@ function fillDefinition(d: FixtureTicket['definition']): TicketDefinition {
 }
 
 export class MockStore {
+  /** Workspaces with the workspace log folded in (derived; rebuilt by `refoldWorkspaces`). */
   workspaces: Workspace[] = []
+  private seedWorkspaces: Workspace[] = []
+  private wsEvents = new Map<string, WorkspaceEvent[]>()
+  private created: PersistedV2['created'] = {}
+  private addonState: PersistedV2['addonState'] = {}
   addons: AddonManifest[] = []
   private defs = new Map<string, TicketDefinition>()
   private bodies = new Map<string, BodySections>()
@@ -98,7 +101,12 @@ export class MockStore {
     this.seeded.clear()
     this.wsOfKey.clear()
     this.addons = structuredClone(addonsFixture) as unknown as AddonManifest[]
-    this.workspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...w, counts: {}, needs_you: 0 }))
+    this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
+    this.wsEvents.clear()
+    for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
+    this.created = {}
+    this.addonState = {}
+    this.refoldWorkspaces()
     const byPrefix: Record<string, FixtureTicket[]> = {
       DEMO: demoFixture as unknown as FixtureTicket[],
       ...(otherFixture as unknown as Record<string, FixtureTicket[]>),
@@ -130,39 +138,47 @@ export class MockStore {
     } as OrchEvent
   }
 
+  private refoldWorkspaces() {
+    this.workspaces = this.seedWorkspaces.map((w) => foldWorkspace(w, this.wsEvents.get(w.id) ?? []))
+  }
+
   private load() {
-    try {
-      const raw = globalThis.localStorage?.getItem(STORAGE_KEY)
-      if (!raw) return
-      const p = JSON.parse(raw) as Persisted
-      let latest = 0
-      for (const [key, evs] of Object.entries(p.events ?? {})) {
-        const list = this.events.get(key)
-        if (!list) continue
-        for (const e of evs) {
-          list.push(e)
-          latest = Math.max(latest, Date.parse(e.at))
-        }
+    const p = loadPersisted()
+    if (!p) return
+    let latest = 0
+    for (const [key, evs] of Object.entries(p.ticketEvents)) {
+      const list = this.events.get(key)
+      if (!list) continue
+      for (const e of evs) {
+        list.push(e)
+        latest = Math.max(latest, Date.parse(e.at))
       }
-      if (p.viewer) this.viewer = p.viewer
-      if (latest) this.clockBase = Math.max(this.clockBase, latest + 1000)
-    } catch {
-      /* storage unavailable or corrupt: start from the seed */
     }
+    for (const [id, evs] of Object.entries(p.wsEvents)) {
+      const list = this.wsEvents.get(id)
+      if (!list) continue
+      for (const e of evs) {
+        list.push(e)
+        latest = Math.max(latest, Date.parse(e.at))
+      }
+    }
+    this.created = p.created
+    this.addonState = p.addonState
+    this.refoldWorkspaces()
+    if (p.viewer) this.viewer = p.viewer
+    if (latest) this.clockBase = Math.max(this.clockBase, latest + 1000)
   }
 
   private save() {
     if (!this.persist) return
-    try {
-      const events: Record<string, OrchEvent[]> = {}
-      for (const [key, list] of this.events) {
-        const extra = list.slice(this.seeded.get(key) ?? 0)
-        if (extra.length) events[key] = extra
-      }
-      globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify({ events, viewer: this.viewer } satisfies Persisted))
-    } catch {
-      /* ignore */
+    const ticketEvents: PersistedV2['ticketEvents'] = {}
+    for (const [key, list] of this.events) {
+      const extra = list.slice(this.seeded.get(key) ?? 0)
+      if (extra.length) ticketEvents[key] = extra
     }
+    const wsEvents: PersistedV2['wsEvents'] = {}
+    for (const [id, list] of this.wsEvents) if (list.length) wsEvents[id] = list
+    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonState, viewer: this.viewer })
   }
 
   reset() {
@@ -170,11 +186,7 @@ export class MockStore {
     this.viewer = meFixture.person
     this.startedAt = Date.now()
     this.clockBase = Date.parse(MOCK_EPOCH)
-    try {
-      globalThis.localStorage?.removeItem(STORAGE_KEY)
-    } catch {
-      /* ignore */
-    }
+    clearPersisted()
   }
 
   // ------------------------------------------------------------ clock & people
@@ -294,6 +306,51 @@ export class MockStore {
     list.push(event)
     this.save()
     return event
+  }
+
+  // ------------------------------------------------------------ workspace log
+
+  wsEventsOf(wsId: string): WorkspaceEvent[] {
+    return this.wsEvents.get(wsId) ?? []
+  }
+
+  /** Append a workspace event (seq is per workspace; actor defaults to the viewer). */
+  appendWs(wsId: string, input: { type: WorkspaceEvent['type']; actor?: string | WorkspaceEvent['actor']; [k: string]: unknown }): WorkspaceEvent {
+    const list = this.wsEvents.get(wsId)
+    if (!list) throw new Error(`unknown workspace ${wsId}`)
+    const seq = (list[list.length - 1]?.seq ?? 0) + 1
+    const { actor, ...rest } = input
+    const event = {
+      v: 2,
+      id: wsId.slice(0, 8) + String(seq).padStart(8, '0'),
+      seq,
+      at: this.now(),
+      ...rest,
+      actor: typeof actor === 'string' ? parseActor(actor) : (actor ?? ({ kind: 'person', id: this.viewer } as const)),
+    } as WorkspaceEvent
+    list.push(event)
+    this.refoldWorkspaces()
+    this.save()
+    return event
+  }
+
+  /** Grants of a workspace: the seed (the demo grant lives in the first workspace) folded with the log. */
+  grants(wsId: string): GrantInfo[] {
+    const seed: GrantInfo[] =
+      wsId === this.seedWorkspaces[0]?.id
+        ? [
+            {
+              id: meFixture.grant.id,
+              person: meFixture.person,
+              scope: 'all',
+              issued_at: new Date(Date.parse(meFixture.grant.until) - meFixture.grant.hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+              until: meFixture.grant.until,
+              revoked: null,
+              sessions: this.agentRegistry.filter((a) => a.grant === meFixture.grant.id).map((a) => a.session),
+            },
+          ]
+        : []
+    return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
   }
 
   // ------------------------------------------------------------ addon actions (mock)

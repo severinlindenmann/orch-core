@@ -408,3 +408,32 @@ export class ApiError extends Error {
     this.hint = body.hint
   }
 }
+
+// ---------------------------------------------------------------- workspace event log
+
+export type WorkspaceEventType =
+  | 'member.added' | 'member.role_changed' | 'member.removed'
+  | 'gate.policy_set'
+  | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'
+  | 'addon.settings_saved'
+  | 'grant.issued' | 'grant.revoked'
+  | 'view.saved' | 'view.deleted'
+  | 'workspace.renamed'
+export interface WorkspaceEvent {
+  v: 2
+  id: string
+  seq: number
+  at: string
+  type: WorkspaceEventType
+  actor: Actor
+  [k: string]: unknown
+}
+export interface GrantInfo {
+  id: string
+  person: string
+  scope: 'all' | 'ci'
+  issued_at: string
+  until: string
+  revoked: { at: string; by: string } | null
+  sessions: string[] // agent sessions currently using it
+}

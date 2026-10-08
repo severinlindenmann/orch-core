@@ -491,6 +491,9 @@ def test_guard_denies_addon_admin(ws, cmd):
 
 @pytest.mark.parametrize("cmd", [
     "orch addon list", "orch addon check ./my-addon", "orch addon check ./my-addon --static",
+    "orch addon preview ./my-addon --slot page.my-addon --out shot.png",
+    "orch addon preview my-addon --slot ticket.external --ticket DEMO-0001 --width 360 --theme dark --out x.html",
+    "uv run orch addon preview ./my-addon --slot today.from_addons --fetch --out x.html",
     "cat ~/.config/orch/addons.json", "sed -i 's/a/b/' src/orch/addons/loader.py",
     "git commit -m 'orch addon trust is human-only'",
 ])

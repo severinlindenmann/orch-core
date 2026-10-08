@@ -47,7 +47,7 @@ _SERVE = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*serve\b")
 _QUOTED_SERVE = re.compile(r"""['"]\s*(?:[^'"\n]*/)?(?:uv\s+run\s+|uvx\s+)?orch['"]?\s+(?:-\S+\s+)*serve\b""")
 _SERVE_DENIED = "the dashboard is the human's; ask the user to open it"
 # `orch addon install|update|trust|enable|disable|remove|rollback|setup` in any form (`uv run orch`, `python -m orch.cli`,
-# `orch --quiet addon ...`); `list` and `check` stay open to agents.
+# `orch --quiet addon ...`); `list`, `check` and `preview` stay open to agents.
 _ADMIN_VERBS = r"(?:install|update|trust|enable|disable|remove|rollback|setup|ticket-option\s+set)\b"
 _ADDON_ADMIN = re.compile(r"\borch(?:\.cli)?\s+(?:-\S+\s+)*addon\s+(?:-\S+\s+)*" + _ADMIN_VERBS)
 # A quoted wrapper path ("${CLAUDE_PLUGIN_ROOT}/bin/orch" addon trust x): the quote must close right after `orch`,

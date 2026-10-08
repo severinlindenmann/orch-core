@@ -279,6 +279,27 @@ from orch.testing.pytest_plugin import orch_user_dir, orch_workspace  # noqa: E4
 - `FakeProvider.each_health()` gives a provider per health state for page tests.
 - `FakeRemote(result)` stands in for `ctx.remote_decision` in a phone-flow test: records every decision dict passed to it (`.seen`) and returns `result` (a `RemoteResult`) every time.
 
+## See your addon
+
+`orch addon preview` draws one slot of your addon the way Mission Control does (same templates, CSS and widget code)
+into a file, without the dashboard server and without its token, so you, or the agent building the addon, can look
+at it at phone and desktop width in both themes:
+
+```bash
+orch addon preview ./my-addon --slot page.my-addon --fixtures ./my-addon/tests/fixtures --out shots/page.png
+orch addon preview ./my-addon --slot page.my-addon --param tab=shares --width 375 --theme dark --out shots/phone.png
+orch addon preview my-addon --slot ticket.external --ticket DEMO-0004 --out shots/panel.html
+orch addon preview my-addon --slot today.from_addons --fetch --out shots/decisions.png
+```
+
+`--slot` is `page.<name>`, a `ticket.*` panel (with `--ticket`), `today.summary`, `today.from_addons` (your
+decisions plus that slot) or `board.external`; `--param` sets a page's query (repeat it). Data comes from your cached
+snapshots; `--fixtures` fetches from recorded output (the `FakeRunner` format), `--fetch` runs your providers once with
+their normal `ctx.run`. Both write into a temporary copy of your state folder, never the workspace's cache. The page is
+read-only: nothing on it does anything, no action, decision or refresh runs, and it carries no token. `.html` always
+works; `.png` needs Playwright (`uv pip install playwright && playwright install chromium`), which orch does not
+install. Agents may run the command.
+
 ## Versioning and CHANGELOG
 
 Bump `version` for every change you ship and add a `CHANGELOG.md` section. Installed addons that change are disabled until the human re-trusts them. The trust screen shows the old and new version, the changed files and any new capabilities, binaries, env vars or actions, so keep permissions minimal.

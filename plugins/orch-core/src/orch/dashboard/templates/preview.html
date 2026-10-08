@@ -1,0 +1,42 @@
+{% import "_ui.html" as ui %}
+{#- `orch addon preview` (#251): one addon slot drawn with the dashboard's own macros and CSS, in a frame of the asked
+    width and theme. No script, no token: forms post nowhere and nothing on the page does anything. -#}
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}" data-density="comfortable">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Preview · {{ title }} · {{ slot }}</title>
+  <style>{{ css }}</style>
+  <style>
+    body { background: var(--bg); margin: 0; }
+    .preview-banner { font: 600 12px/1.4 var(--font-body, system-ui); color: var(--muted); background: var(--surface2);
+      border-bottom: 1px solid var(--line); padding: 8px 16px; margin: 0; }
+    .preview-frame { width: {{ width }}px; max-width: 100%; margin: 0 auto; padding: 24px 16px; box-sizing: border-box; }
+    .preview-frame form, .preview-frame button, .preview-frame a { pointer-events: none; }
+  </style>
+</head>
+<body>
+{% include "_icons.html" %}
+<p class="preview-banner">Preview of {{ title }} {{ version }} · {{ slot }}{% if ticket %} · {{ ticket.id }}{% endif %} · {{ width }} px · {{ theme }}. Nothing on this page does anything.</p>
+<div class="preview-frame">
+{% if group %}
+  <main class="content" id="main">{{ ui.addon_page_body(group, can_refresh) }}</main>
+{% elif slot == "today.summary" %}
+  {% if groups %}{{ ui.summary_tiles(groups) }}{% else %}<p class="empty">The addon draws no tile right now.</p>{% endif %}
+{% elif slot == "today.from_addons" %}
+  <section class="panel from-addons" aria-labelledby="from-addons-h">
+    <h2 id="from-addons-h">From addons</h2>
+    <p class="muted">Not counted as waiting on you.</p>
+    {% if decisions %}<ul class="plain">{% for addon, d in decisions %}<li>{{ ui.addon_decision(addon, d) }}</li>{% endfor %}</ul>{% endif %}
+    {{ ui.slot(groups) }}
+    {% if not decisions and not groups %}<p class="empty">The addon has no decision right now.</p>{% endif %}
+  </section>
+{% elif slot.startswith("ticket.") %}
+  <aside class="ticket-aside" aria-label="Addon panel">{% if groups %}{{ ui.slot(groups) }}{% else %}<p class="empty">The addon draws nothing on {{ ticket.id }}.</p>{% endif %}</aside>
+{% else %}
+  {% if groups %}{{ ui.slot(groups) }}{% else %}<p class="empty">The addon draws nothing here right now.</p>{% endif %}
+{% endif %}
+</div>
+</body>
+</html>

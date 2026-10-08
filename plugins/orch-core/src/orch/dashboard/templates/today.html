@@ -32,13 +32,7 @@
 {% set addon_tiles = addon_slot("today.summary") %}
 {% if addon_tiles %}
 {#- Addon tiles (today.summary) keep their row; core's own numbers are the headline above. -#}
-<ul class="summary summary-addons" aria-label="From addons">
-  {% for g in addon_tiles %}{% for tile in g.widgets if tile.value is not none %}{#- an unknown number is not shown: "unknown" next to a label reads as a state -#}
-  <li class="sum sum-{{ tile.role }}">{% if tile.href %}<a class="sum-link" href="{{ tile.href }}">{% else %}<div class="sum-link">{% endif %}
-    <span class="sum-head"><span class="sum-mark">{{ ui.icon(tile.role if tile.role in ("ok", "info", "warn", "err", "neu") else "neu") }}</span> {{ tile.label }} <b class="sum-num">{{ tile.value }}</b></span>
-    {% if tile.sub %}<span class="sum-sub">{{ tile.sub }}</span>{% endif %}{% if tile.href %}</a>{% else %}</div>{% endif %}</li>
-  {% endfor %}{% endfor %}
-</ul>
+{{ ui.summary_tiles(addon_tiles) }}
 {% endif %}
 
 <div class="grid-2 today-main">

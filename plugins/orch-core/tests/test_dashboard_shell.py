@@ -149,7 +149,8 @@ def test_no_external_urls_in_templates_and_static():
 
 def test_every_template_extends_layout():
     for path in TEMPLATES.glob("*.html"):
-        if path.name in ("layout.html",) or path.name.startswith("_"):
+        # preview.html is `orch addon preview`'s standalone file: no menu, no script, no server (#251)
+        if path.name in ("layout.html", "preview.html") or path.name.startswith("_"):
             continue
         assert path.read_text(encoding="utf-8").lstrip().startswith('{% extends "layout.html" %}'), path
 

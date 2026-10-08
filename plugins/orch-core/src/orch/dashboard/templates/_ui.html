@@ -52,3 +52,30 @@
 </div>
 {% if button %}<button type="submit" class="btn">{{ button }}</button>{% endif %}
 {% endmacro %}
+
+{#- One addon's page (spec v2 §11.5): its widgets for slot page.<name>, read from the cache only. The addon page and
+    `orch addon preview` both draw it. -#}
+{% macro addon_page_body(group, can_refresh) %}
+<div class="page-head">
+  <div><h1>{{ group.title }}</h1>{{ w.banner(group.banner) }}</div>
+  {#- Refresh: secondary, busy after 1 s (app.js); rate limited, it says when it works again in visible text. -#}
+  {% if can_refresh %}{% set limited = group.banner and group.banner.health == "rate_limited" %}<div class="actions"><form method="post" action="/addons/{{ group.addon }}/refresh" data-busy="Refreshing…"><button type="submit" class="btn"{% if limited %} disabled{% endif %}><span aria-hidden="true">⟳</span> Refresh{% if limited and group.banner.retry_after %} (after {{ group.banner.retry_after|local("%H:%M") }}){% endif %}</button></form></div>{% endif %}
+</div>
+<div class="addon-page" id="addon-page">
+  {% if group.widgets %}{{ w.widgets(group.widgets, group) }}
+  {% elif group.banner and group.banner.health == "never_fetched" and not group.banner.stalled %}{#- first fetch: one skeleton line per section, no spinner -#}
+  <section class="card skeleton-block" aria-busy="true" aria-label="Loading {{ group.title }}"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></section>
+  {% else %}<p class="empty">Nothing to show yet.</p>{% endif %}
+</div>
+{% endmacro %}
+
+{#- Addon tiles (today.summary): Today and `orch addon preview` both draw them. -#}
+{% macro summary_tiles(addon_tiles) %}
+<ul class="summary summary-addons" aria-label="From addons">
+  {% for g in addon_tiles %}{% for tile in g.widgets if tile.value is not none %}{#- an unknown number is not shown: "unknown" next to a label reads as a state -#}
+  <li class="sum sum-{{ tile.role }}">{% if tile.href %}<a class="sum-link" href="{{ tile.href }}">{% else %}<div class="sum-link">{% endif %}
+    <span class="sum-head"><span class="sum-mark">{{ icon(tile.role if tile.role in ("ok", "info", "warn", "err", "neu") else "neu") }}</span> {{ tile.label }} <b class="sum-num">{{ tile.value }}</b></span>
+    {% if tile.sub %}<span class="sum-sub">{{ tile.sub }}</span>{% endif %}{% if tile.href %}</a>{% else %}</div>{% endif %}</li>
+  {% endfor %}{% endfor %}
+</ul>
+{% endmacro %}

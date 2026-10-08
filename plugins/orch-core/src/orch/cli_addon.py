@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-addon_app = typer.Typer(no_args_is_help=True, help="Addons. list and check are for everyone; the rest is human-only.")
+addon_app = typer.Typer(no_args_is_help=True, help="Addons. list, check and preview are for everyone; the rest is human-only.")
 JsonOpt = Annotated[bool, typer.Option("--json", help="Machine-readable output.")]
 
 
@@ -91,6 +91,54 @@ def check(
     m = load_manifest(path)
     note = f" with {len(warnings)} design warning{'s' if len(warnings) != 1 else ''} (△, see DESIGN.md)" if warnings else ""
     typer.echo(f"✓ {m.name} {m.version} passes orch addon check" + (" (static only)" if static else "") + note)
+
+
+@addon_app.command("preview")
+def preview(
+    target: Annotated[str, typer.Argument(help="Addon folder (holds orch-addon.json), or the name of a known addon.")],
+    slot: Annotated[str, typer.Option("--slot", help="page.<name>, ticket.code|sync|external|pages, today.summary, "
+                                                     "today.from_addons (its decisions) or board.external.")],
+    out: Annotated[Path, typer.Option("--out", help="The file to write: .html, or .png (needs Playwright).")],
+    ticket: Annotated[str | None, typer.Option("--ticket", help="The ticket a ticket.* slot is drawn for.")] = None,
+    param: Annotated[list[str] | None, typer.Option("--param", help="A page's query parameter, key=value; repeat.")] = None,
+    width: Annotated[int | None, typer.Option("--width", help="Frame width in px (default 1280; 360 for ticket.*).")] = None,
+    theme: Annotated[str, typer.Option("--theme", help="light or dark.")] = "light",
+    fetch: Annotated[bool, typer.Option("--fetch", help="Run the addon's providers once first (its own ctx.run).")] = False,
+    fixtures: Annotated[Path | None, typer.Option("--fixtures", help="Recorded command output to fetch from instead "
+                                                                     "(the FakeRunner format of orch.testing).")] = None,
+) -> None:
+    """Draw one addon slot as Mission Control does, into an HTML file or a PNG, without a server or the dashboard
+    token. Read-only: nothing on the page does anything, and fetched data goes to a temporary folder."""
+    from orch.errors import UsageError
+    try:
+        from orch.dashboard import preview as pv
+    except ImportError:
+        raise UsageError("orch addon preview needs the dashboard extra", hint="install orch-core[dashboard]") from None
+    ws = _current_workspace()
+    if ws is None:
+        raise UsageError("orch addon preview runs inside an orch workspace", hint="cd into one, or run orch init")
+    params = {}
+    for p in param or []:
+        key, eq, value = p.partition("=")
+        if not eq or not key:
+            raise UsageError(f"--param {p!r} is not key=value")
+        params[key] = value
+    if out.suffix not in (".html", ".png"):
+        raise UsageError(f"--out {out} must end in .html or .png")
+    if fixtures is not None and not fixtures.is_dir():
+        raise UsageError(f"--fixtures {fixtures} is not a folder")
+    html = pv.render(ws, target, slot, ticket=ticket, params=params, width=width, theme=theme, fetch=fetch,
+                     fixtures=fixtures)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.suffix == ".png":
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="orch-preview-") as tmp:
+            page = Path(tmp) / "preview.html"
+            page.write_text(html, encoding="utf-8")
+            pv.screenshot(page, out, width or (360 if slot.startswith("ticket.") else 1280), theme)
+    else:
+        out.write_text(html, encoding="utf-8")
+    typer.echo(f"wrote {out}")
 
 
 def _human(what: str) -> None:

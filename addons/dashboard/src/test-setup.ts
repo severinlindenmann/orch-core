@@ -26,3 +26,6 @@ window.matchMedia ??= ((query: string) => ({
 
 // xterm.js probes canvas support; jsdom has none and logs "not implemented" unless told it is unsupported.
 HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext
+
+// jsdom logs "not implemented" for scrollTo; the app calls it on navigation.
+window.scrollTo = (() => {}) as typeof window.scrollTo

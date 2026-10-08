@@ -144,3 +144,40 @@ describe('terminals actions', () => {
     expect((await state(s)).settings).toEqual({ shell: '/bin/bash', font_size: 15 })
   })
 })
+
+describe('terminals are scoped to their workspace', () => {
+  it('CLI (terminals installed and granted) starts with no sessions and carries no DEMO ticket data', async () => {
+    const s = setup('p_sev')
+    const cli = s.store.workspaces.find((w) => w.prefix === 'CLI')!.id
+    const st = (await s.api.getAddonState(cli, 'terminals')) as unknown as State
+    expect(st.sessions).toEqual([])
+    expect(st.current.id).toBe('none')
+    const json = JSON.stringify(st)
+    expect(json).not.toMatch(/DEMO-|Tariff|claude-code|billing-join/)
+  })
+  it('a new shell in CLI resolves no DEMO ticket even when asked for one by key', async () => {
+    const s = setup('p_sev')
+    const cli = s.store.workspaces.find((w) => w.prefix === 'CLI')!.id
+    await s.api.runAddonAction(cli, 'terminals', 'new', {})
+    const st = (await s.api.getAddonState(cli, 'terminals')) as unknown as State
+    expect(st.sessions).toHaveLength(1)
+    expect(st.sessions[0].ctx.ticket).toBeNull()
+    const state = s.store.addonState(cli, 'terminals') as { sessions: { ticket: string | null }[] }
+    state.sessions[0].ticket = 'DEMO-0043' // a tampered/stale session pointing across workspaces
+    const again = (await s.api.getAddonState(cli, 'terminals')) as unknown as State
+    expect(again.sessions[0].ctx.ticket).toBeNull()
+    expect(JSON.stringify(again)).not.toMatch(/Tariff/)
+  })
+  it('a ticket the viewer may not see is not resolved into the shell context', async () => {
+    const s = setup('p_sev')
+    s.store.isVisible = (key: string) => key !== 'DEMO-0043'
+    expect((await state(s)).sessions[0].ctx.ticket).toBeNull()
+  })
+  it('the ctx carries move, gates, questions and tasks for the status command', async () => {
+    const t = (await state(setup('p_sev'))).sessions[0].ctx.ticket!
+    expect(t.move.who).toBeTruthy()
+    expect(t.gates.map((g) => g.name)).toEqual(['requirements', 'plan', 'verify'])
+    expect(t.tasks.total).toBeGreaterThan(0)
+    expect(t.questions.total).toBeGreaterThanOrEqual(t.questions.open)
+  })
+})

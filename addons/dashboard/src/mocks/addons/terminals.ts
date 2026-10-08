@@ -39,9 +39,10 @@ const nameOf = (ctx: Pick<AddonCtx, 'store' | 'ws'>, person: string) => ctx.stor
 /** A person's own shell is theirs alone; an agent mirror is visible to the workspace. */
 const visibleTo = (s: Session, viewer: string) => s.kind === 'agent' || s.owner === viewer
 
-function shellCtx(c: Pick<AddonCtx, 'store' | 'ws'>, s: Session): ShellCtx {
-  const { store, ws } = c
-  const doc = s.ticket && store.hasTicket(s.ticket) ? store.ticket(s.ticket) : undefined
+function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): ShellCtx {
+  const { store, ws, viewer } = c
+  // A ticket reaches the shell only if it belongs to THIS workspace and the viewer may see it.
+  const doc = s.ticket && store.hasTicket(s.ticket) && store.workspaceOf(s.ticket)?.id === ws && store.isVisible(s.ticket, viewer) ? store.ticket(s.ticket) : undefined
   const forPerson = s.kind === 'agent' ? (s.for ?? '') : s.owner
   const g = store.grants(ws).find((x) => x.person === forPerson && !x.revoked && x.until > store.now())
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')
@@ -54,13 +55,31 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws'>, s: Session): ShellCtx {
     cursor: store.cursor(ws),
     grant: g ? { id: g.id, scope: g.scope, until: g.until } : null,
     claim: doc?.claim ? { agent: doc.claim.agent, session: doc.claim.session, for: doc.claim.for, expires: doc.claim.expires } : null,
-    ticket: doc ? { key: doc.key, title: doc.title, status: doc.status, current_state: doc.body.current_state ?? '', next_task: next ? { id: next.id, text: next.text } : null } : null,
+    ticket: doc
+      ? {
+          key: doc.key,
+          title: doc.title,
+          status: doc.status,
+          current_state: doc.body.current_state ?? '',
+          next_task: next ? { id: next.id, text: next.text } : null,
+          move: { who: doc.turn.who, why: doc.turn.why },
+          gates: (['requirements', 'plan', 'verify'] as const).map((name) => ({ name, state: doc.gates[name].state })),
+          questions: { open: doc.questions_state.filter((q) => q.state === 'open').length, total: doc.questions_state.length },
+          tasks: { done: doc.tasks_state.filter((t) => t.state === 'done').length, total: doc.tasks_state.length, doing: doc.tasks_state.find((t) => t.state === 'doing')?.id ?? null },
+        }
+      : null,
   }
 }
 
 registerAddon({
   name: 'terminals',
-  seed: () => ({ settings: { shell: '/bin/zsh', font_size: 13 }, sessions: structuredClone(SESSIONS), nav: {}, seq: 1 }),
+  // The demo sessions belong to the DEMO workspace; every other workspace starts with none.
+  seed: (ws, store) => ({
+    settings: { shell: '/bin/zsh', font_size: 13 },
+    sessions: store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO' ? structuredClone(SESSIONS) : [],
+    nav: {},
+    seq: 1,
+  }),
   view(state, c) {
     const { viewer } = c
     const role = c.store.roleIn(c.ws, viewer)
@@ -97,7 +116,7 @@ registerAddon({
       // Without a session (the "Open terminal" command) go back to the default: your running shell, else the first visible.
       if (body.session === undefined) {
         delete navOf(state)[viewer]
-        return { ok: true, message: 'Opened your terminal.', changed: true }
+        return { ok: true, message: 'Your terminal is under Terminals in the sidebar.', changed: true }
       }
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(x, viewer))
       if (!s) return { ok: true, message: 'No such terminal session.' }

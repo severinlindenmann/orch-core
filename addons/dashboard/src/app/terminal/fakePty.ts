@@ -22,10 +22,22 @@ const left = (until: string, now: string) => {
 }
 const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
 
-export const promptOf = (c: ShellCtx) => `${c.user}@acme ${c.cwd} (${c.branch}) $ `
+/**
+ * The only door for data-derived text into the terminal. Strips ESC and every C0/C1 control character (so no escape,
+ * OSC, CSI, hyperlink or clipboard sequence survives), leaving printable text. Newlines are handled before this by
+ * splitting into lines; each line is then written with \r\n.
+ */
+export const clean = (s: unknown): string => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
 
-/** Run one command line against the live context. */
+export const promptOf = (c: ShellCtx) => clean(`${c.user}@acme ${c.cwd} (${c.branch}) $ `)
+
+/** Run one command line against the live context; every output line is cleaned. */
 export function runCommand(line: string, c: ShellCtx): CommandResult {
+  const r = run(line, c)
+  return { ...r, lines: r.lines.flatMap((l) => l.split(/\r\n|\r|\n/)).map(clean) }
+}
+
+function run(line: string, c: ShellCtx): CommandResult {
   const argv = line.trim().split(/\s+/).filter(Boolean)
   if (!argv.length) return { lines: [] }
   const [cmd, sub, ...rest] = argv
@@ -36,9 +48,13 @@ export function runCommand(line: string, c: ShellCtx): CommandResult {
         lines: t
           ? [
               `${t.key} · ${t.title} · ${t.status}`,
-              c.grant ? `grant   ${c.grant.id} · ${c.grant.scope} · until ${hhmm(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant   none · run orch grant',
-              c.claim ? `claim   ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${hhmm(c.claim.expires)}` : 'claim   none',
-              `cursor  ${c.cursor}`,
+              `move       ${t.move.who} · ${t.move.why}`,
+              `gates      ${t.gates.map((g) => `${g.name} ${g.state}`).join(' · ')}`,
+              `questions  ${t.questions.open} open of ${t.questions.total}`,
+              c.claim ? `claim      ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${hhmm(c.claim.expires)}` : 'claim      none',
+              `tasks      ${t.tasks.done}/${t.tasks.total} done${t.tasks.doing ? ` · doing ${t.tasks.doing}` : ''}${t.next_task ? ` · next ${t.next_task.id}` : ''}`,
+              `cursor     ${c.cursor}`,
+              c.grant ? `grant      ${c.grant.id} · ${c.grant.scope} · until ${hhmm(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant      none · run orch grant',
             ]
           : ['orch · no ticket in this shell'],
       }
@@ -137,7 +153,7 @@ export function createShell(ctx: () => ShellCtx): Shell {
       return out
     }
     // Printable text (a paste may carry several characters); control and escape sequences are ignored.
-    if (/^[^\x00-\x1f\x7f]+$/.test(data)) {
+    if (/^[^\x00-\x1f\x7f-\x9f]+$/.test(data)) {
       buf += data
       return data
     }

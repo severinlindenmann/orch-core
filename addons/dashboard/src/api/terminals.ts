@@ -12,7 +12,18 @@ export interface ShellCtx {
   /** The grant the session works under (the viewer's own for a person's shell); null when there is none. */
   grant: { id: string; scope: string; until: string } | null
   claim: { agent: string; session: string; for: string; expires: string } | null
-  ticket: { key: string; title: string; status: string; current_state: string; next_task: { id: string; text: string } | null } | null
+  ticket: {
+    key: string
+    title: string
+    status: string
+    current_state: string
+    next_task: { id: string; text: string } | null
+    /** Whose turn it is, and why (the dashboard's own rule). */
+    move: { who: string; why: string }
+    gates: { name: string; state: string }[]
+    questions: { open: number; total: number }
+    tasks: { done: number; total: number; doing: string | null }
+  } | null
 }
 
 /** One session as the host shows it to the current viewer. */

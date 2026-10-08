@@ -30,7 +30,9 @@ describe('terminals page', () => {
     await waitFor(() => expect(term.querySelector('textarea')).toHaveAttribute('aria-readonly', 'true'), T)
     await waitFor(() => expect(term.textContent).toContain('err human_only approve · retry:false · next: orch ask or orch wait'), T)
     await user.type(term.querySelector('textarea')!, 'ls{enter}')
-    expect(term.textContent).not.toMatch(/\$ ls$/m)
+    await new Promise((r) => setTimeout(r, 150)) // give a (wrongly) accepted keystroke time to run
+    expect(term.textContent).not.toContain('dbt_project.yml')
+    expect(term.textContent).not.toMatch(/\$ ls/)
   })
   it('a viewer opens the agent mirror view-only and has no New terminal', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_tom' })
@@ -60,6 +62,48 @@ describe('terminals page', () => {
     })
     await screen.findByText('Severin · DEMO-0043 worktree', {}, T)
     await waitFor(() => expect(screen.getByText('This addon panel could not be shown.')).toBeInTheDocument(), T)
+  })
+})
+
+describe('terminals hostile text and exit', () => {
+  it('a ticket title with OSC 8 / OSC 52 / CSI is printed as inert text: no link, no escape reaches the screen', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        const def = (s as unknown as { defs: Map<string, { title: string }> }).defs.get('DEMO-0043')!
+        def.title = 'Seeds \x1b]8;;https://evil.example\x07click\x1b]8;;\x07 \x1b]52;c;ZXZpbA==\x07\x1b[2K\x1b[1A\x9b31m end'
+      },
+    })
+    const box = await screen.findByRole('textbox', {}, T)
+    await user.type(box, 'orch status{enter}')
+    const term = document.querySelector('[data-terminal-session="shell1"]')!
+    const rows = () => term.querySelector('.xterm-rows')?.textContent ?? ''
+    await waitFor(() => expect(rows()).toContain('cursor'), T)
+    expect(rows()).toContain('Seeds')
+    expect(rows()).toContain('end')
+    expect(term.querySelector('a[href]')).toBeNull()
+    expect(rows()).not.toMatch(/\u001b|[\u0080-\u009f]/)
+  })
+  it('exit in your own shell closes the session', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    const box = await screen.findByRole('textbox', {}, T)
+    await user.type(box, 'exit{enter}')
+    await waitFor(() => {
+      const li = screen.getByText('Severin · DEMO-0043 worktree').closest('li')!
+      expect(within(li).getByText('stopped')).toBeInTheDocument()
+    }, T)
+  })
+  it('shows an empty state, not an error, when there are no visible sessions', async () => {
+    renderApp('/addon/terminals/sessions', { viewer: 'p_sev', setup: (s) => void (s.addonState(s.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'terminals').sessions = []) })
+    expect(await screen.findByText('No terminal is open. Start one with New terminal.', {}, T)).toBeInTheDocument()
+    expect(screen.queryByText('This addon panel could not be shown.')).not.toBeInTheDocument()
+  })
+  it('sizes to the container with the fit addon: no horizontal scroll wrapper', async () => {
+    renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    await screen.findByRole('textbox', {}, T)
+    const term = document.querySelector('[data-terminal-session="shell1"]') as HTMLElement
+    expect(term.className).not.toMatch(/overflow-x-auto/)
+    expect(parseInt(term.style.height)).toBeGreaterThan(300) // ~24 rows on the page
   })
 })
 

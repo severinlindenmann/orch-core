@@ -114,7 +114,7 @@ Non-goals for v2:
 
 | Key | Kind | Where it lives | Purpose |
 |---|---|---|---|
-| Person key `PK` | signing | your primary device's keychain, plus a recovery kit | Signs device certificates. Peers pin it. |
+| Person key `PK` | signing | derived from the recovery code (D50); stored on the primary device wrapped by a Secure Enclave key | Signs device certificates. Peers pin it. |
 | Device key `DK` | signing + key agreement | each device: the Secure Enclave on iPhone and Apple-silicon Macs, otherwise the keychain | Signs requests. `WK`s are sealed to it. |
 | Workspace key `WSK` | signing | the workspace host's keychain | Signs envelopes, member lists, directory cards and publish requests |
 | Workspace exchange key `WXK` | key agreement | the workspace host's keychain; public half in the card | Receives ws→ws bodies, Drop wraps addressed to the workspace, and `SK` wraps. Rotates with the 90-day epoch; its version is in the card. |
@@ -148,10 +148,12 @@ suite and the same vectors. A single suite is used across all components, never 
     startup.
 - **Removing a device from one workspace** is a request signed by any member device with Operate scope, applied by
   that host. It also rotates.
-- **Recovery kit:** a 24-word code shown once at person creation. It wraps a copy of `PK`, and the relay stores the
-  wrapped blob. The code is stretched with a memory-hard KDF before it unwraps anything. If both the code and every
-  device are lost, the person key is gone and peers must re-pin a new one. (Decided: recovery code only, no backup
-  device.)
+- **Recovery kit:** a 24-word code shown once at person creation. `PK` is derived from it (D50): the code is
+  stretched with a memory-hard KDF, and the P-256 scalar comes from the result by FIPS 186-5 A.2.1 (or rejection
+  sampling), never by the test-vector seed mapping. On the primary device `PK` is stored wrapped by a Secure Enclave
+  key; the relay stores no copy. Entering the code on a new device gives the same `PK`, so `person_id` and every pin
+  stay, and the lost device can be revoked. If both the code and every device are lost, the person key is gone and
+  peers must re-pin a new one. (Decided: recovery code only, no backup device.)
 
 ### 5.3 Workspace identity
 
@@ -484,6 +486,9 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D46 | P-256 everywhere | The one crypto suite is P-256 (protocol v2 suite 2), so device keys live in the Secure Enclave on iPhone and Apple-silicon Macs. Replaces D22. |
 | D47 | TestFlight and APNs | Apple Developer Program account; builds go out through TestFlight; push goes through APNs with the auth key on the relay. App Store later, if ever. |
 | D48 | One VPS, dev then prod | Everything is built and tested on `*.dev.severin.io`. When all phases are tested, the same VPS moves to production on `*.orch.severin.io`, with new sites and certificates, fresh production data (demo and test data never move), the production APNs environment and the app's production relay URL. DNS for both is in place (8 Oct 2026). |
+| D49 | Human signatures on the iPhone | On the iPhone app, the device signing key works whenever the phone is unlocked: a Secure Enclave key with `WhenPasscodeSetThisDeviceOnly` and no per-signature Face ID (the owner accepts that anyone holding the unlocked phone can sign). It signs decisions, relay logins and bridge requests alike, so no key split is needed. The Mac keeps D41: Touch ID per human signature, showing action and hash. Spike S1 (orch-relay#28) has the custody details. |
+| D50 | Person key from the recovery code | `PK` is derived from the 24-word recovery code (§5.2) instead of a wrapped copy on the relay. Same code, same `PK`: identity and pins survive the loss of every device as long as the code is kept. |
+| D51 | Dev override in the v2 core | The dev-only "test human" override (#265) is built into the v2 core in P1 with the human operations (C2, C7), not into v1 in P0. P0 exits without it; demo workspaces get it in P1. |
 
 ---
 

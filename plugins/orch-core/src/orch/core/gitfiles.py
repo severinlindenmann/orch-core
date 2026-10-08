@@ -129,13 +129,31 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def repo_top(ws) -> Path | None:
-    """The git repository orch's records belong to: the one around the orch home (so `orchestrator/` can be its own
-    repository, ignored by the code repository around it), else the one around the workspace root."""
-    for where in (ws.home, ws.root):
-        out = _git(Path(where).resolve(), "rev-parse", "--show-toplevel")
-        if out and out.strip():
-            return Path(out.strip()).resolve()
-    return None
+    """The git repository orch's records belong to: the repository around the workspace root, or the orch home's own
+    repository (`orchestrator/` ignored by the code repository around it). The home's own repository counts only when
+    its top level IS the home and its git directory lies inside it: a gitfile pointing elsewhere is not trusted."""
+    home = Path(ws.home).resolve()
+    out = _git(Path(ws.root).resolve(), "rev-parse", "--show-toplevel")
+    root_top = Path(out.strip()).resolve() if out and out.strip() else None
+    out = _git(home, "rev-parse", "--show-toplevel")
+    home_top = Path(out.strip()).resolve() if out and out.strip() else None
+    if home_top is not None and (home_top == root_top or home_top == home):
+        if home_top == root_top:
+            return home_top
+        common = _git(home, "rev-parse", "--git-common-dir")
+        if common and common.strip() and (home / common.strip()).resolve().is_relative_to(home):
+            return home_top
+    return root_top
+
+
+# What a push may carry or auto mode may commit: records under the orch home, except the files that steer agents or
+# the workspace (config.json, static/, AGENTS.orch.md) and the sync targets outside the home. Those stay manual.
+_MANUAL_ONLY = re.compile(r"config\.json|AGENTS\.orch\.md|static/.*")
+
+
+def _auto_ok(ws, top: Path, git_rel: str) -> bool:
+    in_home = _rel_home(ws, top, git_rel)
+    return in_home is not None and classify(in_home) == "durable" and not _MANUAL_ONLY.fullmatch(in_home)
 
 
 def _rel_home(ws, top: Path, git_rel: str) -> str | None:
@@ -263,7 +281,7 @@ def busy_reason(top: Path) -> str | None:
     return None
 
 
-def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
+def commit_records(ws, *, dry_run: bool = False, auto: bool = False) -> tuple[list[str], str]:
     """Commit exactly the records doctor lists, with a generated message, and return (paths, subject). The paths
     are staged and committed with `git commit --only`, so whatever else is staged stays staged and uncommitted."""
     from orch.errors import OrchError, UsageError
@@ -271,6 +289,9 @@ def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
     if view is None:
         raise UsageError("the workspace is not in a git repository (or git failed)")
     paths = list(view.uncommitted)
+    if auto:  # automatic mode commits only what it may also push
+        root0 = ws.root.resolve()
+        paths = [p for p in paths if _auto_ok(ws, view.root, (root0 / p).relative_to(view.root).as_posix())]
     if not paths:
         return [], ""
     busy = busy_reason(view.root)
@@ -294,13 +315,16 @@ def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
     return paths, subject
 
 
-def _run(top: Path, *args: str, timeout: int = 30) -> tuple[int, str]:
-    """(exit code, stdout + stderr) of a git call with a timeout; (-1, reason) when git cannot run."""
+def _run(top: Path, *args: str, timeout: float = 10, env: dict | None = None) -> tuple[int, str]:
+    """(exit code, stdout + stderr) of a git call: no stdin, no prompts, untranslated messages, a timeout; (-1, reason)
+    when git cannot run."""
+    import os
+    e = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", **(env or {})}
     try:
         r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), *args], capture_output=True, check=False,
-                           timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return -1, str(e)
+                           timeout=max(1.0, timeout), stdin=subprocess.DEVNULL, env=e)
+    except (OSError, subprocess.TimeoutExpired) as ex:
+        return -1, str(ex)
     return r.returncode, (r.stdout + r.stderr).decode("utf-8", "replace").strip()
 
 
@@ -310,105 +334,173 @@ def head_short(ws) -> str:
     return (out or "").strip()
 
 
-def _unpushed(ws, top: Path) -> tuple[int, int] | None:
-    """(commits in @{u}..HEAD, of those not purely orch records); None when git cannot tell. A commit counts as records
-    only by CONTENT: not a merge, and every path it changes classifies as a durable record (the same rule as
-    git_view). The subject is never trusted."""
-    rc, out = _run(top, "rev-list", "--parents", "@{u}..HEAD")
+def _unpushed(ws, top: Path, base: str, head: str) -> tuple[int, int] | None:
+    """(commits in base..head, of those not purely pushable records); None when git cannot tell. `base` is the real
+    remote tip, never a local tracking ref. A commit counts only by CONTENT: not a merge, no gitlink or symlink, and
+    every path it changes is a record auto mode may commit (_auto_ok). The subject is never trusted."""
+    rc, out = _run(top, "rev-list", "--parents", f"{base}..{head}")
     if rc != 0:
         return None
-    specs = _record_specs(ws, top)
     total = other = 0
     for line in out.splitlines():
         shas = line.split()
         if not shas:
             continue
         total += 1
-        if len(shas) != 2 and len(shas) != 1:  # a merge
+        if len(shas) > 2:  # a merge
             other += 1
             continue
         try:
             r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), "diff-tree", "--root", "--no-commit-id",
-                                "--name-only", "-r", "-z", "--no-renames", shas[0]], capture_output=True, check=False,
-                               timeout=30)
+                                "-r", "-z", "--raw", "--no-renames", shas[0]], capture_output=True, check=False,
+                               timeout=20, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return None
         if r.returncode != 0:
             return None
-        paths = [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
-        if not paths or any(_record_kind(ws, top, specs, x) != "durable" for x in paths):
-            other += 1
+        items = [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
+        ok = bool(items) and len(items) % 2 == 0
+        for meta, path in zip(items[0::2], items[1::2]):
+            modes = meta.lstrip(":").split()[:2]
+            if any(m in ("160000", "120000") for m in modes) or not _auto_ok(ws, top, path):
+                ok = False
+        other += not ok
     return total, other
 
 
-def push_records(ws) -> dict:
-    """Push the current branch to its upstream, only when every commit it would send changes nothing but orch records (judged by content, never by subject).
-    Never forces and names no branch but HEAD's own upstream. A rejected push fetches once and rebases records-only
-    commits onto the upstream (aborted on any conflict), then pushes once more. Returns {"pushed": bool, "reason": str}."""
+_CONFIG_GUARD = r"^(remote\..*\.pushurl|url\..*\.(insteadof|pushinsteadof)|core\.sshcommand|credential\..*helper|credential\.helper)$"
+
+
+def _repo_config_redirects(top: Path) -> str | None:
+    """A key set by the repository itself (local or worktree scope, includes too) that changes where a push goes or how
+    it authenticates; None when there is none."""
+    rc, out = _run(top, "config", "--show-origin", "--show-scope", "--get-regexp", _CONFIG_GUARD)
+    if rc not in (0, 1):
+        return "cannot read the repository git config"
+    for line in out.splitlines():
+        scope = line.split("\t", 1)[0]
+        if scope in ("local", "worktree"):
+            return line.split("\t")[-1].split()[0] if line.split("\t")[-1].split() else "a setting"
+    return None
+
+
+def push_records(ws, *, auto: bool = False) -> dict:
+    """Push the current branch to its upstream, only when every commit it would send changes nothing but orch records
+    (judged by content, never by subject). The remote's real tip is read with `git ls-remote` (a local tracking ref can
+    be forged), must be an ancestor of HEAD, and is the lease: the push is `<checked HEAD sha>:refs/heads/<branch>` with
+    --force-with-lease against that sha, so it can only fast-forward exactly what was checked. A remote that moved
+    is fetched once and records-only commits are rebased onto its tip (aborted on any conflict), then pushed once
+    more. Never creates a remote branch. Returns {"pushed": bool, "reason": str, "failed": bool}."""
+    import os
+    import time
+    end = time.monotonic() + (45 if auto else 120)
+
     def no(reason: str, failed: bool = True) -> dict:
         return {"pushed": False, "reason": reason, "failed": failed}  # failed: worth a warning, not just "nothing to do"
+
+    def run(*args: str, net: bool = False, env: dict | None = None) -> tuple[int, str]:
+        left = end - time.monotonic()
+        if left <= 0:
+            return -1, "timed out"
+        return _run(top, *args, timeout=min(20 if net else 10, left), env=env)
+
     top = repo_top(ws)
     if top is None:
         return no("the workspace is not in a git repository", False)
     busy = busy_reason(top)
     if busy:
         return no(busy)
-    rc, branch = _run(top, "symbolic-ref", "-q", "--short", "HEAD")
+    rc, branch = run("symbolic-ref", "-q", "--short", "HEAD")
     if rc != 0 or not branch:
         return no("HEAD is detached; nothing pushed", False)
-    rc, remote = _run(top, "config", f"branch.{branch}.remote")
-    rc2, merge = _run(top, "config", f"branch.{branch}.merge")
+    rc, remote = run("config", f"branch.{branch}.remote")
+    rc2, merge = run("config", f"branch.{branch}.merge")
     if rc != 0 or rc2 != 0 or not remote or not merge.startswith("refs/heads/"):
         return no(f"{branch} has no upstream; nothing pushed", False)
-    if not re.fullmatch(r"refs/heads/[\w./-]+", merge) or merge.startswith("+") or ".." in merge:
-        return no(f"the upstream branch name of {branch} is not one orch pushes to; nothing pushed")
-    for key in (f"branch.{branch}.pushRemote", "remote.pushDefault"):  # a different push target than the upstream
-        rc3, other_remote = _run(top, "config", key)
-        if rc3 == 0 and other_remote and other_remote != remote:
-            return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
+    if not re.fullmatch(r"refs/heads/[\w./-]+", merge) or ".." in merge or not re.fullmatch(r"[\w.-]+", remote):
+        return no(f"the upstream of {branch} is not one orch pushes to; nothing pushed")
     if remote == ".":
         return no(f"the upstream of {branch} is a local branch; nothing pushed", False)
-    counts = _unpushed(ws, top)
-    if counts is None:
-        return no(f"cannot compare {branch} with its upstream; nothing pushed")
-    total, other = counts
-    if total == 0:
-        return no("nothing to push", False)
-    if other:
-        return no(f"{other} other commit(s) wait; push them yourself", False)
-    # an explicit refspec on the command line: remote.<name>.push and push.default from the repository are not used
-    push = ("push", "--no-follow-tags", remote, f"HEAD:{merge}")
-    rc, out = _run(top, *push, timeout=120)
-    if rc == 0:
-        return {"pushed": True, "failed": False, "reason": f"pushed {total} records commit(s) to {remote}/{merge[11:]}"}
-    if not any(w in out for w in ("rejected", "non-fast-forward", "fetch first")):
-        return no(f"push failed: {out.splitlines()[-1] if out else 'unknown error'}")
-    rc, out = _run(top, "fetch", remote, timeout=120)
-    counts = _unpushed(ws, top) if rc == 0 else None
-    if counts is None or counts[1] or not counts[0]:
-        return no("push rejected and the branch holds other commits; fetch and rebase it yourself")
-    rc, dirty = _run(top, "status", "--porcelain", "--untracked-files=no")
-    if rc != 0 or dirty:
-        return no("push rejected; tracked changes in the working tree block a rebase onto the upstream")
-    rc, out = _run(top, "rebase", "@{u}", timeout=120)
-    if rc != 0:
-        _, conflicts = _run(top, "diff", "--name-only", "--diff-filter=U")
-        _run(top, "rebase", "--abort")
-        return no("rebase onto the upstream conflicts (aborted, nothing changed): " + (few(conflicts.splitlines()) or "see git status"))
-    rc, out = _run(top, *push, timeout=120)
-    if rc == 0:
-        return {"pushed": True, "failed": False, "reason": f"rebased onto {remote}/{merge[11:]} and pushed"}
-    return no(f"push failed after rebase: {out.splitlines()[-1] if out else 'unknown error'}")
+    for key in (f"branch.{branch}.pushRemote", "remote.pushDefault"):  # a different push target than the upstream
+        rc3, other_remote = run("config", key)
+        if rc3 == 0 and other_remote and other_remote != remote:
+            return no(f"{key} points at {other_remote}, not the upstream remote {remote}; nothing pushed")
+    if _repo_config_redirects(top):
+        return no("repository git config changes where pushes go or how they sign in; push by hand")
+    env = {}
+    if not os.environ.get("GIT_SSH_COMMAND") and run("config", "core.sshCommand")[1] == "":
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    name = merge[len("refs/heads/"):]
+
+    def tip() -> str | tuple[None, str]:
+        rc, url = run("remote", "get-url", "--push", remote)
+        if rc != 0 or not url:
+            return None, "cannot read the push URL of the upstream remote"
+        rc, out = run("ls-remote", "--", url, merge, net=True, env=env)
+        if rc != 0:
+            return None, f"cannot reach {remote}: {out.splitlines()[-1] if out else 'unknown error'}"
+        for line in out.splitlines():
+            sha, _, ref = line.partition("\t")
+            if ref == merge and re.fullmatch(r"[0-9a-f]{40,64}", sha):
+                return sha
+        return None, f"{remote} has no branch {name}; orch does not create one"
+
+    def attempt(allow_rebase: bool) -> dict:
+        sha = tip()
+        if isinstance(sha, tuple):
+            return no(sha[1])
+        rc, head = run("rev-parse", "--verify", "HEAD")
+        if rc != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", head):
+            return no("cannot read HEAD; nothing pushed")
+        have = run("cat-file", "-e", f"{sha}^{{commit}}")[0] == 0
+        if have and run("merge-base", "--is-ancestor", sha, head)[0] == 0:
+            counts = _unpushed(ws, top, sha, head)
+            if counts is None:
+                return no(f"cannot compare {branch} with {remote}; nothing pushed")
+            total, other = counts
+            if total == 0:
+                return no("nothing to push", False)
+            if other:
+                return no(f"{other} other commit(s) wait; push them yourself", False)
+            rc, out = run("push", "--no-follow-tags", f"--force-with-lease={merge}:{sha}", remote, f"{head}:{merge}",
+                          net=True, env=env)
+            if rc == 0:
+                return {"pushed": True, "failed": False, "reason": f"pushed {total} records commit(s) to {remote}/{name}"}
+            return no(f"push failed: {out.splitlines()[-1] if out else 'unknown error'}")
+        if not allow_rebase:
+            return no(f"{remote} moved again while pushing; try again")
+        rc, out = run("fetch", "--no-tags", remote, merge, net=True, env=env)  # objects only; no tracking ref is trusted
+        if rc != 0 or run("cat-file", "-e", f"{sha}^{{commit}}")[0] != 0:
+            return no(f"{remote} has commits this clone lacks and they could not be fetched; fetch and rebase yourself")
+        counts = _unpushed(ws, top, sha, head)
+        if counts is None or counts[1] or not counts[0]:
+            return no("the remote moved and the branch holds other commits; fetch and rebase it yourself")
+        rc, dirty = run("status", "--porcelain", "--untracked-files=no")
+        if rc != 0 or dirty:
+            return no("the remote moved; tracked changes in the working tree block a rebase onto it")
+        rc, out = run("-c", "rebase.updateRefs=false", "-c", "rebase.autoSquash=false", "-c", "rebase.autoStash=false",
+                      "rebase", sha)
+        if rc != 0:
+            _, conflicts = run("diff", "--name-only", "--diff-filter=U")
+            run("rebase", "--abort")
+            return no("rebase onto the remote conflicts (aborted, nothing changed): "
+                      + (few(conflicts.splitlines()) or "see git status"))
+        result = attempt(False)
+        if result["pushed"]:
+            result["reason"] = f"rebased onto {remote}/{name} and pushed"
+        return result
+
+    return attempt(True)
 
 
-def sync_records(ws, *, push: bool = False, dry_run: bool = False) -> dict:
+def sync_records(ws, *, push: bool = False, dry_run: bool = False, auto: bool = False) -> dict:
     """Commit the uncommitted records and, with `push`, push them: the one call behind `orch records commit`, the
     dashboard button and `records.auto`. {"committed", "paths", "subject", "hash", "pushed", "reason"}."""
-    paths, subject = commit_records(ws, dry_run=dry_run)
+    paths, subject = commit_records(ws, dry_run=dry_run, auto=auto)
     out = {"committed": bool(paths) and not dry_run, "paths": paths, "subject": subject,
            "hash": head_short(ws) if paths and not dry_run else "", "pushed": False, "reason": "", "failed": False}
     if push and not dry_run:
-        out.update(push_records(ws))
+        out.update(push_records(ws, auto=auto))
     return out
 
 

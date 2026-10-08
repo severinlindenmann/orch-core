@@ -1,5 +1,6 @@
 """#253: records commit guards (merge in progress), push rules, the signed automatic mode, records in a nested repo."""
 import json
+import os
 import shutil
 import subprocess
 
@@ -206,12 +207,18 @@ def test_auto_push_respects_agent_may_push_even_when_auto_is_on(repo, ws, human,
 def test_agent_push_needs_agent_may_push(repo, ws, put, remote, monkeypatch, configure, capsys):
     bare, _ = remote
     configure(git={"agent_may": {"commit": True, "push": False}})
+    _git(repo, "add", "orchestrator/config.json")
+    _git(repo, "commit", "-qm", "config by hand")  # config.json is never pushed automatically
+    _git(repo, "push", "-q")
     put("backlog", size="m")
     monkeypatch.setenv("ORCH_HARNESS", "claude-code")
     assert run(["records", "commit", "--push"]) == 3
     assert "git.agent_may.push is false" in capsys.readouterr().err
-    assert _subjects(repo, "HEAD", 1)[0] == "base"  # nothing committed either
+    assert _subjects(repo, "HEAD", 1)[0] == "config by hand"  # nothing committed either
     configure(git={"agent_may": {"commit": True, "push": True}})
+    _git(repo, "add", "orchestrator/config.json")
+    _git(repo, "commit", "-qm", "config by hand 2")
+    _git(repo, "push", "-q")
     assert run(["records", "commit", "--push"]) == 0
     assert _subjects(bare, "main", 1)[0].startswith("orch: records")
 
@@ -316,3 +323,109 @@ def test_orch_home_can_be_its_own_repository(repo, ws, put):
     assert _git(ws.home, "log", "-1", "--format=%s").stdout.strip() == subject
     assert _subjects(repo, "HEAD", 1)[0] == "ignore orchestrator"  # the code repository is untouched
     assert gitfiles.git_view(ws).uncommitted == []
+
+
+# -- review round 1 -------------------------------------------------------------------------------------------------
+
+@needs_git
+def test_a_forged_tracking_ref_does_not_widen_the_push(repo, ws, put, remote):
+    bare, _ = remote
+    _touch(repo / "src" / "app.py", "print(9)\n")
+    _git(repo, "commit", "-qam", "code")
+    put("backlog", size="m")
+    gitfiles.commit_records(ws)
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD~1")  # pretends the code commit is already pushed
+    result = gitfiles.push_records(ws)
+    assert not result["pushed"] and "other commit" in result["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+def test_a_remote_that_is_not_an_ancestor_is_not_forced(repo, ws, put, remote):
+    bare, other = remote
+    _touch(other / "src" / "x.py")
+    _git(other, "add", "-A")
+    _git(other, "commit", "-qm", "theirs")
+    _git(other, "push", "-q", "origin", "main")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")  # a forged "up to date" ref
+    put("backlog", size="m")
+    gitfiles.commit_records(ws)
+    assert gitfiles.push_records(ws)["pushed"]  # fetched, rebased onto the real tip, pushed
+    assert _subjects(bare, "main", 2)[1] == "theirs"
+
+
+@needs_git
+def test_auto_mode_leaves_sync_targets_and_config_alone_and_they_block_a_push(repo, ws, put, remote):
+    bare, _ = remote
+    _touch(repo / "AGENTS.md", "instructions\n")
+    _touch(ws.home / "static" / "x.html", "<p>x</p>")
+    put("backlog", size="m")
+    result = gitfiles.sync_records(ws, auto=True)
+    assert result["committed"]
+    assert not any(p in ("AGENTS.md", "orchestrator/static/x.html", "orchestrator/config.json") for p in result["paths"])
+    assert "AGENTS.md" in gitfiles.git_view(ws).uncommitted
+    manual = gitfiles.sync_records(ws, push=True)  # a manual commit may take AGENTS.md, but it is never pushed
+    assert "AGENTS.md" in manual["paths"] and not manual["pushed"] and "other commit" in manual["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+@pytest.mark.parametrize("key,value", [("remote.origin.pushurl", "/nowhere.git"), ("url./x/.insteadOf", "/y/"),
+                                       ("url./x/.pushInsteadOf", "/y/"), ("core.sshCommand", "true"),
+                                       ("credential.helper", "store")])
+def test_repository_config_that_redirects_a_push_is_refused(repo, ws, put, remote, key, value):
+    bare, _ = remote
+    _git(repo, "config", key, value)
+    put("backlog", size="m")
+    result = gitfiles.sync_records(ws, push=True)
+    assert result["committed"] and not result["pushed"] and "push by hand" in result["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+def test_gitlinks_and_symlinks_are_not_records(repo, ws, put, remote):
+    bare, _ = remote
+    tickets = ws.home / "tickets"
+    tickets.mkdir(parents=True, exist_ok=True)
+    os.symlink("/etc/hosts", tickets / "link.md")
+    _git(repo, "add", "-f", "orchestrator/tickets/link.md")
+    _git(repo, "commit", "-qm", "orch: records link")
+    assert "other commit" in gitfiles.push_records(ws)["reason"]
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},orchestrator/tickets/sub")
+    _git(repo, "commit", "-qm", "orch: records sub")
+    assert "other commit" in gitfiles.push_records(ws)["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+def test_a_new_remote_branch_is_not_created(repo, ws, put, remote):
+    _git(repo, "checkout", "-q", "-b", "fresh")
+    _git(repo, "config", "branch.fresh.remote", "origin")
+    _git(repo, "config", "branch.fresh.merge", "refs/heads/fresh")
+    put("backlog", size="m")
+    result = gitfiles.sync_records(ws, push=True)
+    assert not result["pushed"] and "does not create" in result["reason"]
+
+
+@needs_git
+def test_a_gitfile_pointing_elsewhere_is_not_the_records_repo(repo, ws, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    init_repo(elsewhere, "main")
+    (ws.home / ".git").write_text(f"gitdir: {elsewhere / '.git'}\n", encoding="utf-8")
+    assert gitfiles.repo_top(ws) == repo.resolve()
+
+
+def test_replayed_or_cut_off_signatures_leave_auto_off(ws, human):
+    Ops(ws, human).set_records_auto(False)
+    path = ledger.ledger_path(ws)
+    path.write_text(path.read_text().replace('"value": false', '"value": true'))  # a forged "on"
+    assert ledger.records_auto_state(ws) == "off"
+
+
+def test_a_broken_head_record_leaves_auto_off(ws, human):
+    Ops(ws, human).set_records_auto(True)
+    assert ledger.records_auto_state(ws) == "on"
+    ledger.head_path().write_text("garbage\n")
+    assert ledger.records_auto_state(ws) == "off"

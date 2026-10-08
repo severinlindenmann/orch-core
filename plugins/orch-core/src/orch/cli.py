@@ -1747,7 +1747,7 @@ def _auto_records(argv: list[str]) -> None:
             return
         os.environ["ORCH_AUTO_RECORDS"] = "1"  # git hooks started by our commit run orch again: not recursively
         try:
-            result = sync_records(ws, push=not harness or bool(may["push"]))
+            result = sync_records(ws, push=not harness or bool(may["push"]), auto=True)
         finally:
             os.environ.pop("ORCH_AUTO_RECORDS", None)
         if result["failed"]:

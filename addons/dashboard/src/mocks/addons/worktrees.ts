@@ -3,6 +3,7 @@ import { registerAddon, type AddonCtx } from './registry'
 
 // worktrees: one git worktree per ticket and repo (the git commands run in the host; here it is plain state).
 //  - Path `wt/<ticket>-<repo>` (repo = the name after the owner), branch `feat/<ticket-slug>`; the id is the path.
+//  - The page shows one table per repo; its rowActions come from view() so "Open terminal here" is bound to terminals being active.
 //  - Seeded for DEMO tickets only; other workspaces start empty.
 //  - "Open terminal here" runs the terminals addon's own `open_ticket` action through the registry (no access to its
 //    state internals) and is offered only while terminals is active (view() exposes `terminalsActive`).
@@ -74,15 +75,22 @@ registerAddon({
       ],
     })
     const all = list(state).filter((w) => canSee(c, w))
-    const byRepo: Record<string, ReturnType<typeof item>[]> = {}
+    const row = (w: Worktree) => ({ id: w.id, path: w.path, branch: w.branch, ticket: w.ticket, changes: plural(w.dirty), sync: `ahead ${w.ahead}, behind ${w.behind}`, by: w.created_by })
+    // The table's rowActions: "Open terminal here" is included only while terminals is active.
+    const rowActions = [
+      ...(terminalsActive ? [{ label: 'Open terminal here', action: 'open_terminal', args: { id: '$row.id' }, variant: 'secondary' as const }] : []),
+      { label: 'Remove', action: 'remove', args: { id: '$row.id' }, variant: 'danger' as const },
+    ]
+    const rowsByRepo: Record<string, ReturnType<typeof row>[]> = {}
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
-    for (const r of REPOS) byRepo[short(r)] = all.filter((w) => w.repo === r).map(item)
+    for (const r of REPOS) rowsByRepo[short(r)] = all.filter((w) => w.repo === r).map(row)
     for (const w of all) (byTicket[w.ticket] ??= []).push(item(w))
     const open = c.store.listTickets(c.ws).filter((t) => t.status !== 'done')
     return {
       worktrees: all, // overrides the raw list: only what this viewer may see
       terminalsActive,
-      byRepo,
+      rowsByRepo,
+      rowActions,
       byTicket,
       total: all.length,
       dirty: all.filter((w) => w.dirty).length,

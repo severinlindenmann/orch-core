@@ -12,21 +12,21 @@ const wts = async () => (await api.getAddonState(ws(), 'worktrees')).worktrees a
 describe('worktrees page', () => {
   it('lists worktrees per repo with path, branch, files and ahead/behind', async () => {
     renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
-    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).getByText(/feat\/load-tariff-tables-as-dbt-seeds/)).toBeInTheDocument()
     expect(within(row).getByText(/3 changed files/)).toBeInTheDocument()
     expect(within(row).getByText(/ahead 2/)).toBeInTheDocument()
   })
   it('Remove on the dirty worktree is refused with the message', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
-    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Remove' }))
     await screen.findByText('3 changed files. Commit or stash first.', {}, T)
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
   })
   it('Remove on a clean worktree removes it from the page', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
-    const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)
   })
@@ -39,9 +39,9 @@ describe('worktrees page', () => {
     await user.click(screen.getByRole('button', { name: 'Add worktree' }))
     await screen.findByText('wt/DEMO-0044-billing-api', {}, T)
   })
-  it('Open terminal here shows only while terminals is active', async () => {
+  it('Open terminal here is offered while terminals is active', async () => {
     renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
-    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Open terminal here' })).toBeInTheDocument()
   })
   it('no Open terminal here when terminals is off', async () => {
@@ -52,12 +52,12 @@ describe('worktrees page', () => {
         st.addonOp(ws(), 'terminals', { op: 'disable' }, { kind: 'person', id: 'p_sev' })
       },
     })
-    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).queryByRole('button', { name: 'Open terminal here' })).not.toBeInTheDocument()
   })
   it('viewer sees disabled actions', async () => {
     renderApp('/addon/worktrees/worktrees', { viewer: 'p_tom', setup })
-    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('li')!
+    const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Remove' })).toBeDisabled()
   })
 })

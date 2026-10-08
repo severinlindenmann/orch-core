@@ -38,33 +38,117 @@
               "text": "**acme-energy/energy-dbt**"
             },
             {
-              "type": "list",
-              "items": {
-                "$ref": "addon.byRepo.energy-dbt"
+              "type": "table",
+              "columns": [
+                {
+                  "key": "path",
+                  "label": "Path"
+                },
+                {
+                  "key": "branch",
+                  "label": "Branch"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "changes",
+                  "label": "Changes"
+                },
+                {
+                  "key": "sync",
+                  "label": "Ahead / behind"
+                },
+                {
+                  "key": "by",
+                  "label": "Created by"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.rowsByRepo.energy-dbt"
               },
-              "empty": "No worktrees in this repository."
+              "rowActions": {
+                "$ref": "addon.rowActions"
+              }
             },
             {
               "type": "markdown",
               "text": "**acme-energy/billing-api**"
             },
             {
-              "type": "list",
-              "items": {
-                "$ref": "addon.byRepo.billing-api"
+              "type": "table",
+              "columns": [
+                {
+                  "key": "path",
+                  "label": "Path"
+                },
+                {
+                  "key": "branch",
+                  "label": "Branch"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "changes",
+                  "label": "Changes"
+                },
+                {
+                  "key": "sync",
+                  "label": "Ahead / behind"
+                },
+                {
+                  "key": "by",
+                  "label": "Created by"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.rowsByRepo.billing-api"
               },
-              "empty": "No worktrees in this repository."
+              "rowActions": {
+                "$ref": "addon.rowActions"
+              }
             },
             {
               "type": "markdown",
               "text": "**acme-energy/ingest**"
             },
             {
-              "type": "list",
-              "items": {
-                "$ref": "addon.byRepo.ingest"
+              "type": "table",
+              "columns": [
+                {
+                  "key": "path",
+                  "label": "Path"
+                },
+                {
+                  "key": "branch",
+                  "label": "Branch"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "changes",
+                  "label": "Changes"
+                },
+                {
+                  "key": "sync",
+                  "label": "Ahead / behind"
+                },
+                {
+                  "key": "by",
+                  "label": "Created by"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.rowsByRepo.ingest"
               },
-              "empty": "No worktrees in this repository."
+              "rowActions": {
+                "$ref": "addon.rowActions"
+              }
             },
             {
               "type": "form",

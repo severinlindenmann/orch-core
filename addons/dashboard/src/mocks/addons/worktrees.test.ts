@@ -30,7 +30,7 @@ interface Item {
   badge?: string
   actions?: { action: string; label: string; args?: Record<string, unknown> }[]
 }
-type State = { worktrees: Wt[]; byRepo: Record<string, Item[]>; byTicket: Record<string, Item[]>; terminalsActive: boolean; addSchema: { properties: { ticket: { enum: string[] }; repo: { enum: string[] } } } }
+type State = { worktrees: Wt[]; rowsByRepo: Record<string, { id: string; path: string }[]>; rowActions: { label: string; args?: Record<string, unknown> }[]; byTicket: Record<string, Item[]>; terminalsActive: boolean; addSchema: { properties: { ticket: { enum: string[] }; repo: { enum: string[] } } } }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'worktrees')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'worktrees', id, body)
 
@@ -60,7 +60,7 @@ describe('worktrees state', () => {
   it('groups rows per repo and per ticket for the page and the ticket panel', async () => {
     const s = setup()
     const st = await state(s)
-    expect(st.byRepo['energy-dbt'].length).toBeGreaterThan(0)
+    expect(st.rowsByRepo['energy-dbt'].length).toBeGreaterThan(0)
     expect(st.byTicket['DEMO-0043'][0].title).toBe('wt/DEMO-0043-energy-dbt')
   })
 })
@@ -138,10 +138,10 @@ describe('worktrees open terminal here', () => {
   it('offers the action only while terminals is active', async () => {
     const on = await state(setup())
     expect(on.terminalsActive).toBe(true)
-    expect(on.byRepo['energy-dbt'][0].actions!.map((a) => a.label)).toEqual(['Open terminal here', 'Remove'])
+    expect(on.rowActions.map((a) => a.label)).toEqual(['Open terminal here', 'Remove'])
     const off = await state(setup('p_sev', { terminals: false }))
     expect(off.terminalsActive).toBe(false)
-    expect(off.byRepo['energy-dbt'][0].actions!.map((a) => a.label)).toEqual(['Remove'])
+    expect(off.rowActions.map((a) => a.label)).toEqual(['Remove'])
   })
   it('opens a terminal session for the worktree ticket through the terminals module', async () => {
     const s = setup()
@@ -187,7 +187,7 @@ describe('worktrees and restricted tickets', () => {
     restrict(s)
     const st = await state(s)
     expect(st.worktrees.some((w) => w.ticket === 'DEMO-0041')).toBe(false)
-    expect(Object.values(st.byRepo).flat().some((i) => i.title.includes('DEMO-0041'))).toBe(false)
+    expect(Object.values(st.rowsByRepo).flat().some((i) => i.path.includes('DEMO-0041'))).toBe(false)
     expect(st.byTicket['DEMO-0041']).toBeUndefined()
     const r = await run(s, 'remove', { id: 'wt/DEMO-0041-energy-dbt' })
     expect(r.message).toBe('No such worktree.')

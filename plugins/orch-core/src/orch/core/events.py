@@ -210,6 +210,9 @@ def last_seq(ws) -> int:
     return _scan(_path(ws)).last_seq
 
 
+WROTE: list = []  # the workspace this process wrote an event in; `orch.cli.run` reads it once at the end (records.auto)
+
+
 def append_event(ws, ticket_id: str | None, kind: str, actor: Actor, data: dict | None = None) -> Event:
     if kind not in EVENT_KINDS:
         raise ValueError(f"unknown event kind {kind!r}")
@@ -231,6 +234,8 @@ def append_event(ws, ticket_id: str | None, kind: str, actor: Actor, data: dict 
         event = Event(scan.last_seq + 1, stamp_s(), ticket_id, kind, actor.to_str(), actor.via, data, evidence)
         with path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(event.to_json() + "\n")
+    if not WROTE:
+        WROTE.append(ws)
     return event
 
 

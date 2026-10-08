@@ -128,6 +128,16 @@ def _git(root: Path, *args: str) -> str | None:
     return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
 
 
+def repo_top(ws) -> Path | None:
+    """The git repository orch's records belong to: the one around the orch home (so `orchestrator/` can be its own
+    repository, ignored by the code repository around it), else the one around the workspace root."""
+    for where in (ws.home, ws.root):
+        out = _git(Path(where).resolve(), "rev-parse", "--show-toplevel")
+        if out and out.strip():
+            return Path(out.strip()).resolve()
+    return None
+
+
 def _rel_home(ws, top: Path, git_rel: str) -> str | None:
     try:
         return (top / git_rel).relative_to(ws.home.resolve()).as_posix()
@@ -138,10 +148,9 @@ def _rel_home(ws, top: Path, git_rel: str) -> str | None:
 def git_view(ws) -> GitView | None:
     """What git says about orch's files, or None when the workspace is not in a git repository (or git fails)."""
     root = ws.root.resolve()
-    top_out = _git(root, "rev-parse", "--show-toplevel")
-    if not top_out or not top_out.strip():
+    top = repo_top(ws)
+    if top is None:
         return None
-    top = Path(top_out.strip()).resolve()
     home = ws.home.resolve()
     if not home.is_relative_to(top):
         return None
@@ -234,6 +243,20 @@ def records_message(ws, view: GitView, paths: list[str]) -> tuple[str, str]:
     return subject, "Records orch wrote:\n" + "\n".join(lines)
 
 
+_BUSY = (("MERGE_HEAD", "a merge"), ("REBASE_HEAD", "a rebase"), ("CHERRY_PICK_HEAD", "a cherry-pick"),
+         ("REVERT_HEAD", "a revert"), ("rebase-merge", "a rebase"), ("rebase-apply", "a rebase or an am"))
+
+
+def busy_reason(top: Path) -> str | None:
+    """Why a records commit or push must wait: a merge, rebase, cherry-pick or revert is in progress in this git
+    directory (`git rev-parse --git-path` finds it in a worktree too). None when nothing is."""
+    for name, what in _BUSY:
+        out = _git(top, "rev-parse", "--git-path", name)
+        if out and out.strip() and (top / out.strip()).exists():
+            return f"{what} is in progress in this repository; finish or abort it first"
+    return None
+
+
 def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
     """Commit exactly the records doctor lists, with a generated message, and return (paths, subject). The paths
     are staged and committed with `git commit --only`, so whatever else is staged stays staged and uncommitted."""
@@ -244,6 +267,9 @@ def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
     paths = list(view.uncommitted)
     if not paths:
         return [], ""
+    busy = busy_reason(view.root)
+    if busy and not dry_run:
+        raise UsageError(f"records not committed: {busy}")
     subject, body = records_message(ws, view, paths)
     if dry_run:
         return paths, subject
@@ -260,6 +286,95 @@ def commit_records(ws, *, dry_run: bool = False) -> tuple[list[str], str]:
             hint = "the records are staged; fix the problem and run `orch records commit` again" if args[0] == "commit" else None
             raise OrchError(f"git {args[0]} failed: {detail}", hint=hint)
     return paths, subject
+
+
+def _run(top: Path, *args: str, timeout: int = 30) -> tuple[int, str]:
+    """(exit code, stdout + stderr) of a git call with a timeout; (-1, reason) when git cannot run."""
+    try:
+        r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), *args], capture_output=True, check=False,
+                           timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return -1, str(e)
+    return r.returncode, (r.stdout + r.stderr).decode("utf-8", "replace").strip()
+
+
+def head_short(ws) -> str:
+    top = repo_top(ws)
+    out = _git(top, "rev-parse", "--short", "HEAD") if top else None
+    return (out or "").strip()
+
+
+def _unpushed(top: Path) -> tuple[int, int] | None:
+    """(commits in @{u}..HEAD, of those not an `orch: records` commit); None when git cannot tell."""
+    rc, out = _run(top, "log", "--format=%s", "@{u}..HEAD")
+    if rc != 0:
+        return None
+    subjects = [x for x in out.splitlines() if x.strip()]
+    return len(subjects), sum(not x.startswith(RECORDS_SUBJECT) for x in subjects)
+
+
+def push_records(ws) -> dict:
+    """Push the current branch to its upstream, only when every commit it would send is an `orch: records` commit.
+    Never forces and names no branch but HEAD's own upstream. A rejected push fetches once and rebases records-only
+    commits onto the upstream (aborted on any conflict), then pushes once more. Returns {"pushed": bool, "reason": str}."""
+    def no(reason: str, failed: bool = True) -> dict:
+        return {"pushed": False, "reason": reason, "failed": failed}  # failed: worth a warning, not just "nothing to do"
+    top = repo_top(ws)
+    if top is None:
+        return no("the workspace is not in a git repository", False)
+    busy = busy_reason(top)
+    if busy:
+        return no(busy)
+    rc, branch = _run(top, "symbolic-ref", "-q", "--short", "HEAD")
+    if rc != 0 or not branch:
+        return no("HEAD is detached; nothing pushed", False)
+    rc, remote = _run(top, "config", f"branch.{branch}.remote")
+    rc2, merge = _run(top, "config", f"branch.{branch}.merge")
+    if rc != 0 or rc2 != 0 or not remote or not merge.startswith("refs/heads/"):
+        return no(f"{branch} has no upstream; nothing pushed", False)
+    if remote == ".":
+        return no(f"the upstream of {branch} is a local branch; nothing pushed", False)
+    counts = _unpushed(top)
+    if counts is None:
+        return no(f"cannot compare {branch} with its upstream; nothing pushed")
+    total, other = counts
+    if total == 0:
+        return no("nothing to push", False)
+    if other:
+        return no(f"{other} other commit(s) wait; push them yourself", False)
+    push = ("push", remote, f"HEAD:{merge}")
+    rc, out = _run(top, *push, timeout=120)
+    if rc == 0:
+        return {"pushed": True, "failed": False, "reason": f"pushed {total} records commit(s) to {remote}/{merge[11:]}"}
+    if not any(w in out for w in ("rejected", "non-fast-forward", "fetch first")):
+        return no(f"push failed: {out.splitlines()[-1] if out else 'unknown error'}")
+    rc, out = _run(top, "fetch", remote, timeout=120)
+    counts = _unpushed(top) if rc == 0 else None
+    if counts is None or counts[1] or not counts[0]:
+        return no("push rejected and the branch holds other commits; fetch and rebase it yourself")
+    rc, dirty = _run(top, "status", "--porcelain", "--untracked-files=no")
+    if rc != 0 or dirty:
+        return no("push rejected; tracked changes in the working tree block a rebase onto the upstream")
+    rc, out = _run(top, "rebase", "@{u}", timeout=120)
+    if rc != 0:
+        _, conflicts = _run(top, "diff", "--name-only", "--diff-filter=U")
+        _run(top, "rebase", "--abort")
+        return no("rebase onto the upstream conflicts (aborted, nothing changed): " + (few(conflicts.splitlines()) or "see git status"))
+    rc, out = _run(top, *push, timeout=120)
+    if rc == 0:
+        return {"pushed": True, "failed": False, "reason": f"rebased onto {remote}/{merge[11:]} and pushed"}
+    return no(f"push failed after rebase: {out.splitlines()[-1] if out else 'unknown error'}")
+
+
+def sync_records(ws, *, push: bool = False, dry_run: bool = False) -> dict:
+    """Commit the uncommitted records and, with `push`, push them: the one call behind `orch records commit`, the
+    dashboard button and `records.auto`. {"committed", "paths", "subject", "hash", "pushed", "reason"}."""
+    paths, subject = commit_records(ws, dry_run=dry_run)
+    out = {"committed": bool(paths) and not dry_run, "paths": paths, "subject": subject,
+           "hash": head_short(ws) if paths and not dry_run else "", "pushed": False, "reason": "", "failed": False}
+    if push and not dry_run:
+        out.update(push_records(ws))
+    return out
 
 
 def few(paths: list[str], n: int = 5) -> str:

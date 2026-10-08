@@ -143,11 +143,14 @@ def run(argv: list[str] | None = None) -> int:
     global _workspace
     argv = list(sys.argv[1:] if argv is None else argv)
     _workspace = None  # never reuse a workspace from an earlier call (tests run many workspaces per process)
+    from orch.core import events
+    events.WROTE.clear()
     from orch.addons.loader import no_addon_imports
     first = argv[0] if argv else ""
     try:
         with contextlib.nullcontext() if first in ADDON_COMMANDS else no_addon_imports():
             rv = app(args=argv, prog_name="orch", standalone_mode=False)
+        _auto_records(argv)
         return rv if isinstance(rv, int) else 0
     except OrchError as e:
         _report(e, "--json" in argv)
@@ -1657,27 +1660,101 @@ app.add_typer(records_app, name="records")
 @records_app.command("commit")
 def records_commit(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be committed; change nothing.")] = False,
+    push: Annotated[bool, typer.Option("--push", help="Then push the branch to its upstream, only when every unpushed "
+                                       "commit is an `orch: records` commit. Never forces.")] = False,
     json_out: JsonOpt = False,
 ) -> None:
     """Commit exactly the records `orch doctor` lists as uncommitted, with a generated `orch: records …` message.
 
     Other staged files stay staged and are not committed. The commit check accepts it before plan approval because
-    it holds no code. Agents need git.agent_may.commit."""
+    it holds no code. Nothing is committed while a merge, rebase or cherry-pick is in progress. With --push the branch
+    is pushed to its upstream when it has one and every unpushed commit is an `orch: records` commit; a rejected push
+    fetches and rebases those commits once (aborting on a conflict). Agents need git.agent_may.commit, and
+    git.agent_may.push for --push."""
     from orch.actor import agent_harness
-    from orch.core.gitfiles import commit_records
+    from orch.core.gitfiles import sync_records
     ws = _ws()
     harness = agent_harness()
-    if harness and not ws.config["git"]["agent_may"]["commit"] and not dry_run:
+    may = ws.config["git"]["agent_may"]
+    if harness and not may["commit"] and not dry_run:
         raise HumanOnlyError(f"orch records commit refused: agents do not commit in this workspace "
                              f"(git.agent_may.commit is false; running inside {harness})",
                              hint="tell the user the records are ready; they run `orch records commit`")
-    paths, subject = commit_records(ws, dry_run=dry_run)
+    if harness and push and not may["push"] and not dry_run:
+        raise HumanOnlyError(f"orch records commit --push refused: agents do not push in this workspace "
+                             f"(git.agent_may.push is false; running inside {harness})",
+                             hint="commit without --push and tell the user; they run `orch records commit --push`")
+    result = sync_records(ws, push=push, dry_run=dry_run)
+    paths, subject = result["paths"], result["subject"]
     if not paths:
-        _out({"committed": False, "paths": []}, json_out, "every orch record is committed; nothing to do")
+        lines = ["every orch record is committed; nothing to do"]
+    elif dry_run:
+        lines = [f"would commit {len(paths)} record(s) as '{subject}':"] + [f"  {p}" for p in paths]
+    else:
+        lines = [f"committed {len(paths)} record(s) as {result['hash']}: {subject}"] + [f"  {p}" for p in paths]
+    if push and not dry_run:
+        lines.append(("pushed: " if result["pushed"] else "not pushed: ") + result["reason"])
+    _out(result, json_out, "\n".join(lines))
+
+
+@records_app.command("auto")
+def records_auto(state: Annotated[str, typer.Argument(help="on | off | status")] = "status",
+                json_out: JsonOpt = False) -> None:
+    """Whether every orch command that wrote a record commits it (and pushes when it can) at its end. `on` is the
+    human's decision, signed (run it in your own terminal); `off` anyone may run; a config edit alone never turns
+    it on. Agents still need git.agent_may.commit / push."""
+    from orch.core import ledger
+    ws = _ws()
+    if state not in ("on", "off", "status"):
+        raise UsageError("expected on, off or status")
+    if state == "on":
+        from orch.actor import confirm_typed, require_human_terminal
+        require_human_terminal("turning on automatic records commits")
+        typer.echo("After every orch command that writes a record, orch will commit the records (an `orch: records` "
+                   "commit) and push them when the branch has an upstream and holds no other unpushed commits.",
+                   err=json_out)
+        _ops(ws, confirm_typed(ws.config["id"]["prefix"])).set_records_auto(True)
+    elif state == "off":
+        _ops(ws).set_records_auto(False)
+    now = ledger.records_auto_state(ws)
+    _out({"records.auto": now}, json_out, "records are committed automatically (signed)" if now == "on"
+         else "records are not committed automatically; turn it on with `orch records auto on` in your own terminal")
+
+
+_AUTO_SKIP = frozenset({"guard", "hook", "hooks", "serve", "records"})
+
+
+def _auto_records(argv: list[str]) -> None:
+    """records.auto, at the very end of a command that wrote an event (the one choke point: events.append_event).
+    Best effort: it never changes the command's result, and a failure is one warning line. Not run for git hooks, the
+    guard, the dashboard (which never comes through here), `orch records` itself, or inside its own commit."""
+    import os
+    from orch.core import events
+    wrote = events.WROTE[:]
+    events.WROTE.clear()
+    if not wrote or (argv[0] if argv else "") in _AUTO_SKIP or os.environ.get("ORCH_AUTO_RECORDS"):
         return
-    head = f"would commit {len(paths)} record(s) as '{subject}':" if dry_run else f"committed {len(paths)} record(s): {subject}"
-    _out({"committed": not dry_run, "subject": subject, "paths": paths}, json_out,
-         "\n".join([head] + [f"  {p}" for p in paths]))
+    try:
+        from orch.actor import agent_harness
+        from orch.core import ledger
+        from orch.core.gitfiles import sync_records
+        ws = wrote[0]
+        if ledger.records_auto_state(ws) != "on":
+            return
+        may = ws.config["git"]["agent_may"]
+        harness = agent_harness()
+        if harness and not may["commit"]:
+            return
+        os.environ["ORCH_AUTO_RECORDS"] = "1"  # git hooks started by our commit run orch again: not recursively
+        try:
+            result = sync_records(ws, push=not harness or bool(may["push"]))
+        finally:
+            os.environ.pop("ORCH_AUTO_RECORDS", None)
+        if result["failed"]:
+            typer.echo(f"orch: records committed but not pushed: {result['reason']}" if result["committed"]
+                       else f"orch: records not pushed: {result['reason']}", err=True)
+    except Exception as e:  # noqa: BLE001 - best effort by design
+        typer.echo(f"orch: records were not committed automatically: {getattr(e, 'message', None) or e}", err=True)
 
 
 # -- Claude Code guard (sub-project 2) --------------------------------------------------

@@ -58,6 +58,7 @@ def workspace_id(ws) -> str:
 
 
 WIDGETS_HTML = "widgets.html"
+RECORDS_AUTO = "records.auto"
 CHECKS = "checks"
 _checkouts: dict[str, str] = {}
 
@@ -140,6 +141,17 @@ def widgets_html_state(ws, signed: list[dict] | None = None) -> str:
         if ev.kind == "setting.changed" and (ev.data or {}).get("setting") == WIDGETS_HTML:
             return "on" if ev.data.get("value") is True else "unsigned"
     return "on"
+
+
+def records_auto_state(ws, signed: list[dict] | None = None) -> str:
+    """"on" only when this checkout's newest signed `records.auto` entry says on (`orch records auto on`). There is no
+    config key for it: nothing but the signed entries can turn it on. Anything unreadable or unchained is "off"."""
+    if getattr(ws, "home", None) is None:
+        return "off"
+    try:
+        return "on" if signed_setting(ws, RECORDS_AUTO, signed) is True else "off"
+    except Exception:  # noqa: BLE001 - fail closed
+        return "off"
 
 
 def checks_digests(cfg: dict | None) -> dict[str, str]:

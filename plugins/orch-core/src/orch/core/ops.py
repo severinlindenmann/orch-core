@@ -1548,6 +1548,20 @@ class Ops(TaskOpsMixin):
         self.ws.config.setdefault("widgets", {})["html"] = on
         self._emit(None, "setting.changed", {"setting": ledger.WIDGETS_HTML, "value": on})
 
+    def set_records_auto(self, on: bool) -> None:
+        """`records.auto`: whether every orch command that wrote a record commits (and pushes) it at its end. Turning it
+        on is a human decision signed for this workspace; off takes power away, so anyone may and it is signed too (the
+        newest signed entry decides). It has no config key, so a config edit cannot turn it on."""
+        from orch.actor import process_evidence
+        from orch.core import ledger
+        if on:
+            require_human(self.actor, "turning on automatic records commits")
+        if self.dry_run:
+            return
+        with lock(self.ws, "config"):
+            ledger.record_setting(self.ws, ledger.RECORDS_AUTO, on, self.actor, process_evidence())
+        self._emit(None, "setting.changed", {"setting": ledger.RECORDS_AUTO, "value": on})
+
     def sign_checks(self) -> dict:
         """Sign the workspace's named checks (`checks` in config.json) as they stand: what each check runs, as a digest,
         in the ledger. Human only, like `widgets.html` on. The config stays the source; a check edited afterwards

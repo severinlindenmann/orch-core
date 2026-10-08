@@ -67,6 +67,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/wp/{addon}/{digest}"): LOOK, ("GET", "/wpf/{addon}/{digest}"): LOOK,
     ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK, ("GET", "/schedules"): LOOK,
     ("GET", "/quick"): LOOK, ("GET", "/quick/{qid}"): LOOK,
+    ("GET", "/factory"): LOOK, ("GET", "/factory/{ref}"): LOOK,  # the AI Factory list and run view: records the ticket pages show
     # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
     # one-time token and deletes the file, so it counts as a change
     ("GET", "/terminals"): OPERATE, ("GET", "/terminals/stream"): OPERATE, ("GET", "/terminals/{name}"): OPERATE,
@@ -103,6 +104,8 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/schedules/{sid}/run"): TYPE,  # starts an agent run on the host
     ("POST", "/schedules/{sid}/arm"): _t(Scope.TYPE, fresh=True),  # lets agents run on a clock, like the factory's start
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),
+    # a standing Dark permission for this checkout's agents: as strong as a grant, so it needs the same fresh assertion
+    ("POST", "/permits/{rid}/profile"): _t(Scope.TYPE, fresh=True),
     ("POST", "/addons/{name}/actions/{action_id}"): TYPE,  # runs addon code; a later change may lower it
     # quick tasks (orch.core.quick): adding and closing are ordinary edits; reopen and drop are the human's call
     ("POST", "/quick/add"): OPERATE, ("POST", "/quick/{qid}/done"): OPERATE, ("POST", "/quick/{qid}/release"): OPERATE,

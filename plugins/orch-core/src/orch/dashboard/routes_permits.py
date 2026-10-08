@@ -47,7 +47,7 @@ def add_to_profile(request: Request, rid: str, sha: Annotated[str, Form()] = "",
     workspace's request, or while Dark is off)."""
     from orch.core import dark_profile
     return _answer(request, next_url,
-                   lambda ws: dark_profile.add_from_request(ws, HUMAN, rid, expected_sha=sha or None),
+                   lambda ws: dark_profile.add_from_request(ws, request_actor(request), rid, expected_sha=sha or None),
                    f"{rid.upper()}: its command is in the Dark profile now")
 
 

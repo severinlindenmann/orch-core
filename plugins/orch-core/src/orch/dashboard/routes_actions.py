@@ -115,12 +115,10 @@ def approve(request: Request, ref: str, gate: Annotated[str, Form()], seen: Anno
 
 
 def start_factory(ws, ref: str, seen: str, limits: dict, despite: bool = False, *, gate: str = "requirements",
-                  actor=None):
+                  actor):
     """The dashboard's factory start (the epic page and the New ticket page): the human's signed charter approval with
     the factory's limits (`dark` too, for a Dark one), then the runner is armed for that delegation. Only this start
     lets the runner work for an epic."""
-    from orch.core.events import HUMAN
-    actor = actor or HUMAN
     epic = Ops(ws, actor).approve(ref, gate, expected_hash=seen, despite_open_question=despite, delegate=limits)
     _arm_runner(ws, epic, actor)
     return epic

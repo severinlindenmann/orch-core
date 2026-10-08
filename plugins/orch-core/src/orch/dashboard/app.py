@@ -252,7 +252,7 @@ def dashboard_routes() -> list:
 def create_app(ws, token: str, *, port: int | None = None, remote=None) -> FastAPI:
     """The dashboard. `remote` (the remote flag only): a callable that builds the bridge host loop for this app
     (orch.remote.remote_start.Remote.loop); without it nothing of the bridge is imported or started."""
-    from orch.dashboard import routes_live, setup_state, switcher
+    from orch.dashboard import routes_live, routes_new, setup_state, switcher
     from orch.addons.outbox import OutboxPump
     from orch.addons.runtime import AddonRuntime
     from orch.addons.scheduler import Scheduler

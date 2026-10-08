@@ -1,0 +1,10 @@
+{
+  "person": "p_sev",
+  "name": "Severin",
+  "role": "owner",
+  "grant": { "id": "gr_01J9Z8", "until": "2026-10-09T18:00:00Z", "hours": 8 },
+  "agents": [
+    { "id": "claude-code", "name": "Claude Code", "for": "p_sev", "session": "s_77c2", "grant": "gr_01J9Z8", "last_seen": "2026-10-09T11:28:40Z" },
+    { "id": "codex", "name": "Codex", "for": "p_mara", "session": "s_a41", "grant": "gr_01J9Y4", "last_seen": "2026-10-09T11:26:10Z" }
+  ]
+}

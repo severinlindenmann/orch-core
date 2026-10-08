@@ -1,0 +1,57 @@
+[
+  {
+    "id": "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11",
+    "prefix": "DEMO",
+    "name": "Acme energy data",
+    "demo": true,
+    "members": [
+      { "person": "p_sev", "name": "Severin", "role": "owner" },
+      { "person": "p_mara", "name": "Mara", "role": "maintainer" },
+      { "person": "p_tom", "name": "Tom", "role": "viewer" }
+    ],
+    "gates": {
+      "requirements": { "approvers": "owner", "count": 1 },
+      "plan": { "approvers": "owner", "count": 1 },
+      "verify": { "approvers": "reviewers", "count": 1, "not": "assignees" }
+    },
+    "addons": {
+      "dashboard": { "enabled": true },
+      "estimate": { "enabled": true },
+      "publish": { "enabled": false },
+      "github": { "enabled": true },
+      "usage": { "enabled": true },
+      "terminals": { "enabled": true },
+      "wiki": { "enabled": true }
+    }
+  },
+  {
+    "id": "0a5e7c31-2d9f-4b68-8e1a-5c3f7d9b2e44",
+    "prefix": "INT",
+    "name": "Internal",
+    "members": [
+      { "person": "p_sev", "name": "Severin", "role": "owner" },
+      { "person": "p_mara", "name": "Mara", "role": "maintainer" }
+    ],
+    "gates": {
+      "requirements": { "approvers": "owner", "count": 1 },
+      "plan": { "approvers": "owner", "count": 1 },
+      "verify": { "approvers": "reviewers", "count": 1, "not": "assignees" }
+    },
+    "addons": { "dashboard": { "enabled": true }, "estimate": { "enabled": true }, "github": { "enabled": true }, "wiki": { "enabled": true } }
+  },
+  {
+    "id": "c7d2b9e4-6f13-4a85-b0c8-1e9a3d5f7b66",
+    "prefix": "CLI",
+    "name": "Client VM",
+    "members": [
+      { "person": "p_sev", "name": "Severin", "role": "owner" },
+      { "person": "p_tom", "name": "Tom", "role": "member" }
+    ],
+    "gates": {
+      "requirements": { "approvers": "owner", "count": 1 },
+      "plan": { "approvers": "owner", "count": 1 },
+      "verify": { "approvers": "owner", "count": 1 }
+    },
+    "addons": { "dashboard": { "enabled": true }, "estimate": { "enabled": true }, "terminals": { "enabled": true } }
+  }
+]

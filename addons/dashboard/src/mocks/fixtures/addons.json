@@ -1,0 +1,263 @@
+[
+  {
+    "name": "publish",
+    "title": "Publish",
+    "version": "0.3.0",
+    "description": "Share a read-only view of a ticket or artifact through a signed link.",
+    "capabilities": ["serve_http", "network"],
+    "enabled": false,
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "ticket.panel",
+        "id": "publish.shares",
+        "title": "Shares",
+        "icon": "Share2",
+        "spec": {
+          "type": "list",
+          "source": "addons.publish.shares",
+          "empty": "Not shared yet.",
+          "item": { "title": "{url}", "meta": "expires {expires} · {views} views" },
+          "actions": [{ "id": "publish.share", "label": "Share ticket", "requires": "publish.create" }]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "publish.settings",
+        "title": "Publish",
+        "icon": "Share2",
+        "spec": {
+          "type": "form",
+          "fields": [
+            { "key": "default_expiry_days", "label": "Link expiry (days)", "kind": "number", "value": 7 },
+            { "key": "allow_artifacts", "label": "Include artifacts", "kind": "boolean", "value": false }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "github",
+    "title": "GitHub",
+    "version": "0.5.2",
+    "description": "Links branches and pull requests to tickets and shows their check status.",
+    "capabilities": ["network"],
+    "enabled": true,
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "github.prs",
+        "title": "Pull requests",
+        "icon": "GitPullRequest",
+        "spec": {
+          "type": "table",
+          "source": "tickets",
+          "filter": "addons.github.pr",
+          "columns": [
+            { "label": "Ticket", "path": "key" },
+            { "label": "PR", "path": "addons.github.pr.number", "format": "#{value}" },
+            { "label": "State", "path": "addons.github.pr.state", "format": "badge" },
+            { "label": "Checks", "path": "addons.github.pr.checks", "format": "badge" }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "github.pr",
+        "title": "Pull request",
+        "icon": "GitPullRequest",
+        "spec": {
+          "type": "kv",
+          "source": "addons.github.pr",
+          "fields": [
+            { "label": "Repository", "path": "repo", "format": "mono" },
+            { "label": "Branch", "path": "branch", "format": "mono" },
+            { "label": "PR", "path": "number", "format": "#{value}" },
+            { "label": "State", "path": "state", "format": "badge" },
+            { "label": "Checks", "path": "checks", "format": "badge" }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "github.attention",
+        "title": "PRs needing attention",
+        "icon": "GitPullRequest",
+        "spec": {
+          "type": "ticket-list",
+          "filter": { "path": "addons.github.pr.checks", "in": ["failing", "pending"] },
+          "meta": "PR #{addons.github.pr.number} · checks {addons.github.pr.checks}"
+        }
+      },
+      {
+        "slot": "board.lane",
+        "id": "github.in-review",
+        "title": "In review",
+        "icon": "GitPullRequest",
+        "spec": { "type": "lane", "after": "testing", "filter": { "path": "addons.github.pr.state", "equals": "open" } }
+      },
+      {
+        "slot": "settings",
+        "id": "github.settings",
+        "title": "GitHub",
+        "icon": "Github",
+        "spec": {
+          "type": "form",
+          "fields": [
+            { "key": "org", "label": "Organisation", "kind": "text", "value": "acme" },
+            { "key": "link_prs", "label": "Link PRs from branch names", "kind": "boolean", "value": true }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "usage",
+    "title": "Usage",
+    "version": "0.2.1",
+    "description": "Tracks agent time and cost per ticket. Money is stored in cents.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "usage.overview",
+        "title": "Usage",
+        "icon": "Gauge",
+        "spec": {
+          "type": "table",
+          "source": "tickets",
+          "filter": "addons.usage",
+          "columns": [
+            { "label": "Ticket", "path": "key" },
+            { "label": "Sessions", "path": "addons.usage.sessions" },
+            { "label": "Time", "path": "addons.usage.ms", "format": "duration" },
+            { "label": "Cost", "path": "addons.usage.cents", "format": "cents:CHF" }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "usage.today",
+        "title": "Agent spend",
+        "icon": "Gauge",
+        "spec": { "type": "stat", "sum": "addons.usage.cents", "format": "cents:CHF", "caption": "this week, all tickets" }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "usage.ticket",
+        "title": "Usage",
+        "icon": "Gauge",
+        "spec": {
+          "type": "kv",
+          "source": "addons.usage",
+          "fields": [
+            { "label": "Cost", "path": "cents", "format": "cents:CHF" },
+            { "label": "Sessions", "path": "sessions" },
+            { "label": "Agent time", "path": "ms", "format": "duration" }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "usage.settings",
+        "title": "Usage",
+        "icon": "Gauge",
+        "spec": {
+          "type": "form",
+          "fields": [{ "key": "weekly_budget_cents", "label": "Weekly budget (CHF)", "kind": "number", "value": 50 }]
+        }
+      }
+    ]
+  },
+  {
+    "name": "terminals",
+    "title": "Terminals",
+    "version": "0.4.0",
+    "description": "Interactive terminals next to a ticket. Never granted to agents.",
+    "capabilities": ["pty"],
+    "enabled": true,
+    "first_party": true,
+    "contributions": [
+      { "slot": "nav", "id": "terminals.list", "title": "Terminals", "icon": "SquareTerminal", "spec": { "type": "terminal-list" } },
+      {
+        "slot": "ticket.panel",
+        "id": "terminals.ticket",
+        "title": "Terminal",
+        "icon": "SquareTerminal",
+        "spec": { "type": "action", "label": "Open terminal in worktree", "requires": "terminals.open" }
+      },
+      {
+        "slot": "settings",
+        "id": "terminals.settings",
+        "title": "Terminals",
+        "icon": "SquareTerminal",
+        "spec": {
+          "type": "form",
+          "fields": [{ "key": "shell", "label": "Shell", "kind": "text", "value": "/bin/zsh" }]
+        }
+      }
+    ]
+  },
+  {
+    "name": "wiki",
+    "title": "Wiki",
+    "version": "0.1.4",
+    "description": "Markdown knowledge base in the workspace repo, linked from tickets.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "contributions": [
+      { "slot": "nav", "id": "wiki.pages", "title": "Wiki", "icon": "BookOpen", "spec": { "type": "page-tree" } },
+      {
+        "slot": "ticket.panel",
+        "id": "wiki.related",
+        "title": "Related pages",
+        "icon": "BookOpen",
+        "spec": { "type": "list", "source": "addons.wiki.pages", "empty": "No linked pages." }
+      }
+    ]
+  },
+  {
+    "name": "estimate",
+    "title": "Estimate",
+    "version": "0.2.0",
+    "description": "Story points on tickets, rolled up on epics.",
+    "capabilities": [],
+    "enabled": true,
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "ticket.panel",
+        "id": "estimate.points",
+        "title": "Estimate",
+        "icon": "Ruler",
+        "spec": {
+          "type": "kv",
+          "source": "addons.estimate",
+          "fields": [{ "label": "Points", "path": "points" }],
+          "editable": [{ "path": "points", "kind": "select", "options": [1, 2, 3, 5, 8, 13, 21] }]
+        }
+      },
+      {
+        "slot": "board.lane",
+        "id": "estimate.badge",
+        "title": "Points",
+        "icon": "Ruler",
+        "spec": { "type": "card-badge", "path": "addons.estimate.points", "format": "{value} pt" }
+      },
+      {
+        "slot": "settings",
+        "id": "estimate.settings",
+        "title": "Estimate",
+        "icon": "Ruler",
+        "spec": {
+          "type": "form",
+          "fields": [{ "key": "scale", "label": "Scale", "kind": "select", "options": ["fibonacci", "t-shirt"], "value": "fibonacci" }]
+        }
+      }
+    ]
+  }
+]

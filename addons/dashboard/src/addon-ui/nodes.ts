@@ -26,15 +26,33 @@ export const kvNode = z.object({
   type: z.literal('kv'),
   pairs: z.array(z.object({ label: text, value: cell, mono: z.boolean().optional() })).max(50),
 })
+const itemAction = z.object({
+  label: z.string().max(40),
+  action: actionId,
+  /** Values of the form "$row.<key>" (table rowActions only) resolve to that row's cell value. */
+  args: z.record(z.string(), scalar).optional(),
+  variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('ghost'),
+})
+export type ItemAction = z.output<typeof itemAction>
+
 export const listNode = z.object({
   type: z.literal('list'),
-  items: orEmpty(z.object({ title: text, subtitle: text.optional(), badge: text.optional() })),
+  items: orEmpty(
+    z.object({
+      title: text,
+      subtitle: text.optional(),
+      badge: text.optional(),
+      actions: z.array(itemAction).max(3).optional(),
+      status: z.enum(['ok', 'warn', 'error', 'idle', 'running']).optional(),
+    }),
+  ),
   empty: text.optional(),
 })
 export const tableNode = z.object({
   type: z.literal('table'),
   columns: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(12),
   rows: orEmpty(z.record(z.string(), cell)),
+  rowActions: z.array(itemAction).max(3).optional(),
 })
 export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000) })
 export const codeNode = z.object({ type: z.literal('code'), language: z.string().max(32).default('text'), text: z.string().max(20000) })
@@ -67,6 +85,16 @@ export const linkNode = z.object({
   href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h), 'only http(s) links'),
 })
 
+export const alertNode = z.object({ type: z.literal('alert'), tone: z.enum(['info', 'success', 'warn', 'error']), title: text, text: text.optional() })
+export const progressNode = z.object({ type: z.literal('progress'), label: text, value: z.number().min(0), max: z.number().positive() })
+export const frameNode = z.object({
+  type: z.literal('frame'),
+  title: z.string().max(120),
+  html: z.string().max(200_000),
+  height: z.number().int().min(80).max(1200).default(320),
+})
+export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
+
 export const nodeSchema = z.discriminatedUnion('type', [
   stackNode,
   statNode,
@@ -79,6 +107,10 @@ export const nodeSchema = z.discriminatedUnion('type', [
   formNode,
   buttonNode,
   linkNode,
+  alertNode,
+  progressNode,
+  frameNode,
+  terminalNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

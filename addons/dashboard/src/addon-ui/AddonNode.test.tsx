@@ -1,10 +1,22 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
 import type { AddonManifest } from '@/api/types'
 import addonsFixture from '@/mocks/fixtures/addons.json'
 import { AddonNode } from './AddonNode'
 import { resolveBindings } from './bindings'
 import { selectContributions } from './slots'
+
+function renderNode(node: unknown, { addon }: { addon: string }) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <AddonNode node={node} addon={addon} />
+    </QueryClientProvider>,
+  )
+}
 
 const show = (node: unknown) => render(<AddonNode node={node} addon="demo" />)
 
@@ -93,5 +105,44 @@ describe('SlotRegistry', () => {
     expect(withPr.some((c) => c.addon === 'github')).toBe(true)
     const without = selectContributions(addons, 'ticket.panel', { ticket: { key: 'T', addons: {} } as never })
     expect(without.some((c) => c.addon === 'github')).toBe(false)
+  })
+})
+
+describe('new node types', () => {
+  it('renders list item actions and posts the args', async () => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
+    renderNode({ type: 'list', items: [{ title: 'share/a', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'a' }, variant: 'danger' }] }] }, { addon: 'publish' })
+    await userEvent.click(screen.getByRole('button', { name: 'Revoke' }))
+    expect(post).toHaveBeenCalledWith('publish', 'revoke', expect.objectContaining({ id: 'a' }))
+  })
+  it('resolves $row.<key> in table row action args', async () => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
+    renderNode(
+      { type: 'table', columns: [{ key: 'id', label: 'Id' }], rows: [{ id: 'r7' }], rowActions: [{ label: 'Drop', action: 'drop', args: { id: '$row.id', fixed: 'x' } }] },
+      { addon: 'publish' },
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Drop' }))
+    expect(post).toHaveBeenCalledWith('publish', 'drop', expect.objectContaining({ id: 'r7', fixed: 'x' }))
+  })
+  it('renders a frame sandboxed without same-origin', () => {
+    renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })
+    const f = screen.getByTitle('Bars') as HTMLIFrameElement
+    expect(f.getAttribute('sandbox')).toBe('allow-scripts')
+    expect(f.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(f.srcdoc).toContain("default-src 'none'")
+    expect(f.srcdoc.indexOf('Content-Security-Policy')).toBeLessThan(f.srcdoc.indexOf('<p>hi</p>'))
+  })
+  it('refuses a terminal node from an addon without a pty grant', () => {
+    renderNode({ type: 'terminal', session: 't1' }, { addon: 'wiki' })
+    expect(screen.getByText(/could not be shown/i)).toBeInTheDocument()
+  })
+  it('shows the placeholder alert for a terminal node from an addon with pty', async () => {
+    renderNode({ type: 'terminal', session: 't1' }, { addon: 'terminals' })
+    expect(await screen.findByText(/Terminal sessions arrive with the terminals addon/)).toBeInTheDocument()
+  })
+  it('renders alert and progress', () => {
+    renderNode({ type: 'stack', children: [{ type: 'alert', tone: 'warn', title: 'Budget at 80%' }, { type: 'progress', label: 'Children', value: 7, max: 25 }] }, { addon: 'usage' })
+    expect(screen.getByRole('status')).toHaveTextContent('Budget at 80%')
+    expect(screen.getByRole('progressbar', { name: 'Children' })).toHaveAttribute('aria-valuenow', '7')
   })
 })

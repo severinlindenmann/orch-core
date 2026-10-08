@@ -12,11 +12,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
 import { AddonChart } from './AddonChart'
+import { AddonFrame } from './AddonFrame'
+import { canUsePty } from './capabilities'
+import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
-import { MAX_DEPTH, parseNode, type NodeOf } from './nodes'
+import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { darkTheme } from './rjsfTheme'
 import { SafeMarkdown } from './SafeMarkdown'
-import type { SlotContext } from './slots'
+import { useAddons, type SlotContext } from './slots'
 
 const ThemedForm = withTheme(darkTheme)
 
@@ -84,6 +87,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         <ul className="divide-y divide-border">
           {n.items.map((it, i) => (
             <li key={i} className="flex items-center gap-2 py-1.5 first:pt-0 last:pb-0">
+              {it.status && <StatusDot status={it.status} />}
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] text-text">{it.title}</div>
                 {it.subtitle && <div className="truncate text-[12px] text-text-faint">{it.subtitle}</div>}
@@ -93,6 +97,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
                   {it.badge}
                 </Badge>
               )}
+              {it.actions && <ItemActions actions={it.actions} />}
             </li>
           ))}
         </ul>
@@ -107,6 +112,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
                   {c.label}
                 </TableHead>
               ))}
+              {n.rowActions && <TableHead className="h-8" />}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -117,6 +123,11 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
                     {r[c.key] === null || r[c.key] === undefined ? '–' : String(r[c.key])}
                   </TableCell>
                 ))}
+                {n.rowActions && (
+                  <TableCell className="py-1.5 text-right">
+                    <ItemActions actions={n.rowActions} row={r} />
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -132,6 +143,18 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <FormNode node={n} />
     case 'button':
       return <ButtonNode node={n} />
+    case 'alert':
+      return <AlertNode node={n} />
+    case 'progress':
+      return <ProgressNode node={n} />
+    case 'frame':
+      return (
+        <AddonFrame addon={addon} title={n.title}>
+          <FrameNode node={n} />
+        </AddonFrame>
+      )
+    case 'terminal':
+      return <TerminalNode />
     case 'link':
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
@@ -209,3 +232,79 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   )
 }
 
+
+const STATUS_DOT = { ok: 'bg-success', warn: 'bg-warning', error: 'bg-danger', idle: 'bg-text-faint', running: 'bg-info animate-pulse' } as const
+
+function StatusDot({ status }: { status: keyof typeof STATUS_DOT }) {
+  return <span role="img" aria-label={status} className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[status])} />
+}
+
+/** "$row.<key>" args take that row's cell value; a null or missing cell leaves the arg out. */
+function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {}
+  for (const [k, v] of Object.entries(args ?? {})) {
+    const ref = typeof v === 'string' ? /^\$row\.(.+)$/.exec(v) : null
+    const val = ref ? row?.[ref[1]] : v
+    if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') out[k] = val
+  }
+  return out
+}
+
+function ItemActions({ actions, row }: { actions: ItemAction[]; row?: Record<string, unknown> }) {
+  const { run, pending } = useAddonAction()
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {actions.map((a, i) => (
+        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
+          {a.label}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+const ALERT_TONE = {
+  info: 'border-info/40 bg-info-soft',
+  success: 'border-success/40 bg-success-soft',
+  warn: 'border-warning/40 bg-warning-soft',
+  error: 'border-danger/40 bg-danger-soft',
+} as const
+
+function AlertNode({ node }: { node: NodeOf<'alert'> }) {
+  return (
+    <div role="status" className={cn('rounded-md border px-3 py-2', ALERT_TONE[node.tone])}>
+      <div className="text-[13px] font-medium text-text">{node.title}</div>
+      {node.text && <div className="mt-0.5 text-[12px] text-text-muted">{node.text}</div>}
+    </div>
+  )
+}
+
+function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
+  const value = Math.min(node.value, node.max)
+  return (
+    <div>
+      <div className="mb-1 flex justify-between text-[12px] text-text-muted">
+        <span>{node.label}</span>
+        <span className="font-mono">
+          {node.value} / {node.max}
+        </span>
+      </div>
+      <div role="progressbar" aria-label={node.label} aria-valuemin={0} aria-valuemax={node.max} aria-valuenow={value} className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+        <div className="h-full rounded-full bg-brand" style={{ width: `${(value / node.max) * 100}%` }} />
+      </div>
+    </div>
+  )
+}
+
+/** Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box. */
+function TerminalNode() {
+  const { addon } = useContext(RuntimeCtx)
+  const { data } = useAddons()
+  if (!canUsePty(data?.find((a) => a.name === addon))) return <AddonUnavailable addon={addon} />
+  // TODO(Task 21): render core's <TerminalView session=…/> here.
+  return (
+    <div role="alert" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text-muted">
+      Terminal sessions arrive with the terminals addon
+    </div>
+  )
+}

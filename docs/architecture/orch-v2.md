@@ -451,6 +451,7 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D32 | Where e2e lives | Scenarios, runner and iPhone checklists live in orch-dev-kit `e2e/`. orch-core holds only `orch.testing.fake_relay` and the hooks the scenarios need. |
 | D33 | Branches | Only `main` is protected; only the owner merges into it. `develop` and feature branches belong to the bot: it merges a group's feature branch into `develop` itself after T2 and the reviews pass. The owner merges `develop` → `main` at phase ends (or more often). |
 | D34 | Guard in development | The orch-core Claude Code plugin (the guard hook) is disabled in dev sessions. The `orch` CLI's human-only checks stay in the product; on the dev machine a dev-only override lets agents act as the test human in workspaces marked dev in the state dir. Real workspaces ignore it. The guard is still tested by its own tests in T1/T2. |
+| D35 | No chains on the dev machine | The dev machine may push, merge into `develop`, deploy and test freely, end to end. The only fence is `main`. The orch-core plugin is not installed for dev sessions; e2e starts workspace agents with `claude --plugin-dir <orch-core working copy>/plugins/orch-core`. |
 
 ---
 
@@ -588,14 +589,17 @@ Safety comes from what the machine can reach, not from prompts:
 - **The sandbox keychain** is a separate file. Its password is unlocked at session start, or kept in the machine's
   login keychain under a dedicated item that only `bin/dev-env` reads.
 
-**Deny rules in `settings.json`** still apply in bypass mode. There are two:
-- network access to `tix.severin.io` and the production relay;
-- pushes to `main`, a second fence behind branch protection.
+**Deny rules in `settings.json`** still apply in bypass mode. The only ones are pushes and merges to `main`, a
+second fence behind branch protection. Everything else is free: pushing, merging into `develop`, deploying to the
+VPS, and running any test end to end (D35).
 
-**The orch guard is off for development (D34).** The orch-core Claude Code plugin, which carries the guard hook, is
-disabled in dev sessions (`"enabledPlugins": {"orch-core@orch-core": false}`). Builders are not policed by the
-product they are building. The guard is still exercised by its own tests in T1/T2, and by e2e scenarios that start
-a nested session with the plugin enabled when a scenario is about the guard.
+**The orch-core plugin is not installed for development (D34, D35).** Manager and implementer sessions use only
+the `orch` CLI from the working copy (`uv run orch …`), so the guard hook doesn't police the builders.
+- Where the product itself runs in an e2e scenario, the plugin is loaded from the working copy:
+  `claude --plugin-dir ~/orch-dev/orch-core/plugins/orch-core`. This covers a workspace agent working a received
+  ticket, an AI Factory run, and the workspace 2 agent on the VPS. These agents run exactly the code being built,
+  guard and skills included.
+- The guard is also covered by its own tests in T1/T2.
 
 **Human-only rules in the `orch` CLI stay in the product.** Approve, answer, verdict and close remain refused for
 agents. On the dev machine, a **dev override** lets an agent act as the scripted **test human**:

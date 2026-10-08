@@ -37,7 +37,7 @@ amendment.
 | D16 | Mobile tech | A PWA now, reusing the TIX vanilla-JS and WebCrypto code. A native shell later, if needed. |
 | D17 | In-flight work | Land the core work (Dark Factory stack #79→#143, #237, the Remote fixes). Freeze TIX #96/#97 and port their good parts into orch-relay. |
 | D18 | Stack | Python, FastAPI and SQLite (WAL), under systemd behind Caddy. The same as orch-core and TIX. |
-| D19 | Process | Spec, then review, then phased issues, then one PR per task group. **The owner merges every PR.** |
+| D19 | Process | Spec, then review, then phased issues, then one PR per task group into `develop`. The owner merges `develop` → `main` (D33). |
 | D20 | Repos | orch-relay and orch-publish are public. |
 
 ## 2. Goals and non-goals
@@ -419,11 +419,11 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 ## 13. Phases
 
 Each phase is a set of **task groups**. A group ends with the full test tier T2 (Part B §16), and a phase ends with
-T3. Every group is one PR, or a short stack of PRs, which the owner merges.
+T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merges it after T2 and the reviews; the owner merges `develop` → `main` (D33).
 
 | Phase | Content | Exit criteria |
 |---|---|---|
-| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, orch-core dev mode (#251) with the state-dir dev marker, the guard extended to all `ORCH_*` variables and the sandbox control files, an orch-relay skeleton (health, deploy), the e2e harness, landing the in-flight core work (D17), and spikes S1 (WebCrypto suite on iOS) and S2 (PWA push and passkeys in the iOS Simulator). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
+| **P0 Dev foundations** | The dev environment (Part B), VPS provisioning scripts, the dev override for human-only CLI checks with the state-dir dev marker (D34), `develop` branches and branch protection on `main` (D33), an orch-relay skeleton (health, deploy), the e2e harness, landing the in-flight core work (D17), and spikes S1 (WebCrypto suite on iOS) and S2 (PWA push and passkeys in the iOS Simulator). | An agent can start both demo workspaces, drive Mission Control in dev mode, deploy the relay to the VPS and run an empty e2e scenario from one command. |
 | **P1 Identity** | Workspace UUID, person id in Actor, the custody backends, the host socket API, `orch keys`, and device certificates. | Unit and contract tests pass. No key material is readable by an agent-UID process on the VPS. |
 | **P2 Relay core** | Directory, bridge v2 with protocol and vectors, members and epochs, and the core bridge host on v2. | Desktop browser ↔ workspace A over the dev relay, with epoch rotation tested. |
 | **P3 Mobile + pairing** | The PWA port, pairing v2, workspace cards, partitioned storage, logout and revoke, and WebAuthn. | Simulator e2e passes. **iPhone session 1:** camera QR, Face ID passkey, logout wipes. |
@@ -449,6 +449,8 @@ T3. Every group is one PR, or a short stack of PRs, which the owner merges.
 | D30 | Dev machine permissions | `bypassPermissions` on a dedicated machine. GitHub through a bot account, with `main` protected so only the owner merges (§19). |
 | D31 | Oldest supported iOS | iOS 18. Spike S1 checks the Ed25519/X25519 suite there (D22). |
 | D32 | Where e2e lives | Scenarios, runner and iPhone checklists live in orch-dev-kit `e2e/`. orch-core holds only `orch.testing.fake_relay` and the hooks the scenarios need. |
+| D33 | Branches | Only `main` is protected; only the owner merges into it. `develop` and feature branches belong to the bot: it merges a group's feature branch into `develop` itself after T2 and the reviews pass. The owner merges `develop` → `main` at phase ends (or more often). |
+| D34 | Guard in development | The orch-core Claude Code plugin (the guard hook) is disabled in dev sessions. The `orch` CLI's human-only checks stay in the product; on the dev machine a dev-only override lets agents act as the test human in workspaces marked dev in the state dir. Real workspaces ignore it. The guard is still tested by its own tests in T1/T2. |
 
 ---
 
@@ -461,7 +463,7 @@ is done by agents.
 
 | Role | Model | Does | Never |
 |---|---|---|---|
-| **Manager** | Opus | Splits a group into tasks, writes each implementer prompt (scope, files, targeted test command, acceptance), integrates, runs T2/T3, opens PRs, keeps the phase checklist | Writes large amounts of code itself, or merges |
+| **Manager** | Opus | Splits a group into tasks, writes each implementer prompt (scope, files, targeted test command, acceptance), integrates, runs T2/T3, opens PRs into `develop` and merges them once T2 and the reviews pass, keeps the phase checklist | Writes large amounts of code itself, or touches `main` |
 | **Implementer** | Sonnet | One task in its own git worktree: write the targeted test, implement, loop on T0, finish with T1, report the diff and evidence | Runs the full suite, touches files outside its task, changes permissions or the guard |
 | **Security reviewer** | Opus | Reviews every change touching crypto, keys, custody, auth, protocol, pairing, the guard, permits or the charter, before the PR. Also writes the adversarial tests for these. | Approves its own fixes. A fix goes back to an implementer, then gets a re-review. |
 | **Code reviewer** | Sonnet | General review of every PR: correctness, tests, simplicity, project conventions | Blocks on style alone |
@@ -568,47 +570,46 @@ The owner prepares items marked **Owner**. Agents do the rest in P0 and tick the
 
 ## 19. Permissions and guardrails
 
-The dev machine runs Claude Code in **`bypassPermissions` mode** (`claude --permission-mode bypassPermissions`, or
-`"defaultMode": "bypassPermissions"` in `~/orch-dev/.claude/settings.json`). Agents are never blocked by permission
-prompts.
+The dev machine runs Claude Code in **`bypassPermissions` mode** (`"defaultMode": "bypassPermissions"` in
+`~/orch-dev/.claude/settings.json`). Agents are never blocked by permission prompts or by the orch guard.
 
-Safety does not come from prompts. It comes from what the machine can reach. In bypass mode, Claude Code still
-applies explicit **deny rules** and **hooks**, so the few hard boundaries are written as those.
-
-**Hard boundaries in the environment:**
+Safety comes from what the machine can reach, not from prompts:
 
 - **A dedicated machine.** It has no real orch config, no real workspaces, no TIX account and no login to
-  `tix.severin.io`. Whatever an agent does there can only touch the sandbox, the test VPS and the dev domain.
-- **GitHub through a bot account (D30).** The machine logs `gh` in as a separate GitHub user (e.g. `orch-dev-bot`)
-  with write access to orch-core, orch-relay, orch-apps/orch-publish and orch-dev-kit.
-  - `main` in each repo is protected: a PR and one approval are required, and only the owner may merge or push.
-  - The bot can open PRs and push branches, and technically cannot merge.
-  - The owner's own GitHub token is never on the dev machine.
+  `tix.severin.io`. Whatever an agent does there touches only the sandbox, the test VPS and the dev domain.
+- **GitHub through a bot account (D30), with branches split (D33):**
+  - The machine logs `gh` in as a separate GitHub user (e.g. `orch-dev-bot`) with write access to the repos.
+  - `main` is protected in every repo: a PR and one approval are required, and only the owner can merge or push.
+  - `develop` and all feature branches are the bot's. It creates feature branches, opens PRs into `develop` and
+    merges them itself once T2 and the required reviews have passed.
+  - The owner reviews and merges `develop` → `main`. The owner's own GitHub token is never on the dev machine.
 - **Infrastructure scoped to tests.** The VPS is a test server. A DNS token, if used, is limited to the
   `dev.severin.io` zone. An Anthropic API key for the VPS agent has a spend cap.
-- **The sandbox keychain** is a separate file. Its password is unlocked by the owner at session start, or kept in
-  the machine's login keychain under a dedicated item that only `bin/dev-env` reads.
+- **The sandbox keychain** is a separate file. Its password is unlocked at session start, or kept in the machine's
+  login keychain under a dedicated item that only `bin/dev-env` reads.
 
-**Deny rules in `settings.json`** (they still apply in bypass mode):
-
+**Deny rules in `settings.json`** still apply in bypass mode. There are two:
 - network access to `tix.severin.io` and the production relay;
-- `gh pr merge` and pushes to `main` (a second fence behind branch protection).
+- pushes to `main`, a second fence behind branch protection.
 
-**Hooks:** the orch guard keeps running. That is the product under test, and it is the reason for dev mode below.
+**The orch guard is off for development (D34).** The orch-core Claude Code plugin, which carries the guard hook, is
+disabled in dev sessions (`"enabledPlugins": {"orch-core@orch-core": false}`). Builders are not policed by the
+product they are building. The guard is still exercised by its own tests in T1/T2, and by e2e scenarios that start
+a nested session with the plugin enabled when a scenario is about the guard.
 
-**Rules that hold in the product itself, whatever the permission mode:**
+**Human-only rules in the `orch` CLI stay in the product.** Approve, answer, verdict and close remain refused for
+agents. On the dev machine, a **dev override** lets an agent act as the scripted **test human**:
+- It works only when `ORCH_DEV=1` and the workspace is marked dev in `$ORCH_STATE_DIR/dev-workspaces.json`.
+- Actions are signed by the test human's own person key from the sandbox keychain.
+- Its certificates carry `dev: true`, and real workspaces refuse to pin a person or device with that flag.
+- A real workspace ignores the override completely. A test proves this in every T2.
 
-- Agents drive Mission Control only through dev mode (#251) on workspaces marked `dev` in the host state dir.
-  Actions are recorded as `agent:<session>`, never as the human. The guard and the human-only rules are not
-  weakened for real workspaces.
-- Owner-only actions in the demo workspaces (approve, verdict, close) are done by a **test human**. This is a
-  scripted persona with its own person key in the sandbox keychain, used only by e2e scenarios. Its certificates
-  carry `dev: true`, and real workspaces refuse to pin a person or device with that flag.
-- No secrets in repos. VAPID keys and the like are generated on the VPS and kept there.
+No secrets in repos. VAPID keys and the like are generated on the VPS and kept there.
 
-**Changing the dev kit.** Agents never edit the live `~/orch-dev` checkout in place: changing it mid-session would
-change the running environment. Kit changes are made in a separate clone at `~/orch-dev/src/orch-dev-kit`
-(gitignored) and go through a PR. After the owner merges, the owner runs `git pull` in `~/orch-dev`.
+**Changing the dev kit.** Agents don't edit the live `~/orch-dev` checkout in place: that would change the running
+environment mid-session. Kit changes are made in a separate clone at `~/orch-dev/src/orch-dev-kit` (gitignored), on a
+feature branch, and merged into `develop` like every other repo. Updating the live checkout (`git pull` in
+`~/orch-dev`) happens between sessions.
 
 ## 20. VPS setup (test server)
 
@@ -700,7 +701,7 @@ The owner reports pass or fail per step, and screenshots go into Drop.
   the commands run and their output.
 - **Group (manager):** T2 green, the security reviewer passed (if security-relevant), the code reviewer passed, the
   docs updated (protocol docs, `docs/remote.md` and so on), and a PR with test evidence and the e2e scenario list.
-- **Phase:** every group merged by the owner, T3 green, the iPhone session passed (where there is one), and the
+- **Phase:** every group merged into `develop`, `develop` merged into `main` by the owner, T3 green, the iPhone session passed (where there is one), and the
   phase's exit criteria from §13 shown in a short recorded e2e run.
 
 ## 24. Before the first implementation task

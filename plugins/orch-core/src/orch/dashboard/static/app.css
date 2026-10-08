@@ -1547,8 +1547,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 var(--s-1); border: 1p
   color: var(--muted); border-top: 1px solid var(--line); }
 .term-screen { margin: 0; background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono);
   font-size: 0.875rem; line-height: 1.2; padding: var(--s-3); white-space: pre; overflow: auto; }
-/* a tile: the last lines at a readable size, cropped on the right, never shrunk */
-.term-tail { height: calc(8 * 1.2em + 2 * var(--s-3)); font-size: 0.8125rem; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+/* a tile: the last lines at a readable size, cropped on the right, never shrunk. A plain block, never flex or grid:
+   the screen is inline spans (one per colour run), and a flex/grid container makes every span its own line. */
+.term-tail { height: calc(8 * 1.2em + 2 * var(--s-3)); font-size: 0.8125rem; overflow: hidden; display: block; }
 .term-summary { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); align-items: baseline; margin: 0 0 var(--s-3); padding: var(--s-3) var(--s-4);
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
 .term-layout { display: flex; gap: var(--s-4); align-items: flex-start; }

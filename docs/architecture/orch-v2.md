@@ -99,8 +99,9 @@ Non-goals for v2:
   workspace: they were never sealed its `WK`, and the workspace's `WXK` opens only what is addressed to it. Rule:
   anything you put into a workspace on a client's machine is visible to that client. The dashboard says so on such
   a workspace's card, which is marked "hosted by <owner of the machine>" at setup.
-- **Accepted leaks to the relay:** sizes, timing, routing ids (random workspace and device ids), push timing, and
-  that a question was resolved.
+- **Accepted leaks to the relay:** sizes, timing, routing ids (a random workspace id, and device ids derived from
+  device keys), push timing, and that a question was resolved. The relay can link a device's traffic across
+  workspaces, as it can through the device's certificate anyway.
 - **Sealed, not leaked:** device and machine names, project and workspace names and descriptions (orch-tix #75's
   lesson).
 - **The one deliberate exception: voice-note transcription.** It is opt-in per person and off by default. When it is
@@ -158,7 +159,12 @@ never a mix.
   id schemes in use today: `sha256(customer|prefix)`, the resolved path, and the TIX space id. Records keyed by the
   old ids are migrated at first run of the new version.
 - The `WSK` key pair is created at the same time, in the host keychain.
-- The **directory card** has two parts, both signed by `WSK` and by the owner's `PK`:
+- **Delegation.** The owner's `PK` signs a one-time delegation `{workspace_id, wsk_pub, owner_person_id,
+  client_hosted}` when the workspace is created. After that, `WSK` alone signs the parts that rotate, such as a new
+  `WXK` every 90 days, so rotation never needs the primary device. A verifier checks the delegation first, then
+  the card. A client-hosted workspace cannot drop its `client_hosted` flag, because the flag is in the
+  PK-signed part.
+- The **directory card** has two parts, both covered by that chain:
   - a cleartext part `{workspace_id, wsk_pub, wxk_pub, wxk_version, owner_person_id, relay_url}`, which the relay
     and orch-publish verify;
   - a sealed part `{name, description, capabilities}`, sealed to the people the owner shares the card with.
@@ -320,8 +326,15 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
   4. **First time only:** the host asks the owner's primary device to sign a device certificate. When the host *is*
      the primary device, it signs locally. The QR carries a pin of the owner's `PK`, which the phone uses to check
      the certificate.
+     - **The primary chooses the randomness.** After it receives the phone's keys, the primary draws a fresh nonce
+       and returns it in a `cert_challenge` signed by `PK`. The phone verifies it with the `PK` pin from the QR and
+       checks that the keys in it are its own. Phone and primary then show a code derived from that signed
+       challenge, and the primary needs its own confirmation. A host can no longer grind a matching code
+       (protocol v2 §8.4).
+     - The primary signs a certificate only for the keys in its own challenge, once, with at most one open
+       request per workspace.
      - If the primary device is unreachable, pairing waits in `cert_pending` for up to 10 minutes, and both screens
-       say "Open orch on <primary>". The primary shows the same fingerprint and needs its own confirmation.
+       say "Open orch on <primary>".
      - **No `WK` is sealed before a valid certificate exists.**
      - A phone that already has a certificate presents it. The host checks
        `cert.person_id == card.owner_person_id` and otherwise refuses with `other_person` (D1 C is out of scope).

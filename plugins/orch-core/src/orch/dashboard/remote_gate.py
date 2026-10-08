@@ -106,6 +106,8 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),
     # a standing Dark permission for this checkout's agents: as strong as a grant, so it needs the same fresh assertion
     ("POST", "/permits/{rid}/profile"): _t(Scope.TYPE, fresh=True),
+    # a release Retry lets the runner run the recipe's merge or deploy commands as the human on the host
+    ("POST", "/factory/{ref}/release/retry"): _t(Scope.TYPE, fresh=True),
     ("POST", "/addons/{name}/actions/{action_id}"): TYPE,  # runs addon code; a later change may lower it
     # quick tasks (orch.core.quick): adding and closing are ordinary edits; reopen and drop are the human's call
     ("POST", "/quick/add"): OPERATE, ("POST", "/quick/{qid}/done"): OPERATE, ("POST", "/quick/{qid}/release"): OPERATE,

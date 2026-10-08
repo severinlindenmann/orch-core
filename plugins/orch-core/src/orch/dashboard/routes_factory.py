@@ -10,7 +10,8 @@ from fastapi import APIRouter, Form, Request
 
 from orch.dashboard.data import factory as factory_data
 from orch.dashboard.routes_ticket import load_or_error
-from orch.dashboard.views import HUMAN, back, error_text, page
+from orch.dashboard.reach import request_actor
+from orch.dashboard.views import back, error_text, page
 from orch.errors import OrchError, UsageError
 
 router = APIRouter()
@@ -58,7 +59,7 @@ def release_retry(request: Request, ref: str, stage: Annotated[str, Form()] = ""
     try:
         if not permits.enabled(ws):
             raise UsageError("AI Factory is switched off in this workspace")
-        text = factory_release.retry(ws, HUMAN, eid, stage, unit)
+        text = factory_release.retry(ws, request_actor(request), eid, stage, unit)
     except OrchError as e:
         return back(url, err=error_text(e))
     return back(url, msg=text)

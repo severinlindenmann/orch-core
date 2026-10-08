@@ -887,6 +887,7 @@ _REMOTE_DENIED = ("remote-humans.json holds the phone pairing keys; only the hum
 # records under permits/bridge (host key, device registry, audit log, request store): the guard is their only barrier.
 # The Dark profile's module (orch.core.dark_profile) is driven from code no more than the permits module.
 _LEDGER = re.compile(r"(?i)\bledger\.(?:key|jsonl|head|lock)\b|orch[/\\]+(?:ledger|permits)\b|ORCH_STATE_DIR\}?[/\\]+(?:ledger|permits)\b"
+                     r"|\bpermits[/\\]+(?:used|requests|children|sessions|armed|runs|factory-command|factory-release"
                      r"|release-records|release-repos|tmux)\b|\bpermits[/\\]+bridge(?![\w-]|\.\w)"
                      r"|\borch\.core\.(?:ledger|permits|dark_profile|factory_release)\b"
                      r"|\bfrom\s+orch\.core\s+import\b[^;\n]*\b(?:ledger|permits|dark_profile|factory_release)\b")
@@ -1410,10 +1411,12 @@ def _sets_git_exec_config(seg: str, plain: str) -> bool:
     """A `git config` write, a `git -c`, or `git --config-env` that sets a key which runs a program or redirects git
     (`_GIT_EXEC_KEY`), writes the user's global or system config, or points `--file` into `.git` or the user's
     config; and any such command whose `git` word, key or file is not a plain literal (`$'..'`, `${..}`, `$(..)`,
-    backslashes, quotes inside a word): its value is unknown here, so it is denied (fail closed)."""
+    backslashes, quotes inside a word): its value is unknown here, so it is denied (fail closed). A `$( … )` payload
+    is judged as its own segment (_command_segments yields it), so the outer command is judged with a placeholder."""
+    seg = _without_substitutions(seg)
     if _GIT_WORD.search(plain) and _GIT_CONFIG.search(plain):  # the plain spelling, as before
         bare = seg.replace("'", "").replace('"', "")
-        if _GIT_EXEC_KEY.search(bare) and not _CONFIG_READ.search(bare):
+        if _GIT_EXEC_KEY.search(bare) and not _git_config_reads(seg):
             return True
     toks = _RAW_TOKEN.findall(seg)
     vals = [_word(t) for t in toks]
@@ -1466,7 +1469,7 @@ def _sets_git_exec_config(seg: str, plain: str) -> bool:
                 key = a
                 break
         joined = " " + " ".join(["config", *[a for a in args if a is not None]])
-        if _CONFIG_READ.search(joined):
+        if _git_config_reads("git" + joined):
             continue
         for k, a in enumerate(args):
             if a in ("--global", "--system"):
@@ -3042,7 +3045,7 @@ def _bash(ws, cmd: str, cwd=None, _decoded: bool = False, _joined: bool = False)
         return Decision(False, _STARTUP_DENIED)
     if (_RECORDER_FILE.search(code) or (_SETTINGS_JSON.search(code) and _STATUS_LINE.search(code))) and _is_write(cmd):
         return Decision(False, _RECORDER_DENIED)
-    if _GIT_INTERNAL_PATH.search(_paths_text(code)) and _is_git_write(cmd):
+    if _writes_git_internal(cmd, code):
         return Decision(False, _GIT_DIR_DENIED)
     if _GLOBAL_GIT_CONFIG.search(_paths_text(code)) and _is_git_write(cmd):
         return Decision(False, _GLOBAL_GIT_DENIED)
@@ -3101,6 +3104,15 @@ def _startup_read(seg: str, cmd: str) -> bool:
             return False
         pos = cmd.find(seg, pos + 1)
     return True
+
+
+def _writes_git_internal(cmd: str, code: str) -> bool:
+    """A write into a repository's own files: a simple command that names one (`_GIT_INTERNAL_PATH`) and writes (or
+    redirects). A read of one next to an unrelated write (`ls .git/hooks && echo x > out.txt`) is not."""
+    if not _GIT_INTERNAL_PATH.search(_paths_text(code)):
+        return False
+    return any(_GIT_INTERNAL_PATH.search(_paths_text(s)) and (_is_git_write(s) or _ANY_REDIRECT.search(_unquoted(s)))
+               for s in _command_segments(cmd))
 
 
 def _writes_startup_file(cmd: str, code: str) -> bool:

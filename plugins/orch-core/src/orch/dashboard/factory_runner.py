@@ -117,7 +117,7 @@ def release_once(ws, run=None) -> list[str]:
     from orch.core import factory_release, permits
     if not permits.enabled(ws):
         return []
-    return factory_release.tick(ws, HUMAN, run)
+    return factory_release.tick(ws, LOCAL_HUMAN, run)
 
 
 async def _release_loop(ws, seconds: float) -> None:

@@ -192,10 +192,32 @@ def _start_agent(ws, route_path, pp, params, method, target, body):
         return None
     session = terminals.free_name(ws, t.id) if terminal == "tmux" else t.id
     more = " alongside the one already running" if another == "1" else ""
-    return _start(f"Start an agent on ticket {t.id}: {_text(t.title)}. Harness {_text(harness)}, mode {_text(mode)}, "
-                  f"in {_where(terminal)} as session {session}{more}.", kind="start_agent", ticket=t.id,
-                  title=t.title, mode=mode, harness=harness, terminal=terminal, session=session, another=another,
-                  next=nxt, where=where)
+    route = _routing(ws, t.id, mode, harness)
+    if route is False:
+        return None
+    # the title is agent-writable text: quoted and last, so it cannot read as part of the sentence
+    return _start(f"Start an agent. Harness {_text(harness)}, mode {_text(mode)}, in {_where(terminal)} as session "
+                  f"{session}{more}.{route[0]} Ticket {t.id} titled: \"{_text(t.title)}\"", kind="start_agent",
+                  ticket=t.id, title=t.title, mode=mode, harness=harness, terminal=terminal, session=session,
+                  another=another, next=nxt, where=where, routing=route[1])
+
+
+def _routing(ws, ticket, mode, harness):
+    """(sentence, bound fields) for what an addon with `launch` chooses for this start (model, environment names, a
+    prompt note): the route applies it, so the sheet shows it. False when the addon cannot plan (the route refuses)."""
+    from orch.addons import launching
+    from orch.addons.api import LaunchRequest
+    try:
+        r = launching.resolve(ws, LaunchRequest(ticket, mode, harness), strict=True)
+    except Exception:  # noqa: BLE001 - the route refuses it too: no sheet
+        return False
+    if r is None or not r.active:
+        return "", None
+    names = ", ".join(_text(k) for k, _ in r.env)
+    parts = [f"model {_text(r.model)}" if r.model else "", f"environment {names}" if names else "",
+             "a note added to the prompt" if r.note else ""]
+    return (" An addon chooses: " + "; ".join(x for x in parts if x) + ".",
+            {"model": r.model, "env": [list(e) for e in r.env], "note": r.note, "label": r.label})
 
 
 def _start_quick(ws, route_path, pp, params, method, target, body):
@@ -216,9 +238,9 @@ def _start_quick(ws, route_path, pp, params, method, target, body):
     if not harness:
         return None
     session = terminals.free_name(ws, t["id"]) if terminal == "tmux" else t["id"]
-    return _start(f"Start an agent on quick task {t['id']}: {_text(t['title'])}. Harness {_text(harness)}, in "
-                  f"{_where(terminal)} as session {session}.", kind="start_quick", task=t["id"], title=t["title"],
-                  harness=harness, terminal=terminal, session=session, where=where, next=nxt)
+    return _start(f"Start an agent. Harness {_text(harness)}, in {_where(terminal)} as session {session}. "
+                  f"Quick task {t['id']} titled: \"{_text(t['title'])}\"", kind="start_quick", task=t["id"],
+                  title=t["title"], harness=harness, terminal=terminal, session=session, where=where, next=nxt)
 
 
 _BUILD = {"permission": _permission, "charter": _charter, "verdict": _verdict, "action": _action,

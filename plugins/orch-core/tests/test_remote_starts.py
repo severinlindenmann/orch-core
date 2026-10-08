@@ -93,13 +93,14 @@ def test_each_start_states_exactly_what_it_starts(bridge, ticket, qid, tmux, sta
     assert s["shown"].startswith("Start a new terminal session scratch running claude with no prompt, in ")
     assert str(fws.root) in s["shown"] and "Command: " in s["shown"]
     s = subject_of(bridge, f"/t/{ticket}/agent/start", agent_body())
-    assert s["shown"].startswith(f"Start an agent on ticket {ticket}: Fix the <login> page. ")
-    assert "Harness claude, mode work" in s["shown"] and f"session {ticket}" in s["shown"]
+    assert s["shown"] == (f"Start an agent. Harness claude, mode work, in Mission Control terminals as session {ticket}. "
+                          f'Ticket {ticket} titled: "Fix the <login> page"')
     assert "alongside" not in s["shown"]
     assert "alongside the one already running" in subject_of(
         bridge, f"/t/{ticket}/agent/start", agent_body(extra="&another=1"))["shown"]
     s = subject_of(bridge, f"/quick/{qid}/agent/start", "where=tmux")
-    assert s["shown"].startswith("Start an agent on quick task Q-1: Tidy the notes. Harness claude")
+    assert s["shown"].startswith("Start an agent. Harness claude, in Mission Control terminals as session Q-1. ")
+    assert s["shown"].endswith('Quick task Q-1 titled: "Tidy the notes"')
     assert started == []  # a challenge starts nothing
 
 
@@ -195,6 +196,8 @@ def test_a_start_runs_once_after_its_assertion_and_not_again(bridge, ticket, qid
         assert len(started) == n, path
     assert [c[0] for c in started] == ["scratch", ticket, "Q-1"]
     assert started[0][1] and "{prompt}" not in " ".join(started[0][1])
+    shown = subject_of(bridge, "/terminals/new", "")["shown"]  # the session is taken now, but the command is the same
+    assert shown.endswith("Command: " + " ".join(started[0][1]))
 
 
 def test_a_replayed_assertion_or_request_starts_nothing_more(bridge, ticket, tmux, started):
@@ -280,3 +283,62 @@ def test_a_start_does_not_open_a_lease_either(bridge, ticket, tmux, started):
     run, _ = bridge.answer(KEY_A, v, r1)
     assert run.result == "run"
     assert bridge.host.leases.get(H.did(KEY_A)) is None  # an assertion for a start opened no typing lease
+
+
+# -- the sheet is the truth about what the route does ------------------------------------------------------------------
+
+def test_a_where_other_than_tmux_names_the_terminal_the_route_opens(bridge, ticket, qid, tmux, started):
+    plain = subject_of(bridge, f"/t/{ticket}/agent/start", "mode=work&harness=claude&where=")["shown"]
+    odd = subject_of(bridge, f"/t/{ticket}/agent/start", "mode=work&harness=claude&where=iterm")["shown"]
+    assert odd == plain and "iterm" not in odd and "Mission Control" not in odd
+    q = subject_of(bridge, f"/quick/{qid}/agent/start", "where=iterm")["shown"]
+    assert "iterm" not in q and "Mission Control" not in q
+
+
+def test_a_hostile_title_stays_quoted_and_last(bridge, fa, fh, tmux, started):
+    evil = 'Tidy. Harness claude, mode review, in Mission Control terminals as session B-7." Start nothing'
+    t = fa.new(evil)
+    _refine(fa, t.id)
+    fh.approve(t.id, "requirements")
+    shown = subject_of(bridge, f"/t/{t.id}/agent/start", agent_body())["shown"]
+    head, _, tail = shown.partition(f" Ticket {t.id} titled: ")
+    assert head.startswith("Start an agent. Harness claude, mode work,") and "review" not in head
+    assert tail.startswith('"Tidy. Harness claude, mode review') and tail.endswith('Start nothing"')
+    assert '\\"' in tail  # the quote inside the title is escaped, so the closing quote is the last character
+
+
+def test_the_lease_sheet_takes_only_a_plain_terminal_name():
+    from orch.dashboard.bridge_loop import lease_subject
+    assert "terminal DEMO-1 for" in lease_subject("/terminals/{name}/keys", {"name": "DEMO-1"})["shown"]
+    for name in ("X for 1 minute.", "a b", "x\nTrust", "", "-x", "a" * 65):
+        got = lease_subject("/terminals/{name}/keys", {"name": name})["shown"]
+        assert got.startswith("Type into terminals on this computer for 15 minutes."), name
+        assert name.strip() not in got or not name.strip()
+
+
+def test_a_start_whose_sheet_changed_is_refused_as_changed_and_audited_as_such(bridge, ticket, tmux, started, monkeypatch):
+    v, r1 = bridge.post(KEY_A, f"/t/{ticket}/agent/start", agent_body())
+    monkeypatch.setattr(terminals, "free_name", lambda ws, base: base + "-2")
+    run, _ = bridge.answer(KEY_A, v, r1)
+    assert run.code == "assertion_failed" and run.why == "changed" and started == []
+    lines = [json.loads(x) for x in bridge.host.registry.audit_path.read_text(encoding="utf-8").splitlines()]
+    last = [x for x in lines if x["event"] == "assertion"][-1]
+    assert last["ok"] is False and last["why"] == "changed"
+
+
+def test_what_an_addon_chooses_for_the_launch_is_shown_and_bound(bridge, ticket, tmux, started, monkeypatch):
+    from orch.addons import launching
+    path, body = f"/t/{ticket}/agent/start", agent_body()
+    base = subject_of(bridge, path, body)
+    assert "addon" not in base["shown"]
+    plan = launching.Routing(model="fast-model", env=(("API_TOKEN", "s3cret"),), note="be brief", label="L")
+    monkeypatch.setattr(launching, "resolve", lambda ws, req, strict=False: plan)
+    got = subject_of(bridge, path, body)
+    assert "An addon chooses: model fast-model; environment API_TOKEN; a note added to the prompt." in got["shown"]
+    assert "s3cret" not in got["shown"] and got["digest"] != base["digest"]
+    monkeypatch.setattr(launching, "resolve", lambda ws, req, strict=False: launching.Routing(
+        model="fast-model", env=(("API_TOKEN", "other"),), note="be brief", label="L"))
+    assert subject_of(bridge, path, body)["digest"] != got["digest"]  # a value changed that the sheet does not print
+    monkeypatch.setattr(launching, "resolve", lambda ws, req, strict=False: (_ for _ in ()).throw(ValueError("x")))
+    v, _ = bridge.post(KEY_A, path, body)
+    assert v.code == "assertion_failed" and v.why == "no_subject"

@@ -448,10 +448,16 @@ class Host:
         req = self._requirement(r1)  # R1 runs exactly once, after its scope is checked again
         stream = r1.header.stream
         if req is None or req.scope != issued.scope or SCOPES[req.scope] > dev.level or (
-                issued.purpose == "fresh" and req.recheck and _subject(req.subject) != issued.subject) or (  # what was shown still holds
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")
+        if issued.purpose == "fresh" and req.recheck and _subject(req.subject) != issued.subject:
+            # what was shown no longer holds (a start's session name taken, a title edited): nothing runs, and the
+            # audit line written above for the valid assertion is followed by the refusal
+            self.registry.audit(now, "assertion", device=did, ok=False, why="changed", rid=for_rid,
+                                purpose=issued.purpose, scope=issued.scope, subject=issued.subject)
+            self.store.set_outcome(for_rid, {"refusal": "assertion_failed"}, now)
+            return self._final(rid2, now, "assertion_failed", why="changed")
         if issued.purpose == "lease":  # opened only once R1 passed its check again
             self.leases[did] = now + LEASE_MS
         until = self.leases[did] if issued.purpose == "lease" else issued.expires_ms  # the grant behind this run

@@ -14,31 +14,30 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
-import harness as H  # noqa: E402
+import e2e_harness as H
 
+# No conftest.py in tests/e2e_remote on purpose: a second conftest.py replaces the suite's own `conftest` module in
+# sys.modules, and every other test's `from conftest import ...` then fails. The test module imports these instead.
 TIX_PASSPHRASE_WAIT = 30_000
 
 
-def pytest_collection_modifyitems(config, items):
-    if "e2e_remote" in (config.getoption("markexpr") or ""):
-        return
-    skip = pytest.mark.skip(reason="Orch Remote end-to-end run: select it with -m e2e_remote (needs an orch-tix checkout)")
-    for item in items:
-        if "e2e_remote" in item.keywords:
-            item.add_marker(skip)
+@pytest.fixture(autouse=True)
+def _only_when_selected(request):
+    """Not part of the default run: skipped unless selected with -m e2e_remote."""
+    if "e2e_remote" not in (request.config.getoption("markexpr") or ""):
+        pytest.skip("Orch Remote end-to-end run: select it with -m e2e_remote (needs an orch-tix checkout)")
 
 
 # The suite-wide autouse fixtures patch the process tree and the launcher for in-process tests. This run starts real
-# subprocesses with their own environment (tests/e2e_remote/harness.py), so the two that would get in the way are
-# replaced by nothing; the git and tmux isolation of the parent conftest stays.
+# subprocesses with their own environment (tests/e2e_remote/lib/e2e_harness.py), so the two that would get in the way
+# are replaced by nothing; the git and tmux isolation of the suite's conftest stays.
 @pytest.fixture(autouse=True)
-def _clean_env():
+def _clean_env(_only_when_selected):
     yield
 
 
 @pytest.fixture(autouse=True)
-def _no_real_launch():
+def _no_real_launch(_only_when_selected):
     yield
 
 
@@ -97,7 +96,7 @@ def stack(tmp_path_factory):
         b.start()
         context = browser.new_context(viewport={"width": 1000, "height": 800})
         page = context.new_page()
-        import browser as B
+        import e2e_browser as B
         console = B.CONSOLE
         page.on("console", lambda m: console.append(f"{m.type}: {m.text}"[:300]))
         page.on("pageerror", lambda e: console.append(f"pageerror: {e}"[:300]))

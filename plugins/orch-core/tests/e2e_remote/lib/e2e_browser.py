@@ -5,7 +5,7 @@ import time
 
 from playwright.sync_api import expect
 
-import harness as H
+import e2e_harness as H
 
 
 def pair(stack, host, scope: str = "operate", link: str | None = None) -> str:

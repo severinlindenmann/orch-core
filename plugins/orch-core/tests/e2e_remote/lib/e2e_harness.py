@@ -22,8 +22,8 @@ from pathlib import Path
 
 import httpx
 
-HERE = Path(__file__).resolve().parent
-LAUNCHER = HERE / "serve_launcher.py"
+HERE = Path(__file__).resolve().parent  # tests/e2e_remote/lib
+LAUNCHER = HERE.parent / "serve_launcher.py"
 SNAPS = Path(os.environ.get("ORCH_E2E_SNAPS", "/tmp/orch-e2e-remote-snaps"))  # pictures of a failure
 SNAPS.mkdir(parents=True, exist_ok=True)
 _Popen = subprocess.Popen  # the suite's autouse fixtures may replace Popen on the module; keep the real one

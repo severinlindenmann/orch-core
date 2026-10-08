@@ -17,10 +17,15 @@ import pytest
 pytest.importorskip("playwright.sync_api", reason="the end-to-end run needs Playwright (pip install pytest-playwright)")
 pytest.importorskip("httpx")
 
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
 from playwright.sync_api import expect  # noqa: E402
 
-import browser as B  # noqa: E402
-import harness as H  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent / "lib"))  # only lib/, never this folder (see lib/e2e_fixtures.py)
+import e2e_browser as B  # noqa: E402
+import e2e_harness as H  # noqa: E402
+from e2e_fixtures import _clean_env, _no_real_launch, _only_when_selected, stack  # noqa: E402,F401  (fixtures)
 
 pytestmark = pytest.mark.e2e_remote
 

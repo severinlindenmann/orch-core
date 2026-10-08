@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { AddonLanes } from './AddonLane'
+import { ColumnSums } from './ColumnSum'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
@@ -100,6 +101,7 @@ function Column({
         <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
           {total}
         </span>
+        <ColumnSums tickets={tickets} />
         <span className="flex-1" />
         {humanOnly && (
           <Tooltip>

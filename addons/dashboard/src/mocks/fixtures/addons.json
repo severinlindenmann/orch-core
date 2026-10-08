@@ -884,24 +884,7 @@
         "icon": "Ruler",
         "node": {
           "type": "form",
-          "schema": {
-            "type": "object",
-            "properties": {
-              "points": {
-                "type": "integer",
-                "title": "Points",
-                "enum": [
-                  1,
-                  2,
-                  3,
-                  5,
-                  8,
-                  13,
-                  21
-                ]
-              }
-            }
-          },
+          "schema": { "$ref": "addon.pointsSchema" },
           "uiSchema": {
             "points": {
               "ui:placeholder": "Choose"
@@ -924,6 +907,9 @@
           "label": "pt",
           "value": {
             "$ref": "ticket.addons.estimate.points"
+          },
+          "sum": {
+            "$ref": "ticket.addons.estimate.weight"
           }
         }
       },

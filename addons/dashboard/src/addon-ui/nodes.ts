@@ -22,6 +22,8 @@ export const statNode = z.object({
   label: text,
   value: z.union([z.string().max(200), z.number()]).nullable(),
   hint: text.optional(),
+  /** What a card-field stat adds to its Board column's sum, when it differs from `value` (e.g. a t-shirt size's weight). */
+  sum: z.union([z.string().max(200), z.number()]).nullable().optional(),
 })
 export const kvNode = z.object({
   type: z.literal('kv'),

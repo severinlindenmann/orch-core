@@ -83,6 +83,16 @@ _ERRORS = {"bad_request": (400, b"This request cannot be read."), "too_large": (
            "timeout": (504, b"This took too long."), "error": (500, b"Something went wrong on the computer.")}
 
 
+# The routes that carry their own Content-Security-Policy (docs/dashboard-frame.md): never drawn as a dashboard page.
+_OWN_POLICY = re.compile(r"/(?:a|w|wp|wpf)/|/addons/[^/]+/files/")
+
+
+def _is_dashboard_page(start, path: str) -> bool:
+    """A navigation answer the device may draw in its frame: HTML, from a route that has the dashboard's own policy."""
+    ctype = next((v for k, v in start.headers if k.lower() == "content-type"), "")
+    return ctype.lower().startswith("text/html") and not _OWN_POLICY.match(path.split("?", 1)[0])
+
+
 def _form(meta, data, query: str):
     """The parameters the gate would read for this request: the query and, for an urlencoded body, the form. None
     when the body is not an urlencoded form (as in the gate: multipart, no content type), is over the peek limit, or
@@ -437,11 +447,14 @@ class HostLoop:
                                                                            type(e).__name__))
 
     @staticmethod
-    def _head(start, reason) -> dict:
+    def _head(start, reason, path: str | None = None) -> dict:
         if start is None:
             status = _ERRORS.get(reason, _ERRORS["error"])[0]
             return {"status": status, "headers": [["content-type", "text/plain; charset=utf-8"]]}
-        return {"status": start.status, "headers": [[k, v] for k, v in start.headers]}
+        head = {"status": start.status, "headers": [[k, v] for k, v in start.headers]}
+        if path is not None and _is_dashboard_page(start, path):
+            head["page"] = True  # the device draws only an answer the host tags as a dashboard page (bridge-frame.md)
+        return head
 
     def _store(self, run, head: dict, body: bytes) -> bool:
         """Store the outcome before anything of it is sent; False when the run may not be answered with it. A body
@@ -466,7 +479,7 @@ class HostLoop:
         if reason == "not_authorized":
             await self._refuse(run, False)
             return
-        head = self._head(start if reason is None else None, reason)
+        head = self._head(start if reason is None else None, reason, req.path)
         body = b"".join(parts) if reason is None else _ERRORS.get(reason, _ERRORS["error"])[1]
         if not self._store(run, head, body):
             await self._refuse(run, False)

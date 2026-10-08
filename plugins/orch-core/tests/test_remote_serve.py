@@ -214,6 +214,7 @@ def test_a_page_at_look_comes_back_sealed_and_signed(ws, fake, put):
         await until(lambda: any(x[0].flags & E.F_LAST for x in fake.chunks(rid)))
         chunks = fake.chunks(rid)
         assert chunks[0][1]["status"] == 200 and b"<html" in b"".join(c[2] for c in chunks)
+        assert chunks[0][1]["page"] is True  # the device draws only a page the host tags (found by the end-to-end run)
         assert not any(c[0].flags & E.F_REFUSAL for c in chunks)
         assert all("set-cookie" not in k.lower() for k, _ in chunks[0][1]["headers"])
         await finish(loop, task)

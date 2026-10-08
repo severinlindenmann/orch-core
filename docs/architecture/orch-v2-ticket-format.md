@@ -246,78 +246,121 @@ other addon.
 
 Real secrecy from other members means a separate workspace.
 
-## 10. How agents see and change tickets
+## 10. The agent interface
 
-Agents never read or write ticket files directly. They use the `orch` CLI, which talks to the workspace host over
-its local socket (`<state>/hosts/<workspace_id>.sock`). If no host is running, the CLI starts one. The host does all
-writes, signs its appends, and holds every key. The agent holds none.
+The `orch` CLI is built for agents first. The goal: an agent does its work with **as little extra context as
+possible**. It loads nothing it doesn't need, its output is terse, and it is told what to do next.
 
-### What tells an agent how to work
+### 10.1 Decisions
 
-| Source | Content | When the agent sees it |
+| # | Decision |
+|---|---|
+| A1 | **The CLI is primary.** There is no MCP server in the core. Every command is defined once, in an operation registry (one JSON Schema per operation), and the CLI, `orch describe`, `orch help` and a later MCP addon are all generated from it. |
+| A2 | **No daemon on day one.** The CLI runs the registry in-process and writes through one `Store.append` behind a file lock. In P1 it plays the host's role: it holds the workspace key, signs appends, and enforces gates, roles, policies and visibility. When the dashboard or relay arrive, the same registry moves into the host behind the socket, and commands and output stay the same. |
+| A3 | **Standing grants.** `orch grant [--hours 8]` (one Touch ID) signs a grant for the person, the workspace and every verb that isn't human-only. Every session and subagent uses it through `ORCH_GRANT`, and CI gets its own narrower grant. Without a grant, only the low-risk writes `ask`, `log` and `artifact add` work, and they are marked `unattended`. Human-only actions need Touch ID or a passkey every time. |
+| A4 | **Parallel subagents.** A ticket has one claim (the manager's). Subagents run with `ORCH_SESSION=<parent>.<sub>` and take a **lease** on one task with `orch task start T3`. Two sessions on the same task are refused. |
+| A5 | **All format behaviour (T1–T16) is in P1.** Checkpoints are written locally and published once the relay exists (P2). |
+
+### 10.2 What the agent is given (context budget)
+
+| Source | Size | Loaded |
 |---|---|---|
-| `AGENTS.orch.md` (generated, included from AGENTS.md / CLAUDE.md) | The rules: claim before working, one task at a time, evidence for every acceptance criterion, ask instead of guessing, never edit ticket files, human-only actions | Every session |
-| Session-start hook | A short status: the workspace, who the agent works for, its session grant, and the tickets that need it | First thing in a session |
-| Skills `orch-tickets`, `orch-work-on-ticket`, `orch-refine-ticket` (plus addon skills) | Step-by-step workflows | When the task matches |
-| `orch … --help` | Exact command usage | On demand |
+| `AGENTS.orch.md` | at most 25 lines, with a version stamp | every session |
+| Session-start hook | 3–6 lines: who the agent works for, its grant, what needs it. Re-injected after context compaction. | every session start or compaction |
+| Skills `orch-tickets`, `orch-work-on-ticket`, `orch-refine-ticket` | short, judgment rules only (when to ask, what a good plan is) | only when the task matches |
+| `orch help <workflow>`, `orch describe <cmd>` | generated from the registry, so never stale | only when the agent asks |
+| Addons | one line each in `AGENTS.orch.md`; details through `orch describe` | on demand |
 
-### Identity
+`AGENTS.orch.md`, the whole file:
 
-- An agent session works **for** a person, under that person's signed session grant (`session.granted`: agent,
-  session, scope, expiry).
-- The CLI finds the grant through the harness session id. Every event the agent causes carries `actor: {kind: agent,
-  id, session, for, grant}`.
-- Without a valid grant the agent can only read.
+```
+orch v2.0 · tickets only through `orch`, never edit tickets/**
+start: orch status
+work:  orch claim --next | orch task next | orch task done T3 --run
+prove: every AC needs evidence (receipt, or orch artifact add --ac AC1)
+unsure? orch ask "…" --options a,b --rec a   then: orch wait
+handoff: orch handoff -m "…"    finished: orch submit
+parallel subagents: ORCH_SESSION=<yours>.<n>; each takes one task with orch task start
+refused with retry:false → stop and tell the user
+more: orch help work · orch describe <cmd>
+```
 
-### Reading (token-cheap by default)
+A stale check at session start compares the version stamp with the installed CLI. When they differ, it prints one
+line: `instructions stale: run orch instructions sync`.
 
-| Command | Returns |
+### 10.3 Commands
+
+A reference (`REF`) is `DEMO-0043`, `43`, `DEMO-0043/T3`, or just `T3`. **Leaving it out means "my current
+claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back with the candidates.
+
+| Group | Commands |
 |---|---|
-| `orch status` | The agent's own claims, what needs it, and new events since its cursor |
-| `orch next` | The next ticket it should pick up, by priority, assignment and readiness |
-| `orch show KEY` | A short text view (about 350 tokens): header, whose turn it is, Current state, open questions, acceptance criteria and task summary, the last 5 events, hints |
-| `orch show KEY --section Plan,Context` | Only those sections |
-| `orch show KEY --full` | Everything |
-| `orch show KEY --log --since N` | Events after its cursor |
-| `orch task next KEY` | The next task with its acceptance criteria and verify command |
-| `--json` on any read | The ticket document (§7) for parsing |
+| Context | `status` (also shows who the agent is, its grant and its cursor), `describe [cmd]`, `help <workflow>` |
+| Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox` |
+| Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
+| Edit | `set REF key=value` (title, priority, labels, due, links), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
+| Human only | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
+| Admin | `init`, `doctor`, `check`, `instructions sync`, `import v1`, `addon …` |
 
-### Writing (every write is an event the host appends)
+Combined calls for the common loops:
 
-| Command | Event |
-|---|---|
-| `orch new "title" --type … [--file def.json]` | `created` |
-| `orch claim KEY` / `orch release KEY` | `claim.taken` / `claim.released` |
-| `orch task add KEY --file tasks.json` | `edited` (fields: tasks). Validated against the schema before writing, with line-level errors. |
-| `orch task start KEY T3` / `orch task done KEY T3 --run` | `task.started` / `task.done`; `--run` executes the verify command and stores a receipt |
-| `orch section set KEY "Current state" --file -` | `edited` (sections), with `base_rev`; a conflict comes back with both versions |
-| `orch artifact add KEY file.png --kind screenshot --ac AC1` | `artifact.added` (file copied into `artifacts/`, sha256 recorded) |
-| `orch ask KEY --to p_mara --file q.json` | `question.asked`; a blocking question moves the ticket to `waiting` |
-| `orch move KEY testing` | `moved` (only moves that are allowed for agents) |
-| `orch log KEY "…"` | `log` |
-| `orch link KEY --pr URL` / `--branch` | `edited` (links) |
+- `orch task done T3 --run --artifact out.png --ac AC2 -m "…"` runs the check, stores the receipt and the evidence,
+  and prints the next task.
+- `orch submit` moves the ticket to testing only when every acceptance criterion has evidence. Otherwise it lists
+  what's missing.
 
-### Waiting
+### 10.4 Output and errors
 
-- `orch wait KEY` blocks until something it waits for happens: an answer, an approval, a change request or a verdict.
-- It returns one JSON object with `kind` (`answered`, `approved`, `changes_requested`, `verdict`, `timeout`), the
-  data, and the new cursor, so the agent can branch on the kind.
-- A change request is never shown as a success.
+1. stdout carries only the result; stderr carries diagnostics.
+2. **Text by default, as short as possible.** The first line is `ok <KEY> <event> <detail> seq=<n>`, optionally
+   followed by one `next:` line.
+3. `--json` (or `ORCH_OUTPUT=json`) gives `{"v":"orch.cli/2.0","ok":true,"data":…,"key":…,"seq":…,"cursor":…,"hints":[]}`.
+4. An error is `{"ok":false,"error":{"code":"conflict.section","message":…,"hint":…,"fix":{"argv":[…]},"retryable":bool}}`.
+   The `code` strings are the stable contract.
+5. Exit codes:
 
-### What an agent cannot do
+   | Code | Meaning |
+   |---|---|
+   | 0 | ok |
+   | 1 | internal error |
+   | 2 | usage or not found |
+   | 3 | not allowed (transition or human-only) |
+   | 4 | claim, lease or lock |
+   | 5 | validation |
+   | 6 | parse |
+   | 7 | wait timeout with `--strict-timeout` |
+   | 8 | `base_rev` conflict |
+   | 9 | retryable |
 
-- **Human-only actions:** approve, request changes, give a verdict, answer, close, reopen, change people, roles or
-  policy, grant a session or an addon, purge addon data. All of these need a person's signature with user presence.
-  The CLI refuses them for agents, saying "this needs a human; ask with `orch ask` or wait".
-- **Direct file edits:** an Edit-tool change to `ticket.json` or `body.md` is detected through `rev` and the section
-  hashes.
-  - Prose changes are taken in as `edit.external` and void any gate they touch.
-  - Protected fields are reverted with `projection.repaired`.
-  - The next `orch show` names the edit.
+6. **Stop rule:** the same refusal three times in a row in one session returns `STOP: report to the user`.
+7. `orch wait` returns `{kind: answered | approved | changes_requested | verdict | timeout, …, cursor, next}`.
+   - Its default timeout is 540 s, which stays under harness tool limits.
+   - `timeout` exits 0, so the agent loops.
+   - `changes_requested` exits 3.
+8. **`base_rev` is tracked by orch per session and section.** Agents never pass it themselves.
+9. **Retries:** the same session, operation and arguments within 15 minutes return the original event with
+   `"duplicate":true`.
+10. Every write supports `--dry-run`. Free text comes from `-m` or `--file PATH|-`, and structured input is JSON only.
+11. Ticket content in output is data: it is fenced and sanitised, never instructions.
 
-### Agents in other workspaces
+### 10.5 Example: a whole task loop, as the agent sees it
 
-- A ticket handed over from a pinned peer workspace arrives through the relay as a signed envelope, and lands as a
-  normal ticket marked `from-peer`.
-- The agent there sees it with `orch inbox` and `orch show`, and replies with `orch reply KEY --result result.json`.
+```
+$ orch status
+for Severin · grant gr_01J9Z8 until 18:00 · cursor 14
+DEMO-0043 in-progress (your claim) · T3 next · 2 new events
+$ orch task next
+T3 Join in fct_billing, add tests · proves AC2 · verify: dbt test --select fct_billing
+$ orch task done T3 --run --artifact target/tests.log --ac AC2 -m "112 passed"
+ok DEMO-0043 task.done T3 receipt=exit0/41000ms artifact=tests.log seq=18
+next: T4 Document the refresh command (@p_mara) · or orch handoff
+$ orch approve plan
+err human_only approve · retry:false · next: orch ask or orch wait
+```
+
+### 10.6 Agents in other workspaces
+
+- A ticket handed over from a pinned peer workspace arrives as a ticket marked `from-peer`. The agent there finds it
+  with `orch inbox`.
+- It replies with `orch reply REF --result -`.
 - What it receives is treated as data, never as instructions (spec §9).

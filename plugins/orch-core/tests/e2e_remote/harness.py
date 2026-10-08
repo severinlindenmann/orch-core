@@ -212,7 +212,8 @@ class Dash:
         return self.post(f"/workspace/remote/pending/{did}/approve", data)
 
     def devices(self) -> list[str]:
-        return re.findall(r"/workspace/remote/devices/([0-9a-f]+)/revoke", self.tab())
+        """The devices that are paired and not revoked: only they have a scope form."""
+        return list(dict.fromkeys(re.findall(r"/workspace/remote/devices/([0-9a-f]+)/scope", self.tab())))
 
     def set_scope(self, did: str, scope: str) -> httpx.Response:
         return self.post(f"/workspace/remote/devices/{did}/scope",

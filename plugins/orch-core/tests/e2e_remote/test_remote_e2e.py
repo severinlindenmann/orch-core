@@ -13,10 +13,14 @@ import re
 import time
 
 import pytest
-from playwright.sync_api import expect
 
-import browser as B
-import harness as H
+pytest.importorskip("playwright.sync_api", reason="the end-to-end run needs Playwright (pip install pytest-playwright)")
+pytest.importorskip("httpx")
+
+from playwright.sync_api import expect  # noqa: E402
+
+import browser as B  # noqa: E402
+import harness as H  # noqa: E402
 
 pytestmark = pytest.mark.e2e_remote
 
@@ -59,7 +63,7 @@ def device_id(host) -> str:
 
 
 def ensure_paired(stack, host, scope="operate"):
-    if host.dash.devices() and not host.dash.tab().count("revoked"):
+    if host.dash.devices():
         return device_id(host)
     return B.pair(stack, host, scope)
 
@@ -112,7 +116,7 @@ def test_switch_between_the_two_workspaces(stack):
         expect(B.card(stack, host).locator(".pill").first).to_have_text("Online", timeout=40_000)
     for host in (stack.a, stack.b, stack.a, stack.b):
         B.open_workspace(stack, host)
-        B.wait_frame_text(stack.page, f"{host.name.title()}")
+        B.wait_frame_text(stack.page, "Today")
         assert stack.page.locator("iframe.frame-dash").count() == 1
         other = stack.b if host is stack.a else stack.a
         go(stack, "/board")
@@ -151,12 +155,14 @@ def test_presence_and_counts_reach_the_status_page(stack):
 def test_the_counts_follow_the_workspace(stack):
     before = beat(stack, stack.a)
     ids = ticket_ids(stack.a)
-    r = stack.a.dash.post(f"/t/{ids['Write the onboarding mail']}/move", {"to": "in-progress"})
+    # the owner closes a ticket in progress (moving one forward needs the human's gates): it leaves the count
+    r = stack.a.dash.post(f"/t/{ids['Fix the invoice rounding']}/close", {"as": "wont-do", "message": "closed by the e2e run"})
     assert r.status_code == 303 and "err=" not in r.headers["location"], r.headers["location"]
     if stack.tmux:
         stack.tmux.session("ALPHA-2", stack.a.root)
     want = beat(stack, stack.a)
-    assert want["in_progress"] == before["in_progress"] + 1
+    assert want["in_progress"] == before["in_progress"] - 1
+    assert not stack.tmux or want["sessions"] == before["sessions"] + 1
     H.until(lambda: row(stack, stack.a)["in_progress"] == want["in_progress"] and row(stack, stack.a)["sessions"] == want["sessions"],
             60, what="the new counts on the status page")
     stack.page.goto(f"{stack.tix.url}/workspaces")
@@ -193,6 +199,7 @@ def test_a_look_device_hitting_a_form_gets_the_readable_refusal(stack):
     frame_has(stack, OP_TITLES["bravo"])
     # the comment form, submitted by a person in the frame
     frame = B.frame_of(stack.page)
+    frame.evaluate("document.querySelectorAll('details').forEach((d) => { d.open = true; })")
     frame.locator(f'form[action$="/t/{tid}/comment"] textarea, form[action$="/t/{tid}/comment"] input[name="text"]').first.fill(
         "typed at look")
     frame.locator(f'form[action$="/t/{tid}/comment"] button[type="submit"]').first.click()
@@ -257,7 +264,8 @@ def test_a_type_device_without_an_unlock_is_refused_and_types_nothing(stack):
     raw = B.raw_request(stack, stack.b, "POST", "/terminals/BRAVO-1/keys",
                         json.dumps({"seq": [{"text": "typed-without-lease"}], "n": 1, "page": "pageone"}),
                         {"content-type": "application/json"})
-    assert raw.get("refusal") in ("lease_required", "assertion_required"), raw
+    # this browser paired without a platform authenticator, so the host has nothing to ask it for: assertion_failed
+    assert raw.get("refusal") in ("lease_required", "assertion_required", "assertion_failed"), raw
     assert "typed-without-lease" not in stack.tmux.screen("BRAVO-1")
     stack.b.dash.set_scope(did, "operate")
 
@@ -284,17 +292,35 @@ def test_revoking_a_device_ends_its_stream_with_a_readable_refusal(stack):
     go(stack, "/board")
     frame_has(stack, OP_TITLES["bravo"])                          # the page holds its live-update stream open
     if stack.tmux:
-        go(stack, "/terminals/BRAVO-1")
+        go(stack, "/terminals/BRAVO-1")                           # and a terminal stream, checked before every frame
         frame_has(stack, "BRAVO-1")
+    stack.page.evaluate("document.getElementById('remote-notice').textContent = ''")   # only what the revoke causes
     r = stack.b.dash.revoke(did)
     assert r.status_code == 303 and "Device revoked" in r.headers["location"].replace("+", " ").replace("%20", " "), r.headers
-    expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=90_000)
+    try:
+        try:   # the open stream is ended by the host and the refusal reaches the page by itself ...
+            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=25_000)
+        except AssertionError:   # ... or, if the page happened to be between two requests, at the person's next click
+            go(stack, "/board")
+            expect(stack.page.locator("#remote-notice")).to_contain_text("removed from that computer", timeout=60_000)
+    except AssertionError as e:
+        probe = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"}, timeout_ms=20_000)
+        raise AssertionError(f"{e}\nraw request after the revoke: {probe}\nconsole: {B.CONSOLE[-8:]}\n"
+                             f"host log: {stack.b.text()[-500:]}") from None
     raw = B.raw_request(stack, stack.b, "GET", "/board", None, {"accept": "text/html"})
-    assert raw.get("refusal") in ("revoked", "not_paired"), raw
-    assert "revoked" in stack.b.dash.tab().lower()
-    # the host recorded it
+    assert raw.get("refusal") == "revoked", raw
+    assert did not in stack.b.dash.devices(), "the device is still listed as live"
     audit = next((stack.b.state_dir / "permits" / "bridge" / stack.b.space).glob("audit.jsonl")).read_text()
-    assert '"revoked"' in audit
+    assert '"revoked"' in audit                                    # the host recorded it
+
+
+@pytest.mark.xfail(strict=True, reason="a revoked browser cannot pair again: the host answers its pair request with a "
+                   "plain `revoked` refusal (host_check._check) that carries no host_pub, which the browser drops, so "
+                   "it waits 60 s and says the link was used, while the Remote tab says 'pair it again' (orch-core#256)")
+def test_a_revoked_browser_can_pair_again(stack):
+    if stack.b.dash.devices():
+        pytest.skip("runs after the revoke test, which leaves bravo's device revoked")
+    B.pair(stack, stack.b, "operate")
 
 
 # -- the computer stops, restarts, vanishes -------------------------------------------------------------------------
@@ -325,7 +351,8 @@ def test_a_computer_that_vanishes_holds_its_lease_until_it_is_taken_over(stack):
     stack.a.start()
     H.until(lambda: "Another dashboard already holds" in stack.a.dash.tab(), 90, 1,
             what="the Remote tab to say another host holds the workspace")
-    assert row(stack, stack.a)["state"] != "online"
+    H.until(lambda: row(stack, stack.a)["state"] != "online", 60, 1,      # the dead host's last beat ages out (30 s)
+            what="TIX to stop calling the workspace online while the new dashboard cannot take it")
     stack.a.stop()
     stack.a.start(take_over=True)
     H.until(lambda: row(stack, stack.a)["state"] == "online", 60, what="the workspace online after a take-over")

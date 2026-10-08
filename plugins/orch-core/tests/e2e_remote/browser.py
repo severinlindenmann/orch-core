@@ -16,7 +16,12 @@ def pair(stack, host, scope: str = "operate", link: str | None = None) -> str:
     page.goto(f"{stack.tix.url}/remote")            # a new hash alone would not reload the pairing page
     page.goto(link)
     page.locator("#pair-go").click()
-    page.locator("#pair-fp").wait_for(state="visible", timeout=40_000)
+    try:
+        page.locator("#pair-fp").wait_for(state="visible", timeout=40_000)
+    except Exception:  # noqa: BLE001 - say what the page said
+        raise AssertionError("no fingerprint after pairing was asked for; the page says: "
+                             f"{page.locator('#pair-state').inner_text()!r}; pending on the computer: "
+                             f"{host.dash.pending()}; log: {host.text()[-400:]!r}") from None
     shown = page.locator("#pair-fp").inner_text().strip()
     mine = H.until(lambda: [p for p in host.dash.pending() if p[1] == shown], 30, what="the pending pairing on the computer")
     did = mine[0][0]

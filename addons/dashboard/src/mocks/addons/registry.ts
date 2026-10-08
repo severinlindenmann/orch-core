@@ -1,4 +1,4 @@
-import type { AddonActionResult, Role } from '@/api/types'
+import type { AddonActionResult, AddonDecision, Role } from '@/api/types'
 import type { MockStore } from '../store'
 
 export interface AddonCtx {
@@ -28,7 +28,26 @@ export interface MockAddon {
   seed(ws: string, store: MockStore): Record<string, unknown>
   /** Optional derived fields merged into GET .../state (e.g. counts). */
   view?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Record<string, unknown>
+  /**
+   * Open decisions for this workspace. Default (hook omitted): the package's decisions minus the ids in
+   * `state.decided`. Implement it for decisions that appear and disappear with state (e.g. only while a build is failed).
+   * `pkg` is the package's declared decisions; never mutate it.
+   */
+  decisions?(state: Record<string, unknown>, pkg: AddonDecision[]): AddonDecision[]
   actions: Record<string, AddonAction>
+}
+
+/** Record a decision as made (the default `decisions` filter hides ids listed in `state.decided`). */
+export function markDecided(state: Record<string, unknown>, id: string): void {
+  const done = (state.decided as string[] | undefined) ?? []
+  if (!done.includes(id)) state.decided = [...done, id]
+}
+
+/** Open decisions of an addon in a workspace, from its mock module (or the default rule). */
+export function openDecisions(addon: MockAddon | undefined, state: Record<string, unknown>, pkg: AddonDecision[]): AddonDecision[] {
+  if (addon?.decisions) return addon.decisions(state, pkg)
+  const done = (state.decided as string[] | undefined) ?? []
+  return pkg.filter((d) => !done.includes(d.id))
 }
 
 const registry = new Map<string, MockAddon>()

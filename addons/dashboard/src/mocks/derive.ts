@@ -391,6 +391,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `linked PR #${e.number}`
     case 'publish.shared':
       return 'shared a secret link'
+    case 'publish.revoked':
+      return 'revoked a share'
     case 'publish.decided':
       return `decided to publish: ${e.option}`
     case 'estimate.set':

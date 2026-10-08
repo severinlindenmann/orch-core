@@ -25,65 +25,32 @@
                 {
                   "type": "stat",
                   "label": "Live shares",
-                  "value": 2,
-                  "hint": "expire within 7 days"
+                  "value": {
+                    "$ref": "addon.liveShares"
+                  },
+                  "hint": "read-only links"
                 },
                 {
                   "type": "stat",
-                  "label": "Views this week",
-                  "value": 19,
+                  "label": "Views",
+                  "value": {
+                    "$ref": "addon.views"
+                  },
                   "hint": "all shares"
                 },
                 {
                   "type": "stat",
-                  "label": "Apps",
-                  "value": 2,
-                  "hint": "1 running"
+                  "label": "Apps running",
+                  "value": {
+                    "$ref": "addon.runningCount"
+                  },
+                  "hint": "of ${addon.appCount}"
                 }
               ]
             },
             {
               "type": "markdown",
-              "text": "### Shares\nRead-only links with an expiry. Revoke one with `orch publish revoke <id>`."
-            },
-            {
-              "type": "table",
-              "columns": [
-                {
-                  "key": "ticket",
-                  "label": "Ticket"
-                },
-                {
-                  "key": "what",
-                  "label": "What"
-                },
-                {
-                  "key": "expires",
-                  "label": "Expires"
-                },
-                {
-                  "key": "views",
-                  "label": "Views"
-                }
-              ],
-              "rows": [
-                {
-                  "ticket": "DEMO-0041",
-                  "what": "Before/after report",
-                  "expires": "in 6 days",
-                  "views": 14
-                },
-                {
-                  "ticket": "DEMO-0042",
-                  "what": "UTC migration summary",
-                  "expires": "in 3 days",
-                  "views": 5
-                }
-              ]
-            },
-            {
-              "type": "markdown",
-              "text": "### Apps\nSmall apps served from a workspace folder."
+              "text": "### Apps\nSmall apps served from a workspace folder under `${addon.settings.namespace}`."
             },
             {
               "type": "table",
@@ -93,26 +60,84 @@
                   "label": "App"
                 },
                 {
-                  "key": "path",
-                  "label": "Folder"
+                  "key": "kind",
+                  "label": "Type"
                 },
                 {
-                  "key": "state",
+                  "key": "status",
                   "label": "State"
+                },
+                {
+                  "key": "recipients",
+                  "label": "Recipients"
+                },
+                {
+                  "key": "folder",
+                  "label": "Folder"
                 }
               ],
-              "rows": [
+              "rows": {
+                "$ref": "addon.appRows"
+              },
+              "rowActions": [
                 {
-                  "name": "tariff-explorer",
-                  "path": "apps/tariff-explorer",
-                  "state": "running"
+                  "label": "Start",
+                  "action": "start",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
                 },
                 {
-                  "name": "meter-map",
-                  "path": "apps/meter-map",
-                  "state": "stopped"
+                  "label": "Stop",
+                  "action": "stop",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
+                },
+                {
+                  "label": "Logs",
+                  "action": "logs",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
                 }
               ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Needs attention\nFailed builds. Redeploy rebuilds from the folder; the decision on Today can roll back to the last good version."
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.attention"
+              },
+              "empty": "No failed builds."
+            },
+            {
+              "type": "code",
+              "language": "text",
+              "text": "${addon.failedLog}"
+            },
+            {
+              "type": "markdown",
+              "text": "### Shares\nRead-only links with an expiry. A show-once link is displayed a single time and cannot be copied again."
+            },
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.shareItems"
+              },
+              "empty": "No shares yet."
+            },
+            {
+              "type": "button",
+              "label": "New show-once link",
+              "action": "share_once",
+              "variant": "secondary"
             }
           ]
         }
@@ -120,13 +145,13 @@
       {
         "slot": "today.card",
         "id": "shares.today",
-        "title": "Shares",
+        "title": "Apps & shares",
         "icon": "Share2",
         "node": {
           "type": "stat",
-          "label": "Live shares",
-          "value": "2 live shares",
-          "hint": "19 views this week"
+          "label": "Apps",
+          "value": "${addon.summary}",
+          "hint": "${addon.liveShares} live shares · ${addon.views} views"
         }
       },
       {
@@ -140,13 +165,13 @@
             {
               "type": "list",
               "items": {
-                "$ref": "ticket.addons.publish.shares"
+                "$ref": "addon.sharesByTicket.$ticket"
               },
               "empty": "Not shared yet."
             },
             {
               "type": "button",
-              "label": "Share ticket",
+              "label": "Share report…",
               "action": "share",
               "variant": "secondary"
             }
@@ -170,10 +195,16 @@
               "allow_artifacts": {
                 "type": "boolean",
                 "title": "Include artifacts"
+              },
+              "namespace": {
+                "type": "string",
+                "title": "Namespace (link host p.<namespace>.example)"
               }
             }
           },
-          "formData": { "$ref": "addon.settings" },
+          "formData": {
+            "$ref": "addon.settings"
+          },
           "action": "save_settings",
           "submitLabel": "Save"
         }
@@ -200,6 +231,26 @@
           }
         ],
         "action": "decide"
+      },
+      {
+        "kind": "decision",
+        "id": "dec_publish_failed_build",
+        "addon": "publish",
+        "title": "Retry failed build",
+        "question": "Ops notebook failed to build: retry with the last good version?",
+        "detail": "The last build failed on a missing module (meter_utils). The last good version is from 2 days ago; retrying rebuilds the notebook from it and keeps the newer files.",
+        "options": [
+          {
+            "key": "retry",
+            "label": "Retry last good version",
+            "primary": true
+          },
+          {
+            "key": "no",
+            "label": "Leave it"
+          }
+        ],
+        "action": "decide"
       }
     ],
     "commands": [
@@ -207,6 +258,11 @@
         "id": "share",
         "title": "Share current ticket",
         "action": "share"
+      },
+      {
+        "id": "share_once",
+        "title": "Create a show-once link",
+        "action": "share_once"
       }
     ],
     "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",

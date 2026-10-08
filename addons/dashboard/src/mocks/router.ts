@@ -318,7 +318,7 @@ export function buildRouter(): MockRouter {
     if (!ws) return fail(404, 'not_found', 'No such workspace')
     if (!can(s.roleIn(wsId, s.viewer), 'ticket.create')) return fail(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
     const b = c.body as NewTicketRequest | null
-    if (!b || typeof b !== 'object' || !(b.type in SECTIONS_BY_TYPE)) return fail(400, 'validation', 'Body must be a new ticket.')
+    if (!b || typeof b !== 'object' || !Object.hasOwn(SECTIONS_BY_TYPE, b.type)) return fail(400, 'validation', 'Body must be a new ticket.')
     const title = (b.title ?? '').trim()
     if (title.length < 3 || title.length > 120) return fail(400, 'validation.title', 'The title needs 3 to 120 characters.')
     const needs = SECTIONS_BY_TYPE[b.type]

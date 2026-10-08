@@ -9,7 +9,7 @@ describe('addon contributions follow the viewer role', () => {
   it('a viewer gets the ticket rail addon controls disabled', async () => {
     renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
     await screen.findByRole('heading', { level: 1 })
-    const share = await within(rail()).findByRole('button', { name: 'Share ticket' })
+    const share = await within(rail()).findByRole('button', { name: 'Share report…' })
     const save = await within(rail()).findByRole('button', { name: 'Save estimate' })
     // Give the workspace time to load: the controls must stay disabled for a viewer, not just while loading.
     await screen.findByRole('button', { name: 'Switch workspace' })
@@ -21,7 +21,7 @@ describe('addon contributions follow the viewer role', () => {
   it('an owner gets them enabled', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1 })
-    const share = await within(rail()).findByRole('button', { name: 'Share ticket' })
+    const share = await within(rail()).findByRole('button', { name: 'Share report…' })
     await waitFor(() => expect(share).toBeEnabled())
   })
 

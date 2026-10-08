@@ -43,7 +43,7 @@ describe('Today page', () => {
   it('addon decisions post the current workspace id', async () => {
     const spy = vi.spyOn(api, 'runAddonAction')
     const { user } = renderApp('/', { viewer: 'p_sev' })
-    const card = await screen.findByTestId(/^card-addon:/, {}, { timeout: 4000 })
+    const card = (await screen.findAllByTestId(/^card-addon:/, {}, { timeout: 4000 }))[0]
     await user.click((await within(card).findAllByRole('button'))[0])
     await waitFor(() => expect(spy).toHaveBeenCalled())
     expect(spy.mock.calls[0][0]).toBe(mockStore.workspaces[0].id)

@@ -139,9 +139,6 @@
           "sessions": 3,
           "ms": 5460000
         },
-        "publish": {
-          "shares": []
-        },
         "wiki": {
           "pages": [
             {
@@ -606,15 +603,6 @@
           "sessions": 2,
           "ms": 3900000
         },
-        "publish": {
-          "shares": [
-            {
-              "title": "Before/after report",
-              "subtitle": "expires in 6 days · 14 views",
-              "badge": "secret link"
-            }
-          ]
-        },
         "wiki": {
           "pages": [
             {
@@ -801,15 +789,6 @@
           "cents": 187,
           "sessions": 1,
           "ms": 2100000
-        },
-        "publish": {
-          "shares": [
-            {
-              "title": "UTC migration summary",
-              "subtitle": "expires in 3 days · 5 views",
-              "badge": "secret link"
-            }
-          ]
         }
       }
     },

@@ -25,7 +25,7 @@ import type {
   WorkspaceEvent,
 } from '@/api/types'
 import { addonActive, pendingUpdate, sameSet } from '@/api/addons'
-import { actionMinRole, actionRun, getAddon } from './addons'
+import { actionMinRole, actionRun, getAddon, openDecisions } from './addons'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
@@ -696,7 +696,7 @@ export class MockStore {
   addonDecisions(wsId: string): AddonDecision[] {
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w || !this.canDecide(wsId)) return []
-    return this.addons.filter((a) => addonActive(w, a.name)).flatMap((a) => a.decisions ?? [])
+    return this.addons.filter((a) => addonActive(w, a.name)).flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? []))
   }
 
   today(workspaceId: string): TodayDocument {

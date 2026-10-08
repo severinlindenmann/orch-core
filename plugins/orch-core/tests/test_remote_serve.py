@@ -789,7 +789,10 @@ def test_preflight_names_each_missing_piece_with_its_fix(ws, ready, fake, monkey
 @pytest.mark.parametrize("server,ok", [
     ("http://localhost:8123", True), ("http://127.0.0.1:8123", True), ("http://[::1]:8123", True),
     ("http://tix.example", False), ("http://localhost.evil.example", False), ("ftp://localhost", False),
-    ("https://tix.example", True), ("http://localhost:99999", False)])
+    ("https://tix.example", True), ("http://localhost:99999", False),
+    ("http://127.0.0.1.evil.com", False), ("http://localhost.evil.com:8123", False), ("http://evil.com#@localhost", False),
+    ("http://localhost@evil.com", False), ("http://127.1", False), ("http://[::2]:8123", False),
+    ("http://0.0.0.0:8123", False), ("HTTP://LOCALHOST:8123", True)])
 def test_preflight_takes_http_only_for_this_machine(ws, ready, fake, server, ok):
     (fake.dir / "space.json").write_text(json.dumps({"space_id": WS_HEX, "owner": True, "server": server}))
     if ok:

@@ -140,9 +140,11 @@ describe('busy store: histories', () => {
   it('gives each generated ticket 5 to 40 events spread over 21 days, denser today', () => {
     const d = generateBusy(BUSY_SEED)
     const all = [...d.tickets.DEMO, ...d.tickets.INT, ...d.tickets.CLI]
+    // Artifacts and refusals are added on top of the history (a ticket may carry 15 or more artifacts).
     for (const t of all) {
-      expect(t.events.length, t.definition.key).toBeGreaterThanOrEqual(5)
-      expect(t.events.length, t.definition.key).toBeLessThanOrEqual(40)
+      const n = t.events.filter((e) => e.type !== 'artifact.added' && e.type !== 'agent.refused').length
+      expect(n, t.definition.key).toBeGreaterThanOrEqual(5)
+      expect(n, t.definition.key).toBeLessThanOrEqual(40)
     }
     const ats = all.flatMap((t) => t.events.map((e) => Date.parse(e.at)))
     const oldest = Math.min(...ats)

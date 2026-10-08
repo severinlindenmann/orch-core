@@ -1,9 +1,12 @@
 // The busy-day dataset (Task 31b): the normal demo PLUS generated data, fixture-shaped, deterministic.
 // `generateBusy(seed)` is pure (seeded PRNG; no Math.random, no Date.now). The store seeds it through the same path as
 // the normal fixtures (tickets and events), the agent registry and grants, and each addon module's `seedBusy`.
+import { addArtifacts } from './artifacts'
+import { addRefusals, agentRows, grantSessions, type AgentRow } from './agents'
 import { makeRng, type Rng } from './rng'
 import { buildTicket, newBuildState, type Plan } from './tickets'
 import type { Arch, Built, GenTicket, WsCfg } from './types'
+import { addWidgets } from './widgets'
 
 export const BUSY_SEED = 20261009
 
@@ -64,12 +67,22 @@ function planFor(cfg: WsCfg, rng: Rng): Plan[] {
 export function buildWorkspace(cfg: WsCfg, seed: number): Built[] {
   const rng = makeRng(seed).fork(cfg.prefix)
   const st = newBuildState(rng, cfg)
-  return planFor(cfg, rng).map((p) => buildTicket(st, p))
+  const tickets = planFor(cfg, rng).map((p) => buildTicket(st, p))
+  addArtifacts(rng.fork('artifacts'), tickets, { max: cfg.prefix === 'DEMO' ? 40 : cfg.prefix === 'INT' ? 8 : 4 })
+  if (cfg.agents) {
+    addRefusals(rng.fork('refusals'), tickets)
+    addWidgets(rng.fork('widgets'), tickets)
+  }
+  return tickets
 }
 
 export interface BusyData {
   /** Generated tickets per workspace prefix, in fixture shape (added to the normal fixtures). */
   tickets: Record<WsCfg['prefix'], GenTicket[]>
+  /** Agent session registry rows (like fixtures/me.json `agents`), all in the DEMO workspace. */
+  agents: AgentRow[]
+  /** Session ids each grant covers, so revoking a grant ends them. */
+  grantSessions: Record<string, string[]>
 }
 
 const strip = (b: Built): GenTicket => ({ definition: b.definition, body: b.body, events: b.events })
@@ -78,5 +91,7 @@ export function generateBusy(seed: number = BUSY_SEED): BusyData {
   const built = Object.fromEntries(WORKSPACES.map((cfg) => [cfg.prefix, buildWorkspace(cfg, seed)])) as Record<WsCfg['prefix'], Built[]>
   return {
     tickets: { DEMO: built.DEMO.map(strip), INT: built.INT.map(strip), CLI: built.CLI.map(strip) },
+    agents: agentRows(makeRng(seed).fork('agents'), built.DEMO),
+    grantSessions: grantSessions(),
   }
 }

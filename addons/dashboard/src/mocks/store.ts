@@ -124,7 +124,7 @@ export class MockStore {
   private wsOfKey = new Map<string, string>() // key -> workspace id
   private events = new Map<string, OrchEvent[]>()
   private seeded = new Map<string, number>() // key -> number of seeded events
-  private agentRegistry = meFixture.agents as unknown as (Omit<AgentSession, 'grant' | 'claims' | 'leases'> & { grant: string })[]
+  private agentRegistry: (Omit<AgentSession, 'grant' | 'claims' | 'leases'> & { grant: string })[] = []
   private startedAt = Date.now()
   private clockBase = Date.parse(MOCK_EPOCH)
   viewer = meFixture.person
@@ -154,6 +154,7 @@ export class MockStore {
     this.wsOfKey.clear()
     this.addons = structuredClone([...addonsFixture, ...catalogFixture]) as unknown as AddonPackage[]
     this.busy = this.dataset === 'busy' ? generateBusy() : null
+    this.agentRegistry = [...meFixture.agents, ...(this.busy?.agents ?? [])] as unknown as typeof this.agentRegistry
     this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
@@ -493,7 +494,7 @@ export class MockStore {
 
   /** Grants of a workspace: the seed folded with the log. */
   grants(wsId: string): GrantInfo[] {
-    const seed = (grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []
+    const seed = ((grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []).map((g) => ({ ...g, sessions: [...g.sessions, ...(this.busy?.grantSessions[g.id] ?? [])] }))
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
   }
 

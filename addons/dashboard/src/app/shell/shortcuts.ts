@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
+import { SHORTCUT_DEFS } from '@/api/shortcuts'
 import { useWorkspace } from '../workspace'
 
 export interface Shortcut {
@@ -7,7 +8,7 @@ export interface Shortcut {
   /** Space-separated keys: `c`, or the two-key sequence `g b`. */
   keys: string
   label: string
-  /** Absent when another component owns the key (`[` is handled by the sidebar). */
+  /** Absent when another component owns the key. */
   run?: (go: (to: string) => void) => void
 }
 
@@ -20,16 +21,20 @@ const WORKSPACE_SHORTCUTS: Shortcut[] = Array.from({ length: 9 }, (_, i) => ({
   label: `Switch to workspace ${i + 1}`,
 }))
 
-/** The one list of keyboard shortcuts: the shell binds them, the palette shows them, the shortcuts guide can list them. */
-export const SHORTCUTS: Shortcut[] = [
-  { id: 'new-ticket', keys: 'c', label: 'New ticket', run: (go) => go('/tickets/new') },
-  { id: 'go.today', keys: 'g t', label: 'Go to Today', run: (go) => go('/') },
-  { id: 'go.board', keys: 'g b', label: 'Go to Board', run: (go) => go('/board') },
-  { id: 'go.tickets', keys: 'g l', label: 'Go to Tickets', run: (go) => go('/tickets') },
-  { id: 'go.agents', keys: 'g a', label: 'Go to Agents', run: (go) => go('/agents') },
-  ...WORKSPACE_SHORTCUTS,
-  { id: 'sidebar', keys: '[', label: 'Collapse or expand the sidebar' },
-]
+/** Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet). */
+const RUN: Record<string, Shortcut['run']> = {
+  'new-ticket': (go) => go('/tickets/new'),
+  'go.today': (go) => go('/'),
+  'go.board': (go) => go('/board'),
+  'go.tickets': (go) => go('/tickets'),
+  'go.agents': (go) => go('/agents'),
+}
+
+/** The one list of keyboard shortcuts: the shell binds them, the palette shows them, the guide's shortcuts page is generated from it (`src/api/shortcuts.ts`). */
+export const SHORTCUTS: Shortcut[] = SHORTCUT_DEFS.flatMap((d): Shortcut[] => {
+  const s: Shortcut = { ...d, run: RUN[d.id] }
+  return d.id === 'go.agents' ? [s, ...WORKSPACE_SHORTCUTS] : [s]
+})
 
 export const keysFor = (id: string) => SHORTCUTS.find((s) => s.id === id)?.keys
 

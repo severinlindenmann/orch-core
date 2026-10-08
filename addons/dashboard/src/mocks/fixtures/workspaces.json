@@ -43,6 +43,21 @@
       }
     },
     "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
       "dashboard": {
         "enabled": true,
         "status": "active",
@@ -234,6 +249,21 @@
       }
     },
     "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
       "dashboard": {
         "enabled": true,
         "status": "active",
@@ -335,6 +365,21 @@
       }
     },
     "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
       "dashboard": {
         "enabled": true,
         "status": "active",

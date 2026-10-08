@@ -1058,5 +1058,33 @@
     },
     "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
     "update": null
+  },
+  {
+    "name": "guide",
+    "title": "Guide",
+    "version": "0.1.0",
+    "description": "How to use the dashboard: short pages for first-time users, and the help sheet on ?.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "guide",
+        "title": "Guide",
+        "icon": "CircleHelp",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "list", "items": { "$ref": "addon.items" }, "empty": "No pages." },
+            { "type": "markdown", "text": { "$ref": "addon.current.markdown" } }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "open": { "minRole": "viewer", "label": "Open page" }
+    },
+    "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+    "update": null
   }
 ]

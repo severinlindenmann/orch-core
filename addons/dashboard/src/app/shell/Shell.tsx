@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useLiveUpdates } from '../live'
 import { WorkspaceProvider } from '../workspace'
+import { HelpSheet } from './HelpSheet'
 import { CommandPalette } from './palette'
 import { ShellUiProvider } from './ShellUi'
 import { useShortcuts } from './shortcuts'
@@ -41,6 +42,7 @@ export function Shell() {
             </div>
           </div>
           <CommandPalette />
+          <HelpSheet />
           <Toaster position="bottom-right" />
         </TooltipProvider>
       </ShellUiProvider>

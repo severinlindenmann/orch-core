@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { Download } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError } from '@/api/types'
 import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { iconByName } from '@/app/icons'
 import { useWorkspace } from '@/app/workspace'
+import { toastApiError } from '@/app/toast'
 
 interface LaneItem {
   title: string
@@ -31,7 +31,7 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
       setState('done')
     } catch (e) {
       setState('idle')
-      toast.error(e instanceof ApiError ? e.message : 'Import failed', { description: e instanceof ApiError ? e.hint : undefined })
+      toastApiError(e, 'Import failed')
     }
   }
   return (

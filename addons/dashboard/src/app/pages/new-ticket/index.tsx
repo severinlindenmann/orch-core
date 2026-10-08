@@ -200,10 +200,13 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Could not create the ticket.'),
   })
 
+  const submitting = useRef(false)
   const submit = async (another: boolean) => {
+    if (submitting.current) return
     setAttempted(true)
     setServerError(null)
     if (!canCreate || check.messages.length) return
+    submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
     const sections: BodySections = {}
     for (const [n, text] of Object.entries(draft.sections) as [SectionName, string | undefined][]) if (needs[n] !== 'absent' && text?.trim()) sections[n] = text.trim()
@@ -222,6 +225,9 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
         acceptance: draft.acceptance,
       })
       .catch(() => null)
+      .finally(() => {
+        submitting.current = false
+      })
     if (!res) return
     const { ticket } = res
     void qc.invalidateQueries()

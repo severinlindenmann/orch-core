@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useShellActions, useShellState } from './ShellUi'
+import { toastApiError } from '@/app/toast'
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
@@ -30,7 +31,7 @@ export function Topbar() {
       await qc.invalidateQueries()
       toast.success('Demo data reset')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Reset failed')
+      toastApiError(e, 'Reset failed')
     }
   }
 

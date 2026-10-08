@@ -51,9 +51,12 @@ function PeopleRow({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer 
   )
 }
 
+const VIEWER_REASON = 'Viewers cannot change tickets.'
+
 function ClaimBox({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const c = ticket.claim
   const leases = ticket.tasks_state.filter((t) => t.lease)
+  const readOnly = !viewer.role || viewer.role === 'viewer'
   const agentOnly = (verb: string) => `Only agents ${verb} tickets: run "orch ${verb} ${ticket.key}". People cannot ${verb} for an agent.`
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-surface px-3 py-2 text-[13px]" data-testid="claim-box">
@@ -87,12 +90,24 @@ function ClaimBox({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }
             <Tooltip key={label}>
               <TooltipTrigger asChild>
                 <span tabIndex={0} className="inline-flex rounded-md focus-visible:ring-[3px] focus-visible:ring-ring/50">
-                  <Button size="sm" variant="outline" disabled aria-label={`${label} (agents only)`}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled
+                    aria-disabled="true"
+                    aria-label={readOnly ? label : `${label} (agents only)`}
+                    aria-describedby={readOnly ? `${verb}-reason` : undefined}
+                  >
                     {label}
                   </Button>
+                  {readOnly && (
+                    <span id={`${verb}-reason`} className="sr-only">
+                      {VIEWER_REASON}
+                    </span>
+                  )}
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="max-w-xs">{agentOnly(verb)}</TooltipContent>
+              <TooltipContent className="max-w-xs">{readOnly ? VIEWER_REASON : agentOnly(verb)}</TooltipContent>
             </Tooltip>
           ))}
         </div>

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Trash2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError, type SavedView } from '@/api/types'
+import type { SavedView } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -12,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { onSaveViewRequest, takeSaveViewRequest } from './saveViewRequest'
 import type { TicketsSearch } from './search'
+import { toastApiError } from '@/app/toast'
 
 /** Canonical form for comparing filters: no empty values, lists sorted. */
 const norm = (p: object) =>
@@ -53,7 +53,7 @@ export function SavedViews({
   const active = views.find((v) => v.id === activeId) ?? (activeId ? undefined : views.find((v) => norm(v.params) === current))
   const modified = !!active && norm(active.params) !== current
 
-  const fail = (err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Request failed')
+  const fail = (err: unknown) => toastApiError(err, 'Request failed')
   const save = useMutation({
     mutationFn: async ({ name, shared: sh, replace }: { name: string; shared: boolean; replace?: SavedView }) => {
       const v = await api.saveView(wsId, { name, shared: sh, params: search })

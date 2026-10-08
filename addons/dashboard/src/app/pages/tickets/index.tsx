@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
-import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
@@ -19,6 +18,7 @@ import { Filters } from './Filters'
 import { SavedViews } from './SavedViews'
 import { TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
+import { toastApiError } from '@/app/toast'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -34,17 +34,20 @@ function BulkBar({ keys, onDone }: { keys: string[]; onDone: () => void }) {
   const [labelOpen, setLabelOpen] = useState(false)
   const run = useMutation({
     mutationFn: async (action: Parameters<typeof api.postAction>[1]) => {
-      const failures: string[] = []
+      const failures: ApiError[] = []
       for (const key of keys) {
         try {
           await api.postAction(key, action)
         } catch (err) {
-          failures.push(err instanceof ApiError ? `${key}: ${err.message}` : `${key}: request failed`)
+          failures.push(err instanceof ApiError ? new ApiError(err.status, { code: err.code, message: `${key}: ${err.message}`, hint: err.hint, retryable: false }) : new ApiError(0, { code: 'request_failed', message: `${key}: request failed`, retryable: false }))
         }
       }
-      if (failures.length) throw new Error(failures[0] + (failures.length > 1 ? ` (+${failures.length - 1} more)` : ''))
+      if (failures.length) {
+        const [first] = failures
+        throw new ApiError(first.status, { code: first.code, message: first.message + (failures.length > 1 ? ` (+${failures.length - 1} more)` : ''), hint: first.hint, retryable: false })
+      }
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => toastApiError(err),
     onSettled: (_d, err) => {
       for (const k of ['tickets', 'ticket', 'workspaces', 'today', 'board']) void qc.invalidateQueries({ queryKey: [k] })
       if (!err) onDone()

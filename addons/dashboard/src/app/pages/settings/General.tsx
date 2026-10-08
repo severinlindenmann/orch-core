@@ -3,12 +3,13 @@ import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError, type Workspace } from '@/api/types'
+import type { Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fmtTime, Mono, Section } from '../ticket/shared'
 import { DangerZone } from './DangerZone'
+import { toastApiError } from '@/app/toast'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -50,7 +51,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
       setName(null)
       toast.success('Workspace renamed')
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Could not rename')
+      toastApiError(e, 'Could not rename')
     }
   }
   const id = identity.data

@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Fingerprint, ShieldCheck } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { toast } from 'sonner'
-import { ApiError } from '@/api/types'
+import { toastApiError } from '@/app/toast'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -24,7 +24,7 @@ export function useSignedAction() {
       toast.success(`${title}: signed with Touch ID`, { id })
       return true
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Could not sign', { id })
+      toastApiError(e, 'Could not sign', id)
       return false
     }
   }

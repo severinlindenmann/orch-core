@@ -5,7 +5,7 @@ import { Bot, Check, Clock, FileText, LayoutDashboard, ListChecks, MessageSquare
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
-import { ApiError, STATUSES, type ActionRequest } from '@/api/types'
+import { STATUSES, type ActionRequest } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
 import { CommandDialog, CommandEmpty, CommandInput, CommandList } from '@/components/ui/command'
 import { iconByName } from '../../icons'
@@ -19,6 +19,7 @@ import { useShellState } from '../ShellUi'
 import { keysFor } from '../shortcuts'
 import { Group, matches, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
+import { toastApiError } from '@/app/toast'
 
 type Mode = null | 'comment' | 'move' | 'ask-to' | { ask: string }
 
@@ -103,7 +104,7 @@ export function CommandPalette() {
     close()
     void router.navigate({ to } as never)
   }
-  const fail = (e: unknown) => toast.error(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Request failed')
+  const fail = (e: unknown) => toastApiError(e, 'Request failed')
 
   const post = async (req: ActionRequest, done: string) => {
     close()

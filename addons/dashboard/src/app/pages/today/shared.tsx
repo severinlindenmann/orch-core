@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { AgentInfo, Workspace } from '@/api/types'
+import { toastApiError } from '@/app/toast'
 
 /** Short, readable hash: first 8 and last 4 characters. */
 export function shortHash(h: string) {
@@ -65,7 +66,7 @@ export function ResolveProvider({ children }: { children: (s: { hidden: Set<stri
         return true
       } catch (e) {
         unhide()
-        toast.error(e instanceof Error ? e.message : 'That did not work.')
+        toastApiError(e, 'That did not work.')
         return false
       }
     },

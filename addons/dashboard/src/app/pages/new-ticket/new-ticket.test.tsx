@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createAppRouter } from '@/app/router'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('new ticket page', () => {
@@ -61,5 +62,17 @@ describe('new ticket page', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('Kept draft')
     await user.click(screen.getByRole('button', { name: 'Discard' }))
     expect(screen.getByLabelText('Title')).toHaveValue('')
+  })
+  it('a double Cmd+Enter creates only one ticket', async () => {
+    const spy = vi.spyOn(api, 'createTicket')
+    const { user } = renderApp('/tickets/new')
+    const title = await screen.findByLabelText('Title')
+    await user.type(title, 'Only once')
+    await user.type(screen.getByLabelText(/^Requirements/), 'One ticket please')
+    fireEvent.keyDown(title, { key: 'Enter', metaKey: true })
+    fireEvent.keyDown(title, { key: 'Enter', metaKey: true })
+    expect(await screen.findByRole('heading', { level: 1, name: /Only once/ })).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })

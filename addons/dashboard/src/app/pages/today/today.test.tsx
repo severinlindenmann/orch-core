@@ -7,6 +7,7 @@ vi.mock('sonner', async (orig) => {
 })
 
 import { toast } from 'sonner'
+import { ApiError } from '@/api/types'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
@@ -43,6 +44,16 @@ describe('Today page', () => {
     await user.click((await within(card).findAllByRole('button'))[0])
     await waitFor(() => expect(spy).toHaveBeenCalled())
     expect(spy.mock.calls[0][2]).toEqual(expect.objectContaining({ ws: mockStore.workspaces[0].id }))
+    spy.mockRestore()
+  })
+
+  it('a failed card action toasts the API message with its hint', async () => {
+    const spy = vi.spyOn(api, 'postAction').mockRejectedValueOnce(new ApiError(403, { code: 'forbidden', message: 'Not yours to answer', hint: 'Ask the owner', retryable: false }))
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const card = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, { timeout: 4000 })
+    const buttons = await within(card).findAllByRole('button', {}, { timeout: 4000 })
+    await user.click(buttons[0])
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Not yours to answer', { description: 'Ask the owner' }), { timeout: 4000 })
     spy.mockRestore()
   })
 })

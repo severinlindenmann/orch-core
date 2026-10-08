@@ -17,9 +17,8 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Lock } from 'lucide-react'
-import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
+import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -30,6 +29,7 @@ import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
 import { applyFilters, NO_FILTERS, STATUS_LABEL, type Filters } from './lib'
+import { toastApiError } from '@/app/toast'
 
 const DONE_LIMIT = 5
 
@@ -114,9 +114,10 @@ function Column({
       </header>
       <div ref={setNodeRef} className="flex min-h-[80px] flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {visible.length === 0 ? (
-          <p className="px-2 py-8 text-center text-[12px] text-text-faint">
-            {filtering ? `No ${STATUS_LABEL[status].toLowerCase()} tickets match the filters.` : `No tickets in ${STATUS_LABEL[status].toLowerCase()}.`}
-          </p>
+          <div className="flex flex-col items-center gap-1 px-2 py-8 text-center text-[12px] text-text-faint">
+            <p>Nothing here</p>
+            {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket (c)</p>}
+          </div>
         ) : (
           visible.map((t) => <TicketCard key={t.key} ticket={t} people={people} me={me} task={tasks.get(t.key)} canMove onOpen={onOpen} />)
         )}
@@ -193,8 +194,7 @@ export function BoardPage() {
     },
     onError: (err, { key, status }, ctx) => {
       qc.setQueryData(ticketsKey, ctx?.prev)
-      const e = err instanceof ApiError ? err : null
-      toast.error(e?.message ?? `Could not move ${key} to ${STATUS_LABEL[status]}.`, { description: e?.hint })
+      toastApiError(err, `Could not move ${key} to ${STATUS_LABEL[status]}.`)
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['board'] })

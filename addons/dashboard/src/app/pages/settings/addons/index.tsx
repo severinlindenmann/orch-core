@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError, type AddonManifest, type AddonOpRequest, type Workspace } from '@/api/types'
+import type { AddonManifest, AddonOpRequest, Workspace } from '@/api/types'
 import { useAddons } from '@/addon-ui/slots'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
@@ -12,6 +11,7 @@ import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components
 import { AddonRow } from './AddonRow'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
+import { toastApiError } from '@/app/toast'
 
 /** Settings > Addons: installed addons with signed capability grants, and the catalog. */
 export function AddonManager({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
@@ -30,7 +30,7 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
       await api.postAddonOp(ws, name, req)
       await qc.invalidateQueries()
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Could not change the addon')
+      toastApiError(e, 'Could not change the addon')
     }
   }
   const sign = (a: GrantAsk) => {

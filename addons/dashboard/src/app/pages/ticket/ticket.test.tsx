@@ -87,4 +87,15 @@ describe('WordDiff', () => {
     expect(diff.querySelector('ins')?.textContent).toMatch(/new/)
     expect(screen.getByTestId('diff-summary')).toHaveTextContent(/\+2 words.*−1 words/)
   })
+
+  it('Tom sees a disabled Claim button with the viewer reason as tooltip', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    const claim = await screen.findByRole('button', { name: 'Claim' })
+    expect(claim).toBeDisabled()
+    expect(claim).toHaveAttribute('aria-disabled', 'true')
+    expect(claim).toHaveAccessibleDescription('Viewers cannot change tickets.')
+    await user.hover(claim.parentElement!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Viewers cannot change tickets.')
+  })
 })

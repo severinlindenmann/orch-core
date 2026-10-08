@@ -268,6 +268,11 @@ export class MockStore {
     return def.visibility === 'workspace' || def.visibility.restricted.includes(person)
   }
 
+  /** Every ticket key of a workspace, whoever may see it (for workspace-wide jobs such as committing records). */
+  ticketKeys(workspaceId: string): string[] {
+    return [...this.wsOfKey].filter(([, w]) => w === workspaceId).map(([k]) => k)
+  }
+
   eventsOf(key: string): OrchEvent[] {
     return this.events.get(key) ?? []
   }

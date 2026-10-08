@@ -295,12 +295,73 @@
     "name": "records",
     "title": "Records",
     "version": "0.1.0",
-    "description": "Keep decision records and meeting notes next to the tickets they touch.",
+    "description": "Commit and push the ticket records to git, so the history lives next to your code.",
     "capabilities": [],
     "first_party": true,
     "package_sha256": "02749a91b9e031f5dd09fca28091eadc437565deab515f89e26e40edd7f0a7d6",
     "update": null,
-    "contributions": []
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "records",
+        "title": "Records",
+        "icon": "GitCommitHorizontal",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "stat", "label": "Not recorded yet", "value": "${addon.summary}", "hint": "${addon.lastPushText}" },
+            { "$ref": "addon.pushAlert" },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                { "type": "button", "label": "Commit records", "action": "commit", "variant": "primary" },
+                { "type": "button", "label": "Push", "action": "push", "variant": "secondary" },
+                { "type": "button", "label": "Pull", "action": "pull", "variant": "ghost" }
+              ]
+            },
+            { "type": "markdown", "text": "Remote: `${addon.remote}`" },
+            {
+              "type": "table",
+              "columns": [
+                { "key": "ticket", "label": "Ticket" },
+                { "key": "title", "label": "Title" },
+                { "key": "events", "label": "Events" },
+                { "key": "last", "label": "Latest" }
+              ],
+              "rows": { "$ref": "addon.rows" }
+            },
+            { "type": "markdown", "text": "### Record commits" },
+            { "type": "list", "items": { "$ref": "addon.historyItems" }, "empty": "No record commits yet." }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "records.settings",
+        "title": "Records",
+        "icon": "GitCommitHorizontal",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "auto_commit_minutes": { "type": "integer", "title": "Auto-commit every N minutes", "minimum": 1, "maximum": 1440, "default": 30 },
+              "push": { "type": "boolean", "title": "Push after committing", "default": true },
+              "remote": { "type": "string", "title": "Remote", "maxLength": 200 }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [
+      { "id": "commit", "title": "Commit records", "action": "commit" },
+      { "id": "push", "title": "Push records", "action": "push" }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" } }
   },
   {
     "name": "activity",

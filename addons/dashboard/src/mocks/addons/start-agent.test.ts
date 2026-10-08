@@ -23,7 +23,8 @@ interface State {
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'start-agent')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'start-agent', id, body)
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string }) => `${e.status} ${e.code}`)
-const start = (s: S, ticket = 'DEMO-0044') => run(s, 'start', { ticket, confirmed: true })
+const LAUNCH = { mode: 'work', harness: 'claude-code', where: 'background' }
+const start = (s: S, ticket = 'DEMO-0044', launch: Record<string, string> = LAUNCH) => run(s, 'start', { ticket, confirmed: true, launch })
 const sessionOn = (s: S, ticket: string) => s.store.wsEventsOf(s.ws).filter((e) => e.type === 'agent.started' && e.ticket === ticket).at(-1)?.session as string
 
 beforeEach(() => vi.useFakeTimers())
@@ -61,6 +62,7 @@ describe('starting a run', () => {
   it('without core\'s confirmation the action is refused', async () => {
     const s = setup()
     expect(await fail(run(s, 'start', { ticket: 'DEMO-0044' }))).toBe('409 confirm.required')
+    expect(await fail(run(s, 'start', { ticket: 'DEMO-0044', confirmed: true }))).toBe('409 confirm.required') // no core-validated launch
     expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'agent.started')).toBe(false)
   })
   it('plays the run live: claim, T1 started, a log line, T1 done with a receipt, then a blocking question to the viewer', async () => {
@@ -136,8 +138,8 @@ describe('starting a run', () => {
     expect(await fail(start(mara))).toBe('404 not_found')
     const sev = setup()
     const other = sev.store.workspaces.find((w) => w.prefix === 'INT')!.id
-    expect(await fail(sev.api.runAddonAction(other, 'start-agent', 'start', { ticket: 'DEMO-0044', confirmed: true }))).toMatch(/^(409 addon.inactive|409 ticket.other_workspace)$/)
-    expect(await fail(run(sev, 'start', { confirmed: true }))).toBe('400 validation')
+    expect(await fail(sev.api.runAddonAction(other, 'start-agent', 'start', { ticket: 'DEMO-0044', confirmed: true, launch: LAUNCH }))).toMatch(/^(409 addon.inactive|409 ticket.other_workspace)$/)
+    expect(await fail(run(sev, 'start', { confirmed: true, launch: LAUNCH }))).toBe('400 validation')
   })
   it('a viewer cannot start (member-level)', async () => {
     const s = setup('p_tom')
@@ -229,5 +231,30 @@ describe('the workspace log reads plainly', () => {
     expect(describeEvent({ type: 'agent.started' })).toBe('started an agent session')
     expect(describeEvent({ type: 'agent.stopped', reason: 'grant revoked', session: 's_1234' })).toBe('stopped an agent session (grant revoked)')
     expect(describeEvent({ type: 'agent.stopped' })).toBe('stopped an agent session')
+  })
+})
+
+describe('core computes what starts (the addon cannot spoof it)', () => {
+  it('the core preview is computed from the request and the store, not from addon state', async () => {
+    const s = setup()
+    const st = s.store.addonState(s.ws, 'start-agent')
+    st.previews = { 'DEMO-0044': { title: 'Approved by owner', mode: 'Approved by owner' } } // raw state an addon could write
+    const core = await s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'fix', harness: 'codex', where: 'terminals' })
+    expect(core).toMatchObject({ ticket: 'DEMO-0044', title: 'Rotate warehouse service credentials', mode: 'Fix failing checks', harness: 'Codex', where: 'Terminals', workspace: 'Acme energy data' })
+    expect(JSON.stringify(core)).not.toContain('Approved by owner')
+    expect(await fail(s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'pwn', harness: 'codex', where: 'terminals' }))).toBe('400 validation')
+    s.store.setViewer('p_tom')
+    expect(await fail(s.api.previewLaunch(s.ws, { ticket: 'DEMO-0044', mode: 'work', harness: 'codex', where: 'terminals' }))).toBe('404 not_found')
+  })
+  it('the start uses core\'s launch, not the addon\'s stored choice, and validates it again', async () => {
+    const s = setup()
+    await run(s, 'configure', { ticket: 'DEMO-0044', formData: { mode: 'refine', harness: 'claude-code', where: 'background' } })
+    await start(s, 'DEMO-0044', { mode: 'fix', harness: 'codex', where: 'terminals' })
+    expect(s.store.wsEventsOf(s.ws).find((e) => e.type === 'agent.started')).toMatchObject({ mode: 'fix', agent: 'codex', where: 'terminals' })
+    expect(await fail(start(s, 'DEMO-0048', { mode: 'pwn', harness: 'codex', where: 'terminals' }))).toBe('400 validation')
+  })
+  it('addon-authored args cannot carry confirmed or launch (core strips them)', async () => {
+    const { withoutReservedKeys } = await import('@/addon-ui/actionRuntime')
+    expect(withoutReservedKeys({ confirmed: true, launch: LAUNCH, ticket: 'X', ws: 'Y', keep: 1 })).toEqual({ keep: 1 })
   })
 })

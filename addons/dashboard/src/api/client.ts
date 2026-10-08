@@ -11,6 +11,7 @@ import {
   type AddonOpRequest,
   type AgentActivityItem,
   type AgentSession,
+  type CoreLaunch,
   type GrantInfo,
   type ApiErrorBody,
   type Me,
@@ -108,6 +109,9 @@ export function createApi(transport: Transport) {
       call<AddonActionResult>('POST', `/api/workspaces/${ws}/addons/${addon}/actions/${action}`, body),
     getAddonState: (ws: string, name: string) => call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state`),
     getAgents: (workspaceId: string) => call<AgentSession[]>('GET', `/api/workspaces/${workspaceId}/agents`),
+    /** What core would start for this choice (core-computed: ticket, labels, command, model line). */
+    previewLaunch: (ws: string, req: { ticket: string; mode: string; harness: string; where: string }) =>
+      call<CoreLaunch>('GET', `/api/workspaces/${ws}/agents/launch${qs(req)}`),
     getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
     listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
     /** Human only, signed in the dashboard. */

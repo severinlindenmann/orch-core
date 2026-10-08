@@ -361,6 +361,26 @@ export interface LaunchPreview {
   model?: string
   /** Why Start is blocked (a setting that is not a model name), as one sentence. */
   blocked?: string
+  /** The choice as ids (what the addon asks core to start); core validates it and computes everything else itself. */
+  request?: { mode: string; harness: string; where: string }
+}
+
+/** What core will start, computed by core from the request and the store (GET .../agents/launch). Core's start dialog shows only this as fact. */
+export interface CoreLaunch {
+  workspace: string
+  ticket: string
+  title: string
+  mode: string
+  harness: string
+  where: string
+  command: string
+  model?: string
+  tier?: string
+  /** The one-line model summary (model routing on). */
+  line?: string
+  /** A sentence from the launch addon (`blocked_by`) that blocks the start; shown as that addon's words. */
+  blocked?: string
+  blocked_by?: string
 }
 
 // ---------------------------------------------------------------- today

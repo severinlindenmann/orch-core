@@ -1,28 +1,50 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, TriangleAlert } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { can } from '@/api/permissions'
-import type { LaunchPreview } from '@/api/types'
+import type { CoreLaunch, LaunchPreview } from '@/api/types'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { AddonBadge } from './AddonBadge'
 import { canSpawnAgent } from './capabilities'
 import { useAddons } from './slots'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
+/** Longest addon-supplied text shown in the dialog. */
+const ADDON_TEXT_MAX = 300
 const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const cap = (v: unknown) => {
+  const t = typeof v === 'string' ? v : ''
+  return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
+}
+
+/** What core starts after the person confirms: the ticket and the validated choice, as core computed them. */
+export interface ConfirmedLaunch {
+  ticket: string
+  mode: string
+  harness: string
+  where: string
+}
 
 /**
- * Core's confirmation before an addon's `spawn_agent` action runs (never an addon node). It shows what will start —
- * ticket, mode, harness, where, model line and the exact command — and the grant it runs under. With an active grant
- * it is a plain confirmation; without one, an owner or maintainer signs a grant here first (SignPrompt, Touch ID),
- * a member is told who can issue one. `onStart` posts the action with core's `confirmed` flag.
+ * Core's confirmation before an addon's `spawn_agent` action runs (never an addon node).
+ *
+ * Trust split: the addon only says WHICH ticket and choice it asks for (ids from its state). Every fact shown as
+ * core's — workspace, ticket key and title, mode, harness, where, model, the exact command, the grant — comes from
+ * core (`api.previewLaunch`, the ticket read through the API, the grants list). Anything the addon displayed that
+ * differs is shown apart, under "From addon <name>", as capped plain text. The confirm label is core's. The action
+ * is then posted with the values core showed (`onStart`), and the host validates them again.
+ *
+ * With an active grant it is a plain confirmation; without one, an owner or maintainer signs a grant here first
+ * (SignPrompt, Touch ID); a member is told who can issue one.
  */
-export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: string; ticketKey?: string; onStart: () => void; onClose: () => void }) {
+export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: string; ticketKey?: string; onStart: (l: ConfirmedLaunch) => void; onClose: () => void }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const role = useRole()
@@ -33,83 +55,117 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
   const state = useQuery({ queryKey: ['addon-state', ws, addon], queryFn: () => api.getAddonState(ws!, addon), enabled: !!ws, retry: false })
 
-  const allowed = canSpawnAgent(addons?.find((a) => a.name === addon), workspace?.addons[addon])
+  // The request, from the addon (untrusted): a ticket key and three ids. Core validates them below.
   const previews = (state.data?.previews ?? {}) as Record<string, LaunchPreview>
   const selected = state.data?.selected
   const key = ticketKey ?? (typeof selected === 'string' ? selected : undefined)
-  const p = key && Object.hasOwn(previews, key) ? previews[key] : undefined
+  const shown = key && Object.hasOwn(previews, key) ? previews[key] : undefined
+  const asked = shown?.request
+  const request = key && asked ? { ticket: key, mode: String(asked.mode), harness: String(asked.harness), where: String(asked.where) } : undefined
 
-  if (!ws || !me.data || !today.data || !grants.data || !state.data) {
+  const core = useQuery({
+    queryKey: ['launch-preview', ws, request],
+    queryFn: () => api.previewLaunch(ws!, request!),
+    enabled: !!ws && !!request,
+    retry: false,
+  })
+  const allowed = canSpawnAgent(addons?.find((a) => a.name === addon), workspace?.addons[addon])
+
+  const plain = (title: string, text: string) => (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg border-border bg-surface">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{text}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+
+  if (!allowed) return plain('Start agent', 'This addon may not start agents in this workspace.')
+  if (state.isSuccess && !request) return plain('Start agent', 'Pick a ticket first.')
+  if (core.isError) return plain('Start agent', 'orch cannot start what this addon asked for (unknown ticket, mode, harness or place).')
+  if (!ws || !me.data || !today.data || !grants.data || !core.data) {
     return (
       <Dialog open onOpenChange={(o) => !o && onClose()}>
         <DialogContent className="max-w-lg border-border bg-surface" aria-busy="true">
           <DialogHeader>
             <DialogTitle>Start agent</DialogTitle>
-            <DialogDescription>Checking your grant…</DialogDescription>
+            <DialogDescription>Checking what would start…</DialogDescription>
           </DialogHeader>
-        </DialogContent>
-      </Dialog>
-    )
-  }
-  if (!p || !allowed) {
-    return (
-      <Dialog open onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="max-w-lg border-border bg-surface">
-          <DialogHeader>
-            <DialogTitle>Start agent</DialogTitle>
-            <DialogDescription>{allowed ? 'Pick a ticket first.' : 'This addon may not start agents in this workspace.'}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={onClose}>
-              Close
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     )
   }
 
+  const c: CoreLaunch = core.data
+  const launch: ConfirmedLaunch = request!
   const now = today.data.now
   const grant = activeGrantOf(grants.data, me.data.person, Date.parse(now))
   const canIssue = can(role, 'grant.issue')
   const until = new Date(Date.parse(now) + GRANT_HOURS * 3600_000).toISOString()
-  const covers = [
-    `Ticket: ${p.ticket} · ${p.title}`,
-    `Mode: ${p.mode}`,
-    `Harness: ${p.harness}`,
-    `Where: ${p.where}`,
-    ...(p.model ? [p.model] : []),
-    grant ? `Runs under your grant ${grant.id} until ${hhmm(grant.until)}; revoking it stops this run` : `Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${hhmm(until)}`,
+  const facts: [string, string][] = [
+    ['Workspace', c.workspace],
+    ['Ticket', `${c.ticket} · ${c.title}`],
+    ['Mode', c.mode],
+    ['Harness', c.harness],
+    ['Where', c.where],
+    ['Model', c.line ?? (c.model ? c.model : 'the harness default')],
+    ['Grant', grant ? `${grant.id} until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
   ]
-  const body = (
+  // What the addon displayed, where it differs from what orch will start.
+  const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
+
+  const body: ReactNode = (
     <>
-      {/* The exact command, wrapped so all of it is visible before it runs. */}
+      <dl aria-label="What orch will start" className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-bg p-3 text-[13px]">
+        {facts.map(([k, v]) => (
+          <div key={k} className="contents">
+            <dt className="text-text-muted">{k}</dt>
+            <dd className="text-text">{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {/* The exact command core runs, wrapped so all of it is visible. */}
       <pre aria-label="Command" className="whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
-        <code>{p.command}</code>
+        <code>{c.command}</code>
       </pre>
-      {p.blocked && (
-        <p role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[13px] text-text">
+      {c.blocked && (
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[13px] text-text">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-          {p.blocked}
-        </p>
+          <div>
+            <p>Start is blocked by {c.blocked_by ?? 'an addon'}:</p>
+            <p className="mt-0.5 text-text-muted">{cap(c.blocked)}</p>
+          </div>
+        </div>
+      )}
+      {differs && (
+        <section aria-label={`From addon ${addon}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
+          <p className="mb-1 flex items-center gap-1.5">
+            <AddonBadge name={addon} />
+            From addon <span className="font-mono">{addon}</span>: its panel shows something else; orch starts only what is listed above.
+          </p>
+          <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(cap).filter(Boolean).join(' · ')}</p>
+        </section>
       )}
     </>
   )
-  const start = () => {
-    onClose()
-    onStart()
-  }
 
   if (!grant && canIssue) {
     return (
       <SignPrompt
-        title={`Sign a grant and start ${p.harness} on ${p.ticket}`}
-        covers={covers}
-        disabled={!!p.blocked}
+        title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
+        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${hhmm(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        disabled={!!c.blocked}
         onClose={onClose}
         onSign={() => {
           onClose()
-          void signed('Grant issued', () => api.issueGrant(ws, { hours: GRANT_HOURS, scope: 'all' })).then((ok) => ok && onStart())
+          void signed('Grant issued', () => api.issueGrant(ws, { hours: GRANT_HOURS, scope: 'all' })).then((ok) => ok && onStart(launch))
         }}
       >
         {body}
@@ -123,27 +179,23 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Bot className="size-4 text-brand" aria-hidden />
-            {`Start ${p.harness} on ${p.ticket}`}
+            {`Start ${c.harness} on ${c.ticket}`}
           </DialogTitle>
           <DialogDescription>orch starts this session under your grant. Only core shows this confirmation; an addon cannot start a session on its own.</DialogDescription>
         </DialogHeader>
         {body}
-        <dl className="grid grid-cols-[88px_1fr] gap-x-3 rounded-md border border-border bg-bg p-3 text-[13px]">
-          <dt className="text-text-muted">Starts</dt>
-          <dd>
-            <ul className="list-disc space-y-0.5 pl-4">
-              {covers.slice(0, grant ? covers.length : -1).map((c) => (
-                <li key={c}>{c}</li>
-              ))}
-            </ul>
-          </dd>
-        </dl>
         {!grant && <p className="text-[13px] text-text-muted">You have no active grant in this workspace. Only owners and maintainers issue grants: ask one to issue yours.</p>}
         <DialogFooter className="gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!grant || !!p.blocked} onClick={start}>
+          <Button
+            disabled={!grant || !!c.blocked}
+            onClick={() => {
+              onClose()
+              onStart(launch)
+            }}
+          >
             Start agent
           </Button>
         </DialogFooter>

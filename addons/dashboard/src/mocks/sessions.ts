@@ -27,6 +27,8 @@ export interface LaunchPlan {
   line?: string
   /** A sentence that blocks the start (a setting that is not a model name). */
   error?: string
+  /** The addon that made this plan (set by core). */
+  by?: string
 }
 
 /** The exact command core runs for a request and plan. Model names are validated before they get here. */

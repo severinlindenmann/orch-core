@@ -11,7 +11,11 @@ import type {
   AgentSession,
   SavedView,
   BodySections,
+  CoreLaunch,
   GateName,
+  LaunchHarness,
+  LaunchMode,
+  LaunchWhere,
   Me,
   NewTicketRequest,
   NeedsYouItem,
@@ -41,7 +45,7 @@ import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { activeGrantOf } from '@/api/grants'
-import { HARNESSES, MODES, WHERES, commandFor, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
+import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, commandFor, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 
@@ -544,10 +548,40 @@ export class MockStore {
       const mod = getAddon(pkg.name)
       if (!mod?.launch || !addonActive(w, pkg.name) || !w?.addons[pkg.name]?.granted?.capabilities.includes('launch')) continue
       const lastTier = this.startedSessions(wsId).filter((x) => x.ticket === req.ticket).at(-1)?.tier
-      plan = mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier })
+      plan = { ...mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier }), by: pkg.name }
       break
     }
     return { plan, command: commandFor(req, plan) }
+  }
+
+  /**
+   * What core would start (GET .../agents/launch): validated choice, the ticket as the viewer sees it, labels, the
+   * exact command and model line from the one resolver. Nothing in it comes from an addon.
+   */
+  launchPreview(wsId: string, req: { ticket?: unknown; mode?: unknown; harness?: unknown; where?: unknown }): { ok: true; launch: CoreLaunch } | StoreFailure {
+    const w = this.workspaces.find((x) => x.id === wsId)
+    if (!w) return refuse(404, 'not_found', 'No such workspace')
+    const { ticket, mode, harness, where } = req
+    if (!MODES.includes(mode as LaunchMode) || !HARNESSES.includes(harness as LaunchHarness) || !WHERES.includes(where as LaunchWhere)) return refuse(400, 'validation', 'Pick a mode, a harness and where it runs.')
+    if (typeof ticket !== 'string' || !this.hasTicket(ticket) || this.wsOfKey.get(ticket) !== wsId || !this.isVisible(ticket)) return refuse(404, 'not_found', `No ticket ${String(ticket)}`)
+    const r: LaunchRequest = { ticket, mode: mode as LaunchMode, harness: harness as LaunchHarness, where: where as LaunchWhere }
+    const { plan, command } = this.resolveLaunch(wsId, r)
+    return {
+      ok: true,
+      launch: {
+        workspace: w.name,
+        ticket,
+        title: this.ticket(ticket)!.title,
+        mode: MODE_LABEL[r.mode],
+        harness: HARNESS_LABEL[r.harness],
+        where: WHERE_LABEL[r.where],
+        command,
+        ...(plan.model ? { model: plan.model } : {}),
+        ...(plan.tier ? { tier: plan.tier } : {}),
+        ...(plan.line ? { line: plan.line } : {}),
+        ...(plan.error ? { blocked: plan.error, blocked_by: plan.by } : {}),
+      },
+    }
   }
 
   /**
@@ -770,7 +804,7 @@ export class MockStore {
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
     }
     // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
-    if (meta?.confirm && body.confirmed !== true) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
+    if (meta?.confirm && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
     // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
     if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }

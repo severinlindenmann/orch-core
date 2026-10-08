@@ -23,7 +23,7 @@ import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { darkTheme } from './rjsfTheme'
 import { SafeMarkdown } from './SafeMarkdown'
-import { SpawnConfirm } from './SpawnConfirm'
+import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { useAddons, type SlotContext } from './slots'
 
 const ThemedForm = withTheme(darkTheme)
@@ -226,12 +226,14 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
   const { workspace } = useWorkspace()
   const [confirming, setConfirming] = useState<{ action: string; extra?: Record<string, unknown> } | null>(null)
   const m = useMutation({
-    mutationFn: ({ action, extra, confirmed }: { action: string; extra?: Record<string, unknown>; confirmed?: boolean }) => {
+    mutationFn: ({ action, extra, confirmed }: { action: string; extra?: Record<string, unknown>; confirmed?: ConfirmedLaunch }) => {
       if (!workspace) throw new Error('No workspace')
+      // After core's dialog: the ticket and choice core validated and showed, never the addon's own args for them.
+      const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
       return api.runAddonAction(workspace.id, addon, action, {
         ...withoutReservedKeys(extra),
-        ...(confirmed ? { confirmed: true } : {}),
         ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}),
+        ...core,
       })
     },
     onSuccess: (res) => {
@@ -246,7 +248,7 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
   })
   const run = (action: string, extra?: Record<string, unknown>) => (actions?.[action]?.confirm === 'spawn_agent' ? setConfirming({ action, extra }) : m.mutate({ action, extra }))
   const dialog = confirming && (
-    <SpawnConfirm addon={addon} ticketKey={ctx.ticket?.key} onClose={() => setConfirming(null)} onStart={() => m.mutate({ ...confirming, confirmed: true })} />
+    <SpawnConfirm addon={addon} ticketKey={ctx.ticket?.key} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   )
   return { run, pending: m.isPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a), dialog }
 }

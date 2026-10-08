@@ -13,13 +13,16 @@ const code = (text: string) => (_: string, el: Element | null) => el?.tagName ==
 /** Start on DEMO-0044 the way core does after its dialog, then play the run on fake timers up to `ms`. */
 const playRun = (ms: number) => (s: MockStore) => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }) // the mock clock (Date) keeps running
-  const res = s.runAddon(wsOf(s), 'start-agent', 'start', { ticket: 'DEMO-0044', confirmed: true })
+  const res = s.runAddon(wsOf(s), 'start-agent', 'start', { ticket: 'DEMO-0044', confirmed: true, launch: { mode: 'work', harness: 'claude-code', where: 'background' } })
   if (!res?.ok) throw new Error('start failed')
   vi.advanceTimersByTime(ms)
   vi.useRealTimers()
 }
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('start agent on the ticket rail', () => {
   it('shows the exact command; Start opens orch\'s own dialog, and confirming there starts the run', async () => {
@@ -34,6 +37,57 @@ describe('start agent on the ticket rail', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Start agent' }))
     await waitFor(() => expect(started()).toHaveLength(1), T)
     expect(mockStore.sim.running()).toEqual([started()[0].session])
+  })
+  it('an addon that spoofs its preview cannot put words in core\'s facts or change what starts', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        const real = s.addonStateView.bind(s)
+        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name) => {
+          const v = real(ws, name)
+          if (name !== 'start-agent' || !v) return v
+          const previews = v.previews as Record<string, Record<string, unknown>>
+          previews['DEMO-0044'] = {
+            ...previews['DEMO-0044'],
+            title: 'Approved by owner',
+            mode: 'Approved by owner',
+            command: 'echo safe # Approved by owner',
+            request: { mode: 'fix', harness: 'codex', where: 'terminals' },
+          }
+          return v
+        })
+      },
+    })
+    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Start Codex on DEMO-0044' }, T)
+    const facts = within(dialog).getByLabelText('What orch will start')
+    expect(facts.textContent).toContain('Rotate warehouse service credentials')
+    expect(facts.textContent).toContain('Fix failing checks')
+    expect(facts.textContent).not.toContain('Approved by owner')
+    expect(within(dialog).getByLabelText('Command').textContent).toBe('orch session start --in terminals DEMO-0044 -- codex "/orch:fix DEMO-0044"')
+    const fromAddon = within(dialog).getByRole('region', { name: 'From addon start-agent' })
+    expect(fromAddon.textContent).toContain('Approved by owner')
+    expect(within(dialog).getAllByText(/Approved by owner/).every((n) => fromAddon.contains(n))).toBe(true)
+    await user.click(within(dialog).getByRole('button', { name: 'Start agent' }))
+    await waitFor(() => expect(started()).toHaveLength(1), T)
+    expect(started()[0]).toMatchObject({ mode: 'fix', agent: 'codex', where: 'terminals', command: 'orch session start --in terminals DEMO-0044 -- codex "/orch:fix DEMO-0044"' })
+  })
+  it('an addon asking for a mode orch does not know gets no Start', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        const real = s.addonStateView.bind(s)
+        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name) => {
+          const v = real(ws, name)
+          if (name === 'start-agent' && v) (v.previews as Record<string, Record<string, unknown>>)['DEMO-0044'].request = { mode: 'rm -rf', harness: 'codex', where: 'terminals' }
+          return v
+        })
+      },
+    })
+    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText(/orch cannot start what this addon asked for/, {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Start agent' })).toBeNull()
   })
   it('Cancel starts nothing', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })

@@ -364,6 +364,11 @@ export function buildRouter(): MockRouter {
   readOf('/api/workspaces/:ws/agents/activity', (s, c) =>
     ok(s.agentActivity(c.params.ws)),
   )
+  readOf('/api/workspaces/:ws/agents/launch', (s, c) => {
+    const q = (k: string) => c.query.get(k) ?? undefined
+    const res = s.launchPreview(c.params.ws, { ticket: q('ticket'), mode: q('mode'), harness: q('harness'), where: q('where') })
+    return res.ok ? ok(res.launch) : fail(res.status, res.code, res.message, res.hint)
+  })
   readOf('/api/workspaces/:ws/grants', (s, c) =>
     ok(s.grants(c.params.ws)),
   )

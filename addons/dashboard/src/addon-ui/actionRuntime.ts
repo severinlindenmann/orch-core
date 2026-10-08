@@ -3,10 +3,10 @@
 
 /**
  * The workspace and `ticket` come from core's render context only, and `confirmed` only from core's own confirmation
- * dialog (starting an agent); addon-authored args may never set them.
+ * dialog (starting an agent), with the `launch` choice core validated there; addon-authored args may never set them.
  */
 export function withoutReservedKeys(extra: Record<string, unknown> = {}): Record<string, unknown> {
-  const { ws: _ws, ticket: _ticket, confirmed: _confirmed, ...rest } = extra
+  const { ws: _ws, ticket: _ticket, confirmed: _confirmed, launch: _launch, ...rest } = extra
   return rest
 }
 

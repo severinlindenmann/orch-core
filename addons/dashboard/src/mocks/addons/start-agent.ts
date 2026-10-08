@@ -69,6 +69,7 @@ function preview(c: Ctx, state: Record<string, unknown>, key: string, title: str
     command,
     ...(plan.line ? { model: plan.line } : {}),
     ...(plan.error ? { blocked: plan.error } : {}),
+    request: { ...choice },
   }
 }
 
@@ -195,12 +196,16 @@ registerAddon({
       setNav(state, viewer, nav)
       return { ok: true, message: `Command updated for ${key}.`, changed: true }
     },
+    // Starts exactly what core confirmed: the ticket core sent and the `launch` choice core validated and showed (never
+    // this addon's stored choice); core's startSession checks every field again.
     start(ctx) {
-      const { state, viewer, store, ws } = ctx
-      const key = ctx.ticket ?? navOf(state, viewer).selected
+      const { viewer, store, ws, body } = ctx
+      const key = ctx.ticket
       if (!key) return { ok: false, status: 400, code: 'validation', message: 'Pick a ticket first.' }
       if (!canSeeTicket(ctx, key)) return { ok: false, status: 404, code: 'not_found', message: `No ticket ${key}` }
-      const res = store.startSession(ws, { addon: 'start-agent', ticket: key, ...choiceOf(state, viewer, key) }, { kind: 'person', id: viewer })
+      const launch = (body.launch ?? {}) as Record<string, unknown>
+      const req = { mode: launch.mode, harness: launch.harness, where: launch.where } as Pick<LaunchRequest, 'mode' | 'harness' | 'where'>
+      const res = store.startSession(ws, { addon: 'start-agent', ticket: key, ...req }, { kind: 'person', id: viewer })
       if (!res.ok) return res
       return { ok: true, message: `Started ${res.session.name} on ${key} (${res.session.session}).`, changed: true }
     },

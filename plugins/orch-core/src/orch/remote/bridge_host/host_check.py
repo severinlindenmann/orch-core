@@ -223,7 +223,13 @@ class Host:
                                              self.origin)
             return v if v is not None else self._unverified(now, "not_paired")
         if dev.revoked:
-            return self._unverified(now, "revoked")
+            try:
+                is_pair = unframe(pt)[0].get("op") == "pair"
+            except Malformed:
+                is_pair = False
+            # §6.2: every refusal to an op = "pair" request carries host_pub, or the device drops it as no answer and
+            # waits out its 60 s. A revoked device is still refused: it does not pair again under its old key.
+            return self._unverified(now, "revoked", **({"host_pub": self.host_pub.hex()} if is_pair else {}))
         if not verify(dev.pub, sig, signed_bytes(hb, body)):
             return self._unverified(now, "bad_signature")
         # the signature verified: from here nothing is dropped for the budget

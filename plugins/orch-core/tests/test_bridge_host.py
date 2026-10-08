@@ -210,6 +210,22 @@ def test_a_revocation_takes_effect_on_the_next_check_and_ends_streams_and_lease(
     assert events == ["added", "added", "revoked"]
 
 
+def test_a_revoked_device_asking_to_pair_gets_a_refusal_the_device_can_verify(host):
+    """§6.2: every refusal to an op = "pair" request carries host_pub. A revoked device is refused (it does not pair
+    again under its old key, and nothing becomes pending); the refusal must carry host_pub so the device does not
+    drop it as no answer (found by the end-to-end run, #94)."""
+    offer, _ = host.offer("operate")
+    host.revoke(did(KEY_A))
+    meta = {"op": "pair", "pairing_id": offer.pairing_id.hex(), "pub": pub(KEY_A).hex(), "label": "again",
+            "mac": keys.pair_mac(offer.secret, WS, offer.pairing_id, pub(KEY_A)).hex()}
+    v = send(host, env(KEY_A, meta, seq=5))
+    assert v.result == "refuse" and v.code == "revoked" and v.fields == {"host_pub": host.host_pub.hex()}
+    assert did(KEY_A) not in host.pairing.pending and host.registry.get(did(KEY_A)).revoked
+    assert not offer.used, "the owner's link was not spent by a revoked device"
+    plain = send(host, env(KEY_A, http("/"), seq=6))
+    assert plain.code == "revoked" and plain.fields == {}, "only a pair request's refusal carries host_pub"
+
+
 def test_a_request_accepted_before_a_revocation_is_refused_at_authorize(host):
     acc = send(host, env(KEY_A, http("/"), seq=1))
     host.revoke(did(KEY_A))

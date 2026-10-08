@@ -14,7 +14,8 @@ REFUSAL_FIELDS = {"stale_sequence": {"high"}, "stale_timestamp": {"host_ms"}, "a
                   "assertion_required": {"purpose", "scope", "expires_ms", "nonce", "subject"},
                   "lease_required": {"purpose", "scope", "expires_ms", "nonce", "subject"}}
 
-PAIR_REFUSALS = frozenset({"pairing_closed", "bad_signature", "stale_timestamp", "malformed"})
+# "revoked" too: a revoked device that sends op = "pair" must get a refusal it can verify, or it waits 60 s for nothing.
+PAIR_REFUSALS = frozenset({"pairing_closed", "bad_signature", "stale_timestamp", "malformed", "revoked"})
 
 
 @dataclass(frozen=True)

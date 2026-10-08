@@ -194,20 +194,17 @@ def test_link_records_a_repo_on_its_own(aops, ws, monkeypatch, capsys):
         aops.link(tid)
 
 
-def test_start_dir_takes_a_settings_link_to_the_workspaces_own_file_only(ws, tmp_path):
-    from orch.core import factory_runner
-    from orch.core.model import new_ticket
-    (ws.root / ".claude").mkdir()
-    (ws.root / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
-    wt = ws.root / ".claude" / "worktrees" / "hub" / "L-0001-x"
-    (wt / ".claude").mkdir(parents=True)
-    t = new_ticket("L-0001", "x", type="feature", priority="normal", size="m", created="2026-10-06")
-    t.meta["worktrees"] = {"hub": ".claude/worktrees/hub/L-0001-x"}
+def test_start_dir_takes_a_settings_link_to_the_workspaces_own_file_only(multi, tmp_path):
+    from orch.core import factory_runner, store, worktrees
+    ws, ops, tid = multi
+    r = worktrees.add(ops, tid, "hub")  # a real linked worktree on a branch that names the child
+    wt = ws.root / r["worktree"]
+    t = store.load(ws, tid)[1]
     link = wt / ".claude" / "settings.json"
-    link.symlink_to(ws.root / ".claude" / "settings.json")
+    assert link.is_symlink()
     assert factory_runner.start_dir(ws, t) == str(wt.resolve())
     twin = tmp_path / "settings.json"
-    twin.write_text("{}", encoding="utf-8")  # same bytes, another file an agent controls
+    twin.write_text('{"permissions": {}}', encoding="utf-8")  # same bytes, another file an agent controls
     link.unlink()
     link.symlink_to(twin)
     assert factory_runner.start_dir(ws, t) is None

@@ -230,7 +230,9 @@ def test_guard_refuses_file_tools_on_the_recorder_and_the_status_line(ws, home):
     assert not write(s, json.dumps({"statusLine": STATUS})).allow
     s.write_text(json.dumps({"model": "opus", "statusLine": STATUS}, indent=2))
     edit = lambda old, new: evaluate(ws, {"tool_name": "Edit", "tool_input": {"file_path": str(s), "old_string": old, "new_string": new}})  # noqa: E731
-    assert edit('"opus"', '"sonnet"').allow  # other settings stay the agent's to change
+    # the user-scope settings hold the hooks that guard every session, so no file-tool edit of them is the agent's
+    # (guard._HARNESS_DENIED), whatever key it touches; the recorder's own keys stay refused for the same reason
+    assert not edit('"opus"', '"sonnet"').allow
     assert not edit("orch-usage/statusline.sh", "mine.sh").allow
     s.write_text('{"model": "opus", // comment\n}')
     assert not edit('"model"', '"statusLine": {}, "model"').allow  # not JSON: judged by the edit's own text

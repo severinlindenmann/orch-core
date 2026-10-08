@@ -14,7 +14,7 @@ describe('Addon manager', () => {
     // The grant lands after the Touch ID wait; the switch unlocks then.
     await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /Enable/ })).toBeEnabled())
     await user.click(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /Enable/ }))
-    expect(await screen.findByRole('link', { name: /Quick tasks/ })).toBeInTheDocument() // sidebar nav appeared
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/addon/quick/quick')).toBe(true)) // sidebar nav appeared
   })
   it('an update with a new capability shows the diff and needs a re-grant', async () => {
     const { user } = renderApp('/settings/addons')

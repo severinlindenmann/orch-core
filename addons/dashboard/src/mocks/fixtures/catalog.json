@@ -224,7 +224,7 @@
     "name": "quick",
     "title": "Quick tasks",
     "version": "0.1.0",
-    "description": "Jot a task in one line and turn it into a ticket later.",
+    "description": "Jot a task in one line; an agent claims it and closes it with a line of proof, or you make it a ticket.",
     "capabilities": [],
     "first_party": true,
     "package_sha256": "54a93267b64f1a580a0efaa1b5649db3a75ee4530769da54202cc720d982ce02",
@@ -236,11 +236,60 @@
         "title": "Quick tasks",
         "icon": "ListChecks",
         "node": {
-          "type": "markdown",
-          "text": "Quick tasks arrive in iteration 3."
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                { "type": "stat", "label": "Open", "value": "${addon.open}" },
+                { "type": "stat", "label": "Claimed", "value": "${addon.claimed}" },
+                { "type": "stat", "label": "Done", "value": "${addon.done}" },
+                { "type": "stat", "label": "Outgrew", "value": "${addon.outgrew}" }
+              ]
+            },
+            { "type": "markdown", "text": "### Add a quick task" },
+            {
+              "type": "form",
+              "schema": { "$ref": "addon.addSchema" },
+              "action": "add",
+              "submitLabel": "Add quick task"
+            },
+            { "$ref": "addon.closePanel" },
+            { "type": "markdown", "text": "### Quick tasks" },
+            {
+              "type": "list",
+              "items": { "$ref": "addon.list" },
+              "empty": "No quick tasks."
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "quick.settings",
+        "title": "Quick tasks",
+        "icon": "ListChecks",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "agents_add": { "type": "boolean", "title": "Agents may add quick tasks", "default": false },
+              "max_commits": { "type": "integer", "title": "Most commits", "minimum": 0, "default": 1 },
+              "max_files": { "type": "integer", "title": "Most files", "minimum": 0, "default": 3 }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
         }
       }
-    ]
+    ],
+    "actions": {
+      "save_settings": { "minRole": "owner" },
+      "decide": { "minRole": "maintainer" }
+    }
   },
   {
     "name": "records",

@@ -2,7 +2,6 @@
 import type { HttpMethod, TransportResponse } from '@/api/transport'
 import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
-import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import type { MockStore } from './store'
 import { can } from '@/api/permissions'
 import { APPROVER_GROUPS } from '@/api/gates'
@@ -322,51 +321,9 @@ export function buildRouter(): MockRouter {
   })
   r.add('POST', '/api/workspaces/:ws/tickets', (s, c) => {
     const wsId = c.params.ws
-    const ws = s.workspaces.find((w) => w.id === wsId)
-    if (!ws) return fail(404, 'not_found', 'No such workspace')
-    if (!can(s.roleIn(wsId, s.viewer), 'ticket.create')) return fail(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
-    const b = c.body as NewTicketRequest | null
-    if (!b || typeof b !== 'object' || !Object.hasOwn(SECTIONS_BY_TYPE, b.type)) return fail(400, 'validation', 'Body must be a new ticket.')
-    const title = (b.title ?? '').trim()
-    if (title.length < 3 || title.length > 120) return fail(400, 'validation.title', 'The title needs 3 to 120 characters.')
-    const needs = SECTIONS_BY_TYPE[b.type]
-    const body: BodySections = {}
-    for (const [name, text] of Object.entries(b.sections ?? {}) as [SectionName, string | undefined][]) {
-      if (needs[name] === undefined || needs[name] === 'absent' || !text?.trim()) continue
-      body[name] = text.trim()
-    }
-    for (const name of requiredAtCreation(b.type)) {
-      if (!body[name]) return fail(400, 'validation.section_missing', `${sectionLabel(b.type, name)} ${name === 'requirements' ? 'are' : 'is'} needed.`, 'Write it before creating the ticket.')
-    }
-    if (b.size !== null && !['xs', 's', 'm', 'l', 'xl'].includes(b.size as string)) return fail(400, 'validation.size', `Unknown size ${String(b.size)}.`)
-    // A restricted ticket always lists its creator: otherwise the creator would land on a ticket they cannot see.
-    let visibility: NewTicketRequest['visibility'] = 'workspace'
-    if (b.visibility && b.visibility !== 'workspace') {
-      const list = (b.visibility as { restricted?: unknown }).restricted
-      if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) return fail(400, 'validation.visibility', 'Visibility is "workspace" or {restricted: [person, ...]}.')
-      visibility = { restricted: list.includes(s.viewer) ? list : [...list, s.viewer] }
-    }
-    if (b.parent) {
-      const parent = s.hasTicket(b.parent) && s.workspaceOf(b.parent)?.id === wsId ? s.ticket(b.parent) : undefined
-      if (!parent || parent.type !== 'epic') return fail(400, 'validation.parent', `${b.parent} is not an epic in this workspace.`)
-    }
-    const ticket = s.createTicket(
-      wsId,
-      {
-        title,
-        type: b.type,
-        priority: b.priority ?? 'medium',
-        size: b.size ?? null,
-        labels: [...new Set((b.labels ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean))],
-        parent: b.parent ?? null,
-        due: b.due ?? null,
-        visibility,
-        acceptance: (b.acceptance ?? []).map((t) => t.trim()).filter(Boolean).map((text, i) => ({ id: `AC${i + 1}`, text })),
-      },
-      body,
-      b.people ?? { owner: null, assignees: [], reviewers: [] },
-    )
-    return ok({ ok: true, ticket }, 201)
+    const res = s.createFromRequest(wsId, c.body as NewTicketRequest | null)
+    if (!res.ok) return fail(res.status, res.code, res.message, res.hint)
+    return ok({ ok: true, ticket: res.ticket }, 201)
   })
   readOf('/api/workspaces/:ws/views', (s, c) =>
     ok(s.views(c.params.ws)),

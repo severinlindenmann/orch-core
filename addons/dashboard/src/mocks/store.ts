@@ -13,6 +13,7 @@ import type {
   BodySections,
   GateName,
   Me,
+  NewTicketRequest,
   NeedsYouItem,
   OrchEvent,
   Status,
@@ -35,6 +36,7 @@ import meFixture from './fixtures/me.json'
 import otherFixture from './fixtures/other-workspaces.json'
 import viewsFixture from './fixtures/views.json'
 import workspacesFixture from './fixtures/workspaces.json'
+import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
@@ -371,6 +373,54 @@ export class MockStore {
     this.append(key, { type: 'ticket.created', status: 'backlog' })
     if (people.owner || people.assignees.length || people.reviewers.length) this.append(key, { type: 'people.set', ...people, watchers: [] })
     return this.ticket(key)!
+  }
+
+  /** Mock of POST /api/workspaces/:ws/tickets: role check, validation and creation in one place (the router and addons share it). */
+  createFromRequest(wsId: string, b: NewTicketRequest | null): { ok: true; ticket: TicketDocument } | StoreFailure {
+    const ws = this.workspaces.find((w) => w.id === wsId)
+    if (!ws) return refuse(404, 'not_found', 'No such workspace')
+    if (!can(this.roleIn(wsId, this.viewer), 'ticket.create')) return refuse(403, 'forbidden', 'Viewers cannot create tickets.', 'Ask an owner or maintainer.')
+    if (!b || typeof b !== 'object' || !Object.hasOwn(SECTIONS_BY_TYPE, b.type)) return refuse(400, 'validation', 'Body must be a new ticket.')
+    const title = (b.title ?? '').trim()
+    if (title.length < 3 || title.length > 120) return refuse(400, 'validation.title', 'The title needs 3 to 120 characters.')
+    const needs = SECTIONS_BY_TYPE[b.type]
+    const body: BodySections = {}
+    for (const [name, text] of Object.entries(b.sections ?? {}) as [SectionName, string | undefined][]) {
+      if (needs[name] === undefined || needs[name] === 'absent' || !text?.trim()) continue
+      body[name] = text.trim()
+    }
+    for (const name of requiredAtCreation(b.type)) {
+      if (!body[name]) return refuse(400, 'validation.section_missing', `${sectionLabel(b.type, name)} ${name === 'requirements' ? 'are' : 'is'} needed.`, 'Write it before creating the ticket.')
+    }
+    if (b.size !== null && !['xs', 's', 'm', 'l', 'xl'].includes(b.size as string)) return refuse(400, 'validation.size', `Unknown size ${String(b.size)}.`)
+    // A restricted ticket always lists its creator: otherwise the creator would land on a ticket they cannot see.
+    let visibility: NewTicketRequest['visibility'] = 'workspace'
+    if (b.visibility && b.visibility !== 'workspace') {
+      const list = (b.visibility as { restricted?: unknown }).restricted
+      if (!Array.isArray(list) || !list.every((p) => typeof p === 'string')) return refuse(400, 'validation.visibility', 'Visibility is "workspace" or {restricted: [person, ...]}.')
+      visibility = { restricted: list.includes(this.viewer) ? list : [...list, this.viewer] }
+    }
+    if (b.parent) {
+      const parent = this.hasTicket(b.parent) && this.workspaceOf(b.parent)?.id === wsId ? this.ticket(b.parent) : undefined
+      if (!parent || parent.type !== 'epic') return refuse(400, 'validation.parent', `${b.parent} is not an epic in this workspace.`)
+    }
+    const ticket = this.createTicket(
+      wsId,
+      {
+        title,
+        type: b.type,
+        priority: b.priority ?? 'medium',
+        size: b.size ?? null,
+        labels: [...new Set((b.labels ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean))],
+        parent: b.parent ?? null,
+        due: b.due ?? null,
+        visibility,
+        acceptance: (b.acceptance ?? []).map((t) => t.trim()).filter(Boolean).map((text, i) => ({ id: `AC${i + 1}`, text })),
+      },
+      body,
+      b.people ?? { owner: null, assignees: [], reviewers: [] },
+    )
+    return { ok: true, ticket }
   }
 
   // ------------------------------------------------------------ live cursor

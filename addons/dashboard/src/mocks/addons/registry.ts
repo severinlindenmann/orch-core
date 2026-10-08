@@ -34,6 +34,15 @@ export interface MockAddon {
   actions: Record<string, AddonAction>
 }
 
+/**
+ * May this viewer see data about ticket `key` in this workspace? A module's view() and its ticket-scoped actions use
+ * this for every per-ticket row, map entry, title or branch name (the store cannot tell which strings are ticket keys).
+ * A key that is not a ticket of this workspace is never shown, whoever asks.
+ */
+export function canSeeTicket(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, key: string | null | undefined): boolean {
+  return !!key && c.store.workspaceOf(key)?.id === c.ws && c.store.isVisible(key, c.viewer)
+}
+
 /** Record a decision as made (the default `decisions` filter hides ids listed in `state.decided`). */
 export function markDecided(state: Record<string, unknown>, id: string): void {
   const done = (state.decided as string[] | undefined) ?? []

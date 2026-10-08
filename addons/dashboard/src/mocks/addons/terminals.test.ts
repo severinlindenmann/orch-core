@@ -165,8 +165,8 @@ describe('terminals are scoped to their workspace', () => {
     const state = s.store.addonState(cli, 'terminals') as { sessions: { ticket: string | null }[] }
     state.sessions[0].ticket = 'DEMO-0043' // a tampered/stale session pointing across workspaces
     const again = (await s.api.getAddonState(cli, 'terminals')) as unknown as State
-    expect(again.sessions[0].ctx.ticket).toBeNull()
-    expect(JSON.stringify(again)).not.toMatch(/Tariff/)
+    expect(again.sessions).toHaveLength(0) // a session naming a ticket of another workspace is not shown at all
+    expect(JSON.stringify(again)).not.toMatch(/Tariff|DEMO-0043/)
   })
   it('a ticket the viewer may not see is not resolved into the shell context', async () => {
     const s = setup('p_sev')

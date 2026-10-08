@@ -1,4 +1,4 @@
-import { registerAddon } from './registry'
+import { canSeeTicket, registerAddon } from './registry'
 
 // usage: cost and tokens per day, model, ticket and agent. Everything derives from ONE generator (`seedDays`) so the
 // page, the ticket panel and the Today card always agree. Money is whole cents. No Math.random / Date.now: the
@@ -138,9 +138,9 @@ registerAddon({
   name: 'usage',
   seed: () => seedState(),
 
-  view(state) {
+  view(state, c) {
     const days = state.days as Day[]
-    const tickets = state.tickets as Row[]
+    const tickets = (state.tickets as Row[]).filter((t) => canSeeTicket(c, t.key)) // per-ticket rows: visible tickets of this workspace only
     const week = days.slice(-7).reduce((n, d) => n + sum(d), 0)
     const month = days.filter((d) => d.date.startsWith(MONTH_PREFIX)).reduce((n, d) => n + sum(d), 0)
     const budget = budgetOf(state)
@@ -150,6 +150,7 @@ registerAddon({
     const byTicket: Record<string, Omit<Row, 'key'>> = {}
     for (const t of tickets) byTicket[t.key] = { cents: t.cents, tokens: t.tokens, sessions: t.sessions, ms: t.ms }
     return {
+      tickets, // overrides the raw list
       weekCents: week,
       monthCents: month,
       tokens30,

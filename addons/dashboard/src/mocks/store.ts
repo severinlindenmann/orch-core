@@ -666,9 +666,9 @@ export class MockStore {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
     }
-    // A decision that is no longer open (already decided, or its condition went away) is closed for every addon.
+    // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
-    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? []).some((d) => d.id === decision.id)) return { ok: true, message: 'That decision is closed.' }
+    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? []).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     this.bump(ws) // addon actions change state without events; let live pages refresh
     this.save()
@@ -753,7 +753,11 @@ export class MockStore {
   addonDecisions(wsId: string): AddonDecision[] {
     const w = this.workspaces.find((x) => x.id === wsId)
     if (!w || !this.canDecide(wsId)) return []
-    return this.addons.filter((a) => addonActive(w, a.name)).flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? []))
+    // A decision about a ticket is shown only to people who can see that ticket.
+    return this.addons
+      .filter((a) => addonActive(w, a.name))
+      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? []))
+      .filter((d) => !d.ticket || (this.wsOfKey.get(d.ticket) === wsId && this.isVisible(d.ticket)))
   }
 
   today(workspaceId: string): TodayDocument {

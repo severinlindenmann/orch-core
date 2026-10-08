@@ -1,4 +1,4 @@
-import { registerAddon } from './registry'
+import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 
 // github: pull requests (code reviews) and the external issues lane. Addon state is the only store for PRs and issues;
 // the ticket panel reads `addon.prByTicket.$ticket` (see view()), nothing is written to ticket addon data.
@@ -65,6 +65,7 @@ const seedIssues = (): Issue[] => [
 
 const prs = (state: Record<string, unknown>) => state.prs as Pr[]
 const issues = (state: Record<string, unknown>) => state.issues as Issue[]
+const visiblePrs = (c: AddonCtx) => prs(c.state).filter((p) => canSeeTicket(c, p.ticket))
 const prUrl = (p: Pr) => `https://github.com/${p.repo}/pull/${p.number}`
 
 /** One word for the checks of a PR: any failure beats pending beats pass. */
@@ -88,8 +89,9 @@ registerAddon({
     settings: { org: 'acme-energy', link_prs: true, repos: `${DBT}, ${API}`, poll_minutes: 5 },
   }),
 
-  view(state, { store }) {
-    const list = prs(state)
+  view(state, c) {
+    const { store } = c
+    const list = prs(state).filter((p) => canSeeTicket(c, p.ticket)) // a PR is tied to a ticket: only visible ones
     const now = store.now()
     const open = list.filter((p) => p.state !== 'merged')
     const byTicket: Record<string, unknown> = {}
@@ -108,6 +110,7 @@ registerAddon({
       }
     }
     return {
+      prs: list, // overrides the raw list
       openPrs: open.length,
       needReview: open.filter((p) => p.review === 'requested').length,
       checksFailing: open.filter((p) => summary(p) === 'fail').length,
@@ -135,17 +138,19 @@ registerAddon({
       if (res.changed) list.splice(i, 1)
       return res
     },
-    refresh({ store, state, body, ticket }) {
-      const list = prs(state)
+    refresh(ctx) {
+      const { store, body, ticket } = ctx
+      const list = visiblePrs(ctx)
       const target = list.find((p) => (body.id ? p.id === body.id : ticket ? p.ticket === ticket : pending(p)))
-      if (!target) return { ok: true, message: ticket ? `${ticket} has no pull request.` : 'No pending checks.' }
+      if (!target) return { ok: true, message: body.id ? 'That pull request no longer exists.' : ticket ? `${ticket} has no pull request.` : 'No pending checks.' }
       if (!pending(target)) return { ok: true, message: `No pending checks on #${target.number}.` }
       for (const c of target.checks) if (c.status === 'pending') c.status = 'pass'
       target.updated_at = store.now()
       return { ok: true, message: `Checked GitHub: #${target.number} ${target.title} checks passed.`, changed: true }
     },
-    approve({ store, state, body }) {
-      const target = prs(state).find((p) => p.id === body.id)
+    approve(ctx) {
+      const { store, body } = ctx
+      const target = visiblePrs(ctx).find((p) => p.id === body.id)
       if (!target) return { ok: true, message: 'That pull request no longer exists.' }
       if (target.state === 'merged') return { ok: true, message: `#${target.number} is already merged.` }
       if (target.review === 'approved') return { ok: true, message: `#${target.number} is already approved.` }
@@ -153,8 +158,9 @@ registerAddon({
       target.updated_at = store.now()
       return { ok: true, message: `Approved #${target.number} on GitHub (mock).`, changed: true }
     },
-    open({ state, body }) {
-      const target = prs(state).find((p) => p.id === body.id)
+    open(ctx) {
+      const { body } = ctx
+      const target = visiblePrs(ctx).find((p) => p.id === body.id)
       if (!target) return { ok: true, message: 'That pull request no longer exists.' }
       return { ok: true, message: `Opening #${target.number} on GitHub.`, url: prUrl(target) }
     },

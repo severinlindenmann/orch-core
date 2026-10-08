@@ -1,4 +1,4 @@
-import { registerAddon } from './registry'
+import { canSeeTicket, registerAddon } from './registry'
 
 // wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
 // open and their search query are per viewer (`state.nav[viewer] = { current, query }`), so navigating never affects
@@ -188,8 +188,10 @@ const item = (p: Page, open: boolean) => ({
 registerAddon({
   name: 'wiki',
   seed: () => ({ settings: {}, pages: structuredClone(PAGES), nav: {} }),
-  view(state, { viewer }) {
-    const pages = pagesOf(state)
+  view(state, c) {
+    const { viewer } = c
+    // Pages are shared; which tickets they link to is shown only for tickets this viewer can see.
+    const pages = pagesOf(state).map((p) => ({ ...p, tickets: p.tickets.filter((t) => canSeeTicket(c, t)) }))
     const nav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] ?? {} // read-only: never create state.nav here
     const query = nav.query ?? ''
     const q = query.trim().toLowerCase()
@@ -198,6 +200,7 @@ registerAddon({
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
     for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p, false))
     return {
+      pages, // overrides the raw list
       items: shown.map((p) => item(p, true)),
       current: cur
         ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated)}` }
@@ -234,9 +237,10 @@ registerAddon({
       p.by = store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === viewer)?.name ?? viewer
       return { ok: true, message: `Saved ${p.title}.`, changed: true }
     },
-    link({ state, body, ticket, store }) {
+    link(ctx) {
+      const { state, body, ticket } = ctx
       const p = bySlug(state, (body.formData as { page?: unknown } | undefined)?.page)
-      if (!ticket || !store.hasTicket(ticket)) return { ok: true, message: 'Pick a ticket first.' }
+      if (!ticket || !canSeeTicket(ctx, ticket)) return { ok: true, message: 'Pick a ticket first.' }
       if (!p) return { ok: true, message: 'Pick a page to link.' }
       if (!p.tickets.includes(ticket)) p.tickets = [...p.tickets, ticket]
       return { ok: true, message: `Linked ${p.title} to ${ticket}.`, changed: true }

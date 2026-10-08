@@ -1,5 +1,5 @@
 import type { AddonDecision } from '@/api/types'
-import { getAddon, markDecided, openDecisions, registerAddon } from './registry'
+import { canSeeTicket, getAddon, markDecided, openDecisions, registerAddon, type AddonCtx } from './registry'
 
 // publish: apps served from the workspace and read-only shares. Addon state is the single source of truth for both;
 // nothing is written to ticket addon data. The ticket panel reads `addon.sharesByTicket.$ticket` (see view()).
@@ -58,6 +58,8 @@ const settingsOf = (state: Record<string, unknown>): Settings => ({ default_expi
 const apps = (state: Record<string, unknown>) => state.apps as App[]
 const shares = (state: Record<string, unknown>) => state.shares as Share[]
 const linkOf = (s: Settings, token: string) => `https://p.${s.namespace}.example/s/${token}`
+/** A share by id, unless it belongs to a ticket the caller cannot see. */
+const visibleShare = (c: AddonCtx, id: unknown) => shares(c.state).find((s) => s.id === id && (!s.ticket || canSeeTicket(c, s.ticket)))
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** Deterministic 10-character token (mock only), so tests and screenshots are stable. */
@@ -105,14 +107,16 @@ registerAddon({
     decided: [],
   }),
 
-  view(state) {
+  view(state, c) {
     const a = apps(state)
-    const sh = shares(state)
+    // A share tied to a ticket is shown only to people who can see that ticket.
+    const sh = shares(state).filter((x) => !x.ticket || canSeeTicket(c, x.ticket))
     const running = a.filter((x) => x.status === 'running').length
     const failed = a.filter((x) => x.status === 'failed')
     const byTicket: Record<string, ReturnType<typeof shareItem>[]> = {}
     for (const x of sh) if (x.ticket) (byTicket[x.ticket] ??= []).push(shareItem(x))
     return {
+      shares: sh, // overrides the raw list
       summary: `${plural(running, 'app', 'apps')} running · ${plural(failed.length, 'failed build', 'failed builds')}`,
       liveShares: sh.length,
       views: sh.reduce((n, x) => n + x.views, 0),
@@ -143,36 +147,41 @@ registerAddon({
   },
 
   actions: {
-    share({ store, ticket, state }) {
-      if (!ticket || !store.hasTicket(ticket)) return { ok: true, message: 'Pick a ticket first.' }
+    share(ctx) {
+      const { store, ticket, state } = ctx
+      if (!ticket || !canSeeTicket(ctx, ticket)) return { ok: true, message: 'Pick a ticket first.' }
       const days = settingsOf(state).default_expiry_days
       newShare(state, ticket, 'secret link', `share/${ticket.toLowerCase()}`, token(state))
       store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Shared ${ticket} as a secret link for ${plural(days, 'day', 'days')}.`, changed: true }
     },
-    share_once({ store, ticket, state }) {
+    share_once(ctx) {
+      const { store, ticket, state } = ctx
       const tok = token(state)
-      const label = ticket && store.hasTicket(ticket) ? ticket : undefined
+      const label = canSeeTicket(ctx, ticket) ? ticket : undefined
       newShare(state, label, 'show-once', label ? `${label} one-time link` : 'One-time link', null)
       if (label) store.append(label, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Link copied, shown once: ${linkOf(settingsOf(state), tok)}`, changed: true }
     },
-    copy_link({ state, body }) {
-      const x = shares(state).find((s) => s.id === body.id)
+    copy_link(ctx) {
+      const { state, body } = ctx
+      const x = visibleShare(ctx, body.id)
       if (!x) return { ok: true, message: 'That share no longer exists.' }
       if (x.kind === 'show-once') return { ok: true, message: 'This link was shown once and cannot be copied again. Revoke it and make a new one.' }
       if (!x.token) return { ok: true, message: `Sealed to ${x.recipient}: it opens only for them, so there is no link to copy.` }
       return { ok: true, message: `Link copied: ${linkOf(settingsOf(state), x.token)}` }
     },
-    extend({ state, body }) {
-      const x = shares(state).find((s) => s.id === body.id)
+    extend(ctx) {
+      const { body } = ctx
+      const x = visibleShare(ctx, body.id)
       if (!x) return { ok: true, message: 'That share no longer exists.' }
       x.expires_in_days += 7
       return { ok: true, message: `${x.title} now expires in ${x.expires_in_days} days.`, changed: true }
     },
-    revoke({ store, state, body }) {
+    revoke(ctx) {
+      const { store, state, body } = ctx
       const list = shares(state)
-      const i = list.findIndex((s) => s.id === body.id)
+      const i = list.findIndex((s) => s.id === body.id && (!s.ticket || canSeeTicket(ctx, s.ticket)))
       if (i < 0) return { ok: true, message: 'That share no longer exists.' }
       const [x] = list.splice(i, 1)
       if (x.ticket && store.hasTicket(x.ticket)) store.append(x.ticket, { type: 'publish.revoked', actor: { kind: 'addon', id: 'publish' } })
@@ -205,12 +214,13 @@ registerAddon({
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
     },
-    decide({ store, state, body }) {
+    decide(ctx) {
+      const { store, state, body } = ctx
       const id = String(body.id ?? '')
       const option = String(body.option ?? '')
       // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
       const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? []).find((d) => d.id === id)
-      if (!open) return { ok: true, message: 'That decision is closed.' }
+      if (!open || (open.ticket && !canSeeTicket(ctx, open.ticket))) return { ok: true, message: 'That decision is closed.' }
       markDecided(state, id)
       if (id === 'dec_publish_failed_build') {
         const ops = apps(state).find((a) => a.id === 'app_ops')

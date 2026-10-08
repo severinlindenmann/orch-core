@@ -87,6 +87,17 @@ _ERRORS = {"bad_request": (400, b"This request cannot be read."), "too_large": (
 _OWN_POLICY = re.compile(r"/(?:a|w|wp|wpf)/|/addons/[^/]+/files/")
 
 
+def _header_map(pairs) -> dict:
+    """The reply's headers as the protocol's mapping (lower-case names, as the request's `headers` is); a repeated
+    name is joined with a comma. The device reads only a mapping: a list of pairs read as no headers at all, so every
+    page looked like a download (found by the end-to-end run, #94)."""
+    out: dict[str, str] = {}
+    for k, v in pairs:
+        k = k.lower()
+        out[k] = f"{out[k]}, {v}" if k in out else v
+    return out
+
+
 def _is_dashboard_page(start, path: str) -> bool:
     """A navigation answer the device may draw in its frame: HTML, from a route that has the dashboard's own policy."""
     ctype = next((v for k, v in start.headers if k.lower() == "content-type"), "")
@@ -450,8 +461,8 @@ class HostLoop:
     def _head(start, reason, path: str | None = None) -> dict:
         if start is None:
             status = _ERRORS.get(reason, _ERRORS["error"])[0]
-            return {"status": status, "headers": [["content-type", "text/plain; charset=utf-8"]]}
-        head = {"status": start.status, "headers": [[k, v] for k, v in start.headers]}
+            return {"status": status, "headers": {"content-type": "text/plain; charset=utf-8"}}
+        head = {"status": start.status, "headers": _header_map(start.headers)}
         if path is not None and _is_dashboard_page(start, path):
             head["page"] = True  # the device draws only an answer the host tags as a dashboard page (bridge-frame.md)
         return head

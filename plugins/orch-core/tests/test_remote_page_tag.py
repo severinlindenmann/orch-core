@@ -21,6 +21,12 @@ def test_only_a_dashboard_page_is_tagged_as_one(path, tagged):
     assert HostLoop._head(HTML, None, path).get("page", False) is tagged  # noqa: SLF001
 
 
+def test_the_reply_headers_are_a_mapping_with_lower_case_names():
+    start = SimpleNamespace(status=200, headers=[("Content-Type", "text/html"), ("X-A", "1"), ("x-a", "2")])
+    assert HostLoop._head(start, None, "/")["headers"] == {"content-type": "text/html", "x-a": "1, 2"}  # noqa: SLF001
+    assert HostLoop._head(None, "timeout")["headers"] == {"content-type": "text/plain; charset=utf-8"}  # noqa: SLF001
+
+
 def test_other_answers_and_streams_are_never_tagged():
     assert "page" not in HostLoop._head(JSON, None, "/")  # noqa: SLF001
     assert "page" not in HostLoop._head(HTML, None)  # noqa: SLF001 - a stream's head carries no path

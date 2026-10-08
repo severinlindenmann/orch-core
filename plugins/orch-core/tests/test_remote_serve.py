@@ -216,7 +216,8 @@ def test_a_page_at_look_comes_back_sealed_and_signed(ws, fake, put):
         assert chunks[0][1]["status"] == 200 and b"<html" in b"".join(c[2] for c in chunks)
         assert chunks[0][1]["page"] is True  # the device draws only a page the host tags (found by the end-to-end run)
         assert not any(c[0].flags & E.F_REFUSAL for c in chunks)
-        assert all("set-cookie" not in k.lower() for k, _ in chunks[0][1]["headers"])
+        assert chunks[0][1]["headers"]["content-type"].startswith("text/html")  # a mapping, not a list of pairs
+        assert all("set-cookie" not in k.lower() for k in chunks[0][1]["headers"])
         await finish(loop, task)
     arun(main())
 

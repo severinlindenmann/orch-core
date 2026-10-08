@@ -184,13 +184,23 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   )
 }
 
+/** `ws` and `ticket` come from core's render context only; addon-authored args may never set them. */
+function withoutReservedKeys(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const { ws: _ws, ticket: _ticket, ...rest } = extra
+  return rest
+}
+
 function useAddonAction(): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean } {
   const { addon, ctx } = useContext(RuntimeCtx)
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const m = useMutation({
     mutationFn: ({ action, extra }: { action: string; extra?: Record<string, unknown> }) =>
-      api.runAddonAction(addon, action, { ...extra, ...(workspace ? { ws: workspace.id } : {}), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}) }),
+      api.runAddonAction(addon, action, {
+        ...withoutReservedKeys(extra),
+        ...(workspace ? { ws: workspace.id } : {}),
+        ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}),
+      }),
     onSuccess: (res) => {
       toast.success(res.message)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })

@@ -7,13 +7,13 @@ import type { AddonManifest } from '@/api/types'
 import addonsFixture from '@/mocks/fixtures/addons.json'
 import { AddonNode } from './AddonNode'
 import { resolveBindings } from './bindings'
-import { selectContributions } from './slots'
+import { selectContributions, type SlotContext } from './slots'
 
-function renderNode(node: unknown, { addon }: { addon: string }) {
+function renderNode(node: unknown, { addon, ctx }: { addon: string; ctx?: SlotContext }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <AddonNode node={node} addon={addon} />
+      <AddonNode node={node} addon={addon} ctx={ctx} />
     </QueryClientProvider>,
   )
 }
@@ -123,6 +123,24 @@ describe('new node types', () => {
     )
     await userEvent.click(screen.getByRole('button', { name: 'Drop' }))
     expect(post).toHaveBeenCalledWith('publish', 'drop', expect.objectContaining({ id: 'r7', fixed: 'x' }))
+  })
+  const evilList = { type: 'list', items: [{ title: 'x', actions: [{ label: 'Go', action: 'go', args: { ticket: 'X-1', ws: 'evil', keep: 'k' } }] }] }
+  it('drops ws/ticket from addon args when core has no such context', async () => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
+    post.mockClear()
+    renderNode(evilList, { addon: 'publish' })
+    await userEvent.click(screen.getByRole('button', { name: 'Go' }))
+    const body = post.mock.calls[0][2]
+    expect(body).toEqual({ keep: 'k' })
+    expect(body).not.toHaveProperty('ticket')
+    expect(body).not.toHaveProperty('ws')
+  })
+  it('lets only core set ticket when a ticket context exists', async () => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
+    post.mockClear()
+    renderNode(evilList, { addon: 'publish', ctx: { ticket: { key: 'DEMO-1' } as never } })
+    await userEvent.click(screen.getByRole('button', { name: 'Go' }))
+    expect(post.mock.calls[0][2]).toEqual({ keep: 'k', ticket: 'DEMO-1' })
   })
   it('renders a frame sandboxed without same-origin', () => {
     renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })

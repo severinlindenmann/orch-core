@@ -1,6 +1,6 @@
 # orch v2: the minimal core
 
-Status: **draft for the owner's review**, 8 Oct 2026. This is the build plan for the first v2 phase. It implements
+Status: **decided by the owner**, 8 Oct 2026 (D42–D44). This is the build plan for the first v2 phase. It implements
 [orch-v2-ticket-format.md](orch-v2-ticket-format.md) (T1–T16, A1–A5) and nothing beyond it.
 
 ## 1. What the core is
@@ -131,15 +131,15 @@ The owner's build order: **core → frontend → relay → mobile → apps → t
 |---|---|---|
 | **P0 Dev foundations** | P0 | The dev kit and VPS, spikes S1/S2, the e2e harness. (The Dark Factory stack is no longer part of it.) |
 | **P1 Core** | P1a, part of P1b | This document: C1–C11. |
-| **P2 Frontend** | parts of P1a, P1b | The host process: the registry behind a socket, holding the workspace key. Agents get their own OS user on macOS (#287). The dashboard addon (FastAPI, desktop only, new look and feel). The first-party addons that need a UI or start agents: start agent, terminals, worktrees, quick tasks, records, activity, widgets, guide, doctor/setup, update, feedback. |
+| **P2 Frontend** | parts of P1a, P1b | The host process: the registry behind a socket, holding the workspace key. Agents get their own OS user on macOS (#287). The dashboard addon (FastAPI, desktop only, new look and feel). The first-party addons that need a UI or start agents: start agent, terminals, worktrees, quick tasks, records, activity, widgets, guide, doctor/setup, update, feedback. Ends with the cutover (D44). |
 | **P3 Relay** | P2 | orch-relay directory and bridge v2, members and epochs, checkpoints on the relay, desktop-browser e2e, protocol change #24 (members' devices). |
-| **P4 Mobile** | P3, P4 | The PWA with pairing v2, workspace cards, questions and needs-you, push with "answered elsewhere", passkeys. iPhone sessions 1 and 2. |
+| **P4 Mobile** | P3, P4 | The PWA with pairing v2, workspace cards, questions and needs-you, push with "answered elsewhere", passkeys, Drop basics (D43). iPhone sessions 1 and 2. |
 | **P5 Apps** | P7 | orch-publish: signed HTTPS API, namespaces, the dashboard pages. |
 | **P6 The rest** | P5, P6, P8, Phase 2 list | Drop (files, inbox claim, documents, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off, iPhone session 3. |
 
-## 8. Open points for the owner
+## 8. Decided with the order
 
-1. **Drop.** In this order, file sharing between phone and workspaces comes in P6. That's late if uploading files
-   from the phone matters early. Option: a small "Drop basics" (send a file to a workspace, receive one) inside P4.
-2. **Cutover.** When does v2 replace v1 for daily use? Option: right after P2, when the core plus the dashboard cover
-   what you use every day. Until then v1 on `main` stays your working tool.
+- **D43 Drop basics in P4:** sending a file from the phone to a workspace, and from a workspace to the phone, comes
+  with mobile. The rest of Drop stays in P6.
+- **D44 Cutover after P2:** once the core and the dashboard cover daily work, `orch import v1` moves the owner's
+  workspaces, and `develop` is merged into `main`. Relay, mobile and the rest continue on v2.

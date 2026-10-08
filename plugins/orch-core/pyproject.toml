@@ -39,5 +39,6 @@ testpaths = ["tests"]
 # The 15 slowest tests are listed after every run (#229).
 addopts = "--durations=15"
 markers = [
+    "e2e_remote: Orch Remote end to end (two dashboards, a local TIX and one Chromium); skipped unless selected with -m e2e_remote, see docs/remote-validation.md",
     "slow: builds wheels or venvs, re-runs cases against mutants or measures a performance budget; a quick loop skips them with -m 'not slow' (CI runs everything)",
 ]

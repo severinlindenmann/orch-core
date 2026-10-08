@@ -1,3 +1,5 @@
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 
 // records: commits and pushes orch's ticket records to git (v1 C29).
@@ -66,33 +68,47 @@ function pending(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Record<str
   return out.sort((a, b) => a.key.localeCompare(b.key))
 }
 
+/** Busy day: most tickets have events that are not recorded yet (about 300 events on the DEMO tickets). */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = seedBase(ws, store)
+  const marks = state.recorded as Record<string, number>
+  for (const key of store.ticketKeys(ws).sort()) {
+    const last = lastSeq(store, key)
+    if (last > 8 && rng.chance(0.65)) marks[key] = last - rng.int(1, Math.min(7, last - 1))
+  }
+  return state
+}
+
+function seedBase(ws: string, store: MockStore) {
+  const marks: Record<string, number> = {}
+  let i = 0
+  for (const key of store.ticketKeys(ws).sort()) {
+    const last = lastSeq(store, key)
+    const lag = last > 0 && i < SEED_PENDING.length && last >= SEED_PENDING[i] ? SEED_PENDING[i] : 0
+    if (lag) i++
+    marks[key] = last - lag
+  }
+  const keys = store.ticketKeys(ws).sort()
+  return {
+    settings: { ...DEFAULTS },
+    recorded: marks,
+    history: [
+      { hash: 'c41d9e2', at: '2026-10-09T08:00:00Z', by: 'auto-commit', perTicket: spread(keys, 0, 5, 17) },
+      { hash: '9b07a3f', at: '2026-10-08T17:30:00Z', by: 'Mara', perTicket: spread(keys, 2, 3, 9) },
+      { hash: '5e2f810', at: '2026-10-08T09:15:00Z', by: 'Severin', perTicket: spread(keys, 0, 6, 24) },
+    ] satisfies Commit[],
+    seq: 3,
+    behind: false,
+    lastPush: { at: '2026-10-08T17:31:00Z', commit: '9b07a3f', remote: REMOTE } satisfies LastPush,
+    pushError: null,
+    pushOk: null,
+  }
+}
+
 registerAddon({
   name: 'records',
-  seed(ws, store) {
-    const marks: Record<string, number> = {}
-    let i = 0
-    for (const key of store.ticketKeys(ws).sort()) {
-      const last = lastSeq(store, key)
-      const lag = last > 0 && i < SEED_PENDING.length && last >= SEED_PENDING[i] ? SEED_PENDING[i] : 0
-      if (lag) i++
-      marks[key] = last - lag
-    }
-    const keys = store.ticketKeys(ws).sort()
-    return {
-      settings: { ...DEFAULTS },
-      recorded: marks,
-      history: [
-        { hash: 'c41d9e2', at: '2026-10-09T08:00:00Z', by: 'auto-commit', perTicket: spread(keys, 0, 5, 17) },
-        { hash: '9b07a3f', at: '2026-10-08T17:30:00Z', by: 'Mara', perTicket: spread(keys, 2, 3, 9) },
-        { hash: '5e2f810', at: '2026-10-08T09:15:00Z', by: 'Severin', perTicket: spread(keys, 0, 6, 24) },
-      ] satisfies Commit[],
-      seq: 3,
-      behind: false,
-      lastPush: { at: '2026-10-08T17:31:00Z', commit: '9b07a3f', remote: REMOTE } satisfies LastPush,
-      pushError: null,
-      pushOk: null,
-    }
-  },
+  seed: seedBase,
+  seedBusy,
 
   view(state, c) {
     const s = settingsOf(state)

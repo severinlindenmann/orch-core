@@ -1,4 +1,7 @@
 import type { AddonDecision } from '@/api/types'
+import { briefs, tokenOf } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, getAddon, markDecided, openDecisions, registerAddon, type AddonCtx } from './registry'
 
 // publish: apps served from the workspace and read-only shares. Addon state is the single source of truth for both;
@@ -98,14 +101,63 @@ const shareItem = (x: Share) => ({
   ],
 })
 
+const seedState = () => ({
+  apps: seedApps(),
+  shares: seedShares(),
+  settings: { default_expiry_days: 7, namespace: 'acme', allow_artifacts: false },
+  decided: [],
+})
+
+/** Busy day: 12 apps and 40 shares in all (workspaces other than DEMO get a third), some of them on restricted tickets. */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = seedState()
+  const demo = store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO'
+  const apps: App[] = [
+    ['Meter quality board', 'streamlit'], ['Tariff explorer', 'streamlit'], ['Invoice preview', 'static'], ['Outage map', 'static'], ['Usage forecast', 'notebook'],
+    ['Reconciliation viewer', 'streamlit'], ['Customer segments', 'notebook'], ['Grid fee calculator', 'static'], ['CO2 report', 'notebook'],
+  ].map(([name, kind], i) => {
+    const status = (['running', 'running', 'stopped', 'running', 'failed', 'running', 'stopped', 'running', 'failed'] as const)[i]
+    return {
+      id: `app_b${i + 1}`,
+      name,
+      kind: kind as App['kind'],
+      folder: `apps/${name.toLowerCase().replace(/ /g, '-')}`,
+      status,
+      recipients: status === 'running' ? rng.int(1, 5) : 0,
+      log: status === 'failed' ? ['Installing requirements.txt', `ERROR: ${name} needs pandas>=2.2`, 'Build failed (exit 1)'] : Array.from({ length: rng.int(6, 24) }, (_, n) => `${String(n).padStart(2, '0')}:${String(rng.int(0, 59)).padStart(2, '0')} served ${rng.int(1, 40)} requests`),
+    }
+  })
+  const tickets = briefs(store, ws)
+  const restricted = tickets.filter((t) => t.restricted)
+  const others = rng.shuffle(tickets.filter((t) => !t.restricted && ['done', 'testing', 'in-progress'].includes(t.status)))
+  const bound = [...restricted.slice(0, 3), ...others]
+  const kinds: ShareKind[] = ['secret link', 'secret link', 'public link', 'sealed', 'show-once', 'secret link']
+  const people = ['Mara', 'Severin', 'Tom']
+  const titles = ['Before/after report', 'Reconciliation table', 'Run summary', 'Sample rows', 'Tariff notes', 'Invoice preview', 'Findings', 'Meter list']
+  const shares: Share[] = Array.from({ length: 35 }, (_, i) => {
+    const kind = kinds[i % kinds.length]
+    const t = i < 30 ? bound[i % bound.length] : undefined
+    return {
+      id: `sh_b${i + 1}`,
+      ...(t ? { ticket: t.key } : {}),
+      title: `${titles[i % titles.length]}${i >= 8 ? ` ${Math.floor(i / 8) + 1}` : ''}`,
+      kind,
+      ...(kind === 'sealed' ? { recipient: people[i % people.length] } : {}),
+      expires_in_days: rng.int(1, 30),
+      views: rng.int(0, 240),
+      last_viewer: rng.chance(0.8) ? `${rng.pick([...people, 'anonymous'])}, ${rng.int(1, 9)} ${rng.pick(['min', 'h', 'days'])} ago` : null,
+      token: kind === 'sealed' || kind === 'show-once' ? null : tokenOf(i, 11),
+    }
+  })
+  state.apps.push(...apps.slice(0, demo ? 9 : 2))
+  state.shares.push(...(demo ? shares : shares.slice(0, 10)))
+  return state
+}
+
 registerAddon({
   name: 'publish',
-  seed: () => ({
-    apps: seedApps(),
-    shares: seedShares(),
-    settings: { default_expiry_days: 7, namespace: 'acme', allow_artifacts: false },
-    decided: [],
-  }),
+  seed: seedState,
+  seedBusy,
 
   view(state, c) {
     const a = apps(state)

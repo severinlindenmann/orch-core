@@ -1,3 +1,6 @@
+import { briefs, dayIso } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, registerAddon } from './registry'
 
 // wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
@@ -185,9 +188,42 @@ const item = (p: Page, open: boolean) => ({
   ...(open ? { actions: [{ action: 'open', label: 'Open', args: { slug: p.slug } }] } : {}),
 })
 
+const TOPICS = ['Tariff data', 'Meter readings', 'Billing runs', 'Reconciliation', 'dbt seeds', 'Ingestion', 'Invoices', 'Credit notes', 'Daylight saving', 'Warehouse access', 'Finance export', 'Smart meters', 'Heat pumps', 'Solar feed-in', 'Outage events', 'Customer segments']
+const FORMS = ['conventions', 'runbook', 'how-to', 'FAQ', 'decision record', 'checklist']
+
+/** Busy day: pages up to 30 in all (a third of that outside DEMO), each linked to up to three tickets. */
+function busyPages(ws: string, store: MockStore, rng: Rng): Page[] {
+  const demo = store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO'
+  const have = new Set(PAGES.map((p) => p.title))
+  const tickets = briefs(store, ws)
+  const pages: Page[] = []
+  const want = demo ? 30 - PAGES.length : 8
+  for (const topic of rng.shuffle(TOPICS)) {
+    for (const form of rng.shuffle(FORMS)) {
+      if (pages.length >= want) return pages
+      const title = `${topic} ${form}`
+      if (have.has(title) || rng.chance(0.55)) continue
+      have.add(title)
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      pages.push({
+        slug,
+        title,
+        updated: dayIso(rng.int(0, 28), rng.int(7, 17)),
+        by: rng.pick(['Mara', 'Severin']),
+        tickets: rng.sample(tickets, rng.int(0, 3)).map((t) => t.key),
+        markdown: `# ${title}\n\nHow the Acme energy data team handles ${topic.toLowerCase()}: ${form}.\n\n## Rules\n\n${Array.from({ length: rng.int(3, 7) }, (_, i) => `${i + 1}. ${rng.pick(['Name the owner in the pull request.', 'Check the September data first.', 'Never edit a past row, add a new one.', 'Run the reconciliation before the close.', 'Keep timestamps in UTC.', 'Write down the tolerance you used.'])}`).join('\n')}\n\n## Checks\n\n| Check | Where | Tolerance |\n| --- | --- | --- |\n| Row count | dbt test | exact |\n| Billed kWh | reconciliation | 0.1 % |\n\n\`\`\`sql\nselect count(*) from {{ ref('fct_billing') }};\n\`\`\`\n`,
+      })
+    }
+  }
+  // If the random skips left us short, fill with numbered pages.
+  for (let n = 1; pages.length < want; n++) pages.push({ slug: `notes-${n}`, title: `Team notes ${n}`, updated: dayIso(n), by: 'Mara', tickets: [], markdown: `# Team notes ${n}\n\nShort notes.\n` })
+  return pages
+}
+
 registerAddon({
   name: 'wiki',
   seed: () => ({ settings: {}, pages: structuredClone(PAGES), nav: {} }),
+  seedBusy: (ws, store, rng) => ({ settings: {}, pages: [...structuredClone(PAGES), ...busyPages(ws, store, rng)], nav: {} }),
   view(state, c) {
     const { viewer } = c
     // Pages are shared; which tickets they link to is shown only for tickets this viewer can see.

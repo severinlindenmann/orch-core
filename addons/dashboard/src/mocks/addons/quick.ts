@@ -1,4 +1,7 @@
 import type { AddonActionResult, AddonDecision, NewTicketRequest } from '@/api/types'
+import { briefs } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, markDecided, registerAddon, type AddonCtx } from './registry'
 
 // quick tasks: one-line jobs too small for a ticket (v1 docs/quick-tasks.md).
@@ -85,9 +88,41 @@ function makeTicket(ctx: AddonCtx, q: Quick): AddonActionResult {
   return { ok: true, message: `${q.id} is now ${r.ticket.key}, in the backlog.`, changed: true }
 }
 
+const QUICK_TITLES = [
+  'Fix the typo in the loader log message', 'Bump the dbt-utils patch version', 'Delete the commented-out join in fct_usage', 'Rename the stale tariffs fixture', 'Add a newline at the end of the seeds',
+  'Pin ruff in the pre-commit file', 'Remove the unused env var', 'Update the freshness warning text', 'Fix the broken link in the runbook', 'Sort the imports in billing_api',
+  'Drop the old export script', 'Correct the unit in the usage column comment', 'Quote the table name in the vacuum job', 'Use UTC in the nightly log line', 'Delete the duplicate test case',
+  'Add the missing index comment', 'Fix the README badge', 'Rename a variable that shadows a builtin', 'Remove the TODO that is done',
+]
+
+/** Busy day: 25 quick tasks in all: open, claimed, done, outgrew (so owners get decisions) and two made into tickets. */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const base = { items: seed(), settings: { ...DEFAULTS }, decided: [] as string[], nav: {} }
+  if (store.workspaces.find((w) => w.id === ws)?.prefix !== 'DEMO') return base
+  const t = briefs(store, ws)
+  const converted = [...t.filter((x) => x.restricted).slice(0, 1), ...t.filter((x) => !x.restricted).slice(0, 1)]
+  const who = ['Severin', 'Mara', 'Claude Code']
+  const plan: Status[] = ['outgrew', 'outgrew', 'outgrew', 'outgrew', 'converted', 'converted', 'done', 'done', 'done', 'done', 'claimed', 'claimed', 'claimed', 'claimed', 'open', 'open', 'open', 'open', 'open']
+  QUICK_TITLES.forEach((title, i) => {
+    const status = plan[i]
+    base.items.push({
+      id: `Q-${String(i + 7).padStart(3, '0')}`,
+      title: i === 5 ? 'Replace the hard-coded warehouse name in the nightly job config, the dbt profile and the Dagster resource' : title,
+      status,
+      added_by: rng.pick(who),
+      ...(status === 'claimed' || status === 'done' ? { claimed_by: rng.pick(['Claude Code', 'Codex']) } : {}),
+      ...(status === 'done' ? { proof: `done, ${rng.int(1000000, 9999999).toString(16).slice(0, 7)}` } : {}),
+      ...(status === 'outgrew' ? { commits: rng.int(2, 6), files: rng.int(4, 12) } : {}),
+      ...(status === 'converted' ? { ticket: converted[i - 4]?.key } : {}),
+    })
+  })
+  return base
+}
+
 registerAddon({
   name: 'quick',
   seed: () => ({ items: seed(), settings: { ...DEFAULTS }, decided: [], nav: {} }),
+  seedBusy,
 
   view(state, c) {
     const s = settingsOf(state)

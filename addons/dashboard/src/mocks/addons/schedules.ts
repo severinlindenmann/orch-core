@@ -1,5 +1,6 @@
 import type { AddonDecision, NewTicketRequest } from '@/api/types'
 import type { StoreFailure } from '../store'
+import type { Rng } from '../busy/rng'
 import { canSeeTicket, getAddon, openDecisions, registerAddon } from './registry'
 
 // schedules (later, preview; v1 docs/schedules.md): agent work that starts without anyone typing.
@@ -149,33 +150,63 @@ const seedSchedules = (): Schedule[] => [
 
 const decisionId = (r: Run) => `schedules.finding:${r.id}`
 
+/** Busy day: 8 schedules in all (5 more) and a long run history; two recurring findings wait to be filed. */
+function seedBusy(_ws: string, _store: unknown, rng: Rng) {
+  const state = seedBase() as { schedules: Schedule[]; runs: Run[]; seq: number }
+  const extra: Schedule[] = [
+    { id: 'nightly-dbt', name: 'Nightly dbt build check', kind: 'schedule', skill: 'check-dbt-run', every: 240, between: ['00:00', '08:00'], days: [0, 1, 2, 3, 4, 5, 6], armed: true, armedBy: 'p_sev', armedAt: '2026-10-05T07:00:00Z' },
+    { id: 'cost-weekly', name: 'Weekly cost report', kind: 'recurring', skill: null, weekly: 5, at: '16:00', template: { label: 'Cost report', title: 'Review the cost report, week {week}', ask: 'Read the usage report and flag anything above budget.', type: 'chore', priority: 'low' }, armed: true, armedBy: 'p_mara', armedAt: '2026-10-05T07:00:00Z' },
+    { id: 'smoke-on-open', name: 'Plan check when a ticket opens', kind: 'listener', skill: 'review-plan', event: 'ticket.moved', to: 'open', cooldown: 15, armed: true, armedBy: 'p_sev', armedAt: '2026-10-06T07:00:00Z' },
+    { id: 'stale-sweep', name: 'Stale ticket sweep', kind: 'schedule', skill: 'sweep-stale', every: 1440, between: ['07:00', '08:00'], days: [1, 2, 3, 4, 5], armed: false },
+    { id: 'freshness-weekly', name: 'Source freshness review', kind: 'recurring', skill: null, weekly: 3, at: '09:00', template: { label: 'Freshness review', title: 'Review source freshness, week {week}', ask: 'Check which sources were late this week and file what to fix.', type: 'chore', priority: 'medium' }, armed: true, armedBy: 'p_sev', armedAt: '2026-10-05T07:00:00Z' },
+  ]
+  state.schedules.push(...extra)
+  let n = state.seq
+  const add = (s: Schedule, at: string, trigger: Run['trigger']) => {
+    n++
+    const run: Run = { id: `R-${n}`, schedule: s.id, at, trigger, ...reportFor(s, at, n) }
+    if (run.findingState === 'open') run.findingState = n % 3 === 0 ? 'open' : 'dismissed'
+    state.runs.unshift(run)
+  }
+  for (let d = 8; d >= 1; d--) {
+    for (const s of extra.filter((x) => x.armed && x.kind === 'schedule')) add(s, `2026-10-${String(9 - d).padStart(2, '0')}T0${rng.int(1, 7)}:${String(rng.int(0, 5) * 10).padStart(2, '0')}:00Z`, 'clock')
+    if (d % 3 === 0) for (const s of extra.filter((x) => x.kind === 'recurring')) add(s, `2026-10-${String(9 - d).padStart(2, '0')}T07:00:00Z`, 'clock')
+    if (d % 2 === 0) add(extra[2], `2026-10-${String(9 - d).padStart(2, '0')}T10:${String(rng.int(10, 59))}:00Z`, 'event')
+  }
+  state.runs.sort((a, b) => b.at.localeCompare(a.at))
+  state.seq = n
+  return state
+}
+
+function seedBase() {
+  const inbox = (id: string, at: string, mails: number): Run => ({
+    id,
+    schedule: 'check-inbox',
+    at,
+    trigger: 'clock',
+    result: 'quiet',
+    summary: `${mails} mails, none need work.`,
+    report: `**${mails} mails** since the last run, none need work.\n\nChecked the support inbox. Nothing was filed.`,
+  })
+  const deps = seedSchedules()[2]
+  const depsAt = '2026-10-05T07:00:00Z'
+  return {
+    schedules: seedSchedules(),
+    runs: [
+      inbox('R-4', '2026-10-09T11:00:00Z', 3),
+      inbox('R-3', '2026-10-09T10:00:00Z', 5),
+      inbox('R-2', '2026-10-09T09:00:00Z', 2),
+      { id: 'R-1', schedule: 'deps-weekly', at: depsAt, trigger: 'clock', ...reportFor(deps, depsAt, 1) },
+    ] satisfies Run[],
+    seq: 4,
+    nav: {},
+  }
+}
+
 registerAddon({
   name: 'schedules',
-
-  seed() {
-    const inbox = (id: string, at: string, mails: number): Run => ({
-      id,
-      schedule: 'check-inbox',
-      at,
-      trigger: 'clock',
-      result: 'quiet',
-      summary: `${mails} mails, none need work.`,
-      report: `**${mails} mails** since the last run, none need work.\n\nChecked the support inbox. Nothing was filed.`,
-    })
-    const deps = seedSchedules()[2]
-    const depsAt = '2026-10-05T07:00:00Z'
-    return {
-      schedules: seedSchedules(),
-      runs: [
-        inbox('R-4', '2026-10-09T11:00:00Z', 3),
-        inbox('R-3', '2026-10-09T10:00:00Z', 5),
-        inbox('R-2', '2026-10-09T09:00:00Z', 2),
-        { id: 'R-1', schedule: 'deps-weekly', at: depsAt, trigger: 'clock', ...reportFor(deps, depsAt, 1) },
-      ] satisfies Run[],
-      seq: 4,
-      nav: {},
-    }
-  },
+  seed: seedBase,
+  seedBusy,
 
   view(state, c) {
     const now = c.store.now()

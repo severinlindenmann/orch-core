@@ -1,3 +1,7 @@
+import { briefs } from '../busy/helpers'
+import { PERSON_NAME } from '../busy/pools'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 
 // github: pull requests (code reviews) and the external issues lane. Addon state is the only store for PRs and issues;
@@ -81,13 +85,58 @@ function ago(fromIso: string, nowIso: string): string {
   return `${d} ${d === 1 ? 'day' : 'days'} ago`
 }
 
+const seedState = () => ({
+  prs: seedPrs(),
+  issues: seedIssues(),
+  settings: { org: 'acme-energy', link_prs: true, repos: `${DBT}, ${API}`, poll_minutes: 5 },
+})
+const REPO_OF: Record<string, string> = { 'acme-energy-dbt': DBT, 'acme-energy-billing-api': API, 'acme-energy-ingest': 'acme-energy/ingest' }
+const ISSUE_TITLES = [
+  'Seed loader fails on files with a BOM', 'Invoice total rounds half down', 'Document the tariff naming', 'Expose valid-from in the API', 'Bump dbt-utils',
+  'Staging model for gas meters', 'Retry policy is not in the README', 'Pin the OpenAPI generator', 'Freshness check warns too late', 'Timestamps lose the zone on export',
+  'Add a smoke test for the loader', 'Partition pruning is off for readings', 'Credit notes are missing from the preview', 'Rename fct_usage columns', 'Explain the billing run log',
+  'Heat pump profiles use the wrong unit', 'Reconciliation page is slow', 'Duplicate meters after a replacement', 'Estimated readings are not flagged', 'Prepayment balance can go negative',
+  'Finance export misses the last day', 'Add a dry-run flag', 'Archive old seeds', 'Customer segment names differ between repos', 'Late readings are dropped',
+]
+
+/** Busy day: 30 pull requests (24 more, from tickets that have one; the rest of the tickets keep it on the ticket) and 25 issues. */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = seedState()
+  const demo = store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO'
+  const cand = briefs(store, ws).filter((t) => t.prs.length)
+  const pool = [...cand.filter((t) => t.restricted), ...rng.shuffle(cand.filter((t) => !t.restricted))]
+  for (const t of pool.slice(0, demo ? 24 : 6)) {
+    const merged = t.status === 'done'
+    const failing = !merged && rng.chance(0.25)
+    const pending = !merged && !failing && rng.chance(0.4)
+    state.prs.push(
+      pr({
+        repo: REPO_OF[t.repo] ?? DBT,
+        number: t.prs[0],
+        title: t.title,
+        ticket: t.key,
+        branch: t.branch,
+        state: merged ? 'merged' : t.claimed && rng.chance(0.5) ? 'draft' : 'open',
+        checks: checks(['lint', 'pass'], ['unit tests', failing ? 'fail' : pending ? 'pending' : 'pass'], ['dbt build', merged ? 'pass' : failing ? 'fail' : pending ? 'pending' : 'pass']),
+        review: merged ? 'approved' : rng.pick(['none', 'requested', 'requested', 'changes requested', 'approved']),
+        author: rng.chance(0.6) ? agent('claude-code') : person(PERSON_NAME[rng.pick(['p_sev', 'p_mara'])]),
+        additions: rng.int(4, 420),
+        deletions: rng.int(0, 160),
+        files: rng.int(1, 18),
+        updated_at: t.updated_at,
+      }),
+    )
+  }
+  const repos = [DBT, API, 'acme-energy/ingest']
+  const extra = ISSUE_TITLES.slice(0, demo ? 17 : 5)
+  extra.forEach((title, i) => state.issues.push(issue(repos[i % 3], 130 + i, title, (['bug', 'docs', 'chore', 'feature'] as const)[rng.int(0, 3)])))
+  return state
+}
+
 registerAddon({
   name: 'github',
-  seed: () => ({
-    prs: seedPrs(),
-    issues: seedIssues(),
-    settings: { org: 'acme-energy', link_prs: true, repos: `${DBT}, ${API}`, poll_minutes: 5 },
-  }),
+  seed: seedState,
+  seedBusy,
 
   view(state, c) {
     const { store } = c

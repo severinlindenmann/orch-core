@@ -49,7 +49,8 @@ import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
-import { generateBusy, type BusyData } from './busy/generate'
+import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
+import { makeRng } from './busy/rng'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -158,6 +159,7 @@ export class MockStore {
     this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
+    if (this.busy) this.installBusyAddons()
     this.created = {}
     this.addonStates = {}
     this.refoldWorkspaces()
@@ -178,6 +180,25 @@ export class MockStore {
           .map(({ e }, idx) => this.expand(def, e, idx + 1))
         this.events.set(def.key, evs)
         this.seeded.set(def.key, evs.length)
+      }
+    }
+  }
+
+  /** Busy day: the catalog addons that fill the pages are installed, granted and on in DEMO. */
+  private installBusyAddons() {
+    const demo = this.seedWorkspaces.find((w) => w.prefix === 'DEMO')
+    if (!demo) return
+    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory']) {
+      const pkg = this.addons.find((a) => a.name === name)
+      if (!pkg || demo.addons[name]) continue
+      demo.addons[name] = {
+        enabled: true,
+        status: 'active',
+        installed: true,
+        granted: { version: pkg.version, capabilities: pkg.capabilities, package_sha256: pkg.package_sha256, at: '2026-10-08T09:00:00Z', by: 'p_sev' },
+        version: pkg.version,
+        package_sha256: pkg.package_sha256,
+        capabilities: pkg.capabilities,
       }
     }
   }
@@ -741,7 +762,11 @@ export class MockStore {
   /** Per-workspace state of an addon (lazily seeded, persisted). */
   addonState(ws: string, name: string): Record<string, unknown> {
     const key = `${ws}/${name}`
-    return (this.addonStates[key] ??= getAddon(name)?.seed(ws, this) ?? {})
+    if (this.addonStates[key]) return this.addonStates[key]
+    const mod = getAddon(name)
+    // The busy dataset seeds an addon with its own, bigger state when the module has one.
+    const seeded = this.dataset === 'busy' && mod?.seedBusy ? mod.seedBusy(ws, this, makeRng(BUSY_SEED).fork(key)) : (mod?.seed(ws, this) ?? {})
+    return (this.addonStates[key] = seeded)
   }
 
   // ------------------------------------------------------------ addon manager

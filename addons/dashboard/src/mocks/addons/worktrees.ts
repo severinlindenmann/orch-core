@@ -1,4 +1,7 @@
 import { addonActive } from '@/api/addons'
+import { briefs, scaled, scaleOf } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { registerAddon, type AddonCtx } from './registry'
 
 // worktrees: one git worktree per ticket and repo (the git commands run in the host; here it is plain state).
@@ -59,9 +62,26 @@ const plural = (n: number) => `${n} changed file${n === 1 ? '' : 's'}`
 const canSee = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, w: Worktree) => c.store.workspaceOf(w.ticket)?.id === c.ws && c.store.isVisible(w.ticket, c.viewer)
 const nameOf = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === c.viewer)?.name ?? c.viewer
 
+/** Busy day: 20 worktrees in DEMO (16 more, from tickets in progress, in testing or just finished; a third of that elsewhere). */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = { worktrees: store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO' ? seedDemo() : [] }
+  const have = new Set(state.worktrees.map((w) => w.id))
+  const pool = briefs(store, ws).filter((t) => ['in-progress', 'testing', 'waiting', 'open'].includes(t.status) || t.restricted)
+  for (const t of rng.shuffle(pool).slice(0, scaled(16, scaleOf(store, ws)) + 4)) {
+    const repo = REPOS.find((r) => r.endsWith(t.repo.replace('acme-energy-', ''))) ?? REPOS[0]
+    const w = wt(t.key, repo, t.title, { dirty: rng.chance(0.5) ? rng.int(1, 12) : 0, ahead: rng.int(0, 6), behind: rng.int(0, 5), created_by: rng.pick(['Claude Code', 'Codex', 'Mara', 'Severin']) })
+    if (have.has(w.id)) continue
+    have.add(w.id)
+    state.worktrees.push(w)
+  }
+  if (store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO') state.worktrees.length = Math.min(state.worktrees.length, 20)
+  return state
+}
+
 registerAddon({
   name: 'worktrees',
   seed: (ws, store) => ({ worktrees: store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO' ? seedDemo() : [] }),
+  seedBusy,
   view(state, c) {
     const terminalsActive = addonActive(c.store.workspaces.find((w) => w.id === c.ws), 'terminals')
     const item = (w: Worktree) => ({

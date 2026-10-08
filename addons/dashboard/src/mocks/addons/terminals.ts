@@ -1,5 +1,8 @@
 import type { ShellCtx, TerminalSessionView } from '@/api/terminals'
 import { atLeast } from '@/api/permissions'
+import { briefs } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import type { MockStore } from '../store'
 import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 
 // terminals: a fake PTY per session (the shell itself is src/app/terminal/fakePty.ts and runs in the browser).
@@ -21,6 +24,8 @@ interface Session {
   branch: string
   status: 'running' | 'stopped'
   started: string
+  /** What an agent mirror shows it typed (default: a few commands). The busy day gives some a long one. */
+  transcript?: string[]
 }
 
 const SESSIONS: Session[] = [
@@ -73,15 +78,39 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
   }
 }
 
+const SEED_BASE = (ws: string, store: MockStore): Record<string, unknown> => ({
+  settings: { shell: '/bin/zsh', font_size: 13 },
+  sessions: store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO' ? structuredClone(SESSIONS) : [],
+  nav: {},
+  seq: 1,
+})
+
+/** A long, plausible run of commands in a ticket's worktree. */
+function longTranscript(rng: Rng, ticket: string, lines: number): string[] {
+  const pool = ['orch status', 'orch task next', `orch show ${ticket} --section plan`, `orch show ${ticket} --section requirements`, 'git status', 'git log --oneline -5', 'ls', 'pwd']
+  return Array.from({ length: lines }, () => rng.pick(pool))
+}
+
+/** Busy day: the DEMO sessions plus three more agent mirrors (6 in all: 2 person shells, 4 mirrors), two of them with a few hundred lines. */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = SEED_BASE(ws, store) as { sessions: Session[]; seq: number }
+  if (state.sessions.length === 0) return state
+  const working = briefs(store, ws).filter((t) => t.claimed && !t.restricted)
+  const asked = rng.shuffle(working).slice(0, 3)
+  asked.forEach((t, i) => {
+    state.sessions.push({ id: `agent${i + 2}`, label: `agent: ${i % 2 ? 'codex' : 'claude-code'} (read only, no typing)`, kind: 'agent', owner: `agent:${i % 2 ? 'codex' : 'claude-code'}`, for: i % 2 ? 'p_mara' : 'p_sev', ticket: t.key, branch: t.branch, status: 'running', started: `2026-10-09T0${8 + i}:${10 + i * 7}:00Z`, transcript: longTranscript(rng, t.key, 160 + i * 120) })
+  })
+  // The seeded mirror also gets a long run.
+  const first = state.sessions.find((s) => s.id === 'agent1')
+  if (first?.ticket) first.transcript = longTranscript(rng, first.ticket, 220)
+  return state
+}
+
 registerAddon({
   name: 'terminals',
   // The demo sessions belong to the DEMO workspace; every other workspace starts with none.
-  seed: (ws, store) => ({
-    settings: { shell: '/bin/zsh', font_size: 13 },
-    sessions: store.workspaces.find((w) => w.id === ws)?.prefix === 'DEMO' ? structuredClone(SESSIONS) : [],
-    nav: {},
-    seq: 1,
-  }),
+  seed: SEED_BASE,
+  seedBusy,
   view(state, c) {
     const { viewer } = c
     const role = c.store.roleIn(c.ws, viewer)
@@ -96,7 +125,7 @@ registerAddon({
       status: s.status,
       interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member'),
       ctx: shellCtx(c, s),
-      transcript: s.kind === 'agent' ? agentTranscript(s) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
+      transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]

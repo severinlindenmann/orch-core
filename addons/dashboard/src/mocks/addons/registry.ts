@@ -1,5 +1,6 @@
 import type { AddonActionResult, AddonDecision } from '@/api/types'
 import type { LaunchPlan, LaunchRequest } from '../sessions'
+import type { Rng } from '../busy/rng'
 import type { MockStore, StoreFailure } from '../store'
 
 export interface AddonCtx {
@@ -25,6 +26,11 @@ export interface MockAddon {
   name: string
   /** Initial state per workspace (seed). */
   seed(ws: string, store: MockStore): Record<string, unknown>
+  /**
+   * Initial state per workspace on the Busy day dataset: the normal seed plus generated data (many apps, pull requests,
+   * pages, ...). `rng` is seeded per workspace and addon, so the data is the same every time. Omitted: the normal seed.
+   */
+  seedBusy?(ws: string, store: MockStore, rng: Rng): Record<string, unknown>
   /** Optional derived fields merged into GET .../state (e.g. counts). */
   view?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Record<string, unknown>
   /**

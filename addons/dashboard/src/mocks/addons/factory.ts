@@ -2,6 +2,7 @@ import { addonActive } from '@/api/addons'
 import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
+import type { Rng } from '../busy/rng'
 import { canSeeTicket, getAddon, openDecisions, registerAddon, type AddonCtx } from './registry'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
@@ -196,33 +197,53 @@ function startScript(store: MockStore, ws: string) {
   store.sim.play(scriptId(ws), steps)
 }
 
+/** Busy day: the epic has 20 children (the store holds them), 5 permits wait for an answer and older ones are decided. */
+function seedBusy(ws: string, store: MockStore, rng: Rng) {
+  const state = seedBase(ws, store) as { epic: string | null; permits: Permit[]; seq: number }
+  if (!state.epic) return state
+  const kids = childKeys(store, ws, state.epic)
+  const generated = kids.filter((k) => Number(k.slice(k.lastIndexOf('-') + 1)) >= 100)
+  const permits = state.permits
+  const states: Permit['state'][] = ['open', 'open', 'open', 'open', 'granted once', 'granted for this epic', 'refused', 'granted once', 'granted once', 'refused']
+  states.forEach((st, i) => {
+    const ask = COMMANDS[(i + 1) % COMMANDS.length]
+    const day = st === 'open' ? 9 : 8 - (i % 3)
+    permits.unshift({ id: `P-${i + 3}`, ...ask, ticket: generated[i % Math.max(1, generated.length)] ?? kids[0], state: st, at: `2026-10-0${day}T${String(rng.int(7, 11)).padStart(2, '0')}:${String(rng.int(10, 59))}:00Z` })
+  })
+  permits.sort((a, b) => b.at.localeCompare(a.at))
+  state.seq = 2 + states.length
+  return state
+}
+
+function seedBase(ws: string, store: MockStore) {
+  const epic = store.ticketKeys(ws).find((k) => k === 'DEMO-0050' && store.ticket(k)?.type === 'epic') ?? null
+  const kids = epic ? childKeys(store, ws, epic) : []
+  return {
+    epic,
+    startedAt: '2026-10-07T08:00:00Z',
+    startedBy: 'p_sev',
+    paused: null,
+    pausedMs: 0,
+    used: kids.length,
+    seq: 2,
+    simSteps: 0,
+    simTimes: [],
+    simBy: null,
+    epicGrants: [],
+    permits: epic
+      ? ([
+          { id: 'P-2', ...COMMANDS[2], ticket: 'DEMO-0052', state: 'open', at: '2026-10-09T10:40:00Z' },
+          { id: 'P-1', ...COMMANDS[0], ticket: 'DEMO-0051', state: 'granted once', at: '2026-10-07T12:10:00Z' },
+        ] satisfies Permit[])
+      : [],
+    nav: {},
+  }
+}
+
 registerAddon({
   name: 'factory',
-
-  seed(ws, store) {
-    const epic = store.ticketKeys(ws).find((k) => k === 'DEMO-0050' && store.ticket(k)?.type === 'epic') ?? null
-    const kids = epic ? childKeys(store, ws, epic) : []
-    return {
-      epic,
-      startedAt: '2026-10-07T08:00:00Z',
-      startedBy: 'p_sev',
-      paused: null,
-      pausedMs: 0,
-      used: kids.length,
-      seq: 2,
-      simSteps: 0,
-      simTimes: [],
-      simBy: null,
-      epicGrants: [],
-      permits: epic
-        ? ([
-            { id: 'P-2', ...COMMANDS[2], ticket: 'DEMO-0052', state: 'open', at: '2026-10-09T10:40:00Z' },
-            { id: 'P-1', ...COMMANDS[0], ticket: 'DEMO-0051', state: 'granted once', at: '2026-10-07T12:10:00Z' },
-          ] satisfies Permit[])
-        : [],
-      nav: {},
-    }
-  },
+  seed: seedBase,
+  seedBusy,
 
   view(state, c) {
     const now = c.store.now()

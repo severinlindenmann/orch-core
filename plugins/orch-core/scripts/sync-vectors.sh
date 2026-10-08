@@ -7,6 +7,9 @@ relay="${ORCH_RELAY_DIR:-$HOME/orch-dev/orch-relay}"
 dest="$(cd "$(dirname "${BASH_SOURCE[0]}")/../tests/vectors" && pwd)"
 git -C "$relay" fetch -q
 sha="$(git -C "$relay" rev-parse "$ref")"
-git -C "$relay" show "$sha:tests/vectors_v2.json" > "$dest/vectors_v2.json"
+tmp="$(mktemp "$dest/.vectors_v2.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+git -C "$relay" show "$sha:tests/vectors_v2.json" > "$tmp"
+mv "$tmp" "$dest/vectors_v2.json"
 echo "$sha" > "$dest/SOURCE"
 echo "synced vectors_v2.json from orch-relay $sha"

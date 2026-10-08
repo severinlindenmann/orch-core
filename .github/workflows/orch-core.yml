@@ -16,6 +16,7 @@ jobs:
   tests:
     name: core tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -29,4 +30,5 @@ jobs:
           cache-dependency-glob: plugins/orch-core/uv.lock
       - run: uv sync --locked
       - run: uv run ruff check
+      - run: uv run ruff format --check
       - run: uv run pytest -q -m "not slow" -n auto

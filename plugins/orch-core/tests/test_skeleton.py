@@ -7,8 +7,20 @@ from pathlib import Path
 
 import pytest
 
-PACKAGES = ["schema", "canon", "crypto", "custody", "identity", "store", "model", "ops", "cli", "instructions",
-            "addons", "importer"]
+PACKAGES = [
+    "schema",
+    "canon",
+    "crypto",
+    "custody",
+    "identity",
+    "store",
+    "model",
+    "ops",
+    "cli",
+    "instructions",
+    "addons",
+    "importer",
+]
 
 
 @pytest.mark.parametrize("name", PACKAGES)

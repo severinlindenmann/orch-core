@@ -83,6 +83,7 @@ class Requirement:
     scope: str
     assertion: str = "none"  # none | lease | fresh
     subject: dict | None = None
+    recheck: bool = False  # fresh only: build the subject again when the assertion arrives and run only if unchanged
 
 
 RouteHook = Callable[[dict, bytes], "Requirement | None"]  # (meta, data) -> what the route needs; None: never remote
@@ -447,7 +448,7 @@ class Host:
         req = self._requirement(r1)  # R1 runs exactly once, after its scope is checked again
         stream = r1.header.stream
         if req is None or req.scope != issued.scope or SCOPES[req.scope] > dev.level or (
-                issued.purpose == "fresh" and _subject(req.subject) != issued.subject) or (  # what was shown still holds
+                issued.purpose == "fresh" and req.recheck and _subject(req.subject) != issued.subject) or (  # what was shown still holds
                 issued.purpose == "lease" and (stream == ZERO_ID or self.streams.get(stream.hex()) != did)):
             self.store.set_outcome(for_rid, {"refusal": "forbidden_scope"}, now)
             return self._final(rid2, now, "forbidden_scope")

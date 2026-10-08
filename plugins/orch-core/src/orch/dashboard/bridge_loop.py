@@ -198,7 +198,10 @@ def route_hook(routes, ws=None):
         if kind is None:
             return plain
         body = data if isinstance(data, bytes) else b""
-        return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body))
+        # a start has no write of its own that checks the state it showed: the host builds its subject again when the
+        # assertion arrives and runs only if the shown text and digest are the same
+        return Requirement(needed.name.lower(), "fresh", subject(ws, kind, route_path, pp, _form(meta, data, ""), method, target, body),
+                           recheck=kind in START_ROUTES.values())
     return hook
 
 

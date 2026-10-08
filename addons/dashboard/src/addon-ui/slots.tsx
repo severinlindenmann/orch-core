@@ -49,7 +49,7 @@ export function useAddons() {
 export function useSlot(name: AddonSlot, ctx: Omit<SlotContext, 'workspace' | 'addon'> = {}): ResolvedContribution[] {
   const { data = [] } = useAddons()
   const { workspace } = useWorkspace()
-  const states = useAddonStates(workspace?.id, data.filter((a) => a.enabled && a.contributions.some((c) => c.slot === name)).map((a) => a.name))
+  const states = useAddonStates(workspace?.id, data.filter((a) => a.enabled && addonActive(workspace, a.name) && a.contributions.some((c) => c.slot === name)).map((a) => a.name))
   const out: ResolvedContribution[] = []
   for (const a of data) {
     out.push(...selectContributions([a], name, { ...ctx, workspace, addon: states[a.name] }))

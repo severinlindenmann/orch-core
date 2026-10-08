@@ -7,6 +7,7 @@ import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/add
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { iconByName } from '@/app/icons'
+import { useWorkspace } from '@/app/workspace'
 
 interface LaneItem {
   title: string
@@ -20,11 +21,12 @@ function laneItems(c: ResolvedContribution): LaneItem[] {
 }
 
 function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
+  const { workspace } = useWorkspace()
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle')
   async function run() {
     setState('busy')
     try {
-      const res = await api.runAddonAction(c.addon, 'import', { item })
+      const res = await api.runAddonAction(c.addon, 'import', { item, ws: workspace?.id })
       toast.success(res.message)
       setState('done')
     } catch (e) {

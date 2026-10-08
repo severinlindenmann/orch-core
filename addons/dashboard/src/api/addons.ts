@@ -18,4 +18,5 @@ export function addonActive(workspace: Pick<Workspace, 'addons'> | undefined, na
   return !!a && a.enabled && a.status !== 'needs_grant'
 }
 
-export const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
+/** Equal as sets: order and duplicates do not matter. */
+export const sameSet = (a: string[], b: string[]) => a.every((x) => b.includes(x)) && b.every((x) => a.includes(x))

@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { BadgeCheck, CalendarClock, CircleHelp, ExternalLink, GitBranch, GitPullRequest, Hand, Hourglass, ShieldQuestion } from 'lucide-react'
 import { api } from '@/api/client'
 import type { NeedsYouItem, TicketDocument } from '@/api/types'
-import { AddonSlotStack } from '@/addon-ui'
+import { addonActive } from '@/api/addons'
+import { AddonSlotStack, AddonBadge, useAddons } from '@/addon-ui'
+import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { availableActions } from './actions'
 import { ago, fmtTime, Mono, Section, shortHash, type Jump, type HumanAction, type Viewer } from './shared'
@@ -66,6 +69,43 @@ function NeedsYou({ ticket, viewer, sign, jump }: { ticket: TicketDocument; view
           })}
         </ul>
       )}
+    </Section>
+  )
+}
+
+/** Data an addon wrote on this ticket while it was active; read-only and collapsed until opened. */
+function InactiveAddonData({ ticket }: { ticket: TicketDocument }) {
+  const { workspace } = useWorkspace()
+  const { data: addons = [] } = useAddons()
+  const [open, setOpen] = useState<string | null>(null)
+  const names = workspace ? Object.keys(ticket.addons ?? {}).filter((n) => !addonActive(workspace, n)) : []
+  if (names.length === 0) return null
+  return (
+    <Section title="Inactive addons">
+      <ul className="space-y-1.5">
+        {names.map((n) => {
+          const title = addons.find((a) => a.name === n)?.title ?? n
+          const isOpen = open === n
+          return (
+            <li key={n} className="rounded-md border border-border bg-bg text-text-muted opacity-70">
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setOpen(isOpen ? null : n)}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px]"
+              >
+                <AddonBadge name={n} />
+                <span>{title} · inactive</span>
+              </button>
+              {isOpen && (
+                <pre className="max-h-60 overflow-auto border-t border-border px-2.5 py-2 font-mono text-[11px] leading-snug text-text-muted">
+                  {JSON.stringify(ticket.addons[n], null, 2)}
+                </pre>
+              )}
+            </li>
+          )
+        })}
+      </ul>
     </Section>
   )
 }
@@ -162,6 +202,7 @@ export function Rail({ ticket, viewer, sign, jump }: { ticket: TicketDocument; v
       </Section>
 
       <AddonSlotStack name="ticket.panel" ctx={{ ticket }} />
+      <InactiveAddonData ticket={ticket} />
     </aside>
   )
 }

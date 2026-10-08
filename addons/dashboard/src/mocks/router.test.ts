@@ -198,3 +198,12 @@ describe('mock tickets search', () => {
     })
   })
 })
+
+describe('addon action route', () => {
+  it('404s for an unknown workspace and creates no state', async () => {
+    const { api, store } = setup()
+    await expect(api.runAddonAction('estimate', 'save_settings', { ws: 'bogus', formData: {} })).rejects.toMatchObject({ status: 404 })
+    const states = (store as unknown as { addonStates: Record<string, unknown> }).addonStates
+    expect(Object.keys(states).some((k) => k.startsWith('bogus'))).toBe(false)
+  })
+})

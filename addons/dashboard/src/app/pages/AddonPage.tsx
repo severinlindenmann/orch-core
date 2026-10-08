@@ -1,3 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { addonActive } from '@/api/addons'
+import { api } from '@/api/client'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useAddonStates, selectContributions } from '@/addon-ui/slots'
@@ -9,11 +13,29 @@ import { usePageHeader } from '../shell/ShellUi'
 export function AddonPage({ name, page }: { name: string; page: string }) {
   const { data: addons, isLoading } = useAddons()
   const { workspace } = useWorkspace()
-  const { [name]: addon } = useAddonStates(workspace?.id, [name])
+  const { [name]: addon } = useAddonStates(workspace?.id, addonActive(workspace, name) ? [name] : [])
+  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const c = selectContributions(addons ?? [], 'nav', { workspace, addon }).find((x) => x.addon === name && x.id === page)
   usePageHeader(c ? c.title : name)
 
-  if (isLoading) return <Skeleton className="h-40 w-full max-w-3xl" />
+  if (isLoading || !workspace) return <Skeleton className="h-40 w-full max-w-3xl" />
+  if (!addonActive(workspace, name)) {
+    const title = addons?.find((x) => x.name === name)?.title ?? name
+    const isOwner = workspace.members.find((m) => m.person === me.data?.person)?.role === 'owner'
+    return (
+      <div className="space-y-2">
+        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <p className="text-sm text-text-muted">{title} is not enabled in {workspace.name}.</p>
+        {isOwner ? (
+          <Link to="/settings/$tab" params={{ tab: 'addons' }} className="text-sm text-brand hover:underline">
+            Open the addon manager
+          </Link>
+        ) : (
+          <p className="text-sm text-text-faint">Ask an owner to enable it.</p>
+        )}
+      </div>
+    )
+  }
   if (!c)
     return (
       <div className="space-y-2">

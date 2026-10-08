@@ -58,9 +58,9 @@ describe('AddonNode', () => {
     expect(within(table).getByText('#29')).toBeInTheDocument()
   })
 
-  it('renders markdown with gfm', () => {
+  it('renders markdown with gfm', async () => {
     show({ type: 'markdown', text: '# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n[docs](https://example.com)' })
-    expect(screen.getByRole('heading', { name: 'Title' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Title' })).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'docs' })).toHaveAttribute('href', 'https://example.com')
   })
@@ -79,11 +79,12 @@ describe('AddonNode', () => {
 })
 
 describe('sanitized markdown', () => {
-  it('strips <script> and javascript: links, and never loads images', () => {
+  it('strips <script> and javascript: links, and never loads images', async () => {
     const { container } = show({
       type: 'markdown',
       text: 'hello <script>window.__pwned = 1</script>\n\n[bad](javascript:alert(1))\n\n![tracker](https://example.com/t.png)\n\n<img src="https://example.com/x.png" onerror="alert(1)">',
     })
+    await screen.findByText('bad')
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('img')).toBeNull()
     expect(container.innerHTML).not.toContain('javascript:')

@@ -13,18 +13,9 @@ import { General } from './General'
 import { AddonManager } from './addons'
 import { Gates } from './Gates'
 import { Members } from './Members'
+import { TABS } from './tabs'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
-
-const TABS = [
-  { id: 'general', label: 'General' },
-  { id: 'members', label: 'Members & roles' },
-  { id: 'gates', label: 'Gate policies' },
-  { id: 'addons', label: 'Addons' },
-] as const
-
-/** The known /settings/$tab values; anything else redirects to General. */
-export const SETTINGS_TABS: readonly string[] = TABS.map((t) => t.id)
 
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'

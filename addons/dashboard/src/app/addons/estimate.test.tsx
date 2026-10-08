@@ -4,6 +4,7 @@ import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const rail = () => screen.getByRole('complementary', { name: 'Ticket details' })
+const openRail = () => screen.findByRole('complementary', { name: 'Ticket details' })
 const sumNow = async () => {
   const sum = await within(await screen.findByRole('region', { name: 'In progress' })).findByLabelText(/^Sum of /)
   return Number(/(\d+) pts?$/.exec(sum.textContent ?? '')?.[1])
@@ -27,7 +28,7 @@ describe('estimate on the board and the ticket', () => {
     const w0 = Number(mockStore.ticket('DEMO-0043')!.addons.estimate?.points ?? 0)
     const before = await sumNow()
     await user.click(await screen.findByTestId('card-DEMO-0043'))
-    await user.selectOptions(await within(rail()).findByLabelText('Points'), '21')
+    await user.selectOptions(await within(await openRail()).findByLabelText('Points'), '21')
     await user.click(within(rail()).getByRole('button', { name: 'Save estimate' }))
     await screen.findByText(/DEMO-0043 estimated at 21 points\./)
     await user.click(screen.getAllByRole('link', { name: 'Board' })[0])
@@ -43,7 +44,7 @@ describe('estimate on the board and the ticket', () => {
     const w0 = Number(mockStore.ticket('DEMO-0043')!.addons.estimate?.points ?? 0)
     const before = await sumNow()
     await user.click(await screen.findByTestId('card-DEMO-0043'))
-    const select = await within(rail()).findByLabelText('Points')
+    const select = await within(await openRail()).findByLabelText('Points')
     await waitFor(() => expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(expect.arrayContaining(['S', 'M', 'L'])))
     await user.selectOptions(select, 'L')
     await user.click(within(rail()).getByRole('button', { name: 'Save estimate' }))

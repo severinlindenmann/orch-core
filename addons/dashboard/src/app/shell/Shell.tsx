@@ -1,5 +1,7 @@
+import { Suspense } from 'react'
 import { Outlet, useRouterState } from '@tanstack/react-router'
 import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useLiveUpdates } from '../live'
@@ -22,6 +24,16 @@ function LiveUpdates() {
   return null
 }
 
+/** Shown while a lazily loaded page chunk arrives. */
+function PageSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-label="Loading page">
+      <Skeleton className="h-7 w-48" />
+      <Skeleton className="h-40 w-full" />
+    </div>
+  )
+}
+
 export function Shell() {
   const path = useRouterState({ select: (s) => s.resolvedLocation?.href ?? s.location.href })
   return (
@@ -36,7 +48,9 @@ export function Shell() {
               <Topbar />
               <main className="min-h-0 flex-1 overflow-y-auto p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => <PageProblem retry={retry} />}>
-                  <Outlet />
+                  <Suspense fallback={<PageSkeleton />}>
+                    <Outlet />
+                  </Suspense>
                 </ErrorBoundary>
               </main>
             </div>

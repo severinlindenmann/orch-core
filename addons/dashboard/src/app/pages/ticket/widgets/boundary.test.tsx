@@ -61,7 +61,7 @@ describe('error boundaries', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Reload' }))
     expect(retry).toHaveBeenCalledOnce()
   })
-  it('one addon contribution that throws shows its own note; the next contribution still renders', () => {
+  it('one addon contribution that throws shows its own note; the next contribution still renders', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const c = (id: string, node: unknown): ResolvedContribution => ({ addon: 'estimate', addonTitle: 'Estimate', slot: 'ticket.panel', id, title: id, node })
     render(
@@ -71,6 +71,6 @@ describe('error boundaries', () => {
       </div>,
     )
     expect(screen.getByText(/This estimate panel could not be drawn/)).toBeInTheDocument()
-    expect(screen.getByText('still here')).toBeInTheDocument()
+    expect(await screen.findByText('still here')).toBeInTheDocument()
   })
 })

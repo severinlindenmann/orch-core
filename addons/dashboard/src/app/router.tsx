@@ -1,14 +1,18 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
-import { AddonPage } from './pages/AddonPage'
-import { SETTINGS_TABS, SettingsPage } from './pages/settings'
-import { TodayPage } from './pages/today'
-import { BoardPage } from './pages/board'
-import { TicketPage } from './pages/ticket'
-import { NewTicketPage } from './pages/new-ticket'
-import { AgentsPage } from './pages/agents'
-import { TicketsPage } from './pages/tickets'
+import { lazyPage } from './pages/lazyPage'
+import { SETTINGS_TABS } from './pages/settings/tabs'
 import { validateTicketsSearch } from './pages/tickets/search'
+
+// Every page is its own chunk (the Shell shows a skeleton while it loads).
+const TodayPage = lazyPage(() => import('./pages/today'), 'TodayPage')
+const BoardPage = lazyPage(() => import('./pages/board'), 'BoardPage')
+const TicketsPage = lazyPage(() => import('./pages/tickets'), 'TicketsPage')
+const NewTicketPage = lazyPage(() => import('./pages/new-ticket'), 'NewTicketPage')
+const TicketPage = lazyPage(() => import('./pages/ticket'), 'TicketPage')
+const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
+const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
+const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
 
 // Code-based route tree. Memory history on purpose: the app also runs inside a sandboxed viewer
 // where URL fragments do not carry state.

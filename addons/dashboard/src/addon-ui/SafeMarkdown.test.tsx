@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { SafeMarkdown } from './SafeMarkdown'
 
@@ -18,8 +18,9 @@ const hostile = [
 ].join('\n\n')
 
 describe('SafeMarkdown', () => {
-  it('renders hostile markup inert', () => {
+  it('renders hostile markup inert', async () => {
     const { container } = render(<SafeMarkdown text={hostile} />)
+    await screen.findByText("raw")
     const html = container.innerHTML
     expect(container.querySelector('script, img, iframe, svg, style, form, object, embed')).toBeNull()
     expect(html).not.toMatch(/\son\w+=/i)
@@ -28,8 +29,9 @@ describe('SafeMarkdown', () => {
     expect(container.querySelector('[href], [src], [action], [formaction], [xlink\\:href]')).toBeNull()
     for (const a of container.querySelectorAll('a')) expect(a.getAttribute('href')).toMatch(/^https?:\/\//)
   })
-  it('opens external links with noopener noreferrer', () => {
+  it('opens external links with noopener noreferrer', async () => {
     const { container } = render(<SafeMarkdown text="[ok](https://example.com)" />)
+    await screen.findByRole('link', { name: 'ok' })
     const a = container.querySelector('a')!
     expect(a.getAttribute('target')).toBe('_blank')
     expect(a.getAttribute('rel')).toContain('noopener')

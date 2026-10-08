@@ -1,7 +1,5 @@
 import { createContext, lazy, Suspense, useContext, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { withTheme } from '@rjsf/core'
-import validator from '@rjsf/validator-ajv8'
 import { ExternalLink, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { toastApiError } from '@/app/toast'
@@ -21,14 +19,14 @@ import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
-import { darkTheme } from './rjsfTheme'
 import { SafeMarkdown } from './SafeMarkdown'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { useAddons, type SlotContext } from './slots'
 
-const ThemedForm = withTheme(darkTheme)
+// rjsf (with ajv) loads on first form, so it stays out of the main bundle.
+const ThemedForm = lazy(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
 const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
 
@@ -307,17 +305,18 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   return (
     <>
       {dialog}
-      <ThemedForm
-        disabled={readOnly}
-        key={JSON.stringify(node.formData ?? null)}
-        schema={node.schema}
-        uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
-        formData={node.formData ?? undefined}
-        validator={validator}
-        noHtml5Validate
-        showErrorList={false}
-        onSubmit={({ formData }) => run(node.action, { formData })}
-      />
+      <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+        <ThemedForm
+          disabled={readOnly}
+          key={JSON.stringify(node.formData ?? null)}
+          schema={node.schema}
+          uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
+          formData={node.formData ?? undefined}
+          noHtml5Validate
+          showErrorList={false}
+          onSubmit={({ formData }) => run(node.action, { formData })}
+        />
+      </Suspense>
     </>
   )
 }

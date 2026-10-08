@@ -9,6 +9,9 @@ codebase on `develop` (D36). Today's code stays on `main` for daily use until th
 
 A feature counts as done only when its e2e scenario passes (spec §23).
 
+> **Phases changed (D42, 8 Oct 2026):** wave 1 is now built across P1 Core (CLI and model) and P2 Frontend (the
+> Mission Control pages); wave 2 is P2 Frontend. See [orch-v2-core.md](orch-v2-core.md) §7.
+
 ## Kernel wave 1 (P1a): the core you work with every day
 
 Built first, on the new identity and key custody from P1.

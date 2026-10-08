@@ -3,7 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
 import { parseActor } from './derive'
-import { createMockStore } from './store'
+import { createMockStore, sessionBelongsTo } from './store'
 
 function setup() {
   const store = createMockStore({ persist: false })
@@ -127,6 +127,16 @@ describe('mock tickets search', () => {
       const sessions = await api.getAgents(ws)
       expect(sessions.filter((s) => s.grant?.id === 'gr_01J9Z8').every((s) => s.state === 'stopped')).toBe(true)
       await expect(api.revokeGrant(ws, 'gr_01J9Z8')).rejects.toMatchObject({ status: 409 })
+    })
+    it('revoke also ends the lease of a subagent the grant does not list, but not a look-alike session', async () => {
+      const { api, store } = setup()
+      const ws = store.workspaces[0].id
+      store.append('DEMO-0043', { type: 'lease.taken', actor: 'claude-code:s_77c2.3:p_sev', task: 'T4' })
+      expect((await api.getTicket('DEMO-0043')).tasks_state.find((t) => t.id === 'T4')?.lease?.session).toBe('s_77c2.3')
+      await api.revokeGrant(ws, 'gr_01J9Z8')
+      expect((await api.getTicket('DEMO-0043')).tasks_state.find((t) => t.id === 'T4')?.lease).toBeNull()
+      expect(sessionBelongsTo('s_77c2.3', 's_77c2')).toBe(true)
+      expect(sessionBelongsTo('s_77c21', 's_77c2')).toBe(false)
     })
     it('Mara cannot revoke Severin\'s grant, a viewer cannot revoke or issue', async () => {
       const { api, store } = setup()

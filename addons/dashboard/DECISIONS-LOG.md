@@ -44,3 +44,15 @@ Format: date, decision, why, how to revert.
 - **Decision:** (1) "Save view…" navigates to `/tickets` and opens the dialog through a one-shot request (`src/app/pages/tickets/saveViewRequest.ts`) that `SavedViews` consumes on mount or on an event, not through a `?saveView=1` URL param, because saved views are exactly the search params and a flag would leak into every view. (2) "On this ticket" shows Comment and Ask a question to anyone who is not a viewer, Move to… to owners/maintainers, and Approve/Give verdict from `availableActions`; Claim and Release are never offered, since the ticket page says only agents claim and release. Comment, Ask and Move use sub-prompts inside the palette (type the text, Enter; Backspace on empty goes back). Approve and Give verdict open core's `SignDialog` (rendered by the palette). (3) Shortcuts live in `src/app/shell/shortcuts.ts` (`g t`, `g b`, `g l`, `g a`, `c`, `[` display only). (4) The brief's tests were adapted: DEMO-0043's title is "Load tariff tables as dbt seeds" (found by body text "billing"), the Board page has no h1 (topbar title is asserted), and the sign-dialog test uses DEMO-0041 which has a verdict pending.
 - **Why:** Keeps saved views clean; matches the existing permission rules; the brief's assertions did not match the fixtures.
 - **Revert:** Delete `saveViewRequest.ts` and its use in `SavedViews.tsx`; restore `CommandPalette.tsx` and `NewTicketShortcut` from the commit before "palette: tickets, ticket actions".
+
+## 2026-10-09 Agents: separate GrantDialog for signing grants
+
+- **Decision:** Issuing and revoking grants are signed in `src/app/pages/agents/GrantDialog.tsx`, not in `SignDialog`. It reuses the same Touch ID simulation (600 ms) and the button text "Sign with Touch ID".
+- **Why:** `SignDialog` is bound to a `TicketDocument` and a gate/question action; grants belong to the workspace and have no ticket.
+- **Revert:** Generalise `SignDialog` to accept a non-ticket action, then delete `GrantDialog.tsx` and use it from `agents/index.tsx`.
+
+## 2026-10-09 Agents: the signing dialog closes on Sign, progress goes to a toast
+
+- **Decision:** Clicking "Sign with Touch ID" closes the grant dialog at once; `useSignGrant` shows a loading toast, waits for the simulated Touch ID, calls the API, then replaces the toast with success or the error message.
+- **Why:** The brief's test queries the grants row right after clicking Sign, and an open Radix modal hides the page from assistive tech (aria-hidden), so the row would not be found; the result also belongs on the page.
+- **Revert:** Move the phase/error state back into `GrantDialog` (as in `SignDialog`) and keep it open until the request finishes; adapt the test to wait for the dialog to close.

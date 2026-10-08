@@ -52,6 +52,8 @@ interface FixtureTicket {
 /** A failed store operation, mapped to an HTTP error by the router. */
 export type StoreFailure = { ok: false; status: number; code: string; message: string; hint?: string }
 export type GrantResult = { ok: true; grant: GrantInfo } | StoreFailure
+/** Is `session` the root session itself or one of its subagents (`s_77c2.1` belongs to `s_77c2`; `s_77c21` does not)? */
+export const sessionBelongsTo = (session: string, root: string) => session === root || session.startsWith(root + '.')
 const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
 export interface StoreOptions {
@@ -435,15 +437,16 @@ export class MockStore {
     if (g.person !== actor.id && role !== 'owner') return refuse(403, 'forbidden', `Only ${g.person} or an owner can revoke ${id}.`)
     if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
     this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
-    const sessions = new Set(g.sessions)
+    const roots = g.sessions
+    const uses = (session: string) => roots.some((r) => sessionBelongsTo(session, r))
     const reason = 'grant revoked'
     for (const [key, ws] of this.wsOfKey) {
       if (ws !== wsId) continue
       const doc = this.ticket(key)
       if (!doc) continue
       for (const t of doc.tasks_state)
-        if (t.lease && sessions.has(t.lease.session)) this.append(key, { type: 'lease.released', actor: `${t.lease.agent}:${t.lease.session}:${g.person}`, task: t.id, reason })
-      if (doc.claim && sessions.has(doc.claim.session))
+        if (t.lease && uses(t.lease.session)) this.append(key, { type: 'lease.released', actor: `${t.lease.agent}:${t.lease.session}:${g.person}`, task: t.id, reason })
+      if (doc.claim && uses(doc.claim.session))
         this.append(key, { type: 'claim.released', actor: `${doc.claim.agent}:${doc.claim.session}:${doc.claim.for}`, reason })
     }
     return { ok: true, grant: this.grants(wsId).find((x) => x.id === id)! }
@@ -644,7 +647,7 @@ export class MockStore {
           .map((t) => ({ ticket: t.key, since: t.claim!.since, expires: t.claim!.expires }))
         const leases = tickets.flatMap((t) =>
           t.tasks_state
-            .filter((x) => x.lease && x.lease.agent === a.id && x.lease.session.startsWith(a.session))
+            .filter((x) => x.lease && x.lease.agent === a.id && sessionBelongsTo(x.lease.session, a.session))
             .map((x) => ({ ticket: t.key, task: x.id, session: x.lease!.session })),
         )
         const stopped = !!g.revoked || g.until <= now || a.state === 'stopped'

@@ -28,7 +28,8 @@ const SESSIONS: Session[] = [
   { id: 'agent1', label: 'agent: claude-code (read only, no typing)', kind: 'agent', owner: 'agent:claude-code', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:40:00Z' },
   { id: 'old1', label: 'Scratch', kind: 'person', owner: 'p_sev', ticket: null, branch: 'main', status: 'stopped', started: '2026-10-08T15:05:00Z' },
 ]
-const AGENT_TRANSCRIPT = ['orch status', 'orch task next', 'orch approve DEMO-0043 plan']
+/** What the agent typed: its commands name the ticket it works on. */
+const agentTranscript = (s: Session) => ['orch status', 'orch task next', ...(s.ticket ? [`orch approve ${s.ticket} plan`] : [])]
 const STOPPED_TRANSCRIPT = ['git status', 'exit']
 
 const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session[]
@@ -95,7 +96,7 @@ registerAddon({
       status: s.status,
       interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member'),
       ctx: shellCtx(c, s),
-      transcript: s.kind === 'agent' ? AGENT_TRANSCRIPT : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
+      transcript: s.kind === 'agent' ? agentTranscript(s) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]

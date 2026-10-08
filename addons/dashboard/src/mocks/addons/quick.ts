@@ -1,5 +1,5 @@
 import type { AddonActionResult, AddonDecision, NewTicketRequest } from '@/api/types'
-import { markDecided, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, markDecided, registerAddon, type AddonCtx } from './registry'
 
 // quick tasks: one-line jobs too small for a ticket (v1 docs/quick-tasks.md).
 //  - Keys Q-001..; status open -> claimed -> done (with one line of proof). Past the limit (commits, files) a task is
@@ -49,8 +49,6 @@ const settingsOf = (state: Record<string, unknown>): Settings => {
 }
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const nameOf = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === c.viewer)?.name ?? c.viewer
-/** A converted task shows its ticket key only to people who can see that ticket. */
-const ticketVisible = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, key: string) => c.store.workspaceOf(key)?.id === c.ws && c.store.isVisible(key, c.viewer)
 const find = (state: Record<string, unknown>, id: unknown) => list(state).find((q) => q.id === id)
 const nav = (state: Record<string, unknown>, viewer: string) => ((state.nav ?? {}) as Record<string, { closing?: string }>)[viewer]
 const oneLine = (v: unknown): string | null => {
@@ -93,7 +91,8 @@ registerAddon({
 
   view(state, c) {
     const s = settingsOf(state)
-    const items = list(state).map((q) => (q.ticket && !ticketVisible(c, q.ticket) ? { ...q, ticket: undefined } : q))
+    /** A converted task shows its ticket key only to people who can see that ticket. */
+    const items = list(state).map((q) => (q.ticket && !canSeeTicket(c, q.ticket) ? { ...q, ticket: undefined } : q))
     const row = (q: Quick) => {
       const actions =
         q.status === 'open'

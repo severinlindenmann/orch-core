@@ -32,6 +32,25 @@ const as = (s: S, viewer: string): S => {
   return s
 }
 
+describe('agent transcript', () => {
+  it('is built from the session ticket, not hard-coded', async () => {
+    const s = setup('p_sev')
+    const a = (await state(s)).sessions.find((x) => x.kind === 'agent')!
+    expect(a.transcript).toContain(`orch approve ${a.ticket} plan`)
+    const sessions = s.store.addonState(s.ws, 'terminals').sessions as { id: string; ticket: string | null }[]
+    sessions.find((x) => x.id === a.id)!.ticket = 'DEMO-0044'
+    const b = (await state(s)).sessions.find((x) => x.id === a.id)!
+    expect(b.transcript).toContain('orch approve DEMO-0044 plan')
+    expect(b.transcript.join('\n')).not.toContain('DEMO-0043')
+  })
+  it('a mirror without a ticket has no approve line', async () => {
+    const s = setup('p_sev')
+    const sessions = s.store.addonState(s.ws, 'terminals').sessions as { kind: string; ticket: string | null }[]
+    sessions.find((x) => x.kind === 'agent')!.ticket = null
+    expect((await state(s)).sessions.find((x) => x.kind === 'agent')!.transcript.some((c) => c.startsWith('orch approve'))).toBe(false)
+  })
+})
+
 describe('terminals state', () => {
   it('seeds three sessions: Severin shell in DEMO-0043, an agent mirror and a stopped one', async () => {
     const s = setup('p_sev')

@@ -161,6 +161,20 @@ describe('quick tasks outgrew decision', () => {
     const d = (await decisions(s))[0]
     expect((await run(s, d.action, { id: d.id, option: 'more' })).changed).toBe(true)
   })
+  it('a plain member is refused and nothing changes', async () => {
+    // CLI has a plain member (Tom); DEMO has none. An outgrown task is seeded only where state has one, so use a decision-shaped call.
+    const store = createMockStore({ persist: false })
+    const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+    installAndGrant(store, cli, 'quick')
+    const items = store.addonState(cli, 'quick').items as { id: string; status: string }[]
+    items.find((q) => q.id === 'Q-004')!.status = 'outgrew'
+    store.setViewer('p_tom')
+    const api = createApi(createMockTransport(store, { latency: false }))
+    await expect(api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', option: 'more' })).rejects.toMatchObject({ status: 403 })
+    expect(items.find((q) => q.id === 'Q-004')!.status).toBe('outgrew')
+    store.setViewer('p_sev') // an owner is above maintainer
+    expect((await api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', option: 'more' })).changed).toBe(true)
+  })
 })
 
 describe('quick tasks manifest', () => {

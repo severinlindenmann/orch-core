@@ -20,6 +20,18 @@ const setup = (viewer: string) => {
 }
 type S = ReturnType<typeof setup>
 const stateOf = async (s: S, name: string) => (await s.api.getAddonState(s.ws, name)) as Record<string, unknown>
+// Titles and branch names would name a hidden ticket as surely as its key does: the restricted tickets' own titles,
+// the branches of their worktrees and sessions, and the titles of their pull requests.
+const hiddenText = (s: S) => [
+  ...HIDDEN.map((k) => s.store.ticket(k)!.title),
+  'feat/billing-join',
+  'feat/load-tariff-tables-as-dbt-seeds',
+  'feat/add-billing-reconciliation-tests',
+  'feat/DEMO-0043-tariff-seeds',
+  'feat/DEMO-0041-reconciliation',
+  'Load tariff tables as dbt seeds',
+  'Add billing reconciliation tests',
+]
 const run = (s: S, name: string, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, name, id, body)
 
 describe('addon state hides tickets the viewer cannot see', () => {
@@ -28,6 +40,11 @@ describe('addon state hides tickets the viewer cannot see', () => {
       const s = setup('p_mara')
       const json = JSON.stringify(await stateOf(s, name))
       for (const k of HIDDEN) expect(json).not.toContain(k)
+    })
+    it(`${name}: no title or branch of a restricted ticket reaches an outside member`, async () => {
+      const s = setup('p_mara')
+      const json = JSON.stringify(await stateOf(s, name))
+      for (const text of hiddenText(s)) expect(json, text).not.toContain(text)
     })
   }
   it('the listed person still sees their data (publish, github, usage, wiki, terminals)', async () => {

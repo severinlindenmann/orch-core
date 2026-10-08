@@ -146,3 +146,21 @@ describe('workspace reads need membership', () => {
     expect(await fail(call(api, ws))).toMatchObject({ status: 403 })
   })
 })
+
+describe('ticket and view routes need membership', () => {
+  it('a non-member gets 403 for a ticket and its events; members are unchanged', async () => {
+    const { api, store } = setup('p_stranger')
+    expect(await fail(api.getTicket('DEMO-0043'))).toMatchObject({ status: 403 })
+    expect(await fail(api.getEvents('DEMO-0043'))).toMatchObject({ status: 403 })
+    expect(await fail(api.getTicket('DEMO-9999'))).toMatchObject({ status: 404 })
+    store.setViewer('p_tom')
+    expect((await api.getTicket('DEMO-0043')).key).toBe('DEMO-0043')
+    expect(Array.isArray(await api.getEvents('DEMO-0043'))).toBe(true)
+  })
+  it('a non-member cannot delete a saved view (403)', async () => {
+    const { api, store, ws } = setup('p_sev')
+    const v = await api.saveView(ws, { name: 'mine', shared: false, params: {} })
+    store.setViewer('p_stranger')
+    expect(await fail(api.deleteView(ws, v.id))).toMatchObject({ status: 403 })
+  })
+})

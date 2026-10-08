@@ -5,6 +5,7 @@ import validator from '@rjsf/validator-ajv8'
 import { ExternalLink, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { toastApiError } from '@/app/toast'
+import { manifestFor } from '@/api/addons'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -198,7 +199,10 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 function useActionAllowed(): (action?: string) => boolean {
   const { addon, readOnly } = useContext(RuntimeCtx)
   const { data } = useAddons()
-  const actions = data?.find((a) => a.name === addon)?.actions
+  const { workspace } = useWorkspace()
+  const pkg = data?.find((a) => a.name === addon)
+  // Same manifest the server enforces: the installed version's, so an update that removed a viewer action disables it here.
+  const actions = pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions : undefined
   return (action) => !readOnly || (!!action && actions?.[action]?.minRole === 'viewer')
 }
 

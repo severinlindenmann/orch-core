@@ -54,6 +54,21 @@ describe('wiki page', () => {
   })
 })
 
+describe('wiki viewer actions follow the installed version', () => {
+  it('an installed update that removed the viewer search action disables Search for a viewer, Open stays enabled', async () => {
+    renderApp('/addon/wiki/pages', {
+      viewer: 'p_tom',
+      setup: (s) => {
+        const w = s.addons.find((a) => a.name === 'wiki')!
+        w.update = { version: w.version, capabilities: [], package_sha256: w.package_sha256, changelog: 'x', actions: { save_settings: { minRole: 'owner' }, open: { minRole: 'viewer', label: 'Open page' } } }
+      },
+    })
+    const item = (await screen.findByText('Glossary', {}, T)).closest('li')!
+    await waitFor(() => expect(within(item).getByRole('button', { name: 'Open' })).toBeEnabled(), T)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled(), T)
+  })
+})
+
 describe('wiki ticket panel', () => {
   it('shows the pages linked to DEMO-0043 and links another one', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })

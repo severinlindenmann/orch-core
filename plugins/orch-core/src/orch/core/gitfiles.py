@@ -225,21 +225,27 @@ def records_only(ws, cwd: Path) -> bool:
 RECORDS_SUBJECT = "orch: records"
 
 
-def records_message(ws, view: GitView, paths: list[str]) -> tuple[str, str]:
-    """(subject, body) for `orch records commit`: the ticket keys the records belong to, then each changed path."""
+def record_keys(ws, paths: list[str]) -> list[str]:
+    """The ticket keys named in record paths, in first-seen order."""
     key = re.compile(rf"(?<![\w-])({re.escape(ws.config['id']['prefix'])}-\d+)(?!\d)")
     keys: list[str] = []
     for p in paths:
         for k in key.findall(p):
             if k not in keys:
                 keys.append(k)
-    subject = RECORDS_SUBJECT + (f" {few(sorted(keys), 8)}" if keys else "")
+    return keys
+
+
+def record_word(code: str) -> str:
     words = {"??": "added", "A": "added", "D": "deleted", "M": "modified", "R": "renamed", "T": "changed"}
-    lines = []
-    for p in paths:
-        code = view.codes.get(p, "")
-        word = next((w for c, w in words.items() if c in code), "changed")
-        lines.append(f"- {word}: {p}")
+    return next((w for c, w in words.items() if c in code), "changed")
+
+
+def records_message(ws, view: GitView, paths: list[str]) -> tuple[str, str]:
+    """(subject, body) for `orch records commit`: the ticket keys the records belong to, then each changed path."""
+    keys = record_keys(ws, paths)
+    subject = RECORDS_SUBJECT + (f" {few(sorted(keys), 8)}" if keys else "")
+    lines = [f"- {record_word(view.codes.get(p, ''))}: {p}" for p in paths]
     return subject, "Records orch wrote:\n" + "\n".join(lines)
 
 
@@ -304,17 +310,39 @@ def head_short(ws) -> str:
     return (out or "").strip()
 
 
-def _unpushed(top: Path) -> tuple[int, int] | None:
-    """(commits in @{u}..HEAD, of those not an `orch: records` commit); None when git cannot tell."""
-    rc, out = _run(top, "log", "--format=%s", "@{u}..HEAD")
+def _unpushed(ws, top: Path) -> tuple[int, int] | None:
+    """(commits in @{u}..HEAD, of those not purely orch records); None when git cannot tell. A commit counts as records
+    only by CONTENT: not a merge, and every path it changes classifies as a durable record (the same rule as
+    git_view). The subject is never trusted."""
+    rc, out = _run(top, "rev-list", "--parents", "@{u}..HEAD")
     if rc != 0:
         return None
-    subjects = [x for x in out.splitlines() if x.strip()]
-    return len(subjects), sum(not x.startswith(RECORDS_SUBJECT) for x in subjects)
+    specs = _record_specs(ws, top)
+    total = other = 0
+    for line in out.splitlines():
+        shas = line.split()
+        if not shas:
+            continue
+        total += 1
+        if len(shas) != 2 and len(shas) != 1:  # a merge
+            other += 1
+            continue
+        try:
+            r = subprocess.run(["git", "--literal-pathspecs", "-C", str(top), "diff-tree", "--root", "--no-commit-id",
+                                "--name-only", "-r", "-z", "--no-renames", shas[0]], capture_output=True, check=False,
+                               timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.returncode != 0:
+            return None
+        paths = [x for x in r.stdout.decode("utf-8", "replace").split("\0") if x]
+        if not paths or any(_record_kind(ws, top, specs, x) != "durable" for x in paths):
+            other += 1
+    return total, other
 
 
 def push_records(ws) -> dict:
-    """Push the current branch to its upstream, only when every commit it would send is an `orch: records` commit.
+    """Push the current branch to its upstream, only when every commit it would send changes nothing but orch records (judged by content, never by subject).
     Never forces and names no branch but HEAD's own upstream. A rejected push fetches once and rebases records-only
     commits onto the upstream (aborted on any conflict), then pushes once more. Returns {"pushed": bool, "reason": str}."""
     def no(reason: str, failed: bool = True) -> dict:
@@ -334,7 +362,7 @@ def push_records(ws) -> dict:
         return no(f"{branch} has no upstream; nothing pushed", False)
     if remote == ".":
         return no(f"the upstream of {branch} is a local branch; nothing pushed", False)
-    counts = _unpushed(top)
+    counts = _unpushed(ws, top)
     if counts is None:
         return no(f"cannot compare {branch} with its upstream; nothing pushed")
     total, other = counts
@@ -349,7 +377,7 @@ def push_records(ws) -> dict:
     if not any(w in out for w in ("rejected", "non-fast-forward", "fetch first")):
         return no(f"push failed: {out.splitlines()[-1] if out else 'unknown error'}")
     rc, out = _run(top, "fetch", remote, timeout=120)
-    counts = _unpushed(top) if rc == 0 else None
+    counts = _unpushed(ws, top) if rc == 0 else None
     if counts is None or counts[1] or not counts[0]:
         return no("push rejected and the branch holds other commits; fetch and rebase it yourself")
     rc, dirty = _run(top, "status", "--porcelain", "--untracked-files=no")

@@ -47,7 +47,7 @@
     </div>
   </div>
   <details class="menu-more" open>
-    <summary><svg class="i-ui" aria-hidden="true"><use href="#i-menu"/></svg> Menu{% if needs_count %} <span class="badge badge-hot" aria-label="{{ badge_label('hot', needs_count) }}">{{ needs_count }}</span>{% endif %}</summary>
+    <summary><svg class="i-ui" aria-hidden="true"><use href="#i-menu"/></svg> Menu{% if records_nav %} <span class="nav-dot nav-dot-warn" role="img" aria-label="Records not in git"></span>{% endif %}{% if needs_count %} <span class="badge badge-hot" aria-label="{{ badge_label('hot', needs_count) }}">{{ needs_count }}</span>{% endif %}</summary>
     <div class="menu-body">
       <a class="btn menu-new" href="/new"{% if nav == "new" %} aria-current="page"{% endif %}>
         <svg class="i-ui" aria-hidden="true"><use href="#i-new"/></svg>New ticket</a>
@@ -69,6 +69,16 @@
       </div>
       {% endif %}
       <div class="menu-foot">
+        {#- uncommitted orch records (#253), from the last setup round: no git call on this page load -#}
+        {% if records_nav %}
+        <div class="menu-records" role="group" aria-label="Records not in git">
+          <p class="menu-records-h"><a href="/records"><b>Not in git</b></a> <span class="badge badge-warn" aria-label="{{ records_nav.count }} {{ 'record' if records_nav.count == 1 else 'records' }} not committed">{{ records_nav.count }}</span></p>
+          {% if records_nav.keys %}<p class="menu-records-note">{{ records_nav.keys }}</p>{% endif %}
+          {% if records_nav.busy %}<p class="menu-records-note">{{ records_nav.busy|capitalize }}.</p>
+          {% elif records_nav.auto %}<p class="menu-records-note">Records commit and push automatically</p>
+          {% else %}<form method="post" action="/records/commit"><input type="hidden" name="next" value="{{ here }}"><button type="submit" class="btn btn-quiet">Commit and push</button></form>{% endif %}
+        </div>
+        {% endif %}
         {#- open setup items: the link lands on the Setup tab that lists them -#}
         {{ item("guide", "How it works", "/guide", "M12 3a9 9 0 100 18 9 9 0 000-18zM12 11v5M12 8h.01", path=true) }}
         {{ item("workspace", "Workspace & addons", "/workspace?tab=setup" if setup_count else "/workspace", "workspace", setup_count, "warn") }}

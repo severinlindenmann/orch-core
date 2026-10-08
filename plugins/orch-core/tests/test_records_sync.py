@@ -117,6 +117,33 @@ def test_other_unpushed_commits_block_the_push(repo, ws, put, remote):
 
 
 @needs_git
+def test_a_records_subject_does_not_make_code_pushable(repo, ws, put, remote):
+    bare, _ = remote
+    _touch(repo / "src" / "app.py", "print(3)\n")
+    _git(repo, "commit", "-qam", "orch: records L-0001")  # the subject lies; the content is code
+    result = gitfiles.push_records(ws)
+    assert not result["pushed"] and "other commit" in result["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
+def test_a_merge_commit_blocks_the_push(repo, ws, put, remote):
+    bare, _ = remote
+    _git(repo, "checkout", "-q", "-b", "side")
+    _touch(repo / "orchestrator" / "side.txt")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "side")
+    _git(repo, "checkout", "-q", "main")
+    _touch(repo / "orchestrator" / "main.txt")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "orch: records merge", "side")
+    result = gitfiles.push_records(ws)
+    assert not result["pushed"] and "other commit" in result["reason"]
+    assert _subjects(bare, "main", 1)[0] == "base"
+
+
+@needs_git
 def test_rejected_push_rebases_records_commits_and_pushes(repo, ws, put, remote):
     bare, other = remote
     _touch(other / "src" / "elsewhere.py")

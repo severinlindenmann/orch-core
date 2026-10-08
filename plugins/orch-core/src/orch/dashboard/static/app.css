@@ -177,6 +177,12 @@ dialog, .overlay { --ctl: var(--ctl-overlay); background: var(--overlay); color:
 @container (max-width: 199.98px) { .menu-rows { display: none; } }
 /* A broken addon: a small red dot (never a ✕ in a pill), named by its aria-label. */
 .nav-dot { flex: none; width: calc(1.5 * var(--s-1)); height: calc(1.5 * var(--s-1)); border-radius: 50%; background: var(--err-mark); }
+.nav-dot-warn { background: var(--warn-mark); display: inline-block; vertical-align: middle; }
+/* "Not in git" (#253): uncommitted orch records, one small bordered block above the guide link. */
+.menu-records { display: flex; flex-direction: column; gap: var(--s-1); padding: var(--s-3); border-radius: var(--r-md); border: 1px solid var(--line); }
+.menu-records p, .menu-records form { margin: 0; }
+.menu-records-h { display: flex; align-items: center; gap: var(--s-2); }
+.menu-records-note { color: var(--muted); font: var(--type-meta); overflow-wrap: anywhere; }
 .badge {
   display: inline-block; min-width: 22px; padding: 1px var(--s-2); border-radius: var(--r-pill); text-align: center;
   background: var(--chip); color: var(--text); font: var(--type-meta); font-weight: 700; line-height: 1.5;

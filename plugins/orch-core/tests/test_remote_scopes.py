@@ -352,6 +352,7 @@ BELOW_TYPE = {
     ("POST", "/addons/{name}/decisions"): "OPERATE", ("POST", "/addons/{name}/refresh"): "OPERATE",
     ("POST", "/board/backlog"): "OPERATE", ("POST", "/new"): "OPERATE",
     ("POST", "/permits/grants/{gid}/revoke"): "DECIDE", ("POST", "/permits/{rid}/deny"): "DECIDE",
+    ("POST", "/records/auto-off"): "DECIDE",  # only turns automatic commits off; the route refuses a device anyway
     ("POST", "/quick/add"): "OPERATE", ("POST", "/quick/{qid}/done"): "OPERATE",
     ("POST", "/quick/{qid}/drop"): "DECIDE", ("POST", "/quick/{qid}/promote"): "OPERATE",
     ("POST", "/quick/{qid}/release"): "OPERATE", ("POST", "/quick/{qid}/reopen"): "DECIDE",

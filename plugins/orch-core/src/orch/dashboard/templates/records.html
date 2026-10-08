@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% import "_ui.html" as ui %}
+{#- /records (#253): the orch records git has not committed, the message `orch records commit` would write, and the
+    button. Automatic mode can only be turned off here; turning it on is signed in the human's own terminal. -#}
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Records in git</h1>
+    <p>Tickets, gates and the event log orch writes are shared records. Commit them here, or run <code>orch records commit --push</code>.</p>
+  </div>
+</div>
+
+{% if not in_git %}
+<section class="card"><p>{{ ui.status("neu", "Not in a git repository") }}</p>
+  <p>The records of this workspace are local only: neither the workspace folder nor its orch folder is in a git repository.</p></section>
+{% elif not rows %}
+<section class="card"><p>{{ ui.status("ok", "Every record is committed") }}</p></section>
+{% else %}
+<section class="card" aria-labelledby="rec-h">
+  <h2 id="rec-h">Not in git <span class="count">{{ rows|length }}</span></h2>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th scope="col">Ticket</th><th scope="col">Change</th><th scope="col">File</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td>{% if r.key %}<a class="lnk" href="/t/{{ r.key }}">{{ r.key }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+            <td>{{ r.word }}</td><td><code>{{ r.path }}</code></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <h3>Commit message</h3>
+  <pre class="permit-cmd">{{ subject }}
+
+{{ body }}</pre>
+  {% if busy %}
+  <p>{{ ui.status("warn", "Waiting") }} {{ busy|capitalize }}.</p>
+  {% else %}
+  <form method="post" action="/records/commit" class="actions">
+    <input type="hidden" name="next" value="/records">
+    <button type="submit" class="btn btn-primary">Commit and push</button>
+    <span class="muted">Pushes only when the branch has an upstream and every unpushed commit is an <code>orch: records</code> commit. Never forces.</span>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="auto-h">
+  <h2 id="auto-h">Automatic mode</h2>
+  {% if auto %}
+  <p>{{ ui.status("ok", "On") }} Every orch command that writes a record commits it, and pushes when it can.</p>
+  <form method="post" action="/records/auto-off" class="actions">
+    <input type="hidden" name="next" value="/records">
+    <button type="submit" class="btn btn-quiet">Turn off</button>
+  </form>
+  {% else %}
+  <p>{{ ui.status("neu", "Off") }} To commit records after every command, run <code>orch records auto on</code> in your own terminal. It is your decision, signed on your machine; an agent cannot turn it on.</p>
+  {% endif %}
+</section>
+{% endblock %}

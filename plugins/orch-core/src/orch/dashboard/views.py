@@ -256,9 +256,26 @@ def _setup_count(ws, checks=None) -> int:
             return setup_state.open_count(snap, ws) if snap is not None else 0
         state = onboarding.load_state()
         dismissed = set(state["dismissed_items"].get(str(Path(ws.root).resolve()), []))
-        return len([c for c in checks if not c.ok and c.code in onboarding.OPEN_ITEM_CODES and c.code not in dismissed])
+        return len([c for c in checks if not c.ok and c.code in onboarding.OPEN_ITEM_CODES
+                    and c.code not in dismissed and c.code not in setup_state.NOT_COUNTED])
     except Exception:
         return 0
+
+
+def records_nav(ws) -> dict | None:
+    """The menu's "Not in git" row from the last setup round (no git call here); None when nothing waits."""
+    from orch.core import gitfiles, ledger
+    from orch.dashboard import setup_state
+
+    try:
+        snap = setup_state.state(ws).peek()
+        rec = snap.records if snap is not None else None
+        if not rec or not rec["paths"]:
+            return None
+        return {"count": len(rec["paths"]), "busy": rec["busy"], "auto": ledger.records_auto_state(ws) == "on",
+                "keys": gitfiles.few(sorted(gitfiles.record_keys(ws, rec["paths"])), 4)}
+    except Exception:
+        return None
 
 
 def _density(ws) -> str:
@@ -329,6 +346,7 @@ def page(request, name: str, status_code: int = 200, *, nav: str = "", title: st
         "needs_count": needs_count,
         "setup_count": _setup_count(ws, ctx.get("checks")) + (runtime.attention() if runtime else 0),
         "nav": nav,
+        "records_nav": records_nav(ws),
         # Addon pages in the menu as (label, url, icon path); the group shows only when there is one.
         "addon_nav": runtime.nav() if runtime else [],
         "terminals_nav": terminals.enabled(ws, request),  # issue #40: addon on, tmux installed, a local request

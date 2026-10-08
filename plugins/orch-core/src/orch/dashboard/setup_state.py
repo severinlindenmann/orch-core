@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 TTL = 60.0
+NOT_COUNTED = frozenset({"records"})  # shown by the menu's "Not in git" row instead of the Workspace badge
 RECHECK_AFTER = 5.0  # a Workspace visit to a result older than this asks the loop for a new round (shown next visit)
 
 
@@ -26,6 +27,7 @@ class Snapshot:
     checks_error: str | None
     repos: list[dict]
     findings: list
+    records: dict | None = None  # uncommitted orch records (None: not a git repository); see _records()
 
 
 @dataclass
@@ -121,7 +123,19 @@ def _compute(ws, at: float) -> Snapshot:
     except Exception as e:  # noqa: BLE001 - shown on the page, never raised from the loop
         from orch.core.check import Finding
         findings = [Finding("error", "check-failed", None, f"could not run orch check: {e}")]
-    return Snapshot(at, checks, error, repos, findings)
+    return Snapshot(at, checks, error, repos, findings, _records(ws))
+
+
+def _records(ws) -> dict | None:
+    """What the menu's "Not in git" row shows, taken with the setup checks (one git status, off the request path)."""
+    from orch.core import gitfiles
+    try:
+        view = gitfiles.git_view(ws)
+        if view is None:
+            return None
+        return {"paths": list(view.uncommitted), "busy": gitfiles.busy_reason(view.root) if view.uncommitted else None}
+    except Exception:  # noqa: BLE001 - never breaks the round
+        return None
 
 
 _STATES: dict[str, SetupState] = {}
@@ -150,4 +164,4 @@ def open_count(snap: Snapshot, ws) -> int:
 
     dismissed = set(onboarding.load_state()["dismissed_items"].get(str(Path(ws.root).resolve()), []))
     return len([c for c in snap.checks if not c.ok and c.code in onboarding.OPEN_ITEM_CODES
-                and c.code not in dismissed])
+                and c.code not in dismissed and c.code not in NOT_COUNTED])

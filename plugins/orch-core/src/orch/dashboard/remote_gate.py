@@ -66,7 +66,7 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("GET", "/w/preview/{ref}"): LOOK, ("GET", "/w/{ref}/{section}/{digest}"): LOOK,
     ("GET", "/wp/{addon}/{digest}"): LOOK, ("GET", "/wpf/{addon}/{digest}"): LOOK,
     ("GET", "/addons/{name}"): LOOK, ("GET", "/addons/{name}/"): LOOK, ("GET", "/schedules"): LOOK,
-    ("GET", "/quick"): LOOK, ("GET", "/quick/{qid}"): LOOK,
+    ("GET", "/quick"): LOOK, ("GET", "/quick/{qid}"): LOOK, ("GET", "/records"): LOOK,
     # -- watching a terminal needs Operate (live output can hold secrets); a download is a GET that consumes a
     # one-time token and deletes the file, so it counts as a change
     ("GET", "/terminals"): OPERATE, ("GET", "/terminals/stream"): OPERATE, ("GET", "/terminals/{name}"): OPERATE,
@@ -100,6 +100,8 @@ TAGS: dict[tuple[str, str], Tag | Callable] = {
     ("POST", "/terminals/new"): _t(Scope.TYPE, fresh=True), ("POST", "/terminals/{name}/keys"): TYPE,
     ("POST", "/terminals/{name}/size"): TYPE, ("POST", "/terminals/{name}/end"): TYPE,
     ("POST", "/t/{ref}/agent/start"): _t(Scope.TYPE, fresh=True),
+    ("POST", "/records/commit"): TYPE,  # commits and pushes on the host (the route also refuses a paired device)
+    ("POST", "/records/auto-off"): DECIDE,  # only takes power away (the route also refuses a paired device)
     ("POST", "/schedules/{sid}/run"): TYPE,  # starts an agent run on the host
     ("POST", "/schedules/{sid}/arm"): _t(Scope.TYPE, fresh=True),  # lets agents run on a clock, like the factory's start
     ("POST", "/permits/{rid}/grant"): _t(Scope.TYPE, fresh=True),

@@ -14,6 +14,7 @@ const ROUTES: HelpRoute[] = [
   { match: '/ticket/*', page: 'gates-and-approvals' },
   { match: '/agents', page: 'agents-and-grants' },
   { match: '/settings/addons', page: 'addons' },
+  { match: '/settings/addon/*', page: 'addons' },
   { match: '/addon/*', page: 'addons' },
 ]
 

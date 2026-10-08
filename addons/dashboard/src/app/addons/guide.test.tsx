@@ -29,6 +29,10 @@ describe('? opens the Help sheet', () => {
     await user.keyboard('?')
     const sheet = await screen.findByRole('dialog', { name: 'Help' }, T)
     expect(await within(sheet).findByRole('heading', { name: 'Tickets and sections' }, T)).toBeInTheDocument()
+    const frame = sheet.querySelector('section[data-addon="guide"]')!
+    expect(frame).not.toBeNull()
+    expect(within(frame as HTMLElement).getByRole('img', { name: /From addon: guide/ })).toBeInTheDocument()
+    expect(within(frame as HTMLElement).queryByRole('link', { name: 'Open the guide' })).toBeNull()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Help' })).not.toBeInTheDocument())
   })

@@ -4,7 +4,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { helpPageFor, type HelpRoute } from '@/api/guide'
-import { AddonBadge } from '@/addon-ui/AddonBadge'
+import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -48,7 +48,8 @@ export function HelpSheet() {
   // Open the guide on the page the sheet showed.
   const openPage = () => {
     setOpen(false)
-    if (workspace && slug) void api.runAddonAction(workspace.id, 'guide', 'open', { slug }).catch(() => {})
+    // Only remembers which guide page to show; if it fails (offline, role) the full guide simply opens on its last page.
+    if (workspace && slug) void api.runAddonAction(workspace.id, 'guide', 'open', { slug }).catch(() => undefined)
   }
 
   return (
@@ -56,10 +57,7 @@ export function HelpSheet() {
       <SheetContent side="right" className="w-[480px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[480px]">
         <SheetHeader className="border-b border-border">
           <SheetTitle>Help</SheetTitle>
-          <SheetDescription className="flex items-center gap-2">
-            {active && <AddonBadge name="guide" />}
-            Help for this page. Press Esc to close.
-          </SheetDescription>
+          <SheetDescription>Help for this page. Press Esc to close.</SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {!active ? (
@@ -67,7 +65,9 @@ export function HelpSheet() {
           ) : state.isError ? (
             <p className="text-[13px] text-text-muted">The guide could not be loaded.</p>
           ) : page ? (
-            <SafeMarkdown text={page.markdown} />
+            <AddonFrame addon="guide" title="Guide page">
+              <SafeMarkdown text={page.markdown} />
+            </AddonFrame>
           ) : (
             <Skeleton className="h-40 w-full" />
           )}

@@ -60,6 +60,7 @@ describe('route to help page', () => {
     expect(t('/ticket/DEMO-0043')).toBe('gates-and-approvals')
     expect(t('/agents')).toBe('agents-and-grants')
     expect(t('/settings/addons')).toBe('addons')
+    expect(t('/settings/addon/wiki')).toBe('addons')
     expect(t('/addon/wiki/pages')).toBe('addons')
     expect(t('/settings/members')).toBe('getting-around')
     expect(t('/nope')).toBe('getting-around')

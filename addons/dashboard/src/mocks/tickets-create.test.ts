@@ -3,6 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore, type MockStore } from '@/mocks/store'
 import type { NewTicketRequest } from '@/api/types'
+import { describeEvent } from '@/mocks/derive'
 
 const apiOf = (store: MockStore) => createApi(createMockTransport(store, { latency: false }))
 const setup = () => {
@@ -75,5 +76,47 @@ describe('create ticket', () => {
     const r = await api.createTicket(ws, { ...base, sections: { requirements: 'R' }, visibility: { restricted: ['p_sev'] } })
     expect(r.ticket.visibility).toEqual({ restricted: ['p_sev', 'p_mara'] })
     expect((await api.getTicket(r.ticket.key)).key).toBe(r.ticket.key)
+  })
+})
+
+describe('undo a create', () => {
+  const req = { ...base, sections: { requirements: 'Something' } }
+  it('removes a ticket you just created, logs the discard, and never hands its key out again', async () => {
+    const { api, store, ws } = setup()
+    const { ticket } = await api.createTicket(ws, req)
+    await expect(api.undoCreateTicket(ws, ticket.key)).resolves.toEqual({ ok: true })
+    expect(store.hasTicket(ticket.key)).toBe(false)
+    await expect(api.getTicket(ticket.key)).rejects.toMatchObject({ status: 404 })
+    const ev = store.wsEventsOf(ws).at(-1)!
+    expect(ev).toMatchObject({ type: 'ticket.discarded', key: ticket.key, by: store.viewer, actor: { kind: 'person', id: store.viewer } })
+    expect(describeEvent(ev)).toBe(`discarded ${ticket.key} right after creating it`)
+    const again = await api.createTicket(ws, req)
+    expect(again.ticket.key).not.toBe(ticket.key)
+    expect(Number(again.ticket.key.split('-')[1])).toBe(Number(ticket.key.split('-')[1]) + 1)
+  })
+  it('the discarded key stays used after a reload from the persisted log', async () => {
+    const { api, store, ws } = setup()
+    const { ticket } = await api.createTicket(ws, req)
+    await api.undoCreateTicket(ws, ticket.key)
+    const fresh = createMockStore({ persist: false })
+    for (const e of store.wsEventsOf(ws).filter((x) => x.type === 'ticket.discarded')) fresh.appendWs(ws, { type: e.type, key: e.key, by: e.by, actor: e.by as string })
+    expect(fresh.nextKey(ws)).not.toBe(ticket.key)
+  })
+  it('refuses once anything else happened to the ticket', async () => {
+    const { api, store, ws } = setup()
+    const { ticket } = await api.createTicket(ws, req)
+    await api.postAction(ticket.key, { action: 'comment', text: 'On it' })
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 409, code: 'ticket.undo_too_late' })
+    expect(store.hasTicket(ticket.key)).toBe(true)
+  })
+  it('refuses for a seeded ticket, for someone else, and for a viewer', async () => {
+    const { api, store, ws } = setup()
+    await expect(api.undoCreateTicket(ws, 'DEMO-0043')).rejects.toMatchObject({ status: 404 })
+    const { ticket } = await api.createTicket(ws, req)
+    store.setViewer('p_mara')
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 403 })
+    store.setViewer('p_tom')
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 403 })
+    expect(store.hasTicket(ticket.key)).toBe(true)
   })
 })

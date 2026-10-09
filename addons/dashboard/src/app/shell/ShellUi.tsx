@@ -1,5 +1,5 @@
-import { useNavigate } from '@tanstack/react-router'
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useRouterState } from '@tanstack/react-router'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 interface ShellUi {
   paletteOpen: boolean
@@ -12,6 +12,11 @@ interface ShellUi {
   /** The sidebar is the icon rail (the viewer's choice wins; without one, below 1280 px). */
   railCollapsed: boolean
   toggleRail: () => void
+  /** The New ticket overlay (a right-hand sheet over the current page). */
+  newTicketOpen: boolean
+  setNewTicketOpen: (open: boolean) => void
+  /** What had the focus when the overlay was asked for; it gets the focus back on close. */
+  newTicketOpener: { current: HTMLElement | null }
 }
 
 type RailPref = 'auto' | 'wide' | 'narrow'
@@ -73,9 +78,11 @@ export function ShellUiProvider({ children }: { children: ReactNode }) {
   const [paletteSeed, setPaletteSeed] = useState('')
   const [header, setHeader] = useState<PageHeaderState>({})
   const rail = useRailState()
+  const [newTicketOpen, setNewTicketOpen] = useState(false)
+  const newTicketOpener = useRef<HTMLElement | null>(null)
   const value = useMemo(
-    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle }),
-    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle],
+    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, newTicketOpen, setNewTicketOpen, newTicketOpener }),
+    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, newTicketOpen],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -88,9 +95,17 @@ function useShellUi() {
 
 /** Pages and components open the global overlays through this. */
 export function useShellActions() {
-  const { setPaletteOpen } = useShellUi()
-  const navigate = useNavigate()
-  return { openPalette: () => setPaletteOpen(true), openNewTicket: () => void navigate({ to: '/tickets/new' }) }
+  const { setPaletteOpen, setNewTicketOpen, newTicketOpener } = useShellUi()
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const openNewTicket = useCallback(() => {
+    // On the full page already: the form is right there.
+    if (pathname === '/tickets/new') return void document.getElementById('nt-title')?.focus()
+    const active = document.activeElement as HTMLElement | null
+    // Opened from the palette (or another dialog): that element is about to go, so the focus returns to the page.
+    newTicketOpener.current = active && active !== document.body && !active.closest('[role="dialog"],[role="alertdialog"]') ? active : null
+    setNewTicketOpen(true)
+  }, [pathname, setNewTicketOpen, newTicketOpener])
+  return { openPalette: () => setPaletteOpen(true), openNewTicket }
 }
 
 export const useShellState = useShellUi

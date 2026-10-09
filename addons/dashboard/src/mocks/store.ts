@@ -439,11 +439,17 @@ export class MockStore {
     this.seeded.set(def.key, 0)
   }
 
-  /** The next free key of a workspace: max(number) + 1, zero-padded to 4. */
+  /**
+   * The next key of a workspace, zero-padded to 4: one past the highest key ever used. Keys are never reused: a
+   * discarded ticket (undo of a create) stays counted through its `ticket.discarded` workspace event, which is
+   * persisted with the workspace log, so recents, links, toasts and addon state never point at a different ticket.
+   */
   nextKey(wsId: string): string {
     const prefix = this.workspaces.find((w) => w.id === wsId)!.prefix
-    const nums = [...this.defs.keys()].filter((k) => k.startsWith(prefix + '-')).map((k) => Number(k.slice(prefix.length + 1)))
-    return `${prefix}-${String(Math.max(0, ...nums) + 1).padStart(4, '0')}`
+    const num = (k: unknown) => (typeof k === 'string' && k.startsWith(prefix + '-') ? Number(k.slice(prefix.length + 1)) || 0 : 0)
+    const live = [...this.defs.keys()].map(num)
+    const discarded = this.wsEventsOf(wsId).filter((e) => e.type === 'ticket.discarded').map((e) => num(e.key))
+    return `${prefix}-${String(Math.max(0, ...live, ...discarded) + 1).padStart(4, '0')}`
   }
 
   /** Creates a backlog ticket. `ticket.created` is its first event, then `people.set` when people were chosen. */
@@ -506,6 +512,32 @@ export class MockStore {
       opts.actor,
     )
     return { ok: true, ticket }
+  }
+
+  /**
+   * Undo of a create (the "Created … · Undo" toast): removes a ticket its creator made a moment ago. Only while nothing
+   * else has happened to it (its events are still `ticket.created` and maybe `people.set`, all by that person);
+   * otherwise 409 `ticket.undo_too_late`. Seeded tickets and other people's tickets are never removed.
+   */
+  undoCreate(wsId: string, key: string, person = this.viewer): { ok: true } | StoreFailure {
+    if (!this.workspaces.some((w) => w.id === wsId)) return refuse(404, 'not_found', 'No such workspace')
+    if (!can(this.roleIn(wsId, person), 'ticket.create')) return refuse(403, 'forbidden', 'Viewers cannot create or remove tickets.', 'Ask an owner or maintainer.')
+    const made = this.created[key]
+    if (!made || made.ws !== wsId || !this.hasTicket(key) || !this.isVisible(key, person)) return refuse(404, 'not_found', `No ticket ${key}`)
+    const evs = this.eventsOf(key)
+    const byPerson = (e: OrchEvent) => e.actor.kind === 'person' && e.actor.id === person
+    if (!evs.length || evs[0].type !== 'ticket.created' || !byPerson(evs[0])) return refuse(403, 'forbidden', `Only who created ${key} can undo it.`)
+    if (evs.some((e) => !(e.type === 'ticket.created' || e.type === 'people.set') || !byPerson(e)))
+      return refuse(409, 'ticket.undo_too_late', `Something already happened on ${key}, so it is kept.`, 'Open the ticket to change or close it.')
+    this.defs.delete(key)
+    this.bodies.delete(key)
+    this.wsOfKey.delete(key)
+    this.events.delete(key)
+    this.seeded.delete(key)
+    delete this.created[key]
+    // Recorded so the key is never handed out again and the workspace log shows what happened.
+    this.appendWs(wsId, { type: 'ticket.discarded', key, by: person, actor: person })
+    return { ok: true }
   }
 
   // ------------------------------------------------------------ live cursor

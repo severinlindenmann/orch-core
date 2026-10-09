@@ -513,6 +513,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.name ? `saved view "${t(e.name, '')}"` : 'saved a view'
     case 'view.deleted':
       return 'deleted a saved view'
+    case 'ticket.discarded':
+      return e.key ? `discarded ${t(e.key, '')} right after creating it` : 'discarded a ticket right after creating it'
     case 'workspace.renamed':
       return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
     case 'skill.credentials_granted': {

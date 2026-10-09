@@ -4,7 +4,7 @@ import { can } from '@/api/permissions'
 import { SHORTCUT_DEFS } from '@/api/shortcuts'
 import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
-import { useShellState } from './ShellUi'
+import { useShellActions, useShellState } from './ShellUi'
 
 export interface Shortcut {
   id: string
@@ -12,7 +12,12 @@ export interface Shortcut {
   keys: string
   label: string
   /** Absent when another component owns the key. */
-  run?: (go: (to: string) => void) => void
+  run?: (go: (to: string) => void, shell: ShortcutShell) => void
+}
+
+/** What a shortcut can do besides navigating. */
+export interface ShortcutShell {
+  openNewTicket: () => void
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
@@ -26,7 +31,7 @@ const WORKSPACE_SHORTCUTS: Shortcut[] = Array.from({ length: 9 }, (_, i) => ({
 
 /** Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet). */
 const RUN: Record<string, Shortcut['run']> = {
-  'new-ticket': (go) => go('/tickets/new'),
+  'new-ticket': (_go, shell) => shell.openNewTicket(),
   'go.today': (go) => go('/'),
   'go.board': (go) => go('/board'),
   'go.tickets': (go) => go('/tickets'),
@@ -55,9 +60,11 @@ export function useShortcuts() {
   const router = useRouter()
   const { workspaces, switchWorkspace } = useWorkspace()
   const { setPaletteOpen, setPaletteSeed } = useShellState()
+  const { openNewTicket } = useShellActions()
   const role = useRole()
   useEffect(() => {
     const go = (to: string) => void router.navigate({ to } as never)
+    const shell: ShortcutShell = { openNewTicket }
     let armed: number | null = null
     const disarm = () => {
       if (armed !== null) window.clearTimeout(armed)
@@ -82,7 +89,7 @@ export function useShortcuts() {
         const hit = SHORTCUTS.find((s) => s.run && s.keys === `g ${e.key}`)
         if (hit) {
           e.preventDefault()
-          hit.run!(go)
+          hit.run!(go, shell)
         }
         return
       }
@@ -99,7 +106,7 @@ export function useShortcuts() {
           setPaletteOpen(true)
           return
         }
-        hit.run!(go)
+        hit.run!(go, shell)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -107,5 +114,5 @@ export function useShortcuts() {
       window.removeEventListener('keydown', onKey)
       disarm()
     }
-  }, [router, workspaces, switchWorkspace, role, setPaletteOpen, setPaletteSeed])
+  }, [router, workspaces, switchWorkspace, role, setPaletteOpen, setPaletteSeed, openNewTicket])
 }

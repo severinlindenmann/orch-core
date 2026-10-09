@@ -96,6 +96,8 @@ export function createApi(transport: Transport) {
             restricted: p.restricted === undefined ? undefined : String(p.restricted),
           }),
       ),
+    /** Removes a ticket you just created, while nothing else has happened to it (409 `ticket.undo_too_late`). */
+    undoCreateTicket: (ws: string, key: string) => call<{ ok: true }>('POST', `/api/workspaces/${ws}/tickets/${key}/undo-create`),
     listViews: (ws: string) => call<SavedView[]>('GET', `/api/workspaces/${ws}/views`),
     saveView: (ws: string, v: { name: string; shared: boolean; params: ViewParams }) => call<SavedView>('POST', `/api/workspaces/${ws}/views`, v),
     deleteView: (ws: string, id: string) => call<{ ok: true }>('POST', `/api/workspaces/${ws}/views/${id}/delete`),

@@ -136,6 +136,7 @@ button{font:inherit;font-size:11px;color:CanvasText;background:Canvas;border:1px
 export const FLOW = `<style>
 svg{display:block;height:auto;max-height:none}
 body{overflow-x:auto}
+body.more::after{content:'';position:fixed;top:0;right:0;bottom:0;width:28px;background:linear-gradient(to right,transparent,Canvas);pointer-events:none}
 .box{fill:Canvas;stroke:GrayText;stroke-width:1}
 .box.done{stroke:CanvasText}
 .box.current{stroke:Highlight;stroke-width:2.5}
@@ -179,7 +180,8 @@ body{overflow-x:auto}
     var a = pos[e.from], b = pos[e.to], x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x - 6, y2 = b.y + H / 2, mx = (x1 + x2) / 2
     svg.appendChild(el('path', { 'class': 'edge', d: 'M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + y2 + ' ' + x2 + ',' + y2 }))
     svg.appendChild(el('path', { 'class': 'head', d: 'M' + x2 + ',' + (y2 - 4) + ' L' + (x2 + 6) + ',' + y2 + ' L' + x2 + ',' + (y2 + 4) + ' z' }))
-    if (e.label) svg.appendChild(el('text', { 'class': 'el', x: mx, y: (y1 + y2) / 2 - 4, 'text-anchor': 'middle' }, e.label))
+    // On the straight tail just before the arrow (each target has its own row), never across a curve.
+    if (e.label) svg.appendChild(el('text', { 'class': 'el', x: x2 - 4, y: y2 - 6, 'text-anchor': 'end' }, e.label))
   })
   nodes.forEach(function (n) {
     var p = pos[n.id], g = el('g', {})
@@ -190,6 +192,12 @@ body{overflow-x:auto}
     g.appendChild(el('title', {}, n.label + (n.status ? ' (' + WORD[n.status] + ')' : '')))
     svg.appendChild(g)
   })
+  // A fade on the right edge while the flow continues past it (the frame scrolls sideways).
+  var b = document.body
+  function edge() { b.classList.toggle('more', b.scrollWidth - b.clientWidth - b.scrollLeft > 2) }
+  b.addEventListener('scroll', edge)
+  addEventListener('resize', edge)
+  edge()
 })()
 </script>`
 

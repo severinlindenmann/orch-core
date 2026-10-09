@@ -61,6 +61,7 @@ export const HANDOFF_WIDGETS = 2
  * A widget that sketches the options of an open question (an option prototype, or a widget titled "Q2: …") is a
  * prototype, not the decision: it names the question it belongs to, which is answered (and signed) in Questions.
  */
+/** The open question a prototype belongs to; '' when it belongs to Questions but to no one question; undefined when it is not a prototype. */
 export function prototypeQuestion(spec: WidgetSpec | undefined, ticket: Pick<TicketDocument, 'questions_state'>): string | undefined {
   if (!spec) return undefined
   const open = ticket.questions_state.filter((q) => q.state === 'open').map((q) => q.id)
@@ -69,7 +70,9 @@ export function prototypeQuestion(spec: WidgetSpec | undefined, ticket: Pick<Tic
   if (!titled && !options) return undefined
   const named = titled ?? `${spec.title ?? ''} ${spec.caption ?? ''}`.match(/\b(Q\d+)\b/)?.[1]
   if (named) return open.includes(named) ? named : undefined
-  return open.length === 1 ? open[0] : undefined
+  // An option prototype on a ticket with several open questions and none named: still a prototype, answered in
+  // Questions ('' = no particular question). With no open question it is just a widget.
+  return open.length === 1 ? open[0] : open.length > 1 && options ? '' : undefined
 }
 
 /**
@@ -87,7 +90,7 @@ function SectionBody({ segments, ticket, agentHtml, label, list, maxWidgets, jum
         if (s.kind === 'markdown') return s.text.trim() ? <SafeMarkdown key={i} text={list ? asListItems(s.text) : s.text} /> : null
         if (++seen > limit) return null
         const q = prototypeQuestion(s.block.reason ? undefined : s.block.spec, ticket)
-        const prototype: PrototypeOf | undefined = q ? { question: q, answer: () => jump({ tab: 'questions', id: `question-${q}` }) } : undefined
+        const prototype: PrototypeOf | undefined = q === undefined ? undefined : { question: q || undefined, answer: () => jump(q ? { tab: 'questions', id: `question-${q}` } : { tab: 'questions' }) }
         return (
           // Reset when the block's text changes (another ticket, or a live update that fixed it).
           <ErrorBoundary key={i} resetKey={`${ticket.key}\n${s.block.raw}`} fallback={() => <BlockProblem what="This widget" />}>

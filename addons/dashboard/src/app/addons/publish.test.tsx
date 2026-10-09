@@ -5,6 +5,7 @@ import { api, mockStore } from '@/api/client'
 import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 import { openTicketPanel } from '@/test/ticketPanels'
+import { installAndGrant } from '@/test/installAddon'
 
 // Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
 afterEach(() => {
@@ -177,5 +178,19 @@ describe('publish decisions on Today', () => {
     renderApp('/', { viewer: 'p_tom' })
     await screen.findByText('viewer · read only', {}, T)
     expect(screen.queryByText(/Ops notebook failed to build/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Apps & shares and Drop point at each other (R-e)', () => {
+  const T = { timeout: 5000 }
+  it('says what the page is for; "Open Drop" only while Drop is active, and it opens Drop', async () => {
+    const { unmount } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    expect(await screen.findByText(/Live apps, and read-only links to tickets and artifacts\. Files you send go through Drop\./, {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Open Drop' })).toBeNull() // Drop is in the catalog, not installed
+    unmount()
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: (s) => installAndGrant(s, s.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'drop') })
+    await user.click(await screen.findByRole('link', { name: 'Open Drop' }, T))
+    expect(await screen.findByText(/Files between devices, people and workspaces\./, {}, T)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open Apps & shares' })).toBeInTheDocument()
   })
 })

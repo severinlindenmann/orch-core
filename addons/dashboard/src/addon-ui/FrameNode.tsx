@@ -30,14 +30,29 @@ function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'fr
   // from this frame's own window count, and only a number: the frame shrinks to it, never past `node.height`.
   useEffect(() => {
     if (!fitContent) return
+    // At most one height per animation frame (the last one wins), and changes under 2 px are ignored: a chatty or
+    // oscillating frame cannot make the page re-layout on every message.
+    let pending: number | null = null
+    let raf = 0
+    const apply = () => {
+      raf = 0
+      const next = pending
+      pending = null
+      if (next === null) return
+      setFit((cur) => (cur !== null && Math.abs(cur - next) < 2 ? cur : next))
+    }
     const onMessage = (e: MessageEvent) => {
       if (!ref.current || e.source !== ref.current.contentWindow) return
       const h = (e.data as { orch?: unknown; height?: unknown } | null)?.height
       if ((e.data as { orch?: unknown } | null)?.orch !== 'size' || typeof h !== 'number' || !Number.isFinite(h)) return
-      setFit(Math.max(MIN_FIT, Math.min(node.height, Math.ceil(h))))
+      pending = Math.max(MIN_FIT, Math.min(node.height, Math.ceil(h)))
+      if (!raf) raf = requestAnimationFrame(apply)
     }
     window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+    return () => {
+      window.removeEventListener('message', onMessage)
+      if (raf) cancelAnimationFrame(raf)
+    }
   }, [fitContent, node.height])
   if (navigated) return <>{fallback}</>
   return (

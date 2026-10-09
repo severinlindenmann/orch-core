@@ -100,7 +100,8 @@ function Refused({ block, reason, plain, sectionLabel }: { block: Block; reason:
 
 /** The widget sketches the options of an open question: it is answered in Questions, not here. */
 export interface PrototypeOf {
-  question: string
+  /** The question's id; unset when the prototype belongs to no single question (the link opens Questions). */
+  question?: string
   /** Opens the Questions tab on that question. */
   answer: () => void
 }
@@ -176,14 +177,21 @@ function Drawn({ block, spec, res, agentHtml, prototype }: { block: Block; spec:
         <p data-widget-prototype className="mx-3 mb-2 rounded-md border border-dashed border-border-strong px-2.5 py-1.5 text-[12px] text-text-muted">
           <span className="font-medium text-text">Prototype</span> — answer in Questions →{' '}
           <button type="button" onClick={prototype.answer} className="font-medium text-brand underline-offset-2 hover:underline">
-            Answer {prototype.question}
+            {prototype.question ? `Answer ${prototype.question}` : 'Open Questions'}
           </button>
         </p>
       )}
       <div className="space-y-1.5 px-3 pb-2.5">
         {/* A prototype only shows the options: no clicks or focus inline (Expand still lets the reader look closer). */}
-        <div data-widget-body inert={prototype ? true : undefined} className={cn('max-h-[280px] overflow-auto', prototype && 'pointer-events-none select-none opacity-70 saturate-50')}>
-          {text ? <pre className="whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-[12px] text-text">{alt}</pre> : <Body spec={spec} res={res} agentHtml={agentHtml} height={BODY_HEIGHT} />}
+        <div data-widget-body className="max-h-[280px] overflow-auto">
+          {text ? (
+            // The text alternative stays readable and copyable, also on a prototype.
+            <pre className="whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-[12px] text-text">{alt}</pre>
+          ) : (
+            <div data-widget-drawing inert={prototype ? true : undefined} className={cn(prototype && 'pointer-events-none select-none opacity-70 saturate-50')}>
+              <Body spec={spec} res={res} agentHtml={agentHtml} height={BODY_HEIGHT} />
+            </div>
+          )}
         </div>
         {(spec.source || spec.caption) && <div className={cn('text-[11px] text-text-muted', !agentHtml && framed && 'hidden')}>{meta}</div>}
       </div>
@@ -199,6 +207,10 @@ function Drawn({ block, spec, res, agentHtml, prototype }: { block: Block; spec:
           </SheetHeader>
           <div className="min-h-0 flex-1 space-y-2 overflow-auto p-4">
             <Body spec={spec} res={res} agentHtml={agentHtml} height={720} />
+            <details className="text-[12px] text-text-muted">
+              <summary className="cursor-pointer">Text alternative</summary>
+              <pre className="mt-1 whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-text">{alt}</pre>
+            </details>
             <div className="text-[12px] text-text-muted">{meta}</div>
           </div>
         </SheetContent>

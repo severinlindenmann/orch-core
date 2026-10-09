@@ -11,6 +11,7 @@ import { toastApiError } from '@/app/toast'
 import { ago, fmtTime, Mono, Pill, Section } from '../../ticket/shared'
 import { PairDialog } from './PairDialog'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
+import { fmtDay } from '@/lib/time'
 
 const LINK: Record<RelayLink, { word: string; dot: string; text: string }> = {
   off: { word: 'Not connected', dot: 'border border-text-faint', text: 'The workspace has never been linked to the relay.' },
@@ -22,9 +23,17 @@ const LINK: Record<RelayLink, { word: string; dot: string; text: string }> = {
 const SCOPE: Record<DeviceScope, string> = { look: 'Look', decide: 'Decide', operate: 'Operate', type: 'Type' }
 const PLATFORM = { mac: Laptop, linux: Laptop, iphone: Smartphone, ipad: Tablet } as const
 const QUEUE_ICON: Record<RelayQueueItem['kind'], typeof Send> = { seal_key: KeyRound, push: Send, drop: Upload, answer: Send }
-const day = (iso: string) => {
-  const d = new Date(iso)
-  return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })} ${d.getUTCFullYear()}`
+const day = (iso: string) => fmtDay(iso)
+
+/**
+ * The link line, consistent with the devices below: "never linked" only while no other device has ever reached the
+ * workspace; otherwise when the last one did, and that what is queued waits for the link.
+ */
+function linkText(r: RelayState, text: string): string {
+  if (r.link !== 'off') return text
+  const seen = r.devices.filter((d) => !d.this_device && d.last_seen).sort((a, b) => b.last_seen!.localeCompare(a.last_seen!))[0]
+  if (!seen) return text
+  return `The link is off on this machine. ${seen.label} last reached this workspace ${ago(seen.last_seen!, Date.parse(r.now))}; what is queued waits until you connect.`
 }
 
 function EpochCell({ d, epoch }: { d: RelayDevice; epoch: number }) {
@@ -110,9 +119,9 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
           <div className="min-w-0 flex-1 space-y-0.5">
             <p className="font-medium" role="status">
               {L.word}
-              {r.since && r.link !== 'connecting' && <span className="font-normal text-text-muted"> · since {fmtTime(r.since)} UTC</span>}
+              {r.since && r.link !== 'connecting' && <span className="font-normal text-text-muted"> · since {fmtTime(r.since)}</span>}
             </p>
-            <p className="text-text-muted">{L.text}</p>
+            <p className="text-text-muted">{linkText(r, L.text)}</p>
           </div>
         </div>
         <dl className="mt-3 grid grid-cols-[140px_1fr] gap-x-3 gap-y-1.5 text-[13px]">

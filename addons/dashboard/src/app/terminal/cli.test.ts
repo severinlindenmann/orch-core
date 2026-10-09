@@ -31,7 +31,7 @@ const mirror = (over: Partial<CliSession> = {}): CliSession => ({
   status: 'running',
   started: '2026-10-09T09:40:00Z',
   ctx: ctx(),
-  transcript: ['orch status', 'orch task next', 'orch approve DEMO-0043 plan'],
+  transcript: ['orch status', 'orch task next'],
   context: true,
   summary: null,
   resumedFrom: null,
@@ -44,7 +44,7 @@ const HOSTILE = 'Seeds \x1b]8;;https://evil.example\x07click\x1b]8;;\x07 \x1b]52
 
 describe('Claude Code mirror screen', () => {
   it('has the CLI look: welcome box, the prompt, tool calls with results, a working line, and no input or key hints', () => {
-    const s = cliScreen(mirror(), 100)
+    const s = cliScreen(mirror({ ctx: ctx({ move: { who: 'p_mara', why: 'Ready to claim' }, gates: [{ name: 'requirements', state: 'approved' }, { name: 'plan', state: 'pending' }] }) }), 100)
     const t = plain(s.text)
     expect(t).toContain('Welcome to Claude Code (simulated)')
     expect(t).toMatch(/╭─+╮/)
@@ -58,6 +58,22 @@ describe('Claude Code mirror screen', () => {
     expect(t.split('\r\n').at(-1)).toMatch(/Waiting for approval…/)
     expect(s.live).toMatchObject({ up: 0 })
     expect(plain(s.live!.frame(3))).toMatch(/Waiting for approval… \(1h 50m\)$/)
+  })
+  it('ends on the real blocker, from the live ticket state: a question, a gate, the verdict, or nothing', () => {
+    const q = plain(cliScreen(mirror({ ctx: ctx({ move: { who: 'p_sev', why: 'Answer Q2', name: 'Severin' } }) }), 100).text)
+    expect(q).toContain('Bash(orch wait)')
+    expect(q).toContain('waiting · Answer Q2 · Severin')
+    expect(q).toContain('Q2 needs an answer from Severin before I go on.')
+    expect(q).not.toContain('human_only')
+    expect(q.split('\r\n').at(-1)).toMatch(/Waiting for Q2…/)
+    // Plan approved, no question: no approval wait.
+    const working = plain(cliScreen(mirror({ ctx: ctx({ move: { who: 'agent:claude-code', why: 'Working' } }) }), 100).text)
+    expect(working).not.toMatch(/human_only|Waiting/)
+    expect(working.split('\r\n').at(-1)).toMatch(/Working…/)
+    const verdict = plain(cliScreen(mirror({ ctx: ctx({ status: 'testing', move: { who: 'p_mara', why: 'Verdict needed', name: 'Mara' } }) }), 100).text)
+    expect(verdict).toContain('Waiting for Mara to give the verdict in orch.')
+    // An ended session replays only what it ran.
+    expect(plain(cliScreen(mirror({ status: 'stopped', ctx: ctx({ move: { who: 'p_sev', why: 'Answer Q2' } }) }), 100).text)).not.toContain('orch wait')
   })
   it('cuts long tool output to three lines and says how many more there were', () => {
     const t = plain(cliScreen(mirror({ transcript: ['orch status'] }), 100).text)

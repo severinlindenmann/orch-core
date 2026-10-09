@@ -103,6 +103,17 @@ describe('worktrees page', () => {
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Open terminal here' })).toBeInTheDocument()
   })
+  it('Open terminal here opens the dock on the new session, with the keyboard in the dock', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    vi.stubGlobal('innerHeight', 900)
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Open terminal here' }))
+    const dock = await screen.findByRole('region', { name: 'Terminal dock' }, T)
+    expect(await within(dock).findByRole('group', { name: /^Session: \d+ DEMO-0041 Shell · Your shell/ }, { timeout: 8000 })).toBeInTheDocument()
+    // The keyboard goes to the dock (the session strip, then the terminal once xterm is up).
+    await waitFor(() => expect(dock.contains(document.activeElement)).toBe(true), { timeout: 8000 })
+  }, 25_000)
   it('no Open terminal here when terminals is off', async () => {
     renderApp('/addon/worktrees/worktrees', {
       viewer: 'p_sev',

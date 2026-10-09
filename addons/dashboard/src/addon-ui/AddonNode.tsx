@@ -414,14 +414,16 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
       <Button
         size="sm"
         variant={BUTTON_VARIANT[node.variant]}
-        disabled={pending || blocked || !!precheck}
-        aria-describedby={precheck ? reasonId : undefined}
+        disabled={pending || blocked || !!precheck || !!node.disabled}
+        aria-describedby={precheck || node.disabled ? reasonId : undefined}
+        title={!precheck ? node.disabled : undefined}
         aria-pressed={node.pressed}
         className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
         onClick={() => run(node.action, node.args)}
       >
         {node.label}
       </Button>
+      {node.disabled && !precheck && <p id={reasonId} className="text-[12px] text-text-muted">{node.disabled}</p>}
       {error && <ErrorAlert error={error} onDismiss={dismissError} />}
       {dialog}
     </div>
@@ -473,6 +475,13 @@ function LeaveGuard() {
   )
 }
 
+const initial0 = (node: NodeOf<'form'>) => JSON.stringify(node.formData ?? {})
+/** A free-text field of a form schema (no choices): typing in it waits for a pause before a live form runs. */
+const isTextField = (schema: Record<string, unknown>, key: string) => {
+  const p = ((schema.properties ?? {}) as Record<string, Record<string, unknown>>)[key]
+  return !!p && p.type === 'string' && !p.enum && !p.oneOf
+}
+
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const closePopover = useContext(ClosePopoverCtx)
   // In a popover the form closes it once its action went through (a refusal leaves it open, with the error in it).
@@ -514,11 +523,25 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   const formControl = claim === 'won' ? offered : undefined
   const report = formControl?.onState
   useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
-  const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  const submitOptions = formControl || node.live ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  // A live form (filters) runs its action on each change: a choice at once, typed text after a pause.
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const liveLast = useRef(initial0(node))
+  useEffect(() => () => void (liveTimer.current && clearTimeout(liveTimer.current)), [])
+  const onLive = (formData: Record<string, unknown> | undefined) => {
+    const next = formData ?? {}
+    const prev = JSON.parse(liveLast.current) as Record<string, unknown>
+    if (JSON.stringify(next) === liveLast.current) return
+    const typed = Object.keys(next).some((k) => next[k] !== prev[k] && isTextField(node.schema, k))
+    liveLast.current = JSON.stringify(next)
+    if (liveTimer.current) clearTimeout(liveTimer.current)
+    liveTimer.current = setTimeout(() => run(node.action, { formData: next }), typed ? 400 : 0)
+  }
   const guarded = !!node.cancel
   const initial = JSON.stringify(node.formData ?? {})
   const [edited, setEdited] = useState(false)
-  useEffect(() => setEdited(false), [initial]) // new data from the addon (e.g. after a save): nothing unsaved any more
+  useEffect(() => setEdited(false), [initial])
+  useEffect(() => void (liveLast.current = initial), [initial]) // the addon's answer is the new starting point // new data from the addon (e.g. after a save): nothing unsaved any more
   // A form with Cancel tracks unsaved edits: this page's other actions ask before they discard them, and closing the tab does too.
   useEffect(() => {
     if (!guarded) return
@@ -541,7 +564,8 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
         <ThemedForm
           id={formControl?.id}
           disabled={readOnly}
-          key={JSON.stringify(node.formData ?? null)}
+          // A live form keeps its fields mounted (typing goes on while results update); others start over with new data.
+          key={node.live ? 'live' : JSON.stringify(node.formData ?? null)}
           schema={node.schema}
           uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
           formData={node.formData ?? undefined}
@@ -549,7 +573,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
           showErrorList={false}
           focusOnFirstError={focusField}
           transformErrors={(errors) => formErrors(errors, node.schema)}
-          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : undefined}
+          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : node.live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
           onSubmit={({ formData }) => run(node.action, { formData })}
         >
           {node.cancel && !formControl ? (

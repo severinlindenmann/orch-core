@@ -3,6 +3,8 @@ import { PERSON_NAME } from '../busy/pools'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
+import { plural } from '@/lib/time'
+import { fmtWhen } from '@/lib/time'
 
 // github: pull requests (code reviews) and the external issues lane. Addon state is the only store for PRs and issues;
 // the ticket panel reads `addon.prByTicket.$ticket` (see view()), nothing is written to ticket addon data.
@@ -76,15 +78,7 @@ const prUrl = (p: Pr) => `https://github.com/${p.repo}/pull/${p.number}`
 const summary = (p: Pr): CheckStatus => (p.checks.some((c) => c.status === 'fail') ? 'fail' : p.checks.some((c) => c.status === 'pending') ? 'pending' : 'pass')
 const pending = (p: Pr) => p.checks.some((c) => c.status === 'pending')
 
-function ago(fromIso: string, nowIso: string): string {
-  const min = Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(fromIso)) / 60000))
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min} min ago`
-  const h = Math.round(min / 60)
-  if (h < 24) return `${h} h ago`
-  const d = Math.round(h / 24)
-  return `${d} ${d === 1 ? 'day' : 'days'} ago`
-}
+const ago = (fromIso: string, nowIso: string): string => fmtWhen(fromIso, nowIso)
 
 const seedState = () => ({
   prs: seedPrs(),
@@ -154,7 +148,7 @@ registerAddon({
         checks: summary(p),
         review: p.review,
         author: `${p.author.name} (${p.author.kind})`,
-        diff: `+${p.additions} −${p.deletions} in ${p.files} files`,
+        diff: `+${p.additions} −${p.deletions} in ${plural(p.files, 'file')}`,
         url: prUrl(p),
         checkPairs: p.checks.map((c) => ({ label: c.name, value: c.status })),
       }

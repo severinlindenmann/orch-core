@@ -267,7 +267,7 @@ registerAddon({
       const x = visibleShare(ctx, body.id)
       if (!x) return notFound('That share no longer exists.')
       x.expires_in_days += 7
-      return { ok: true, message: `${x.title} now expires in ${x.expires_in_days} days.`, changed: true }
+      return { ok: true, message: `${x.title} now expires in ${plural(x.expires_in_days, 'day', 'days')}.`, changed: true }
     },
     revoke(ctx) {
       const { store, state, body } = ctx

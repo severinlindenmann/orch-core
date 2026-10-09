@@ -3,6 +3,7 @@ import { briefs, dayIso } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, invalid, notFound, registerAddon } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
 // open and their search query are per viewer (`state.nav[viewer] = { current, query }`), so navigating never affects
@@ -173,10 +174,7 @@ A normal link still works: [dbt docs](https://docs.getdbt.com).
   },
 ]
 
-const ago = (iso: string) => {
-  const d = Math.max(0, Math.floor((EPOCH - Date.parse(iso)) / DAY_MS))
-  return d === 0 ? 'updated today' : `updated ${d}d ago`
-}
+const ago = (iso: string) => `updated ${fmtWhen(iso)}`
 
 const pagesOf = (state: Record<string, unknown>) => state.pages as Page[]
 interface Nav {

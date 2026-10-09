@@ -25,13 +25,15 @@ interface State {
   pendingTickets: number
   rows: Row[]
   history: { hash: string; at: string; tickets: number; events: number; by: string }[]
-  pushAlert: { type: string; tone?: string; title?: string }
+  statusNote: { type: string; tone?: string; title?: string; text?: string }
+  actions: { children: { children: { label: string; variant: string; disabled?: string }[] }[] }
   remote: string
   settings: { auto_commit_minutes: number; push: boolean; remote: string }
 }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'records')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'records', id, body)
-const alertOf = async (s: S) => (await state(s)).pushAlert
+const alertOf = async (s: S) => (await state(s)).statusNote
+const buttons = async (s: S) => Object.fromEntries((await state(s)).actions.children.map((c) => [c.children[0].label, c.children[0]]))
 
 describe('records seed and derived pending changes', () => {
   it('starts in the catalog, not installed', () => {
@@ -92,7 +94,7 @@ describe('commit records', () => {
 })
 
 describe('push and pull', () => {
-  it('push records last push; a second push without a pull is rejected; pull then push works', async () => {
+  it('push records last push; a push after the remote moved is rejected; pull then push works', async () => {
     const s = setup()
     await run(s, 'commit')
     expect((await run(s, 'push')).message).toMatch(/pushed/i)
@@ -100,14 +102,27 @@ describe('push and pull', () => {
     expect(ok.tone).not.toBe('error')
     const st = await state(s)
     expect((st as unknown as { lastPush: { commit: string; remote: string } }).lastPush).toMatchObject({ commit: st.history[0].hash, remote: st.remote })
+    // Nothing pending and nothing to push: Record and Push are disabled with their reasons; the headline says so.
+    expect(st.summary).toBe('Everything is recorded and pushed')
+    expect(await buttons(s)).toMatchObject({ 'Record changes': { disabled: 'Nothing pending to record.' }, 'Push to remote': { disabled: 'Nothing to push: the remote has every record commit.' } })
 
+    // New activity, recorded; the remote moved on meanwhile: the push is rejected.
+    s.store.append('DEMO-0041', { type: 'labels.changed', add: ['x'] })
+    await run(s, 'commit')
+    expect((await buttons(s))['Push to remote'].variant).toBe('primary')
     const rejected = await refused(run(s, 'push'))
     expect(rejected).toMatchObject({ status: 409, code: 'records.push_rejected' })
     expect(rejected.message).toMatch(/^Push rejected: Remote rejected/)
-    expect(await alertOf(s)).toMatchObject({ type: 'alert', tone: 'error', title: 'Remote rejected: non-fast-forward. Pull first.' })
+    // One error (the refusal under the button); the headline names the next step and Pull is primary.
+    const after = await state(s)
+    expect(after.summary).toBe('Push rejected · pull first')
+    expect(after.statusNote).toMatchObject({ type: 'markdown' })
+    expect(JSON.stringify(after.statusNote)).not.toMatch(/Remote rejected/)
+    expect(await buttons(s)).toMatchObject({ Pull: { variant: 'primary' }, 'Push to remote': { variant: 'secondary', disabled: expect.stringMatching(/^Pull first/) } })
 
     await run(s, 'pull')
-    expect((await alertOf(s)).tone).not.toBe('error')
+    expect((await state(s)).summary).toBe('Everything is recorded · 1 commit waiting to push')
+    expect((await buttons(s))['Push to remote']).toMatchObject({ variant: 'primary' })
     await run(s, 'push')
     expect((await alertOf(s)).tone).not.toBe('error')
     expect(JSON.stringify(await alertOf(s))).toMatch(/pushed/i)

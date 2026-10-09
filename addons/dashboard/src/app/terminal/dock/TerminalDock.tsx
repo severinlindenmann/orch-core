@@ -42,6 +42,9 @@ export interface TerminalDockProps {
   focus: MutableRefObject<'dock' | 'bar' | null>
   memory: DockMemory
   collapse: () => void
+  /** A session an action opened (Worktrees' "Open terminal here"): select it and put the keyboard in it. */
+  request?: string | null
+  requestDone?: () => void
 }
 
 export default function TerminalDock(props: TerminalDockProps) {
@@ -57,7 +60,7 @@ export default function TerminalDock(props: TerminalDockProps) {
     toWorkspace={(follow) => setWide({ page, follow })} backToTicket={() => setWide(null)} />
 }
 
-function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, ticket, pageTicket, followFrom, toWorkspace, backToTicket }: TerminalDockProps & {
+function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, request, requestDone, ticket, pageTicket, followFrom, toWorkspace, backToTicket }: TerminalDockProps & {
   ticket?: string
   /** The ticket of the page (may differ from `ticket` after switching to the workspace scope). */
   pageTicket?: string
@@ -103,6 +106,15 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
     setSelected(currentId)
     setFocusId(currentId)
   }, [currentId])
+  // A requested session: select it here, or switch to the workspace scope when this ticket's list does not hold it.
+  useEffect(() => {
+    if (!request) return
+    if (list.some((s) => s.id === request) || ended.some((s) => s.id === request)) {
+      requestDone?.()
+      select(request)
+    } else if (ticket && sessions.some((s) => s.id === request)) toWorkspace(currentId ?? '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request, sessions])
   // Opening the dock puts focus on the session strip (or the dock), so the keyboard is where the eye is.
   useEffect(() => {
     if (focus.current !== 'dock') return

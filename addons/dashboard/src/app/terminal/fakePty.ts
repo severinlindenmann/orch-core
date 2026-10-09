@@ -12,7 +12,7 @@ export interface CommandResult {
   exit?: boolean
 }
 
-const HELP = ['orch status', 'orch show <key> --section <name>', 'orch task next', 'git status', 'git log --oneline -5', 'ls', 'pwd', 'clear', 'help', 'exit']
+const HELP = ['orch status', 'orch show <key> --section <name>', 'orch task next', 'orch wait', 'git status', 'git log --oneline -5', 'ls', 'pwd', 'clear', 'help', 'exit']
 const HUMAN_ONLY = 'err human_only approve · retry:false · next: orch ask or orch wait'
 const CLEAR = '\x1b[2J\x1b[H'
 
@@ -93,6 +93,8 @@ function run(line: string, c: ShellCtx): CommandResult {
       return { lines: [`${t.key} · ${label(section)}`, t.current_state] }
     }
     if (sub === 'task' && rest[0] === 'next') return { lines: [t?.next_task ? `next ${t.next_task.id} · ${t.next_task.text}` : 'no open tasks'] }
+    // What the ticket waits on now (the dashboard's turn rule): an agent blocks here until it moves.
+    if (sub === 'wait') return { lines: [t ? `waiting · ${t.move.why} · ${t.move.name ?? t.move.who}` : 'err no_ticket · no ticket in this shell'] }
     if (sub === 'approve') return { lines: [c.owner === 'agent' ? HUMAN_ONLY : 'approve needs Touch ID: use the dashboard'] }
     return { lines: [`err unknown_command · orch ${sub ?? ''}`.trimEnd() + ' · next: help'] }
   }

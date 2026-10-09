@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { GrantInfo } from '@/api/types'
+import { grantLabel } from '@/api/grants'
+import { fmtClock } from '@/lib/time'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { Label } from '@/components/ui/label'
 import { useWorkspace } from '../../workspace'
@@ -11,8 +13,10 @@ export type GrantAction = { kind: 'issue' } | { kind: 'revoke'; grant: GrantInfo
 /** Signs an issue or revoke with the shared Touch ID simulation; progress and result go to a toast. */
 export function useSignGrant(ws: string) {
   const signed = useSignedAction()
+  const { workspace } = useWorkspace()
+  const name = (id: string) => workspace?.members.find((m) => m.person === id)?.name ?? id
   return async (action: GrantAction, hours: number) => {
-    const title = action.kind === 'issue' ? 'Issue a grant' : `Revoke ${action.grant.id}`
+    const title = action.kind === 'issue' ? 'Issue a grant' : `Revoke ${grantLabel(action.grant, name(action.grant.person))}`
     await signed(title, () => (action.kind === 'issue' ? api.issueGrant(ws, { hours, scope: 'all' }) : api.revokeGrant(ws, action.grant.id)))
   }
 }
@@ -29,7 +33,7 @@ export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAct
 
   if (!action) return null
   const issue = action.kind === 'issue'
-  const until = new Date(Date.parse(now) + hours * 3600_000).toISOString().slice(11, 16)
+  const until = fmtClock(new Date(Date.parse(now) + hours * 3600_000).toISOString())
   const sessionName = (id: string) => {
     const s = sessions.data?.find((x) => x.session === id)
     return s ? `${s.name} for ${person(s.for)}` : id
@@ -39,11 +43,12 @@ export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAct
     for (const id of ids) n.set(sessionName(id), (n.get(sessionName(id)) ?? 0) + 1)
     return [...n].map(([label, c]) => (c > 1 ? `${label} (${c})` : label)).join(', ')
   }
-  const title = issue ? 'Issue a grant' : `Revoke ${action.grant.id}`
+  const label = issue ? '' : grantLabel(action.grant, person(action.grant.person), Date.parse(now))
+  const title = issue ? 'Issue a grant' : `Revoke ${label}`
   const covers = issue
-    ? ['Scope: all tickets in this workspace', `Duration: ${hours} h, until ${until} UTC`]
+    ? ['Scope: all tickets in this workspace', `Duration: ${hours} h, until ${until}`]
     : [
-        `Grant ${action.grant.id} for ${person(action.grant.person)}`,
+        `${label} · ${action.grant.id}`,
         action.grant.sessions.length ? `Stops ${action.grant.sessions.length} session${action.grant.sessions.length === 1 ? '' : 's'}: ${sessionList(action.grant.sessions)}` : 'No session uses it',
         'Releases their claims and task leases (reason: grant revoked)',
       ]

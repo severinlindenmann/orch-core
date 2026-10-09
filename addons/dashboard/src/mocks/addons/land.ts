@@ -24,7 +24,8 @@ import {
   type Need,
   type Queue,
 } from './land-worker'
-import { seedLand, seedLandBusy } from './land-seed'
+import { landSeedLog, seedLand, seedLandBusy } from './land-seed'
+import { fmtClock, fmtWhen } from '@/lib/time'
 
 // land (Landing, D53, Phase 2 preview): the merge lane. Approved tickets land on their target branch one at a time.
 //  - One queue per (canonical remote, target branch). In the real host the queue is shared by the workspaces on this
@@ -56,8 +57,9 @@ type Node = Record<string, unknown>
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
 /** "Claude Code for Severin", or a person's name. */
 const whoLabel = (c: Ctx, actor: string) => (actor.includes(':') ? `${agentLabel(actor)} for ${nameOf(c, actor.split(':')[2])}` : nameOf(c, actor))
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
-const when = (iso?: string) => (iso ? (iso.startsWith('2026-10-09') ? hhmm(iso) : `${iso.slice(5, 10)} ${iso.slice(11, 16)}`) : '–')
+/** A deadline (a time of day) and when something happened (the one formatter). */
+const hhmm = (iso: string) => fmtClock(iso)
+const when = (iso?: string) => (iso ? fmtWhen(iso) : '–')
 const repo = (remote: string) => remote.split('/').slice(-1)[0]
 const queueName = (q: Pick<Queue, 'remote' | 'target'>) => `${q.remote} → ${q.target}`
 const titleOf = (c: Ctx, key: string) => c.store.ticket(key)?.title ?? ''
@@ -447,6 +449,7 @@ registerAddon({
   name: 'land',
   seed: (ws, store) => seedLand(ws, store),
   seedBusy: (ws, store, rng) => seedLandBusy(ws, store, rng),
+  seedLog: (state) => landSeedLog(asLand(state)),
   view,
   decisions,
   actions: {
@@ -549,8 +552,12 @@ registerAddon({
       const need = openNeedOf(state, ticket)
       if (!need?.owner) return conflict('land.not_taken', `Nobody took ${ticket} to resolve by hand.`, 'Choose "I will resolve it" on Today first.')
       if (need.owner !== viewer && !atLeast(store.roleIn(ws, viewer), 'maintainer')) return refusal(403, 'forbidden', `${nameOf(c, need.owner)} took this one.`, 'Ask them, or an owner or maintainer.')
+      // Core voids the approval only for a failed attempt it finds in the ticket's log: never tell a person it did otherwise.
+      const recorded = store.eventsOf(ticket).some((e) => e.type === 'land.attempt' && e.actor.kind === 'addon' && e.actor.id === 'land' && e.attempt === need.attempt && e.outcome === 'failed')
+      if (!recorded) return conflict('land.no_record', `Attempt #${need.attempt} of ${ticket} has no landing record, so orch cannot void its approval.`, 'Take it off the queue on Today instead.')
       resolve(store, state, need, viewer)
-      return { ok: true, message: `Resolution recorded. The approval is void: ${ticket} is back in review.`, changed: true }
+      const t = store.ticket(ticket)
+      return { ok: true, message: t?.gates.verify.state === 'invalidated' ? `Resolution recorded. orch voided the verify approval: ${ticket} is back in Testing for a new verdict.` : `Resolution recorded for ${ticket}.`, changed: true }
     },
 
     run_worker({ store, ws }) {

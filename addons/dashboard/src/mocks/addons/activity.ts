@@ -1,6 +1,7 @@
 import { atLeast, roleOf } from '@/api/permissions'
 import type { Actor } from '@/api/types'
 import { describeEvent } from '../derive'
+import { findHarness, harnessForAgent } from '@/api/harnesses'
 import { canSeeTicket, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // activity: the workspace-wide timeline (v1 D11).
@@ -151,7 +152,16 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
   // Someone removed later is no longer a member: their name is still in the member.added event.
   for (const e of c.store.wsEventsOf(c.ws)) if (e.type === 'member.added' && typeof e.person === 'string' && typeof e.name === 'string' && !names.has(e.person)) names.set(e.person, e.name)
   const sees = atLeast(roleOf(w, c.viewer), 'maintainer')
-  const who = (a: Actor) => (a.kind === 'person' ? (names.get(a.id) ?? a.id) : a.id)
+  // Display names: a member's name, "Claude Code for Severin", an addon's title ("Estimate"), "orch".
+  const who = (a: Actor) => {
+    if (a.kind === 'person') return names.get(a.id) ?? a.id
+    if (a.kind === 'agent') {
+      const label = findHarness(harnessForAgent(a.id))?.label ?? a.id
+      return a.for ? `${label} for ${names.get(a.for) ?? a.for}` : label
+    }
+    if (a.kind === 'addon') return c.store.addons.find((p) => p.name === a.id)?.title ?? a.id
+    return 'orch'
+  }
   const out: Entry[] = []
   const push = (e: ReturnType<typeof c.store.eventsOf>[number], src: string, ticket: string | undefined) => {
     const actorId = e.actor.kind === 'person' || e.actor.kind === 'agent' ? e.actor.id : undefined
@@ -178,7 +188,7 @@ const byType = (e: Entry, n: Nav) => n.type === 'all' || e.group === n.type
 const byPerson = (e: Entry, n: Nav) =>
   n.person === 'everyone' || (e.kind === 'person' && n.person === `p:${e.actorId}`) || (e.kind === 'agent' && n.person === `a:${e.actorId}`)
 const bySearch = (e: Entry, n: Nav, titleOf: (k: string) => string) =>
-  !n.q || `${e.actor} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
+  !n.q || `${e.actor} ${e.actorId ?? ''} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
 
 /** Runs of consecutive events by one actor on one ticket (or in the workspace log) on one day become one row. */
 function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
@@ -285,7 +295,7 @@ registerAddon({
       uiSchema: { 'ui:options': { layout: 'row' }, 'ui:globalOptions': { layout: 'row' } },
       formData: { period: nav.period, type: nav.type, person: nav.person, q: nav.q },
       action: 'apply',
-      submitLabel: 'Apply',
+      live: true, // filters apply on change: no Apply button
     }
     const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
     // One line: the headline, then the view switch. `fit` keeps each child at its own width, so Timeline / By ticket / Clear filters read as a switch, not as equal-width columns.

@@ -189,8 +189,10 @@ describe('terminal dock on a ticket page', () => {
     }, T)
     expect(term).toHaveAttribute('aria-readonly', 'true')
     const rows = () => term.querySelector('.xterm-rows')?.textContent ?? ''
-    await waitFor(() => expect(rows()).toContain('Waiting for approval'), T)
-    expect(rows()).toContain('err human_only approve')
+    // It ends on what DEMO-0043 really waits on: Severin's answer to Q2 (its plan is approved).
+    await waitFor(() => expect(rows()).toContain('Waiting for Q2'), T)
+    expect(rows()).toContain('waiting · Answer Q2 · Severin')
+    expect(rows()).not.toContain('human_only')
     expect(rows()).not.toMatch(/esc to interrupt|│ >/)
     expect(rows()).not.toMatch(/[\u001b\u0080-\u009f]/)
     expect(term.querySelector('a[href]')).toBeNull()

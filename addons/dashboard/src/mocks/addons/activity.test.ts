@@ -38,6 +38,8 @@ interface Node {
   schema?: { properties: Record<string, { title: string; oneOf: Opt[] }> }
   uiSchema?: { 'ui:options'?: { layout?: string } }
   formData?: Record<string, string>
+  submitLabel?: string
+  live?: boolean
   children?: Node[]
   items?: { title: string }[]
 }
@@ -92,6 +94,24 @@ describe('activity timeline', () => {
     }
     expect(st.timeline.some((r) => r.ticket === 'DEMO-0043')).toBe(true)
   })
+  it('R2: actors by display name (addon titles, "Claude Code for Severin"), refusals in plain words, Records events listed', async () => {
+    const s = setup()
+    installAndGrant(s.store, s.ws, 'records')
+    tick()
+    await s.api.runAddonAction(s.ws, 'records', 'commit', {})
+    tick()
+    await s.api.runAddonAction(s.ws, 'records', 'push', {})
+    tick()
+    s.store.append('DEMO-0044', { type: 'agent.refused', actor: AGENT, code: 'human_only', message: 'raw' })
+    const st = await everything(s)
+    const titles = st.timeline.map((r) => r.title).join('\n')
+    // The commit and the push are one run by Records in the workspace log.
+    const rec = st.timeline.find((r) => r.actor === 'Records')!
+    expect(rec).toMatchObject({ count: 2, ticket: undefined })
+    expect(rec.subtitle).toMatch(/latest: pushed \w+ to the remote \(Severin\)/)
+    expect(titles).toContain('Claude Code for Severin · DEMO-0044 · was refused: only people approve')
+    expect(titles).not.toMatch(/human_only|^(estimate|github|codex|claude-code) · /m)
+  })
   it('groups by day: a day heading per day, newest first', async () => {
     const s = setup()
     await everything(s)
@@ -110,9 +130,9 @@ describe('activity timeline', () => {
     for (const t of ['T1', 'T2', 'T3', 'T4', 'T5']) s.store.append('DEMO-0044', { type: 'task.done', task: t, actor: AGENT })
     const st = await state(s)
     const top = st.timeline[0]
-    expect(top).toMatchObject({ actor: 'claude-code', ticket: 'DEMO-0044', count: 5, group: 'tasks' })
-    expect(top.title).toBe('claude-code · DEMO-0044 · 5 task updates')
-    expect(st.timeline.filter((r) => r.ticket === 'DEMO-0044' && r.actor === 'claude-code' && r.group === 'tasks')).toHaveLength(1)
+    expect(top).toMatchObject({ actor: 'Claude Code for Severin', ticket: 'DEMO-0044', count: 5, group: 'tasks' })
+    expect(top.title).toBe('Claude Code for Severin · DEMO-0044 · 5 task updates')
+    expect(st.timeline.filter((r) => r.ticket === 'DEMO-0044' && r.actor === 'Claude Code for Severin' && r.group === 'tasks')).toHaveLength(1)
   })
   it('does not collapse across different actors or tickets', async () => {
     const s = setup()
@@ -122,7 +142,7 @@ describe('activity timeline', () => {
     s.store.append('DEMO-0044', { type: 'task.done', task: 'T2', actor: 'codex:s_x2:p_mara' })
     const top = (await state(s)).timeline.slice(0, 3)
     expect(top.map((r) => r.count)).toEqual([1, 1, 1])
-    expect(top[0].title).toBe('codex · DEMO-0044 · finished T2')
+    expect(top[0].title).toBe('Codex for Mara · DEMO-0044 · finished T2')
   })
   it('caps the default view at 30 rows with Show older, per viewer', async () => {
     const s = setup()
@@ -184,7 +204,7 @@ describe('activity timeline', () => {
 
 describe('activity filter bar (per viewer)', () => {
   const form = (st: State) => st.page.children!.find((c) => c.type === 'form')!
-  it('is one form node in row layout: Period, Type, Person, Search, Apply', async () => {
+  it('is one live form node in row layout: Period, Type, Person, Search (no Apply: filters apply on change)', async () => {
     const st = await state(setup())
     const f = form(st)
     expect(st.page.children!.filter((c) => c.type === 'form')).toHaveLength(1)
@@ -192,7 +212,8 @@ describe('activity filter bar (per viewer)', () => {
     expect(Object.values(f.schema!.properties).map((p) => p.title)).toEqual(['Period', 'Type', 'Person', 'Search'])
     expect(f.schema!.properties.period.oneOf.map((o) => o.title)).toEqual(['Today', '7 days', 'All'])
     expect(f.formData).toMatchObject({ period: 'today', type: 'all', person: 'everyone' })
-    expect(f).toMatchObject({ action: 'apply', submitLabel: 'Apply' })
+    expect(f).toMatchObject({ action: 'apply', live: true })
+    expect(f.submitLabel).toBeUndefined()
     expect(JSON.stringify(st.page)).not.toContain('Only show')
     expect(JSON.stringify(st.page)).not.toContain('Clear filters')
   })
@@ -246,7 +267,7 @@ describe('activity filter bar (per viewer)', () => {
     await apply(s, { person: 'a:codex' })
     let st = await state(s)
     expect(st.timeline.length).toBeGreaterThan(0)
-    expect(st.timeline.every((r) => r.actor === 'codex')).toBe(true)
+    expect(st.timeline.every((r) => r.actor.startsWith('Codex for '))).toBe(true)
     const codexTasks = countOf(st, 'tasks')
     await apply(s, { person: 'a:codex', type: 'tasks' })
     st = await state(s)

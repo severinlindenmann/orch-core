@@ -36,7 +36,7 @@ describe('wiki page', () => {
     await openPage(user, 'Tariff data conventions')
     expect(await screen.findByRole('heading', { name: 'Tariff data conventions' }, T)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'All pages' })).toBeInTheDocument()
-    expect(await screen.findByText(/^by Mara · updated \d+d ago$/, {}, T)).toBeInTheDocument()
+    expect(await screen.findByText(/^by Mara · updated \d+ days? ago$/, {}, T)).toBeInTheDocument()
     expect(screen.queryAllByRole('heading', { name: 'Tariff data conventions' })).toHaveLength(1) // the body does not repeat the title
     const back = screen.getByRole('link', { name: 'DEMO-0041' })
     expect(back).toHaveAttribute('href', '/ticket/DEMO-0041')

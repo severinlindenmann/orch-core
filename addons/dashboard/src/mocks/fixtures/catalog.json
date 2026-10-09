@@ -256,58 +256,10 @@
               "text": "**${addon.summary}**"
             },
             {
-              "$ref": "addon.pushAlert"
+              "$ref": "addon.statusNote"
             },
             {
-              "type": "stack",
-              "direction": "row",
-              "children": [
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Record changes",
-                      "action": "commit",
-                      "variant": "primary"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "${addon.commitLine}"
-                    }
-                  ]
-                },
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Push to remote",
-                      "action": "push",
-                      "variant": "secondary"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "Sends the record commits to the shared remote."
-                    }
-                  ]
-                },
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Pull",
-                      "action": "pull",
-                      "variant": "ghost"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "Brings in commits another clone pushed."
-                    }
-                  ]
-                }
-              ]
+              "$ref": "addon.actions"
             },
             {
               "type": "tabs",

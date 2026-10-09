@@ -1,6 +1,7 @@
 import type { LaunchHarness, LaunchMode, LaunchPreview, LaunchWhere } from '@/api/types'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, type LaunchRequest } from '../sessions'
 import { canSeeTicket, notFound, registerAddon, type AddonCtx } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // start-agent (capability spawn_agent): pick a mode, a harness and where it runs, see the exact command, press Start.
 //  - The addon never starts anything itself. `start` is declared `confirm: 'spawn_agent'` in the manifest: core shows
@@ -45,7 +46,7 @@ const parseChoice = (raw: unknown, fallback: Choice): Choice => {
   return { mode: one(MODES, f.mode, fallback.mode), harness: one(HARNESSES, f.harness, fallback.harness), where: one(WHERES, f.where, fallback.where) }
 }
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const hhmm = (iso: string) => fmtWhen(iso)
 
 /** Tickets the viewer can see in this workspace that are not done (where a run makes sense). */
 const startable = (c: Ctx) =>

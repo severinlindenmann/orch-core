@@ -15,12 +15,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AddonBadge } from './AddonBadge'
 import { canSpawnAgent } from './capabilities'
 import { addonStateKey, useAddons } from './slots'
+import { fmtClock } from '@/lib/time'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
 /** Longest addon-supplied text shown in the dialog. */
 const ADDON_TEXT_MAX = 300
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const hhmm = (iso: string) => fmtClock(iso)
 const cap = (v: unknown) => {
   const t = typeof v === 'string' ? v : ''
   return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
@@ -160,6 +161,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   ]
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
+  const titleOf = (name: string) => addons?.find((p) => p.name === name)?.title ?? name
   const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
 
   const body: ReactNode = (
@@ -205,7 +207,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         <section aria-label={`From addon ${addon}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={addon} />
-            From addon <span className="font-mono">{addon}</span>: its panel shows something else; orch starts only what is listed above.
+            From the addon {titleOf(addon)}: its panel shows something else; orch starts only what is listed above.
           </p>
           <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(cap).filter(Boolean).join(' · ')}</p>
         </section>
@@ -214,7 +216,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         <section aria-label={`From addon ${c.line_by ?? 'launch'}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={c.line_by ?? 'launch'} />
-            From addon <span className="font-mono">{c.line_by ?? 'launch'}</span>:
+            From the addon {titleOf(c.line_by ?? 'launch')}:
           </p>
           <p className="whitespace-pre-wrap break-all">{cap(c.line)}</p>
         </section>

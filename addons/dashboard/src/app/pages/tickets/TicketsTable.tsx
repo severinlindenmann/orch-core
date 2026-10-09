@@ -8,9 +8,9 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
-import { PriorityMarker, STATUS_LABEL, TypeIcon } from '../board/lib'
+import { PriorityMarker, TypeIcon } from '../board/lib'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups } from '../board/grouping'
-import { ago } from '../ticket/shared'
+import { ago, statusLabel } from '../ticket/shared'
 import type { SortKey } from './search'
 
 export interface AddonColumn {
@@ -144,7 +144,7 @@ export function TicketsTable({
         <TableCell className="px-1.5 py-1.5">
           <PriorityMarker priority={t.priority} />
         </TableCell>
-        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{STATUS_LABEL[t.status]}</TableCell>
+        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell>
         <TableCell className="px-1.5 py-1.5">
           <People ticket={t} people={people} />
         </TableCell>

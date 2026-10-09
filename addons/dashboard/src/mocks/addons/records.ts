@@ -1,6 +1,7 @@
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, registerAddon, type AddonCtx } from './registry'
+import { fmtExact, fmtWhen } from '@/lib/time'
 
 // records: commits and pushes orch's ticket records to git (v1 C29).
 //  - Pending changes are derived, never stored: per ticket, the events whose seq is above the seq recorded by the last
@@ -28,6 +29,7 @@ interface LastPush {
   commit: string
   remote: string
 }
+const ADDON = { kind: 'addon', id: 'records' } as const
 const REMOTE = 'git@github.com:acme-energy/energy-records.git'
 const DEFAULTS: Settings = { auto_commit_minutes: 30, push: true, remote: REMOTE }
 const REJECTED = 'Remote rejected: non-fast-forward. Pull first.'
@@ -116,22 +118,46 @@ registerAddon({
       ticket: p.key,
       title: c.store.ticket(p.key)?.title ?? '',
       events: p.events,
-      last: p.last.slice(0, 16).replace('T', ' ') + ' UTC',
+      last: fmtWhen(p.last),
     }))
     const events = rows.reduce((n, r) => n + r.events, 0)
     const err = state.pushError as string | null
     const ok = state.pushOk as string | null
-    const pushAlert = err
-      ? { type: 'alert', tone: 'error', title: err, text: 'Another clone pushed first. Pull, then push again.' }
-      : ok
-        ? { type: 'alert', tone: 'success', title: ok }
-        : { type: 'stack', children: [] }
     const last = state.lastPush as LastPush | null
     const all = history(state)
     const pushedAt = last ? all.findIndex((h) => h.hash === last.commit) : -1
     const unpushed = pushedAt < 0 ? all.length : pushedAt // commits newer than the last push (newest first)
     const toRecord = rows.length ? `${plural(events, 'event', 'events')} to record` : 'Everything is recorded'
-    const summary = unpushed || rows.length ? `${toRecord} · ${plural(unpushed, 'commit', 'commits')} waiting to push` : 'Everything is recorded and pushed'
+    // The headline says the one thing that is true now; a rejected push leads (the next step is a pull).
+    const summary = err
+      ? 'Push rejected · pull first'
+      : unpushed || rows.length
+        ? `${toRecord} · ${unpushed ? `${plural(unpushed, 'commit', 'commits')} waiting to push` : 'nothing to push'}`
+        : 'Everything is recorded and pushed'
+    // One line under it: why the push was rejected, or what the last push did. The error itself is shown once, here.
+    const statusNote = err
+      ? { type: 'markdown', text: 'Another clone pushed to the remote first. Pull its commits, then push again.' }
+      : ok
+        ? { type: 'alert', tone: 'success', title: ok }
+        : { type: 'stack', children: [] }
+    // Three steps; the next one is primary. Record needs something pending; Push needs a commit the remote lacks.
+    const next = err ? 'pull' : rows.length ? 'commit' : unpushed ? 'push' : null
+    const step = (label: string, action: string, line: string, disabled?: string) => ({
+      type: 'stack',
+      children: [
+        { type: 'button', label, action, variant: next === action ? 'primary' : action === 'pull' ? 'ghost' : 'secondary', ...(disabled ? { disabled } : {}) },
+        ...(disabled ? [] : [{ type: 'markdown', text: line }]),
+      ],
+    })
+    const actions = {
+      type: 'stack',
+      direction: 'row',
+      children: [
+        step('Record changes', 'commit', `Saves the ${plural(events, 'pending event', 'pending events')} as one record commit.`, rows.length ? undefined : 'Nothing pending to record.'),
+        step('Push to remote', 'push', `Sends ${plural(unpushed, 'record commit', 'record commits')} to the shared remote.`, err ? 'Pull first: the remote has commits you do not have.' : unpushed ? undefined : 'Nothing to push: the remote has every record commit.'),
+        step('Pull', 'pull', err ? 'Brings in the commits another clone pushed. Then push again.' : 'Brings in commits another clone pushed.'),
+      ],
+    }
     // Each entry as this viewer sees it: counts over the visible tickets only; an entry with none of them is left out.
     const hist = history(state)
       .map((h) => {
@@ -147,17 +173,17 @@ registerAddon({
       rows,
       pendingEvents: events,
       unpushed,
-      commitLine: rows.length ? `Saves the ${plural(events, 'pending event', 'pending events')} as one record commit.` : 'Nothing pending to save.',
       pendingTickets: rows.length,
       summary,
-      pushAlert,
+      statusNote,
+      actions,
       historyCount: hist.length,
       history: hist, // overrides the raw entries, which carry the per-ticket breakdown
       lastPush: last,
-      lastPushText: last ? `Last push ${last.commit} to ${last.remote}, ${last.at.slice(0, 16).replace('T', ' ')} UTC` : 'Not pushed yet',
+      lastPushText: last ? `Last push ${last.commit} to ${last.remote}, ${fmtExact(last.at)}` : 'Not pushed yet',
       historyItems: hist.map((h, i) => ({
         title: `${plural(h.tickets, 'ticket', 'tickets')}, ${plural(h.events, 'event', 'events')}`,
-        subtitle: `${h.at.slice(0, 16).replace('T', ' ')} UTC by ${h.by}`,
+        subtitle: `${fmtWhen(h.at)} by ${h.by}`,
         badge: last && h.hash === last.commit ? 'pushed' : i === 0 ? 'latest' : undefined,
         status: last && h.hash === last.commit ? ('ok' as const) : ('idle' as const),
       })),
@@ -176,6 +202,8 @@ registerAddon({
       const seq = ((state.seq as number) ?? 0) + 1
       state.seq = seq
       history(state).unshift({ hash: hashOf(seq), at: store.now(), by: nameOf(ctx), perTicket: Object.fromEntries(all.map((p) => [p.key, p.events])) })
+      // The workspace log says it happened (Activity lists it); no ticket keys: a commit is workspace-wide.
+      store.appendWs(ctx.ws, { type: 'records.committed', actor: ADDON, person: ctx.viewer, commit: hashOf(seq) }) // no counts: they would tell about tickets a reader cannot see
       return { ok: true, message: `Recorded ${plural(mine.reduce((n, p) => n + p.events, 0), 'event', 'events')} on ${plural(mine.length, 'ticket', 'tickets')} as ${hashOf(seq)}.`, changed: true }
     },
     push(ctx) {
@@ -192,11 +220,13 @@ registerAddon({
       state.lastPush = { at: store.now(), commit: head.hash, remote: s.remote } satisfies LastPush
       state.behind = true // the remote moves on: someone else pushes before the next push
       state.pushOk = `Pushed ${head.hash} to ${s.remote}`
+      store.appendWs(ctx.ws, { type: 'records.pushed', actor: ADDON, person: ctx.viewer, commit: head.hash })
       return { ok: true, message: `Pushed ${head.hash}.`, changed: true }
     },
     pull(ctx) {
-      const { state } = ctx
+      const { state, store } = ctx
       const was = state.behind === true
+      if (was) store.appendWs(ctx.ws, { type: 'records.pulled', actor: ADDON, person: ctx.viewer })
       state.behind = false
       state.pushError = null
       state.pushOk = null

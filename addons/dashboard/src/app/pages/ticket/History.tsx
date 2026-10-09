@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
 import { sectionTitle } from './Overview'
-import { ActorIcon, agentName, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
+import { ActorIcon, agentName, ago, fmtExact, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
 
 const CORE_PREFIXES = new Set(['ticket', 'status', 'people', 'claim', 'lease', 'task', 'artifact', 'question', 'gate', 'verdict', 'handoff', 'log', 'section', 'edit', 'projection', 'restore'])
 const SIGNED_TYPES = new Set(['gate.approved', 'gate.changes_requested', 'verdict.given', 'question.answered', 'people.set'])
@@ -135,7 +135,7 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
                   <span className="text-[13px] font-medium text-text">{e.actor.kind === 'agent' ? `${agentName(e.actor.id)} for ${viewer.name(e.actor.for)}` : e.actor.kind === 'host' ? 'orch' : e.actor.kind === 'addon' ? e.actor.id : viewer.name(e.actor.id)}</span>
                   <Pill>{e.type}</Pill>
-                  <span className="text-text-faint">{fmtTime(e.at)}</span>
+                  <span className="text-text-faint" title={fmtExact(e.at)}>{ago(e.at)}</span>
                   <Mono className="text-[11px] text-text-faint">seq {e.seq}</Mono>
                   <SigStatus e={e} />
                 </div>
@@ -219,7 +219,7 @@ function Changes({ ticket }: { ticket: TicketDocument }) {
             <select className={selectCls} value={label === 'From' ? from : to} onChange={(e) => (label === 'From' ? setFromRev(Number(e.target.value)) : setToRev(Number(e.target.value)))}>
               {revs.map((r) => (
                 <option key={r.rev} value={r.rev}>
-                  r{r.rev} · {fmtTime(r.at)}
+                  r{r.rev} · {ago(r.at)}
                 </option>
               ))}
             </select>

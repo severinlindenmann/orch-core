@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
+import { fmtWhen } from '@/lib/time'
 
 export function SessionList({ sessions, selected, onSelect }: { sessions: TerminalSessionView[]; selected: string; onSelect: (id: string) => void }) {
   const ended = sessions.filter((s) => s.status === 'stopped')
@@ -12,7 +13,7 @@ export function SessionList({ sessions, selected, onSelect }: { sessions: Termin
         {s.status === 'running' && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-success" />}
         <span className="truncate">{s.label}</span>
       </span>
-      <span className="block text-xs text-text-muted">{s.interactive ? 'Interactive' : 'View only'} · started {s.started.slice(11, 16)}</span>
+      <span className="block text-xs text-text-muted">{s.interactive ? 'Interactive' : 'View only'} · started {fmtWhen(s.started, s.ctx.now)}</span>
     </button>
   </li>
   return <nav aria-label="Terminal sessions" className="min-w-0 space-y-2">

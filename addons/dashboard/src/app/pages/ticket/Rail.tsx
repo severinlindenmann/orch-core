@@ -9,7 +9,7 @@ import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { NeedsValue } from './Needs'
-import { ago, fmtTime, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
+import { ago, fmtExact, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
 
 const isHttp = (u: string) => /^https?:\/\//i.test(u)
 
@@ -99,8 +99,8 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
         {assignees.length > 0 && row('Assignees', people(assignees))}
         {reviewers.length > 0 && row('Reviewers', people(reviewers))}
         {watchers.length > 0 && row('Watchers', people(watchers))}
-        {row('Created', <span className="text-text-muted">{fmtTime(ticket.created_at)} UTC</span>)}
-        {row('Updated', <span className="text-text-muted">{ago(ticket.updated_at)}</span>)}
+        {row('Created', <span className="text-text-muted">{fmtExact(ticket.created_at)}</span>)}
+        {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}>{ago(ticket.updated_at)}</span>)}
       </dl>
     </Section>
   )

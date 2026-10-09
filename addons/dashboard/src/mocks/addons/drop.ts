@@ -2,6 +2,7 @@ import type { Rng } from '../busy/rng'
 import { briefs, tokenOf } from '../busy/helpers'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, invalid, notFound, refusal, registerAddon, type AddonCtx } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // drop (Preview; orch v2 P5, docs/architecture/orch-v2.md §6.4): files between your devices, people and workspaces.
 //  - Inbox: files addressed to this workspace. An `inbox` object is claim-once: one eligible workspace claims it and
@@ -128,8 +129,7 @@ const claimsOf = (store: MockStore) => ((store.sharedAddonState('drop').claims ?
 const claimedBy = (store: MockStore, x: Received): string | undefined => claimsOf(store)[x.id] ?? x.claimed_by
 const sentOf = (s: Record<string, unknown>) => s.sent as Sent[]
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`)
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const when = (iso: string) => `${Number(iso.slice(8, 10))} ${MON[Number(iso.slice(5, 7)) - 1]} ${iso.slice(11, 16)}`
+const when = (iso: string) => fmtWhen(iso)
 const left = (iso: string, now: string) => {
   const ms = Date.parse(iso) - Date.parse(now)
   if (ms <= 0) return 'expired'

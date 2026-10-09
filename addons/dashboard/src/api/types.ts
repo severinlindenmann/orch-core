@@ -292,6 +292,21 @@ export interface TicketDocument extends TicketDefinition {
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
   /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
   needs?: TicketNeeds
+  /**
+   * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
+   * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
+   * shown as "Landing" / "Landing failed", never as Done. Absent: not landing (never queued, landed or taken off).
+   */
+  landing?: TicketLanding
+}
+
+export interface TicketLanding {
+  state: 'queued' | 'failed'
+  /** The addon that wrote the records. */
+  addon: string
+  attempt?: number
+  reason?: 'conflict' | 'red_checks' | 'timeout'
+  at: string
 }
 
 export interface TicketSummary {
@@ -316,6 +331,7 @@ export interface TicketSummary {
   awaiting_gate: GateName | null
   addons: Record<string, Record<string, unknown>>
   updated_at: string
+  landing?: TicketLanding
   /** Set by list search (`q`) when a body section matched: the hit is wrapped in «». */
   match?: { section: keyof BodySections; snippet: string }
 }
@@ -683,6 +699,8 @@ export interface AddonActionResult {
   changed?: boolean
   /** An https address the client opens in a new tab (e.g. github's Open). */
   url?: string
+  /** A terminals session this action opened (e.g. Worktrees' "Open terminal here"): core opens the dock on it. */
+  terminal?: string
   /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */
   undo?: { action: string; args?: Record<string, string | number | boolean> }
   /**
@@ -745,6 +763,7 @@ export type WorkspaceEventType =
   | 'workspace.renamed'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
+  | 'records.committed' | 'records.pushed' | 'records.pulled'
 export interface WorkspaceEvent {
   v: 2
   id: string

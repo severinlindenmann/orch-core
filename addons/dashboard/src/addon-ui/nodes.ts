@@ -106,6 +106,8 @@ export const formNode = z.object({
   submitLabel: z.string().max(60).optional(),
   /** A Cancel button next to submit. The form then also shows "Unsaved changes" once edited, and core asks before any other action of this addon discards them. */
   cancel: z.object({ label: z.string().max(40), action: actionId }).optional(),
+  /** Filters: the action runs on each change (a choice at once, typed text after a short pause) and there is no submit button. */
+  live: z.boolean().optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),
@@ -116,6 +118,8 @@ export const buttonNode = z.object({
   args: argsRecord.optional(),
   /** A toggle or filter chip that is on right now (drawn pressed, exposed as aria-pressed). */
   pressed: z.boolean().optional(),
+  /** Why it cannot be used now: core disables the button and shows this reason with it. */
+  disabled: z.string().max(160).optional(),
 })
 export const linkNode = z.object({
   type: z.literal('link'),

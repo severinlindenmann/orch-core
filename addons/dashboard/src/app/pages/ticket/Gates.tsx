@@ -3,7 +3,7 @@ import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { availableActions, GATE_LABEL, policyText } from './actions'
-import { fmtDay, fmtTime, Mono, type Viewer } from './shared'
+import { fmtDay, fmtExact, Mono, type Viewer } from './shared'
 
 const GATES: GateName[] = ['requirements', 'plan', 'verify']
 
@@ -88,7 +88,7 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                 <div key={i}>
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
-                    {fmtTime(a.at)} UTC · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                    {fmtExact(a.at)} · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
                     {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? PRESENCE[a.presence] ?? a.presence : 'unknown'}`}
                   </dd>
                 </div>

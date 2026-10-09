@@ -7,6 +7,7 @@ import { useAddonStates } from '@/addon-ui/slots'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useWorkspace } from '../../workspace'
+import { plural } from '@/lib/time'
 
 const chf = (cents: number) => `CHF ${(cents / 100).toFixed(2)}`
 
@@ -23,7 +24,7 @@ export function useInfoRows(ticket?: string): { label: string; value: string; fr
   if (usage) {
     const u = ticket ? usage.byTicket?.[ticket] : undefined
     const today = usage.perDay?.at(-1)
-    if (u) rows.push({ label: 'Agent cost', value: `${chf(u.cents)} · ${u.sessions} sessions`, from: 'Usage' })
+    if (u) rows.push({ label: 'Agent cost', value: `${chf(u.cents)} · ${plural(u.sessions, 'session')}`, from: 'Usage' })
     else if (!ticket && today) rows.push({ label: 'Agent cost today', value: chf(Math.round(today.chf * 100)), from: 'Usage' })
   }
   if (github) {

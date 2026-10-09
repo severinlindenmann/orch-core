@@ -53,6 +53,7 @@ import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
 import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
+import { setClock } from '@/lib/time'
 import type { RelaySim } from './relay'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
@@ -164,6 +165,8 @@ export class MockStore {
     this.seed()
     if (this.persist) this.load(saved)
     this.startLiveIfBusy()
+    // The host's clock: relative times everywhere (pages and addon views) are measured against it (src/lib/time.ts).
+    setClock(() => Date.parse(this.now()))
   }
 
   private live = false
@@ -206,6 +209,34 @@ export class MockStore {
           .map(({ e }, idx) => this.expand(def, e, idx + 1))
         this.events.set(def.key, evs)
         this.seeded.set(def.key, evs.length)
+      }
+    }
+    this.seedAddonLogs()
+  }
+
+  /** Records an active addon's seed implies (MockAddon.seedLog) join the seeded events, in time order. */
+  private seedAddonLogs() {
+    for (const ws of this.workspaces) {
+      for (const name of Object.keys(ws.addons)) {
+        const mod = getAddon(name)
+        if (!mod?.seedLog || !addonActive(ws, name)) continue
+        const touched = new Set<string>()
+        for (const { ticket, event } of mod.seedLog(this.addonState(ws.id, name), ws.id, this)) {
+          const def = this.defs.get(ticket)
+          if (!def || this.wsOfKey.get(ticket) !== ws.id) continue
+          this.events.get(ticket)!.push(this.expand(def, event as FixtureEvent, 0))
+          touched.add(ticket)
+        }
+        for (const key of touched) {
+          const def = this.defs.get(key)!
+          const evs = this.events
+            .get(key)!
+            .map((e, i) => ({ e, i }))
+            .sort((a, b) => a.e.at.localeCompare(b.e.at) || a.i - b.i)
+            .map(({ e }, idx) => ({ ...e, seq: idx + 1, id: def.uid.slice(0, 14) + String(idx + 1).padStart(12, '0') }) as OrchEvent)
+          this.events.set(key, evs)
+          this.seeded.set(key, evs.length)
+        }
       }
     }
   }
@@ -359,6 +390,11 @@ export class MockStore {
     }
     const needs = this.conn.needs(ws.id, key)
     if (needs) doc.needs = needs
+    // Landing records only mean something while their addon runs here: a turned-off lane shows the ticket as done.
+    if (doc.landing && !addonActive(ws, doc.landing.addon)) {
+      delete doc.landing
+      if (doc.status === 'done') doc.turn = { who: 'nobody', why: 'Done' }
+    }
     return doc
   }
 
@@ -390,6 +426,7 @@ export class MockStore {
       awaiting_gate: awaitingGate(doc),
       addons: doc.addons,
       updated_at: doc.updated_at,
+      ...(doc.landing ? { landing: doc.landing } : {}),
     }
   }
 

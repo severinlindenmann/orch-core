@@ -15,7 +15,7 @@ import { CodeBlock } from '@/addon-ui/CodeBlock'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
-import { agentName, fmtBytes, fmtTime, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
+import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
@@ -296,7 +296,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
               <div className="mt-1.5 flex items-center gap-1.5">
                 <Pill>{a.addon ? 'addon artifact' : a.kind}</Pill>
                 <span className="truncate text-[11px] text-text-faint">
-                  by {viewer.name(a.added_by)} · {fmtTime(a.at)}
+                  by {viewer.name(a.added_by)} · {ago(a.at)}
                 </span>
               </div>
             </>
@@ -370,7 +370,7 @@ export function ArtifactDrawer({
             <SheetHeader className="border-b border-border">
               <SheetTitle className="break-all font-mono text-[14px]">{open.name}</SheetTitle>
               <SheetDescription>
-                {open.kind} · {fmtBytes(open.bytes)} · sha256 {shortHash(open.sha256, 12)} · by {open.added_by === 'host' ? 'orch' : agentName(open.added_by)} · {fmtTime(open.at)}
+                {open.kind} · {fmtBytes(open.bytes)} · sha256 {shortHash(open.sha256, 12)} · by {open.added_by === 'host' ? 'orch' : agentName(open.added_by)} · {ago(open.at)}
                 {open.ac && ` · proves ${open.ac}`}
                 {open.task && ` · from ${open.task}`}
               </SheetDescription>

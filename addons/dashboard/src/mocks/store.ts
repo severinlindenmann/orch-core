@@ -52,6 +52,7 @@ import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
 import { startLive } from './busy/live'
 import { makeRng } from './busy/rng'
+import type { RelaySim } from './relay'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -145,6 +146,8 @@ export class MockStore {
   private persist: boolean
   private cursors = new Map<string, number>()
   readonly sim = new Simulator(this)
+  /** Relay simulation per workspace (in memory: a dropped link, an open pairing code). See mocks/relay.ts. */
+  readonly relaySim = new Map<string, RelaySim>()
 
   /** Which demo dataset is loaded: today's seed, or the seed plus a generated busy day (src/mocks/busy). */
   dataset: Dataset = 'normal'
@@ -283,6 +286,7 @@ export class MockStore {
   /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */
   reset(dataset: Dataset = this.dataset, keepViewer = false) {
     this.sim.stopAll()
+    this.relaySim.clear()
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person
@@ -504,6 +508,11 @@ export class MockStore {
   /** Counter that increases on every ticket/workspace append (and addon action) in the workspace. */
   cursor(wsId: string): number {
     return this.cursors.get(wsId) ?? 0
+  }
+
+  /** Tell clients something changed in this workspace without a log entry (the relay simulation). */
+  bumpCursor(wsId: string) {
+    this.bump(wsId)
   }
 
   private bump(wsId: string | undefined) {
@@ -791,6 +800,14 @@ export class MockStore {
     // The busy dataset seeds an addon with its own, bigger state when the module has one.
     const seeded = this.dataset === 'busy' && mod?.seedBusy ? mod.seedBusy(ws, this, makeRng(BUSY_SEED).fork(key)) : (mod?.seed(ws, this) ?? {})
     return (this.addonStates[key] = seeded)
+  }
+
+  /**
+   * State an addon shares across workspaces (e.g. Drop's claim-once records: one claim per object, whichever workspace
+   * makes it). Persisted with the per-workspace states under the key "*" + "/" + name; the addon's own actions write it.
+   */
+  sharedAddonState(name: string): Record<string, unknown> {
+    return (this.addonStates[`*/${name}`] ??= {})
   }
 
   // ------------------------------------------------------------ addon manager

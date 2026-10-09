@@ -784,5 +784,272 @@
       "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" },
       "finding": { "minRole": "maintainer", "decision": true }
     }
+  },
+  {
+    "name": "drop",
+    "title": "Drop",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: files between your devices, people and workspaces. An inbox of received files, sealed drops and links with an expiry. Simulated.",
+    "capabilities": [
+      "network"
+    ],
+    "first_party": true,
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "drop",
+        "title": "Drop",
+        "icon": "Inbox",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "alert",
+              "tone": "info",
+              "title": "Simulated",
+              "text": "Uploads, downloads and links on this page are simulated: nothing leaves this machine. In orch v2 every file is sealed end to end, and the relay stores only ciphertext."
+            },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "To claim",
+                  "value": {
+                    "$ref": "addon.toClaim"
+                  },
+                  "hint": "inbox files several workspaces got"
+                },
+                {
+                  "type": "stat",
+                  "label": "Live drops",
+                  "value": {
+                    "$ref": "addon.liveCount"
+                  },
+                  "hint": "sent, not expired"
+                },
+                {
+                  "type": "stat",
+                  "label": "Views",
+                  "value": {
+                    "$ref": "addon.views"
+                  },
+                  "hint": "all sent files"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "file",
+                  "label": "File"
+                },
+                {
+                  "key": "from",
+                  "label": "From"
+                },
+                {
+                  "key": "size",
+                  "label": "Size"
+                },
+                {
+                  "key": "received",
+                  "label": "Received"
+                },
+                {
+                  "key": "expires",
+                  "label": "Expires"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.inboxRows"
+              },
+              "empty": "Nothing received.",
+              "rowActions": [
+                {
+                  "label": "Claim",
+                  "action": "claim",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "secondary",
+                  "when": "$row.canClaim"
+                },
+                {
+                  "label": "Download",
+                  "action": "download",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
+                },
+                {
+                  "label": "Remove",
+                  "action": "remove",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "danger"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "file",
+                  "label": "File"
+                },
+                {
+                  "key": "to",
+                  "label": "To"
+                },
+                {
+                  "key": "by",
+                  "label": "By"
+                },
+                {
+                  "key": "expires",
+                  "label": "Expires"
+                },
+                {
+                  "key": "views",
+                  "label": "Views"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.sentRows"
+              },
+              "empty": "Nothing sent yet.",
+              "rowActions": [
+                {
+                  "label": "Extend 7 days",
+                  "action": "extend",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost",
+                  "when": "$row.canChange"
+                },
+                {
+                  "label": "Revoke",
+                  "action": "revoke",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "danger",
+                  "when": "$row.canChange"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "$ref": "addon.shareSchema"
+              },
+              "uiSchema": {
+                "file": {
+                  "ui:enumNames": {
+                    "$ref": "addon.fileNames"
+                  }
+                },
+                "to": {
+                  "ui:enumNames": {
+                    "$ref": "addon.sendToNames"
+                  }
+                },
+                "ticket": {
+                  "ui:enumNames": {
+                    "$ref": "addon.ticketNames"
+                  }
+                }
+              },
+              "formData": {
+                "days": 7,
+                "ticket": ""
+              },
+              "action": "share",
+              "submitLabel": "Share file"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "drop.today",
+        "title": "Drop",
+        "icon": "Inbox",
+        "node": {
+          "type": "stat",
+          "label": "Drop",
+          "value": "${addon.summary}",
+          "hint": "simulated"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "share": {
+        "minRole": "member",
+        "label": "Share a file"
+      },
+      "claim": {
+        "minRole": "member",
+        "label": "Claim a file"
+      },
+      "download": {
+        "minRole": "viewer",
+        "label": "Download a file"
+      },
+      "remove": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Remove from inbox",
+        "confirmText": "The file leaves this workspace's inbox. Whoever sent it keeps it."
+      },
+      "extend": {
+        "minRole": "member",
+        "label": "Extend a drop"
+      },
+      "revoke": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Revoke drop",
+        "confirmText": "It stops opening for everyone, now. Copies already downloaded stay where they are."
+      }
+    },
+    "package_sha256": "9ab7f2f0df9ca08b7c99dad68338474f256cec63e6ae54788071129c13697556"
   }
 ]

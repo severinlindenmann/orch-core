@@ -88,6 +88,8 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['/settings/general', /^Settings$/, /Key fingerprint/],
     ['/settings/members', /^Settings$/, /Add member/],
     ['/settings/gates', /^Settings$/, /Approvals already given stay valid/],
+    ['/settings/relay', /^Settings$/, /Everything on this tab is simulated/],
+    ['/artifacts', /^Artifacts$/, /tariff-export\.log/],
     ['/settings/addons', /^Settings$/, /Browse addons/],
     ['/settings/addon/estimate', /^Settings$/, /Scale/],
   ]

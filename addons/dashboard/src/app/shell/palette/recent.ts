@@ -12,6 +12,7 @@ const PAGES: Record<string, string> = {
   '/board': 'Board',
   '/tickets': 'Tickets',
   '/tickets/new': 'New ticket',
+  '/artifacts': 'Artifacts',
   '/agents': 'Agents',
   '/settings': 'Settings',
 }

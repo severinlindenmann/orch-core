@@ -419,6 +419,16 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'shared a secret link'
     case 'publish.revoked':
       return 'revoked a share'
+    case 'drop.shared':
+      return `dropped ${t(e.name, 'a file')}`
+    case 'drop.claimed':
+      return `claimed ${t(e.name, 'a file')} from the Drop inbox`
+    case 'drop.extended':
+      return `extended the drop of ${t(e.name, 'a file')}`
+    case 'drop.removed':
+      return `removed ${t(e.name, 'a file')} from the Drop inbox`
+    case 'drop.revoked':
+      return `revoked the drop of ${t(e.name, 'a file')}`
     case 'publish.decided':
       return `decided to publish: ${t(e.option, 'no option')}`
     case 'estimate.set':

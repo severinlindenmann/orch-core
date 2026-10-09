@@ -13,14 +13,15 @@ import { SHORTCUTS } from './shortcuts'
 
 const PREVIEWS = 2
 
-/** Relay is not connected anywhere yet (arrives with orch-relay, P3): a muted dot that says so. */
-function RelayDot() {
+/** The relay link the owner turned on or off in Settings > Relay & devices (simulated until orch-relay ships). */
+function RelayDot({ on }: { on: boolean }) {
+  const label = on ? 'Relay on (simulated)' : 'Relay not connected'
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span role="img" aria-label="Relay not connected" className="size-2 shrink-0 rounded-full border border-text-faint" />
+        <span role="img" aria-label={label} className={cn('size-2 shrink-0 rounded-full', on ? 'bg-success' : 'border border-text-faint')} />
       </TooltipTrigger>
-      <TooltipContent side="right">Relay not connected</TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   )
 }
@@ -47,7 +48,7 @@ function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; ind
             {needs}
           </span>
         )}
-        <RelayDot />
+        <RelayDot on={w.relay === 'on'} />
       </div>
       <div className="flex items-center gap-2 px-1.5 text-[11px] text-text-faint">
         <span>{roleOf(w, viewer)}</span>

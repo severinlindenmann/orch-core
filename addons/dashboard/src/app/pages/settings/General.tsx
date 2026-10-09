@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import type { Workspace } from '@/api/types'
@@ -93,9 +94,13 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
 
       <Section title="Relay">
         <div className="flex items-center gap-3 text-[13px]">
-          <p className="flex-1 text-text-muted">Not connected yet</p>
-          <Button variant="outline" size="sm" disabled>
-            Connect
+          <p className="flex-1 text-text-muted">
+            {workspace.relay === 'on' ? 'On (simulated)' : 'Not connected yet'} · devices, pairing and the sync queue are in Relay &amp; devices (Preview, simulated)
+          </p>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/settings/$tab" params={{ tab: 'relay' }}>
+              Open Relay &amp; devices
+            </Link>
           </Button>
         </div>
       </Section>

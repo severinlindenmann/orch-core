@@ -43,6 +43,8 @@ export interface Workspace {
   addons: Record<string, WorkspaceAddon>
   counts: Partial<Record<Status, number>>
   needs_you: number
+  /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */
+  relay?: 'on' | 'off'
 }
 
 /** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
@@ -436,6 +438,104 @@ export interface WorkspaceIdentity {
   epoch: number
 }
 
+// ---------------------------------------------------------------- relay & devices (simulated; orch v2 P2/P3)
+
+/** The link's state, as orch serve --remote names it (docs/remote.md): off, connecting, online, reconnecting, stopped, error. */
+export type RelayLink = 'off' | 'connecting' | 'online' | 'reconnecting' | 'stopped'
+/** Device scopes from the bridge protocol: Look, Decide, Operate, Type. */
+export type DeviceScope = 'look' | 'decide' | 'operate' | 'type'
+export interface RelayDevice {
+  id: string // d_mac
+  person: string
+  label: string // "Severin's MacBook Pro"
+  platform: 'mac' | 'iphone' | 'ipad' | 'linux'
+  /** The device that holds the person key and signs device certificates. */
+  primary: boolean
+  /** The device this dashboard runs on (the workspace host). */
+  this_device: boolean
+  scopes: DeviceScope[]
+  paired_at: string
+  last_seen: string | null
+  /** The newest epoch key sealed to this device; behind the workspace epoch until it fetches it from the relay. */
+  epoch: number
+}
+export interface RelayPairing {
+  id: string
+  state: 'waiting' | 'confirm' | 'expired'
+  started_at: string
+  expires_at: string
+  /** The 6-character code both screens show once the phone has joined (state 'confirm'). */
+  fingerprint?: string
+  /** What the joining device calls itself (state 'confirm'). */
+  label?: string
+  platform?: RelayDevice['platform']
+}
+export interface RelayQueueItem {
+  id: string
+  kind: 'seal_key' | 'push' | 'drop' | 'answer'
+  label: string
+  device?: string
+  ticket?: string
+  queued_at: string
+  state: 'queued' | 'sent'
+  sent_at?: string
+}
+/** GET /api/workspaces/:ws/relay. Every part is simulated in the mockup (`simulated: true`). */
+export interface RelayState {
+  simulated: true
+  now: string
+  relay_url: string
+  link: RelayLink
+  since: string | null
+  epoch: number
+  epoch_started: string
+  next_rotation: string
+  devices: RelayDevice[]
+  pairing: RelayPairing | null
+  queue: RelayQueueItem[]
+}
+/** POST /api/workspaces/:ws/relay. Owner only; connect, stop, confirm and remove are signed in the dashboard. */
+export type RelayRequest =
+  | { op: 'connect' | 'stop' | 'pair.start' | 'pair.cancel' }
+  | { op: 'pair.confirm'; pairing: string; fingerprint: string }
+  | { op: 'device.remove'; device: string }
+/** POST /api/dev/relay/:ws (mock only): what the relay or a phone would do. */
+export type RelaySimRequest = { op: 'drop' | 'scan' }
+
+// ---------------------------------------------------------------- workspace artifacts
+
+/** One artifact in the workspace browser (GET /api/workspaces/:ws/artifacts): no inline content. */
+export interface ArtifactItem extends Omit<Artifact, 'preview'> {
+  ticket: string
+  ticket_title: string
+  /** Who added it: a person, an agent (with the person it works for), an addon, or orch itself. */
+  by: { kind: 'person' | 'agent' | 'addon' | 'host'; id: string; for?: string }
+  has_preview: boolean
+}
+export interface ArtifactQuery {
+  kind?: string
+  ticket?: string
+  /** 'people', 'agents', or one actor id (p_sev, claude-code, …). */
+  by?: string
+  /** '24h' | '7d' | '30d' (from the mock clock). */
+  since?: string
+  q?: string
+  page?: number
+  per?: number
+}
+export interface ArtifactPage {
+  items: ArtifactItem[]
+  total: number
+  page: number
+  pages: number
+  per: number
+  facets: {
+    kinds: { kind: Artifact['kind']; count: number }[]
+    tickets: { key: string; title: string; count: number }[]
+    by: { id: string; kind: ArtifactItem['by']['kind']; count: number }[]
+  }
+}
+
 /** POST /api/workspaces/:ws/settings. Owner only; every op except rename is signed in the UI. */
 export type SettingsRequest =
   | { op: 'rename'; name: string }
@@ -636,6 +736,7 @@ export type WorkspaceEventType =
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'
   | 'workspace.renamed'
+  | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
 export interface WorkspaceEvent {
   v: 2
   id: string

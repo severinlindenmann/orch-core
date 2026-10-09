@@ -1,3 +1,4 @@
+import { harnessCommand, harnessForAgent, harnessOf, isHarness, type HarnessId } from '@/api/harnesses'
 import type { ShellCtx, TerminalSessionView } from '@/api/terminals'
 import { atLeast } from '@/api/permissions'
 import { briefs } from '../busy/helpers'
@@ -12,6 +13,9 @@ import { canSeeTicket, invalid, notFound, refusal, registerAddon, type AddonCtx 
 //  - `pty` is never granted to agents: an agent session here is a mirror of work it does elsewhere, not a PTY.
 //  - Which session is open is per viewer (`state.nav[viewer].current`); `open` is minRole 'viewer', new/close/open_ticket
 //    are member-level (declared in the package manifest).
+//  - A session runs a harness (src/api/harnesses.ts): a shell, Claude Code or Codex. `start` opens the viewer's own
+//    session of a harness (with the ticket's context or a fresh window); `resume` starts a new one seeded with an ended
+//    session's summary. Both are the person's own PTY: agents never get one, agent mirrors stay view-only.
 // The shell context (grant, claim, cursor, ticket) is built in view() from the live store, so `orch status` is live.
 
 interface Session {
@@ -25,12 +29,25 @@ interface Session {
   started: string
   /** What an agent mirror shows it typed (default: a few commands). The busy day gives some a long one. */
   transcript?: string[]
+  /** Default: a person's session is a shell, an agent mirror runs its agent's harness. */
+  harness?: HarnessId
+  /** Started with the ticket's context (default: true when it has a ticket). */
+  context?: boolean
+  /** What an ended session left behind; a resume is seeded with it. */
+  summary?: string
+  /** The ended session this one resumed. */
+  resumedFrom?: string
 }
 
 const SESSIONS: Session[] = [
   { id: 'shell1', kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:12:00Z' },
   { id: 'agent1', kind: 'agent', owner: 'agent:claude-code', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:40:00Z' },
   { id: 'old1', kind: 'person', owner: 'p_sev', ticket: null, branch: 'main', status: 'stopped', started: '2026-10-08T15:05:00Z' },
+  {
+    id: 'codex0', kind: 'agent', owner: 'agent:codex', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'stopped', started: '2026-10-08T16:40:00Z',
+    transcript: ['git log --oneline -5', 'orch show DEMO-0043 --section current_state', 'git status'],
+    summary: 'Reviewed the DEMO-0043 plan: tariff seeds before the billing join is the right order. Flagged VAT rounding on mixed tariffs (answered since). No code changes.',
+  },
 ]
 /** What the agent typed: its commands name the ticket it works on. */
 const agentTranscript = (s: Session) => ['orch status', 'orch task next', ...(s.ticket ? [`orch approve ${s.ticket} plan`] : [])]
@@ -39,6 +56,9 @@ const STOPPED_TRANSCRIPT = ['git status', 'exit']
 const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session[]
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string }>
 const hhmm = (iso: string) => iso.slice(11, 16)
+
+const harnessOfSession = (s: Session): HarnessId => s.harness ?? (s.kind === 'agent' ? harnessForAgent(s.owner.slice('agent:'.length)) : 'shell')
+const contextOf = (s: Session) => !!s.ticket && (s.context ?? true)
 
 const nameOf = (ctx: Pick<AddonCtx, 'store' | 'ws'>, person: string) => ctx.store.workspaces.find((w) => w.id === ctx.ws)?.members.find((m) => m.person === person)?.name ?? person
 /** A person's own shell is theirs alone; an agent mirror is visible to the workspace. */
@@ -90,7 +110,7 @@ function longTranscript(rng: Rng, ticket: string, lines: number): string[] {
   return Array.from({ length: lines }, () => rng.pick(pool))
 }
 
-/** Busy day: the DEMO sessions plus three more agent mirrors (6 in all: 2 person shells, 4 mirrors), two of them with a few hundred lines. */
+/** Busy day: the DEMO sessions plus three more agent mirrors (7 in all: 2 person shells, 5 mirrors of which one ended), two of them with a few hundred lines. */
 function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const state = SEED_BASE(ws, store) as { sessions: Session[]; seq: number }
   if (state.sessions.length === 0) return state
@@ -126,6 +146,11 @@ registerAddon({
       interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member'),
       ctx: shellCtx(c, s),
       transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
+      harness: harnessOfSession(s),
+      command: harnessCommand(harnessOfSession(s), { ticket: s.ticket, context: contextOf(s) }),
+      context: contextOf(s),
+      summary: s.status === 'stopped' ? (s.summary ?? null) : null,
+      resumedFrom: resumedFromView(c, state, s),
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
@@ -137,7 +162,7 @@ registerAddon({
       sessionByTicket,
       items: shown.map((s) => ({
         title: sessionTitle(s),
-        subtitle: `zsh · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
+        subtitle: `${harnessOf(harnessOfSession(s)).window} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
       })),
@@ -176,6 +201,31 @@ registerAddon({
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }
     },
+    /** Start the viewer's own session of a harness: in the ticket's worktree (`ticket`) with its context, or a fresh window. */
+    start(ctx) {
+      const { state, store, viewer, ticket, body } = ctx
+      if (!isHarness(body.harness)) return invalid('Pick Shell, Claude Code or Codex.')
+      if (ticket && !canSeeTicket(ctx, ticket)) return notFound('No such ticket.')
+      const s = newShell(state, store, viewer, ticket ?? null)
+      s.harness = body.harness
+      s.context = !!ticket && body.context !== false
+      navOf(state)[viewer] = { current: s.id }
+      return { ok: true, message: `Started ${harnessOf(s.harness).label}${ticket ? ` in ${ticket}` : ''}${s.context ? ' with the ticket context' : ' in a fresh window'}.`, changed: true }
+    },
+    /** Resume an ended session: a new session of the same harness, seeded with the ended one's summary. */
+    resume(ctx) {
+      const { state, store, viewer, body } = ctx
+      const old = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
+      if (!old) return notFound('No such terminal session.')
+      if (old.status !== 'stopped') return refusal(409, 'terminals.running', 'That session is still running: join it instead.')
+      const s = newShell(state, store, viewer, old.ticket)
+      s.harness = harnessOfSession(old)
+      s.context = !!old.ticket
+      s.resumedFrom = old.id
+      if (old.ticket) s.branch = old.branch
+      navOf(state)[viewer] = { current: s.id }
+      return { ok: true, message: `Resumed ${sessionTitle(old)} in a new ${harnessOf(s.harness).label} session.`, changed: true }
+    },
     save_settings: ({ state, body }) => {
       const d = (body.formData ?? {}) as { shell?: unknown; font_size?: unknown }
       const size = typeof d.font_size === 'number' && Number.isFinite(d.font_size) ? Math.min(20, Math.max(10, Math.round(d.font_size))) : 13
@@ -185,9 +235,18 @@ registerAddon({
   },
 })
 
+/** The session this one resumed, as the viewer may see it (a source the viewer cannot see is left out). */
+function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Record<string, unknown>, s: Session): TerminalSessionView['resumedFrom'] {
+  const old = s.resumedFrom ? sessionsOf(state).find((x) => x.id === s.resumedFrom && visibleTo(c, x)) : undefined
+  return old ? { id: old.id, label: sessionTitle(old), summary: old.summary ?? null } : null
+}
+
 /** What the person sees: ticket first ("DEMO-0043 · Claude Code", "DEMO-0043 · Your shell", "Scratch shell"). */
-function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket'>): string {
-  if (s.kind === 'person') return s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'
+function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness'>): string {
+  if (s.kind === 'person') {
+    const h = s.harness && s.harness !== 'shell' ? harnessOf(s.harness).label : null
+    return h ? (s.ticket ? `${s.ticket} · Your ${h}` : `Your ${h}`) : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'
+  }
   const agent = s.owner.slice('agent:'.length).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
   return s.ticket ? `${s.ticket} · ${agent}` : agent
 }

@@ -22,6 +22,11 @@ interface Sess {
   interactive: boolean
   ctx: ShellCtx
   transcript: string[]
+  harness: string
+  command: string
+  context: boolean
+  summary: string | null
+  resumedFrom: { id: string; label: string; summary: string | null } | null
 }
 type State = { sessions: Sess[]; current: { id: string }; sessionByTicket: Record<string, string>; settings: { shell: string; font_size: number }; items: { title: string; badge?: string; actions?: { action: string; label: string }[] }[] }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'terminals')) as unknown as State
@@ -53,11 +58,13 @@ describe('agent transcript', () => {
 })
 
 describe('terminals state', () => {
-  it('seeds three sessions: Severin shell in DEMO-0043, an agent mirror and a stopped one', async () => {
+  it('seeds four sessions: Severin shell in DEMO-0043, an agent mirror, a stopped shell and an ended Codex review', async () => {
     const s = setup('p_sev')
     const st = await state(s)
-    expect(st.sessions).toHaveLength(3)
-    const [shell, mirror, stopped] = st.sessions
+    expect(st.sessions).toHaveLength(4)
+    const [shell, mirror, stopped, review] = st.sessions
+    expect(review).toMatchObject({ id: 'codex0', kind: 'agent', ticket: 'DEMO-0043', status: 'stopped', harness: 'codex', label: 'DEMO-0043 · Codex' })
+    expect(review.summary).toMatch(/Reviewed the DEMO-0043 plan/)
     expect(shell).toMatchObject({ kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', status: 'running', interactive: true })
     expect(shell.ctx.branch).toBe('feat/billing-join')
     expect(mirror).toMatchObject({ kind: 'agent', interactive: false, label: 'DEMO-0043 · Claude Code' })
@@ -79,7 +86,7 @@ describe('terminals state', () => {
   it('a person sees other people\'s agent mirrors but not their shells; nobody else gets interactive access', async () => {
     const s = as(setup(), 'p_mara')
     const st = await state(s)
-    expect(st.sessions.map((x) => x.kind)).toEqual(['agent'])
+    expect(st.sessions.map((x) => x.kind)).toEqual(['agent', 'agent'])
     expect(st.sessions.every((x) => !x.interactive)).toBe(true)
   })
   it('a viewer owning a session still gets it view-only', async () => {
@@ -150,12 +157,12 @@ describe('terminals actions', () => {
     const s = setup('p_sev')
     await run(s, 'open_ticket', { ticket: 'DEMO-0043' })
     let st = await state(s)
-    expect(st.sessions).toHaveLength(3) // reused shell1
+    expect(st.sessions).toHaveLength(4) // reused shell1
     expect(st.sessionByTicket['DEMO-0043']).toBe('shell1')
     expect(st.sessionByTicket['DEMO-0041']).toBeUndefined()
     await run(s, 'open_ticket', { ticket: 'DEMO-0041' })
     st = await state(s)
-    expect(st.sessions).toHaveLength(4)
+    expect(st.sessions).toHaveLength(5)
     const id = st.sessionByTicket['DEMO-0041']
     expect(st.sessions.find((x) => x.id === id)).toMatchObject({ ticket: 'DEMO-0041', owner: 'p_sev', interactive: true })
     expect(st.current.id).toBe(id)
@@ -213,5 +220,54 @@ describe('busy session times', () => {
     expect(JSON.stringify(st)).not.toMatch(/\b0\d{2}:/)
     const sessions = s.store.addonState(s.ws, 'terminals').sessions as { started: string }[]
     for (const session of sessions) expect(session.started).toMatch(/T\d{2}:\d{2}:\d{2}Z$/)
+  })
+})
+
+describe('harness sessions (start, resume)', () => {
+  it('sessions carry their harness: shells are shells, mirrors run their agent harness', async () => {
+    const st = await state(setup('p_sev'))
+    const by = Object.fromEntries(st.sessions.map((x) => [x.id, x]))
+    expect(by.shell1).toMatchObject({ harness: 'shell', command: '$SHELL -l', summary: null })
+    expect(by.agent1).toMatchObject({ harness: 'claude', context: true })
+    expect(by.codex0).toMatchObject({ harness: 'codex', status: 'stopped' })
+  })
+  it('start opens your own session of a harness with the ticket context, or a fresh window', async () => {
+    const s = setup('p_sev')
+    await run(s, 'start', { harness: 'claude', ticket: 'DEMO-0043' })
+    let st = await state(s)
+    const a = st.sessions.find((x) => x.id === st.current.id)!
+    expect(a).toMatchObject({ kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', harness: 'claude', context: true, interactive: true, label: 'DEMO-0043 · Your Claude Code' })
+    expect(a.command).toBe('claude --append-system-prompt "$(orch show DEMO-0043 --section current_state)"')
+    await run(s, 'start', { harness: 'codex', ticket: 'DEMO-0043', context: false })
+    st = await state(s)
+    const b = st.sessions.find((x) => x.id === st.current.id)!
+    expect(b).toMatchObject({ harness: 'codex', context: false, ticket: 'DEMO-0043', command: 'codex' })
+    await run(s, 'start', { harness: 'shell' })
+    st = await state(s)
+    expect(st.sessions.find((x) => x.id === st.current.id)).toMatchObject({ harness: 'shell', ticket: null, context: false, label: 'Scratch shell' })
+  })
+  it('start refuses an unknown harness, a viewer, and a ticket the caller cannot see', async () => {
+    const s = setup('p_sev')
+    expect(await refused(run(s, 'start', { harness: 'vim' }))).toMatchObject({ status: 400 })
+    expect(await status(run(as(setup(), 'p_tom'), 'start', { harness: 'claude' }))).toBe(403)
+    const h = setup('p_sev')
+    h.store.isVisible = (key: string) => key !== 'DEMO-0043'
+    expect(await status(run(h, 'start', { harness: 'claude', ticket: 'DEMO-0043' }))).toBe(404)
+  })
+  it('resume starts a new session of the same harness seeded with the ended one\'s summary', async () => {
+    const s = setup('p_sev')
+    await run(s, 'resume', { session: 'codex0' })
+    const st = await state(s)
+    const r = st.sessions.find((x) => x.id === st.current.id)!
+    expect(r).toMatchObject({ kind: 'person', owner: 'p_sev', harness: 'codex', ticket: 'DEMO-0043', status: 'running', interactive: true })
+    expect(r.resumedFrom).toMatchObject({ id: 'codex0', label: 'DEMO-0043 · Codex' })
+    expect(r.resumedFrom!.summary).toMatch(/Reviewed the DEMO-0043 plan/)
+    expect(st.sessions.find((x) => x.id === 'codex0')!.status).toBe('stopped') // the old one stays as it was
+  })
+  it('resume refuses a running session, someone else\'s shell and viewers', async () => {
+    const s = setup('p_sev')
+    expect(await refused(run(s, 'resume', { session: 'agent1' }))).toMatchObject({ status: 409, code: 'terminals.running' })
+    expect(await status(run(as(setup(), 'p_mara'), 'resume', { session: 'old1' }))).toBe(404)
+    expect(await status(run(as(setup(), 'p_tom'), 'resume', { session: 'codex0' }))).toBe(403)
   })
 })

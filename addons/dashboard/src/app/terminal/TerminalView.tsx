@@ -16,7 +16,8 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
-import { clean, createShell, replay } from './fakePty'
+import { clean } from './fakePty'
+import { openSession, sessionScreen, type LiveLine } from './harnessView'
 import { SessionList } from './SessionList'
 import { TerminalHeader } from './TerminalHeader'
 
@@ -43,7 +44,8 @@ function useFillHeight(ref: RefObject<HTMLElement | null>, enabled: boolean, min
   return enabled ? h : undefined
 }
 
-export default function TerminalView({ addon, session, fallback, placement = 'page' }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' }) {
+/** `page`: the Terminals page (session list beside it); `rail`: a ticket panel; `dock`: the shell's terminal dock (fills its pane). */
+export default function TerminalView({ addon, session, fallback, placement = 'page' }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' | 'dock' }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
@@ -74,20 +76,26 @@ export default function TerminalView({ addon, session, fallback, placement = 'pa
       setError('')
     } catch (e) { setError(e instanceof Error ? e.message : 'Terminal action failed.') }
   }
+  const xterm = (picker?: ReactNode) => <XtermSession key={`${workspace.id}:${me.data!.person}:${s.id}:${interactive}`} addon={addon} session={s} interactive={interactive} fontSize={fontSize} placement={placement} cacheKey={`${workspace.id}:${me.data!.person}:${addon}:${s.id}:${s.status}`} canCreate={can(role, 'addon.action')} action={action} picker={picker} />
+  if (placement === 'dock') return <div className="flex h-full min-w-0 flex-col">
+    {error && <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
+    <div className="min-h-0 flex-1">{xterm()}</div>
+  </div>
   const list = <SessionList sessions={sessions} selected={s.id} onSelect={(id) => { void action('open', id); setPicker(false) }} />
   return <div className="min-w-0">
     {error && <p role="alert" className="mb-2 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
     <div className={`grid min-w-0 gap-3 ${placement === 'page' && wide ? 'grid-cols-[260px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
       {placement === 'page' && wide && <aside ref={aside} style={{ maxHeight: listHeight }} className="overflow-y-auto">{list}</aside>}
-      <XtermSession key={`${workspace.id}:${me.data.person}:${s.id}:${interactive}`} addon={addon} session={s} interactive={interactive} fontSize={fontSize} rail={placement === 'rail'} cacheKey={`${workspace.id}:${me.data.person}:${addon}:${s.id}:${s.status}`} canCreate={can(role, 'addon.action')} action={action}
-        picker={placement === 'page' && !wide ? <div className="relative shrink-0"><Button variant="ghost" size="xs" aria-label="Choose terminal session" aria-expanded={picker} onClick={() => setPicker(!picker)}>Sessions<ChevronDown /></Button>{picker && <div className="absolute left-0 top-7 z-20 max-h-80 w-[260px] overflow-auto rounded border border-border bg-surface p-1 shadow-lg">{list}</div>}</div> : undefined} />
+      {xterm(placement === 'page' && !wide ? <div className="relative shrink-0"><Button variant="ghost" size="xs" aria-label="Choose terminal session" aria-expanded={picker} onClick={() => setPicker(!picker)}>Sessions<ChevronDown /></Button>{picker && <div className="absolute left-0 top-7 z-20 max-h-80 w-[260px] overflow-auto rounded border border-border bg-surface p-1 shadow-lg">{list}</div>}</div> : undefined)}
     </div>
   </div>
 }
 
-function XtermSession({ addon, session, interactive, fontSize, rail, picker, cacheKey, canCreate, action }: {
-  addon: string; session: TerminalSessionView; interactive: boolean; fontSize: number; rail: boolean; picker?: ReactNode; cacheKey: string; canCreate: boolean; action: (name: string, id?: string) => Promise<void>
+function XtermSession({ addon, session, interactive, fontSize, placement, picker, cacheKey, canCreate, action }: {
+  addon: string; session: TerminalSessionView; interactive: boolean; fontSize: number; placement: 'page' | 'rail' | 'dock'; picker?: ReactNode; cacheKey: string; canCreate: boolean; action: (name: string, id?: string) => Promise<void>
 }) {
+  const rail = placement === 'rail'
+  const dock = placement === 'dock'
   const qc = useQueryClient()
   const router = useRouter()
   const host = useRef<HTMLDivElement>(null)
@@ -127,7 +135,13 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     const cache = saved.get(qc) ?? new Map()
     saved.set(qc, cache)
     const previous = cache.get(cacheKey)
-    output.current = (interactive ? previous?.output : undefined) ?? (interactive ? createShell(() => latest.current.session.ctx).prompt() : replay(latest.current.session.ctx, latest.current.session.transcript) + (session.status === 'stopped' ? '[process completed]\r\n' : ''))
+    // The first screen depends on the width (agent CLIs draw boxes), so it is drawn again once xterm knows its columns.
+    const cached = interactive ? previous?.output : undefined
+    const firstScreen = (cols: number) => (interactive ? openSession(() => latest.current.session, () => cols).start() : sessionScreen(latest.current.session, cols).text)
+    output.current = cached ?? firstScreen(80)
+    let liveLine: LiveLine | undefined
+    let onCols = () => {}
+    let ticking: ReturnType<typeof setInterval> | undefined
     preview.current = output.current.split(/\r?\n/).slice(-20).map(clean).join('\n')
     followingRef.current = previous?.following ?? true
     setFollowing(followingRef.current)
@@ -135,6 +149,7 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
       if (disposed) return
       disposed = true
       ro.disconnect() // stop fits before xterm tears down its renderer
+      clearInterval(ticking)
       if (term) {
         cache.set(cacheKey, { output: output.current, viewport: term.buffer.active.viewportY, following: followingRef.current })
         // Bound retained transcripts to the most recent 40 sessions per query client.
@@ -143,8 +158,10 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
         subscriptions.forEach((s) => s.dispose())
         // xterm schedules animation-frame work (viewport sync) when it opens; disposing before it runs throws
         // "reading 'dimensions'" (hit by StrictMode's mount/unmount/mount). Dispose after those frames have run.
+        // Long screens (agent CLIs) are still being parsed and refresh the viewport on a timer: wait for the write
+        // queue to drain and that timer to run first.
         const dying = term
-        requestAnimationFrame(() => requestAnimationFrame(() => dying.dispose()))
+        dying.write('', () => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => dying.dispose())), 0))
         terminal.current = null
         search.current = null
       }
@@ -152,10 +169,19 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     }
     const mountOrFit = () => {
       if (disposed || el.clientWidth === 0 || el.clientHeight === 0) return
-      if (term) { fit?.fit(); return }
+      if (term) {
+        const before = term.cols
+        fit?.fit()
+        if (term.cols !== before) onCols()
+        return
+      }
       while (live.size >= 2) live.values().next().value?.()
       live.set(id, () => { cleanup(); setAttached(false) })
-      term = new Terminal({ fontSize, fontFamily: 'Geist Mono, ui-monospace, monospace', cursorBlink: interactive, disableStdin: !interactive, convertEol: false, linkHandler: NO_LINKS, theme: { background: token(el, '--bg'), foreground: token(el, '--text'), cursor: token(el, '--brand') } })
+      term = new Terminal({
+        fontSize, fontFamily: 'Geist Mono, ui-monospace, monospace', cursorBlink: interactive, disableStdin: !interactive, convertEol: false, linkHandler: NO_LINKS,
+        // ANSI colours from the dashboard tokens (agent CLIs colour their marks); no orange.
+        theme: { background: token(el, '--bg'), foreground: token(el, '--text'), cursor: token(el, '--brand'), green: token(el, '--success'), red: token(el, '--danger'), cyan: token(el, '--brand'), yellow: token(el, '--warning'), blue: token(el, '--info'), brightBlack: token(el, '--text-faint') },
+      })
       terminal.current = term
       fit = new FitAddon()
       term.loadAddon(fit)
@@ -163,6 +189,16 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
       term.loadAddon(search.current)
       term.open(el)
       fit.fit()
+      const cols = () => term?.cols || 80
+      const shell = interactive ? openSession(() => latest.current.session, cols) : undefined
+      if (cached === undefined) {
+        if (shell) output.current = shell.start()
+        else {
+          const screen = sessionScreen(latest.current.session, cols())
+          output.current = screen.text
+          liveLine = screen.live
+        }
+      }
       term.textarea?.setAttribute('aria-label', `${session.label} input`)
       if (!interactive) term.textarea?.setAttribute('aria-readonly', 'true')
       let lastEscape = -Infinity
@@ -202,8 +238,25 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
         followingRef.current = term!.buffer.active.viewportY >= term!.buffer.active.baseY
         setFollowing(followingRef.current)
       }))
-      if (interactive) {
-        const shell = createShell(() => latest.current.session.ctx)
+      // A running agent CLI keeps its "working" line alive (not under reduced motion). Ticks are not cached output.
+      const tickLive = (line: LiveLine | undefined) => {
+        clearInterval(ticking)
+        if (!line || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+        let tick = 0
+        ticking = setInterval(() => { if (!disposed) term!.write(`\x1b7\x1b[${line.up}A\r\x1b[2K${line.frame(++tick)}\x1b8`) }, 200)
+      }
+      tickLive(liveLine)
+      // An agent CLI draws boxes for its width: after a resize, draw the screen again instead of letting xterm rewrap them.
+      onCols = () => {
+        if (latest.current.session.harness === 'shell' || (interactive && !shell?.redraw) || shell?.exited()) return
+        const text = shell?.redraw ? shell.redraw() : sessionScreen(latest.current.session, cols())
+        const next = typeof text === 'string' ? { text } : text
+        term!.reset()
+        output.current = next.text
+        term!.write(next.text, () => { if (!disposed && followingRef.current) term!.scrollToBottom() })
+        if (!shell) tickLive(next.live)
+      }
+      if (shell) {
         let closed = false
         subscriptions.push(term.onData((d) => {
           const out = shell.feed(d) // all data-derived output goes through fakePty.clean()
@@ -240,8 +293,8 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     if (!query) return
     setFindResult(search.current?.findNext(query, { caseSensitive: false }) ? 'Match found' : 'No matches')
   }
-  const fill = useFillHeight(host, !rail && attached, 360, 40)
-  return <section ref={region} className="min-w-0 overflow-hidden rounded-md border border-border bg-bg" onKeyDown={(e) => { if (e.metaKey && e.key.toLowerCase() === 'f' && attached) { e.preventDefault(); setFinding(true) } }}>
+  const fill = useFillHeight(host, placement === 'page' && attached, 360, 40)
+  return <section ref={region} className={`min-w-0 overflow-hidden bg-bg ${dock ? 'flex h-full flex-col' : 'rounded-md border border-border'}`} onKeyDown={(e) => { if (e.metaKey && e.key.toLowerCase() === 'f' && attached) { e.preventDefault(); setFinding(true) } }}>
     <TerminalHeader session={session} interactive={interactive} rail={rail} picker={picker} leaveRef={leave} canFind={attached} onLeave={leaveTerminal}
       onCopy={() => { void navigator.clipboard.writeText(terminal.current?.getSelection() || transcript()).then(() => setFeedback('Copied transcript'), () => setFeedback('Could not copy transcript')) }}
       onFind={() => setFinding(!finding)}
@@ -251,10 +304,10 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     {finding && attached && <form className="flex items-center gap-2 border-b border-border bg-surface px-2 py-1 text-xs" onSubmit={(e) => { e.preventDefault(); find() }}><Input autoFocus aria-label="Find in terminal" value={query} onChange={(e) => setQuery(e.target.value)} className="h-6 min-w-0 flex-1 px-2 text-xs md:text-xs" /><Button type="submit" variant="secondary" size="xs">Find next</Button><Button type="button" variant="ghost" size="icon-xs" aria-label="Close find" onClick={() => setFinding(false)}><X /></Button><span role="status" className="text-text-muted">{findResult}</span></form>}
     {note && <div role="status" className="px-2 py-1 text-xs text-text-muted">Agent output is view only. Open your own shell to type. <Button variant="link" size="xs" disabled={!canCreate} onClick={() => void action('new')}>New terminal</Button></div>}
     {feedback && <p role="status" className="px-2 text-xs text-text-muted">{feedback}</p>}
-    {attached ? <div className="relative">
+    {attached ? <div className={dock ? 'relative min-h-0 flex-1' : 'relative'}>
       <span id={helpId} className="sr-only">Terminal output is drawn on screen; use Download transcript for a text copy.</span>
-      <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-describedby={helpId} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : 24}
-        style={{ height: rail ? `${Math.ceil(12 * fontSize * 1.25) + 16}px` : fill ?? 'calc(100vh - 300px)', minHeight: rail ? undefined : 360 }} className="w-full overflow-hidden bg-bg p-2" />
+      <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-describedby={helpId} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : dock ? undefined : 24}
+        style={{ height: rail ? `${Math.ceil(12 * fontSize * 1.25) + 16}px` : dock ? '100%' : fill ?? 'calc(100vh - 300px)', minHeight: rail || dock ? undefined : 360 }} className="w-full overflow-hidden bg-bg p-2" />
       {!following && <Button size="xs" className="absolute bottom-3 right-4 z-10" onClick={() => { followingRef.current = true; terminal.current?.scrollToBottom(); setFollowing(true) }}><ArrowDown />Jump to latest</Button>}
     </div>
       : <div className="p-2"><pre aria-label={`Last 20 lines: ${session.label}`} className="max-h-96 overflow-auto text-xs">{preview.current}</pre><Button variant="secondary" size="xs" className="mt-2" onClick={() => setAttached(true)}>Attach terminal</Button></div>}

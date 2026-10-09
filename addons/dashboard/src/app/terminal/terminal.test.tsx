@@ -215,7 +215,7 @@ describe('terminal workspace layout', () => {
   it('opens Ended when the selected session is in it', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
     const list = await screen.findByRole('navigation', { name: 'Terminal sessions' }, T)
-    await user.click(within(list).getByText(/Ended \(1\)/))
+    await user.click(within(list).getByText(/Ended \(2\)/))
     await user.click(within(list).getByRole('button', { name: /Scratch shell/ }))
     await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Terminal sessions' })).getByRole('button', { name: /Scratch shell/ })).toHaveAttribute('aria-current', 'true'), T)
     expect(document.querySelector('details')).toHaveAttribute('open')

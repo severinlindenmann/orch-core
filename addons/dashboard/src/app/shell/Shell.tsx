@@ -4,6 +4,7 @@ import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
+import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
 import { WorkspaceProvider } from '../workspace'
 import { HelpSheet } from './HelpSheet'
@@ -47,6 +48,7 @@ export function Shell() {
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
+              <DockArea>
               <main className="min-h-0 flex-1 overflow-y-auto p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (
                     <PageProblem
@@ -61,6 +63,7 @@ export function Shell() {
                   </Suspense>
                 </ErrorBoundary>
               </main>
+              </DockArea>
             </div>
           </div>
           <CommandPalette />

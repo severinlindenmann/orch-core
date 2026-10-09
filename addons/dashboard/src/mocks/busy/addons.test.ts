@@ -40,12 +40,12 @@ describe('busy day: addons are installed and filled', () => {
     expect(new Set(pages.map((p) => p.slug)).size).toBe(30)
     expect(new Set(pages.map((p) => p.title)).size).toBe(30)
   })
-  it('terminals: 6 sessions, 2 shells of people and 4 agent mirrors with long transcripts', () => {
+  it('terminals: 7 sessions, 2 shells of people and 5 agent mirrors (one ended) with long transcripts', () => {
     const sessions = raw('terminals').sessions as { kind: string; transcript?: string[] }[]
-    expect(sessions.length).toBe(6)
+    expect(sessions.length).toBe(7)
     expect(sessions.filter((x) => x.kind === 'person').length).toBe(2)
     const mirrors = sessions.filter((x) => x.kind === 'agent')
-    expect(mirrors.length).toBe(4)
+    expect(mirrors.length).toBe(5)
     expect(mirrors.filter((m) => (m.transcript?.length ?? 0) >= 150).length).toBeGreaterThanOrEqual(3)
   })
   it('worktrees: 20', () => expect((raw('worktrees').worktrees as Rows).length).toBe(20))

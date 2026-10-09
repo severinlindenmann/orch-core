@@ -275,21 +275,28 @@ registerAddon({
       submitLabel: 'Apply',
     }
     const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
+    // One line: the headline on the left, the view switch (and Clear filters) on the right.
     const switcher = {
       type: 'stack',
       direction: 'row',
       children: [
-        { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
-        { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
-        ...clear,
+        { type: 'markdown', text: headline },
+        {
+          type: 'stack',
+          direction: 'row',
+          children: [
+            { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
+            { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
+            ...clear,
+          ],
+        },
       ],
     }
 
     // Timeline node: a heading and a list per day.
     const raw = new Map(shownEntries.map((e) => [`${e.src}:${e.seq}`, e]))
     const timelineNodes: unknown[] = [
-      { type: 'markdown', text: '### Timeline' },
-      { type: 'markdown', text: `Showing ${shownEvents} of ${shownEntries.length}${filtered(nav) ? ' matching' : ''}` },
+      { type: 'markdown', text: `### Timeline\n\nShowing ${shownEvents} of ${shownEntries.length}${filtered(nav) ? ' matching' : ''}` },
     ]
     if (newEntries.length) timelineNodes.push({ type: 'button', label: `Show ${plural(newEntries.length, 'new event', 'new events')}`, action: 'show_new', variant: 'secondary' })
     for (const day of [...new Set(timeline.map((r) => r.day))]) {
@@ -368,9 +375,8 @@ registerAddon({
       page: {
         type: 'stack',
         children: [
-          { type: 'markdown', text: headline },
-          form,
           switcher,
+          form,
           ...(nav.view === 'timeline' ? timelineNodes : ticketNodes),
         ],
       },

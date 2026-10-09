@@ -134,7 +134,7 @@ function Column({
       )}
     >
       <header className="flex items-center gap-2 px-3 py-2">
-        <h2 className="text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
+        <h2 className="whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
         <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
           {total}
         </span>

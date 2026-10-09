@@ -55,7 +55,7 @@ export function ColumnSums({ tickets }: { tickets: TicketSummary[] }) {
   return (
     <>
       {sums.map((s) => (
-        <span key={`${s.addon}/${s.id}`} aria-label={`Sum of ${s.title}`} className="inline-flex items-center gap-1 font-mono text-[11px] text-text-muted">
+        <span key={`${s.addon}/${s.id}`} aria-label={`Sum of ${s.title}`} className="inline-flex items-center gap-1 whitespace-nowrap font-mono text-[11px] text-text-muted">
           <AddonBadge name={s.addon} />
           {withUnit(s.total, s.unit)}
         </span>

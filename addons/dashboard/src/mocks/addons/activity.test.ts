@@ -26,26 +26,46 @@ interface Row {
   title: string
   subtitle?: string
 }
-interface Item {
+interface Opt {
+  const: string
   title: string
-  badge?: string
-  status?: string
-  actions?: { label: string; action: string; args?: Record<string, unknown> }[]
+}
+interface Node {
+  type: string
+  text?: string
+  label?: string
+  action?: string
+  schema?: { properties: Record<string, { title: string; oneOf: Opt[] }> }
+  uiSchema?: { 'ui:options'?: { layout?: string } }
+  formData?: Record<string, string>
+  children?: Node[]
+  items?: { title: string }[]
 }
 interface State {
   timeline: Row[]
   total: number
   hidden: number
   hasMore: boolean
-  filters: { groups: string[]; people: string[]; agents: string[]; q: string }
-  typeFilters: Item[]
-  peopleFilters: Item[]
-  agentFilters: Item[]
+  filters: { type: string; person: string; q: string }
+  newEvents: number
+  period: string
+  activeView: string
+  headline: string
+  counts: { period: number; byAgents: number; matching: number; shown: number }
+  typeOptions: Opt[]
+  personOptions: Opt[]
   todaySummary: string
   today: { events: number; byAgents: number }
-  ticketRows: { ticket: string; today: number; last_actor: string }[]
-  view: { type: string; children?: { type: string; text?: string; items?: { title: string }[] }[] }
+  ticketRows: { ticket: string; events: number; last_actor: string }[]
+  page: Node
 }
+const ALL = { type: 'all', person: 'everyone', q: '' }
+const everything = async (s: S) => {
+  await run(s, 'set_period', { period: 'all' })
+  return state(s)
+}
+const apply = (s: S, f: Record<string, string>) => run(s, 'apply', { formData: { period: 'all', ...ALL, ...f } })
+const countOf = (st: State, id: string) => Number(st.typeOptions.find((o) => o.const === id)!.title.match(/\((\d+)\)/)![1])
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'activity')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'activity', id, body)
 const comment = (s: S, key: string, text: string) => s.api.postAction(key, { action: 'comment', text })
@@ -60,7 +80,7 @@ describe('activity timeline', () => {
     const s = setup()
     tick()
     s.store.appendWs(s.ws, { type: 'view.saved', view: 'v1', name: 'My open work', shared: false, params: {} })
-    const st = await state(s)
+    const st = await everything(s)
     expect(st.timeline.length).toBeGreaterThan(10)
     const ats = st.timeline.map((r) => r.at)
     expect([...ats].sort().reverse()).toEqual(ats)
@@ -73,13 +93,16 @@ describe('activity timeline', () => {
     expect(st.timeline.some((r) => r.ticket === 'DEMO-0043')).toBe(true)
   })
   it('groups by day: a day heading per day, newest first', async () => {
-    const st = await state(setup())
+    const s = setup()
+    await everything(s)
+    for (let i = 0; i < 6; i++) await run(s, 'show_older')
+    const st = await state(s)
     const days = [...new Set(st.timeline.map((r) => r.day))]
     expect(days.length).toBeGreaterThan(2)
     expect([...days].sort().reverse()).toEqual(days)
-    const heads = st.view.children!.filter((c) => c.type === 'markdown').map((c) => c.text!)
+    const heads = st.page.children!.filter((c) => c.type === 'markdown' && c.text!.startsWith('####')).map((c) => c.text!)
     expect(heads).toHaveLength(days.length)
-    expect(heads[0]).toMatch(/^### Today/)
+    expect(heads[0]).toMatch(/^#### Today/)
   })
   it('collapses a run by one actor on one ticket into one row with a count', async () => {
     const s = setup()
@@ -101,110 +124,210 @@ describe('activity timeline', () => {
     expect(top.map((r) => r.count)).toEqual([1, 1, 1])
     expect(top[0].title).toBe('codex · DEMO-0044 · finished T2')
   })
-  it('caps the default view at 50 rows with Show older, per viewer', async () => {
+  it('caps the default view at 30 rows with Show older, per viewer', async () => {
     const s = setup()
     for (let i = 0; i < 70; i++) {
       s.store.append(i % 2 ? 'DEMO-0044' : 'DEMO-0045', { type: 'log.added', text: `n${i}`, actor: i % 3 ? 'p_sev' : 'p_mara' })
     }
     const st = await state(s)
-    expect(st.timeline).toHaveLength(50)
+    expect(st.timeline).toHaveLength(30)
     expect(st.hasMore).toBe(true)
     expect(st.hidden).toBeGreaterThan(0)
+    expect(JSON.stringify(st.page)).toContain('Show older')
     await run(s, 'show_older')
     const more = await state(s)
-    expect(more.timeline).toHaveLength(100)
+    expect(more.timeline).toHaveLength(60)
     s.store.setViewer('p_mara')
-    expect((await state(s)).timeline).toHaveLength(50)
+    expect((await state(s)).timeline).toHaveLength(30)
   })
   it('stops offering Show older once everything is shown', async () => {
     const s = setup()
-    for (let i = 0; i < 3; i++) await run(s, 'show_older')
+    for (let i = 0; i < 6; i++) await run(s, 'show_older')
     const st = await state(s)
     expect(st.hasMore).toBe(false)
     expect(st.hidden).toBe(0)
     expect(st.timeline.length).toBe(st.total)
   })
-  it('a comment elsewhere appears at the top after the cursor bump', async () => {
+  it('a comment elsewhere is offered as "Show 1 new event"; the rows stay put until it is taken', async () => {
     const s = setup()
-    const before = await s.api.getCursor(s.ws)
+    const before = await state(s)
+    const cursor = await s.api.getCursor(s.ws)
     tick()
     await comment(s, 'DEMO-0043', 'Looks good, shipping')
-    expect((await s.api.getCursor(s.ws)).cursor).toBeGreaterThan(before.cursor)
+    expect((await s.api.getCursor(s.ws)).cursor).toBeGreaterThan(cursor.cursor)
+    const waiting = await state(s)
+    expect(waiting.newEvents).toBe(1)
+    expect(JSON.stringify(waiting.page)).toContain('Show 1 new event')
+    expect(waiting.timeline).toEqual(before.timeline)
+    expect(waiting.counts).toEqual(before.counts)
+    await run(s, 'show_new')
     const top = (await state(s)).timeline[0]
     expect(top).toMatchObject({ ticket: 'DEMO-0043', actor: 'Severin' })
     expect(top.summary).toBe('logged a note')
+    expect((await state(s)).newEvents).toBe(0)
+  })
+  it('new events are per viewer and respect the filters', async () => {
+    const s = setup()
+    await state(s)
+    s.store.setViewer('p_mara')
+    await state(s)
+    tick()
+    await comment(s, 'DEMO-0043', 'late')
+    expect((await state(s)).newEvents).toBe(1)
+    await apply(s, { type: 'gates' })
+    expect((await state(s)).newEvents).toBe(0) // applying takes the new events, and a note is not a gate event
+    s.store.setViewer('p_sev')
+    expect((await state(s)).newEvents).toBe(1)
   })
 })
 
-describe('activity filters (per viewer)', () => {
+describe('activity filter bar (per viewer)', () => {
+  const form = (st: State) => st.page.children!.find((c) => c.type === 'form')!
+  it('is one form node in row layout: Period, Type, Person, Search, Apply', async () => {
+    const st = await state(setup())
+    const f = form(st)
+    expect(st.page.children!.filter((c) => c.type === 'form')).toHaveLength(1)
+    expect(f.uiSchema!['ui:options']!.layout).toBe('row')
+    expect(Object.values(f.schema!.properties).map((p) => p.title)).toEqual(['Period', 'Type', 'Person', 'Search'])
+    expect(f.schema!.properties.period.oneOf.map((o) => o.title)).toEqual(['Today', '7 days', 'All'])
+    expect(f.formData).toMatchObject({ period: 'today', type: 'all', person: 'everyone' })
+    expect(f).toMatchObject({ action: 'apply', submitLabel: 'Apply' })
+    expect(JSON.stringify(st.page)).not.toContain('Only show')
+    expect(JSON.stringify(st.page)).not.toContain('Clear filters')
+  })
+  it('lists "All types" then the seven groups with a count for the period', async () => {
+    const st = await state(setup())
+    expect(st.typeOptions[0]).toEqual({ const: 'all', title: 'All types' })
+    expect(st.typeOptions.slice(1).map((o) => o.title.split(' ')[0])).toEqual(['Status', 'Gates', 'Questions', 'Tasks', 'Artifacts', 'Addons', 'Workspace'])
+    expect(st.typeOptions.slice(1).every((o) => /\(\d+\)$/.test(o.title))).toBe(true)
+    expect(st.personOptions[0]).toEqual({ const: 'everyone', title: 'Everyone' })
+    expect(st.personOptions.map((o) => o.title).join()).toMatch(/Severin \(\d+\).*claude-code \(\d+\)/)
+  })
+  it('the headline is the sum of the type counts for the period, and follows the period', async () => {
+    const s = setup()
+    let st = await state(s)
+    expect(st.headline).toMatch(/^\d+ events? today · \d+ by agents?$/)
+    expect(st.page.children![0].text).toBe(st.headline)
+    const sum = (x: State) => x.typeOptions.slice(1).reduce((n, o) => n + countOf(x, o.const), 0)
+    expect(sum(st)).toBe(st.counts.period)
+    await run(s, 'set_period', { period: 'week' })
+    const week = await state(s)
+    expect(week.headline).toMatch(/in the last 7 days/)
+    expect(sum(week)).toBe(week.counts.period)
+    st = await everything(s)
+    expect(st.headline).toMatch(/in total/)
+    expect(sum(st)).toBe(st.counts.period)
+    expect(st.counts.period).toBeGreaterThanOrEqual(week.counts.period)
+    expect(week.counts.period).toBeGreaterThanOrEqual((await (async () => { await run(s, 'set_period', { period: 'today' }); return state(s) })()).counts.period)
+  })
+  it('choosing a type shows exactly the count its option promised, in the period', async () => {
+    const s = setup()
+    const st = await state(s)
+    const n = countOf(st, 'status')
+    await apply(s, { period: 'today', type: 'status' })
+    const f = await state(s)
+    expect(f.counts.matching).toBe(n)
+    expect(f.timeline.every((r) => r.group === 'status')).toBe(true)
+    expect(JSON.stringify(f.page)).toContain(`of ${n} matching`)
+  })
   it('filtering to gates shows only gate events', async () => {
     const s = setup()
-    await run(s, 'toggle_group', { group: 'gates' })
+    await apply(s, { type: 'gates' })
     const st = await state(s)
     expect(st.timeline.length).toBeGreaterThan(0)
     expect(st.timeline.every((r) => r.group === 'gates')).toBe(true)
-    expect(st.filters.groups).toEqual(['gates'])
-    const gates = st.typeFilters.find((i) => i.title.startsWith('Gates'))!
-    expect(gates.status).toBe('ok')
-    expect(gates.actions![0].label).toBe('Remove filter')
+    expect(st.filters).toEqual({ type: 'gates', person: 'everyone', q: '' })
+    expect(JSON.stringify(st.page)).toContain('Clear filters')
   })
-  it('lists the seven type groups, people and agents as list items with counts', async () => {
-    const st = await state(setup())
-    expect(st.typeFilters.map((i) => i.title.split(' ')[0])).toEqual(['Status', 'Gates', 'Questions', 'Tasks', 'Artifacts', 'Addons', 'Workspace'])
-    expect(st.typeFilters.every((i) => /^\d+$/.test(i.badge ?? ''))).toBe(true)
-    expect(st.peopleFilters.map((i) => i.title)).toEqual(expect.arrayContaining(['Severin', 'Mara']))
-    expect(st.agentFilters.map((i) => i.title)).toEqual(expect.arrayContaining(['claude-code', 'codex']))
-  })
-  it('filters by person, by agent, and the two combine as "these actors"', async () => {
+  it('filters by person and by agent; counts respect the other filters', async () => {
     const s = setup()
-    await run(s, 'toggle_agent', { id: 'codex' })
+    await apply(s, { person: 'a:codex' })
     let st = await state(s)
+    expect(st.timeline.length).toBeGreaterThan(0)
     expect(st.timeline.every((r) => r.actor === 'codex')).toBe(true)
-    await run(s, 'toggle_person', { id: 'p_mara' })
+    const codexTasks = countOf(st, 'tasks')
+    await apply(s, { person: 'a:codex', type: 'tasks' })
     st = await state(s)
-    expect(new Set(st.timeline.map((r) => r.actor))).toEqual(new Set(['codex', 'Mara']))
-    await run(s, 'toggle_agent', { id: 'codex' })
-    await run(s, 'toggle_person', { id: 'p_mara' })
-    expect((await state(s)).timeline.some((r) => r.actor === 'claude-code')).toBe(true)
+    expect(st.counts.matching).toBe(codexTasks)
+    await apply(s, { person: 'p:p_mara' })
+    st = await state(s)
+    expect(st.timeline.every((r) => r.actor === 'Mara')).toBe(true)
   })
-  it('search matches summary, actor and ticket; Clear filters resets everything', async () => {
+  it('search matches summary, actor and ticket; Clear filters resets type, person and search but keeps the period', async () => {
     const s = setup()
-    await run(s, 'search', { formData: { q: 'DEMO-0043' } })
+    await apply(s, { q: 'DEMO-0043' })
     let st = await state(s)
     expect(st.timeline.length).toBeGreaterThan(0)
     expect(st.timeline.every((r) => r.ticket === 'DEMO-0043')).toBe(true)
-    await run(s, 'toggle_group', { group: 'gates' })
+    await apply(s, { q: 'DEMO-0043', type: 'gates' })
     await run(s, 'clear_filters')
     st = await state(s)
-    expect(st.filters).toEqual({ groups: [], people: [], agents: [], q: '' })
+    expect(st.filters).toEqual(ALL)
+    expect(st.period).toBe('all')
     expect(st.timeline.length).toBeGreaterThan(10)
+  })
+  it('stores the search query as typed (trimmed) and matches case-insensitively', async () => {
+    const s = setup()
+    await apply(s, { q: '  Claude-Code  ' })
+    const st = await state(s)
+    expect(st.filters.q).toBe('Claude-Code')
+    expect(form(st).formData!.q).toBe('Claude-Code')
+    expect(st.timeline.length).toBeGreaterThan(0)
   })
   it('filters belong to the viewer', async () => {
     const s = setup()
-    await run(s, 'toggle_group', { group: 'gates' })
+    await apply(s, { type: 'gates' })
     s.store.setViewer('p_mara')
-    expect((await state(s)).filters.groups).toEqual([])
+    expect((await state(s)).filters).toEqual(ALL)
   })
-  it('a viewer (read-only role) can filter and page', async () => {
+  it('a viewer (read-only role) can filter, switch view and page', async () => {
     const s = setup('p_tom')
-    expect((await run(s, 'toggle_group', { group: 'questions' })).ok).toBe(true)
-    expect((await state(s)).filters.groups).toEqual(['questions'])
+    expect((await apply(s, { type: 'questions' })).ok).toBe(true)
+    expect((await state(s)).filters.type).toBe('questions')
     expect((await run(s, 'show_older')).ok).toBe(true)
+    expect((await run(s, 'view_ticket')).ok).toBe(true)
+    expect((await run(s, 'show_new')).ok).toBe(true)
     expect((await run(s, 'clear_filters')).ok).toBe(true)
   })
-  it('ignores an unknown group, person or agent', async () => {
+  it('refuses an unknown type, person, agent, period or view', async () => {
     const s = setup()
-    expect(await refused(run(s, 'toggle_group', { group: 'nope' }))).toMatchObject({ status: 404 })
-    expect(await refused(run(s, 'toggle_person', { id: 'p_nobody' }))).toMatchObject({ status: 404 })
-    expect(await refused(run(s, 'toggle_agent', { id: 'ghost' }))).toMatchObject({ status: 404 })
-    expect((await state(s)).filters).toEqual({ groups: [], people: [], agents: [], q: '' })
+    expect(await refused(apply(s, { type: 'nope' }))).toMatchObject({ status: 404 })
+    expect(await refused(apply(s, { person: 'p:p_nobody' }))).toMatchObject({ status: 404 })
+    expect(await refused(apply(s, { person: 'a:ghost' }))).toMatchObject({ status: 404 })
+    expect(await refused(apply(s, { period: 'decade' }))).toMatchObject({ status: 400 })
+    expect(await refused(run(s, 'set_period', { period: 'decade' }))).toMatchObject({ status: 400 })
+    expect(await refused(run(s, 'set_view', { view: 'grid' }))).toMatchObject({ status: 400 })
+    expect((await state(s)).filters).toEqual(ALL)
   })
   it('an empty result is told apart from no events at all', async () => {
     const s = setup()
-    await run(s, 'search', { formData: { q: 'zzz-no-such-thing' } })
+    await apply(s, { q: 'zzz-no-such-thing' })
     const st = await state(s)
     expect(st.timeline).toEqual([])
-    expect(JSON.stringify(st.view)).toMatch(/No events match/)
+    expect(JSON.stringify(st.page)).toMatch(/No events match/)
+  })
+})
+
+describe('activity views', () => {
+  const has = (st: State, type: string) => st.page.children!.some((c) => c.type === type)
+  it('renders only one view: Timeline by default, By ticket on demand', async () => {
+    const s = setup()
+    let st = await state(s)
+    expect(st.activeView).toBe('timeline')
+    expect(has(st, 'table')).toBe(false)
+    expect(st.page.children!.some((c) => c.text === '### Timeline')).toBe(true)
+    await run(s, 'view_ticket')
+    st = await state(s)
+    expect(has(st, 'table')).toBe(true)
+    expect(has(st, 'list')).toBe(false)
+    await run(s, 'set_view', { view: 'timeline' })
+    expect(has(await state(s), 'table')).toBe(false)
+  })
+  it('the Timeline heading comes before any table', async () => {
+    const st = await state(setup())
+    const kinds = st.page.children!.map((c) => c.text ?? c.type)
+    expect(kinds.indexOf('### Timeline')).toBeGreaterThan(-1)
+    expect(kinds).not.toContain('table')
   })
 })
 
@@ -216,6 +339,7 @@ describe('activity today card and by-ticket table', () => {
     expect(today.events).toBeGreaterThan(10)
     expect(today.byAgents).toBeGreaterThan(0)
     expect(st.todaySummary).toBe(`${today.events} events, ${today.byAgents} by agents`)
+    expect(st.counts.period).toBe(today.events) // the same period word, the same number
     await comment(s, 'DEMO-0043', 'one more')
     s.store.append('DEMO-0044', { type: 'task.done', task: 'T1', actor: AGENT })
     const after = await state(s)
@@ -225,7 +349,7 @@ describe('activity today card and by-ticket table', () => {
   it('the card is not narrowed by the viewer filters', async () => {
     const s = setup()
     const all = (await state(s)).todaySummary
-    await run(s, 'toggle_group', { group: 'gates' })
+    await apply(s, { type: 'gates', period: 'today' })
     expect((await state(s)).todaySummary).toBe(all)
   })
   it('merges a run only when its events are close in time', async () => {
@@ -250,11 +374,12 @@ describe('activity today card and by-ticket table', () => {
     const s = setup()
     s.store.append('DEMO-0044', { type: 'task.done', task: 'T1', actor: AGENT })
     await comment(s, 'DEMO-0044', 'hi')
+    await run(s, 'show_new')
     const rows = (await state(s)).ticketRows
     const r = rows.find((x) => x.ticket === 'DEMO-0044')!
-    expect(r.today).toBeGreaterThanOrEqual(2)
+    expect(r.events).toBeGreaterThanOrEqual(2)
     expect(r.last_actor).toBe('Severin')
-    const counts = rows.map((x) => x.today)
+    const counts = rows.map((x) => x.events)
     expect([...counts].sort((a, b) => b - a)).toEqual(counts)
   })
 })
@@ -265,9 +390,9 @@ describe('activity visibility', () => {
   }
   it('no event, count, table row or filter reveals a ticket the viewer cannot see', async () => {
     const s = setup('p_mara')
-    const full = await state(setup('p_sev'))
+    const full = await everything(setup('p_sev'))
     hide(s)
-    const st = await state(s)
+    const st = await everything(s)
     const json = JSON.stringify(st)
     for (const k of ['DEMO-0041', 'DEMO-0043']) expect(json).not.toContain(k)
     for (const t of ['Load tariff tables as dbt seeds', 'Add billing reconciliation tests']) expect(json).not.toContain(t)
@@ -275,19 +400,19 @@ describe('activity visibility', () => {
   })
   it('today count leaves out hidden-ticket events for an outsider', async () => {
     const s = setup('p_mara')
-    const open = (await state(s)).today.events
+    const open = (await everything(s)).today.events
     hide(s)
-    expect((await state(s)).today.events).toBeLessThan(open)
+    expect((await everything(s)).today.events).toBeLessThan(open)
   })
   it('the owner of a restricted ticket still sees it', async () => {
     const s = setup('p_sev')
     hide(s)
-    expect(JSON.stringify(await state(s))).toContain('DEMO-0043')
+    expect(JSON.stringify(await everything(s))).toContain('DEMO-0043')
   })
   it('a collapsed run never merges hidden and visible events (counts are the viewer\'s)', async () => {
     const s = setup('p_mara')
     hide(s)
-    const st = await state(s)
+    const st = await everything(s)
     expect(st.timeline.every((r) => !r.ticket || !['DEMO-0041', 'DEMO-0043'].includes(r.ticket))).toBe(true)
   })
 })
@@ -311,7 +436,7 @@ describe('activity workspace events', () => {
     for (const v of ['p_tom']) {
       const s = setup(v)
       seedWs(s)
-      const st = await state(s)
+      const st = await everything(s)
       const json = JSON.stringify(st)
       expect(json).not.toContain('gr_secret1')
       expect(JSON.stringify(st.timeline)).not.toContain('Xavier')
@@ -324,7 +449,7 @@ describe('activity workspace events', () => {
     for (const v of ['p_sev', 'p_mara']) {
       const s = setup(v)
       seedWs(s)
-      const st = await state(s)
+      const st = await everything(s)
       const text = st.timeline.map((r) => r.summary).join('\n')
       expect(text).toMatch(/issued a grant/)
       expect(text).toMatch(/added Xavier as member/)
@@ -335,9 +460,9 @@ describe('activity workspace events', () => {
   })
   it('hidden sensitive events do not count in totals or the Today card for a viewer', async () => {
     const s = setup('p_tom')
-    const before = await state(s)
+    const before = await everything(s)
     seedWs(s)
-    const after = await state(s)
+    const after = await everything(s)
     expect(after.today.events - before.today.events).toBe(2) // view.saved and addon.enabled only
   })
 })
@@ -382,7 +507,7 @@ describe('activity review follow-ups (Task 26 minors)', () => {
     s.store.appendWs(s.ws, { type: 'member.removed', person: 'p_gone' })
     tick(3600)
     s.store.appendWs(s.ws, { type: 'member.removed', person: 'p_unknown_id' })
-    const st = await state(s)
+    const st = await everything(s)
     const text = st.timeline.map((r) => r.summary).join('\n')
     expect(text).toMatch(/removed Greta/)
     expect(text).toMatch(/removed a member/)
@@ -393,18 +518,10 @@ describe('activity review follow-ups (Task 26 minors)', () => {
     const s = setup()
     tick(3600)
     s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 2 })
-    const st = await state(s)
+    const st = await everything(s)
     const row = st.timeline.find((r) => r.summary.includes('approval rule'))!
     expect(row.group).toBe('workspace')
-    await run(s, 'toggle_group', { group: 'gates' })
-    expect((await state(s)).timeline.some((r) => r.summary.includes('approval rule'))).toBe(false)
-  })
-  it('stores the search query as typed and matches case-insensitively', async () => {
-    const s = setup()
-    await run(s, 'search', { formData: { q: '  Claude-Code  ' } })
-    const st = await state(s)
-    expect(st.filters.q).toBe('Claude-Code')
-    expect((st as unknown as { searchData: { q: string } }).searchData.q).toBe('Claude-Code')
-    expect(st.timeline.length).toBeGreaterThan(0)
+    await apply(s, { type: 'gates' })
+    expect((await everything(s)).timeline.some((r) => r.summary.includes('approval rule'))).toBe(false)
   })
 })

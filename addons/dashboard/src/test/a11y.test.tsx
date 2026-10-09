@@ -20,7 +20,7 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['worktrees/worktrees', /Worktrees/, /With changes/],
   ['quick/quick', /Quick tasks/, /Add a quick task/],
   ['records/records', /Records/, /Commit records/],
-  ['activity/activity', /Activity/, /By ticket, today/],
+  ['activity/activity', /Activity/, /events today/],
   ['widgets/widgets', /Widgets/, /small visual blocks/],
   ['start-agent/start', /Start agent/, /Start an agent session on a ticket/],
   ['guide/guide', /Guide/, /Getting around/],

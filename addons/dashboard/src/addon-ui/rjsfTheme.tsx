@@ -91,7 +91,37 @@ function FieldTemplate({ id, label, children, errors, help, description, hidden,
   )
 }
 
-function ObjectFieldTemplate({ properties, title, description }: ObjectFieldTemplateProps) {
+/** `ui:options.layout: 'row'` on the root object: a one-line filter bar (auto-fit grid) with the submit button inline. */
+const isRow = (uiSchema?: Record<string, unknown>) => (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.layout === 'row'
+type SubmitOptions = { submitText?: string; props?: { disabled?: boolean } }
+const submitOptions = (uiSchema?: Record<string, unknown>) =>
+  (uiSchema?.['ui:submitButtonOptions'] ?? (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions) as SubmitOptions | undefined
+
+/**
+ * Forms whose root object drew its own inline submit button. rjsf renders its SubmitButton after the root field and
+ * gives it only the submit options, so the root template tells it (through the shared registry) to draw nothing.
+ */
+const inlineSubmit = new WeakSet<object>()
+
+function ObjectFieldTemplate({ properties, title, description, uiSchema, fieldPathId, registry }: ObjectFieldTemplateProps) {
+  if (isRow(uiSchema) && fieldPathId.path.length === 0) {
+    inlineSubmit.add(registry)
+    const o = submitOptions(uiSchema)
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] items-end gap-x-3 gap-y-2">
+        {properties.map((p) => (
+          <div key={p.name} className="min-w-0">
+            {p.content}
+          </div>
+        ))}
+        <div>
+          <Button type="submit" size="sm" disabled={o?.props?.disabled}>
+            {o?.submitText ?? 'Save'}
+          </Button>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-3">
       {title && <div className="text-[13px] font-semibold">{title}</div>}
@@ -103,8 +133,9 @@ function ObjectFieldTemplate({ properties, title, description }: ObjectFieldTemp
   )
 }
 
-function SubmitButton({ uiSchema }: SubmitButtonProps) {
-  const o = (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions as { submitText?: string; props?: { disabled?: boolean } } | undefined
+function SubmitButton({ uiSchema, registry }: SubmitButtonProps) {
+  if (inlineSubmit.has(registry)) return null // the row layout draws it inline
+  const o = submitOptions(uiSchema)
   const label = o?.submitText ?? 'Save'
   return (
     <Button type="submit" size="sm" disabled={o?.props?.disabled}>

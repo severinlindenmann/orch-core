@@ -1,21 +1,26 @@
 import { atLeast, roleOf } from '@/api/permissions'
 import type { Actor } from '@/api/types'
 import { describeEvent } from '../derive'
-import { canSeeTicket, notFound, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // activity: the workspace-wide timeline (v1 D11).
 //  - Built in view() from store.eventsOf over the workspace's tickets plus store.wsEventsOf. A ticket's events are listed
 //    only to people who can see that ticket. Grant, member and addon-grant events are listed only to owners and
 //    maintainers (they say who may do what); everyone else sees the rest of the workspace log.
 //  - Dense by design: grouped by day, a run of consecutive events by one actor on one ticket is one row with a count
-//    ("claude-code · DEMO-0043 · 5 task updates"), as long as they are within 30 minutes of each other, and the default view is the most recent 50 rows with "Show older".
-//  - Filters (type groups, people, agents, search) and the page size are the viewer's own (`state.nav[viewer]`).
-//  - The Today card and the by-ticket table are roll-ups of everything the viewer can see; filters do not narrow them.
+//    ("claude-code · DEMO-0043 · 5 task updates"), as long as they are within 30 minutes of each other, and the default view is the most recent 30 rows with "Show older".
+//  - The whole page is `view().page`: a headline, ONE filter bar (period, type, person, search), a Timeline / By ticket switch
+//    and the chosen view. Period, filters, view and page size are the viewer's own (`state.nav[viewer]`). Every count on the
+//    page uses the chosen period; type and person counts are faceted (they respect the other filters), the headline does not.
+//  - Live: the first read of a viewer remembers, per source, the newest event seen (`nav.seen`). Later events are not
+//    listed; they are offered as "Show N new events" (`show_new`), so rows never shift while someone reads. (A read that
+//    records the viewer's own position is a mock convenience; a real addon would record it on the first request.)
+//  - The Today card is a roll-up of everything the viewer can see; filters and the freeze do not narrow it.
 
-const PAGE = 50
+const PAGE = 30
 /** Events further apart than this are never merged into one row. */
 const RUN_GAP_MS = 30 * 60_000
-const TABLE_ROWS = 8
+const TABLE_ROWS = 12
 
 export const GROUPS = [
   { id: 'status', label: 'Status', noun: 'ticket updates' },
@@ -56,12 +61,23 @@ interface Row {
   title: string
   subtitle: string
 }
+type Period = 'today' | 'week' | 'all'
+const PERIODS: { id: Period; label: string; word: string }[] = [
+  { id: 'today', label: 'Today', word: 'today' },
+  { id: 'week', label: '7 days', word: 'in the last 7 days' },
+  { id: 'all', label: 'All', word: 'in total' },
+]
 interface Nav {
-  groups: Group[]
-  people: string[]
-  agents: string[]
+  period: Period
+  /** 'all' or a group id. */
+  type: string
+  /** 'everyone', 'p:<person id>' or 'a:<agent id>'. */
+  person: string
   q: string
   pages: number
+  view: 'timeline' | 'ticket'
+  /** Newest seq seen per source when the viewer last looked; a missing source has seen nothing. */
+  seen: Record<string, number>
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -93,13 +109,29 @@ function dayLabel(day: string, today: string): string {
 
 const navOf = (state: Record<string, unknown>, viewer: string): Nav => {
   const n = ((state.nav ?? {}) as Record<string, Partial<Nav>>)[viewer] ?? {}
-  return { groups: n.groups ?? [], people: n.people ?? [], agents: n.agents ?? [], q: n.q ?? '', pages: n.pages && n.pages > 0 ? n.pages : 1 }
+  return {
+    period: PERIODS.some((p) => p.id === n.period) ? n.period! : 'today',
+    type: n.type ?? 'all',
+    person: n.person ?? 'everyone',
+    q: n.q ?? '',
+    pages: n.pages && n.pages > 0 ? n.pages : 1,
+    view: n.view === 'ticket' ? 'ticket' : 'timeline',
+    seen: n.seen ?? {},
+  }
 }
 function setNav(state: Record<string, unknown>, viewer: string, patch: Partial<Nav>): void {
   const all = (state.nav ??= {}) as Record<string, Nav>
   all[viewer] = { ...navOf(state, viewer), ...patch }
 }
-const filtered = (n: Nav) => n.groups.length > 0 || n.people.length > 0 || n.agents.length > 0 || n.q !== ''
+const filtered = (n: Nav) => n.type !== 'all' || n.person !== 'everyone' || n.q !== ''
+const sourceKey = (e: Entry) => e.src
+/** The newest seq per source in `list`: where the viewer's reading position is. */
+function positionOf(list: Entry[]): Record<string, number> {
+  const seen: Record<string, number> = {}
+  for (const e of list) seen[sourceKey(e)] = Math.max(seen[sourceKey(e)] ?? 0, e.seq)
+  return seen
+}
+const isNew = (e: Entry, seen: Record<string, number>) => e.seq > (seen[sourceKey(e)] ?? 0)
 
 /** Every event the viewer may see, newest first. */
 function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
@@ -126,15 +158,13 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
   return out.sort((a, b) => b.at.localeCompare(a.at) || (a.src === b.src ? b.seq - a.seq : a.src.localeCompare(b.src)))
 }
 
-function matches(e: Entry, n: Nav, titleOf: (k: string) => string): boolean {
-  if (n.groups.length && !n.groups.includes(e.group)) return false
-  if ((n.people.length || n.agents.length) && !((e.kind === 'person' && n.people.includes(e.actorId!)) || (e.kind === 'agent' && n.agents.includes(e.actorId!)))) return false
-  if (n.q) {
-    const hay = `${e.actor} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase()
-    if (!hay.includes(n.q.toLowerCase())) return false
-  }
-  return true
-}
+const inPeriod = (e: Entry, period: Period, today: string) =>
+  period === 'all' || (period === 'today' ? e.day === today : e.day >= new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10) && e.day <= today)
+const byType = (e: Entry, n: Nav) => n.type === 'all' || e.group === n.type
+const byPerson = (e: Entry, n: Nav) =>
+  n.person === 'everyone' || (e.kind === 'person' && n.person === `p:${e.actorId}`) || (e.kind === 'agent' && n.person === `a:${e.actorId}`)
+const bySearch = (e: Entry, n: Nav, titleOf: (k: string) => string) =>
+  !n.q || `${e.actor} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
 
 /** Runs of consecutive events by one actor on one ticket (or in the workspace log) on one day become one row. */
 function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
@@ -182,33 +212,91 @@ function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
 
 const WARN = new Set(['agent.refused', 'gate.changes_requested', 'gate.invalidated'])
 
+const opt = (value: string, title: string) => ({ const: value, title })
+
 registerAddon({
   name: 'activity',
   seed: () => ({ nav: {} }),
 
   view(state, c) {
-    const nav = navOf(state, c.viewer)
     const today = c.store.now().slice(0, 10)
-    const all = entriesOf(c)
+    const everything = entriesOf(c)
+    // First read of this viewer: remember where they are (see the header comment).
+    if (!((state.nav ?? {}) as Record<string, Partial<Nav>>)[c.viewer]?.seen) setNav(state, c.viewer, { seen: positionOf(everything) })
+    const nav = navOf(state, c.viewer)
     const titles = new Map<string, string>()
     const titleOf = (k: string) => {
       if (!titles.has(k)) titles.set(k, c.store.ticket(k)?.title ?? '')
       return titles.get(k)!
     }
-    const shownEntries = all.filter((e) => matches(e, nav, titleOf))
+    const period = PERIODS.find((p) => p.id === nav.period)!
+    const known = everything.filter((e) => !isNew(e, nav.seen))
+    const inScope = known.filter((e) => inPeriod(e, nav.period, today))
+    const shownEntries = inScope.filter((e) => byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
+    const newEntries = everything.filter((e) => isNew(e, nav.seen) && inPeriod(e, nav.period, today) && byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
     const allRows = collapse(shownEntries, titleOf)
     const limit = PAGE * nav.pages
     const timeline = allRows.slice(0, limit)
     const hidden = allRows.length - timeline.length
+    const shownEvents = timeline.reduce((n, r) => n + r.count, 0)
+
+    // Headline: the period's events, unfiltered.
+    const byAgentsInPeriod = inScope.filter((e) => e.kind === 'agent').length
+    const headline = `${plural(inScope.length, 'event', 'events')} ${period.word} · ${byAgentsInPeriod} by ${byAgentsInPeriod === 1 ? 'agent' : 'agents'}`
+
+    // Filter options: counts for the period, respecting the other filters (so a count is what you get when you pick it).
+    const typeOptions = [
+      opt('all', 'All types'),
+      ...GROUPS.map((g) => opt(g.id, `${g.label} (${inScope.filter((e) => e.group === g.id && byPerson(e, nav) && bySearch(e, nav, titleOf)).length})`)),
+    ]
+    const w = c.store.workspaces.find((x) => x.id === c.ws)
+    const forPerson = inScope.filter((e) => byType(e, nav) && bySearch(e, nav, titleOf))
+    const people = (w?.members ?? []).map((m) => ({ value: `p:${m.person}`, name: m.name, n: forPerson.filter((e) => e.kind === 'person' && e.actorId === m.person).length }))
+    const agentIds = [...new Set(everything.filter((e) => e.kind === 'agent').map((e) => e.actorId!))].sort()
+    const agents = agentIds.map((id) => ({ value: `a:${id}`, name: id, n: forPerson.filter((e) => e.kind === 'agent' && e.actorId === id).length }))
+    const personOptions = [
+      opt('everyone', 'Everyone'),
+      ...[...people, ...agents].filter((p) => p.n > 0 || p.value === nav.person).map((p) => opt(p.value, `${p.name} (${p.n})`)),
+    ]
+    const form = {
+      type: 'form',
+      schema: {
+        type: 'object',
+        properties: {
+          period: { type: 'string', title: 'Period', oneOf: PERIODS.map((p) => opt(p.id, p.label)) },
+          type: { type: 'string', title: 'Type', oneOf: typeOptions },
+          person: { type: 'string', title: 'Person', oneOf: personOptions },
+          q: { type: 'string', title: 'Search', maxLength: 80 },
+        },
+      },
+      uiSchema: { 'ui:options': { layout: 'row' } },
+      formData: { period: nav.period, type: nav.type, person: nav.person, q: nav.q },
+      action: 'apply',
+      submitLabel: 'Apply',
+    }
+    const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
+    const switcher = {
+      type: 'stack',
+      direction: 'row',
+      children: [
+        { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
+        { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
+        ...clear,
+      ],
+    }
 
     // Timeline node: a heading and a list per day.
     const raw = new Map(shownEntries.map((e) => [`${e.src}:${e.seq}`, e]))
-    const children: unknown[] = []
+    const timelineNodes: unknown[] = [
+      { type: 'markdown', text: '### Timeline' },
+      { type: 'markdown', text: `Showing ${shownEvents} of ${shownEntries.length}${filtered(nav) ? ' matching' : ''}` },
+    ]
+    if (newEntries.length) timelineNodes.push({ type: 'button', label: `Show ${plural(newEntries.length, 'new event', 'new events')}`, action: 'show_new', variant: 'secondary' })
     for (const day of [...new Set(timeline.map((r) => r.day))]) {
       const rows = timeline.filter((r) => r.day === day)
       const events = rows.reduce((n, r) => n + r.count, 0)
-      children.push({ type: 'markdown', text: `### ${dayLabel(day, today)} · ${plural(events, 'event', 'events')}` })
-      children.push({
+      timelineNodes.push({ type: 'markdown', text: `#### ${dayLabel(day, today)} · ${plural(events, 'event', 'events')}` })
+      timelineNodes.push({
         type: 'list',
         items: rows.map((r) => {
           const e = raw.get(r.id)
@@ -222,66 +310,70 @@ registerAddon({
       })
     }
     if (!timeline.length) {
-      children.push(
-        all.length
-          ? { type: 'alert', tone: 'info', title: 'No events match these filters', text: 'Clear the filters to see everything again.' }
+      timelineNodes.push(
+        everything.length
+          ? { type: 'alert', tone: 'info', title: filtered(nav) ? 'No events match these filters' : `No events ${period.word}`, text: filtered(nav) ? 'Clear the filters to see everything again.' : 'Pick a longer period to see earlier events.' }
           : { type: 'alert', tone: 'info', title: 'No activity yet', text: 'Events from tickets and the workspace appear here as they happen.' },
       )
     }
+    if (hidden > 0) timelineNodes.push({ type: 'button', label: 'Show older', action: 'show_older', variant: 'secondary' })
 
-    // Filters: counts over everything the viewer can see.
-    const countBy = (f: (e: Entry) => boolean) => all.filter(f).length
-    const w = c.store.workspaces.find((x) => x.id === c.ws)
-    const toggle = (selected: boolean, action: string, args: Record<string, string>) => [
-      { label: selected ? 'Remove filter' : 'Only show', action, args, variant: 'ghost' as const },
-    ]
-    const typeFilters = GROUPS.map((g) => {
-      const on = nav.groups.includes(g.id)
-      return { title: g.label, badge: String(countBy((e) => e.group === g.id)), ...(on ? { status: 'ok' as const } : {}), actions: toggle(on, 'toggle_group', { group: g.id }) }
-    })
-    const peopleFilters = (w?.members ?? []).map((m) => {
-      const on = nav.people.includes(m.person)
-      return { title: m.name, badge: String(countBy((e) => e.kind === 'person' && e.actorId === m.person)), ...(on ? { status: 'ok' as const } : {}), actions: toggle(on, 'toggle_person', { id: m.person }) }
-    })
-    const agentIds = [...new Set(all.filter((e) => e.kind === 'agent').map((e) => e.actorId!))].sort()
-    const agentFilters = agentIds.map((id) => {
-      const on = nav.agents.includes(id)
-      return { title: id, badge: String(countBy((e) => e.kind === 'agent' && e.actorId === id)), ...(on ? { status: 'ok' as const } : {}), actions: toggle(on, 'toggle_agent', { id }) }
-    })
-
-    // Roll-ups (never narrowed by the filters).
-    const todays = all.filter((e) => e.day === today)
-    const byAgents = todays.filter((e) => e.kind === 'agent').length
-    const todaySummary = todays.length ? `${plural(todays.length, 'event', 'events')}, ${byAgents} by ${byAgents === 1 ? 'agent' : 'agents'}` : 'No events today'
-    const last = all[0]
-    const perTicket = new Map<string, { today: number; last: Entry }>()
-    for (const e of all) {
+    // By ticket: the period's events per ticket (never narrowed by type, person or search).
+    const perTicket = new Map<string, { n: number; last: Entry }>()
+    for (const e of inScope) {
       if (!e.ticket) continue
       const cur = perTicket.get(e.ticket)
-      if (!cur) perTicket.set(e.ticket, { today: e.day === today ? 1 : 0, last: e })
-      else if (e.day === today) cur.today++
+      if (cur) cur.n++
+      else perTicket.set(e.ticket, { n: 1, last: e })
     }
     const ticketRows = [...perTicket]
-      .filter(([, v]) => v.today > 0)
-      .sort((a, b) => b[1].today - a[1].today || b[1].last.at.localeCompare(a[1].last.at))
+      .sort((a, b) => b[1].n - a[1].n || b[1].last.at.localeCompare(a[1].last.at))
       .slice(0, TABLE_ROWS)
-      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), today: v.today, last_actor: v.last.actor, last: hhmm(v.last.at) }))
+      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), events: v.n, last_actor: v.last.actor, last: hhmm(v.last.at) }))
+    const ticketNodes: unknown[] = [
+      { type: 'markdown', text: `### By ticket, ${period.word}` },
+      {
+        type: 'table',
+        columns: [
+          { key: 'ticket', label: 'Ticket' },
+          { key: 'title', label: 'Title' },
+          { key: 'events', label: 'Events' },
+          { key: 'last_actor', label: 'Last actor' },
+          { key: 'last', label: 'At' },
+        ],
+        rows: ticketRows,
+        empty: `No ticket events ${period.word}.`,
+      },
+    ]
+
+    // Roll-up for the Today card (never narrowed, never frozen).
+    const todays = everything.filter((e) => e.day === today)
+    const byAgents = todays.filter((e) => e.kind === 'agent').length
+    const todaySummary = todays.length ? `${plural(todays.length, 'event', 'events')}, ${byAgents} by ${byAgents === 1 ? 'agent' : 'agents'}` : 'No events today'
+    const last = everything[0]
 
     return {
-      nav: undefined,
       timeline,
       total: allRows.length,
       hidden,
       hasMore: hidden > 0,
-      filters: { groups: nav.groups, people: nav.people, agents: nav.agents, q: nav.q },
-      view: { type: 'stack', children },
-      older: hidden > 0 ? { type: 'button', label: 'Show older', action: 'show_older', variant: 'secondary' } : { type: 'stack', children: [] },
-      olderHint: hidden > 0 ? `${plural(hidden, 'older row', 'older rows')} not shown` : '',
-      clear: filtered(nav) ? { type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' } : { type: 'stack', children: [] },
-      searchData: { q: nav.q },
-      typeFilters,
-      peopleFilters,
-      agentFilters,
+      newEvents: newEntries.length,
+      period: nav.period,
+      activeView: nav.view,
+      filters: { type: nav.type, person: nav.person, q: nav.q },
+      headline,
+      counts: { period: inScope.length, byAgents: byAgentsInPeriod, matching: shownEntries.length, shown: shownEvents },
+      typeOptions,
+      personOptions,
+      page: {
+        type: 'stack',
+        children: [
+          { type: 'markdown', text: headline },
+          form,
+          switcher,
+          ...(nav.view === 'timeline' ? timelineNodes : ticketNodes),
+        ],
+      },
       today: { events: todays.length, byAgents },
       todaySummary,
       todayHint: last ? `Latest: ${last.actor}, ${hhmm(last.at)}` : 'Nothing has happened yet',
@@ -290,37 +382,50 @@ registerAddon({
   },
 
   actions: {
-    toggle_group(ctx) {
-      const g = GROUPS.find((x) => x.id === ctx.body.group)
-      if (!g) return notFound('No such type.')
-      const n = navOf(ctx.state, ctx.viewer)
-      setNav(ctx.state, ctx.viewer, { groups: n.groups.includes(g.id) ? n.groups.filter((x) => x !== g.id) : [...n.groups, g.id], pages: 1 })
-      return { ok: true, message: `${g.label} filter changed.`, changed: true }
+    apply(ctx) {
+      const f = (ctx.body.formData ?? {}) as { period?: unknown; type?: unknown; person?: unknown; q?: unknown }
+      const period = String(f.period ?? 'today')
+      if (!PERIODS.some((p) => p.id === period)) return invalid('Pick Today, 7 days or All.')
+      const type = String(f.type ?? 'all')
+      if (type !== 'all' && !GROUPS.some((g) => g.id === type)) return notFound('No such type.')
+      const person = String(f.person ?? 'everyone')
+      if (person !== 'everyone') {
+        const id = person.slice(2)
+        const w = ctx.store.workspaces.find((x) => x.id === ctx.ws)
+        const ok = person.startsWith('p:') ? !!w?.members.some((m) => m.person === id) : person.startsWith('a:') && entriesOf(ctx).some((e) => e.kind === 'agent' && e.actorId === id)
+        if (!ok) return notFound('No such person.')
+      }
+      const q = typeof f.q === 'string' ? f.q.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : ''
+      setNav(ctx.state, ctx.viewer, { period: period as Period, type, person, q, pages: 1, seen: positionOf(entriesOf(ctx)) })
+      return { ok: true, message: 'Filters applied.', changed: true }
     },
-    toggle_person(ctx) {
-      const w = ctx.store.workspaces.find((x) => x.id === ctx.ws)
-      const id = String(ctx.body.id ?? '')
-      if (!w?.members.some((m) => m.person === id)) return notFound('No such person.')
-      const n = navOf(ctx.state, ctx.viewer)
-      setNav(ctx.state, ctx.viewer, { people: n.people.includes(id) ? n.people.filter((x) => x !== id) : [...n.people, id], pages: 1 })
-      return { ok: true, message: 'Person filter changed.', changed: true }
+    set_period(ctx) {
+      const period = String(ctx.body.period ?? '')
+      if (!PERIODS.some((p) => p.id === period)) return invalid('Pick Today, 7 days or All.')
+      setNav(ctx.state, ctx.viewer, { period: period as Period, pages: 1, seen: positionOf(entriesOf(ctx)) })
+      return { ok: true, message: 'Period changed.', changed: true }
     },
-    toggle_agent(ctx) {
-      const id = String(ctx.body.id ?? '')
-      // Only agents that appear in what this viewer can see.
-      if (!entriesOf(ctx).some((e) => e.kind === 'agent' && e.actorId === id)) return notFound('No such agent.')
-      const n = navOf(ctx.state, ctx.viewer)
-      setNav(ctx.state, ctx.viewer, { agents: n.agents.includes(id) ? n.agents.filter((x) => x !== id) : [...n.agents, id], pages: 1 })
-      return { ok: true, message: 'Agent filter changed.', changed: true }
+    set_view(ctx) {
+      const view = ctx.body.view
+      if (view !== 'timeline' && view !== 'ticket') return invalid('Pick Timeline or By ticket.')
+      setNav(ctx.state, ctx.viewer, { view })
+      return { ok: true, message: 'View changed.', changed: true }
     },
-    search(ctx) {
-      const raw = (ctx.body.formData as { q?: unknown } | undefined)?.q
-      const q = typeof raw === 'string' ? raw.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : ''
-      setNav(ctx.state, ctx.viewer, { q, pages: 1 })
-      return { ok: true, message: q ? `Searching for "${q}".` : 'Search cleared.', changed: true }
+    // Buttons cannot carry arguments, so each view has its own action; set_view is the general form.
+    view_timeline(ctx) {
+      setNav(ctx.state, ctx.viewer, { view: 'timeline' })
+      return { ok: true, message: 'Showing the timeline.', changed: true }
+    },
+    view_ticket(ctx) {
+      setNav(ctx.state, ctx.viewer, { view: 'ticket' })
+      return { ok: true, message: 'Showing events by ticket.', changed: true }
+    },
+    show_new(ctx) {
+      setNav(ctx.state, ctx.viewer, { pages: 1, seen: positionOf(entriesOf(ctx)) })
+      return { ok: true, message: 'Showing new events.', changed: true }
     },
     clear_filters(ctx) {
-      setNav(ctx.state, ctx.viewer, { groups: [], people: [], agents: [], q: '', pages: 1 })
+      setNav(ctx.state, ctx.viewer, { type: 'all', person: 'everyone', q: '', pages: 1 })
       return { ok: true, message: 'Filters cleared.', changed: true }
     },
     show_older(ctx) {

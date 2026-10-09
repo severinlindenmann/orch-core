@@ -1,7 +1,7 @@
 import { briefs, dayIso } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, registerAddon } from './registry'
+import { canSeeTicket, conflict, invalid, notFound, registerAddon } from './registry'
 
 // wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
 // open and their search query are per viewer (`state.nav[viewer] = { current, query }`), so navigating never affects
@@ -250,7 +250,7 @@ registerAddon({
   actions: {
     open({ state, body, viewer }) {
       const p = bySlug(state, body.slug)
-      if (!p) return { ok: true, message: 'Pick a page to open.' }
+      if (!p) return notFound('That page no longer exists.')
       navOf(state)[viewer] = { ...navOf(state)[viewer], current: p.slug }
       return { ok: true, message: `Opened ${p.title}.`, changed: true }
     },
@@ -263,10 +263,10 @@ registerAddon({
     save({ state, body, store, ws, viewer }) {
       const data = (body.formData ?? {}) as { slug?: unknown; title?: unknown; markdown?: unknown }
       const p = bySlug(state, data.slug) // the page the form was opened on, never "whatever is current now"
-      if (!p) return { ok: true, message: 'That page no longer exists.' }
+      if (!p) return notFound('That page no longer exists.')
       const title = typeof data.title === 'string' ? data.title.trim() : ''
-      if (!title || typeof data.markdown !== 'string') return { ok: true, message: 'A page needs a title.' }
-      if (pagesOf(state).some((o) => o !== p && o.title.toLowerCase() === title.toLowerCase())) return { ok: true, message: `A page called "${title}" already exists.` }
+      if (!title || typeof data.markdown !== 'string') return invalid('A page needs a title.')
+      if (pagesOf(state).some((o) => o !== p && o.title.toLowerCase() === title.toLowerCase())) return conflict('wiki.title_taken', `A page called "${title}" already exists.`, 'Pick another title.')
       p.title = title
       p.markdown = data.markdown
       p.updated = store.now()
@@ -276,8 +276,8 @@ registerAddon({
     link(ctx) {
       const { state, body, ticket } = ctx
       const p = bySlug(state, (body.formData as { page?: unknown } | undefined)?.page)
-      if (!ticket || !canSeeTicket(ctx, ticket)) return { ok: true, message: 'Pick a ticket first.' }
-      if (!p) return { ok: true, message: 'Pick a page to link.' }
+      if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
+      if (!p) return invalid('Pick a page to link.')
       if (!p.tickets.includes(ticket)) p.tickets = [...p.tickets, ticket]
       return { ok: true, message: `Linked ${p.title} to ${ticket}.`, changed: true }
     },

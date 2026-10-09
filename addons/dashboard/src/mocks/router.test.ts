@@ -272,7 +272,7 @@ describe('addon action route', () => {
       store.appendWs(demo, { type: 'member.added', person: 'p_mem', name: 'Mem', role: 'member' })
       store.setViewer('p_mara')
       expect(await run(api, demo, 'estimate', 'save_settings', { formData: {} })).toBe('403 forbidden')
-      expect(await run(api, demo, 'publish', 'decide', { option: 'no', id: 'nope' })).toBe('ok')
+      expect(await run(api, demo, 'publish', 'decide', { option: 'no', id: 'nope' })).toBe('409 decision.closed') // allowed to decide; that one is not open
       store.setViewer('p_mem')
       expect(await run(api, demo, 'publish', 'decide', { option: 'no', id: 'nope' })).toBe('403 forbidden')
       expect(await run(api, demo, 'publish', 'share', { ticket: 'DEMO-0043' })).toBe('ok')

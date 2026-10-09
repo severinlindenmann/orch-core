@@ -3,6 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 
 const setup = (viewer = 'p_sev', opts: { terminals?: boolean } = {}) => {
   const store = createMockStore({ persist: false })
@@ -89,16 +90,17 @@ describe('worktrees add', () => {
   it('refuses a duplicate for the same ticket and repo', async () => {
     const s = setup()
     const n = (await state(s)).worktrees.length
-    const r = await run(s, 'add', { formData: { ticket: 'DEMO-0043', repo: 'acme-energy/energy-dbt', base: 'main' } })
+    const r = await refused(run(s, 'add', { formData: { ticket: 'DEMO-0043', repo: 'acme-energy/energy-dbt', base: 'main' } }))
+    expect(r).toMatchObject({ status: 409, code: 'worktrees.exists' })
     expect(r.message).toMatch(/already has a worktree/)
     expect((await state(s)).worktrees).toHaveLength(n)
   })
   it('refuses unknown repos, tickets of other workspaces and empty input', async () => {
     const s = setup()
     const n = (await state(s)).worktrees.length
-    expect((await run(s, 'add', { formData: { ticket: 'DEMO-0044', repo: 'evil/repo', base: 'main' } })).changed).toBeFalsy()
-    expect((await run(s, 'add', { formData: { ticket: 'NOPE-1', repo: 'acme-energy/ingest', base: 'main' } })).changed).toBeFalsy()
-    expect((await run(s, 'add', { formData: {} })).changed).toBeFalsy()
+    expect(await refused(run(s, 'add', { formData: { ticket: 'DEMO-0044', repo: 'evil/repo', base: 'main' } }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(run(s, 'add', { formData: { ticket: 'NOPE-1', repo: 'acme-energy/ingest', base: 'main' } }))).toMatchObject({ status: 404, code: 'not_found' })
+    expect(await refused(run(s, 'add', { formData: {} }))).toMatchObject({ status: 400, code: 'validation' })
     expect((await state(s)).worktrees).toHaveLength(n)
   })
   it('defaults the base branch to main', async () => {
@@ -116,9 +118,8 @@ describe('worktrees remove', () => {
   it('refuses when dirty, with the file count', async () => {
     const s = setup()
     const dirty = (await state(s)).worktrees.find((w) => w.dirty === 3)!
-    const r = await run(s, 'remove', { id: dirty.id })
-    expect(r.message).toBe('3 changed files. Commit or stash first.')
-    expect(r.changed).toBeFalsy()
+    const r = await refused(run(s, 'remove', { id: dirty.id }))
+    expect(r).toMatchObject({ status: 409, code: 'worktrees.dirty', message: '3 changed files.', hint: 'Commit or stash first.' })
     expect((await state(s)).worktrees.some((w) => w.id === dirty.id)).toBe(true)
   })
   it('removes a clean worktree', async () => {
@@ -130,7 +131,7 @@ describe('worktrees remove', () => {
   })
   it('an unknown id changes nothing', async () => {
     const s = setup()
-    expect((await run(s, 'remove', { id: 'nope' })).changed).toBeFalsy()
+    expect(await refused(run(s, 'remove', { id: 'nope' }))).toMatchObject({ status: 404, code: 'not_found' })
   })
 })
 
@@ -154,7 +155,9 @@ describe('worktrees open terminal here', () => {
   it('says so when terminals is not active and opens nothing', async () => {
     const s = setup('p_sev', { terminals: false })
     const w = (await state(s)).worktrees[0]
-    expect((await run(s, 'open_terminal', { id: w.id })).message).toMatch(/Terminals is not active/)
+    const r = await refused(run(s, 'open_terminal', { id: w.id }))
+    expect(r).toMatchObject({ status: 409, code: 'addon.inactive' })
+    expect(r.message).toMatch(/Terminals is not active/)
   })
 })
 
@@ -173,7 +176,7 @@ describe('worktrees open terminal here is authorized by terminals', () => {
   it('does not create a session when terminals is disabled', async () => {
     const s = setup('p_sev', { terminals: false })
     const before = (s.store.addonState(s.ws, 'terminals').sessions as unknown[]).length
-    await run(s, 'open_terminal', { id: 'wt/DEMO-0041-energy-dbt' })
+    await refused(run(s, 'open_terminal', { id: 'wt/DEMO-0041-energy-dbt' }))
     expect((s.store.addonState(s.ws, 'terminals').sessions as unknown[]).length).toBe(before)
   })
 })
@@ -189,9 +192,8 @@ describe('worktrees and restricted tickets', () => {
     expect(st.worktrees.some((w) => w.ticket === 'DEMO-0041')).toBe(false)
     expect(Object.values(st.rowsByRepo).flat().some((i) => i.path.includes('DEMO-0041'))).toBe(false)
     expect(st.byTicket['DEMO-0041']).toBeUndefined()
-    const r = await run(s, 'remove', { id: 'wt/DEMO-0041-energy-dbt' })
-    expect(r.message).toBe('No such worktree.')
-    expect((await run(s, 'open_terminal', { id: 'wt/DEMO-0041-energy-dbt' })).message).toBe('No such worktree.')
+    expect(await refused(run(s, 'remove', { id: 'wt/DEMO-0041-energy-dbt' }))).toMatchObject({ status: 404, message: 'No such worktree.' })
+    expect(await refused(run(s, 'open_terminal', { id: 'wt/DEMO-0041-energy-dbt' }))).toMatchObject({ status: 404, message: 'No such worktree.' })
   })
   it('a listed person sees it and can remove it', async () => {
     const s = setup('p_sev')

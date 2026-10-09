@@ -2,7 +2,7 @@ import { addonActive } from '@/api/addons'
 import { briefs, scaled, scaleOf } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { registerAddon, type AddonCtx } from './registry'
+import { conflict, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // worktrees: one git worktree per ticket and repo (the git commands run in the host; here it is plain state).
 //  - Path `wt/<ticket>-<repo>` (repo = the name after the owner), branch `feat/<ticket-slug>`; the id is the path.
@@ -132,13 +132,13 @@ registerAddon({
       const ticket = ctx.ticket ?? (typeof f.ticket === 'string' ? f.ticket : undefined)
       const repo = typeof f.repo === 'string' ? f.repo : ''
       const base = typeof f.base === 'string' && f.base.trim() ? f.base.trim() : 'main'
-      if (!ticket || !repo) return { ok: true, message: 'Pick a ticket and a repository.' }
-      if (!REPOS.includes(repo)) return { ok: true, message: `${repo} is not a repository of this workspace.` }
-      if (!/^[A-Za-z0-9._/-]{1,60}$/.test(base)) return { ok: true, message: 'That is not a valid branch name.' }
+      if (!ticket || !repo) return invalid('Pick a ticket and a repository.')
+      if (!REPOS.includes(repo)) return invalid(`${repo} is not a repository of this workspace.`)
+      if (!/^[A-Za-z0-9._/-]{1,60}$/.test(base)) return invalid('That is not a valid branch name.')
       const doc = store.hasTicket(ticket) && store.workspaceOf(ticket)?.id === ws && store.isVisible(ticket) ? store.ticket(ticket) : undefined
-      if (!doc) return { ok: true, message: `${ticket} is not a ticket of this workspace.` }
+      if (!doc) return notFound(`No ticket ${ticket}`)
       const path = `wt/${ticket}-${short(repo)}`
-      if (list(state).some((w) => w.id === path)) return { ok: true, message: `${ticket} already has a worktree in ${short(repo)}.` }
+      if (list(state).some((w) => w.id === path)) return conflict('worktrees.exists', `${ticket} already has a worktree in ${short(repo)}.`)
       const branch = `feat/${slugOf(doc.title)}`
       list(state).push({ id: path, path, repo, ticket, branch, base, dirty: 0, ahead: 0, behind: 0, created_by: nameOf(ctx) })
       return { ok: true, message: `Created ${path} on ${branch}.`, changed: true }
@@ -146,19 +146,19 @@ registerAddon({
     remove(ctx) {
       const { state, body } = ctx
       const w = list(state).find((x) => x.id === body.id)
-      if (!w || !canSee(ctx, w)) return { ok: true, message: 'No such worktree.' }
-      if (w.dirty > 0) return { ok: true, message: `${plural(w.dirty)}. Commit or stash first.` }
+      if (!w || !canSee(ctx, w)) return notFound('No such worktree.')
+      if (w.dirty > 0) return conflict('worktrees.dirty', `${plural(w.dirty)}.`, 'Commit or stash first.')
       state.worktrees = list(state).filter((x) => x !== w)
       return { ok: true, message: `Removed ${w.path}.`, changed: true }
     },
     open_terminal(ctx) {
       const { store, ws, state, body } = ctx
       const w = list(state).find((x) => x.id === body.id)
-      if (!w || !canSee(ctx, w)) return { ok: true, message: 'No such worktree.' }
+      if (!w || !canSee(ctx, w)) return notFound('No such worktree.')
       // Same authorized path as a direct call: terminals' activity, grant, minRole and visibility checks all apply.
       const r = store.runAddon(ws, 'terminals', 'open_ticket', { ticket: w.ticket })
-      if (!r) return { ok: true, message: 'Terminals is not available.' }
-      if ('code' in r) return { ok: true, message: r.code === 'addon.inactive' ? 'Terminals is not active in this workspace. Turn it on in Settings > Addons.' : r.message }
+      if (!r) return conflict('addon.inactive', 'Terminals is not available.')
+      if (!r.ok) return r.code === 'addon.inactive' ? conflict('addon.inactive', 'Terminals is not active in this workspace.', 'Turn it on in Settings > Addons.') : r
       return { ...r, message: `${r.message} Find it under Terminals.` }
     },
   },

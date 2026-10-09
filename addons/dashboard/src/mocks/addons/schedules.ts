@@ -295,7 +295,7 @@ registerAddon({
     disarm(ctx) {
       const s = schedulesOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!s) return fail(404, 'not_found', 'No such schedule.')
-      if (!s.armed) return { ok: true, message: `${s.name} is not armed.` }
+      if (!s.armed) return { ok: true, message: `${s.name} was already disarmed.` }
       Object.assign(s, { armed: false, disarmedBy: ctx.viewer, disarmedAt: ctx.store.now() })
       return { ok: true, message: `Disarmed ${s.name}.`, changed: true }
     },
@@ -329,7 +329,7 @@ registerAddon({
       const id = String(body.id ?? '')
       const open = openDecisions(getAddon('schedules'), state, [], ctx).find((d) => d.id === id)
       const run = open && runsOf(state).find((r) => decisionId(r) === id)
-      if (!open || !run?.finding) return { ok: true, message: 'That decision is closed.' }
+      if (!open || !run?.finding) return fail(409, 'decision.closed', 'That decision is closed.')
       if (body.option !== 'file' && body.option !== 'dismiss') return fail(400, 'validation.option', 'Choose File ticket in backlog or Dismiss.')
       if (body.option === 'dismiss') {
         run.findingState = 'dismissed'

@@ -1,6 +1,6 @@
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, registerAddon, type AddonCtx } from './registry'
 
 // records: commits and pushes orch's ticket records to git (v1 C29).
 //  - Pending changes are derived, never stored: per ticket, the events whose seq is above the seq recorded by the last
@@ -162,7 +162,7 @@ registerAddon({
       const { state, store } = ctx
       // "Is there anything to record" is judged on what the caller can see; hidden tickets stay pending until someone who can see them commits.
       const mine = pending(ctx, state)
-      if (!mine.length) return { ok: true, message: 'Nothing to record.' }
+      if (!mine.length) return { ok: true, message: 'Already recorded: nothing new since the last commit.' }
       const all = pending(ctx, state, true) // the commit itself is workspace-wide
       const marks = recorded(state)
       for (const key of store.ticketKeys(ctx.ws)) marks[key] = lastSeq(store, key)
@@ -174,11 +174,11 @@ registerAddon({
     push(ctx) {
       const { state, store } = ctx
       const s = settingsOf(state)
-      if (!s.push) return { ok: true, message: 'Push is off in the records settings.' }
+      if (!s.push) return conflict('records.push_off', 'Push is off in the records settings.', 'An owner turns it on in the Records settings.')
       state.pushOk = null
       if (state.behind) {
         state.pushError = REJECTED
-        return { ok: true, message: `Push rejected: ${REJECTED}`, changed: true }
+        return conflict('records.push_rejected', `Push rejected: ${REJECTED}`, 'Pull first, then push again.')
       }
       const head = history(state)[0]
       state.pushError = null

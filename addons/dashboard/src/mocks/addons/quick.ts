@@ -1,8 +1,8 @@
 import type { AddonActionResult, AddonDecision, NewTicketRequest } from '@/api/types'
 import { briefs } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
-import type { MockStore } from '../store'
-import { canSeeTicket, markDecided, registerAddon, type AddonCtx } from './registry'
+import type { MockStore, StoreFailure } from '../store'
+import { canSeeTicket, conflict, invalid, markDecided, notFound, refusal, registerAddon, type AddonCtx } from './registry'
 
 // quick tasks: one-line jobs too small for a ticket (v1 docs/quick-tasks.md).
 //  - Keys Q-001..; status open -> claimed -> done (with one line of proof). Past the limit (commits, files) a task is
@@ -65,8 +65,8 @@ const decisionId = (q: Quick) => `dec_quick_${q.id}`
 
 const STATUS_TONE = { open: 'idle', claimed: 'running', done: 'ok', outgrew: 'warn', converted: 'ok' } as const
 
-function makeTicket(ctx: AddonCtx, q: Quick): AddonActionResult {
-  if (q.status !== 'open' && q.status !== 'outgrew') return { ok: true, message: `${q.id} is ${q.status}; only an open or outgrown task becomes a ticket.` }
+function makeTicket(ctx: AddonCtx, q: Quick): AddonActionResult | StoreFailure {
+  if (q.status !== 'open' && q.status !== 'outgrew') return conflict('quick.not_open', `${q.id} is ${q.status}; only an open or outgrown task becomes a ticket.`)
   const req: NewTicketRequest = {
     type: 'chore',
     title: q.title,
@@ -81,7 +81,7 @@ function makeTicket(ctx: AddonCtx, q: Quick): AddonActionResult {
     acceptance: [],
   }
   const r = ctx.store.createFromRequest(ctx.ws, req)
-  if (!r.ok) return { ok: true, message: r.message }
+  if (!r.ok) return r
   q.status = 'converted'
   q.ticket = r.ticket.key
   markDecided(ctx.state, decisionId(q))
@@ -216,8 +216,8 @@ registerAddon({
   actions: {
     add(ctx) {
       const title = oneLine((ctx.body.formData as { title?: unknown } | undefined)?.title)
-      if (!title) return { ok: true, message: 'Write the task as one line.' }
-      if (title.length > MAX_TITLE) return { ok: true, message: `Keep it under ${MAX_TITLE} characters, or make a ticket.` }
+      if (!title) return invalid('Write the task as one line.')
+      if (title.length > MAX_TITLE) return invalid(`Keep it under ${MAX_TITLE} characters, or make a ticket.`)
       const n = Math.max(0, ...list(ctx.state).map((q) => Number(q.id.slice(2)))) + 1
       const id = `Q-${String(n).padStart(3, '0')}`
       list(ctx.state).push({ id, title, status: 'open', added_by: nameOf(ctx) })
@@ -225,18 +225,19 @@ registerAddon({
     },
     claim(ctx) {
       const q = find(ctx.state, ctx.body.id)
-      if (!q) return { ok: true, message: 'No such quick task.' }
-      if (q.status !== 'open') return { ok: true, message: `${q.id} is ${q.status}; only an open task can be claimed.` }
+      if (!q) return notFound('No such quick task.')
+      if (q.status !== 'open') return conflict('quick.not_open', `${q.id} is ${q.status}; only an open task can be claimed.`)
       q.status = 'claimed'
       q.claimed_by = nameOf(ctx)
       return { ok: true, message: `${q.id} claimed.`, changed: true }
     },
     start_close(ctx) {
       const q = find(ctx.state, ctx.body.id)
-      if (!q || q.status !== 'claimed') return { ok: true, message: 'Only a claimed task can be closed.' }
+      if (!q) return notFound('No such quick task.')
+      if (q.status !== 'claimed') return conflict('quick.not_claimed', 'Only a claimed task can be closed.')
       const all = (ctx.state.nav ??= {}) as Record<string, { closing?: string }>
       all[ctx.viewer] = { ...all[ctx.viewer], closing: q.id }
-      return { ok: true, message: `Write one line of proof for ${q.id}.`, changed: true }
+      return { ok: true, message: `Closing ${q.id}: add one line of proof.`, changed: true }
     },
     cancel_close(ctx) {
       const mine = nav(ctx.state, ctx.viewer)
@@ -246,9 +247,9 @@ registerAddon({
     close(ctx) {
       const id = nav(ctx.state, ctx.viewer)?.closing
       const q = id ? find(ctx.state, id) : undefined
-      if (!q || q.status !== 'claimed') return { ok: true, message: 'Pick a claimed task to close first.' }
+      if (!q || q.status !== 'claimed') return conflict('quick.not_claimed', 'Pick a claimed task to close first.')
       const proof = oneLine((ctx.body.formData as { proof?: unknown } | undefined)?.proof)
-      if (!proof) return { ok: true, message: 'Write one line of proof.' }
+      if (!proof) return invalid('Write one line of proof.')
       q.status = 'done'
       q.proof = proof.slice(0, 200)
       delete nav(ctx.state, ctx.viewer)!.closing
@@ -256,14 +257,14 @@ registerAddon({
     },
     make_ticket(ctx) {
       const q = find(ctx.state, ctx.body.id)
-      if (!q) return { ok: true, message: 'No such quick task.' }
+      if (!q) return notFound('No such quick task.')
       return makeTicket(ctx, q)
     },
     decide(ctx) {
       const id = String(ctx.body.id ?? '')
       const q = outgrew(ctx.state).find((x) => decisionId(x) === id)
       const done = (ctx.state.decided as string[] | undefined) ?? []
-      if (!q || done.includes(id)) return { ok: true, message: 'That decision is closed.' }
+      if (!q || done.includes(id)) return conflict('decision.closed', 'That decision is closed.')
       if (ctx.body.option === 'ticket') return makeTicket(ctx, q)
       if (ctx.body.option === 'more') {
         q.extra_files = (q.extra_files ?? 0) + MORE_FILES
@@ -272,7 +273,7 @@ registerAddon({
         markDecided(ctx.state, id)
         return { ok: true, message: `${q.id} may change ${MORE_FILES} more files. It is open again.`, changed: true }
       }
-      return { ok: true, message: 'Choose one of the options.' }
+      return refusal(400, 'validation.option', 'Choose one of the options.')
     },
     save_settings: ({ state, body }) => {
       state.settings = body.formData ?? {}

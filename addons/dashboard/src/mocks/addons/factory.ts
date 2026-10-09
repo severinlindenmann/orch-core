@@ -3,7 +3,7 @@ import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, getAddon, openDecisions, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, getAddon, notFound, openDecisions, registerAddon, type AddonCtx } from './registry'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -353,7 +353,7 @@ registerAddon({
       const id = String(body.id ?? '')
       const open = openDecisions(getAddon('factory'), state, [], ctx).find((d) => d.id === id)
       const permit = open && permitsOf(state).find((p) => `factory.permit:${p.id}` === id)
-      if (!open || !permit || !canSeeTicket(ctx, permit.ticket)) return { ok: true, message: 'That decision is closed.' }
+      if (!open || !permit || !canSeeTicket(ctx, permit.ticket)) return conflict('decision.closed', 'That decision is closed.')
       if (body.option !== 'once' && body.option !== 'epic' && body.option !== 'refuse') return { ok: false, status: 400, code: 'validation.option', message: 'Choose Grant once, Grant for this epic or Refuse.' }
       const epic = state.epic as string
       if (body.option === 'refuse') {
@@ -370,10 +370,10 @@ registerAddon({
 
     pause({ state, store, viewer, ws }) {
       const epic = state.epic as string | null
-      if (!epic) return { ok: true, message: 'There is no factory epic here.' }
+      if (!epic) return notFound('There is no factory epic here.')
       const mode = modeOf(state, store.now())
       if (mode === 'paused') return { ok: true, message: 'The factory is already paused.' }
-      if (mode === 'stopped') return { ok: true, message: 'The factory is stopped; there is nothing to pause.' }
+      if (mode === 'stopped') return conflict('factory.stopped', 'The factory is stopped; there is nothing to pause.')
       state.paused = { at: store.now(), by: viewer }
       endWatching(store, ws, state)
       store.append(epic, { type: 'factory.paused' })
@@ -383,7 +383,7 @@ registerAddon({
     resume({ state, store }) {
       const epic = state.epic as string | null
       const paused = state.paused as { at: string } | null
-      if (!epic || !paused) return { ok: true, message: 'The factory is not paused.' }
+      if (!epic || !paused) return conflict('factory.not_paused', 'The factory is not paused.')
       state.pausedMs = (state.pausedMs as number) + (Date.parse(store.now()) - Date.parse(paused.at))
       state.paused = null
       store.append(epic, { type: 'factory.resumed' })
@@ -391,9 +391,9 @@ registerAddon({
     },
 
     watch({ state, store, viewer, ws }) {
-      if (!state.epic) return { ok: true, message: 'There is no factory epic to watch here.' }
-      if (modeOf(state, store.now()) !== 'running') return { ok: true, message: 'The factory is not running; there is nothing to watch.' }
-      if (recentSteps(state, store.now()).length >= WATCH_STEPS) return { ok: true, message: `Demo limit reached: ${WATCH_STEPS} simulated steps per hour in this workspace. Try again later.` }
+      if (!state.epic) return notFound('There is no factory epic to watch here.')
+      if (modeOf(state, store.now()) !== 'running') return conflict('factory.not_running', 'The factory is not running; there is nothing to watch.')
+      if (recentSteps(state, store.now()).length >= WATCH_STEPS) return conflict('factory.demo_limit', `Demo limit reached: ${WATCH_STEPS} simulated steps per hour in this workspace.`, 'Try again later.')
       setNav(state, viewer, { watching: true })
       if (!store.sim.running().includes(scriptId(ws))) {
         state.simBy = viewer

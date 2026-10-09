@@ -4,6 +4,7 @@ import { createMockTransport } from '@/api/transport'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 
 const setup = (viewer = 'p_sev') => {
   const store = createMockStore({ persist: false })
@@ -193,9 +194,9 @@ describe('activity filters (per viewer)', () => {
   })
   it('ignores an unknown group, person or agent', async () => {
     const s = setup()
-    await run(s, 'toggle_group', { group: 'nope' })
-    await run(s, 'toggle_person', { id: 'p_nobody' })
-    await run(s, 'toggle_agent', { id: 'ghost' })
+    expect(await refused(run(s, 'toggle_group', { group: 'nope' }))).toMatchObject({ status: 404 })
+    expect(await refused(run(s, 'toggle_person', { id: 'p_nobody' }))).toMatchObject({ status: 404 })
+    expect(await refused(run(s, 'toggle_agent', { id: 'ghost' }))).toMatchObject({ status: 404 })
     expect((await state(s)).filters).toEqual({ groups: [], people: [], agents: [], q: '' })
   })
   it('an empty result is told apart from no events at all', async () => {

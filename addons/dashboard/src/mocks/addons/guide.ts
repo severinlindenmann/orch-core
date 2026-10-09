@@ -1,6 +1,6 @@
 import type { HelpRoute } from '@/api/guide'
 import { GUIDE_PAGES } from './guide-pages'
-import { registerAddon } from './registry'
+import { notFound, registerAddon } from './registry'
 
 // guide: how to use the dashboard, as eight markdown pages. The pages are fixed text, the same for everyone, so the
 // only state is per viewer: which page they have open (`state.nav[viewer] = { current }`). `open` is minRole 'viewer'
@@ -40,7 +40,7 @@ registerAddon({
   actions: {
     open({ state, body, viewer }) {
       const p = GUIDE_PAGES.find((x) => x.slug === body.slug)
-      if (!p) return { ok: true, message: 'Pick a page to open.' }
+      if (!p) return notFound('No such guide page.')
       navOf(state)[viewer] = { current: p.slug }
       return { ok: true, message: `Opened ${p.title}.`, changed: true }
     },

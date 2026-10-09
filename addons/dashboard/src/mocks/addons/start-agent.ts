@@ -1,6 +1,6 @@
 import type { LaunchHarness, LaunchMode, LaunchPreview, LaunchWhere } from '@/api/types'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, type LaunchRequest } from '../sessions'
-import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, notFound, registerAddon, type AddonCtx } from './registry'
 
 // start-agent (capability spawn_agent): pick a mode, a harness and where it runs, see the exact command, press Start.
 //  - The addon never starts anything itself. `start` is declared `confirm: 'spawn_agent'` in the manifest: core shows
@@ -213,7 +213,7 @@ registerAddon({
       const { store, ws, viewer, body } = ctx
       const live = runsOf(ctx).filter((r) => r.state !== 'stopped')
       const run = typeof body.session === 'string' ? live.find((r) => r.s.session === body.session) : live.find((r) => r.s.ticket === ctx.ticket)
-      if (!run) return { ok: true, message: ctx.ticket ? `No run on ${ctx.ticket}.` : 'That run has already ended.' }
+      if (!run) return notFound(ctx.ticket ? `No run on ${ctx.ticket}.` : 'That run has already ended.')
       const res = store.stopSession(ws, run.s.session, { kind: 'person', id: viewer })
       if (!res.ok) return res
       return { ok: true, message: `Stopped ${run.s.session} on ${run.s.ticket}.`, changed: true }

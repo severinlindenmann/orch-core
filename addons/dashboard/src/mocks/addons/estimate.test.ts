@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 
 const setup = (viewer = 'p_sev') => {
   const store = createMockStore({ persist: false })
@@ -47,9 +48,9 @@ describe('estimate addon', () => {
   it('refuses a value that is not on the current scale and changes nothing', async () => {
     const s = setup()
     const before = JSON.stringify(s.store.ticket('DEMO-0043')!.addons.estimate)
-    const r = await s.api.runAddonAction(s.ws, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 'M' } })
+    const r = await refused(s.api.runAddonAction(s.ws, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 'M' } }))
+    expect(r).toMatchObject({ status: 400, code: 'validation' })
     expect(r.message).toMatch(/not on the fibonacci scale/)
-    expect(r.changed).toBeFalsy()
     expect(JSON.stringify(s.store.ticket('DEMO-0043')!.addons.estimate)).toBe(before)
   })
 })

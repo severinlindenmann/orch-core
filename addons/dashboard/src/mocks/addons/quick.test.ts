@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 import { installAndGrant } from '@/test/installAddon'
 
 const setup = (viewer = 'p_sev') => {
@@ -70,24 +71,24 @@ describe('quick tasks actions', () => {
   })
   it('add refuses an empty or multi-line line', async () => {
     const s = setup()
-    expect((await run(s, 'add', { formData: { title: '  ' } })).changed).toBeFalsy()
-    expect((await run(s, 'add', { formData: { title: 'a\nb' } })).changed).toBeFalsy()
+    await refused(run(s, 'add', { formData: { title: '  ' } }))
+    await refused(run(s, 'add', { formData: { title: 'a\nb' } }))
     expect((await state(s)).items).toHaveLength(6)
   })
   it('claim marks an open task as claimed by the viewer and refuses a claimed one', async () => {
     const s = setup()
     expect((await run(s, 'claim', { id: 'Q-001' })).changed).toBe(true)
     expect((await state(s)).items.find((q) => q.id === 'Q-001')).toMatchObject({ status: 'claimed', claimed_by: 'Severin' })
-    expect((await run(s, 'claim', { id: 'Q-003' })).changed).toBeFalsy()
+    await refused(run(s, 'claim', { id: 'Q-003' }))
   })
   it('close with proof needs a claimed task and a one-line proof', async () => {
     const s = setup()
     await run(s, 'start_close', { id: 'Q-003' })
-    expect((await run(s, 'close', { formData: { proof: '' } })).changed).toBeFalsy()
+    await refused(run(s, 'close', { formData: { proof: '' } }))
     const r = await run(s, 'close', { formData: { proof: 'removed, 9ac1f20' } })
     expect(r.changed).toBe(true)
     expect((await state(s)).items.find((q) => q.id === 'Q-003')).toMatchObject({ status: 'done', proof: 'removed, 9ac1f20' })
-    expect((await run(s, 'close', { formData: { proof: 'again' } })).changed).toBeFalsy()
+    await refused(run(s, 'close', { formData: { proof: 'again' } }))
   })
   it('Make a ticket creates a backlog chore with the line as title and marks the task converted', async () => {
     const s = setup()
@@ -102,9 +103,9 @@ describe('quick tasks actions', () => {
   })
   it('Make a ticket is refused for claimed, done and converted tasks', async () => {
     const s = setup()
-    for (const id of ['Q-003', 'Q-005']) expect((await run(s, 'make_ticket', { id })).changed).toBeFalsy()
+    for (const id of ['Q-003', 'Q-005']) await refused(run(s, 'make_ticket', { id }))
     await run(s, 'make_ticket', { id: 'Q-001' })
-    expect((await run(s, 'make_ticket', { id: 'Q-001' })).changed).toBeFalsy()
+    await refused(run(s, 'make_ticket', { id: 'Q-001' }))
   })
   it('a viewer cannot add, claim or make a ticket', async () => {
     const s = setup('p_tom')
@@ -147,9 +148,7 @@ describe('quick tasks outgrew decision', () => {
     const s = setup()
     const d = (await decisions(s))[0]
     await run(s, d.action, { id: d.id, option: 'ticket' })
-    const again = await run(s, d.action, { id: d.id, option: 'ticket' })
-    expect(again).toMatchObject({ ok: true, message: 'That decision is closed.' })
-    expect(again.changed).toBeFalsy()
+    expect(await refused(run(s, d.action, { id: d.id, option: 'ticket' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
   })
   it('Make a ticket on the outgrew task removes its decision too', async () => {
     const s = setup()

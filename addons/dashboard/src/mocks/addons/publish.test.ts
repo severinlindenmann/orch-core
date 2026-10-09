@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 import { selectContributions } from '@/addon-ui/slots'
 
 const setup = () => {
@@ -55,8 +56,7 @@ describe('publish app actions', () => {
   })
   it('refuses an unknown app without changing anything', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'start', { id: 'nope' })
-    expect(r.changed).toBeFalsy()
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'start', { id: 'nope' }))).toMatchObject({ status: 404, code: 'not_found' })
   })
   it('a viewer cannot start an app', async () => {
     const s = setup()
@@ -110,7 +110,8 @@ describe('publish shares', () => {
     const once = st.shares[0]
     expect(once.kind).toBe('show-once')
     expect(JSON.stringify(st)).not.toContain(r.message!.split(': ')[1])
-    const again = await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: once.id })
+    const again = await refused(s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: once.id }))
+    expect(again).toMatchObject({ status: 409, code: 'publish.shown_once' })
     expect(again.message).toMatch(/shown once/i)
     expect(again.message).not.toMatch(/https:/)
   })
@@ -155,16 +156,15 @@ describe('closed decisions are refused by the store, for any addon', () => {
     const s = setup()
     await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
     const shares = (await state(s)).shares.length
-    const again = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
-    expect(again).toMatchObject({ ok: true, message: 'That decision is closed.' })
-    expect(again.changed).toBeFalsy()
+    const again = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' }))
+    expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     expect((await state(s)).shares).toHaveLength(shares)
   })
   it('a decision that is not currently open (failed-build once the app runs) is closed', async () => {
     const s = setup()
     await s.api.runAddonAction(s.ws, 'publish', 'redeploy', { id: 'app_ops' })
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' })
-    expect(r.message).toBe('That decision is closed.')
+    const r = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' }))
+    expect(r).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
   })
 })
 

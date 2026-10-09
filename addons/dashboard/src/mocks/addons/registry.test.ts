@@ -27,7 +27,14 @@ describe('addon registry', () => {
   })
   it('keeps the six iteration-1 actions working', async () => {
     const { api, ws } = setup()
-    for (const [a, id] of [['publish', 'decide'], ['estimate', 'save_settings'], ['github', 'refresh'], ['terminals', 'save_settings'], ['usage', 'save_settings'], ['wiki', 'open']] as const)
-      expect((await api.runAddonAction(ws, a, id)).ok).toBe(true)
+    const calls = [
+      ['publish', 'decide', { id: 'dec_publish_failed_build', option: 'no' }],
+      ['estimate', 'save_settings', {}],
+      ['github', 'refresh', {}],
+      ['terminals', 'save_settings', {}],
+      ['usage', 'save_settings', {}],
+      ['wiki', 'open', { slug: 'glossary' }],
+    ] as const
+    for (const [a, id, body] of calls) expect((await api.runAddonAction(ws, a, id, { ...body })).ok).toBe(true)
   })
 })

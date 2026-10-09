@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
@@ -9,6 +10,8 @@ const ws = () => mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const setup = (store: typeof mockStore) => installAndGrant(store, store.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'worktrees')
 const wts = async () => (await api.getAddonState(ws(), 'worktrees')).worktrees as { ticket: string; path: string; dirty: number }[]
 
+afterEach(() => vi.restoreAllMocks())
+
 describe('worktrees page', () => {
   it('lists worktrees per repo with path, branch, files and ahead/behind', async () => {
     renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
@@ -17,11 +20,14 @@ describe('worktrees page', () => {
     expect(within(row).getByText(/3 changed files/)).toBeInTheDocument()
     expect(within(row).getByText(/ahead 2/)).toBeInTheDocument()
   })
-  it('Remove on the dirty worktree is refused with the message', async () => {
+  it('Remove on the dirty worktree is refused: an error toast with the message and the hint, never a success', async () => {
+    const error = vi.spyOn(toast, 'error')
+    const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Remove' }))
-    await screen.findByText('3 changed files. Commit or stash first.', {}, T)
+    await waitFor(() => expect(error).toHaveBeenCalledWith('3 changed files.', expect.objectContaining({ description: 'Commit or stash first.' })), T)
+    expect(success).not.toHaveBeenCalled()
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
   })
   it('Remove on a clean worktree removes it from the page', async () => {

@@ -3,6 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 
 const setup = (viewer = 'p_sev', restrict: string[] = []) => {
   const store = createMockStore({ persist: false })
@@ -72,7 +73,7 @@ describe('commit records', () => {
     const s = setup()
     await run(s, 'commit')
     const n = (await state(s)).history.length
-    expect((await run(s, 'commit')).message).toMatch(/nothing to record/i)
+    expect((await run(s, 'commit')).message).toMatch(/nothing new/i)
     expect((await state(s)).history).toHaveLength(n)
   })
   it('new ticket activity makes it pending again', async () => {
@@ -100,7 +101,9 @@ describe('push and pull', () => {
     const st = await state(s)
     expect((st as unknown as { lastPush: { commit: string; remote: string } }).lastPush).toMatchObject({ commit: st.history[0].hash, remote: st.remote })
 
-    expect((await run(s, 'push')).message).toMatch(/^Push rejected: Remote rejected/)
+    const rejected = await refused(run(s, 'push'))
+    expect(rejected).toMatchObject({ status: 409, code: 'records.push_rejected' })
+    expect(rejected.message).toMatch(/^Push rejected: Remote rejected/)
     expect(await alertOf(s)).toMatchObject({ type: 'alert', tone: 'error', title: 'Remote rejected: non-fast-forward. Pull first.' })
 
     await run(s, 'pull')
@@ -112,7 +115,9 @@ describe('push and pull', () => {
   it('push is refused when push is off in settings', async () => {
     const s = setup()
     await run(s, 'save_settings', { formData: { auto_commit_minutes: 30, push: false, remote: 'git@github.com:acme-energy/energy-records.git' } })
-    expect((await run(s, 'push')).message).toMatch(/push is off/i)
+    const r = await refused(run(s, 'push'))
+    expect(r).toMatchObject({ status: 409, code: 'records.push_off' })
+    expect(r.message).toMatch(/push is off/i)
   })
 })
 
@@ -168,7 +173,7 @@ describe('records and ticket visibility', () => {
     ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get('DEMO-0041')!.visibility = { restricted: ['p_sev'] }
     s.store.setViewer('p_mara')
     const n = (await state(s)).history.length
-    expect((await run(s, 'commit')).message).toBe('Nothing to record.')
+    expect((await run(s, 'commit')).message).toBe('Already recorded: nothing new since the last commit.')
     expect((await state(s)).history).toHaveLength(n)
     s.store.setViewer('p_sev')
     expect((await state(s)).pendingEvents).toBe(1)

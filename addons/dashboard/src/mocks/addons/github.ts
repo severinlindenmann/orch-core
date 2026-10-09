@@ -2,7 +2,7 @@ import { briefs } from '../busy/helpers'
 import { PERSON_NAME } from '../busy/pools'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
 
 // github: pull requests (code reviews) and the external issues lane. Addon state is the only store for PRs and issues;
 // the ticket panel reads `addon.prByTicket.$ticket` (see view()), nothing is written to ticket addon data.
@@ -181,17 +181,21 @@ registerAddon({
     import({ store, ws, state, body }) {
       const list = issues(state)
       const i = list.findIndex((x) => x.id === body.id)
-      if (i < 0) return { ok: true, message: 'Nothing to import.' }
+      if (i < 0) return notFound('That issue is no longer in the list.')
       const x = list[i]
       const res = store.importGithubIssue(ws, { title: x.title, subtitle: x.id, badge: x.label })
-      if (res.changed) list.splice(i, 1)
+      if (res.ok && res.changed) list.splice(i, 1)
       return res
     },
     refresh(ctx) {
       const { store, body, ticket } = ctx
       const list = visiblePrs(ctx)
       const target = list.find((p) => (body.id ? p.id === body.id : ticket ? p.ticket === ticket : pending(p)))
-      if (!target) return { ok: true, message: body.id ? 'That pull request no longer exists.' : ticket ? `${ticket} has no pull request.` : 'No pending checks.' }
+      if (!target) {
+        if (body.id) return notFound('That pull request no longer exists.')
+        if (ticket) return notFound(`${ticket} has no pull request.`)
+        return { ok: true, message: 'No pending checks.' }
+      }
       if (!pending(target)) return { ok: true, message: `No pending checks on #${target.number}.` }
       for (const c of target.checks) if (c.status === 'pending') c.status = 'pass'
       target.updated_at = store.now()
@@ -200,8 +204,8 @@ registerAddon({
     approve(ctx) {
       const { store, body } = ctx
       const target = visiblePrs(ctx).find((p) => p.id === body.id)
-      if (!target) return { ok: true, message: 'That pull request no longer exists.' }
-      if (target.state === 'merged') return { ok: true, message: `#${target.number} is already merged.` }
+      if (!target) return notFound('That pull request no longer exists.')
+      if (target.state === 'merged') return conflict('github.merged', `#${target.number} is already merged.`)
       if (target.review === 'approved') return { ok: true, message: `#${target.number} is already approved.` }
       target.review = 'approved'
       target.updated_at = store.now()
@@ -210,7 +214,7 @@ registerAddon({
     open(ctx) {
       const { body } = ctx
       const target = visiblePrs(ctx).find((p) => p.id === body.id)
-      if (!target) return { ok: true, message: 'That pull request no longer exists.' }
+      if (!target) return notFound('That pull request no longer exists.')
       return { ok: true, message: `Opening #${target.number} on GitHub.`, url: prUrl(target) }
     },
     save_settings: ({ state, body }) => {

@@ -4,6 +4,7 @@ import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { describeEvent } from '@/mocks/derive'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 import { getAddon } from './registry'
 
 // AI Factory (Phase 2 preview): one factory epic with a signed charter, children, permits as core decisions,
@@ -136,8 +137,8 @@ describe('permits are core decisions', () => {
     const s = setup()
     const [d] = await permitsOf(s)
     await run(s, 'permit', { id: d.id, option: 'once', ticket: d.ticket })
-    const again = await run(s, 'permit', { id: d.id, option: 'refuse', ticket: d.ticket })
-    expect(again.message).toBe('That decision is closed.')
+    const again = await refused(run(s, 'permit', { id: d.id, option: 'refuse', ticket: d.ticket }))
+    expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.refused')).toHaveLength(0)
     const v = setup('p_tom')
     const [vd] = [{ id: 'factory.permit:P-1', ticket: 'DEMO-0052' }]
@@ -269,7 +270,9 @@ describe('Watch live simulator', () => {
     await run(s, 'watch')
     vi.advanceTimersByTime(20_000 * 12)
     expect((await state(s)).children).toHaveLength(n + 10)
-    expect((await run(s, 'watch')).message).toMatch(/limit reached/i)
+    const limit = await refused(run(s, 'watch'))
+    expect(limit).toMatchObject({ status: 409, code: 'factory.demo_limit' })
+    expect(limit.message).toMatch(/limit reached/i)
     vi.advanceTimersByTime(20_000 * 12)
     expect((await state(s)).children).toHaveLength(n + 10)
     expect((await state(s)).watching).toBe(false)

@@ -740,11 +740,11 @@ export class MockStore {
   }
 
   /** github/import: a lane issue becomes a new backlog ticket in workspace `wsId` (the github module removes the issue from its state). */
-  importGithubIssue(wsId: string, item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult {
+  importGithubIssue(wsId: string, item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult | StoreFailure {
     const ws = this.workspaces.find((w) => w.id === wsId)!
     const title = item.title?.trim()
     const m = /^(.*)#(\d+)$/.exec(item.subtitle ?? '')
-    if (!title || !m) return { ok: true, message: 'Nothing to import.' }
+    if (!title || !m) return refuse(400, 'validation', 'That issue has no title or number to import.')
     const [, repo, number] = m
     const external = `GH-${number}`
     const nums = [...this.defs.keys()].filter((k) => k.startsWith(ws.prefix + '-')).map((k) => Number(k.slice(ws.prefix.length + 1)))
@@ -891,7 +891,7 @@ export class MockStore {
     if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
     // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
     const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
-    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return { ok: true, message: 'That decision is closed.' }
+    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return refuse(409, 'decision.closed', 'That decision is closed.')
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
     if (meta?.confirm === 'sign' && res.ok) {

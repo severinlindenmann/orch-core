@@ -85,7 +85,11 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       void qc.invalidateQueries({ queryKey: ['today'] })
       if (res.changed) void qc.invalidateQueries()
     },
-    onError: (err) => toastApiError(err, 'Action failed'),
+    // A refusal can still have been recorded in the addon's state (e.g. a rejected push): read it again.
+    onError: (err, { addon }) => {
+      toastApiError(err, 'Action failed')
+      void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })
+    },
   })
 
   const run = (addon: string, action: string, extra?: Record<string, unknown>) => {

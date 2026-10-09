@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -84,8 +85,8 @@ describe('github approve and open', () => {
   })
   it('approve refuses a merged PR and an unknown one', async () => {
     const s = setup()
-    expect((await s.api.runAddonAction(s.ws, 'github', 'approve', { id: 'acme-energy/energy-dbt#27' })).changed).toBeFalsy()
-    expect((await s.api.runAddonAction(s.ws, 'github', 'approve', { id: 'nope' })).changed).toBeFalsy()
+    expect(await refused(s.api.runAddonAction(s.ws, 'github', 'approve', { id: 'acme-energy/energy-dbt#27' }))).toMatchObject({ status: 409, code: 'github.merged' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'github', 'approve', { id: 'nope' }))).toMatchObject({ status: 404, code: 'not_found' })
   })
   it('open returns the github.com url and changes nothing', async () => {
     const s = setup()
@@ -115,7 +116,6 @@ describe('github import (list item action)', () => {
   })
   it('importing an issue that is gone does nothing', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'github', 'import', { id: 'nope' })
-    expect(r.changed).toBeFalsy()
+    expect(await refused(s.api.runAddonAction(s.ws, 'github', 'import', { id: 'nope' }))).toMatchObject({ status: 404 })
   })
 })

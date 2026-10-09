@@ -30,7 +30,7 @@ describe('action minimum roles are declared once, in the package manifest', () =
   it('the store enforces the manifest: save_settings owner-only, decide maintainer, others member', async () => {
     const mara = setup('p_mara') // maintainer
     expect(await status(mara.api.runAddonAction(mara.ws, 'estimate', 'save_settings', { formData: {} }))).toBe(403)
-    expect(await status(mara.api.runAddonAction(mara.ws, 'publish', 'decide', { id: 'nope', option: 'no' }))).toBe(200)
+    expect(await status(mara.api.runAddonAction(mara.ws, 'publish', 'decide', { id: 'nope', option: 'no' }))).toBe(409) // allowed; that decision is not open
     expect(await status(mara.api.runAddonAction(mara.ws, 'publish', 'share', { ticket: 'DEMO-0041' }))).toBe(200)
     const sev = setup('p_sev')
     expect(await status(sev.api.runAddonAction(sev.ws, 'estimate', 'save_settings', { formData: {} }))).toBe(200)

@@ -4,7 +4,7 @@
 //    binds against the ticket summary only, so it cannot read addon state. `weight` is the number the Board sums:
 //    the points themselves, or for t-shirt sizes the fixed mapping XS=1 S=2 M=3 L=5 XL=8.
 //  - The ticket panel's choices come from the scale (view() exposes `pointsSchema`).
-import { registerAddon } from './registry'
+import { invalid, registerAddon } from './registry'
 
 const SCALES: Record<string, (string | number)[]> = {
   fibonacci: [1, 2, 3, 5, 8, 13, 21],
@@ -36,10 +36,11 @@ registerAddon({
   actions: {
     set({ store, ticket, body, state }) {
       const raw = (body.formData as { points?: unknown } | undefined)?.points
-      if (!ticket || raw === undefined || raw === null || raw === '') return { ok: true, message: 'Nothing to save.' }
+      if (!ticket) return invalid('Pick a ticket first.')
+      if (raw === undefined || raw === null || raw === '') return invalid('Pick a value first.')
       const scale = scaleOf(state)
       const points = SCALES[scale].find((o) => String(o) === String(raw))
-      if (points === undefined) return { ok: true, message: `${String(raw)} is not on the ${scale} scale.` }
+      if (points === undefined) return invalid(`${String(raw)} is not on the ${scale} scale.`)
       store.setAddonData(ticket, 'estimate', (d) => {
         d.points = points
         d.weight = weightOf(points)

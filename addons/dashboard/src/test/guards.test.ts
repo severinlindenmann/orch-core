@@ -40,3 +40,18 @@ describe('orange guard (orange is reserved for addons)', () => {
     expect(hits).toEqual([])
   })
 })
+
+describe('refusal guard (refusals are 4xx with a code, never a success)', () => {
+  // A sentence that says the request was not honoured must come back as a StoreFailure (refusal/notFound/invalid/conflict).
+  const REFUSAL = /ok: true, message: [`'"](?:No such|That [^`'"]* (?:no longer|is closed)|Pick |Only |Write |Choose |Nothing to|[^`'"]* is not |[^`'"]* already (?:has|exists|merged))/
+  it('no addon module returns ok:true with a refusal sentence', () => {
+    const hits: string[] = []
+    for (const { file, text } of FILES) {
+      if (!file.startsWith('mocks/')) continue
+      text.split('\n').forEach((line, i) => {
+        if (REFUSAL.test(line)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 140)}`)
+      })
+    }
+    expect(hits).toEqual([])
+  })
+})

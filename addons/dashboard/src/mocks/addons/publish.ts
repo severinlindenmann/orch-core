@@ -2,7 +2,7 @@ import type { AddonDecision } from '@/api/types'
 import { briefs, tokenOf } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, getAddon, markDecided, openDecisions, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, getAddon, invalid, markDecided, notFound, openDecisions, registerAddon, type AddonCtx } from './registry'
 
 // publish: apps served from the workspace and read-only shares. Addon state is the single source of truth for both;
 // nothing is written to ticket addon data. The ticket panel reads `addon.sharesByTicket.$ticket` (see view()).
@@ -201,7 +201,7 @@ registerAddon({
   actions: {
     share(ctx) {
       const { store, ticket, state } = ctx
-      if (!ticket || !canSeeTicket(ctx, ticket)) return { ok: true, message: 'Pick a ticket first.' }
+      if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       const days = settingsOf(state).default_expiry_days
       newShare(state, ticket, 'secret link', `share/${ticket.toLowerCase()}`, token(state))
       store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
@@ -218,15 +218,15 @@ registerAddon({
     copy_link(ctx) {
       const { state, body } = ctx
       const x = visibleShare(ctx, body.id)
-      if (!x) return { ok: true, message: 'That share no longer exists.' }
-      if (x.kind === 'show-once') return { ok: true, message: 'This link was shown once and cannot be copied again. Revoke it and make a new one.' }
-      if (!x.token) return { ok: true, message: `Sealed to ${x.recipient}: it opens only for them, so there is no link to copy.` }
+      if (!x) return notFound('That share no longer exists.')
+      if (x.kind === 'show-once') return conflict('publish.shown_once', 'This link was shown once and cannot be copied again.', 'Revoke it and make a new one.')
+      if (!x.token) return conflict('publish.sealed', `Sealed to ${x.recipient}: it opens only for them, so there is no link to copy.`)
       return { ok: true, message: `Link copied: ${linkOf(settingsOf(state), x.token)}` }
     },
     extend(ctx) {
       const { body } = ctx
       const x = visibleShare(ctx, body.id)
-      if (!x) return { ok: true, message: 'That share no longer exists.' }
+      if (!x) return notFound('That share no longer exists.')
       x.expires_in_days += 7
       return { ok: true, message: `${x.title} now expires in ${x.expires_in_days} days.`, changed: true }
     },
@@ -234,34 +234,34 @@ registerAddon({
       const { store, state, body } = ctx
       const list = shares(state)
       const i = list.findIndex((s) => s.id === body.id && (!s.ticket || canSeeTicket(ctx, s.ticket)))
-      if (i < 0) return { ok: true, message: 'That share no longer exists.' }
+      if (i < 0) return notFound('That share no longer exists.')
       const [x] = list.splice(i, 1)
       if (x.ticket && store.hasTicket(x.ticket)) store.append(x.ticket, { type: 'publish.revoked', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Revoked ${x.title}. The link stops working now.`, changed: true }
     },
     start({ state, body }) {
       const x = apps(state).find((a) => a.id === body.id)
-      if (!x) return { ok: true, message: 'No such app.' }
-      if (x.status === 'failed') return { ok: true, message: `${x.name} failed to build. Redeploy it first.` }
+      if (!x) return notFound('No such app.')
+      if (x.status === 'failed') return conflict('publish.build_failed', `${x.name} failed to build.`, 'Redeploy it first.')
       x.status = 'running'
       x.log.push('Started')
       return { ok: true, message: `${x.name} is running.`, changed: true }
     },
     stop({ state, body }) {
       const x = apps(state).find((a) => a.id === body.id)
-      if (!x) return { ok: true, message: 'No such app.' }
+      if (!x) return notFound('No such app.')
       x.status = 'stopped'
       x.log.push('Stopped')
       return { ok: true, message: `${x.name} stopped.`, changed: true }
     },
     logs({ state, body }) {
       const x = apps(state).find((a) => a.id === body.id)
-      if (!x) return { ok: true, message: 'No such app.' }
+      if (!x) return notFound('No such app.')
       return { ok: true, message: `${x.name}: ${x.log.slice(-3).join(' / ')}` }
     },
     redeploy({ state, body }) {
       const x = apps(state).find((a) => a.id === body.id)
-      if (!x) return { ok: true, message: 'No such app.' }
+      if (!x) return notFound('No such app.')
       x.status = 'running'
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
@@ -272,7 +272,7 @@ registerAddon({
       const option = String(body.option ?? '')
       // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
       const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? [], ctx).find((d) => d.id === id)
-      if (!open || (open.ticket && !canSeeTicket(ctx, open.ticket))) return { ok: true, message: 'That decision is closed.' }
+      if (!open || (open.ticket && !canSeeTicket(ctx, open.ticket))) return conflict('decision.closed', 'That decision is closed.')
       markDecided(state, id)
       if (id === 'dec_publish_failed_build') {
         const ops = apps(state).find((a) => a.id === 'app_ops')

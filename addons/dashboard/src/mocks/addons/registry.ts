@@ -57,6 +57,18 @@ export function canSeeTicket(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, key: 
   return !!key && c.store.workspaceOf(key)?.id === c.ws && c.store.isVisible(key, c.viewer)
 }
 
+/**
+ * A refusal: the request was not honoured. The router answers with this status and stable code, and the client shows
+ * the message as an error. Return `{ ok: true }` only when the request was honoured (with or without a change).
+ * Codes: `not_found` (404: no such item, or one the caller cannot see), `validation` (400: missing or bad input),
+ * `validation.option` (400: not one of the decision's options), `forbidden` (403), and `<addon>.<reason>` (409: the
+ * item is in a state that does not allow it).
+ */
+export const refusal = (status: 400 | 403 | 404 | 409, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, ...(hint ? { hint } : {}) })
+export const notFound = (message: string): StoreFailure => refusal(404, 'not_found', message)
+export const invalid = (message: string): StoreFailure => refusal(400, 'validation', message)
+export const conflict = (code: string, message: string, hint?: string): StoreFailure => refusal(409, code, message, hint)
+
 /** Record a decision as made (the default `decisions` filter hides ids listed in `state.decided`). */
 export function markDecided(state: Record<string, unknown>, id: string): void {
   const done = (state.decided as string[] | undefined) ?? []

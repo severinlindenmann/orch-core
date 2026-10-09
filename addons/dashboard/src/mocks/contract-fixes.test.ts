@@ -98,7 +98,7 @@ describe('the signed manifest is the one enforced after an update', () => {
     store.setViewer('p_tom')
     expect(await ok(api.runAddonAction(ws, 'wiki', 'search', { query: 'a' }))).toBe('refused')
     expect(await fail(api.runAddonAction(ws, 'wiki', 'search', { query: 'a' }))).toMatchObject({ status: 403 })
-    expect(await ok(api.runAddonAction(ws, 'wiki', 'open', { slug: 'x' }))).toBe('ok')
+    expect(await ok(api.runAddonAction(ws, 'wiki', 'open', { slug: 'glossary' }))).toBe('ok')
   })
   it('an update that adds one lets viewers run it after the re-grant, not before', async () => {
     const { store, api, ws } = setup()

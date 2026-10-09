@@ -5,6 +5,7 @@ import type { LaunchPreview } from '@/api/types'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 import { getAddon } from './registry'
 
 // model routing (`models`, capability `launch`): picks the model a start-agent session starts on.
@@ -209,8 +210,8 @@ describe('escalation after a task failed its check in two sessions', () => {
   })
   it('a closed or made-up decision does nothing', async () => {
     const s = setup()
-    const res = await s.api.runAddonAction(s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0044:T1:2', option: 'strong', ticket: 'DEMO-0044' })
-    expect(res.message).toBe('That decision is closed.')
+    const res = await refused(s.api.runAddonAction(s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0044:T1:2', option: 'strong', ticket: 'DEMO-0044' }))
+    expect(res).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     expect((await models(s)).nextStrong).toEqual([])
   })
   it('people who cannot see DEMO-0045 get no decision and cannot escalate it', async () => {

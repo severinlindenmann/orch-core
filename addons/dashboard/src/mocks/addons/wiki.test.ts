@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 
 const setup = (viewer?: string) => {
   const store = createMockStore({ persist: false })
@@ -59,8 +60,8 @@ describe('wiki actions', () => {
   it('open by title or with an unknown slug changes nothing: pages are addressed by slug only', async () => {
     const s = setup()
     const st0 = await state(s)
-    await run(s, 'open', { slug: 'nope' })
-    await run(s, 'open', { slug: st0.pages[2].title })
+    expect(await refused(run(s, 'open', { slug: 'nope' }))).toMatchObject({ status: 404 })
+    expect(await refused(run(s, 'open', { slug: st0.pages[2].title }))).toMatchObject({ status: 404 })
     expect((await state(s)).current.slug).toBe(st0.current.slug)
   })
   it('save writes to the page named in the form, even after the open page changed meanwhile', async () => {
@@ -82,8 +83,8 @@ describe('wiki actions', () => {
     const p = st.pages.find((x) => x.slug === a.slug) as Page & { updated: string }
     expect(p).toMatchObject({ title: 'New title', markdown: '# Fresh text', by: 'Mara' })
     expect(p.updated.startsWith('2026-10-09')).toBe(true)
-    await run(s, 'save', { formData: { slug: a.slug, title: b.title.toUpperCase(), markdown: 'dup' } })
-    await run(s, 'save', { formData: { slug: a.slug, title: '  ', markdown: 'empty' } })
+    expect(await refused(run(s, 'save', { formData: { slug: a.slug, title: b.title.toUpperCase(), markdown: 'dup' } }))).toMatchObject({ status: 409, code: 'wiki.title_taken' })
+    expect(await refused(run(s, 'save', { formData: { slug: a.slug, title: '  ', markdown: 'empty' } }))).toMatchObject({ status: 400, code: 'validation' })
     st = await state(s)
     expect(st.pages.find((x) => x.slug === a.slug)).toMatchObject({ title: 'New title', markdown: '# Fresh text' })
   })
@@ -103,7 +104,7 @@ describe('wiki actions', () => {
     expect(st0.byTicket['DEMO-0043'].length).toBeGreaterThanOrEqual(2)
     expect(st0.pageOptions[0]).toEqual({ const: st0.pages[0].slug, title: st0.pages[0].title })
     const free = st0.pages.find((p) => !p.tickets.includes('DEMO-0042'))!
-    await run(s, 'link', { ticket: 'DEMO-0042', formData: { page: free.title } }) // a title is not an address
+    expect(await refused(run(s, 'link', { ticket: 'DEMO-0042', formData: { page: free.title } }))).toMatchObject({ status: 400 }) // a title is not an address
     expect((await state(s)).byTicket['DEMO-0042'].map((i) => i.title)).not.toContain(free.title)
     await run(s, 'link', { ticket: 'DEMO-0042', formData: { page: free.slug } })
     expect((await state(s)).byTicket['DEMO-0042'].map((i) => i.title)).toContain(free.title)

@@ -1,7 +1,7 @@
 import { atLeast, roleOf } from '@/api/permissions'
 import type { Actor } from '@/api/types'
 import { describeEvent } from '../derive'
-import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, notFound, registerAddon, type AddonCtx } from './registry'
 
 // activity: the workspace-wide timeline (v1 D11).
 //  - Built in view() from store.eventsOf over the workspace's tickets plus store.wsEventsOf. A ticket's events are listed
@@ -291,7 +291,7 @@ registerAddon({
   actions: {
     toggle_group(ctx) {
       const g = GROUPS.find((x) => x.id === ctx.body.group)
-      if (!g) return { ok: true, message: 'No such type.' }
+      if (!g) return notFound('No such type.')
       const n = navOf(ctx.state, ctx.viewer)
       setNav(ctx.state, ctx.viewer, { groups: n.groups.includes(g.id) ? n.groups.filter((x) => x !== g.id) : [...n.groups, g.id], pages: 1 })
       return { ok: true, message: `${g.label} filter changed.`, changed: true }
@@ -299,7 +299,7 @@ registerAddon({
     toggle_person(ctx) {
       const w = ctx.store.workspaces.find((x) => x.id === ctx.ws)
       const id = String(ctx.body.id ?? '')
-      if (!w?.members.some((m) => m.person === id)) return { ok: true, message: 'No such person.' }
+      if (!w?.members.some((m) => m.person === id)) return notFound('No such person.')
       const n = navOf(ctx.state, ctx.viewer)
       setNav(ctx.state, ctx.viewer, { people: n.people.includes(id) ? n.people.filter((x) => x !== id) : [...n.people, id], pages: 1 })
       return { ok: true, message: 'Person filter changed.', changed: true }
@@ -307,7 +307,7 @@ registerAddon({
     toggle_agent(ctx) {
       const id = String(ctx.body.id ?? '')
       // Only agents that appear in what this viewer can see.
-      if (!entriesOf(ctx).some((e) => e.kind === 'agent' && e.actorId === id)) return { ok: true, message: 'No such agent.' }
+      if (!entriesOf(ctx).some((e) => e.kind === 'agent' && e.actorId === id)) return notFound('No such agent.')
       const n = navOf(ctx.state, ctx.viewer)
       setNav(ctx.state, ctx.viewer, { agents: n.agents.includes(id) ? n.agents.filter((x) => x !== id) : [...n.agents, id], pages: 1 })
       return { ok: true, message: 'Agent filter changed.', changed: true }

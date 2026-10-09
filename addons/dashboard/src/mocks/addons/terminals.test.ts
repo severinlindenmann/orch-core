@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import { refused } from '@/test/refused'
 import type { ShellCtx } from '@/app/terminal/fakePty'
 
 const setup = (viewer?: string) => {
@@ -105,10 +106,11 @@ describe('terminals navigation (per viewer)', () => {
   })
   it('open ignores unknown sessions and other people\'s shells', async () => {
     const s = setup('p_sev')
-    await run(s, 'open', { session: 'nope' })
+    expect(await refused(run(s, 'open', { session: 'nope' }))).toMatchObject({ status: 404 })
     await run(s, 'open', { session: 'agent1' })
     const m = as(s, 'p_mara')
-    const r = await run(m, 'open', { session: 'shell1' })
+    const r = await refused(run(m, 'open', { session: 'shell1' }))
+    expect(r).toMatchObject({ status: 404, code: 'not_found' })
     expect(r.message).toMatch(/not found|no such/i)
     expect((await state(m)).current.id).toBe('agent1')
   })
@@ -136,12 +138,13 @@ describe('terminals actions', () => {
     const s = setup('p_sev')
     await run(s, 'close', { session: 'shell1' })
     expect((await state(s)).sessions.find((x) => x.id === 'shell1')).toMatchObject({ status: 'stopped', interactive: false })
-    const r = await run(s, 'close', { session: 'agent1' })
+    const r = await refused(run(s, 'close', { session: 'agent1' }))
+    expect(r).toMatchObject({ status: 403, code: 'forbidden' })
     expect(r.message).toMatch(/only/i)
     expect((await state(s)).sessions.find((x) => x.id === 'agent1')!.status).toBe('running')
     const m = as(s, 'p_mara')
     await run(m, 'open', { session: 'agent1' })
-    expect((await run(m, 'close', { session: 'shell1' })).message).toMatch(/not found|no such/i)
+    expect((await refused(run(m, 'close', { session: 'shell1' }))).message).toMatch(/not found|no such/i)
   })
   it('open_ticket reuses your running shell for that ticket, else creates one, and exposes it by ticket', async () => {
     const s = setup('p_sev')

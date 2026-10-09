@@ -3,6 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused } from '@/test/refused'
 
 // Schedules (later, preview): three kinds with when/on, skill, armed state, last and next run from the mock clock.
 // Arm/Disarm are signed by core; "Run now" adds a run with a markdown report; a recurring finding is a Today decision.
@@ -170,7 +171,7 @@ describe('a recurring finding lands on Today', () => {
     const s = setup()
     const [d] = await decisions(s)
     await run(s, 'finding', { id: d.id, option: 'dismiss' })
-    expect((await run(s, 'finding', { id: d.id, option: 'file' })).message).toBe('That decision is closed.')
+    expect(await refused(run(s, 'finding', { id: d.id, option: 'file' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     await run(s, 'run_now', { id: 'deps-weekly' })
     const next = await decisions(s)
     expect(next).toHaveLength(1)

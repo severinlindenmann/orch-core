@@ -4,6 +4,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
+import { refused as refusal } from '@/test/refused'
 
 // Security sweep: an addon's state and actions must not reveal a ticket the viewer cannot see.
 // DEMO-0041 and DEMO-0043 are restricted to Severin; Mara (a maintainer) is outside the list.
@@ -92,14 +93,13 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   it('publish: copy_link, extend and revoke by id do nothing for a hidden ticket share', async () => {
     const s = setup('p_mara')
     const before = JSON.stringify(s.store.addonState(s.ws, 'publish').shares)
-    for (const id of ['copy_link', 'extend', 'revoke']) expect((await run(s, 'publish', id, { id: 'sh_report' })).message).toBe('That share no longer exists.')
+    for (const id of ['copy_link', 'extend', 'revoke']) expect(await refusal(run(s, 'publish', id, { id: 'sh_report' }))).toMatchObject({ status: 404, message: 'That share no longer exists.' })
     expect(JSON.stringify(s.store.addonState(s.ws, 'publish').shares)).toBe(before)
   })
   it('publish: the decision about a hidden ticket is not on Today and cannot be decided by id', async () => {
     const s = setup('p_mara')
     expect((await s.api.getAddonDecisions(s.ws)).some((d) => d.ticket === 'DEMO-0041')).toBe(false)
-    const r = await run(s, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes' })
-    expect(r.message).toBe('That decision is closed.')
+    expect(await refusal(run(s, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
     expect(s.store.addonState(s.ws, 'publish').shares).toHaveLength(5) // no share was created
     // Severin still sees and can decide it.
     const t = setup('p_sev')
@@ -108,11 +108,9 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   it('github: approve, open and refresh by id do not touch a hidden ticket PR', async () => {
     const s = setup('p_mara')
     const id = 'acme-energy/energy-dbt#29' // DEMO-0041
-    expect((await run(s, 'github', 'approve', { id })).message).toBe('That pull request no longer exists.')
-    const open = await run(s, 'github', 'open', { id })
-    expect(open.message).toBe('That pull request no longer exists.')
-    expect(open.url).toBeUndefined()
-    expect((await run(s, 'github', 'refresh', { id: 'acme-energy/energy-dbt#31' })).message).toBe('That pull request no longer exists.') // DEMO-0043
+    expect(await refusal(run(s, 'github', 'approve', { id }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' })
+    expect(await refusal(run(s, 'github', 'open', { id }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' })
+    expect(await refusal(run(s, 'github', 'refresh', { id: 'acme-energy/energy-dbt#31' }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' }) // DEMO-0043
     const prs = s.store.addonState(s.ws, 'github').prs as { id: string; review: string; checks: { status: string }[] }[]
     expect(prs.find((p) => p.id === id)!.review).toBe('requested')
     expect(prs.find((p) => p.id === 'acme-energy/energy-dbt#31')!.checks.some((c) => c.status === 'pending')).toBe(true)
@@ -126,7 +124,7 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   })
   it('terminals: a hidden ticket session cannot be opened or closed by id', async () => {
     const s = setup('p_mara')
-    expect((await run(s, 'terminals', 'open', { session: 'agent1' })).message).toBe('No such terminal session.')
-    expect((await run(s, 'terminals', 'close', { session: 'agent1' })).message).toBe('No such terminal session.')
+    expect(await refusal(run(s, 'terminals', 'open', { session: 'agent1' }))).toMatchObject({ status: 404, message: 'No such terminal session.' })
+    expect(await refusal(run(s, 'terminals', 'close', { session: 'agent1' }))).toMatchObject({ status: 404, message: 'No such terminal session.' })
   })
 })

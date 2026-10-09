@@ -3,7 +3,7 @@ import { atLeast } from '@/api/permissions'
 import { briefs } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, invalid, notFound, refusal, registerAddon, type AddonCtx } from './registry'
 
 // terminals: a fake PTY per session (the shell itself is src/app/terminal/fakePty.ts and runs in the browser).
 // This module owns the sessions and who may see and type in them.
@@ -152,7 +152,7 @@ registerAddon({
         return { ok: true, message: 'Your terminal is under Terminals in the sidebar.', changed: true }
       }
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
-      if (!s) return { ok: true, message: 'No such terminal session.' }
+      if (!s) return notFound('No such terminal session.')
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Opened ${s.label}.`, changed: true }
     },
@@ -164,14 +164,14 @@ registerAddon({
     close(ctx) {
       const { state, body, viewer } = ctx
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
-      if (!s) return { ok: true, message: 'No such terminal session.' }
-      if (s.kind !== 'person' || s.owner !== viewer) return { ok: true, message: 'Only the owner can close a terminal; agent sessions are mirrors.' }
+      if (!s) return notFound('No such terminal session.')
+      if (s.kind !== 'person' || s.owner !== viewer) return refusal(403, 'forbidden', 'Only the owner can close a terminal; agent sessions are mirrors.')
       s.status = 'stopped'
       return { ok: true, message: `Closed ${s.label}.`, changed: true }
     },
     open_ticket(ctx) {
       const { state, store, ws, viewer, ticket } = ctx
-      if (!ticket || !canSeeTicket(ctx, ticket)) return { ok: true, message: 'Pick a ticket first.' }
+      if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, ws, viewer, ticket)
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }

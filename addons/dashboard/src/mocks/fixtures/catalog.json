@@ -760,6 +760,15 @@
           "type": "stack",
           "children": [
             {
+              "type": "stack",
+              "direction": "row",
+              "fit": true,
+              "children": [
+                { "type": "markdown", "text": "Files between devices, people and workspaces. Live apps and links to tickets go through Apps & shares." },
+                { "type": "link", "label": "Open Apps & shares", "href": "/addon/publish/shares" }
+              ]
+            },
+            {
               "type": "alert",
               "tone": "info",
               "title": "Simulated",

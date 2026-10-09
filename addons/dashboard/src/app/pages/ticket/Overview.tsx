@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { NotebookPen } from 'lucide-react'
 import { addonActive } from '@/api/addons'
@@ -9,8 +9,8 @@ import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { BlockProblem, ErrorBoundary } from '@/components/ErrorBoundary'
 import { cn } from '@/lib/utils'
 import { ago, Pill, type TabProps } from './shared'
-import { resolveTicketWidgets, type Segment } from './widgets/parse'
-import { WidgetBlock } from './widgets/WidgetBlock'
+import { resolveTicketWidgets, type Segment, type WidgetSpec } from './widgets/parse'
+import { WidgetBlock, type PrototypeOf } from './widgets/WidgetBlock'
 
 type SectionKey = keyof BodySections
 
@@ -54,19 +54,59 @@ export function asListItems(text: string): string {
     .join('\n')
 }
 
-/** A section's prose with its widgets drawn in place (core types inline, templates and pages in the sandboxed frame). */
-function SectionBody({ segments, ticket, agentHtml, label, list }: { segments: Segment[]; ticket: TicketDocument; agentHtml: boolean; label: string; list?: boolean }) {
+/** How many widgets Current state shows before "N more widgets": the handoff stays readable at a glance. */
+export const HANDOFF_WIDGETS = 2
+
+/**
+ * A widget that sketches the options of an open question (an option prototype, or a widget titled "Q2: …") is a
+ * prototype, not the decision: it names the question it belongs to, which is answered (and signed) in Questions.
+ */
+/** The open question a prototype belongs to; '' when it belongs to Questions but to no one question; undefined when it is not a prototype. */
+export function prototypeQuestion(spec: WidgetSpec | undefined, ticket: Pick<TicketDocument, 'questions_state'>): string | undefined {
+  if (!spec) return undefined
+  const open = ticket.questions_state.filter((q) => q.state === 'open').map((q) => q.id)
+  const titled = spec.title?.match(/^(Q\d+)\s*:/)?.[1]
+  const options = spec.widget?.startsWith('option-prototype@')
+  if (!titled && !options) return undefined
+  const named = titled ?? `${spec.title ?? ''} ${spec.caption ?? ''}`.match(/\b(Q\d+)\b/)?.[1]
+  if (named) return open.includes(named) ? named : undefined
+  // An option prototype on a ticket with several open questions and none named: still a prototype, answered in
+  // Questions ('' = no particular question). With no open question it is just a widget.
+  return open.length === 1 ? open[0] : open.length > 1 && options ? '' : undefined
+}
+
+/**
+ * A section's prose with its widgets drawn in place (core types inline, templates and pages in the sandboxed frame).
+ * `maxWidgets`: widgets after that many wait behind "N more widgets" (prose stays); not mounted until asked for.
+ */
+function SectionBody({ segments, ticket, agentHtml, label, list, maxWidgets, jump }: { segments: Segment[]; ticket: TicketDocument; agentHtml: boolean; label: string; list?: boolean; maxWidgets?: number; jump: TabProps['jump'] }) {
+  const [all, setAll] = useState(false)
+  const total = segments.filter((s) => s.kind === 'widget').length
+  const limit = maxWidgets !== undefined && !all && total > maxWidgets ? maxWidgets : Infinity
+  let seen = 0
   return (
     <>
-      {segments.map((s, i) =>
-        s.kind === 'markdown' ? (
-          s.text.trim() ? <SafeMarkdown key={i} text={list ? asListItems(s.text) : s.text} /> : null
-        ) : (
+      {segments.map((s, i) => {
+        if (s.kind === 'markdown') return s.text.trim() ? <SafeMarkdown key={i} text={list ? asListItems(s.text) : s.text} /> : null
+        if (++seen > limit) return null
+        const q = prototypeQuestion(s.block.reason ? undefined : s.block.spec, ticket)
+        const prototype: PrototypeOf | undefined = q === undefined ? undefined : { question: q || undefined, answer: () => jump(q ? { tab: 'questions', id: `question-${q}` } : { tab: 'questions' }) }
+        return (
           // Reset when the block's text changes (another ticket, or a live update that fixed it).
           <ErrorBoundary key={i} resetKey={`${ticket.key}\n${s.block.raw}`} fallback={() => <BlockProblem what="This widget" />}>
-            <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} />
+            <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} prototype={prototype} />
           </ErrorBoundary>
-        ),
+        )
+      })}
+      {maxWidgets !== undefined && total > maxWidgets && (
+        <button
+          type="button"
+          aria-expanded={all}
+          onClick={() => setAll(!all)}
+          className="mt-1 rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] text-text-muted hover:bg-surface-2 hover:text-text"
+        >
+          {all ? 'Show fewer widgets' : `${total - maxWidgets} more widget${total - maxWidgets === 1 ? '' : 's'}`}
+        </button>
       )}
     </>
   )
@@ -75,7 +115,7 @@ function SectionBody({ segments, ticket, agentHtml, label, list }: { segments: S
 /** The handoff comes first, then the written sections in spec order. */
 const SHOW_ORDER: SectionKey[] = ['current_state', ...SECTION_ORDER.filter((k) => k !== 'current_state')]
 
-export function Overview({ ticket }: TabProps) {
+export function Overview({ ticket, jump }: TabProps) {
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   const widgets = useMemo(() => resolveTicketWidgets(ticket.body, { order: SECTION_ORDER, label: (k) => sectionTitle(k as SectionKey, ticket.type) }), [ticket.body, ticket.type])
@@ -101,7 +141,16 @@ export function Overview({ ticket }: TabProps) {
               </h2>
               {handoff && <Pill tone="brand">handoff{handoffAt ? ` · ${ago(handoffAt)}` : ''}</Pill>}
             </div>
-            <SectionBody segments={widgets[key] ?? []} ticket={ticket} agentHtml={agentHtml} label={sectionTitle(key, ticket.type)} list={key === 'requirements'} />
+            <SectionBody
+              key={ticket.key}
+              segments={widgets[key] ?? []}
+              ticket={ticket}
+              agentHtml={agentHtml}
+              label={sectionTitle(key, ticket.type)}
+              list={key === 'requirements'}
+              maxWidgets={handoff ? HANDOFF_WIDGETS : undefined}
+              jump={jump}
+            />
           </section>
         )
       })}

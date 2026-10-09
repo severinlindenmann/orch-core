@@ -159,10 +159,18 @@ export function findTemplate(ref: string): WidgetTemplate | undefined {
 }
 
 /**
+ * Core's own script after the page: it tells the host how tall the content is, so a frame shrinks to fit (never
+ * grows past the height core gave it). Only a number crosses; the host takes it only from this frame's window.
+ */
+export const FRAME_SIZE_REPORTER =
+  '<script>(function(){var last=0;function send(){var b=document.body;if(!b)return;var h=Math.ceil(b.getBoundingClientRect().height);if(h>0&&h!==last){last=h;parent.postMessage({orch:"size",height:h},"*")}}' +
+  'if(window.ResizeObserver&&document.body)new ResizeObserver(send).observe(document.body);addEventListener("load",send);send()})()</script>'
+
+/**
  * The frame document for a template or a one-off page: the block's data as inert JSON (`<` escaped), a tiny `orch`
  * object (data only; the text/ready/resize hooks are no-ops in the mock), then the page. The frame node prepends the CSP.
  * Core's base style keeps an SVG inside the frame's height (a width-100% chart in a wide card would otherwise be cut
- * off); it is core's wrapper, not part of any template's pinned bytes.
+ * off); it is core's wrapper, not part of any template's pinned bytes, and so is the size reporter.
  */
 export function frameDocument(page: string, data: unknown): string {
   const json = JSON.stringify(data ?? {}).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16))
@@ -170,6 +178,7 @@ export function frameDocument(page: string, data: unknown): string {
     '<style>:root{color-scheme:dark}html,body{margin:0}body{padding:8px;font:12px/1.45 ui-sans-serif,system-ui,sans-serif;color:CanvasText;background:Canvas}svg{max-height:calc(100vh - 16px)}</style>' +
     `<script type="application/json" id="orch-data">${json}</script>` +
     '<script>window.orch={data:JSON.parse(document.getElementById("orch-data").textContent),text:function(){},ready:function(){},resize:function(){}}</script>' +
-    page
+    page +
+    FRAME_SIZE_REPORTER
   )
 }

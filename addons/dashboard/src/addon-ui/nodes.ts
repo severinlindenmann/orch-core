@@ -135,10 +135,14 @@ export const buttonNode = z.object({
   /** Why it cannot be used now: core disables the button and shows this reason with it. */
   disabled: z.string().max(160).optional(),
 })
+/** An addon page inside the app; nothing else internal (no settings, no query strings). */
+export const INTERNAL_LINK = /^\/addon\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,40}$/
+
 export const linkNode = z.object({
   type: z.literal('link'),
   label: z.string().max(120),
-  href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h), 'only http(s) links'),
+  /** An http(s) URL (opens in a new tab), or another addon's page in this app: `/addon/<name>/<page>` (core's router). */
+  href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h) || INTERNAL_LINK.test(h), 'only http(s) links or /addon/<name>/<page>'),
 })
 
 export const alertNode = z.object({ type: z.literal('alert'), tone: z.enum(['info', 'success', 'warn', 'error']), title: text, text: text.optional() })
@@ -151,7 +155,8 @@ export const frameNode = z.object({
 })
 /** One open decision of this addon (by id), rendered and signed by core in place. The id is looked up in core's list. */
 export const decisionNode = z.object({ type: z.literal('decision'), id: z.string().min(1).max(200) })
-export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
+/** `session` may be empty (bound to state that has no session for this ticket yet): core then draws nothing. */
+export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{0,40}$/) })
 /**
  * A ticket widget (format orch.widgets.v1) drawn by core: `block` is the JSON inside an `orch` fence, read by the same
  * strict parser as ticket text (fail closed). Templates run in the sandboxed frame only on the widgets addon's own

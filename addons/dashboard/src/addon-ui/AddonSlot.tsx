@@ -92,11 +92,13 @@ const writeOpen = (c: ResolvedContribution, open: boolean) => {
 /**
  * Panels as 32 px header buttons (the A, the title, a chevron), collapsed by default. What the person opens is
  * remembered per panel, and at most two stay open: opening a third closes the one opened longest ago.
+ * The panels sit in one "Addons" group (the caller's heading), so their borders are neutral: the A in each header is
+ * the one addon marker per panel.
  */
-export function CollapsibleStack({ items, ctx = {}, readOnly, className, level = 2 }: { items: ResolvedContribution[]; ctx?: SlotContext; readOnly: boolean; className?: string; level?: 2 | 3 }) {
+export function CollapsibleStack({ items, ctx = {}, readOnly, className, level = 2 }: { items: ResolvedContribution[]; ctx?: SlotContext; readOnly: boolean; className?: string; level?: 2 | 3 | 4 }) {
   const keys = items.map(panelKey)
   const [open, setOpen] = useState<string[]>(() => items.filter(readOpen).map(panelKey).slice(-MAX_OPEN))
-  const Heading = level === 2 ? 'h2' : 'h3'
+  const Heading = (['h2', 'h3', 'h4'] as const)[level - 2]
   /** Opens `adding` on top of `current`, closing the oldest beyond MAX_OPEN; remembers the choice. */
   const withOpened = (current: string[], adding: ResolvedContribution[]): string[] => {
     const next = [...current, ...adding.map(panelKey).filter((k) => !current.includes(k))]
@@ -146,7 +148,7 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
         const isOpen = open.includes(keys[i])
         const id = `panel-${c.addon}-${c.id}`
         return (
-          <section key={keys[i]} data-addon={c.addon} className="rounded-lg border border-addon-border bg-surface">
+          <section key={keys[i]} data-addon={c.addon} className="rounded-lg border border-border bg-surface">
             <Heading className="m-0">
               <button
                 type="button"
@@ -161,7 +163,7 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
               </button>
             </Heading>
             <Collapse open={isOpen} id={id}>
-              <div className="border-t border-addon-border p-3">
+              <div className="border-t border-border p-3">
                 <ContributionBody c={c} ctx={ctx} compact={false} readOnly={readOnly} />
               </div>
             </Collapse>

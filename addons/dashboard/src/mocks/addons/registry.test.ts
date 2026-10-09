@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
+import addonsFixture from '@/mocks/fixtures/addons.json'
+import catalogFixture from '@/mocks/fixtures/catalog.json'
+import { CORE_EVENT_NAMESPACES, registerAddon } from './registry'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -9,6 +12,11 @@ const setup = () => {
 }
 
 describe('addon registry', () => {
+  it('refuses an addon named like a core event namespace, so the seedLog prefix guard cannot be sidestepped', () => {
+    for (const name of ['gate', 'ticket', 'status', 'verdict', 'addon', 'claim', 'question', 'task', 'workspace', 'member'])
+      expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/core event namespace/)
+    for (const p of [...addonsFixture, ...catalogFixture]) expect(CORE_EVENT_NAMESPACES, p.name).not.toContain(p.name)
+  })
   it('serves per-workspace addon state', async () => {
     const { api, ws } = setup()
     const s = await api.getAddonState(ws, 'publish')

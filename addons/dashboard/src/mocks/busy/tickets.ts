@@ -133,7 +133,10 @@ export function buildTicket(st: BuildState, plan: Plan): Built {
   const dev = (a: Arch) => live && ['wip', 'qSev', 'qBoth', 'qMara', 'waitingExt'].includes(a)
   let holder: Session | null = null
   if (dev(arch) && (arch === 'wip' || rng.chance(0.55))) {
-    const pool = arch === 'qMara' ? ROOTS.filter((s) => s.for === 'p_mara') : ROOTS
+    // A session that will wait on a question works for the person the question is addressed to (qMara: Mara; qSev and
+    // qBoth: Severin, who gets Q1), so its "waiting for" names the one who can answer.
+    const forWhom = arch === 'qMara' ? cfg.other : arch === 'qSev' || arch === 'qBoth' ? cfg.owner : null
+    const pool = forWhom ? ROOTS.filter((s) => s.for === forWhom) : ROOTS
     holder = pool[st.claimer++ % pool.length]
   }
   let owner = rng.chance(0.65) ? O : X

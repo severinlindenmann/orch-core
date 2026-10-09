@@ -110,7 +110,19 @@ export function openDecisions(addon: MockAddon | undefined, state: Record<string
 
 const registry = new Map<string, MockAddon>()
 
+/**
+ * Core's own event namespaces (`<namespace>.<verb>`). An addon writes only `<its name>.<verb>` records (the seedLog
+ * guard and the event rules check that prefix), so an addon named like one of these could pass core events off as its
+ * own: such names are refused at registration.
+ */
+export const CORE_EVENT_NAMESPACES: readonly string[] = [
+  'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'epoch', 'gate', 'grant', 'handoff',
+  'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'question', 'relay', 'section', 'skill', 'status', 'task',
+  'ticket', 'verdict', 'verify', 'view', 'workspace',
+]
+
 export function registerAddon(a: MockAddon): void {
+  if (CORE_EVENT_NAMESPACES.includes(a.name)) throw new Error(`Addon name "${a.name}" is a core event namespace; pick another name.`)
   registry.set(a.name, a)
 }
 

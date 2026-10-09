@@ -240,7 +240,8 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
         return byUpdated(a.t, b.t)
     }
   })
-  return rows.map(({ t, match }) => ({ ...s.summary(t), ...(match ? { match } : {}) }))
+  const blocks = s.blockingCheck(ws)
+  return rows.map(({ t, match }) => ({ ...s.summary(t, blocks), ...(match ? { match } : {}) }))
 }
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']

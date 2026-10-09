@@ -2,7 +2,8 @@ import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { ArrowRight, ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +22,7 @@ import { AddonChart } from './AddonChart'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
-import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
+import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
@@ -192,6 +193,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'popover':
       return <PopoverView node={n} depth={depth} />
     case 'link':
+      if (INTERNAL_LINK.test(n.href)) return <InternalLink href={n.href} label={n.label} />
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
           {n.label}
@@ -987,11 +989,26 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
  * Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box.
  * The session id is untrusted: TerminalView resolves it against this addon's own state (this workspace, this viewer).
  */
+/** A link to another addon's page: drawn only while that addon is active here (else there is nothing to open). */
+function InternalLink({ href, label }: { href: string; label: string }) {
+  const { workspace } = useWorkspace()
+  const [, , name, page] = href.split('/')
+  if (!addonActive(workspace, name)) return null
+  return (
+    <Link to="/addon/$name/$page" params={{ name, page }} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+      {label}
+      <ArrowRight className="size-3" aria-hidden />
+    </Link>
+  )
+}
+
 function TerminalNode({ session }: { session: string }) {
   const { addon, ctx } = useContext(RuntimeCtx)
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
+  // No session yet (e.g. the ticket panel before "Open terminal"): nothing to draw.
+  if (!session) return null
   return (
     <Suspense fallback={<Skeleton className="h-64 w-full" />}>
       <TerminalView addon={addon} session={session} placement={ctx.ticket ? 'rail' : 'page'} fallback={<AddonUnavailable addon={addon} />} />

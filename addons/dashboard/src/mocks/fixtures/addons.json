@@ -21,6 +21,15 @@
             {
               "type": "stack",
               "direction": "row",
+              "fit": true,
+              "children": [
+                { "type": "markdown", "text": "Live apps, and read-only links to tickets and artifacts. Files you send go through Drop." },
+                { "type": "link", "label": "Open Drop", "href": "/addon/drop/drop" }
+              ]
+            },
+            {
+              "type": "stack",
+              "direction": "row",
               "children": [
                 {
                   "type": "stat",
@@ -736,25 +745,25 @@
               "children": [
                 {
                   "type": "stat",
-                  "label": "Last 7 days",
+                  "label": "Cost · last 7 days",
                   "value": "${addon.weekCents|chf}",
-                  "hint": "cost"
+                  "hint": "all models"
                 },
                 {
                   "type": "stat",
-                  "label": "Month to date",
+                  "label": "Cost · this month",
                   "value": "${addon.monthCents|chf}",
-                  "hint": "${addon.budgetPct}% of the CHF ${addon.budgetChf} monthly budget"
+                  "hint": "${addon.monthRange} · ${addon.budgetPct}% of the CHF ${addon.budgetChf} budget"
                 },
                 {
                   "type": "stat",
-                  "label": "Last 30 days",
+                  "label": "Cost · last 30 days",
                   "value": "${addon.cost30Cents|chf}",
-                  "hint": "cost, all models"
+                  "hint": "all models"
                 },
                 {
                   "type": "stat",
-                  "label": "Tokens, last 30 days",
+                  "label": "Tokens · last 30 days",
                   "value": "${addon.tokens30Text}",
                   "hint": "input + output, without cache reads"
                 }
@@ -1078,19 +1087,12 @@
         "title": "Terminal",
         "icon": "SquareTerminal",
         "node": {
-          "type": "button",
-          "label": "Open terminal in this ticket's worktree",
-          "action": "open_ticket",
-          "variant": "secondary"
+          "type": "stack",
+          "children": [
+            { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" },
+            { "type": "button", "label": "Open terminal in this ticket's worktree", "action": "open_ticket", "variant": "secondary" }
+          ]
         }
-      },
-      {
-        "slot": "ticket.panel",
-        "id": "ticket-terminal",
-        "title": "Terminal session",
-        "icon": "SquareTerminal",
-        "when": "addon.sessionByTicket.$ticket",
-        "node": { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" }
       },
       {
         "slot": "settings",

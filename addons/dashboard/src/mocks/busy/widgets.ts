@@ -1,4 +1,5 @@
-// Widgets for the busy day (format orch.widgets.v1, plugins/orch-core/docs/widgets.md): eight DEMO tickets carry 4 to 10
+// Widgets for the busy day (format orch.widgets.v1, plugins/orch-core/docs/widgets.md): twenty DEMO tickets carry widgets.
+// Twelve light ones carry two or three blocks from the whole mix (every core type and two templates); eight carry 4 to 10
 // blocks each: bars with many bars, long tables, checks with 30 rows, kv, the catalog's newer types (series, stats,
 // gates, spark, diff, callout and the proposed timeline and progress), every template, one-off html pages and a few blocks the page
 // must refuse. Pins are computed here (template digest, sha256 of the artifact the block names).
@@ -116,17 +117,47 @@ function blocksFor(b: Built, rng: Rng, variant: number): { section: 'context' | 
   }
 }
 
-/** Puts blocks into the sections of eight DEMO tickets (the ones with artifacts first). */
+/** Every core type, and two templates, for the light tickets: together they show the whole mix (R-g). */
+export const LIGHT_MIX = ['stats', 'series', 'spark', 'checks', 'gates', 'diff', 'callout', 'bars', 'table', 'kv', 'timeline', 'progress', 'line-chart@1', 'flow-diagram@1'] as const
+/** How many tickets carry widgets on the busy day: the eight heavy ones plus the light ones. */
+export const WIDGET_TICKETS = 20
+
+/**
+ * A light ticket: two or three blocks, the way most agents write them (a number, a check list, a chart). Consecutive
+ * light tickets walk through LIGHT_MIX, so every type appears at least twice across them.
+ */
+function lightBlocks(b: Built, rng: Rng, n: number): { section: 'context' | 'verification' | 'current_state'; text: string }[] {
+  const key = b.definition.key.toLowerCase()
+  const count = 2 + (n % 2)
+  return Array.from({ length: count }, (_, i) => {
+    const ref = LIGHT_MIX[(n * 3 + i) % LIGHT_MIX.length]
+    const id = `${ref.replace(/@\d+$/, '')}-${key}-${i}`
+    const text =
+      ref === 'stats' ? stats(rng, id) : ref === 'series' ? series(rng, id) : ref === 'checks' ? checks(rng, id, rng.int(3, 8)) : ref === 'bars' ? bars(rng, id, rng.int(4, 9)) : ref === 'table' ? table(rng, id, rng.int(4, 12)) : ref === 'kv' ? kv(rng, id, rng.int(3, 7)) : ref === 'progress' ? progress(rng, id) : ref === 'line-chart@1' ? lineChart(rng, id) : fromCatalog(ref, id)
+    // Checks belong with the evidence; the rest spread over context and the handoff.
+    const section = ref === 'checks' || ref === 'gates' ? 'verification' : (['current_state', 'context'] as const)[i % 2]
+    return { section, text }
+  })
+}
+
+/**
+ * Puts blocks into the sections of 20 DEMO tickets: eight heavy ones (the ones with artifacts first; every layer, long
+ * tables, refusals) and twelve light ones with two or three blocks each, so the busy day shows the whole widget mix.
+ */
 export function addWidgets(rng: Rng, demo: Built[]): void {
   const withArtifacts = demo.filter((b) => b.events.some((e) => e.type === 'artifact.added') && b.arch !== 'epic')
   const rest = demo.filter((b) => !withArtifacts.includes(b) && ['done', 'testSev', 'testBoth', 'wip'].includes(b.arch))
   const picked = [...withArtifacts.slice(2, 8), ...rest.slice(0, 2)].slice(0, 8)
-  picked.forEach((b, i) => {
+  const put = (b: Built, blocks: { section: 'context' | 'verification' | 'current_state' | 'requirements'; text: string }[]) => {
     // A handoff replaces Current state, so blocks meant for it go into the last handoff the agent wrote.
     const handoff = [...b.events].reverse().find((e) => e.type === 'handoff.written')
-    for (const { section, text } of blocksFor(b, rng, i)) {
+    for (const { section, text } of blocks) {
       if (section === 'current_state' && handoff) handoff.text = `${String(handoff.text)}\n\n${text}`
       else b.body[section] = [b.body[section], text].filter(Boolean).join('\n\n')
     }
-  })
+  }
+  picked.forEach((b, i) => put(b, blocksFor(b, rng, i)))
+  // The light ones: tickets in progress, in testing and done, that are not restricted and carry no widgets yet.
+  const light = demo.filter((b) => !picked.includes(b) && !b.definition.visibility && ['wip', 'testSev', 'testMara', 'testBoth', 'testNobody', 'done'].includes(b.arch))
+  rng.sample(light, WIDGET_TICKETS - picked.length).forEach((b, n) => put(b, lightBlocks(b, rng, n)))
 }

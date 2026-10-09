@@ -134,15 +134,17 @@ button{font:inherit;font-size:11px;color:CanvasText;background:Canvas;border:1px
 </script>`
 
 export const FLOW = `<style>
-svg{display:block;width:100%;height:auto}
+svg{display:block;height:auto;max-height:none}
+body{overflow-x:auto}
+body.more::after{content:'';position:fixed;top:0;right:0;bottom:0;width:28px;background:linear-gradient(to right,transparent,Canvas);pointer-events:none}
 .box{fill:Canvas;stroke:GrayText;stroke-width:1}
 .box.done{stroke:CanvasText}
 .box.current{stroke:Highlight;stroke-width:2.5}
 .box.blocked{stroke-dasharray:4 3}
 .lbl{font:600 11px ui-sans-serif,system-ui,sans-serif;fill:CanvasText}
-.st{font:10px ui-sans-serif,system-ui,sans-serif;fill:GrayText}
+.st{font:11px ui-sans-serif,system-ui,sans-serif;fill:GrayText}
 .edge{fill:none;stroke:GrayText;stroke-width:1.2}
-.el{font:10px ui-sans-serif,system-ui,sans-serif;fill:GrayText;paint-order:stroke;stroke:Canvas;stroke-width:3px;stroke-linejoin:round}
+.el{font:11px ui-sans-serif,system-ui,sans-serif;fill:GrayText;paint-order:stroke;stroke:Canvas;stroke-width:3px;stroke-linejoin:round}
 .head{fill:GrayText}
 </style>
 <svg id="c" role="img"></svg>
@@ -171,13 +173,15 @@ svg{display:block;width:100%;height:auto}
   cols.forEach(function (c, ci) { c.forEach(function (id, ri) { pos[id] = { x: P + ci * (W + GX), y: P + ri * (H + GY) + ((rows - c.length) * (H + GY)) / 2 } }) })
   var vw = P * 2 + cols.length * (W + GX) - GX, vh = P * 2 + rows * (H + GY) - GY
   svg.setAttribute('viewBox', '0 0 ' + vw + ' ' + vh)
-  svg.style.maxWidth = vw * 1.4 + 'px'
+  // Never drawn smaller than its own units, so labels stay at 11 px; a wide flow scrolls inside the frame.
+  svg.style.width = vw + 'px'
   svg.appendChild(el('title', {}, 'Flow: ' + edges.map(function (e) { return byId[e.from].label + ' to ' + byId[e.to].label + (e.label ? ' (' + e.label + ')' : '') }).join(', ')))
   edges.forEach(function (e) {
     var a = pos[e.from], b = pos[e.to], x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x - 6, y2 = b.y + H / 2, mx = (x1 + x2) / 2
     svg.appendChild(el('path', { 'class': 'edge', d: 'M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + y2 + ' ' + x2 + ',' + y2 }))
     svg.appendChild(el('path', { 'class': 'head', d: 'M' + x2 + ',' + (y2 - 4) + ' L' + (x2 + 6) + ',' + y2 + ' L' + x2 + ',' + (y2 + 4) + ' z' }))
-    if (e.label) svg.appendChild(el('text', { 'class': 'el', x: mx, y: (y1 + y2) / 2 - 4, 'text-anchor': 'middle' }, e.label))
+    // On the straight tail just before the arrow (each target has its own row), never across a curve.
+    if (e.label) svg.appendChild(el('text', { 'class': 'el', x: x2 - 4, y: y2 - 6, 'text-anchor': 'end' }, e.label))
   })
   nodes.forEach(function (n) {
     var p = pos[n.id], g = el('g', {})
@@ -188,6 +192,12 @@ svg{display:block;width:100%;height:auto}
     g.appendChild(el('title', {}, n.label + (n.status ? ' (' + WORD[n.status] + ')' : '')))
     svg.appendChild(g)
   })
+  // A fade on the right edge while the flow continues past it (the frame scrolls sideways).
+  var b = document.body
+  function edge() { b.classList.toggle('more', b.scrollWidth - b.clientWidth - b.scrollLeft > 2) }
+  b.addEventListener('scroll', edge)
+  addEventListener('resize', edge)
+  edge()
 })()
 </script>`
 

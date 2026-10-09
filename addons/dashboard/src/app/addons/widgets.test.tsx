@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
-import { CATALOG, PROPOSED_NOTE } from '@/api/widgetCatalog'
+import { CATALOG, CORE_ALLOWED, PROPOSED_NOTE, TEMPLATE_ALLOWED } from '@/api/widgetCatalog'
 import { CORE_TYPES } from '@/app/pages/ticket/widgets/parse'
 
 describe('widgets addon page', () => {
@@ -37,7 +37,11 @@ describe('widgets addon page', () => {
     const templates = screen.getByRole('heading', { level: 2, name: /Templates/ })
     expect(core.compareDocumentPosition(templates)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(screen.getAllByText(PROPOSED_NOTE)).toHaveLength(CATALOG.filter((c) => c.proposed).length)
-    expect(screen.getAllByText(/Where it's allowed:/)).toHaveLength(CATALOG.length)
+    // Said once per section; an entry repeats it only when its rule differs (checks), or adds to it ("Also:").
+    const own = CATALOG.filter((c) => ![CORE_ALLOWED, TEMPLATE_ALLOWED].some((base) => c.allowed.startsWith(base)))
+    expect(screen.getAllByText(/Where it's allowed:/)).toHaveLength(2 + own.length)
+    expect(own.map((c) => c.ref)).toEqual(['checks'])
+    expect(screen.getAllByText(/^Also:/)).toHaveLength(CATALOG.filter((c) => c.allowed !== TEMPLATE_ALLOWED && c.allowed.startsWith(TEMPLATE_ALLOWED)).length)
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
     await user.click(within(nav).getByRole('button', { name: 'flow-diagram@1' }))

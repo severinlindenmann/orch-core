@@ -66,7 +66,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
         <div className="flex items-end gap-2">
           <div className="max-w-sm flex-1 space-y-1.5">
             <Label htmlFor="ws-name">Name</Label>
-            <Input id="ws-name" value={value} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
+            <Input id="ws-name" name="workspace-name" value={value} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
           </div>
           <Button disabled={!canEdit || value.trim() === workspace.name || !value.trim()} onClick={save} aria-describedby={canEdit ? undefined : 'ws-name-why'}>
             Save

@@ -18,6 +18,9 @@
           "type": "stack",
           "children": [
             {
+              "$ref": "addon.addBar"
+            },
+            {
               "$ref": "addon.filterBar"
             },
             {
@@ -158,15 +161,16 @@
               "schema": {
                 "$ref": "addon.addSchema"
               },
+              "uiSchema": {
+                "$ref": "addon.addUi"
+              },
               "action": "add",
-              "submitLabel": "Add quick task"
+              "submitLabel": "Add",
+              "reset": true
             },
             {
               "type": "markdown",
               "text": "An agent picks up quick tasks on its own."
-            },
-            {
-              "$ref": "addon.closePanel"
             },
             {
               "type": "tabs",
@@ -228,9 +232,7 @@
     ],
     "actions": {
       "save_settings": { "minRole": "owner" },
-      "decide": { "minRole": "maintainer", "decision": true },
-      "start_close": { "minRole": "member", "kind": "navigation" },
-      "cancel_close": { "minRole": "member", "kind": "navigation" }
+      "decide": { "minRole": "maintainer", "decision": true }
     }
   },
   {
@@ -843,7 +845,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
+              "text": "## Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
             },
             {
               "type": "table",
@@ -911,7 +913,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
+              "text": "## Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
             },
             {
               "type": "table",
@@ -972,7 +974,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
+              "text": "## Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
             },
             {
               "type": "form",

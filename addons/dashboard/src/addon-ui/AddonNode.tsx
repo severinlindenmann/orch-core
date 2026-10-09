@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,7 +25,8 @@ import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
-import { useRunAddonAction, type ActionError } from './useRunAddonAction'
+import { roleReason, useRunAddonAction, type ActionError } from './useRunAddonAction'
+import { useRole } from '@/app/useRole'
 import { precheckReason } from './SpawnConfirm'
 import { DestructiveConfirm } from './DestructiveConfirm'
 import { Collapse } from '@/components/Collapse'
@@ -67,6 +69,8 @@ const isEmptyStack = (c: unknown) => !!c && typeof c === 'object' && (c as { typ
 export interface FormControl {
   id: string
   onState: (s: { pending: boolean; blocked: boolean }) => void
+  /** The form's action went through (a refusal does not call it): the drawer closes itself. */
+  onSaved?: () => void
 }
 
 /** Box shown instead of anything that is not one of the allowed node types or fails validation. */
@@ -347,12 +351,17 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 interface AddonAction {
   run: (action: string, extra?: Record<string, unknown>, subject?: string) => void
   pending: boolean
+  pendingAction: string | null
   blocked: boolean
   blockedFor: (action: string) => boolean
   dialog: ReactNode
   precheck: string | null
   error: ActionError | null
   dismissError: () => void
+  /** Set only on the row's inline field: closes it without running anything. */
+  onCancelAsk?: () => void
+  /** Why this action is off for the viewer, in plain words (null when it can run or only waits for the host). */
+  reasonFor: (action: string) => string | null
 }
 function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   const { addon, ctx, readOnly, dirty } = useContext(RuntimeCtx)
@@ -361,7 +370,9 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   const [discard, setDiscard] = useState<(() => void) | null>(null)
   // A refusal shows as a persistent alert under the node or row that asked (no toast).
   const r = useRunAddonAction(ctx.ticket?.key, { inlineErrors: true, onSuccess: onDone })
+  const role = useRole()
   const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
+  const reasonFor = (a: string) => (!r.allowed(addon, a) ? roleReason(role, r.meta(addon, a)?.minRole ?? 'member') : blockedFor(a) ? 'This view is read-only.' : null)
   // Core's prechecks before its start dialog (from the ticket, not the addon): a claimed ticket gets no second agent,
   // and a ticket whose needed connection fails auth or identity gets none until an owner logs in again.
   const precheck =
@@ -389,7 +400,7 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
       )}
     </>
   )
-  return { run, pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
+  return { run, pending: r.pending, pendingAction: r.pendingAction, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -405,23 +416,32 @@ function PrecheckAlert({ id, text }: { id?: string; text: string }) {
 }
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked, dialog, precheck, error, dismissError } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog, precheck, error, dismissError, reasonFor } = useAddonAction(node.action)
   const reasonId = useId()
+  // A button that is off for the viewer's role says why (a tooltip on its wrapper: the disabled button gets no pointer events).
+  const why = blocked && !pending ? reasonFor(node.action) : null
   return (
     // `flex-none!`: in a row stack a button keeps its own width instead of stretching like a panel does.
     <div className="space-y-2 flex-none!">
       {precheck && <PrecheckAlert id={reasonId} text={precheck} />}
-      <Button
-        size="sm"
-        variant={BUTTON_VARIANT[node.variant]}
-        disabled={pending || blocked || !!precheck}
-        aria-describedby={precheck ? reasonId : undefined}
-        aria-pressed={node.pressed}
-        className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
-        onClick={() => run(node.action, node.args)}
-      >
-        {node.label}
-      </Button>
+      <span title={why ?? undefined} className="inline-flex">
+        <Button
+          size="sm"
+          variant={BUTTON_VARIANT[node.variant]}
+          disabled={pending || blocked || !!precheck}
+          aria-describedby={precheck ? reasonId : why ? `${reasonId}-why` : undefined}
+          aria-pressed={node.pressed}
+          className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
+          onClick={() => run(node.action, node.args)}
+        >
+          {node.label}
+        </Button>
+        {why && (
+          <span id={`${reasonId}-why`} className="sr-only">
+            {why}
+          </span>
+        )}
+      </span>
       {error && <ErrorAlert error={error} onDismiss={dismissError} />}
       {dialog}
     </div>
@@ -476,7 +496,18 @@ function LeaveGuard() {
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const closePopover = useContext(ClosePopoverCtx)
   // In a popover the form closes it once its action went through (a refusal leaves it open, with the error in it).
-  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError } = useAddonAction(node.action, closePopover ?? undefined)
+  // `reset`: once the action went through the fields are emptied (the form remounts) and the first is focused again.
+  const [round, setRound] = useState(0)
+  const box = useRef<HTMLDivElement>(null)
+  const saved = useRef<(() => void) | undefined>(undefined)
+  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError } = useAddonAction(node.action, () => {
+    closePopover?.()
+    if (node.reset) setRound((n) => n + 1)
+    saved.current?.()
+  })
+  useEffect(() => {
+    if (round > 0) box.current?.querySelector<HTMLElement>('input:not([type=hidden]),select,textarea')?.focus()
+  }, [round])
   const { dirty } = useContext(RuntimeCtx)
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
@@ -512,6 +543,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
     }
   }, [offered, formControlClaim, me])
   const formControl = claim === 'won' ? offered : undefined
+  saved.current = formControl?.onSaved
   const report = formControl?.onState
   useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
   const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
@@ -538,10 +570,11 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
       {guarded && edited && <LeaveGuard />}
       {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+        <div ref={box}>
         <ThemedForm
           id={formControl?.id}
           disabled={readOnly}
-          key={JSON.stringify(node.formData ?? null)}
+          key={`${round}|${JSON.stringify(node.formData ?? null)}`}
           schema={node.schema}
           uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
           formData={node.formData ?? undefined}
@@ -569,6 +602,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
             </div>
           ) : undefined}
         </ThemedForm>
+        </div>
       </Suspense>
       {error && <ErrorAlert error={error} onDismiss={dismissError} className="mt-2" />}
     </>
@@ -600,6 +634,8 @@ function cellText(key: string, v: unknown): string {
 
 /** What a row is called in "More actions for …": its first column's cell. */
 function rowLabel(key: string | undefined, row: Record<string, unknown>): string {
+  // A table whose first column repeats (two PRs of one repository) names its rows with a `rowName` cell.
+  if (typeof row.rowName === 'string' && row.rowName) return row.rowName
   const v = key ? row[key] : undefined
   return v === null || v === undefined || v === '' ? 'row' : String(v)
 }
@@ -615,6 +651,14 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
   return out
 }
 
+/** Why an action is blocked on this row (its `blocked` sentence, or the named cell), or null when it can run. */
+function blockedWhy(a: ItemAction, row?: Record<string, unknown>): string | null {
+  if (!a.blocked) return null
+  const ref = /^\$row\.(.+)$/.exec(a.blocked)
+  const v = ref ? row?.[ref[1]] : a.blocked
+  return typeof v === 'string' && v.trim() ? v : null
+}
+
 /** "$row.<key>" / "!$row.<key>": is the action offered for this row? A cell is false when null, empty, false, 0 or "false". */
 function offered(when: string | undefined, row?: Record<string, unknown>): boolean {
   if (!when || !row) return true
@@ -627,12 +671,56 @@ function offered(when: string | undefined, row?: Record<string, unknown>): boole
 type ListEntry = NodeOf<'list'>['items'][number]
 
 function ActionListItem({ it }: { it: ListEntry }) {
-  return <ListItemView it={it} act={useAddonAction()} />
+  // An action with `input` asks in the row; the row closes it once the action went through.
+  const [asking, setAsking] = useState<ItemAction | null>(null)
+  return <ListItemView it={it} act={useAddonAction(undefined, () => setAsking(null))} asking={asking} onAsk={setAsking} />
 }
 
-function ListItemView({ it, act }: { it: ListEntry; act?: AddonAction }) {
+/** The one-line field under a list item whose action has `input`: focused, Enter sends, Escape cancels. */
+function InlineAsk({ action, act, label }: { action: ItemAction; act: AddonAction; label: string }) {
+  const input = action.input!
+  const id = useId()
+  const [value, setValue] = useState('')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => ref.current?.focus(), [])
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
+    <form
+      className="col-span-2 flex flex-wrap items-center gap-2 pb-1"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation()
+          act.onCancelAsk?.()
+        }
+      }}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (value.trim()) act.run(action.action, { ...resolveRowArgs(action.args), [input.name]: value.trim() }, label)
+      }}
+    >
+      <label htmlFor={id} className="text-[12px] text-text-muted">
+        {input.label}
+      </label>
+      <Input id={id} ref={ref} name={input.name} value={value} maxLength={input.maxLength ?? 200} placeholder={input.placeholder} onChange={(e) => setValue(e.target.value)} className="h-8 min-w-48 flex-1 text-[13px]" />
+      <Button type="submit" size="sm" disabled={act.pending || !value.trim()}>
+        {input.submitLabel ?? action.label}
+      </Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => act.onCancelAsk?.()}>
+        Cancel
+      </Button>
+    </form>
+  )
+}
+
+function ListItemView({ it, act, asking, onAsk }: { it: ListEntry; act?: AddonAction; asking?: ItemAction | null; onAsk?: (a: ItemAction | null) => void }) {
+  const li = useRef<HTMLLIElement>(null)
+  // Cancelling the row's field puts focus back on the button that opened it.
+  const cancelAsk = () => {
+    const label = asking?.label
+    onAsk?.(null)
+    setTimeout(() => [...(li.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label)?.focus(), 0)
+  }
+  return (
+    <li ref={li} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
       <div className="flex min-w-0 items-start gap-2">
         {it.status && <StatusDot status={it.status} className="mt-1.5" />}
         <div className="min-w-0">
@@ -647,9 +735,10 @@ function ListItemView({ it, act }: { it: ListEntry; act?: AddonAction }) {
               {it.badge}
             </Badge>
           )}
-          {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} />}
+          {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} onAsk={onAsk} />}
         </div>
       )}
+      {asking?.input && act && <InlineAsk action={asking} act={{ ...act, onCancelAsk: cancelAsk }} label={it.title} />}
       {act?.error && <ErrorAlert error={act.error} onDismiss={act.dismissError} className="col-span-2" />}
     </li>
   )
@@ -737,19 +826,20 @@ function DataRowView({ columns, row, rowActions, rowOpen, act, numeric, total }:
  * "More actions for {title}", danger last and in the danger colour. A single action is just its button. An action
  * with `when` is offered only while that cell of the row says so (core evaluates it).
  */
-function ItemActions({ act, actions: all, row, label }: { act: AddonAction; actions: ItemAction[]; row?: Record<string, unknown>; label: string }) {
+function ItemActions({ act, actions: all, row, label, onAsk }: { act: AddonAction; actions: ItemAction[]; row?: Record<string, unknown>; label: string; onAsk?: (a: ItemAction) => void }) {
   const { run, pending, blockedFor, dialog } = act
   const actions = all.filter((a) => offered(a.when, row))
   if (actions.length === 0) return <>{dialog}</>
-  const start = (a: ItemAction) => run(a.action, resolveRowArgs(a.args, row), label)
+  const start = (a: ItemAction) => (a.input && onAsk ? onAsk(a) : run(a.action, resolveRowArgs(a.args, row), label))
   const lead = actions.length === 1 ? actions[0] : (actions.find((a) => a.primary) ?? actions.find((a) => a.variant !== 'danger') ?? actions[0])
   const more = actions.filter((a) => a !== lead)
   const menu = [...more.filter((a) => a.variant !== 'danger'), ...more.filter((a) => a.variant === 'danger')]
   return (
     <div className="flex shrink-0 items-center gap-1">
       {dialog}
-      <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action)} onClick={() => start(lead)}>
-        {lead.label}
+      <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action) || !!blockedWhy(lead, row)} title={blockedWhy(lead, row) ?? undefined} onClick={() => start(lead)}>
+        {act.pendingAction === lead.action && lead.pendingLabel ? lead.pendingLabel : lead.label}
+        {blockedWhy(lead, row) && <span className="sr-only"> ({blockedWhy(lead, row)})</span>}
       </Button>
       {menu.length > 0 && (
         <DropdownMenu>
@@ -760,8 +850,9 @@ function ItemActions({ act, actions: all, row, label }: { act: AddonAction; acti
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {menu.map((a, i) => (
-              <DropdownMenuItem key={i} disabled={pending || blockedFor(a.action)} onSelect={() => start(a)} className={a.variant === 'danger' ? 'text-danger focus:text-danger' : undefined}>
+              <DropdownMenuItem key={i} disabled={pending || blockedFor(a.action) || !!blockedWhy(a, row)} onSelect={() => start(a)} className={a.variant === 'danger' ? 'text-danger focus:text-danger' : undefined}>
                 {a.label}
+                {blockedWhy(a, row) && <span className="ml-2 text-[12px] font-normal text-text-muted">{blockedWhy(a, row)}</span>}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

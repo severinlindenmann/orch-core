@@ -167,7 +167,7 @@ registerAddon({
       // Open pull requests only; merged ones are in the "Recently merged" fold. Approve is offered only while it can still help.
       prRows: list
         .filter((p) => p.state !== 'merged')
-        .map((p) => ({ id: p.id, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, checks: summary(p), review: p.review, updated: ago(p.updated_at, now), canApprove: summary(p) !== 'fail' && p.review !== 'approved' })),
+        .map((p) => ({ id: p.id, rowName: `${p.repo} #${p.number}`, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, checks: summary(p), review: p.review, updated: ago(p.updated_at, now), canApprove: summary(p) !== 'fail' && p.review !== 'approved' })),
       mergedRows: list.filter((p) => p.state === 'merged').map((p) => ({ id: p.id, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, updated: ago(p.updated_at, now) })),
       mergedCount: list.filter((p) => p.state === 'merged').length,
       prByTicket: byTicket,

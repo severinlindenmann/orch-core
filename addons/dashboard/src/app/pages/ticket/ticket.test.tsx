@@ -79,6 +79,23 @@ describe('ticket page', () => {
   })
 })
 
+describe('a gate the person may not sign', () => {
+  it('Mara sees "Approve plan (owners only)" disabled with the reason, and the turn line does not say ready to claim', async () => {
+    renderApp('/ticket/DEMO-0044', { viewer: 'p_mara' })
+    const button = await screen.findByRole('button', { name: 'Approve plan (owners only)' }, T)
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription('Plan needs 1 approval from owners.')
+    const header = screen.getByTestId('ticket-header')
+    expect(header).toHaveTextContent(/plan needs approval \(owners\)/i)
+    expect(header).not.toHaveTextContent(/ready to claim/i)
+  })
+  it('the owner gets the real button instead', async () => {
+    renderApp('/ticket/DEMO-0044')
+    expect(await screen.findByRole('button', { name: 'Approve plan' }, T)).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /owners only/ })).toBeNull()
+  })
+})
+
 describe('ticket gate policy wording', () => {
   it('uses the same sentence as Settings, not the raw approver value', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })

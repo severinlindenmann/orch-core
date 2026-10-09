@@ -49,9 +49,13 @@ describe('quick tasks page', () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
     await rowOf('Q-001') // the form's schema arrives with the state
     await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Fix the typo in CONTRIBUTING')
-    await user.click(screen.getByRole('button', { name: 'Add quick task' }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
     await rowOf('Q-007')
     expect((await items()).at(-1)!.status).toBe('open')
+    // The bar is ready for the next one: emptied and focused.
+    const field = screen.getByLabelText(/^Quick task \(one line\)/)
+    await waitFor(() => expect(field).toHaveValue(''))
+    expect(field).toHaveFocus()
   })
   it('an open task has no Claim button for people (agents claim)', async () => {
     renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
@@ -62,9 +66,22 @@ describe('quick tasks page', () => {
   it('Close with proof opens a one-line form and closes the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
     await user.click(within(await rowOf('Q-003')).getByRole('button', { name: 'Close with proof' }))
-    await user.type(await screen.findByLabelText(/^Proof/, {}, T), 'removed, 9ac1f20')
+    // The field opens in the task's own row, focused.
+    const proof = await screen.findByLabelText(/^Proof/, {}, T)
+    expect(proof).toHaveFocus()
+    expect((await rowOf('Q-003')).contains(proof)).toBe(true)
+    await user.type(proof, 'removed, 9ac1f20')
     await user.click(screen.getByRole('button', { name: 'Close task' }))
     await waitFor(async () => expect((await items()).find((q) => q.id === 'Q-003')!.status).toBe('done'), T)
+  })
+  it('Escape in the proof field cancels it and focus returns to Close with proof', async () => {
+    const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    await user.click(within(await rowOf('Q-003')).getByRole('button', { name: 'Close with proof' }))
+    await user.type(await screen.findByLabelText(/^Proof/, {}, T), 'x')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText(/^Proof/)).toBeNull())
+    await waitFor(async () => expect(within((await rowOf('Q-003'))).getByRole('button', { name: 'Close with proof' })).toHaveFocus())
+    expect((await items()).find((q) => q.id === 'Q-003')!.status).toBe('claimed')
   })
   it('Make a ticket converts the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })

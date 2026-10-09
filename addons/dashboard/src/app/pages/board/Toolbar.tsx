@@ -126,6 +126,8 @@ export function Toolbar({
         <div className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-faint" aria-hidden />
           <Input
+            id="board-filter"
+            name="q"
             value={filters.q}
             onChange={(e) => set({ q: e.target.value })}
             placeholder="Filter tickets"

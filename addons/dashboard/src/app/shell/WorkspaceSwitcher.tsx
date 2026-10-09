@@ -41,7 +41,7 @@ function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; ind
         >
           <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
           <span className="min-w-0 flex-1 truncate">{w.name}</span>
-          {current && <Check className="size-3.5 text-text-muted" aria-label="Current workspace" />}
+          {current && <Check role="img" className="size-3.5 text-text-muted" aria-label="Current workspace" />}
         </button>
         {needs > 0 && (
           <span aria-label={`${needs} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">

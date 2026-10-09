@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useId } from 'react'
 import { Search, X } from 'lucide-react'
 import { STATUSES, type Priority, type Status } from '@/api/types'
 import { Input } from '@/components/ui/input'
@@ -35,6 +35,8 @@ export const SearchBox = forwardRef<HTMLInputElement, { value: string; onChange:
       <Input
         ref={ref}
         type="search"
+        id={useId()}
+        name="q"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}

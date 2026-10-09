@@ -170,7 +170,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
                 key={o.key}
                 className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-[13px] text-text has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
               >
-                <input type="radio" name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
+                <input type="radio" id={`answer-${id}-${o.key}`} name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
                 <span>{o.label}</span>
                 {o.cost && <span className="text-xs text-text-muted">· {o.cost}</span>}
                 {q.recommended === o.key && <RecommendedTag />}

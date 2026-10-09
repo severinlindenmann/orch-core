@@ -144,7 +144,10 @@ describe('wiki page', () => {
     expect(screen.queryByRole('button', { name: 'New page' })).not.toBeInTheDocument()
     await openPage(user, 'Glossary')
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Glossary' })).toBeInTheDocument(), T)
-    expect(screen.getByRole('button', { name: 'Edit page' })).toBeDisabled()
+    const edit = screen.getByRole('button', { name: 'Edit page' })
+    expect(edit).toBeDisabled()
+    expect(edit.closest('[title]')).toHaveAttribute('title', 'Viewers cannot do this.') // the reason, on hover
+    expect(edit).toHaveAccessibleDescription('Viewers cannot do this.')
     expect(screen.getByRole('button', { name: 'All pages' })).toBeEnabled()
     expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument()
   })

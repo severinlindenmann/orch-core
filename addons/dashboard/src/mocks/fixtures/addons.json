@@ -114,7 +114,8 @@
                               "id": "$row.id"
                             },
                             "variant": "ghost",
-                            "when": "$row.canStop"
+                            "when": "$row.canStop",
+                            "pendingLabel": "Stopping…"
                           },
                           {
                             "label": "Logs",
@@ -344,7 +345,7 @@
         "action": "share_once"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" }, "stop": { "minRole": "member", "undo": "start" }, "revoke": { "minRole": "member", "confirm": "destructive", "confirmLabel": "Revoke link", "confirmText": "The link stops working for everyone who has it. This cannot be undone." } },
+    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" }, "stop": { "minRole": "member", "undo": "start", "confirm": "destructive", "confirmLabel": "Stop app", "confirmText": "Anyone using the app loses it until you start it again. You can undo this right after." }, "share_once": { "minRole": "member", "label": "Create show-once link", "confirm": "options", "options": { "note": "The link is shown once and cannot be copied again.", "fields": [ { "key": "what", "label": "What to share", "default": "ticket", "choices": [ { "value": "ticket", "label": "The ticket page (read-only)" }, { "value": "report", "label": "The before/after report" } ] }, { "key": "expires_days", "label": "Works for", "default": 7, "choices": [ { "value": 1, "label": "1 day" }, { "value": 3, "label": "3 days" }, { "value": 7, "label": "7 days" }, { "value": 30, "label": "30 days" } ] }, { "key": "view_limit", "label": "Opens", "default": 1, "choices": [ { "value": 1, "label": "Once" }, { "value": 3, "label": "At most 3 times" }, { "value": 10, "label": "At most 10 times" }, { "value": 0, "label": "No limit" } ] } ] } }, "revoke": { "minRole": "member", "confirm": "destructive", "confirmLabel": "Revoke link", "confirmText": "The link stops working for everyone who has it. This cannot be undone." } },
     "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
     "update": null
   },
@@ -1327,7 +1328,7 @@
               "submitLabel": "Preview command"
             },
             { "$ref": "addon.page.preview" },
-            { "type": "markdown", "text": "### Running" },
+            { "type": "markdown", "text": "## Running" },
             {
               "type": "table",
               "columns": [{ "key": "ticket", "label": "Ticket" }, { "key": "title", "label": "Title" }, { "key": "harness", "label": "Harness" }, { "key": "model", "label": "Model" }, { "key": "state", "label": "State" }, { "key": "started", "label": "Started" }],
@@ -1335,7 +1336,7 @@
               "empty": "Nothing is running.",
               "rowActions": [{ "label": "Stop", "action": "stop", "args": { "session": "$row.session" }, "variant": "danger" }]
             },
-            { "type": "markdown", "text": "### Ended" },
+            { "type": "markdown", "text": "## Ended" },
             { "type": "list", "items": { "$ref": "addon.ended" }, "empty": "No run has ended yet." }
           ]
         }

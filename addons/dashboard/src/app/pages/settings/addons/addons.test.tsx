@@ -9,28 +9,30 @@ describe('Addon manager', () => {
     const heads = screen.getAllByRole('columnheader')
     expect(heads.map((h) => h.textContent)).toEqual(['Addon', 'Capabilities', 'Status', 'On', 'Actions'])
   })
-  it('installs from the catalog, requires a signed grant, then enables', async () => {
+  it('installs from the catalog in one signed act: Install, the capability sheet, "Grant and turn on", Active', async () => {
     const { user } = renderApp('/settings/addons')
     await user.click(await screen.findByRole('button', { name: 'Browse addons' }))
     await user.click(within(await screen.findByRole('article', { name: /Quick tasks/ })).getByRole('button', { name: 'Install' }))
-    const row = await screen.findByRole('row', { name: /Quick tasks/ })
-    expect(within(row).getByRole('switch', { name: /(enabled|disabled)$/ })).toBeDisabled()
-    await user.click(within(row).getByRole('button', { name: 'Grant…' }))
-    await user.click(await screen.findByRole('button', { name: /Grant and sign/ }))
-    // The grant lands after the Touch ID wait; the switch unlocks then.
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /(enabled|disabled)$/ })).toBeEnabled())
-    await user.click(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /(enabled|disabled)$/ }))
+    // Nothing is installed until the signature: the sheet says what it covers, including turning it on.
+    const dialog = await screen.findByRole('dialog', { name: /Install Quick tasks/ })
+    expect(dialog).toHaveTextContent('and turns it on')
+    expect(screen.queryByRole('row', { name: /Quick tasks/ })).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: 'Grant and turn on' }))
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByText('Active')).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: 'Quick tasks enabled' })).toBeEnabled()
     await user.click(await screen.findByRole('button', { name: /More addons/ }))
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/addon/quick/quick')).toBe(true)) // sidebar nav appeared
   })
-  it('an update with a new capability shows the diff and needs a re-grant', async () => {
+  it('an update with a new capability shows the diff and is one signature (it stays on)', async () => {
     const { user } = renderApp('/settings/addons')
     const row = await screen.findByRole('row', { name: /GitHub/ })
     await user.click(within(row).getByRole('button', { name: /Update to 0\.6\.0/ }))
     expect(await screen.findByText('+ spawn_agent')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and GitHub stays on')
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    expect(await screen.findByText(/grant again to turn it back on/)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Code reviews/ })).toBeNull()
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('Active')).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument()
+    expect(screen.queryByText(/grant again/)).toBeNull()
   })
   it('disabling an addon removes its nav, palette commands and Today card', async () => {
     const { user } = renderApp('/settings/addons')
@@ -45,8 +47,8 @@ describe('Addon manager', () => {
     await waitFor(() => expect(screen.queryByRole('row', { name: /Estimate/ })).toBeNull())
     await user.click(screen.getByRole('button', { name: 'Browse addons' }))
     await user.click(within(await screen.findByRole('article', { name: /Estimate/ })).getByRole('button', { name: 'Install' }))
-    const row = await screen.findByRole('row', { name: /Estimate/ })
-    expect(within(row).getByText('Needs grant')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Grant and turn on' }))
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('Active')).toBeInTheDocument())
   })
   it('only the owner grants', async () => {
     renderApp('/settings/addons', { viewer: 'p_mara' })
@@ -97,7 +99,8 @@ describe('Grant and update dialogs list what viewers can run', () => {
     await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
     expect(await screen.findByText('+ Viewers can: Refresh pull requests')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    expect(await screen.findByText(/grant again to turn it back on/)).toBeInTheDocument()
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument())
+    expect(screen.queryByText(/grant again/)).toBeNull()
   })
 })
 

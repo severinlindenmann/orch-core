@@ -3,8 +3,9 @@ import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
-import type { AddonOpRequest, InstalledAddon, Workspace } from '@/api/types'
-import { useSignedAction } from '@/components/sign/SignPrompt'
+import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
+import { useSignedAction, type SignedToast } from '@/components/sign/SignPrompt'
+import { PIN_ADDON_EVENT } from '@/app/shell/pinEvent'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -39,13 +40,30 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
       toastApiError(e, 'Could not change the addon')
     }
   }
+  /** The success toast of a grant that turned the addon on: Open its page, or Pin it to the sidebar. */
+  const isOn = (pkg: AddonPackage): SignedToast => {
+    const nav = pkg.contributions.find((c) => c.slot === 'nav')
+    return {
+      signedToast: true,
+      message: `${pkg.title} is on`,
+      ...(nav
+        ? {
+            action: { label: 'Open', onClick: () => void navigate({ to: `/addon/${pkg.name}/${nav.id}` } as never) },
+            cancel: { label: 'Pin to sidebar', onClick: () => window.dispatchEvent(new CustomEvent(PIN_ADDON_EVENT, { detail: `${pkg.name}/${nav.id}` })) },
+          }
+        : {}),
+    }
+  }
   const sign = (a: GrantAsk) => {
     setAsk(null)
     // Send exactly what the prompt showed; the host refuses if the package changed in between.
     const update = a.kind === 'update' ? pendingUpdate(a.addon) : null
-    const t = update ?? a.addon.ws
-    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities, viewer_actions: viewerActions(update ? { actions: update.actions ?? a.addon.actions } : manifestFor(a.addon, a.addon.ws.version)).map((x) => x.id) }
-    void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, () => api.postAddonOp(ws, a.addon.name, req))
+    const t = update ?? (a.kind === 'install' ? a.addon : a.addon.ws)
+    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities, viewer_actions: viewerActions(update ? { actions: update.actions ?? a.addon.actions } : manifestFor(a.addon, a.kind === 'install' ? a.addon.version : a.addon.ws.version)).map((x) => x.id), ...(a.kind === 'update' ? {} : { enable: true }) }
+    void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, async () => {
+      await api.postAddonOp(ws, a.addon.name, req)
+      return a.kind === 'update' ? `${a.addon.title} updated to ${t.version}` : isOn(a.addon)
+    })
   }
 
   return (
@@ -103,9 +121,9 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
         canEdit={canEdit}
         open={browsing}
         onOpenChange={setBrowsing}
-        onInstall={(name) => {
+        onInstall={(pkg) => {
           setBrowsing(false)
-          void run(name, { op: 'install' })
+          setAsk({ kind: 'install', addon: pkg })
         }}
       />
       {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} />}

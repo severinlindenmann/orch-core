@@ -554,8 +554,14 @@ export type SettingsRequest =
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
 export type AddonOpRequest =
   | { op: 'install' | 'enable' | 'disable' | 'uninstall' }
-  /** grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now. */
-  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[] }
+  /**
+   * grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now.
+   * `enable: true` on a grant makes turning the addon on part of the same signed act. An update is itself the grant of the
+   * new version (one signature; the addon keeps its on/off state).
+   */
+  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[]; enable?: boolean }
+  /** Install from the catalog as one signed act: install, grant exactly these values and turn it on (409 addon.changed if the package differs now). */
+  | { op: 'install'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[]; enable?: boolean }
 
 // ---------------------------------------------------------------- addons.json
 
@@ -614,7 +620,7 @@ export interface ActionMeta {
    * 'sign': core's own signing prompt (what is covered, then Touch ID). The dialog title is `label`; the host
    * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
-  confirm?: 'spawn_agent' | 'sign' | 'destructive'
+  confirm?: 'spawn_agent' | 'sign' | 'destructive' | 'options'
   /**
    * 'destructive': core's own confirm dialog (not a signature) whose button names the consequence ("Revoke link").
    * `confirmLabel` is that button's text, `confirmText` the sentence above it. Both are the package's words, shown
@@ -622,6 +628,12 @@ export interface ActionMeta {
    */
   confirmLabel?: string
   confirmText?: string
+  /**
+   * 'options': core's small dialog asks for these choices first (a select per field, `label` is the title and the
+   * button), then posts the action with `{ [field.key]: chosen value }` merged into its args. The host validates the values.
+   * Not a signature. The package's words are plain text; core builds the structure.
+   */
+  options?: { fields: { key: string; label: string; choices: { value: string | number; label: string }[]; default: string | number }[]; note?: string }
   /**
    * The action that reverses this one (e.g. stop -> start). Core shows "Undo" on the success toast only when the
    * response's `undo.action` is exactly this, and the target is a plain action (no confirm, no decision, not navigation)

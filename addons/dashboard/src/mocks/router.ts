@@ -193,6 +193,12 @@ function bodyMatch(body: BodySections, needle: string): TicketSummary['match'] {
   return undefined
 }
 
+/** `_` and `-` read as spaces, so "tariff code" finds tariff_code. */
+const plainText = (s: string) => s.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** A key typed without its dash (demo0041) still finds DEMO-0041. */
+const squash = (s: string) => plainText(s).replace(/ /g, '')
+
 function searchTickets(s: MockStore, ws: string, query: URLSearchParams): TicketSummary[] {
   const list = (k: string) => query.get(k)?.split(',').filter(Boolean)
   const statuses = list('status')
@@ -217,7 +223,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
     .filter((t) => restricted === null || t.restricted === (restricted === 'true'))
     .map((t) => ({
       t,
-      direct: !q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || t.labels.some((l) => l.toLowerCase().includes(q)),
+      direct: !q || [t.key, t.title, ...t.labels].some((v) => plainText(v).includes(plainText(q))) || squash(t.key).includes(squash(q)),
       match: q ? bodyMatch(t.body, q) : undefined,
     }))
     .filter((r) => r.direct || r.match)

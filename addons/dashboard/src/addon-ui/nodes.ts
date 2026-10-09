@@ -45,6 +45,18 @@ const itemAction = z.object({
   primary: z.boolean().optional(),
   /** "$row.<key>": the action is offered only when that cell is truthy (a table row's, evaluated by core). "!$row.<key>" for the opposite. */
   when: z.string().regex(/^!?\$row\.[A-Za-z0-9_]{1,64}$/).optional(),
+  /**
+   * The action cannot run now, and this is why: drawn disabled with the reason next to it (a literal sentence, or
+   * "$row.<key>" for a table row's cell; an empty cell means it can run). The host still decides.
+   */
+  blocked: z.string().max(120).optional(),
+  /** The button's text while this row's action is running ("Stopping…"), so a slow action never looks like nothing happened. */
+  pendingLabel: z.string().max(40).optional(),
+  /**
+   * A list item only: pressing the action opens a one-line field in the row (focused) before anything runs; the typed
+   * text is sent as arg `name`. For "Close with proof"-style actions that need a sentence but no page of their own.
+   */
+  input: z.object({ name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/), label: z.string().max(60), placeholder: z.string().max(80).optional(), submitLabel: z.string().max(40).optional(), maxLength: z.number().int().min(1).max(500).optional() }).optional(),
 })
 export type ItemAction = z.output<typeof itemAction>
 
@@ -106,6 +118,8 @@ export const formNode = z.object({
   submitLabel: z.string().max(60).optional(),
   /** A Cancel button next to submit. The form then also shows "Unsaved changes" once edited, and core asks before any other action of this addon discards them. */
   cancel: z.object({ label: z.string().max(40), action: actionId }).optional(),
+  /** After the action went through, the fields are emptied and the first one is focused again (an "add another" bar). */
+  reset: z.boolean().optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),

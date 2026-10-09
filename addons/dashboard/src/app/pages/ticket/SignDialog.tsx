@@ -203,7 +203,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending 
                   key={r}
                   className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
                 >
-                  <input ref={i === 0 ? firstRadio : undefined} type="radio" name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
+                  <input ref={i === 0 ? firstRadio : undefined} type="radio" id={`verdict-${r}`} name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
                   {label}
                 </label>
               ))}

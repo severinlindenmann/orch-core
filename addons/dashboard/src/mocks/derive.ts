@@ -304,7 +304,7 @@ export function deriveTicket(
   if (claim && claim.expires <= ctx.now) claim = null // lapsed: nobody holds the ticket any more
 
   const openBlocking = questions_state.find((q) => q.state === 'open' && q.blocking)
-  const turn = computeTurn(status, people, claim, openBlocking, verdict)
+  const turn = computeTurn(status, people, claim, openBlocking, verdict, gates.plan.state, gates.requirements.state, gates.plan.approvers, def.tasks.length)
 
   const last = events[events.length - 1]
   return {
@@ -345,18 +345,24 @@ function gateContent(g: GateName, def: TicketDefinition, body: BodySections, art
   }
 }
 
-function computeTurn(
+export function computeTurn(
   status: Status,
   people: People,
   claim: Claim | null,
   openBlocking: QuestionStatus | undefined,
   verdict: TicketDocument['verdict'],
+  plan: GateStatus['state'] = 'approved',
+  requirements: GateStatus['state'] = 'approved',
+  planApprovers: GateStatus['approvers'] = 'maintainer',
+  taskCount = 1,
 ): Turn {
   if (status === 'done') return { who: 'nobody', why: 'Done' }
   if (openBlocking) return { who: openBlocking.to, why: `Answer ${openBlocking.id}` }
   if (status === 'testing' && !verdict) return { who: people.reviewers[0] ?? people.owner ?? 'nobody', why: 'Verdict needed' }
   if (claim) return { who: `agent:${claim.agent}`, why: 'Working' }
   if (status === 'backlog') return { who: people.owner ?? 'nobody', why: 'Refine' }
+  // A plan that still needs a signature is the next step, not "ready to claim" (and it names who may sign it).
+  if (status === 'open' && requirements === 'approved' && plan !== 'approved' && taskCount > 0) return { who: people.owner ?? 'nobody', why: `Plan needs approval (${planApprovers === 'reviewers' ? 'reviewers' : planApprovers === 'owner' ? 'owners' : 'owners and maintainers'})` }
   if (status === 'open') return { who: people.owner ?? 'nobody', why: 'Ready to claim' }
   if (status === 'waiting') return { who: people.owner ?? 'nobody', why: 'Waiting' }
   return { who: people.owner ?? 'nobody', why: 'Next step' }

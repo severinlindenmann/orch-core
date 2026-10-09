@@ -41,6 +41,7 @@ describe('row feedback follows the row', () => {
     const row = () => screen.getByText('Beta').closest('tr')!
     await waitFor(() => expect(within(row()).getByRole('button', { name: 'Stop' })).toBeEnabled(), T)
     await userEvent.click(within(row()).getByRole('button', { name: 'Stop' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop app' })) // stopping asks first
     const alert = await screen.findByRole('alert')
     expect(alert.closest('tr')!.previousElementSibling).toBe(row())
     rerender(table([{ id: 'z', name: 'Zed' }, { id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]))
@@ -85,6 +86,7 @@ describe('a secret is not kept', () => {
     vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Made a link.', secret: { label: 'Link', value: SECRET } })
     const { client } = draw({ type: 'button', label: 'Make link', action: 'share_once', variant: 'secondary' })
     await press('Make link')
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Create show-once link' })).getByRole('button', { name: 'Create show-once link' }))
     const dialog = await screen.findByRole('dialog', { name: /Copy this link now/ })
     const held = () => JSON.stringify([client.getMutationCache().getAll().map((m) => m.state), client.getQueryCache().getAll().map((q) => q.state.data)])
     expect(held()).not.toContain('TOPSECRET123')

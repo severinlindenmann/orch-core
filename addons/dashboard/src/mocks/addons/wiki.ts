@@ -341,7 +341,7 @@ registerAddon({
                 submitLabel: 'Save changes',
                 cancel: { label: 'Cancel', action: 'done' },
               }
-            : { type: 'stack', children: [{ type: 'markdown', text: `# ${cur.title}\n\n*by ${cur.by} · ${ago(cur.updated)}*` }, ...backlinks, { type: 'markdown', text: body, toc: true }] },
+            : { type: 'stack', children: [{ type: 'markdown', text: `# ${cur.title}\n\n*by ${cur.by} · ${ago(cur.updated)}*` }, { type: 'markdown', text: body, toc: true }, ...backlinks] },
         ],
       }
     }

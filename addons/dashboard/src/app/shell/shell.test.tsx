@@ -17,6 +17,19 @@ describe('app shell', () => {
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
   })
 
+  it('Pin to sidebar says what happened: already pinned, or pinned', async () => {
+    const msg = vi.spyOn(toast, 'message')
+    const ok = vi.spyOn(toast, 'success')
+    renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    await screen.findByRole('link', { name: /Code reviews/ })
+    window.dispatchEvent(new CustomEvent('orch:pin-addon-page', { detail: 'github/reviews' }))
+    expect(msg).toHaveBeenCalledWith('Already pinned')
+    expect(ok).not.toHaveBeenCalledWith('Pinned to the sidebar')
+    msg.mockRestore()
+    ok.mockRestore()
+  })
+
   it('dismisses toasts when the route changes, and not before', async () => {
     const dismiss = vi.spyOn(toast, 'dismiss')
     const { user } = renderApp('/')
@@ -142,6 +155,40 @@ describe('app shell', () => {
       await user.type(screen.getByPlaceholderText(/Search tickets/), 'billing')
       await user.click(await screen.findByRole('option', { name: /DEMO-0043/ }))
       expect(await screen.findByRole('heading', { level: 1, name: /tariff tables/i })).toBeInTheDocument()
+    })
+
+    it('an exact key is the first, preselected hit: Enter opens it', async () => {
+      const { user } = renderApp('/ticket/DEMO-0043')
+      await screen.findByRole('heading', { level: 1 })
+      await user.keyboard('{Control>}k{/Control}')
+      await user.type(screen.getByPlaceholderText(/Search tickets/), 'DEMO-0041')
+      const first = (await screen.findAllByRole('option'))[0]
+      expect(first).toHaveTextContent('DEMO-0041')
+      expect(first).toHaveAttribute('aria-selected', 'true')
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/reconciliation tests|billing/i))
+      expect(screen.queryByPlaceholderText(/Search tickets/)).toBeNull()
+    })
+
+    it('a key typed without the dash finds it; a query of only dashes or underscores lists nothing', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('heading', { name: 'Today' })
+      await user.keyboard('{Control>}k{/Control}')
+      const box = screen.getByPlaceholderText(/Search tickets/)
+      await user.type(box, 'demo0041')
+      const first = (await screen.findAllByRole('option'))[0]
+      expect(first).toHaveTextContent('DEMO-0041')
+      await user.clear(box)
+      await user.type(box, '-_-')
+      expect(screen.queryByRole('group', { name: 'Tickets' })).toBeNull()
+    })
+
+    it('_ and - match spaces: "billing run id" finds billing_run_id', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('heading', { name: 'Today' })
+      await user.keyboard('{Control>}k{/Control}')
+      await user.type(screen.getByPlaceholderText(/Search tickets/), 'billing run id')
+      expect(await screen.findByRole('option', { name: /billing_run_id/ })).toBeInTheDocument()
     })
 
     it('offers ticket actions only on a ticket page, and opens the sign dialog for approve', async () => {

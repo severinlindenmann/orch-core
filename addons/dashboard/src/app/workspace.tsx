@@ -77,13 +77,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const switchWorkspace = useCallback(
     (next: string, opts: SwitchOptions = {}) => {
+      const { data: all, workspace: current } = latest.current
+      const target = all.find((w) => w.id === next)
+      if (!target) return
+      if (next === current?.id && !opts.ticket) return
       if (switchGuard && !opts.guarded) {
         switchGuard(() => switchWorkspace(next, { ...opts, guarded: true }))
         return
       }
-      const { data: all, workspace: current } = latest.current
-      const target = all.find((w) => w.id === next)
-      if (!target) return
       const path = router.state.location.pathname
       if (opts.ticket) {
         setWorkspaceId(next)

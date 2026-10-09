@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Section } from '../ticket/shared'
+import { OwnerNote } from './OwnerNote'
 
 /** Mock download: the workspace and its identity as JSON. */
 function exportWorkspace(workspace: Workspace, identity: WorkspaceIdentity | undefined) {
@@ -40,13 +41,15 @@ export function DangerZone({ workspace, identity, canEdit }: { workspace: Worksp
   return (
     <Section title="Danger zone" className="border-danger/40">
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => exportWorkspace(workspace, identity)}>
+        <Button variant="outline" size="sm" disabled={!canEdit} aria-describedby={canEdit ? undefined : 'export-why'} onClick={() => exportWorkspace(workspace, identity)}>
           <Download />
           Export workspace
         </Button>
-        <Button variant="destructive" size="sm" disabled={!canEdit} onClick={() => setOpen(true)}>
+        {!canEdit && <OwnerNote id="export-why">Only owners can export.</OwnerNote>}
+        <Button variant="destructive" size="sm" disabled={!canEdit} aria-describedby={canEdit ? undefined : 'archive-why'} onClick={() => setOpen(true)}>
           Archive workspace
         </Button>
+        {!canEdit && <OwnerNote id="archive-why">Only owners can archive.</OwnerNote>}
       </div>
       {open && (
         <Dialog open onOpenChange={(o) => !o && close()}>

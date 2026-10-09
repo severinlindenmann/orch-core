@@ -338,7 +338,7 @@ export class MockStore {
     const def = this.defs.get(key)
     const ws = this.workspaceOf(key)
     if (!def || !ws) return undefined
-    const doc = deriveTicket(def, this.bodies.get(key) ?? {}, this.eventsOf(key), { gates: ws.gates, now: this.now() })
+    const doc = deriveTicket(def, this.bodies.get(key) ?? {}, this.eventsOf(key), { gates: ws.gates, seedGates: this.seedWorkspaces.find((w) => w.id === ws.id)?.gates, now: this.now() })
     if (def.type === 'epic') {
       doc.children = [...this.defs.values()].filter((d) => d.parent === key && this.isVisible(d.key)).map((d) => d.key)
     }
@@ -393,6 +393,8 @@ export class MockStore {
     const prev = list[list.length - 1]
     const seq = (prev?.seq ?? 0) + 1
     const { actor, ...rest } = input
+    // An approval records the count the policy asked for, so a later policy change does not undo it.
+    if (rest.type === 'gate.approved' && rest.needed === undefined) rest.needed = this.workspaceOf(key)?.gates[rest.gate as GateName]?.count
     const event = {
       v: 2,
       id: def.uid.slice(0, 14) + String(seq).padStart(12, '0'),

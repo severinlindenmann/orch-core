@@ -52,6 +52,51 @@ describe('app shell', () => {
     expect(aside.getAttribute('data-collapsed')).toBe(start)
   })
 
+  it('Skip to content is the first Tab stop and moves focus to main', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    await user.tab()
+    const skip = screen.getByRole('link', { name: 'Skip to content' })
+    expect(skip).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(document.getElementById('main')).toHaveFocus()
+  })
+
+  it('shows at most 6 addon links and a More addons button listing all, each with its A and a unique icon', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    const more = await within(nav).findByRole('button', { name: /More addons \(\d+\)/ })
+    const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
+    expect(links.length).toBeLessThanOrEqual(6)
+    const icons = links.map((l) => l.querySelector('[data-icon]')?.getAttribute('data-icon'))
+    expect(new Set(icons).size).toBe(icons.length)
+    await user.click(more)
+    expect((await screen.findAllByRole('img', { name: /From addon:|From the .* addon/ })).length).toBeGreaterThan(links.length)
+  })
+
+  it('Today has an accessible name with its count', async () => {
+    renderApp('/')
+    expect(await screen.findByRole('link', { name: /^Today, \d+ need you$/ })).toBeInTheDocument()
+  })
+
+  it('Reset demo asks first', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    await user.click(screen.getByRole('button', { name: 'Reset demo' }))
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('a viewer has no New ticket button and c explains instead of opening the form', async () => {
+    const { user } = renderApp('/', { viewer: 'p_tom' })
+    await screen.findByRole('heading', { name: 'Today' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Viewing as' })).toHaveTextContent(/viewer/))
+    expect(screen.queryByRole('button', { name: /New ticket/ })).toBeNull()
+    await user.keyboard('c')
+    expect(await screen.findByText(/Viewers cannot create tickets/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1, name: 'New ticket' })).toBeNull()
+  })
+
   it('renders an addon page with the badge in the page title', async () => {
     renderApp('/addon/usage/overview')
     const title = await screen.findByRole('heading', { level: 1, name: /Usage/ })
@@ -62,7 +107,7 @@ describe('app shell', () => {
   it('opens the new ticket page from the button and from the c shortcut, but not while typing', async () => {
     const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
-    await user.click(screen.getByRole('button', { name: /New ticket/ }))
+    await user.click(await screen.findByRole('button', { name: /New ticket/ }))
     expect(await screen.findByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: /Board/ }))
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board'))

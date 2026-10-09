@@ -15,6 +15,15 @@ describe('new ticket page', () => {
     await user.click(screen.getByRole('radio', { name: 'bug' }))
     expect(screen.getByLabelText('Out of scope')).toBeInTheDocument()
   })
+  it('focuses Title; an empty submit shows inline errors and focuses the first invalid field', async () => {
+    const { user } = renderApp('/tickets/new')
+    const title = await screen.findByLabelText('Title')
+    expect(title).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText('The title needs 3 to 120 characters.')).toBeInTheDocument()
+    expect(title).toHaveFocus()
+  })
   it('keeps shared section text when switching type', async () => {
     const { user } = renderApp('/tickets/new')
     await user.type(await screen.findByLabelText(/^Requirements/), 'Must not loop')

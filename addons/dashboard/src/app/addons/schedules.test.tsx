@@ -22,7 +22,8 @@ describe('Schedules page', () => {
     expect(screen.getByText('Smoke test on testing')).toBeInTheDocument()
     expect(screen.getAllByText('Weekly dependency update').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
-    expect(within(await screen.findByRole('link', { name: 'Schedules' })).getByText('Preview')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: /More addons/ }))
+    expect(within(await screen.findByRole('link', { name: /^Schedules/ })).getByText('Preview')).toBeInTheDocument()
   })
   it('Arm is signed in core\'s dialog and then shows the next run', async () => {
     const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })

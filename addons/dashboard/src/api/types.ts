@@ -45,6 +45,13 @@ export interface Workspace {
   needs_you: number
 }
 
+/** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
+export interface KnownPerson {
+  person: string
+  name: string
+  email: string
+}
+
 export interface Me {
   person: string
   name: string

@@ -8,6 +8,7 @@ import {
   type AddonDecision,
   type AddonPackage,
   type InstalledAddon,
+  type KnownPerson,
   type AddonOpRequest,
   type AgentActivityItem,
   type AgentSession,
@@ -68,6 +69,7 @@ export function createApi(transport: Transport) {
 
   return {
     getMe: () => call<Me>('GET', '/api/me'),
+    listPeople: () => call<KnownPerson[]>('GET', '/api/people'),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
     getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),

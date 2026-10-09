@@ -50,6 +50,8 @@ export function parseActor(s: string): Actor {
 
 export interface DeriveContext {
   gates: Workspace['gates']
+  /** The policy the workspace started with: an approval that records no `needed` was given under it. */
+  seedGates?: Workspace['gates']
   /** The clock. A claim whose `expires` has passed has lapsed (its grant is over): the ticket shows no claim. */
   now: string
 }
@@ -69,6 +71,8 @@ export function deriveTicket(
   let handoff: string | null = null
   const artifacts: Artifact[] = []
   const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  // How many approvals the policy asked for when the latest one was given: a later policy change does not undo it.
+  const gateNeeded: Partial<Record<GateName, number>> = {}
   const gateInvalid: Partial<Record<GateName, { reason: string; at: string }>> = {}
   const history: NonNullable<TicketDocument['section_history']> = {}
   const gateChanges: Partial<Record<GateName, { text?: string; at: string }>> = {}
@@ -166,6 +170,7 @@ export function deriveTicket(
         break
       case 'gate.approved': {
         const g = e.gate as GateName
+        gateNeeded[g] = typeof e.needed === 'number' ? e.needed : ctx.seedGates?.[g].count
         gateApprovals[g].push({
           by: actorLabel(e.actor),
           at: e.at,
@@ -263,7 +268,7 @@ export function deriveTicket(
         ? 'changes_requested'
         : invalid
           ? 'invalidated'
-          : approvals.length >= policy.count
+          : approvals.length >= policy.count || (approvals.length > 0 && approvals.length >= (gateNeeded[g] ?? Infinity))
             ? 'approved'
             : 'pending',
       approvals,

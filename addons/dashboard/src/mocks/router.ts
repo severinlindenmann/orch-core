@@ -6,6 +6,7 @@ import type { MockStore } from './store'
 import { can } from '@/api/permissions'
 import { APPROVER_GROUPS } from '@/api/gates'
 import { addonActive } from '@/api/addons'
+import peopleFixture from './fixtures/people.json'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -313,6 +314,7 @@ export function buildRouter(): MockRouter {
       return h(s, c)
     })
   r.add('GET', '/api/me', (s) => ok(s.me()))
+  r.add('GET', '/api/people', () => ok(peopleFixture))
   r.add('GET', '/api/workspaces', (s) => ok(s.workspaceList()))
   readOf('/api/workspaces/:ws/today', (s, c) =>
     ok(s.today(c.params.ws)),

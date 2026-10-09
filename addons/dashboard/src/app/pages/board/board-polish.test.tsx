@@ -31,7 +31,7 @@ describe('board polish', () => {
     renderApp('/board')
     await screen.findByTestId('card-DEMO-0043', {}, T)
     act(() => dnd.onDragEnd!({ active: { data: { current: { ticket: { key: 'DEMO-0043', status: 'in-progress' } } } }, over: { id: 'done' } }))
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Done is reached by a verdict', { duration: Infinity, description: 'Give the verdict on the ticket page' }), T)
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Done is reached by a verdict', { id: 'api-error', duration: Infinity, description: 'Give the verdict on the ticket page' }), T)
   })
 
   it('an empty column says Nothing here, and backlog offers to create a ticket', async () => {

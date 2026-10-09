@@ -1,4 +1,5 @@
 import {
+  Activity,
   Bot,
   BookOpen,
   CalendarClock,
@@ -6,6 +7,7 @@ import {
   Factory,
   Gauge,
   GitBranch,
+  GitCommitHorizontal,
   GitPullRequest,
   LayoutDashboard,
   LayoutPanelTop,
@@ -21,6 +23,7 @@ import {
 
 // Addons name icons as strings in their manifests; only a fixed set is renderable.
 const ICONS: Record<string, LucideIcon> = {
+  Activity,
   Bot,
   BookOpen,
   CalendarClock,
@@ -28,6 +31,7 @@ const ICONS: Record<string, LucideIcon> = {
   Gauge,
   Github: GitBranch,
   GitBranch,
+  GitCommitHorizontal,
   GitPullRequest,
   LayoutDashboard,
   LayoutPanelTop,

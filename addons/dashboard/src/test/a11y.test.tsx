@@ -87,7 +87,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['/agents', /^Agents$/, /Issue grant/],
     ['/settings/general', /^Settings$/, /Key fingerprint/],
     ['/settings/members', /^Settings$/, /Add member/],
-    ['/settings/gates', /^Settings$/, /Open approvals stay valid/],
+    ['/settings/gates', /^Settings$/, /Approvals already given stay valid/],
     ['/settings/addons', /^Settings$/, /Browse addons/],
     ['/settings/addon/estimate', /^Settings$/, /Scale/],
   ]

@@ -20,7 +20,8 @@ describe('AI Factory page', () => {
     expect(screen.getByRole('columnheader', { name: 'Approval' })).toBeInTheDocument()
     expect(screen.getAllByText('auto-approved by agent', { selector: 'td' }).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
-    const nav = await screen.findByRole('link', { name: 'AI Factory' })
+    await user.click(await screen.findByRole('button', { name: /More addons/ }))
+    const nav = await screen.findByRole('link', { name: /^AI Factory/ })
     expect(within(nav).getByText('Preview')).toBeInTheDocument()
   })
   it('the addon manager row carries the Preview chip too', async () => {

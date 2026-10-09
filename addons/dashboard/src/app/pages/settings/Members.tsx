@@ -1,6 +1,8 @@
 import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
-import { useState } from 'react'
-import type { Role, Workspace } from '@/api/types'
+import { useQuery } from '@tanstack/react-query'
+import { useId, useRef, useState } from 'react'
+import { api } from '@/api/client'
+import type { KnownPerson, Role, Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -9,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ago, PersonAvatar } from '../ticket/shared'
+import { OwnerNote } from './OwnerNote'
 import { useSettingsSign } from './useSettingsSign'
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
@@ -42,41 +45,156 @@ function RoleHelp() {
   )
 }
 
-function AddMember({ onSubmit, onClose }: { onSubmit: (v: { person: string; name: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
-  const [name, setName] = useState('')
-  const [person, setPerson] = useState('')
+const ADD_ROLE_HELP: Record<Exclude<Role, 'owner'>, string> = {
+  maintainer: 'Maintainer: can approve plans and verdicts, cannot change settings.',
+  member: 'Member: can create tickets, comment and answer questions, cannot approve gates.',
+  viewer: 'Viewer: reads what they can see, changes nothing.',
+}
+const ADD_ROLES = Object.keys(ADD_ROLE_HELP) as Exclude<Role, 'owner'>[]
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** "ida@x.org" has no person id yet: the mock derives one from the part before the @. */
+function fromEmail(email: string): KnownPerson {
+  const local = email.split('@')[0]
+  return { person: `p_${local.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, name: local.charAt(0).toUpperCase() + local.slice(1), email }
+}
+
+/** Add by name or email: a combobox over the people this device knows. Enter adds the highlighted person (or the one chosen). */
+function AddMember({ members, onSubmit, onClose }: { members: Workspace['members']; onSubmit: (v: { person: string; name: string; email: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
+  const known = useQuery({ queryKey: ['people'], queryFn: () => api.listPeople() })
+  const [text, setText] = useState('')
+  const [chosen, setChosen] = useState<KnownPerson | null>(null)
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
   const [role, setRole] = useState<Exclude<Role, 'owner'>>('member')
+  const [error, setError] = useState<string | null>(null)
+  const input = useRef<HTMLInputElement>(null)
+  const arrowed = useRef(false)
+  const listId = useId()
+
+  const needle = text.trim().toLowerCase()
+  const options = (known.data ?? []).filter((p) => !members.some((m) => m.person === p.person) && (!needle || p.name.toLowerCase().includes(needle) || p.email.toLowerCase().includes(needle)))
+  const shown = open && !chosen
+
+  const pick = (p: KnownPerson) => {
+    setChosen(p)
+    setText(p.name)
+    setOpen(false)
+    setError(null)
+  }
+  const submit = () => {
+    const typed = text.trim()
+    const who = chosen ?? (needle || arrowed.current ? options[active] : null) ?? (EMAIL.test(typed) ? fromEmail(typed) : null)
+    if (!who) {
+      setError(typed ? 'Nobody known matches that. Pick a person from the list or type an email address.' : 'Choose a person, or type an email address.')
+      input.current?.focus()
+      return
+    }
+    if (members.some((m) => m.person === who.person)) {
+      setError(`${who.name} is already a member.`)
+      input.current?.focus()
+      return
+    }
+    onSubmit({ person: who.person, name: who.name, email: who.email, role })
+  }
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-sm gap-4 border-border bg-surface">
-        <DialogHeader>
-          <DialogTitle>Add member</DialogTitle>
-          <DialogDescription>Owners are made by promoting a member afterwards.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-1.5">
-          <Label htmlFor="member-name">Name</Label>
-          <Input id="member-name" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="member-person">Person id</Label>
-          <Input id="member-person" value={person} onChange={(e) => setPerson(e.target.value)} placeholder="p_ida" />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="member-role">Role</Label>
-          <select id="member-role" value={role} onChange={(e) => setRole(e.target.value as Exclude<Role, 'owner'>)} className="h-9 w-full rounded-md border border-border bg-bg px-2 text-[13px]">
-            {ROLES.filter((r) => r !== 'owner').map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-        </div>
-        <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button disabled={!name.trim() || !person.trim()} onClick={() => onSubmit({ person: person.trim(), name: name.trim(), role })}>
-            Add
-          </Button>
-        </DialogFooter>
+        <form
+          noValidate
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            submit()
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Add member</DialogTitle>
+            <DialogDescription>Owners are made by promoting a member afterwards.</DialogDescription>
+          </DialogHeader>
+          <div className="relative space-y-1.5">
+            <Label htmlFor="member-person">Person</Label>
+            <Input
+              id="member-person"
+              ref={input}
+              role="combobox"
+              aria-label="Person"
+              aria-expanded={shown}
+              aria-controls={listId}
+              aria-autocomplete="list"
+              aria-invalid={!!error || undefined}
+              aria-describedby={error ? 'member-person-error' : undefined}
+              autoComplete="off"
+              value={text}
+              placeholder="Name or email"
+              onFocus={() => setOpen(true)}
+              onChange={(e) => {
+                setText(e.target.value)
+                setChosen(null)
+                arrowed.current = false
+                setOpen(true)
+                setActive(0)
+                setError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  arrowed.current = true
+                  setOpen(true)
+                  setActive((a) => Math.max(0, Math.min(options.length - 1, a + (e.key === 'ArrowDown' ? 1 : -1))))
+                } else if (e.key === 'Escape' && shown) {
+                  e.stopPropagation()
+                  setOpen(false)
+                }
+              }}
+            />
+            {shown && (
+              <ul id={listId} role="listbox" aria-label="People" className="absolute inset-x-0 z-10 mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
+                {options.length === 0 && <li className="px-2 py-1.5 text-[13px] text-text-faint">{needle ? 'Nobody known matches. A full email address adds a new person.' : 'Everyone known is already a member.'}</li>}
+                {options.map((p, i) => (
+                  <li
+                    key={p.person}
+                    role="option"
+                    aria-selected={i === active}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => pick(p)}
+                    className={`flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 text-[13px] ${i === active ? 'bg-surface-3' : 'hover:bg-surface-2'}`}
+                  >
+                    <span>{p.name}</span>
+                    <span className="text-[12px] text-text-faint">{p.email}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {error && (
+              <p id="member-person-error" role="alert" className="text-[12px] text-danger">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="member-role">Role</Label>
+            <select id="member-role" value={role} onChange={(e) => setRole(e.target.value as Exclude<Role, 'owner'>)} className="h-9 w-full rounded-md border border-border bg-bg px-2 text-[13px]">
+              {ADD_ROLES.map((r) => (
+                <option key={r}>{r}</option>
+              ))}
+            </select>
+            <ul aria-label="What each role can do" className="space-y-0.5 pt-1 text-[12px] text-text-faint">
+              {ADD_ROLES.map((r) => (
+                <li key={r} className={r === role ? 'text-text' : undefined}>
+                  {ADD_ROLE_HELP[r]}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Add</Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
@@ -100,6 +218,11 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
         )}
       </div>
 
+      {!canEdit && (
+        <p>
+          <OwnerNote>Only owners can change roles or add and remove members.</OwnerNote>
+        </p>
+      )}
       <div className="rounded-lg border border-border bg-surface">
         <Table>
           <TableHeader>
@@ -190,13 +313,14 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
 
       {adding && (
         <AddMember
+          members={workspace.members}
           onClose={() => setAdding(false)}
           onSubmit={(v) => {
             setAdding(false)
             ask({
               title: `Add ${v.name}`,
-              covers: [`Person: ${v.name} (${v.person})`, `Role: ${v.role}`, 'Joins this workspace now'],
-              req: { op: 'member.add', ...v },
+              covers: [`Person: ${v.name} (${v.email})`, `Role: ${v.role}`, 'Joins this workspace now'],
+              req: { op: 'member.add', person: v.person, name: v.name, role: v.role },
             })
           }}
         />

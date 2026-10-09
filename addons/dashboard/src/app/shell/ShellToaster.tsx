@@ -1,7 +1,8 @@
 import { useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
+import { useShellState } from './ShellUi'
 
 const GUTTER = 16
 const WIDE_RAIL = 232
@@ -21,16 +22,8 @@ export function ShellToaster() {
     for (const t of toast.getToasts()) if ('type' in t && t.type !== 'error' && t.type !== 'loading') toast.dismiss(t.id)
   }, [path])
 
-  const [rail, setRail] = useState(WIDE_RAIL)
-  useEffect(() => {
-    const aside = document.querySelector('aside[data-collapsed]')
-    if (!aside) return
-    const read = () => setRail(aside.getAttribute('data-collapsed') === 'true' ? NARROW_RAIL : WIDE_RAIL)
-    read()
-    const mo = new MutationObserver(read)
-    mo.observe(aside, { attributes: true, attributeFilter: ['data-collapsed'] })
-    return () => mo.disconnect()
-  }, [])
+  const { railCollapsed } = useShellState()
+  const rail = railCollapsed ? NARROW_RAIL : WIDE_RAIL
 
   return <Toaster position="bottom-left" visibleToasts={2} duration={6000} offset={{ left: rail + GUTTER, bottom: GUTTER }} />
 }

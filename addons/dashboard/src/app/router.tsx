@@ -62,6 +62,14 @@ const settingsAddonRoute = createRoute({
     return <SettingsPage addon={name} />
   },
 })
+// An older spelling of the addon settings link: the drawer lives at /settings/addon/$name.
+const settingsAddonsAliasRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'settings/addons/$name',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/settings/addon/$name', params: { name: params.name } })
+  },
+})
 const addonRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'addon/$name/$page',
@@ -71,7 +79,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 export function createAppRouter(initialPath = '/') {
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) })

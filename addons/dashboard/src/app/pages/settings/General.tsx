@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fmtTime, Mono, Section } from '../ticket/shared'
 import { DangerZone } from './DangerZone'
+import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -65,9 +66,10 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
             <Label htmlFor="ws-name">Name</Label>
             <Input id="ws-name" value={value} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
           </div>
-          <Button disabled={!canEdit || value.trim() === workspace.name || !value.trim()} onClick={save}>
+          <Button disabled={!canEdit || value.trim() === workspace.name || !value.trim()} onClick={save} aria-describedby={canEdit ? undefined : 'ws-name-why'}>
             Save
           </Button>
+          {!canEdit && <OwnerNote id="ws-name-why">Only owners can save.</OwnerNote>}
         </div>
         <dl className="mt-3 divide-y divide-border">
           <Row label="Prefix">
@@ -91,7 +93,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
 
       <Section title="Relay">
         <div className="flex items-center gap-3 text-[13px]">
-          <p className="flex-1 text-text-muted">Not connected · arrives with orch-relay (P3)</p>
+          <p className="flex-1 text-text-muted">Not connected yet</p>
           <Button variant="outline" size="sm" disabled>
             Connect
           </Button>

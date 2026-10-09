@@ -109,13 +109,12 @@ function writeDraft(key: string, d: Draft | null) {
   }
 }
 
-function problems(d: Draft): { sections: SectionName[]; messages: string[] } {
-  const messages: string[] = []
+function problems(d: Draft): { title: string | null; sections: Partial<Record<SectionName, string>>; count: number } {
   const t = d.title.trim()
-  if (t.length < 3 || t.length > 120) messages.push('The title needs 3 to 120 characters.')
-  const sections = requiredAtCreation(d.type).filter((n) => !d.sections[n]?.trim())
-  for (const n of sections) messages.push(`${sectionLabel(d.type, n)} ${n === 'summary' ? 'is' : 'are'} needed before the ticket can be created.`)
-  return { sections, messages }
+  const title = t.length < 3 || t.length > 120 ? 'The title needs 3 to 120 characters.' : null
+  const sections: Partial<Record<SectionName, string>> = {}
+  for (const n of requiredAtCreation(d.type)) if (!d.sections[n]?.trim()) sections[n] = `${sectionLabel(d.type, n)} ${n === 'summary' ? 'is' : 'are'} needed before the ticket can be created.`
+  return { title, sections, count: (title ? 1 : 0) + Object.keys(sections).length }
 }
 
 function TypeControl({ value, onChange }: { value: TicketType; onChange: (t: TicketType) => void }) {
@@ -214,6 +213,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
   const [serverError, setServerError] = useState<string | null>(null)
   const leaving = useRef(false)
   const titleRef = useRef<HTMLInputElement>(null)
+  const [refused, setRefused] = useState(0)
   const canCreate = can(roleOf(workspace, me.person), 'ticket.create')
   const dirty = hasText(draft)
   const check = problems(draft)
@@ -239,7 +239,11 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
     if (submitting.current) return
     setAttempted(true)
     setServerError(null)
-    if (!canCreate || check.messages.length) return
+    if (!canCreate) return
+    if (check.count) {
+      setRefused((n) => n + 1) // the effect below moves the focus to the first field that explains itself
+      return
+    }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
     const sections: BodySections = {}
@@ -278,6 +282,11 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
     }
   }
 
+  // A refused submit: focus the first invalid field (title, then the sections in page order).
+  useEffect(() => {
+    if (refused) document.querySelector<HTMLElement>('main [aria-invalid="true"]')?.focus()
+  }, [refused])
+
   const discardAll = () => {
     writeDraft(key, null)
     setDraft(EMPTY)
@@ -285,7 +294,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
     setAttempted(false)
   }
 
-  const shown = attempted ? check.messages : []
+  const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
     <div
@@ -313,7 +322,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
         </div>
       )}
       <TypeControl value={draft.type} onChange={(type) => patch({ type, parent: type === 'epic' ? null : draft.parent })} />
-      <div className="mt-5 grid gap-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="mt-5 grid gap-8 pb-24 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-5">
           <div className="space-y-1.5">
             <label htmlFor="nt-title" className="text-[13px] font-medium">
@@ -322,13 +331,20 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
             <Input
               id="nt-title"
               ref={titleRef}
+              autoFocus
               value={draft.title}
               onChange={(e) => patch({ title: e.target.value })}
               maxLength={160}
               placeholder="What needs to happen?"
-              aria-invalid={(attempted && draft.title.trim().length < 3) || undefined}
+              aria-invalid={(attempted && !!check.title) || undefined}
+              aria-describedby={attempted && check.title ? 'nt-title-error' : undefined}
               className="h-11 text-lg md:text-lg"
             />
+            {attempted && check.title && (
+              <p id="nt-title-error" className="text-[12px] text-danger">
+                {check.title}
+              </p>
+            )}
           </div>
           <SectionsEditor
             type={draft.type}
@@ -336,7 +352,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
             onSection={(n, text) => setDraft((d) => ({ ...d, sections: { ...d.sections, [n]: text } }))}
             acceptance={draft.acceptance}
             onAcceptance={(acceptance) => patch({ acceptance })}
-            invalid={attempted ? check.sections : []}
+            invalid={attempted ? check.sections : {}}
           />
         </div>
         <aside className="space-y-4" aria-label="Properties">
@@ -381,11 +397,11 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
         </aside>
       </div>
       <div className="sticky bottom-0 -mx-6 mt-8 border-t border-border bg-bg px-6 py-3">
-        {(shown.length > 0 || serverError) && (
+        {(summary || serverError) && (
           <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
             <ul>
-              {[...shown, ...(serverError ? [serverError] : [])].map((m) => (
+              {[...(summary ? [summary] : []), ...(serverError ? [serverError] : [])].map((m) => (
                 <li key={m}>{m}</li>
               ))}
             </ul>

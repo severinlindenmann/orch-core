@@ -18,7 +18,7 @@ const HINT: Partial<Record<SectionName, string>> = {
   current_state: 'Where things stand right now.',
 }
 
-function Section({ type, name, value, onChange, invalid }: { type: TicketType; name: SectionName; value: string; onChange: (v: string) => void; invalid: boolean }) {
+function Section({ type, name, value, onChange, error }: { type: TicketType; name: SectionName; value: string; onChange: (v: string) => void; error?: string }) {
   const id = useId()
   const [preview, setPreview] = useState(false)
   const label = sectionLabel(type, name)
@@ -49,11 +49,16 @@ function Section({ type, name, value, onChange, invalid }: { type: TicketType; n
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={HINT[name]}
-          aria-describedby={`${id}-need`}
+          aria-describedby={error ? `${id}-need ${id}-error` : `${id}-need`}
           aria-required={atCreation}
-          aria-invalid={invalid || undefined}
+          aria-invalid={!!error || undefined}
           className="min-h-20 font-mono text-[13px] md:text-[13px]"
         />
+      )}
+      {error && (
+        <p id={`${id}-error`} className="text-[12px] text-danger">
+          {error}
+        </p>
       )}
     </section>
   )
@@ -72,7 +77,8 @@ export function SectionsEditor({
   onSection: (name: SectionName, text: string) => void
   acceptance: string[]
   onAcceptance: (list: string[]) => void
-  invalid: SectionName[]
+  /** Why a section cannot be submitted yet, by section (shown under it). */
+  invalid: Partial<Record<SectionName, string>>
 }) {
   const [next, setNext] = useState('')
   const add = () => {
@@ -84,7 +90,7 @@ export function SectionsEditor({
   return (
     <div className="space-y-5">
       {SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[type][n] !== 'absent').map((n) => (
-        <Section key={n} type={type} name={n} value={sections[n] ?? ''} onChange={(v) => onSection(n, v)} invalid={invalid.includes(n)} />
+        <Section key={n} type={type} name={n} value={sections[n] ?? ''} onChange={(v) => onSection(n, v)} error={invalid[n]} />
       ))}
       <section className="space-y-1.5" aria-labelledby="ac-heading">
         <h2 id="ac-heading" className="text-[13px] font-medium">

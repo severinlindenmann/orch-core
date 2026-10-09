@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
 import { useRouter } from '@tanstack/react-router'
+import { can } from '@/api/permissions'
 import { SHORTCUT_DEFS } from '@/api/shortcuts'
+import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
+import { useShellState } from './ShellUi'
 
 export interface Shortcut {
   id: string
@@ -43,14 +46,16 @@ const SEQUENCE_MS = 1000
 /** Typing in a field, or any open dialog, menu or list, owns the keyboard. */
 export function keyboardBusy(target: EventTarget | null): boolean {
   const t = target as HTMLElement | null
-  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.closest?.('[role="dialog"],[role="menu"],[role="listbox"]'))) return true
-  return !!document.querySelector('[role="dialog"]')
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.closest?.('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'))) return true
+  return !!document.querySelector('[role="dialog"],[role="alertdialog"]')
 }
 
 /** Binds SHORTCUTS: single keys and `g x` sequences (second key within 1 s). Mount once, in the shell. */
 export function useShortcuts() {
   const router = useRouter()
   const { workspaces, switchWorkspace } = useWorkspace()
+  const { setPaletteOpen, setPaletteSeed } = useShellState()
+  const role = useRole()
   useEffect(() => {
     const go = (to: string) => void router.navigate({ to } as never)
     let armed: number | null = null
@@ -88,6 +93,12 @@ export function useShortcuts() {
       const hit = SHORTCUTS.find((s) => s.run && s.keys === e.key)
       if (hit) {
         e.preventDefault()
+        if (hit.id === 'new-ticket' && role && !can(role, 'ticket.create')) {
+          // A viewer gets the reason, in the palette, instead of a form they cannot submit.
+          setPaletteSeed('New ticket')
+          setPaletteOpen(true)
+          return
+        }
         hit.run!(go)
       }
     }
@@ -96,5 +107,5 @@ export function useShortcuts() {
       window.removeEventListener('keydown', onKey)
       disarm()
     }
-  }, [router, workspaces, switchWorkspace])
+  }, [router, workspaces, switchWorkspace, role, setPaletteOpen, setPaletteSeed])
 }

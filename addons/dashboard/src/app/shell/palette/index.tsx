@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import { Bot, Check, Clock, FileText, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
 import { api } from '@/api/client'
-import { STATUSES, type ActionRequest } from '@/api/types'
+import { STATUSES, type ActionRequest, type Status } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
 import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import { CommandDialog, CommandEmpty, CommandInput, CommandList } from '@/components/ui/command'
@@ -24,7 +24,7 @@ import { Group, matches, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
 import { toastApiError } from '@/app/toast'
 
-type Mode = null | 'comment' | 'move' | 'ask-to' | { ask: string }
+type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | { ask: string }
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value)
@@ -39,7 +39,7 @@ const PLACEHOLDER = 'Search tickets or run a command...'
 
 /** Global command palette: ⌘K / Ctrl+K. `>` commands, `#` tickets, `@` people. */
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen } = useShellState()
+  const { paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed } = useShellState()
   const { workspace, workspaces, switchWorkspace } = useWorkspace()
   const router = useRouter()
   const qc = useQueryClient()
@@ -48,6 +48,9 @@ export function CommandPalette() {
   const [q, setQ] = useState('')
   const [mode, setMode] = useState<Mode>(null)
   const [signing, setSigning] = useState<HumanAction | null>(null)
+  // "Move ticket to…" on the board: the ticket chosen (or the focused card when ⌘K was pressed on one).
+  const [moveTarget, setMoveTarget] = useState<{ key: string; status?: Status } | null>(null)
+  const focusedCard = useRef<string | null>(null)
   const { data: addons = [] } = useAddons()
   const addonNav = useSlot('nav')
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
@@ -67,6 +70,7 @@ export function CommandPalette() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
+        focusedCard.current = /^card-(.+)$/.exec((document.activeElement as HTMLElement | null)?.dataset?.testid ?? '')?.[1] ?? null
         setPaletteOpen(!paletteOpen)
       }
     }
@@ -78,8 +82,13 @@ export function CommandPalette() {
     if (!paletteOpen) {
       setQ('')
       setMode(null)
+      setMoveTarget(null)
+    } else if (paletteSeed) {
+      // Opened by a shortcut that wants to show something (a viewer pressing c): start with that search.
+      setQ(paletteSeed)
+      setPaletteSeed('')
     }
-  }, [paletteOpen])
+  }, [paletteOpen, paletteSeed, setPaletteSeed])
 
   // The prefix restricts what is listed; the rest is the search text.
   const prefix = mode ? '' : q.startsWith('>') || q.startsWith('#') || q.startsWith('@') ? q[0] : ''
@@ -90,7 +99,7 @@ export function CommandPalette() {
   const { data: tickets = [] } = useQuery({
     queryKey: ['palette-tickets', workspace?.id, dq],
     queryFn: () => api.listTickets(workspace!.id, { q: dq }),
-    enabled: paletteOpen && !!workspace && !mode && (prefix === '' || prefix === '#') && dq.length > 0,
+    enabled: paletteOpen && !!workspace && (!mode || mode === 'move-pick') && (prefix === '' || prefix === '#') && dq.length > 0,
     placeholderData: (prev) => prev,
   })
 
@@ -109,10 +118,10 @@ export function CommandPalette() {
   }
   const fail = (e: unknown) => toastApiError(e, 'Request failed')
 
-  const post = async (req: ActionRequest, done: string) => {
+  const post = async (req: ActionRequest, done: string, key = ticketKey!) => {
     close()
     try {
-      await api.postAction(ticketKey!, req)
+      await api.postAction(key, req)
       await qc.invalidateQueries()
       toast.success(done)
     } catch (e) {
@@ -134,7 +143,21 @@ export function CommandPalette() {
   ]
 
   const create: Entry[] = [
-    ...(can(role, 'ticket.create') || !role ? [{ id: 'new-ticket', label: 'New ticket', icon: <Plus />, hint: 'create', keys: keysFor('new-ticket'), run: () => go('/tickets/new') }] : []),
+    can(role, 'ticket.create') || !role
+      ? { id: 'new-ticket', label: 'New ticket', icon: <Plus />, hint: 'create', keys: keysFor('new-ticket'), run: () => go('/tickets/new') }
+      : {
+          id: 'new-ticket',
+          label: (
+            <>
+              New ticket
+              <span className="ml-2 text-[12px] text-text-faint">Viewers cannot create tickets</span>
+            </>
+          ),
+          icon: <Plus />,
+          hint: 'new ticket create',
+          disabled: true,
+          run: () => undefined,
+        },
     {
       id: 'save-view',
       label: 'Save view…',
@@ -166,6 +189,24 @@ export function CommandPalette() {
         if (runAddon.meta(c.addon, c.action)?.kind === 'navigation' && page) go(`/addon/${page.addon}/${page.id}`)
       },
     }))
+
+  const onBoard: Entry[] =
+    pathname === '/board' && can(role, 'ticket.move')
+      ? [
+          {
+            id: 'board-move',
+            label: focusedCard.current ? `Move ${focusedCard.current} to…` : 'Move ticket to…',
+            icon: <ArrowRightLeft />,
+            run: () => {
+              setQ('')
+              if (focusedCard.current) {
+                setMoveTarget({ key: focusedCard.current })
+                setMode('move')
+              } else setMode('move-pick')
+            },
+          },
+        ]
+      : []
 
   const onTicket = useMemo<Entry[]>(() => {
     const t = ticket.data
@@ -253,16 +294,34 @@ export function CommandPalette() {
     )
   } else if (mode === 'ask-to') {
     body = <Group heading="Ask whom" entries={visible(members.map((m) => ({ id: m.person, label: m.name, icon: <User />, hint: m.role, run: () => (setQ(''), setMode({ ask: m.person })) })))} />
-  } else if (mode === 'move') {
-    const cur = ticket.data?.status
+  } else if (mode === 'move-pick') {
     body = (
       <Group
-        heading="Move to"
+        heading="Move which ticket"
+        entries={tickets.slice(0, 8).map((t) => ({
+          id: t.key,
+          label: (
+            <>
+              <span className="w-24 shrink-0 font-mono text-[12px] text-text-faint">{t.key}</span>
+              <span className="flex-1 truncate">{t.title}</span>
+              <span className="text-[11px] text-text-faint">{STATUS_LABEL[t.status]}</span>
+            </>
+          ),
+          run: () => (setQ(''), setMoveTarget({ key: t.key, status: t.status }), setMode('move')),
+        }))}
+      />
+    )
+  } else if (mode === 'move') {
+    const target = moveTarget?.key ?? ticketKey!
+    const cur = moveTarget ? moveTarget.status : ticket.data?.status
+    body = (
+      <Group
+        heading={`Move ${target} to`}
         entries={visible(
           STATUSES.filter((s) => s !== cur && s !== 'done').map((s) => ({
             id: s,
             label: STATUS_LABEL[s],
-            run: () => void post({ action: 'set_status', status: s }, `Moved to ${STATUS_LABEL[s]}`),
+            run: () => void post({ action: 'set_status', status: s }, `Moved ${target} to ${STATUS_LABEL[s]}`, target),
           })),
         )}
       />
@@ -273,6 +332,7 @@ export function CommandPalette() {
       <>
         {!prefix && <Group heading="Recent" entries={visible(recentEntries)} />}
         {(!prefix || commandsOnly) && <Group heading="On this ticket" entries={visible(onTicket)} />}
+        {(!prefix || commandsOnly) && <Group heading="On the board" entries={visible(onBoard)} />}
         {(prefix === '' || prefix === '#') && <Group heading="Tickets" entries={ticketEntries} />}
         {(!prefix || commandsOnly) && <Group heading="Go to" entries={visible(goTo)} />}
         {(!prefix || commandsOnly) && <Group heading="Create" entries={visible(create)} />}
@@ -283,7 +343,7 @@ export function CommandPalette() {
     )
   }
 
-  const placeholder = mode === 'comment' ? 'Write a comment, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : PLACEHOLDER
+  const placeholder = mode === 'comment' ? 'Write a comment, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : mode === 'move-pick' ? 'Search for the ticket to move...' : PLACEHOLDER
 
   return (
     <>

@@ -23,12 +23,12 @@ describe('Settings', () => {
     expect(await screen.findByText(/last owner/)).toBeInTheDocument()
   })
   it('describes a gate policy in a sentence and saves it', async () => {
-    const { user } = renderApp('/settings/gates')
+    const { user } = renderApp('/settings/gates', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1 }) })
     expect(await screen.findByText(/Plan needs 1 approval from/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Plan: 2 approvals' }))
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     expect(await screen.findByText(/Plan needs 2 approvals/)).toBeInTheDocument()
-    expect(screen.getByText('Open approvals stay valid; new approvals use the new policy.')).toBeInTheDocument()
+    expect(screen.getByText('Approvals already given stay valid; new approvals use the new policy.')).toBeInTheDocument()
   })
   it('Mara sees settings read-only', async () => {
     renderApp('/settings/members', { viewer: 'p_mara' })
@@ -37,7 +37,7 @@ describe('Settings', () => {
   })
   it('shows the relay as not connected', async () => {
     renderApp('/settings/general')
-    expect(await screen.findByText(/Not connected/)).toBeInTheDocument()
+    expect(await screen.findByText(/Not connected yet/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
   })
   it('the nav shows General, Members, Gates and Addons only: no entry per addon', async () => {
@@ -70,11 +70,56 @@ describe('Settings', () => {
   it('adds a member after signing', async () => {
     const { user } = renderApp('/settings/members')
     await user.click(await screen.findByRole('button', { name: 'Add member' }))
-    await user.type(screen.getByLabelText('Name'), 'Ida')
-    await user.type(screen.getByLabelText('Person id'), 'p_ida')
+    await user.click(screen.getByRole('combobox', { name: 'Person' }))
+    await user.type(screen.getByRole('combobox', { name: 'Person' }), 'Ida')
+    await user.click(await screen.findByRole('option', { name: /Ida/ }))
     await user.click(screen.getByRole('button', { name: 'Add' }))
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     expect(await screen.findByRole('row', { name: /Ida/ })).toBeInTheDocument()
+  })
+  it('Add member offers people by name, never ids, and Enter submits', async () => {
+    const { user } = renderApp('/settings/members')
+    await user.click(await screen.findByRole('button', { name: 'Add member' }))
+    const box = screen.getByRole('combobox', { name: 'Person' })
+    await user.type(box, 'Ida')
+    expect(await screen.findByRole('option', { name: /Ida/ })).toBeInTheDocument()
+    expect(screen.queryByText(/p_ida/)).toBeNull()
+    expect(screen.getByText(/Maintainer: can approve plans and verdicts, cannot change settings/)).toBeInTheDocument()
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('button', { name: 'Sign and save' })).toBeInTheDocument()
+  })
+  it('an empty Add member submit explains itself', async () => {
+    const { user } = renderApp('/settings/members')
+    await user.click(await screen.findByRole('button', { name: 'Add member' }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Choose a person/)
+  })
+  it('refuses a gate policy that can never be met', async () => {
+    const { user } = renderApp('/settings/gates')
+    await user.click(await screen.findByRole('button', { name: 'Plan: 2 approvals' }))
+    expect(await screen.findByText(/can never be met/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign and save' })).toBeNull()
+  })
+  it('an approved gate stays approved after the policy asks for more', async () => {
+    const { user } = renderApp('/settings/gates', { setup: (s) => ['requirements', 'plan', 'verify'].forEach((g) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: g, approvers: 'maintainer', count: 1 })) })
+    const key = 'DEMO-0043'
+    const before = await api.getTicket(key)
+    const gate = (['requirements', 'plan', 'verify'] as const).find((g) => before.gates[g].state === 'approved')
+    expect(gate).toBeDefined()
+    await user.click(await screen.findByRole('button', { name: `${gate![0].toUpperCase()}${gate!.slice(1)}: 2 approvals` }))
+    await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
+    await screen.findByText(/needs 2 approvals/)
+    expect((await api.getTicket(key)).gates[gate!].state).toBe('approved')
+  })
+  it('a maintainer sees why controls are disabled', async () => {
+    renderApp('/settings/general', { viewer: 'p_mara' })
+    expect(await screen.findByText('Only owners can save.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
+    expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
+  })
+  it('/settings/addons/<name> redirects to the addon drawer route', async () => {
+    renderApp('/settings/addons/estimate')
+    expect(await screen.findByRole('link', { name: /Back to Addons/ })).toBeInTheDocument()
   })
   it('saves an addon settings form and the value is in the addon state', async () => {
     const { user } = renderApp('/settings/addon/estimate')

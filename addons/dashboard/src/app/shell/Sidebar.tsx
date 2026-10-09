@@ -1,13 +1,16 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
   ChevronsUpDown,
+  Ellipsis,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
+  Pin,
+  PinOff,
   Settings,
   ShieldCheck,
   ShieldOff,
@@ -32,56 +35,47 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { iconByName } from '../icons'
 import { useWorkspace } from '../workspace'
+import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 
-type Pref = 'auto' | 'wide' | 'narrow'
-const PREF_KEY = 'orch.sidebar'
 const RailContext = createContext(false)
 
-function readPref(): Pref {
+/** At most this many addons sit in the sidebar; the rest are under "More addons". */
+const MAX_PINNED = 6
+const PINS_KEY = (ws: string) => `orch.sidebar.pins.${ws}`
+
+function readPins(ws: string): string[] | null {
   try {
-    const v = localStorage.getItem(PREF_KEY)
-    return v === 'wide' || v === 'narrow' ? v : 'auto'
+    const v: unknown = JSON.parse(localStorage.getItem(PINS_KEY(ws)) ?? 'null')
+    return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null
   } catch {
-    return 'auto'
+    return null
   }
 }
 
-/** Wide or narrow (icon rail). The user's choice wins; without one, the rail is used below 1280 px. */
-export function useSidebarCollapsed() {
-  const [pref, setPref] = useState<Pref>(readPref)
-  const [narrowWindow, setNarrowWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1280)
-  useEffect(() => {
-    const onResize = () => setNarrowWindow(window.innerWidth < 1280)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-  const collapsed = pref === 'auto' ? narrowWindow : pref === 'narrow'
-  const toggle = useCallback(() => {
-    const next: Pref = collapsed ? 'wide' : 'narrow'
-    setPref(next)
+/**
+ * Which addon pages sit in the sidebar: the viewer's choice (kept per workspace in this browser), else the first
+ * six by install order. The rest are reached through "More addons".
+ */
+function usePinnedAddons(ws: string | undefined, all: string[]) {
+  const [stored, setStored] = useState<string[] | null>(() => (ws ? readPins(ws) : null))
+  useEffect(() => setStored(ws ? readPins(ws) : null), [ws])
+  const pinned = (stored ? all.filter((k) => stored.includes(k)) : all).slice(0, MAX_PINNED)
+  const toggle = (key: string) => {
+    const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : pinned.length < MAX_PINNED ? [...pinned, key] : pinned
+    setStored(next)
     try {
-      localStorage.setItem(PREF_KEY, next)
+      if (ws) localStorage.setItem(PINS_KEY(ws), JSON.stringify(next))
     } catch {
       /* storage unavailable: the choice lasts for this page only */
     }
-  }, [collapsed])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== '[' || e.metaKey || e.ctrlKey || e.altKey) return
-      const t = e.target as HTMLElement | null
-      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
-      e.preventDefault()
-      toggle()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [toggle])
-  return { collapsed, toggle }
+  }
+  return { pinned, toggle, full: pinned.length >= MAX_PINNED }
 }
 
 /** In the icon rail the label is hidden and a tooltip carries it. */
@@ -119,6 +113,17 @@ function ToggleButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
   )
 }
 
+/** The addon's icon; in the icon rail a corner badge keeps the orange "A" visible when the label is hidden. */
+function AddonNavIcon({ item, collapsed }: { item: { addon: string; icon?: string }; collapsed: boolean }) {
+  const Icon = iconByName(item.icon)
+  return (
+    <span className="relative">
+      <Icon className="size-4" data-icon={item.icon} />
+      {collapsed && <AddonBadge name={item.addon} className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px]" />}
+    </span>
+  )
+}
+
 const PEOPLE = [
   { id: 'p_sev', name: 'Severin' },
   { id: 'p_mara', name: 'Mara' },
@@ -140,7 +145,27 @@ export function Sidebar() {
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   const grantTime = grant?.until.slice(11, 16)
-  const { collapsed, toggle } = useSidebarCollapsed()
+  const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
+  const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
+  const { pinned, toggle: togglePin, full } = usePinnedAddons(ws, navItems.map(itemKey))
+  const shown = navItems.filter((i) => pinned.includes(itemKey(i)))
+  const [moreOpen, setMoreOpen] = useState(false)
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+  // The nav scrolls when the window is short; a fade at the edge says there is more below.
+  const navRef = useRef<HTMLElement>(null)
+  const [moreBelow, setMoreBelow] = useState(false)
+  useEffect(() => {
+    const el = navRef.current
+    if (!el) return
+    const read = () => setMoreBelow(el.scrollHeight - el.scrollTop - el.clientHeight > 4)
+    read()
+    el.addEventListener('scroll', read)
+    window.addEventListener('resize', read)
+    return () => {
+      el.removeEventListener('scroll', read)
+      window.removeEventListener('resize', read)
+    }
+  })
 
   const link = cn(
     'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text',
@@ -176,10 +201,11 @@ export function Sidebar() {
           <WorkspaceSwitcher collapsed={collapsed} viewer={me?.person} />
         </div>
 
-        <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
           {CORE_NAV.map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
-              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
+              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
                   <Icon className="size-4" />
                   {collapsed && to === '/' && attention.badge > 0 && (
@@ -195,44 +221,82 @@ export function Sidebar() {
           ))}
 
           {navItems.length > 0 && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-0.5">
               {collapsed ? (
                 <div className="mx-2 mb-1 border-t border-border" />
               ) : (
                 <div className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-text-faint">Addons</div>
               )}
-              {navItems.map((item) => {
-                const Icon = iconByName(item.icon)
-                return (
-                  <RailTip key={`${item.addon}/${item.id}`} label={`${item.title}${previews.has(item.addon) ? ' (Preview)' : ''} · from addon ${item.addon}`}>
-                    <Link
-                      to="/addon/$name/$page"
-                      params={{ name: item.addon, page: item.id }}
-                      className={link}
-                      activeProps={activeProps}
-                      aria-label={item.title}
-                    >
-                      <span className="relative">
-                        <Icon className="size-4" />
-                        {/* Icon rail: the corner badge keeps the orange "A" visible when the label is hidden. */}
-                        {collapsed && (
-                          <AddonBadge name={item.addon} className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px]" />
-                        )}
-                      </span>
-                      {!collapsed && (
-                        <>
-                          <span className="flex-1 truncate">{item.title}</span>
-                          <PreviewChip name={item.addon} />
-                          <AddonBadge name={item.addon} />
-                        </>
-                      )}
-                    </Link>
+              {shown.map((item) => (
+                <RailTip key={itemKey(item)} label={`${item.title}${previews.has(item.addon) ? ' (Preview)' : ''} · from addon ${item.addon}`}>
+                  <Link to="/addon/$name/$page" params={{ name: item.addon, page: item.id }} className={link} activeProps={activeProps} aria-label={`${item.title}${previews.has(item.addon) ? ', Preview' : ''}`}>
+                    <AddonNavIcon item={item} collapsed={collapsed} />
+                    {!collapsed && (
+                      <>
+                        <span className="flex-1 truncate">{item.title}</span>
+                        <PreviewChip name={item.addon} />
+                        <AddonBadge name={item.addon} />
+                      </>
+                    )}
+                  </Link>
+                </RailTip>
+              ))}
+              {navItems.length > shown.length && (
+                <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+                  <RailTip label={`More addons (${navItems.length - shown.length})`}>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`More addons (${navItems.length - shown.length})`}
+                        className={cn(link, 'w-full outline-none focus-visible:ring-2 focus-visible:ring-brand', navItems.some((i) => !shown.includes(i) && pathname === `/addon/${i.addon}/${i.id}`) && 'bg-surface-2 text-text')}
+                      >
+                        <Ellipsis className="size-4" />
+                        <span className={cn('flex-1 text-left', label)}>More addons ({navItems.length - shown.length})</span>
+                      </button>
+                    </PopoverTrigger>
                   </RailTip>
-                )
-              })}
+                  <PopoverContent side="right" align="end" className="w-72 p-1.5">
+                    <p className="px-2 pb-1 pt-0.5 text-[11px] text-text-faint">All addons in this workspace. Pin up to {MAX_PINNED} to the sidebar.</p>
+                    <ul>
+                      {navItems.map((item) => {
+                        const isPinned = pinned.includes(itemKey(item))
+                        return (
+                          <li key={itemKey(item)} className="flex items-center gap-1">
+                            <Link
+                              to="/addon/$name/$page"
+                              params={{ name: item.addon, page: item.id }}
+                              onClick={() => setMoreOpen(false)}
+                              className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text"
+                              aria-label={`${item.title}${previews.has(item.addon) ? ', Preview' : ''}`}
+                            >
+                              <AddonNavIcon item={item} collapsed={false} />
+                              <span className="flex-1 truncate">{item.title}</span>
+                              <PreviewChip name={item.addon} />
+                              <AddonBadge name={item.addon} />
+                            </Link>
+                            <button
+                              type="button"
+                              aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${item.title} ${isPinned ? 'from' : 'to'} the sidebar`}
+                              aria-pressed={isPinned}
+                              disabled={!isPinned && full}
+                              title={!isPinned && full ? `The sidebar holds ${MAX_PINNED}. Unpin one first.` : undefined}
+                              onClick={() => togglePin(itemKey(item))}
+                              className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </PopoverContent>
+                </Popover>
+              )}
             </div>
           )}
         </nav>
+        {moreBelow && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-sidebar to-transparent" />}
+        </div>
 
         <div className="space-y-1 border-t border-border p-2">
           <RailTip label="Settings">

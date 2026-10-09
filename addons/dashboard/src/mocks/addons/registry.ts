@@ -18,6 +18,12 @@ export interface AddonCtx {
   decision?: AddonDecision
 }
 
+export interface Charter {
+  epic: string
+  signedBy: string
+  active: boolean
+}
+
 /** An action's result, or a refusal the router turns into an HTTP error (status, code, sentence). */
 export type AddonActionFn = (ctx: AddonCtx) => AddonActionResult | StoreFailure
 
@@ -49,6 +55,11 @@ export interface MockAddon {
    * error). Core calls it, only while the addon is active with `launch` granted, for the preview and for the start
    * (`commit: true`, where one-shot choices may be used up). `lastTier` is the tier of the last start on that ticket.
    */
+  /**
+   * A signed charter this addon holds over an epic (the AI Factory): which epic, who signed it, and whether it is in
+   * force now (started, not paused or stopped). Core's `store.autoApprove` reads it; nothing else may auto-approve.
+   */
+  charter?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Charter | null
   launch?(state: Record<string, unknown>, req: LaunchRequest, ctx: Omit<AddonCtx, 'body' | 'state'> & { commit: boolean; lastTier?: string }): LaunchPlan
   actions: Record<string, AddonAction>
 }

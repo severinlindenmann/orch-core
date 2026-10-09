@@ -923,6 +923,28 @@ export class MockStore {
     return res
   }
 
+  /**
+   * Core's one way to approve a gate without a person: an agent working under an addon's signed charter (the AI
+   * Factory, v1 charter behaviour). The charter must be in force now (the addon active, started, not paused or
+   * stopped) and the ticket a child of its epic. Gate policy is not applied: the charter's signer agreed to it for the
+   * epic. Recorded as `gate.approved {via: 'factory_charter', charter, charter_signed_by}` with the agent as actor;
+   * an approved plan moves a backlog ticket to open, as core does for a person's approval.
+   */
+  autoApprove(key: string, gate: 'requirements' | 'plan', opts: { charter: string; by: string }): { ok: true; event: OrchEvent } | StoreFailure {
+    const t = this.ticket(key)
+    const w = this.workspaceOf(key)
+    if (!t || !w) return refuse(404, 'not_found', `No ticket ${key}`)
+    const actor = parseActor(opts.by)
+    if (actor.kind !== 'agent') return refuse(403, 'charter.agent_only', 'Only an agent working under a charter is auto-approved; a person approves and signs.')
+    const mod = getAddon(opts.charter)
+    const ch = mod?.charter && addonActive(w, opts.charter) ? mod.charter(this.addonState(w.id, opts.charter), { store: this, ws: w.id, viewer: actor.for }) : null
+    if (!ch || !ch.active) return refuse(409, 'charter.inactive', 'No charter is in force for this epic (not started, paused or stopped).')
+    if (t.parent !== ch.epic) return refuse(409, 'charter.out_of_scope', `${key} is not a child of ${ch.epic}.`)
+    const event = this.append(key, { type: 'gate.approved', actor: opts.by, gate, via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy })
+    if (gate === 'plan' && this.ticket(key)!.status === 'backlog') this.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
+    return { ok: true, event }
+  }
+
   // ------------------------------------------------------------ workspace views
 
   /** Gate policy: why `person` may not approve `gate` on `t` (null when eligible). */

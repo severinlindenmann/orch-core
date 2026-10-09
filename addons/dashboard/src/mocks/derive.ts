@@ -169,7 +169,7 @@ export function deriveTicket(
           by: actorLabel(e.actor),
           at: e.at,
           via: (e.via as Via | undefined) ?? 'dashboard',
-          presence: (e.presence as Presence | undefined) ?? 'touchid',
+          ...(e.via === 'factory_charter' ? {} : { presence: (e.presence as Presence | undefined) ?? 'touchid' }),
           sig_ok: (e.sig_ok as boolean | undefined) ?? true,
         })
         delete gateChanges[g]
@@ -434,9 +434,9 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `decided ${t(e.option, 'an option')} on a ${t(e.name, 'an addon')} decision`
     case 'addon.action_signed':
       return `signed ${t(e.action, 'an action')} of ${t(e.name, 'an addon')}`
-    case 'permit.granted':
+    case 'factory.permit_granted':
       return `granted ${t(e.permit, 'a permit')} ${e.scope === 'epic' ? (e.standing ? 'for this epic (standing grant)' : 'for this epic') : 'once'}`
-    case 'permit.refused':
+    case 'factory.permit_refused':
       return `refused ${t(e.permit, 'a permit')}`
     case 'factory.paused':
       return 'paused the AI Factory'

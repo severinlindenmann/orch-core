@@ -60,7 +60,7 @@ describe('AI Factory page', () => {
 })
 
 describe('permits on Today', () => {
-  it('Grant once removes the card and logs permit.granted on the epic', async () => {
+  it('Grant once removes the card and logs factory.permit_granted on the epic', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
     const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]
     const id = card.getAttribute('data-testid')!.replace('card-addon:', '')
@@ -69,6 +69,6 @@ describe('permits on Today', () => {
     await user.click(within(card).getByRole('button', { name: 'Grant once' }))
     await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(screen.queryByTestId(`card-addon:${id}`)).not.toBeInTheDocument(), T)
-    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'permit.granted' && e.scope === 'once')).toBe(true)
+    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted' && e.scope === 'once')).toBe(true)
   })
 })

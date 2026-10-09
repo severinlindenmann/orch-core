@@ -180,7 +180,8 @@ export interface QuestionStatus extends QuestionDef {
   hash?: string
 }
 
-export type Via = 'cli' | 'dashboard' | 'phone'
+/** How an approval or answer came in. 'factory_charter': auto-approved by an agent under a signed factory charter (core's store.autoApprove). */
+export type Via = 'cli' | 'dashboard' | 'phone' | 'factory_charter'
 export type Presence = 'touchid' | 'passkey' | 'password'
 
 export interface Artifact {
@@ -223,6 +224,7 @@ export interface Claim {
 
 export interface GateStatus {
   state: 'pending' | 'approved' | 'invalidated' | 'changes_requested'
+  /** `presence` is absent for a charter approval (no person was present; the charter was signed when the epic started). */
   approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean }[]
   needed: number
   approvers: string

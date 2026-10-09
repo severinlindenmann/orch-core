@@ -11,7 +11,8 @@ import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from '
 //  - The budget (`used`) is a counter kept in the addon state, like v1's markers beside the ledger, so the number
 //    does not depend on which children a viewer may see. Rows, permits and the Ready report list only visible tickets.
 //  - Permits are core-rendered decisions (`decisions()`): agents ask, a maintainer answers "Grant once / Grant for this
-//    epic / Refuse". The answer appends permit.granted / permit.refused on the epic. A grant for the epic is standing:
+//    epic / Refuse". Core records the answer (addon.decided); the addon logs factory.permit_granted / _refused on the
+//    epic as itself. Children are auto-approved through core (store.autoApprove, the charter hook). A grant for the epic is standing:
 //    the same command asked again is answered at once and never reaches Today.
 //  - Pause and Resume are declared `confirm: 'sign'` (core's signing prompt) and maintainer-only.
 //  - "Watch live" plays a simulator script (one child and one permit request about every 20 s). Nodes cannot tell that
@@ -66,6 +67,8 @@ const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id =
 const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`
 const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
 const scriptId = (ws: string) => `factory:${ws}`
+/** The addon writes its own events (`factory.*`) as itself; who answered or signed is in core's addon.decided / addon.action_signed. */
+const ADDON = { kind: 'addon', id: 'factory' } as const
 const navOf = (state: Record<string, unknown>, viewer: string): Nav => ((state.nav ?? {}) as Record<string, Nav>)[viewer] ?? {}
 const setNav = (state: Record<string, unknown>, viewer: string, nav: Nav) => {
   ;((state.nav ??= {}) as Record<string, Nav>)[viewer] = nav
@@ -164,9 +167,9 @@ function simulateStep(store: MockStore, ws: string): boolean {
   )
   if (!made.ok) return false
   const child = made.ticket
-  store.append(child.key, { type: 'gate.approved', actor: agent, gate: 'requirements' })
-  store.append(child.key, { type: 'gate.approved', actor: agent, gate: 'plan' })
-  store.append(child.key, { type: 'status.changed', actor: 'host', to: 'open' })
+  // Auto-approval is core's (store.autoApprove checks the charter is in force); the addon never writes gate events.
+  store.autoApprove(child.key, 'requirements', { charter: 'factory', by: agent })
+  store.autoApprove(child.key, 'plan', { charter: 'factory', by: agent })
   state.used = (state.used as number) + 1
   state.simSteps = n + 1
   state.simTimes = [...recentSteps(state, now), now]
@@ -176,7 +179,7 @@ function simulateStep(store: MockStore, ws: string): boolean {
   const standing = (state.epicGrants as string[]).includes(ask.command)
   permitsOf(state).unshift({ id: `P-${seq}`, command: ask.command, reason: ask.reason, ticket: child.key, state: standing ? 'granted for this epic' : 'open', at: now })
   // A standing grant answers at once; it is still logged on the epic, marked as standing.
-  if (standing) store.append(epic, { type: 'permit.granted', actor: 'host', permit: `P-${seq}`, scope: 'epic', standing: true, child: child.key, command: ask.command })
+  if (standing) store.append(epic, { type: 'factory.permit_granted', actor: ADDON, permit: `P-${seq}`, scope: 'epic', standing: true, child: child.key, command: ask.command })
   return true
 }
 
@@ -324,6 +327,12 @@ registerAddon({
     }
   },
 
+  // The charter signed when the epic started; in force while the factory runs (not paused, not stopped).
+  charter(state, c) {
+    const epic = state.epic as string | null
+    return epic ? { epic, signedBy: state.startedBy as string, active: modeOf(state, c.store.now()) === 'running' } : null
+  },
+
   decisions(state, _pkg, c): AddonDecision[] {
     // Answering a permit lets a command run: owners and maintainers only.
     if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
@@ -355,13 +364,13 @@ registerAddon({
       const epic = state.epic as string
       if (body.option === 'refuse') {
         permit.state = 'refused'
-        store.append(epic, { type: 'permit.refused', permit: permit.id, child: permit.ticket, command: permit.command })
+        store.append(epic, { type: 'factory.permit_refused', actor: ADDON, permit: permit.id, child: permit.ticket, command: permit.command })
         return { ok: true, message: `Refused ${permit.id}.`, changed: true }
       }
       const scope = body.option
       permit.state = scope === 'epic' ? 'granted for this epic' : 'granted once'
       if (scope === 'epic') (state.epicGrants as string[]).push(permit.command)
-      store.append(epic, { type: 'permit.granted', permit: permit.id, scope, child: permit.ticket, command: permit.command })
+      store.append(epic, { type: 'factory.permit_granted', actor: ADDON, permit: permit.id, scope, child: permit.ticket, command: permit.command })
       return { ok: true, message: scope === 'epic' ? `Granted ${permit.id} for this epic.` : `Granted ${permit.id} once.`, changed: true }
     },
 
@@ -373,7 +382,7 @@ registerAddon({
       if (mode === 'stopped') return conflict('factory.stopped', 'The factory is stopped; there is nothing to pause.')
       state.paused = { at: store.now(), by: viewer }
       endWatching(store, ws, state)
-      store.append(epic, { type: 'factory.paused' })
+      store.append(epic, { type: 'factory.paused', actor: ADDON })
       return { ok: true, message: 'Factory paused.', changed: true }
     },
 
@@ -383,7 +392,7 @@ registerAddon({
       if (!epic || !paused) return conflict('factory.not_paused', 'The factory is not paused.')
       state.pausedMs = (state.pausedMs as number) + (Date.parse(store.now()) - Date.parse(paused.at))
       state.paused = null
-      store.append(epic, { type: 'factory.resumed' })
+      store.append(epic, { type: 'factory.resumed', actor: ADDON })
       return { ok: true, message: 'Factory resumed.', changed: true }
     },
 

@@ -12,7 +12,7 @@ const STATE: Record<GateStatus['state'], { label: string; tone: 'success' | 'war
   changes_requested: { label: 'Changes requested', tone: 'danger', Icon: MessageSquareWarning },
 }
 
-const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
+const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone', factory_charter: 'the factory charter' }
 const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
 
 function Gate({ name, gate, viewer }: { name: GateName; gate: GateStatus; viewer: Viewer }) {
@@ -45,7 +45,7 @@ function Gate({ name, gate, viewer }: { name: GateName; gate: GateStatus; viewer
               <ShieldCheck className={gate.state === 'invalidated' ? 'size-3.5 text-text-faint' : 'size-3.5 text-success'} />
               <span className={gate.state === 'invalidated' ? 'text-text-muted line-through decoration-text-faint' : 'text-text'}>{viewer.name(a.by)}</span>
               <span className="text-text-faint">
-                {fmtTime(a.at)} · via {VIA[a.via ?? 'cli']} · {PRESENCE[a.presence ?? 'touchid']}
+                {fmtTime(a.at)} · via {VIA[a.via ?? 'cli']}{a.via === 'factory_charter' ? ' · auto-approved' : ` · ${PRESENCE[a.presence ?? 'touchid']}`}
               </span>
               <span className={a.sig_ok === false ? 'text-danger' : 'text-success'}>{a.sig_ok === false ? 'signature failed' : 'sig ok'}</span>
             </li>

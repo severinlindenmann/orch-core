@@ -1894,13 +1894,19 @@
         "at": "2026-10-07T08:30:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "requirements"
+        "gate": "requirements",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-07T08:40:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "plan"
+        "gate": "plan",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-07T09:00:00Z",
@@ -1983,13 +1989,19 @@
         "at": "2026-10-08T09:10:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "requirements"
+        "gate": "requirements",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-08T09:20:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "plan"
+        "gate": "plan",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-08T09:40:00Z",
@@ -2047,13 +2059,19 @@
         "at": "2026-10-08T09:15:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "requirements"
+        "gate": "requirements",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-08T09:25:00Z",
         "type": "gate.approved",
         "actor": "claude-code:s_f101:p_sev",
-        "gate": "plan"
+        "gate": "plan",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-09T08:00:00Z",

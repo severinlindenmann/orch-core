@@ -100,24 +100,25 @@ describe('permits are core decisions', () => {
     const v = setup('p_tom')
     expect(await permitsOf(v)).toEqual([])
   })
-  it('grant once: the decision disappears and permit.granted lands on the epic', async () => {
+  it('grant once: the decision disappears and factory.permit_granted lands on the epic', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
     const before = (await permitsOf(s)).length
     await run(s, 'permit', { id: d.id, option: 'once', ticket: d.ticket })
     expect((await permitsOf(s)).length).toBe(before - 1)
-    const ev = s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.granted')
+    const ev = s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_granted')
     expect(ev).toHaveLength(1)
     expect(ev[0]).toMatchObject({ scope: 'once', permit: d.id.split(':')[1] })
-    expect(ev[0].actor).toMatchObject({ kind: 'person', id: 'p_sev' })
+    expect(ev[0].actor).toEqual({ kind: 'addon', id: 'factory' }) // the person's answer is core's addon.decided
+    expect(s.store.wsEventsOf(s.ws).find((e) => e.type === 'addon.decided')).toMatchObject({ id: d.id, option: 'once', actor: { kind: 'person', id: 'p_sev' } })
     expect(describeEvent(ev[0])).toMatch(/granted P-\d+ once/)
     expect((await state(s)).permits.find((p) => p.id === ev[0].permit)!.state).toBe('granted once')
   })
-  it('refuse logs permit.refused on the epic', async () => {
+  it('refuse logs factory.permit_refused on the epic', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
     await run(s, 'permit', { id: d.id, option: 'refuse', ticket: d.ticket })
-    expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.refused')).toHaveLength(1)
+    expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_refused')).toHaveLength(1)
     expect(describeEvent(s.store.eventsOf(EPIC).at(-1)!)).toMatch(/refused P-\d+/)
   })
   it('grant for this epic is a standing grant: the same command later needs no decision', async () => {
@@ -125,7 +126,7 @@ describe('permits are core decisions', () => {
     const [d] = await permitsOf(s)
     const command = (await state(s)).permits.find((p) => d.id.endsWith(p.id))!.command
     await run(s, 'permit', { id: d.id, option: 'epic', ticket: d.ticket })
-    expect(s.store.eventsOf(EPIC).find((e) => e.type === 'permit.granted')).toMatchObject({ scope: 'epic' })
+    expect(s.store.eventsOf(EPIC).find((e) => e.type === 'factory.permit_granted')).toMatchObject({ scope: 'epic' })
     await run(s, 'watch')
     vi.advanceTimersByTime(20_000 * 10)
     const st = await state(s)
@@ -139,7 +140,7 @@ describe('permits are core decisions', () => {
     await run(s, 'permit', { id: d.id, option: 'once', ticket: d.ticket })
     const again = await refused(run(s, 'permit', { id: d.id, option: 'refuse', ticket: d.ticket }))
     expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
-    expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.refused')).toHaveLength(0)
+    expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_refused')).toHaveLength(0)
     const v = setup('p_tom')
     const [vd] = [{ id: 'factory.permit:P-1', ticket: 'DEMO-0052' }]
     expect(await fail(v.api.runAddonAction(v.ws, 'factory', 'permit', { id: vd.id, option: 'once' }))).toBe('403 forbidden')
@@ -318,7 +319,7 @@ describe('minors', () => {
     const [d] = await permitsOf(s)
     expect(await fail(run(s, 'permit', { id: d.id, option: 'whatever', ticket: d.ticket }))).toBe('400 validation.option')
     expect((await permitsOf(s)).length).toBeGreaterThan(0)
-    expect(s.store.eventsOf(EPIC).some((e) => e.type === 'permit.granted')).toBe(false)
+    expect(s.store.eventsOf(EPIC).some((e) => e.type === 'factory.permit_granted')).toBe(false)
   })
   it('a standing grant answering a later request is logged on the epic as standing', async () => {
     const s = setup()
@@ -326,7 +327,7 @@ describe('minors', () => {
     await run(s, 'permit', { id: d.id, option: 'epic', ticket: d.ticket })
     await run(s, 'watch')
     vi.advanceTimersByTime(20_000 * 10)
-    const standing = s.store.eventsOf(EPIC).filter((e) => e.type === 'permit.granted' && e.standing === true)
+    const standing = s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_granted' && e.standing === true)
     expect(standing.length).toBeGreaterThan(0)
     expect(standing[0]).toMatchObject({ scope: 'epic' })
     expect(describeEvent(standing[0])).toMatch(/standing grant/)

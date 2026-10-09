@@ -529,6 +529,7 @@ export class MockStore {
     if (!evs.length || evs[0].type !== 'ticket.created' || !byPerson(evs[0])) return refuse(403, 'forbidden', `Only who created ${key} can undo it.`)
     if (evs.some((e) => !(e.type === 'ticket.created' || e.type === 'people.set') || !byPerson(e)))
       return refuse(409, 'ticket.undo_too_late', `Something already happened on ${key}, so it is kept.`, 'Open the ticket to change or close it.')
+    const visibility = this.defs.get(key)!.visibility
     this.defs.delete(key)
     this.bodies.delete(key)
     this.wsOfKey.delete(key)
@@ -536,7 +537,8 @@ export class MockStore {
     this.seeded.delete(key)
     delete this.created[key]
     // Recorded so the key is never handed out again and the workspace log shows what happened.
-    this.appendWs(wsId, { type: 'ticket.discarded', key, by: person, actor: person })
+    // `visibleTo` keeps the ticket's visibility at discard time: the log line follows it (the ticket itself is gone).
+    this.appendWs(wsId, { type: 'ticket.discarded', key, by: person, actor: person, visibleTo: visibility === 'workspace' ? 'workspace' : [...visibility.restricted] })
     return { ok: true }
   }
 

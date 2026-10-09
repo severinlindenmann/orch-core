@@ -209,6 +209,8 @@ registerAddon({
             views: x.to.kind === 'link' && x.to.max_views !== undefined ? `${x.views} of ${x.to.max_views}` : String(x.views),
             state: st,
             canChange: st === 'live' || st === 'used up' || st === 'expired',
+            // Extend is the sender's or an owner's (the action refuses everyone else), so it is offered only to them.
+            canExtend: (st === 'live' || st === 'used up' || st === 'expired') && (x.sent_by === c.viewer || c.store.roleIn(c.ws, c.viewer) === 'owner'),
           }
         }),
       shareSchema: {

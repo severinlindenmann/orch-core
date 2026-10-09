@@ -364,6 +364,15 @@ describe('activity views', () => {
     await run(s, 'view_timeline')
     expect(has(await state(s), 'table')).toBe(false)
   })
+  it('the view switch and Clear filters keep their own width (fit rows), so they read as a switch', async () => {
+    const s = setup()
+    await run(s, 'apply', { formData: { period: 'week', type: 'all', person: 'everyone', q: 'zzzz-nothing' } })
+    const st = (await state(s)) as unknown as { page: { children: { type: string; fit?: boolean; children?: { type: string; fit?: boolean; children?: { label?: string }[] }[] }[] } }
+    const row = st.page.children.find((c) => c.type === 'stack' && c.fit)!
+    const buttons = row.children!.find((c) => c.type === 'stack')!
+    expect(buttons.fit).toBe(true)
+    expect(buttons.children!.map((b) => b.label)).toEqual(['Timeline', 'By ticket', 'Clear filters'])
+  })
   it('the Timeline heading comes before any table', async () => {
     const st = await state(setup())
     const kinds = st.page.children!.map((c) => c.text ?? c.type)
@@ -455,6 +464,31 @@ describe('activity visibility', () => {
     hide(s)
     const st = await everything(s)
     expect(st.timeline.every((r) => !r.ticket || !['DEMO-0041', 'DEMO-0043'].includes(r.ticket))).toBe(true)
+  })
+})
+
+describe('a discarded ticket in the log', () => {
+  const discards = async (s: S) => (await everything(s)).timeline.filter((r) => /right after creating it/.test(r.summary))
+  const make = async (s: S, visibility: 'workspace' | { restricted: string[] }) => {
+    s.store.setViewer('p_mara')
+    const { ticket } = await s.api.createTicket(s.ws, { type: 'feature', title: 'Scratch', priority: 'medium', size: null, labels: [], parent: null, due: null, visibility, people: { owner: null, assignees: [], reviewers: [] }, sections: { requirements: 'R' }, acceptance: [] })
+    await s.api.undoCreateTicket(s.ws, ticket.key)
+    return ticket.key
+  }
+  it('a restricted ticket\'s discard line is shown only to people who could see the ticket', async () => {
+    const s = setup('p_sev')
+    const key = await make(s, { restricted: ['p_mara'] }) // Severin was not on it
+    s.store.setViewer('p_mara')
+    expect((await discards(s)).map((r) => r.summary).join()).toContain(key)
+    s.store.setViewer('p_sev')
+    expect(await discards(s)).toHaveLength(0)
+    expect(JSON.stringify(await everything(s))).not.toContain(key)
+  })
+  it('a workspace-wide ticket\'s discard line is shown to everyone', async () => {
+    const s = setup('p_sev')
+    const key = await make(s, 'workspace')
+    s.store.setViewer('p_sev')
+    expect((await discards(s)).map((r) => r.summary).join()).toContain(key)
   })
 })
 

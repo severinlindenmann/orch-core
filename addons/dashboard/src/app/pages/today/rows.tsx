@@ -267,6 +267,9 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
 
 // ------------------------------------------------------------------ addon decisions (rendered and signed by core)
 
+/** The queries an addon decision can change. */
+const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'ticket-events', 'ticket-children', 'tickets', 'board', 'agents', 'workspaces']
+
 /** Core's flow for one addon decision: core's prompt, presence, then the post with `confirmed`. */
 function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
@@ -283,7 +286,8 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
       await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
       toast.success(`${d.title}: ${o.label}`)
       onDone?.()
-      await qc.invalidateQueries()
+      // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
+      await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
     } catch (e) {
       if (onError) onError(e)
       else toastApiError(e, 'That did not work.')

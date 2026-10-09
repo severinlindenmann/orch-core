@@ -52,6 +52,7 @@ function headingIds(into: Heading[], opts: { toc: boolean; prefix: string }) {
         const id = count === 1 ? base : `${base}-${count}`
         n.properties = { ...n.properties, id }
         into.push({ id, level: Number(n.tagName![1]), text })
+        n.children?.forEach(walk) // an id on something inside a heading is stripped too
         return
       }
       n.children?.forEach(walk)
@@ -62,6 +63,9 @@ function headingIds(into: Heading[], opts: { toc: boolean; prefix: string }) {
 
 /** Several markdown nodes with a toc on one page must not share ids: the first live one is `addon-h-`, the next `addon-h2-`, ... */
 const liveToc: string[] = []
+const tocListeners = new Set<() => void>()
+/** A toc node that goes away shifts every later one up a slot, so each live one recomputes its own. */
+const tellToc = () => tocListeners.forEach((f) => f())
 
 const tocItems = (headings: Heading[]) => headings.filter((h) => h.level >= 2 && h.level <= 3)
 
@@ -118,8 +122,14 @@ export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: bo
   useEffect(() => {
     if (!toc) return
     liveToc.push(owner)
-    setSlot(liveToc.indexOf(owner))
-    return () => void liveToc.splice(liveToc.indexOf(owner), 1)
+    const sync = () => setSlot(liveToc.indexOf(owner))
+    tocListeners.add(sync)
+    sync()
+    return () => {
+      tocListeners.delete(sync)
+      liveToc.splice(liveToc.indexOf(owner), 1)
+      tellToc()
+    }
   }, [toc, owner])
   const prefix = slot === 0 ? 'addon-h-' : `addon-h${slot + 1}-`
   const plugin = useMemo(() => headingIds(found.current, { toc, prefix }), [toc, prefix])
@@ -130,7 +140,7 @@ export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: bo
     setHeadings((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
   }, [text, toc, prefix])
   const body = (
-    <div className="addon-md text-[13px] leading-relaxed text-text [&_blockquote]:border-l-2 [&_blockquote]:border-border-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-muted [&_code]:rounded [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:scroll-mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:scroll-mt-4 [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-3 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5">
+    <div className="addon-md text-[13px] leading-relaxed text-text [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_blockquote]:border-l-2 [&_blockquote]:border-border-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-muted [&_code]:rounded [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:scroll-mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:scroll-mt-4 [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-3 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize, plugin]}

@@ -112,6 +112,7 @@ export function fmtDuration(ms: number): string {
 export function ago(iso: string, now = NOW_FALLBACK): string {
   const diff = now - Date.parse(iso)
   const abs = Math.abs(diff)
+  if (abs < 60_000 || (diff < 0 && abs < 90_000)) return 'just now' // a clock a little ahead reads as now, not "in 1 min"
   const unit = abs < 3_600_000 ? `${Math.max(1, Math.round(abs / 60_000))} min` : abs < 86_400_000 ? `${Math.round(abs / 3_600_000)} h` : `${Math.round(abs / 86_400_000)} d`
   return diff >= 0 ? `${unit} ago` : `in ${unit}`
 }

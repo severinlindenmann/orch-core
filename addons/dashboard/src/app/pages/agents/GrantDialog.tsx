@@ -23,7 +23,7 @@ export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAct
   const { workspace } = useWorkspace()
   const ws = workspace?.id
   const sessions = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws && action?.kind === 'revoke' })
-  const person = (id: string) => workspace?.members.find((m) => m.person === id)?.name ?? id
+  const person = (id: string) => (workspace ? (workspace.members.find((m) => m.person === id)?.name ?? id) : '…')
 
   useEffect(() => setHours(8), [action])
 

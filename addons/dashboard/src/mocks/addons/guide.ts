@@ -30,7 +30,7 @@ registerAddon({
       pages: GUIDE_PAGES,
       items: GUIDE_PAGES.map((p) => ({
         title: p.title,
-        ...(p.slug === cur.slug ? { badge: 'Open' } : {}),
+        ...(p.slug === cur.slug ? { badge: 'Current' } : {}),
         actions: [{ action: 'open', label: 'Open', args: { slug: p.slug } }],
       })),
       current: cur,

@@ -281,6 +281,7 @@ describe('app shell', () => {
       await user.click(within(recent).getByRole('option', { name: /DEMO-0043/ }))
       await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ })
       await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/))
+      expect(await screen.findByText('Switched to Acme energy data to open DEMO-0043')).toBeInTheDocument()
       // DEMO's addons (Publish is not installed in INT) render in the rail.
       await waitFor(() => expect(screen.getByRole('complementary', { name: 'Ticket details' }).querySelector('[data-addon="publish"]')).not.toBeNull())
     })

@@ -119,7 +119,7 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
   // A panel that appears while the page is open is the result of something the person just did (e.g. "Open
   // terminal" adds a "Terminal session" panel): it opens, so the action is visibly answered. The baseline is the
   // first render where every panel's state has loaded (a waiting panel may still vanish on its `when`), and it
-  // starts over for another ticket.
+  // starts over for another ticket (the open set too). The seen set only grows.
   const seen = useRef<{ scope: string; keys: Set<string> } | null>(null)
   const scope = ctx.ticket?.key ?? ''
   const ready = items.every((c) => !c.waiting)
@@ -127,12 +127,15 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
   useEffect(() => {
     if (!ready) return
     if (seen.current === null || seen.current.scope !== scope) {
+      // Another ticket: its panels start from what the person chose before, not from what was open on the last ticket.
+      if (seen.current !== null) setOpen(items.filter(readOpen).map(panelKey).slice(-MAX_OPEN))
       seen.current = { scope, keys: new Set(keys) }
       return
     }
     const known = seen.current.keys
     const fresh = items.filter((c) => !known.has(panelKey(c)))
-    seen.current.keys = new Set(keys)
+    // Cumulative: a panel that goes away and comes back is not new, so it keeps the person's earlier choice.
+    for (const k of keys) known.add(k)
     if (fresh.length) setOpen((cur) => withOpened(cur, fresh))
     // keyList stands for `items`: only a change in which panels exist matters here.
   }, [keyList, ready, scope])

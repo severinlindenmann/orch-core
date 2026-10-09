@@ -94,6 +94,11 @@ describe('usage by model', () => {
     expect(sum(st.modelTotals.map((m) => m.shareTenths))).toBe(1000)
     for (const m of st.modelTotals) expect(m.tokensOut).toBeLessThan(m.tokensIn)
   })
+  it('the Overview tokens stat is the By model Total (input + output), printed the same way', async () => {
+    const st = (await full()) as Full & { tokens30Text: string }
+    const total = st.modelRows[4]
+    expect(st.tokens30Text).toBe(`${(Math.round(Number(total.input) * 100) / 100 + Math.round(Number(total.output) * 100) / 100).toFixed(2)} M`)
+  })
   it('the table has one row per model, biggest cost first, and a Total row with the same cost as the Overview', async () => {
     const st = await full()
     expect(st.modelRows).toHaveLength(5)

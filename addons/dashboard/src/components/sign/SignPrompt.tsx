@@ -80,7 +80,7 @@ export function SignDetails({ hash, covers }: { hash?: string; covers?: string[]
 }
 
 /**
- * Core-rendered signing prompt: what is covered, then "Sign with Touch ID". Render it only while a
+ * Core-rendered signing prompt: what is covered, then a Sign button. Render it only while a
  * signature is pending. It closes on Sign (the modal would hide the page from assistive tech) and the
  * caller runs `useSignedAction`, so progress and the result appear as a toast. Only core shows this
  * prompt; an agent or an addon cannot sign.
@@ -91,7 +91,7 @@ export function SignPrompt({
   covers,
   children,
   destructive,
-  confirmLabel = 'Sign with Touch ID',
+  confirmLabel = 'Sign',
   hash,
   disabled,
   onSign,
@@ -102,7 +102,7 @@ export function SignPrompt({
   covers: string[]
   children?: ReactNode
   destructive?: boolean
-  /** Button text; the default says what happens (Touch ID). Use a verb for the action being signed. */
+  /** Button text; use a verb for the action being signed; the default is plain Sign. */
   confirmLabel?: string
   /** The hash being signed; shown only inside the closed Details. */
   hash?: string

@@ -71,7 +71,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
   const [error, setError] = useState<string | null>(null)
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
   const members = workspaceOfTicket(ticket.key, workspaces.data ?? [])?.members ?? []
-  const personName = (id: string) => members.find((m) => m.person === id)?.name ?? id
+  const personName = (id: string) => (workspaces.data ? (members.find((m) => m.person === id)?.name ?? id) : '…') // not the raw id while the workspaces load
   const cancel = useRef<HTMLButtonElement>(null)
   const firstRadio = useRef<HTMLInputElement>(null)
 

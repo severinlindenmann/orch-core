@@ -8,6 +8,7 @@ describe('guide page', () => {
   it('shows Getting around, opens Keyboard shortcuts and lists g b', async () => {
     const { user, container } = renderApp('/addon/guide/guide', { viewer: 'p_sev' })
     expect(await screen.findByRole('heading', { name: 'Getting around' }, T)).toBeInTheDocument()
+    expect(screen.getByText('Current')).toBeInTheDocument() // the chip marks the open page and does not echo the "Open" button
     const item = screen.getByText('Keyboard shortcuts').closest('li')!
     await user.click(within(item).getByRole('button', { name: 'Open' }))
     await waitFor(() => expect(container.querySelector('.addon-md')).toHaveTextContent('g b'), T)

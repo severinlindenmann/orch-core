@@ -204,8 +204,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
 
   const queue = (
     <section aria-label={readOnly ? 'Open in the workspace' : 'Needs you'} className="min-w-0 space-y-3">
-      {/* A zero-height sticky slot: the pill floats over the top of the queue, so its arrival moves no row. */}
-      <div data-testid="new-items" className="pointer-events-none sticky top-2 z-10 mb-0 flex h-0 justify-center">
+      {/* A zero-height sticky slot: the pill floats over the top of the queue, so its arrival moves no row. top-7 less the pill's -mt-5 leaves it 8 px below the scroll edge when stuck. */}
+      <div data-testid="new-items" className="pointer-events-none sticky top-7 z-10 mb-0 flex h-0 justify-center">
         {fresh.length > 0 && (
           <button
             type="button"

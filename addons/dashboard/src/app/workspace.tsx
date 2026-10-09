@@ -37,17 +37,28 @@ function readStored(): string | null {
 }
 
 /**
- * A screen with unsaved work can ask before the workspace changes under it: while a guard is set, switchWorkspace
- * calls it with the switch as `proceed` and does nothing until the guard runs it.
+ * A screen with unsaved work can ask before the workspace changes under it. While guards are set, switchWorkspace
+ * runs them one after the other, each with "go on" as `proceed`, and switches only when every guard has let it
+ * through (a guard that says no simply never calls `proceed`). More than one screen can hold a guard at once.
  */
-let switchGuard: ((proceed: () => void) => void) | null = null
-export function useSwitchGuard(guard: ((proceed: () => void) => void) | null) {
+type SwitchGuard = (proceed: () => void) => void
+const switchGuards: SwitchGuard[] = []
+export function useSwitchGuard(guard: SwitchGuard | null) {
   useEffect(() => {
-    switchGuard = guard
+    if (!guard) return
+    switchGuards.push(guard)
     return () => {
-      if (switchGuard === guard) switchGuard = null
+      const at = switchGuards.indexOf(guard)
+      if (at >= 0) switchGuards.splice(at, 1)
     }
   }, [guard])
+}
+
+/** Asks each guard in turn; `done` runs when all agreed. */
+function askGuards(list: SwitchGuard[], done: () => void) {
+  const [first, ...rest] = list
+  if (!first) return done()
+  first(() => askGuards(rest, done))
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -81,14 +92,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const target = all.find((w) => w.id === next)
       if (!target) return
       if (next === current?.id && !opts.ticket) return
-      if (switchGuard && !opts.guarded) {
-        switchGuard(() => switchWorkspace(next, { ...opts, guarded: true }))
+      if (switchGuards.length > 0 && !opts.guarded) {
+        askGuards([...switchGuards], () => switchWorkspace(next, { ...opts, guarded: true }))
         return
       }
       const path = router.state.location.pathname
       if (opts.ticket) {
+        const changed = next !== current?.id
         setWorkspaceId(next)
         void router.navigate({ to: '/ticket/$key', params: { key: opts.ticket } })
+        if (changed) toast(`Switched to ${target.name} to open ${opts.ticket}`)
         return
       }
       if (next === current?.id) return

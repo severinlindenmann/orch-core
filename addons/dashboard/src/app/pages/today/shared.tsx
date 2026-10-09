@@ -21,7 +21,8 @@ export function displayName(dir: Directory, id: string): string {
     const a = dir.agents.find((x) => x.id === id.slice(6))
     return a ? `${a.name} for ${displayName(dir, a.for)}` : id.slice(6)
   }
-  return dir.workspace?.members.find((m) => m.person === id)?.name ?? id
+  if (!dir.workspace) return '…' // members have not loaded yet: not the raw id
+  return dir.workspace.members.find((m) => m.person === id)?.name ?? id
 }
 
 /** Today's two layouts: a side column from 1280 px, one column below. */

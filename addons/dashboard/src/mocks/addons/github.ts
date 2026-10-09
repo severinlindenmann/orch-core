@@ -78,6 +78,7 @@ const pending = (p: Pr) => p.checks.some((c) => c.status === 'pending')
 
 function ago(fromIso: string, nowIso: string): string {
   const min = Math.max(0, Math.round((Date.parse(nowIso) - Date.parse(fromIso)) / 60000))
+  if (min < 1) return 'just now'
   if (min < 60) return `${min} min ago`
   const h = Math.round(min / 60)
   if (h < 24) return `${h} h ago`

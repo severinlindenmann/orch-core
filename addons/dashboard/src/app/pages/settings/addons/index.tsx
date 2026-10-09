@@ -15,6 +15,9 @@ import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
 
+/** The queries an install, enable, disable or uninstall can change. */
+const ADDON_OP_KEYS = ['workspace-addons', 'workspaces', 'addons', 'addon-state', 'addon-decisions', 'today', 'ticket', 'board', 'agents']
+
 /** Settings > Addons: installed addons with signed capability grants, and the catalog. */
 export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Workspace; canEdit: boolean; settingsOf?: string }) {
   const navigate = useNavigate()
@@ -30,7 +33,8 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
   const run = async (name: string, req: AddonOpRequest) => {
     try {
       await api.postAddonOp(ws, name, req)
-      await qc.invalidateQueries()
+      // An addon turning on or off changes the lists of addons, every page's contributions, Today's cards and the board's lanes.
+      await Promise.all(ADDON_OP_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
     } catch (e) {
       toastApiError(e, 'Could not change the addon')
     }

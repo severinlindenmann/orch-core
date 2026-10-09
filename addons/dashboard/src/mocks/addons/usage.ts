@@ -183,6 +183,8 @@ registerAddon({
       weekCents: week,
       monthCents: month,
       tokens30,
+      // The Overview stat reads the same rounded number as the By model Total (Input + Output).
+      tokens30Text: `${mUnits(sum1(inU) + sum1(outU))} M`,
       budgetChf: budget,
       budgetPct: pct,
       monthChf: month / 100,

@@ -13,7 +13,7 @@ const setup = (viewer = 'p_sev', install = true, dataset: 'normal' | 'busy' = 'n
   return { store, ws, api: createApi(createMockTransport(store, { latency: false })) }
 }
 type S = ReturnType<typeof setup>
-interface Row { id: string; file: string; state: string; ticket: string; canClaim?: boolean; canChange?: boolean; to?: string; views?: string }
+interface Row { id: string; file: string; state: string; ticket: string; canClaim?: boolean; canChange?: boolean; canExtend?: boolean; to?: string; views?: string }
 interface State { inboxRows: Row[]; sentRows: Row[]; toClaim: number; sendToNames: string[]; shareSchema: { properties: { to: { enum: string[] }; ticket: { enum: string[] } } }; inbox: unknown[]; sent: unknown[] }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'drop')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'drop', id, body)
@@ -141,6 +141,13 @@ describe('sent drops', () => {
     expect(sev.store.eventsOf('DEMO-0043').at(-1)).toMatchObject({ type: 'drop.extended', actor: { kind: 'addon', id: 'drop' } })
     await run(sev, 'remove', { id: 'in_photos' })
     expect(sev.store.eventsOf('DEMO-0043').at(-1)).toMatchObject({ type: 'drop.removed', actor: { kind: 'addon', id: 'drop' } })
+  })
+  it('Extend is offered only to the sender or an owner', async () => {
+    const mara = (await state(setup('p_mara'))).sentRows
+    expect(mara.find((r) => r.id === 'out_report')).toMatchObject({ canChange: true, canExtend: false }) // Severin sent it
+    expect(mara.find((r) => r.id === 'out_int')?.canExtend).toBe(true) // her own
+    const sev = (await state(setup())).sentRows
+    expect(sev.filter((r) => r.canChange).every((r) => r.canExtend)).toBe(true) // the owner
   })
   it('extend and revoke; revoke is idempotent and adds an addon event on the ticket', async () => {
     const s = setup()

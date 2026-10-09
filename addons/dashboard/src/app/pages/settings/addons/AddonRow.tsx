@@ -66,7 +66,7 @@ export function AddonRow({ addon, active, canEdit, hasSettings, actions }: { add
         </span>
       </TableCell>
       <TableCell>
-        <Switch aria-label={`Enable ${addon.title}`} checked={addon.ws.enabled && !needsGrant} disabled={!canEdit || needsGrant} onCheckedChange={actions.setEnabled} />
+        <Switch aria-label={`${addon.title} ${addon.ws.enabled && !needsGrant ? 'enabled' : 'disabled'}`} checked={addon.ws.enabled && !needsGrant} disabled={!canEdit || needsGrant} onCheckedChange={actions.setEnabled} />
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap justify-end gap-1.5">

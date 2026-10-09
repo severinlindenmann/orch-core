@@ -23,6 +23,18 @@ type State = {
 const state = async (s: ReturnType<typeof setup>) => (await s.api.getAddonState(s.ws, 'github')) as unknown as State
 const prOf = (st: State, id: string) => st.prs.find((p) => p.id === id)!
 
+describe('github times', () => {
+  it('a PR updated this minute reads "just now", not "0 min ago"', async () => {
+    const s = setup()
+    await state(s) // seeds
+    const prs = (s.store.addonState(s.ws, 'github') as unknown as { prs: { id: string; updated_at: string }[] }).prs
+    prs[0].updated_at = s.store.now()
+    const rows = ((await s.api.getAddonState(s.ws, 'github')) as unknown as { prRows: { id: string; updated: string }[] }).prRows
+    expect(rows.find((r) => r.id === prs[0].id)?.updated).toBe('just now')
+    expect(rows.some((r) => /^0 min/.test(r.updated))).toBe(false)
+  })
+})
+
 describe('github seed', () => {
   it('has six pull requests across two acme-energy repos with checks, reviews, authors and diff stats', async () => {
     const st = await state(setup())

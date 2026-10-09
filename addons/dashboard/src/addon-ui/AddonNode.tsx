@@ -1,7 +1,7 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
@@ -46,10 +46,15 @@ interface Runtime {
   formControl?: FormControl
   /** Submit actions of forms on this page that hold unsaved edits (a form with `cancel`). Any other action asks before it discards them. */
   dirty: Set<string>
-  /** Which form took the drawer's form control (see FormNode). */
-  formControlClaim: { current: string | null }
+  /** Which form took the drawer's form control (see FormNode), and the forms waiting to take it when it is released. */
+  formControlClaim: FormControlClaim
 }
-const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), formControlClaim: { current: null } })
+interface FormControlClaim {
+  current: string | null
+  waiting: Set<() => void>
+}
+const newClaim = (): FormControlClaim => ({ current: null, waiting: new Set() })
+const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), formControlClaim: newClaim() })
 
 /** A stack with nothing in it draws nothing and takes no gap (addons use one as "no alert right now"). */
 const isEmptyStack = (c: unknown) => !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'stack' && Array.isArray((c as { children?: unknown }).children) && (c as { children: unknown[] }).children.length === 0
@@ -80,7 +85,7 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  */
 export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl }) {
   const dirty = useRef(new Set<string>()).current
-  const formControlClaim = useRef<string | null>(null)
+  const formControlClaim = useRef(newClaim()).current
   return (
     <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, formControlClaim }}>
       <NodeView node={node} depth={0} />
@@ -478,16 +483,34 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   const { formControl: offered, formControlClaim } = useContext(RuntimeCtx)
   // The drawer's form control belongs to ONE form: the first that mounts. Another form on the page keeps its own submit button.
   const me = useId()
-  const [lost, setLost] = useState(false)
-  useEffect(() => {
-    if (!offered) return
-    if (formControlClaim.current === null || formControlClaim.current === me) formControlClaim.current = me
-    else setLost(true)
+  // Not 'won' until the claim is made (before paint), so a form that loses never reports its state in between.
+  // A form that lost waits, and takes the control when the winner goes away.
+  const [claim, setClaim] = useState<'won' | 'lost' | null>(null)
+  useLayoutEffect(() => {
+    if (!offered) {
+      setClaim(null)
+      return
+    }
+    const take = () => {
+      if (formControlClaim.current === null || formControlClaim.current === me) {
+        formControlClaim.current = me
+        formControlClaim.waiting.delete(take)
+        setClaim('won')
+      } else {
+        formControlClaim.waiting.add(take)
+        setClaim('lost')
+      }
+    }
+    take()
     return () => {
-      if (formControlClaim.current === me) formControlClaim.current = null
+      formControlClaim.waiting.delete(take)
+      if (formControlClaim.current === me) {
+        formControlClaim.current = null
+        for (const next of [...formControlClaim.waiting]) next() // the first waiting form takes it; the rest stay waiting
+      }
     }
   }, [offered, formControlClaim, me])
-  const formControl = lost ? undefined : offered
+  const formControl = claim === 'won' ? offered : undefined
   const report = formControl?.onState
   useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
   const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
@@ -510,6 +533,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   return (
     <>
       {dialog}
+      {/* A form that holds the drawer's form control is guarded by the drawer: a second prompt would ask twice. */}
       {guarded && edited && <LeaveGuard />}
       {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>

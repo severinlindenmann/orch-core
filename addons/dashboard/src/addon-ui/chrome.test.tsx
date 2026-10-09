@@ -20,7 +20,7 @@ describe('AddonFrame header', () => {
         body
       </AddonFrame>,
     )
-    const header = screen.getByRole('banner', { hidden: true }) ?? document.querySelector('header')
+    const header = screen.getByRole('banner', { hidden: true })
     expect(header).toHaveTextContent('Shares')
     expect(header.textContent).not.toMatch(/publish|today\.card/)
     expect(screen.getByRole('img', { name: 'From the Publish addon' })).toBeInTheDocument()
@@ -105,6 +105,35 @@ describe('collapsible slot stack', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Logs/ })).toHaveAttribute('aria-expanded', 'true'))
     expect(screen.getByRole('button', { name: /Shares/ })).toHaveAttribute('aria-expanded', 'false')
   })
+  it('a panel that goes away and comes back keeps the earlier choice: it does not open as new', async () => {
+    const user = userEvent.setup()
+    const both = ['shares', 'logs']
+    const at = (ids: string[]) => (
+      <QueryClientProvider client={new QueryClient()}>
+        <CollapsibleStack items={ids.map(item)} readOnly={false} />
+      </QueryClientProvider>
+    )
+    const view = render(at(both))
+    await user.click(screen.getByRole('button', { name: /Shares/ })) // open Shares, leave Logs shut
+    view.rerender(at(['shares']))
+    view.rerender(at(both))
+    expect(screen.getByRole('button', { name: /Logs/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: /Shares/ })).toHaveAttribute('aria-expanded', 'true')
+  })
+  it('another ticket starts from the remembered choices, not from what was open on the last one', async () => {
+    const user = userEvent.setup()
+    const ticket = (key: string) => ({ key }) as never
+    const at = (key: string, ids: string[]) => (
+      <QueryClientProvider client={new QueryClient()}>
+        <CollapsibleStack items={ids.map(item)} ctx={{ ticket: ticket(key) }} readOnly={false} />
+      </QueryClientProvider>
+    )
+    const view = render(at('DEMO-1', ['shares', 'logs']))
+    await user.click(screen.getByRole('button', { name: /Logs/ }))
+    localStorage.removeItem('orch.panel.publish/logs') // the remembered choice for the next ticket: shut
+    view.rerender(at('DEMO-2', ['shares', 'logs']))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Logs/ })).toHaveAttribute('aria-expanded', 'false'))
+  })
   it('remembers what the person opened', async () => {
     const user = userEvent.setup()
     const first = stack()
@@ -144,6 +173,10 @@ describe('list and table nodes', () => {
     wrap(<AddonNode node={{ type: 'table', columns: [{ key: 'status', label: 'Status' }, { key: 'note', label: 'Note' }], rows: [{ status: 'in-progress', note: 'in-progress' }] }} addon="worktrees" />)
     expect(screen.getByText('In progress')).toBeInTheDocument()
     expect(screen.getByText('in-progress')).toBeInTheDocument() // other columns stay as the addon wrote them
+  })
+  it('a frame node\'s iframe is named by its title', () => {
+    wrap(<AddonNode node={{ type: 'frame', title: 'Bars', html: '<p>hi</p>' }} addon="widgets" />)
+    expect(document.querySelector('iframe')).toHaveAttribute('title', 'Bars')
   })
   it('a frame node inside a frame has a hairline and a Sandboxed chip, not a second addon frame', () => {
     wrap(<AddonNode node={{ type: 'frame', title: 'Bars', html: '<p>hi</p>' }} addon="widgets" />)

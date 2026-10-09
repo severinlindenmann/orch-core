@@ -43,7 +43,7 @@ export function AgentsPage() {
   const viewer = me.data.person
   const role = roleOf(workspace, viewer)
   const canAct = can(role, 'grant.issue')
-  const name = (id: string) => workspace?.members.find((m) => m.person === id)?.name ?? id
+  const name = (id: string) => (workspace ? (workspace.members.find((m) => m.person === id)?.name ?? id) : '…')
   const canRevoke = (g: GrantInfo) => canRevokeGrant(role, g.person, viewer)
 
   const { sessions: n, waitingOnYou, stopped } = attention.agents

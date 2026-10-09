@@ -49,7 +49,8 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
   const save = async () => {
     try {
       await api.postSettings(workspace.id, { op: 'rename', name: value })
-      await qc.invalidateQueries()
+      // The name lives in the workspace list (switcher, palette, sidebar) and in the identity card here.
+      await Promise.all([qc.invalidateQueries({ queryKey: ['workspaces'] }), qc.invalidateQueries({ queryKey: ['identity', workspace.id] })])
       setName(null)
       toast.success('Workspace renamed')
     } catch (e) {

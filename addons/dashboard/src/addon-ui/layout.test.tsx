@@ -139,6 +139,22 @@ describe('round 2 hardening', () => {
     expect(ids.every((e) => /^H[1-6]$/.test(e.tagName) && e.id.startsWith('addon-h-'))).toBe(true) // only core's heading ids
     expect(ids.map((e) => e.id)).toEqual(expect.arrayContaining(['addon-h-rules', 'addon-h-other']))
   })
+  it('an id on something inside a heading never survives, with toc on', async () => {
+    const { container } = show(md('## Rules <span id="evil">x</span>', { toc: true }))
+    await waitFor(() => expect(container.querySelector('#addon-h-rules-x')).not.toBeNull())
+    expect(container.querySelector('#evil')).toBeNull()
+  })
+  it('when one of two toc nodes stops being one, the other takes the first slot again', async () => {
+    const wrap = (node: unknown) => (
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AddonNode node={node} addon="demo" />
+      </QueryClientProvider>
+    )
+    const two = render(wrap({ type: 'stack', children: [md('## Rules', { toc: true }), md('## Rules', { toc: true })] }))
+    await waitFor(() => expect([...two.container.querySelectorAll('h2')].map((h) => h.id)).toEqual(['addon-h-rules', 'addon-h2-rules']))
+    two.rerender(wrap({ type: 'stack', children: [md('## Rules'), md('## Rules', { toc: true })] }))
+    await waitFor(() => expect([...two.container.querySelectorAll('h2')].map((h) => h.id)).toEqual(['', 'addon-h-rules']))
+  })
   it('two toc nodes on one page do not share heading ids', async () => {
     const both = show({ type: 'stack', children: [md('## Rules\n\n## Two', { toc: true }), md('## Rules\n\n## Two', { toc: true })] })
     await waitFor(() => expect(both.container.querySelectorAll('h2')).toHaveLength(4))

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -80,7 +81,10 @@ function useHomeWorkspace(ticketKey: string): { ready: boolean } {
   const { workspace, workspaces, setWorkspaceId } = useWorkspace()
   const home = workspaceOfTicket(ticketKey, workspaces)
   useEffect(() => {
-    if (home && home.id !== workspace?.id) setWorkspaceId(home.id)
+    if (home && home.id !== workspace?.id) {
+      setWorkspaceId(home.id)
+      toast(`Switched to ${home.name} to open ${ticketKey}`)
+    }
     // Only when the ticket (or its home) changes: a later switch away is the user's, and leaves the page.
   }, [ticketKey, home?.id])
   return { ready: !home || home.id === workspace?.id }

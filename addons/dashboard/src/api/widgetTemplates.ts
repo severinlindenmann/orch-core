@@ -23,13 +23,14 @@ export interface WidgetTemplate {
   check?: (data: Record<string, unknown>) => string | undefined
 }
 
+// The sandboxed frame cannot read the dashboard's CSS variables, so the slider repeats the brand token (--brand) as a literal.
 const BEFORE_AFTER = `<style>
 .stage{position:relative;border:1px solid GrayText;border-radius:6px;overflow:hidden}
 .pane{margin:0;padding:10px 12px;min-height:110px;font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}
 .pane h4{margin:0 0 6px;font:600 11px ui-sans-serif,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.04em;color:GrayText}
-.over{position:absolute;inset:0;background:Canvas;border-right:2px solid Highlight}
+.over{position:absolute;inset:0;background:Canvas;border-right:2px solid #2fc6a3}
 .row{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px}
-.row input{flex:1}
+.row input{flex:1;accent-color:#2fc6a3}
 </style>
 <div class="stage"><div class="pane" id="after"></div><div class="pane over" id="before"></div></div>
 <div class="row"><span id="lb"></span><input id="r" type="range" min="0" max="100" value="50" aria-label="Slide between before and after"><span id="la"></span></div>

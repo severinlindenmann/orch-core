@@ -21,7 +21,7 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['quick/quick', /Quick tasks/, /Quick task \(one line\)/],
   ['records/records', /Records/, /Record changes/],
   ['activity/activity', /Activity/, /events today/],
-  ['widgets/widgets', /Widgets/, /small visual blocks/],
+  ['widgets/widgets', /Widgets/, /Agents can put small charts/],
   ['start-agent/start', /Start agent/, /Start an agent session on a ticket/],
   ['guide/guide', /Guide/, /Getting around/],
   ['factory/factory', /AI Factory/, /Children used/],

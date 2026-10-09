@@ -754,7 +754,7 @@
                 {
                   "type": "stat",
                   "label": "Tokens, last 30 days",
-                  "value": "${addon.tokens30|ktok}",
+                  "value": "${addon.tokens30Text}",
                   "hint": "input + output, without cache reads"
                 }
               ]
@@ -1273,7 +1273,7 @@
         "node": {
           "type": "stack",
           "children": [
-            { "type": "markdown", "text": "Agents put small visual blocks into the **Context**, **Current state** and **Verification** sections of a ticket, as a fenced `orch` block of strict JSON. **Core types** are drawn by core itself, without a script. **Templates** run only in a sandboxed frame that cannot reach this dashboard, the network or your files, and only while this addon is on; each block pins its template by sha256. A block that breaks a rule is shown as plain words with Details, never half-drawn. Copy a source block into a ticket section to use it." },
+            { "type": "markdown", "text": "Agents can put small charts, tables and interactive pages into the Context, Current state and Verification sections of a ticket. Pages run in a locked sandbox that cannot reach this dashboard, the network or your files, and a block that breaks a rule is shown as plain words instead of being half-drawn." },
             { "type": "stack", "children": { "$ref": "addon.gallery" } }
           ]
         }

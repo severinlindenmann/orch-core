@@ -14,12 +14,12 @@ describe('Addon manager', () => {
     await user.click(await screen.findByRole('button', { name: 'Browse addons' }))
     await user.click(within(await screen.findByRole('article', { name: /Quick tasks/ })).getByRole('button', { name: 'Install' }))
     const row = await screen.findByRole('row', { name: /Quick tasks/ })
-    expect(within(row).getByRole('switch', { name: /Enable/ })).toBeDisabled()
+    expect(within(row).getByRole('switch', { name: /(enabled|disabled)$/ })).toBeDisabled()
     await user.click(within(row).getByRole('button', { name: 'Grant…' }))
     await user.click(await screen.findByRole('button', { name: /Grant and sign/ }))
     // The grant lands after the Touch ID wait; the switch unlocks then.
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /Enable/ })).toBeEnabled())
-    await user.click(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /Enable/ }))
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /(enabled|disabled)$/ })).toBeEnabled())
+    await user.click(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: /(enabled|disabled)$/ }))
     await user.click(await screen.findByRole('button', { name: /More addons/ }))
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/addon/quick/quick')).toBe(true)) // sidebar nav appeared
   })
@@ -34,7 +34,8 @@ describe('Addon manager', () => {
   })
   it('disabling an addon removes its nav, palette commands and Today card', async () => {
     const { user } = renderApp('/settings/addons')
-    await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /Enable/ }))
+    await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: 'Publish enabled' }))
+    expect(await within(screen.getByRole('row', { name: /Publish/ })).findByRole('switch', { name: 'Publish disabled' })).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('link', { name: /Apps & shares/ })).toBeNull())
   })
   it('an uninstalled seeded addon shows up in Browse addons and can be installed again', async () => {
@@ -63,7 +64,7 @@ describe('Addon manager', () => {
     expect(await screen.findByText(/Publish report/)).toBeInTheDocument()
     await user.click(await screen.findByRole('link', { name: 'Settings' }))
     await user.click(await screen.findByRole('link', { name: 'Addons' }))
-    await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /Enable/ }))
+    await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /(enabled|disabled)$/ }))
     await user.click(await screen.findByRole('link', { name: /^Today/ }))
     await screen.findByRole('heading', { name: 'Today' })
     await waitFor(() => expect(screen.queryByText(/Publish report/)).toBeNull())

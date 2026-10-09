@@ -20,6 +20,13 @@ describe('widgets addon page', () => {
     expect(screen.getAllByRole('img', { name: /From addon: widgets/ }).length).toBeGreaterThan(0)
   })
 
+  it('the intro is two plain sentences, without Moment or Pin (sha256) jargon', async () => {
+    renderApp('/addon/widgets/widgets')
+    const intro = await screen.findByText(/^Agents can put small charts/, {}, { timeout: 5000 })
+    expect(intro.textContent).not.toMatch(/moment|sha256|pin/i)
+    expect((intro.textContent ?? '').match(/[.!?](\s|$)/g)).toHaveLength(2)
+  })
+
   it('is a gallery: a jump list, Core before Templates, one card per catalog entry, proposed types marked', async () => {
     const { user } = renderApp('/addon/widgets/widgets')
     const nav = await screen.findByRole('navigation', { name: 'Jump to a widget' }, { timeout: 5000 })

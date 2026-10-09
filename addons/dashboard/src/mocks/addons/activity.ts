@@ -165,9 +165,12 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
     for (const e of c.store.eventsOf(key)) if (e.type !== 'people.set') push(e, key, key)
   }
   // A workspace event about a ticket (addon.decided) follows that ticket's visibility.
-  for (const e of c.store.wsEventsOf(c.ws)) if ((sees || !isSensitive(e.type)) && (typeof e.ticket !== 'string' || canSeeTicket(c, e.ticket))) push(e, '#ws', undefined)
+  for (const e of c.store.wsEventsOf(c.ws)) if ((sees || !isSensitive(e.type)) && (typeof e.ticket !== 'string' || canSeeTicket(c, e.ticket)) && seesDiscard(e, c.viewer)) push(e, '#ws', undefined)
   return out.sort((a, b) => b.at.localeCompare(a.at) || (a.src === b.src ? b.seq - a.seq : a.src.localeCompare(b.src)))
 }
+
+/** A discarded ticket is gone, so its log line carries the visibility the ticket had: only people who could see it see the line. */
+const seesDiscard = (e: { type: string; visibleTo?: unknown }, viewer: string) => e.type !== 'ticket.discarded' || !Array.isArray(e.visibleTo) || e.visibleTo.includes(viewer)
 
 const inPeriod = (e: Entry, period: Period, today: string) =>
   period === 'all' || (period === 'today' ? e.day === today : e.day >= new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10) && e.day <= today)
@@ -285,15 +288,23 @@ registerAddon({
       submitLabel: 'Apply',
     }
     const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
-    // One line: the headline and the view switch. (Core row stacks give each child an equal share; the buttons cannot sit adjacent.)
+    // One line: the headline, then the view switch. `fit` keeps each child at its own width, so Timeline / By ticket / Clear filters read as a switch, not as equal-width columns.
     const switcher = {
       type: 'stack',
       direction: 'row',
+      fit: true,
       children: [
         { type: 'markdown', text: headline },
-        { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
-        { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
-        ...clear,
+        {
+          type: 'stack',
+          direction: 'row',
+          fit: true,
+          children: [
+            { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
+            { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
+            ...clear,
+          ],
+        },
       ],
     }
 

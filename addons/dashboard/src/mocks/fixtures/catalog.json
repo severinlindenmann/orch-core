@@ -957,7 +957,7 @@
                     "id": "$row.id"
                   },
                   "variant": "ghost",
-                  "when": "$row.canChange"
+                  "when": "$row.canExtend"
                 },
                 {
                   "label": "Revoke",

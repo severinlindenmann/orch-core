@@ -4,7 +4,7 @@
 //    integration checks, then the pull request's CI) run on that exact candidate. If the target moved meanwhile, the
 //    candidate is rebuilt and checked again (outcome `requeued`). All green on an unchanged target: merged.
 //  - A conflict or a red check fails the attempt: the ticket gets a "needs" item for its agent and the queue moves on.
-//    Any resolution or fix is new code, so core voids the verify approval (store.voidApproval) and the ticket goes
+//    Any resolution or fix is new code, so core voids the verify approval (store.landingResolved) and the ticket goes
 //    back to review with the resolution diff. The worker never writes gate events itself.
 //  - Stacked tickets land parent first; a descendant whose parent failed waits and never lands without it.
 //  - A merge is recorded (phase 1) before the queue is tidied (phase 2). After a crash the worker finds the recorded
@@ -82,8 +82,10 @@ export interface Need {
   agent: string | null
   /** A person must resolve it (the agent could not, or there is none). */
   person: boolean
-  /** A person already answered the Today decision (the agent has it). */
+  /** A person already answered the Today decision (an agent or that person has it now). */
   decided?: boolean
+  /** The person who took it to resolve by hand ("I will resolve it"); they record the resolution with Mark resolved. */
+  owner?: string
   /** The agent saw it on a worker step and resolves it on the next. */
   picked?: boolean
   open: boolean
@@ -108,7 +110,6 @@ export interface LandState {
   resolutions: Resolution[]
   worker: { current: number | null; resumed: { from: number; at: string } | null }
   seq: number
-  nav: Record<string, { view?: 'queues' | 'history' }>
   [k: string]: unknown
 }
 
@@ -294,14 +295,13 @@ function nextEntry(store: MockStore, state: LandState): { q: Queue; e: Entry } |
 }
 
 /** Core voids the approval for a resolution; the addon records the resolution and its diff. */
-export function resolve(store: MockStore, state: LandState, need: Need, by: string, byLabel: string): Resolution {
+export function resolve(store: MockStore, state: LandState, need: Need, by: string): Resolution {
   const r: Resolution = { ticket: need.ticket, attempt: need.attempt, kind: need.kind, by, at: store.now(), file: need.file, diff: resolutionDiff(need.kind, need.file) }
   state.resolutions.push(r)
   need.open = false
   store.append(need.ticket, { type: 'land.resolved', actor: ADDON, attempt: need.attempt, kind: need.kind, file: need.file, by })
-  const what = need.kind === 'conflict' ? `resolved a rebase conflict in ${need.file}. A resolution` : `fixed the failing check (${need.check ?? 'CI'}) in ${need.file}. A fix`
-  if (store.ticket(need.ticket)?.gates.verify.state === 'approved')
-    store.voidApproval(need.ticket, 'verify', { addon: 'land', reason: `Landing attempt #${need.attempt}: ${byLabel} ${what} is new code, so the approval no longer covers it.` })
+  // Core checks the attempt and the resolution in the log and writes its own reason (store.landingResolved).
+  if (store.ticket(need.ticket)?.gates.verify.state === 'approved') store.landingResolved(need.ticket, { addon: 'land', attempt: need.attempt })
   return r
 }
 
@@ -371,12 +371,12 @@ export function step(store: MockStore, state: LandState): string | null {
   }
   if (current) return progress(store, state, current)
   state.worker.current = null
-  const need = state.needs.find((x) => x.open && !x.person && x.agent && x.picked)
+  const need = state.needs.find((x) => x.open && !x.person && !x.owner && x.agent && x.picked)
   if (need) {
-    resolve(store, state, need, need.agent!, agentLabel(need.agent!))
+    resolve(store, state, need, need.agent!)
     return `${need.ticket}: ${agentLabel(need.agent!)} resolved the ${need.kind === 'conflict' ? 'conflict' : 'red checks'}`
   }
-  for (const x of state.needs) if (x.open && !x.person && x.agent) x.picked = true
+  for (const x of state.needs) if (x.open && !x.person && !x.owner && x.agent) x.picked = true
   const next = nextEntry(store, state)
   if (!next) return null
   const a = startAttempt(store, state, next.q, next.e)

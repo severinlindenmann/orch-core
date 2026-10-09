@@ -204,7 +204,8 @@ describe('Settings', () => {
     const plans = today.needs_you.filter((i) => i.kind === 'approval' && i.ref === 'plan').length
     expect(plans).toBeGreaterThan(0)
     const section = (await screen.findByRole('heading', { name: 'Plan' })).closest('section')!
-    await screen.findByText(new RegExp(`Affects ${plans} open ticket`), {}, { timeout: 10000 })
+    // Within the Plan section: another gate may affect the same number of tickets (Verify does since N9).
+    await within(section as HTMLElement).findByText(new RegExp(`Affects ${plans} open ticket`), {}, { timeout: 10000 })
     expect(section.textContent).toMatch(new RegExp(`Affects ${plans} open ticket`))
     void user
   })

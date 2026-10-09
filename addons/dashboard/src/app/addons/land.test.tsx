@@ -1,6 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { openTicketPanel } from '@/test/ticketPanels'
 
@@ -22,16 +21,13 @@ describe('Landing page', () => {
     expect(screen.getByText('1 from another workspace on this machine')).toBeInTheDocument()
   })
 
-  it('History lists land.attempt records with source, target and candidate; the tab is per viewer', async () => {
+  it('History lists land.attempt records with source, target and candidate (core tabs)', async () => {
     const { user } = renderApp('/addon/land/landing', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('button', { name: 'History' }, T))
+    await user.click(await screen.findByRole('tab', { name: /History/ }, T))
     expect(await screen.findByRole('columnheader', { name: 'Candidate' }, T)).toBeInTheDocument()
     const rows = screen.getAllByRole('row')
     expect(rows.some((r) => /DEMO-0053.*failed: conflict/.test(r.textContent ?? ''))).toBe(true)
     expect(rows.some((r) => /DEMO-0053.*requeued: target moved/.test(r.textContent ?? ''))).toBe(true)
-    const ws = mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
-    mockStore.setViewer('p_mara')
-    expect(JSON.stringify(mockStore.addonStateView(ws, 'land')!.body)).not.toContain('"columns"')
   })
 })
 

@@ -5,6 +5,7 @@ import { createMockStore, type MockStore } from '@/mocks/store'
 import { describeEvent } from '@/mocks/derive'
 import { refused } from '@/test/refused'
 import { parseBlock } from '@/app/pages/ticket/widgets/parse'
+import { availableActions } from '@/app/pages/ticket/actions'
 import { asLand, attemptOf, recordMerge, step, type LandState } from './land-worker'
 
 // Landing (D53): one serial worker over queues per (remote, target); approval binds to the candidate; any resolution
@@ -55,7 +56,7 @@ describe('land package', () => {
       save_settings: { minRole: 'owner' },
       resolve: { minRole: 'maintainer', decision: true },
       enqueue: { minRole: 'member' },
-      view_history: { minRole: 'viewer', kind: 'navigation' },
+      mark_resolved: { minRole: 'member' },
       open_checks: { minRole: 'viewer', kind: 'navigation' },
     })
     expect(pkg.contributions.map((c) => c.slot).sort()).toEqual(['board.card_field', 'nav', 'settings', 'ticket.panel'])
@@ -96,8 +97,12 @@ describe('normal day seed', () => {
     expect(t.verdict).toBeNull()
     expect(t.gates.verify.state).toBe('invalidated')
     const inv = s.store.eventsOf('DEMO-0053').find((e) => e.type === 'gate.invalidated')!
-    expect(inv).toMatchObject({ actor: { kind: 'host' }, gate: 'verify', addon: 'land' })
-    expect(String(inv.reason)).toMatch(/resolved a rebase conflict/)
+    expect(inv).toMatchObject({ actor: { kind: 'host' }, gate: 'verify', addon: 'land', attempt: 13, reason: 'Landing attempt #13: a resolution changed the code (land).' })
+    // The land.* records are in the ticket's own log (History), written by the addon.
+    expect(s.store.eventsOf('DEMO-0053').filter((e) => e.type.startsWith('land.')).map((e) => `${e.type}:${e.actor.kind}`)).toEqual(['land.queued:addon', 'land.attempt:addon', 'land.attempt:addon', 'land.resolved:addon'])
+    // The void took the approval with it: no approval counts any more, the one given is kept as voided.
+    expect(t.gates.verify.approvals).toEqual([])
+    expect(t.gates.verify.voided?.map((a) => a.by)).toEqual(['p_mara'])
     const p = await panel(s, 'DEMO-0053')
     expect(text(p)).toContain('Conflict resolution voids the approval — back to review')
     expect(text(p)).toContain('Verify: invalidated by orch')
@@ -139,7 +144,7 @@ describe('the serial worker', () => {
     await verdict(s, 'DEMO-0053') // Mara approved before the void; the void lets her approve the resolved code
     expect(s.store.ticket('DEMO-0053')!.status).toBe('done')
     await run(s, 'enqueue', { ticket: 'DEMO-0053' })
-    expect(landEvents(s, 'DEMO-0053', 'land.queued')).toHaveLength(1)
+    expect(landEvents(s, 'DEMO-0053', 'land.queued')).toHaveLength(2) // the seeded one and this one
     expect((await view(s)).cards['DEMO-0053']).toBe('landing #2') // behind DEMO-0052, which is being checked
     const log = drain(s)
     expect(log).toEqual(['#14 DEMO-0052: merged', '#15 DEMO-0053: checking', '#15 DEMO-0053: T2 passed', '#15 DEMO-0053: merged'])
@@ -199,7 +204,7 @@ describe('the serial worker', () => {
     expect(s.store.needsYou(s.ws, 'p_sev').some((i) => i.kind === 'verdict' && i.ticket === 'DEMO-0041')).toBe(true) // back to review
   })
 
-  it('a conflict a person must resolve: deciding "I will resolve it" records the resolution and core voids the approval', async () => {
+  it('"I will resolve it" only hands the need to that person; Mark resolved records the resolution and core voids the approval', async () => {
     const s = setup()
     drain(s)
     await verdict(s, 'DEMO-0041', 'p_sev')
@@ -211,11 +216,35 @@ describe('the serial worker', () => {
     expect(d.title).toBe('Needs: conflict, a person must resolve')
     expect(d.options.map((o) => o.key)).toEqual(['self', 'agent', 'drop'])
     expect((await refused(run(s, 'resolve', { id: d.id, option: 'self' }))).code).toBe('confirm.required') // only core's prompt sets confirmed
+    expect((await refused(run(s, 'mark_resolved', { ticket: 'DEMO-0041' }))).code).toBe('land.not_taken')
     await run(s, 'resolve', { id: d.id, option: 'self', confirmed: true })
+    // Nothing was resolved yet: no resolution, no void.
+    expect(s.store.ticket('DEMO-0041')!.gates.verify.state).toBe('approved')
+    expect(land(s).resolutions.some((r) => r.ticket === 'DEMO-0041')).toBe(false)
+    expect(landEvents(s, 'DEMO-0041', 'land.resolved')).toHaveLength(0)
+    expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'land')).toBe(false)
+    expect(text(await panel(s, 'DEMO-0041'))).toContain('Severin resolves it by hand')
+    expect((await refused(run(s, 'enqueue', { ticket: 'DEMO-0041' }))).code).toBe('land.needs_open')
+    // Someone else (a member, not the taker) cannot close it.
+    s.store.workspaces.find((w) => w.id === s.ws)!.members.push({ person: 'p_x', name: 'Xan', role: 'member' } as never)
+    s.store.setViewer('p_x')
+    expect((await refused(run(s, 'mark_resolved', { ticket: 'DEMO-0041' }))).status).toBe(403)
+    s.store.setViewer('p_sev')
+    await run(s, 'mark_resolved', { ticket: 'DEMO-0041' })
     expect(s.store.ticket('DEMO-0041')!.gates.verify.state).toBe('invalidated')
     expect(land(s).resolutions.at(-1)).toMatchObject({ ticket: 'DEMO-0041', by: 'p_sev' })
+    expect(s.store.eventsOf('DEMO-0041').at(-2)).toMatchObject({ type: 'gate.invalidated', reason: 'Landing attempt #15: a resolution changed the code (land).' })
     expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'addon.decided' && e.name === 'land')).toBe(true)
-    expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'land')).toBe(false)
+  })
+
+  it('"Hand it to an agent" names the ticket\'s agent and invents no session', async () => {
+    const s = setup()
+    land(s).needs.push({ id: 'N-90', ticket: 'DEMO-0053', kind: 'conflict', attempt: 13, agent: null, person: true, open: true, at: s.store.now(), file: 'x.sql' })
+    const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === 'land.need:N-90')!
+    const res = await run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true })
+    expect(res.message).toBe("Handed to the ticket's agent. Its resolution will void the approval.")
+    expect(land(s).needs.find((n) => n.id === 'N-90')!.agent).toBeNull()
+    expect(text(await view(s))).not.toContain('s_land')
   })
 
   it('red checks: the failing check is shown, the approval stands, and "Re-run the checks" queues the same code again', async () => {
@@ -233,6 +262,15 @@ describe('the serial worker', () => {
     await run(s, 'resolve', { id: d.id, option: 'rerun', confirmed: true })
     expect(land(s).queues.flatMap((q) => q.entries).map((e) => e.ticket)).toEqual(['DEMO-0041'])
     expect(land(s).queues.flatMap((q) => q.entries)[0].source_sha).toBe(land(s).attempts.at(-1)!.source_sha)
+  })
+
+  it('"Re-run the checks" on a ticket that is no longer approved is refused and changes nothing', async () => {
+    const s = setup()
+    land(s).needs.push({ id: 'N-91', ticket: 'DEMO-0053', kind: 'red_checks', attempt: 13, agent: null, person: true, open: true, at: s.store.now(), file: 'x.sql' })
+    const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === 'land.need:N-91')!
+    const before = JSON.stringify(land(s))
+    expect((await refused(run(s, 'resolve', { id: d.id, option: 'rerun', confirmed: true }))).code).toBe('land.not_approved')
+    expect(JSON.stringify(land(s))).toBe(before)
   })
 
   it('stacked tickets land parent first; a failed parent blocks its descendant', async () => {
@@ -304,6 +342,9 @@ describe('queue actions and settings', () => {
     const r = await refused(run(s, 'save_settings', { targets: 'develop, main', timeout_minutes: 30 }))
     expect(r).toMatchObject({ status: 409, code: 'land.target_refused' })
     expect(r.message).toMatch(/D33/)
+    for (const t of ['refs/heads/main', 'origin/main', 'Main', 'refs/remotes/origin/MAIN']) expect((await refused(run(s, 'save_settings', { targets: `develop, ${t}` }))).code, t).toBe('land.target_refused')
+    expect(await run(s, 'save_settings', { targets: 'refs/heads/develop' })).toMatchObject({ ok: true })
+    expect(land(s).settings.targets).toEqual(['develop'])
     expect((await refused(run(s, 'save_settings', { targets: 'dev elop' }))).code).toBe('validation')
     expect((await refused(run(s, 'save_settings', { targets: 'release', timeout_minutes: 30 }))).code).toBe('land.target_busy') // DEMO-0052 waits on develop
     expect((await refused(run(s, 'save_settings', { targets: 'develop', timeout_minutes: 500 }))).code).toBe('validation')
@@ -314,11 +355,12 @@ describe('queue actions and settings', () => {
     expect((await refused(run(s, 'save_settings', { targets: 'develop' }))).status).toBe(403)
   })
 
-  it('viewers read and switch tabs but cannot queue; open_checks hands out the CI link', async () => {
+  it('viewers read the tabs but cannot queue; open_checks hands out the CI link', async () => {
     const s = setup('p_tom')
     expect((await refused(run(s, 'enqueue', { ticket: 'DEMO-0052' }))).status).toBe(403)
-    await run(s, 'view_history')
     const v = await view(s)
+    expect((v.body as unknown as { type: string; tabs: { id: string }[] }).type).toBe('tabs')
+    expect((v.body as unknown as { tabs: { id: string }[] }).tabs.map((t) => t.id)).toEqual(['queues', 'needs', 'history'])
     expect(text(v.body)).toContain('"columns"')
     expect((await refused(run(s, 'open_checks', { n: 13 }))).code).toBe('not_found') // a conflict ran no checks
     expect(((await run(s, 'open_checks', { n: 14 })) as { url: string }).url).toMatch(/^https:\/\/github\.com\/acme-energy\/billing-api\/actions\/runs\/\d+$/)
@@ -336,6 +378,15 @@ describe('visibility', () => {
     const v = await view(s)
     const all = text(v)
     for (const k of ['DEMO-0052', 'DEMO-0053', 'Prorate mid-month', 'billing_run_id to invoice']) expect(all).not.toContain(k)
+    // A visible ticket stacked on a hidden parent names no parent.
+    s.store.setViewer('p_sev')
+    await verdict(s, 'DEMO-0041', 'p_sev')
+    await run(s, 'enqueue', { ticket: 'DEMO-0041' })
+    Object.assign(land(s).queues.flatMap((q) => q.entries).find((e) => e.ticket === 'DEMO-0041')!, { stacked_on: 'DEMO-0053' })
+    s.store.setViewer('p_mara')
+    hide(s.store, ['DEMO-0052', 'DEMO-0053'])
+    expect(text((await view(s)).body)).toContain('waits for a ticket you cannot see (its landing failed)')
+    expect(text((await view(s)).body)).not.toContain('DEMO-0053')
     expect(v.workerAlert.title).toMatch(/checking a ticket you cannot see/)
     expect(all).toContain('checking a ticket you cannot see')
     expect((await refused(s.api.getAddonState(s.ws, 'land', 'DEMO-0052'))).code).toBe('not_visible')
@@ -348,12 +399,55 @@ describe('visibility', () => {
   })
 })
 
-describe('core voidApproval', () => {
-  it('refuses for an inactive addon or a gate that is not approved', () => {
+describe('core landingResolved', () => {
+  const failed = (s: S, key: string, n: number) => s.store.append(key, { type: 'land.attempt', actor: { kind: 'addon', id: 'land' }, attempt: n, outcome: 'failed', reason: 'conflict' })
+  const resolved = (s: S, key: string, n: number) => s.store.append(key, { type: 'land.resolved', actor: { kind: 'addon', id: 'land' }, attempt: n, kind: 'conflict', file: 'x.sql' })
+  it('voids only with a failed attempt and its resolution by that addon, no later merge, git_push granted; core writes the reason', () => {
     const s = setup()
-    expect(s.store.voidApproval('DEMO-0041', 'verify', { addon: 'land', reason: 'x' })).toMatchObject({ ok: false, code: 'gate.not_approved' })
+    const k = 'DEMO-0052'
+    expect(s.store.landingResolved('DEMO-0041', { addon: 'land', attempt: 1 })).toMatchObject({ ok: false, code: 'gate.not_approved' })
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 20 })).toMatchObject({ ok: false, code: 'land.no_failed_attempt' })
+    // A failed attempt written by someone else (a person) does not count.
+    s.store.append(k, { type: 'land.attempt', actor: 'p_sev', attempt: 20, outcome: 'failed' })
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 20 })).toMatchObject({ ok: false, code: 'land.no_failed_attempt' })
+    failed(s, k, 20)
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 20 })).toMatchObject({ ok: false, code: 'land.not_resolved' })
+    resolved(s, k, 20)
+    s.store.append(k, { type: 'land.attempt', actor: { kind: 'addon', id: 'land' }, attempt: 21, outcome: 'merged' })
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 20 })).toMatchObject({ ok: false, code: 'land.already_merged' })
+    failed(s, k, 22)
+    resolved(s, k, 22)
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    const caps = w.addons.land.granted!.capabilities
+    w.addons.land.granted!.capabilities = ['network']
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 22 })).toMatchObject({ ok: false, code: 'addon.inactive' })
+    w.addons.land.granted!.capabilities = caps
+    const r = s.store.landingResolved(k, { addon: 'land', attempt: 22 })
+    expect(r).toMatchObject({ ok: true, event: { type: 'gate.invalidated', gate: 'verify', addon: 'land', attempt: 22, reason: 'Landing attempt #22: a resolution changed the code (land).', actor: { kind: 'host' } } })
+    expect(s.store.ticket(k)!.status).toBe('testing')
     s.store.addonOp(s.ws, 'land', { op: 'disable' }, { kind: 'person', id: 'p_sev' })
-    expect(s.store.voidApproval('DEMO-0052', 'verify', { addon: 'land', reason: 'x' })).toMatchObject({ ok: false, code: 'addon.inactive' })
+    expect(s.store.landingResolved('DEMO-0042', { addon: 'land', attempt: 22 })).toMatchObject({ ok: false, code: 'addon.inactive' })
+  })
+})
+
+describe('a void resets the quorum (core)', () => {
+  it('with a policy of 2, one person cannot reach the quorum twice after a void', async () => {
+    const s = setup()
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    w.gates.plan.count = 2
+    // DEMO-0046: Severin approved the plan, then it was invalidated (plan changed).
+    expect(s.store.ticket('DEMO-0046')!.gates.plan).toMatchObject({ state: 'invalidated', approvals: [] })
+    await s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan' })
+    expect(s.store.ticket('DEMO-0046')!.gates.plan).toMatchObject({ state: 'pending', approvals: [{ by: 'p_sev' }] })
+    expect((await refused(s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan' }))).code).toBe('gate.not_eligible')
+  })
+
+  it('client and server agree: Mara may give the verdict on DEMO-0053 after the void', () => {
+    const s = setup('p_mara')
+    const t = s.store.ticket('DEMO-0053')!
+    const viewer = { person: 'p_mara', role: 'maintainer' as const, members: [], name: (x: string | null | undefined) => x ?? '', ready: true }
+    expect(availableActions(t, viewer).verdict).toBe(true)
+    expect(s.store.canApprove(t, 'verify', 'p_mara')).toBeNull()
   })
 })
 

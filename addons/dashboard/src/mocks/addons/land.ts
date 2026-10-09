@@ -1,7 +1,8 @@
 import { addonActive } from '@/api/addons'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
-import { canSeeTicket, conflict, invalid, notFound, registerAddon, type AddonCtx } from './registry'
+import { atLeast } from '@/api/permissions'
+import { canSeeTicket, conflict, invalid, notFound, refusal, registerAddon, type AddonCtx } from './registry'
 import {
   ADDON,
   agentLabel,
@@ -20,16 +21,19 @@ import {
   type Attempt,
   type Check,
   type LandState,
+  type Need,
   type Queue,
 } from './land-worker'
 import { seedLand, seedLandBusy } from './land-seed'
 
 // land (Landing, D53, Phase 2 preview): the merge lane. Approved tickets land on their target branch one at a time.
-//  - One queue per (canonical remote, target branch); the queue is shared by the workspaces on this machine (a file
-//    lock in the host), so entries of other workspaces show as a count only.
+//  - One queue per (canonical remote, target branch). In the real host the queue is shared by the workspaces on this
+//    machine (a file lock); this mockup keeps one worker per workspace and only simulates the other workspaces'
+//    entries as a count.
 //  - Only tickets with a standing verify approval (the verdict) enter. Approval binds to code: what was approved,
 //    checked and merged is the same candidate. A conflict resolution or a fix is new code: core voids the approval
-//    (store.voidApproval, gate.invalidated) and the ticket goes back to review with the resolution diff.
+//    (store.landingResolved checks the attempt and the resolution in the log and writes gate.invalidated with its own
+//    reason) and the ticket goes back to review with the resolution diff.
 //  - Failures open a "needs" item for the ticket's agent, shown on Today as a core-signed decision (and as a decision
 //    a person must answer when the agent could not resolve it). The queue moves on.
 //  - `main` is never an allowed target (D33). The worker pushes only the ticket's own branch (--force-with-lease).
@@ -38,6 +42,11 @@ import { seedLand, seedLandBusy } from './land-seed'
 const STEP_MS = 3000
 const MAX_STEPS = 40
 const TARGET_RE = /^[A-Za-z0-9._/-]{1,80}$/
+const REMOTE_PREFIX = /^(origin|upstream)\//i
+/** A target as git would resolve it: `refs/heads/` and a remote prefix (`origin/`) stripped. */
+const normTarget = (raw: string) => raw.trim().replace(/^refs\/heads\//i, '').replace(/^refs\/remotes\//i, '').replace(REMOTE_PREFIX, '')
+/** `main` in any spelling (case-folded after normalising) is never a target (D33). */
+const isNever = (t: string) => normTarget(t).toLowerCase() === NEVER_TARGET
 const MAX_TARGETS = 10
 const scriptId = (ws: string) => `land:${ws}`
 
@@ -52,10 +61,11 @@ const when = (iso?: string) => (iso ? (iso.startsWith('2026-10-09') ? hhmm(iso) 
 const repo = (remote: string) => remote.split('/').slice(-1)[0]
 const queueName = (q: Pick<Queue, 'remote' | 'target'>) => `${q.remote} → ${q.target}`
 const titleOf = (c: Ctx, key: string) => c.store.ticket(key)?.title ?? ''
-const navOf = (state: LandState, viewer: string) => state.nav[viewer] ?? {}
 const queueOfAttempt = (state: LandState, a: Attempt) => state.queues.find((q) => q.id === a.queue)
 const openNeedOf = (state: LandState, key: string) => [...state.needs].reverse().find((n) => n.open && n.ticket === key)
 const lastResolution = (state: LandState, key: string) => [...state.resolutions].reverse().find((r) => r.ticket === key)
+/** "DEMO-0041", or "a ticket you cannot see" (a stacked parent may be restricted). */
+const parentName = (c: Ctx, key: string) => (canSeeTicket(c, key) ? key : 'a ticket you cannot see')
 const STATUS: Record<Check['result'], string> = { pass: 'pass', fail: 'fail', timeout: 'fail', running: 'running', waiting: 'skip' }
 const RESULT_WORD: Record<Check['result'], string> = { pass: 'pass', fail: 'fail', timeout: 'timed out', running: 'running', waiting: 'waits' }
 const checksLine = (a: Attempt) => (a.checks.length ? a.checks.map((c) => `${c.level} ${RESULT_WORD[c.result]}`).join(' · ') : 'not run (conflict)')
@@ -125,9 +135,12 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       { label: 'State', value: `Queued #${queued.pos}` },
       { label: 'Queue', value: `${repo(queued.q.remote)} → ${queued.q.target}` },
       { label: 'Source', value: queued.e.source_sha, mono: true },
-      ...(queued.e.stacked_on ? [{ label: 'Stacked on', value: queued.e.stacked_on }] : []),
+      ...(queued.e.stacked_on ? [{ label: 'Stacked on', value: parentName(c, queued.e.stacked_on) }] : []),
     ])
-    if (block) children.push({ type: 'alert', tone: block.why === 'failed' ? 'warn' : 'info', title: `Waits for ${block.parent}`, text: block.why === 'failed' ? `${block.parent} failed to land. A stacked ticket never lands without its parent.` : `${block.parent} is ahead in the queue and lands first.` })
+    if (block) {
+      const p = parentName(c, block.parent)
+      children.push({ type: 'alert', tone: block.why === 'failed' ? 'warn' : 'info', title: `Waits for ${p}`, text: block.why === 'failed' ? `Its parent (${p}) failed to land. A stacked ticket never lands without its parent.` : `Its parent (${p}) is ahead in the queue and lands first.` })
+    }
     button('Take off the queue', 'dequeue', 'ghost')
   } else if (need) {
     const a = attemptOf(state, need.attempt)
@@ -135,7 +148,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       { label: 'State', value: need.kind === 'conflict' ? 'Failed: conflict' : 'Failed: red checks' },
       { label: 'Queue', value: `${repo(remote)} → ${a?.target ?? target}` },
       ...(a ? [{ label: 'Candidate', value: a.candidate_sha, mono: true }] : []),
-      { label: 'Needs', value: need.person ? 'A person to resolve it' : `${whoLabel(c, need.agent!)} picks it up` },
+      { label: 'Needs', value: needWho(c, need) },
     ])
     if (need.kind === 'conflict')
       children.push({ type: 'alert', tone: 'error', title: `Conflict in ${need.file}`, text: `The rebase onto ${a?.target ?? target} did not apply cleanly (attempt #${need.attempt}). Any resolution voids the approval: the ticket goes back to review with the resolution diff.` })
@@ -143,6 +156,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       children.push({ type: 'alert', tone: 'error', title: `Red checks: ${need.check ?? 'CI'} failed`, text: `On candidate ${a?.candidate_sha ?? ''}. The approval stands until the code changes; a fix voids it.` })
       if (a) children.push(checksWidget(a))
     }
+    if (need.owner) button('Mark resolved', 'mark_resolved', 'primary')
   } else if (voided && res) {
     kv([
       { label: 'State', value: 'Back to review' },
@@ -179,8 +193,8 @@ function entryRow(c: Ctx, state: LandState, q: Queue, i: number) {
   const notes = [
     e.branch,
     `source ${e.source_sha}`,
-    e.stacked_on && !block ? `stacked on ${e.stacked_on}` : '',
-    block ? `waits for ${block.parent}${block.why === 'failed' ? ' (its landing failed)' : ' (ahead in the queue)'}` : '',
+    e.stacked_on && !block ? `stacked on ${parentName(c, e.stacked_on)}` : '',
+    block ? `waits for ${parentName(c, block.parent)}${block.why === 'failed' ? ' (its landing failed)' : ' (ahead in the queue)'}` : '',
     checking ? `checking now (attempt #${cur!.n})` : `queued ${when(e.enqueued)} by ${nameOf(c, e.by)}`,
   ].filter(Boolean)
   return {
@@ -198,14 +212,15 @@ function queueSection(c: Ctx, state: LandState, q: Queue): Node[] {
   const visible = q.entries.map((_, i) => i).filter((i) => canSeeTicket(c, q.entries[i].ticket))
   const hidden = q.entries.length - visible.length
   const allowed = state.settings.targets.includes(q.target)
+  const waiting = q.entries.filter((e) => e.ticket !== mine?.ticket).length + q.foreign
   const out: Node[] = [
     { type: 'markdown', text: `### ${queueName(q)}` },
     {
       type: 'kv',
       pairs: [
         { label: 'Target head', value: q.head, mono: true },
-        { label: 'Waiting', value: `${q.entries.length + q.foreign} ${q.entries.length + q.foreign === 1 ? 'ticket' : 'tickets'}` },
-        { label: 'Shared', value: q.foreign ? `With other workspaces on this machine: ${q.foreign} of theirs waiting (one queue per remote and target)` : 'One queue per remote and target, for every workspace on this machine' },
+        { label: 'Waiting', value: `${waiting} ${waiting === 1 ? 'ticket' : 'tickets'}${mine ? ', besides the one being checked' : ''}` },
+        { label: 'Shared', value: q.foreign ? `With other workspaces on this machine: ${q.foreign} of theirs waiting (simulated in this mockup)` : 'One queue per remote and target (shared across workspaces in the real host)' },
       ],
     },
   ]
@@ -231,14 +246,22 @@ function queueSection(c: Ctx, state: LandState, q: Queue): Node[] {
   return out
 }
 
+/** Who has a need now, in words. */
+function needWho(c: Ctx, n: Need): string {
+  if (n.owner) return `${nameOf(c, n.owner)} resolves it by hand`
+  if (n.person) return 'A person to resolve it'
+  return n.agent ? `${whoLabel(c, n.agent)} picks it up` : "The ticket's agent, when one claims it"
+}
+
 function needRows(c: Ctx, state: LandState) {
   return state.needs
     .filter((n) => n.open && canSeeTicket(c, n.ticket))
     .map((n) => ({
       id: n.id,
       title: `${n.ticket} needs: ${n.kind === 'conflict' ? 'conflict' : 'red checks'}`,
-      subtitle: `${n.kind === 'conflict' ? `Conflict in ${n.file}` : `${n.check ?? 'CI'} failed`} (attempt #${n.attempt}) · ${n.person ? 'a person must resolve it' : `for ${whoLabel(c, n.agent!)}`}`,
+      subtitle: `${n.kind === 'conflict' ? `Conflict in ${n.file}` : `${n.check ?? 'CI'} failed`} (attempt #${n.attempt}) · ${needWho(c, n)}`,
       status: 'error',
+      ...(n.owner ? { actions: [{ label: 'Mark resolved', action: 'mark_resolved', args: { ticket: n.ticket }, variant: 'secondary' }] } : {}),
     }))
 }
 
@@ -267,9 +290,9 @@ function workerAlert(c: Ctx, state: LandState): Node {
   if (cur && !cur.outcome) {
     const q = queueOfAttempt(state, cur)
     const what = canSeeTicket(c, cur.ticket) ? cur.ticket : 'a ticket you cannot see'
-    return { type: 'alert', tone: 'info', title: `Worker: checking ${what} (attempt #${cur.n}) on ${q ? queueName(q) : cur.target}`, text: `One attempt at a time, across every queue.${resumed}${demo}` }
+    return { type: 'alert', tone: 'info', title: `Worker: checking ${what} (attempt #${cur.n}) on ${q ? queueName(q) : cur.target}`, text: `One attempt at a time, across every queue of this workspace.${resumed}${demo}` }
   }
-  return { type: 'alert', tone: 'info', title: 'Worker: idle', text: `Approved tickets land one at a time, across every queue.${resumed}${demo}` }
+  return { type: 'alert', tone: 'info', title: 'Worker: idle', text: `Approved tickets land one at a time, across every queue of this workspace.${resumed}${demo}` }
 }
 
 function view(state0: Record<string, unknown>, c: Ctx & { ticket?: string }): Record<string, unknown> {
@@ -288,59 +311,61 @@ function view(state0: Record<string, unknown>, c: Ctx & { ticket?: string }): Re
     const chip = chipOf(state, k)
     if (chip) cards[k] = chip
   }
-  const tab = navOf(state, c.viewer).view ?? 'queues'
   const running = c.store.sim.running().includes(scriptId(c.ws))
-  const tabButton = (label: string, action: string, on: boolean) => ({ type: 'button', label, action, variant: on ? 'primary' : 'ghost' })
-  const controls = {
-    type: 'stack',
-    direction: 'row',
-    children: [tabButton('Queues', 'view_queues', tab === 'queues'), tabButton('History', 'view_history', tab === 'history'), running ? { type: 'button', label: 'Stop the worker (demo)', action: 'stop_worker', variant: 'ghost' } : { type: 'button', label: 'Run the worker (demo)', action: 'run_worker', variant: 'secondary' }],
-  }
+  const controls = running ? { type: 'button', label: 'Stop the worker (demo)', action: 'stop_worker', variant: 'ghost' } : { type: 'button', label: 'Run the worker (demo)', action: 'run_worker', variant: 'secondary' }
   const needs = needRows(c, state)
   const queues = [...state.queues].sort((a, b) => queueName(a).localeCompare(queueName(b)))
-  const body =
-    tab === 'history'
-      ? {
-          type: 'stack',
-          children: [
-            { type: 'markdown', text: 'Every attempt is a `land.attempt` record: what was approved (source), what it was tested on (candidate on target) and what merged are the same commit.' },
-            {
-              type: 'table',
-              columns: [
-                { key: 'n', label: '#' },
-                { key: 'ticket', label: 'Ticket' },
-                { key: 'target', label: 'Queue' },
-                { key: 'source', label: 'Source' },
-                { key: 'target_sha', label: 'Target' },
-                { key: 'candidate', label: 'Candidate' },
-                { key: 'checks', label: 'Checks' },
-                { key: 'outcome', label: 'Outcome' },
-                { key: 'when', label: 'When' },
-              ],
-              rows: historyRows(c, state),
-              rowActions: [{ label: 'Checks', action: 'open_checks', args: { n: '$row.n' }, when: '$row.has_checks' }],
-              empty: 'No landing attempts yet.',
-            },
-          ],
-        }
-      : {
-          type: 'stack',
-          children: [
-            ...queues.flatMap((q) => queueSection(c, state, q)),
-            { type: 'markdown', text: '### Needs' },
-            { type: 'list', items: needs, empty: 'Nothing failed. A conflict or red checks shows here, for the ticket\'s agent, and on Today.' },
-            { type: 'markdown', text: '### Allowed targets' },
-            {
-              type: 'kv',
-              pairs: [
-                { label: 'Lands on', value: state.settings.targets.join(', ') || 'nothing (no target allowed)' },
-                { label: 'Never', value: `${NEVER_TARGET} (D33: people merge to main by hand)` },
-                { label: 'Check timeout', value: `${state.settings.timeout_minutes} minutes` },
-                { label: 'Pushes', value: "Only the ticket's own branch, with --force-with-lease" },
-              ],
-            },
-          ],
-        }
+  const history = historyRows(c, state)
+  const queuesNode = {
+    type: 'stack',
+    children: [
+      ...queues.flatMap((q) => queueSection(c, state, q)),
+      { type: 'markdown', text: '### Allowed targets' },
+      {
+        type: 'kv',
+        pairs: [
+          { label: 'Lands on', value: state.settings.targets.join(', ') || 'nothing (no target allowed)' },
+          { label: 'Never', value: `${NEVER_TARGET} (D33: people merge to main by hand)` },
+          { label: 'Check timeout', value: `${state.settings.timeout_minutes} minutes` },
+          { label: 'Pushes', value: "Only the ticket's own branch, with --force-with-lease" },
+        ],
+      },
+    ],
+  }
+  const historyNode = {
+    type: 'stack',
+    children: [
+      { type: 'markdown', text: 'Every attempt is a `land.attempt` record: what was approved (source), what it was tested on (candidate on target) and what merged are the same commit.' },
+      {
+        type: 'table',
+        columns: [
+          { key: 'n', label: '#' },
+          { key: 'ticket', label: 'Ticket' },
+          { key: 'target', label: 'Queue' },
+          { key: 'source', label: 'Source' },
+          { key: 'target_sha', label: 'Target' },
+          { key: 'candidate', label: 'Candidate' },
+          { key: 'checks', label: 'Checks' },
+          { key: 'outcome', label: 'Outcome' },
+          { key: 'when', label: 'When' },
+        ],
+        rows: history,
+        rowActions: [{ label: 'Checks', action: 'open_checks', args: { n: '$row.n' }, when: '$row.has_checks' }],
+        empty: 'No landing attempts yet.',
+      },
+    ],
+  }
+  const needsNode = { type: 'list', items: needs, empty: "Nothing failed. A conflict or red checks shows here, for the ticket's agent, and on Today." }
+  // Core's tabs node: the open tab is the viewer's own UI state, never sent to the addon.
+  const body = {
+    type: 'tabs',
+    id: 'land',
+    tabs: [
+      { id: 'queues', label: 'Queues', count: queues.reduce((n, q) => n + q.entries.filter((e) => canSeeTicket(c, e.ticket)).length, 0), node: queuesNode },
+      { id: 'needs', label: 'Needs', count: needs.length, node: needsNode },
+      { id: 'history', label: 'History', count: history.length, node: historyNode },
+    ],
+  }
   return { ...hide, settings, cards, workerAlert: workerAlert(c, state), controls, body, needsCount: needs.length }
 }
 
@@ -408,7 +433,7 @@ function parseTargets(raw: unknown): string[] | string {
   if (!list) return 'Write the allowed targets, separated by commas.'
   const out: string[] = []
   for (const x of list) {
-    const t = typeof x === 'string' ? x.trim() : ''
+    const t = typeof x === 'string' ? normTarget(x) : ''
     if (!t) continue
     if (!TARGET_RE.test(t)) return `"${String(x).slice(0, 40)}" is not a branch name.`
     if (!out.includes(t)) out.push(t)
@@ -428,7 +453,7 @@ registerAddon({
       const state = asLand(s0)
       const targets = parseTargets(body.targets)
       if (typeof targets === 'string') return invalid(targets)
-      if (targets.includes(NEVER_TARGET)) return conflict('land.target_refused', '`main` is never a landing target (D33).', 'People merge to main by hand. Allow develop or a release branch instead.')
+      if (targets.some(isNever)) return conflict('land.target_refused', '`main` is never a landing target (D33), in any spelling (refs/heads/main, origin/main, Main).', 'People merge to main by hand. Allow develop or a release branch instead.')
       const busy = state.queues.find((q) => q.entries.length > 0 && state.settings.targets.includes(q.target) && !targets.includes(q.target))
       if (busy) return conflict('land.target_busy', `${busy.target} still has tickets waiting in ${queueName(busy)}.`, 'Take them off the queue first, or keep the target.')
       const minutes = body.timeout_minutes === undefined ? state.settings.timeout_minutes : Number(body.timeout_minutes)
@@ -447,11 +472,12 @@ registerAddon({
       if (cur?.ticket === ticket && !cur.outcome) return { ok: true, message: `${ticket} is being checked now (attempt #${cur.n}).` }
       const at = state.queues.find((q) => q.entries.some((e) => e.ticket === ticket))
       if (at) return { ok: true, message: `${ticket} is already queued (#${at.entries.findIndex((e) => e.ticket === ticket) + 1}).` }
+      const need = openNeedOf(state, ticket)
+      if (need) return conflict('land.needs_open', `${ticket} failed attempt #${need.attempt} (${need.kind === 'conflict' ? 'conflict' : 'red checks'}) and that is not answered yet.`, 'Answer it on Today (re-run, resolve or take it off the queue).')
       if (mergedNow(state, ticket)) return conflict('land.already_merged', `${ticket} already landed.`, 'A new change needs a new ticket.')
       const target = state.settings.targets[0]
       if (!target) return conflict('land.no_target', 'No landing target is allowed.', 'An owner allows one in Settings > Addons > Landing.')
       const q = queueFor(state, remoteOf(store, ticket), target)
-      for (const n of state.needs) if (n.ticket === ticket) n.open = false // a re-run: the old failure is answered
       q.entries.push({ ticket, branch: branchOf(store, ticket), source_sha: sourceOf(store, ticket), enqueued: store.now(), by: viewer })
       store.append(ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: sourceOf(store, ticket), by: viewer })
       return { ok: true, message: `${ticket} queued #${q.entries.length} on ${queueName(q)}.`, changed: true }
@@ -477,22 +503,26 @@ registerAddon({
       const c = { store, ws, viewer }
       switch (body.option) {
         case 'agent': {
+          // Nobody invents a session: it is the agent that worked on the ticket, or the next one that claims it.
           need.person = false
           need.decided = true
-          need.agent ??= `claude-code:s_land:${viewer}`
-          return { ok: true, message: `Handed to ${whoLabel(c, need.agent)}. Its resolution will void the approval.`, changed: true }
+          need.owner = undefined
+          return { ok: true, message: `Handed to ${need.agent ? whoLabel(c, need.agent) : "the ticket's agent"}. Its resolution will void the approval.`, changed: true }
         }
         case 'self': {
-          resolve(store, state, need, viewer, nameOf(c, viewer))
-          return { ok: true, message: `Resolution recorded. The approval is void: ${need.ticket} is back in review.`, changed: true }
+          // Nothing is resolved yet: the person takes it, and records the resolution with Mark resolved when done.
+          need.owner = viewer
+          need.person = true
+          need.decided = true
+          return { ok: true, message: `${need.ticket} is yours to resolve. Press Mark resolved when the resolution is pushed; that voids the approval.`, changed: true }
         }
         case 'rerun': {
-          need.open = false
           const a = attemptOf(state, need.attempt)
           const q = a ? queueOfAttempt(state, a) : undefined
-          if (!q || !approved(store, need.ticket)) return { ok: true, message: `${need.ticket} is no longer approved; it needs a new verdict first.`, changed: true }
-          if (!q.entries.some((e) => e.ticket === need.ticket)) q.entries.push({ ticket: need.ticket, branch: branchOf(store, need.ticket), source_sha: a!.source_sha, enqueued: store.now(), by: viewer })
-          store.append(need.ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: a!.source_sha, by: viewer, rerun: true })
+          if (!a || !q || !approved(store, need.ticket)) return conflict('land.not_approved', `${need.ticket} is no longer approved; it needs a new verdict before it runs again.`, 'Give the verdict, then add it to the queue.')
+          need.open = false
+          if (!q.entries.some((e) => e.ticket === need.ticket)) q.entries.push({ ticket: need.ticket, branch: branchOf(store, need.ticket), source_sha: a.source_sha, enqueued: store.now(), by: viewer })
+          store.append(need.ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: a.source_sha, by: viewer, rerun: true })
           return { ok: true, message: `${need.ticket} queued again with the same code; the checks run once more.`, changed: true }
         }
         default: {
@@ -500,6 +530,19 @@ registerAddon({
           return { ok: true, message: `${need.ticket} stays off the queue.`, changed: true }
         }
       }
+    },
+
+    // The person who took a need records that the resolution is pushed: the resolution diff is written and core voids
+    // the approval (store.landingResolved). Owners and maintainers may close it for someone else.
+    mark_resolved({ state: s0, store, ws, viewer, ticket }) {
+      const state = asLand(s0)
+      const c = { store, ws, viewer }
+      if (!ticket || !canSeeTicket(c, ticket)) return notFound('No such ticket.')
+      const need = openNeedOf(state, ticket)
+      if (!need?.owner) return conflict('land.not_taken', `Nobody took ${ticket} to resolve by hand.`, 'Choose "I will resolve it" on Today first.')
+      if (need.owner !== viewer && !atLeast(store.roleIn(ws, viewer), 'maintainer')) return refusal(403, 'forbidden', `${nameOf(c, need.owner)} took this one.`, 'Ask them, or an owner or maintainer.')
+      resolve(store, state, need, viewer)
+      return { ok: true, message: `Resolution recorded. The approval is void: ${ticket} is back in review.`, changed: true }
     },
 
     run_worker({ store, ws }) {
@@ -512,16 +555,6 @@ registerAddon({
       if (!store.sim.running().includes(scriptId(ws))) return { ok: true, message: 'The worker was already stopped.' }
       store.sim.stop(scriptId(ws))
       return { ok: true, message: 'Worker stopped.', changed: true }
-    },
-
-    view_queues({ state, viewer }) {
-      asLand(state).nav[viewer] = { view: 'queues' }
-      return { ok: true, message: 'Queues.' }
-    },
-
-    view_history({ state, viewer }) {
-      asLand(state).nav[viewer] = { view: 'history' }
-      return { ok: true, message: 'History.' }
     },
 
     open_checks({ state: s0, store, ws, viewer, body }) {

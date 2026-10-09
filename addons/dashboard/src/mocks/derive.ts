@@ -41,6 +41,8 @@ export function actorLabel(a: Actor): string {
 
 export function parseActor(s: string): Actor {
   if (s === 'host') return { kind: 'host', id: 'orch' }
+  // `addon:<name>`: an addon writing its own events (fixtures use it for land.* records).
+  if (s.startsWith('addon:')) return { kind: 'addon', id: s.slice(6) }
   if (s.includes(':')) {
     const [id, session, forPerson] = s.split(':')
     return { kind: 'agent', id, session, for: forPerson, grant: 'gr_' + fnvHex(forPerson, 6) }
@@ -74,6 +76,8 @@ export function deriveTicket(
   // How many approvals the policy asked for when the latest one was given: a later policy change does not undo it.
   const gateNeeded: Partial<Record<GateName, number>> = {}
   const gateInvalid: Partial<Record<GateName, { reason: string; at: string }>> = {}
+  // Approvals an invalidation voided: kept for the record, never counted again.
+  const gateVoided: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
   const history: NonNullable<TicketDocument['section_history']> = {}
   const gateChanges: Partial<Record<GateName, { text?: string; at: string }>> = {}
   const taskDone = new Map<string, { exit: number; ms: number; commit?: string; at: string }>()
@@ -185,6 +189,9 @@ export function deriveTicket(
       case 'gate.invalidated': {
         const g = e.gate as GateName
         gateInvalid[g] = { reason: (e.reason as string) ?? 'Gated content changed after approval', at: e.at }
+        // The voided approvals no longer count toward the policy: the new content needs a full quorum again.
+        gateVoided[g] = [...gateVoided[g], ...gateApprovals[g]]
+        gateApprovals[g] = []
         // The verdict is the verify approval: once that approval is void (e.g. a landing conflict was resolved, so the
         // code changed), the verdict no longer stands and the ticket waits for a new one.
         if (g === 'verify') verdict = null
@@ -280,6 +287,7 @@ export function deriveTicket(
       not: policy.not,
       note: changes?.text,
       reason: invalid?.reason,
+      ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
       hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
     }

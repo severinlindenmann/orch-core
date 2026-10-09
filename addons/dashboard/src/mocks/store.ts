@@ -983,21 +983,31 @@ export class MockStore {
   }
 
   /**
-   * Core's gate invalidation on behalf of an addon whose work changed gated code (the land addon: any conflict
-   * resolution or fix during landing is new code the approval does not cover). The addon must be active in the
-   * ticket's workspace and the gate approved now. Recorded by core as `gate.invalidated {gate, reason, addon}`; a void
-   * verify approval takes the verdict with it (derive), so a done ticket goes back to testing: back to review.
+   * Core voids a ticket's verify approval after a landing resolution (D53): a conflict resolution or a fix is new code
+   * the approval does not cover. Core checks everything itself and writes its own reason; the addon only names the
+   * attempt. Refused unless: the addon is active here with `git_push` granted; the verify gate is approved now; the
+   * ticket's log holds a `land.attempt {outcome: 'failed'}` for that attempt and a `land.resolved` for it, both by that
+   * addon, and no merge of the ticket after them. Recorded as `gate.invalidated {gate: 'verify', reason, addon,
+   * attempt}` by host; the derive step voids the approvals and the verdict, and a done ticket goes back to testing.
    */
-  voidApproval(key: string, gate: GateName, opts: { addon: string; reason: string }): { ok: true; event: OrchEvent } | StoreFailure {
+  landingResolved(key: string, opts: { addon: string; attempt: number }): { ok: true; event: OrchEvent } | StoreFailure {
     const t = this.ticket(key)
     const w = this.workspaceOf(key)
     if (!t || !w) return refuse(404, 'not_found', `No ticket ${key}`)
-    if (!addonActive(w, opts.addon)) return refuse(409, 'addon.inactive', `${opts.addon} is not active in this workspace.`)
-    const reason = opts.reason.trim().slice(0, 400)
-    if (!reason) return refuse(400, 'validation', 'Say why the approval is void.')
-    if (t.gates[gate].state !== 'approved') return refuse(409, 'gate.not_approved', `The ${gate} gate of ${key} is not approved.`)
-    const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate, reason, addon: opts.addon })
-    if (gate === 'verify' && t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
+    const inst = w.addons[opts.addon]
+    if (!addonActive(w, opts.addon) || !inst?.capabilities.includes('git_push') || !inst.granted?.capabilities.includes('git_push'))
+      return refuse(409, 'addon.inactive', `${opts.addon} is not active with git_push granted in this workspace.`)
+    if (t.gates.verify.state !== 'approved') return refuse(409, 'gate.not_approved', `The verify gate of ${key} is not approved.`)
+    const byAddon = (e: OrchEvent) => e.actor.kind === 'addon' && e.actor.id === opts.addon
+    const evs = this.eventsOf(key)
+    const failed = evs.find((e) => e.type === 'land.attempt' && byAddon(e) && e.attempt === opts.attempt && e.outcome === 'failed')
+    if (!failed) return refuse(409, 'land.no_failed_attempt', `${key} has no failed landing attempt #${opts.attempt}.`)
+    const resolved = evs.find((e) => e.type === 'land.resolved' && byAddon(e) && e.attempt === opts.attempt && e.seq > failed.seq)
+    if (!resolved) return refuse(409, 'land.not_resolved', `Attempt #${opts.attempt} of ${key} has no recorded resolution.`)
+    if (evs.some((e) => e.type === 'land.attempt' && e.outcome === 'merged' && e.seq > failed.seq)) return refuse(409, 'land.already_merged', `${key} merged after attempt #${opts.attempt}.`)
+    const reason = `Landing attempt #${opts.attempt}: a resolution changed the code (${opts.addon}).`
+    const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason, addon: opts.addon, attempt: opts.attempt })
+    if (t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
     return { ok: true, event }
   }
 
@@ -1022,8 +1032,7 @@ export class MockStore {
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
     if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
-    // An invalidated approval no longer counts: the same person may approve the new content.
-    if (t.gates[gate].state !== 'invalidated' && t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
+    if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
     return null
   }
 

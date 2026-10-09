@@ -53,7 +53,6 @@ export function emptyState(): LandState {
     resolutions: [],
     worker: { current: null, resumed: null },
     seq: 0,
-    nav: {},
   }
 }
 

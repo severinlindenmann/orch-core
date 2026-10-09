@@ -1180,15 +1180,9 @@
         "minRole": "member",
         "label": "Stop the worker (demo)"
       },
-      "view_queues": {
-        "minRole": "viewer",
-        "kind": "navigation",
-        "label": "Show the queues"
-      },
-      "view_history": {
-        "minRole": "viewer",
-        "kind": "navigation",
-        "label": "Show the history"
+      "mark_resolved": {
+        "minRole": "member",
+        "label": "Mark the landing resolution done"
       },
       "open_checks": {
         "minRole": "viewer",

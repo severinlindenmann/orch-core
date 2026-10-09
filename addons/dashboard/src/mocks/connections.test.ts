@@ -174,7 +174,7 @@ describe('ticket needs and the claim / start precheck', () => {
       env: ['DATABRICKS_HOST', 'DATABRICKS_TOKEN'],
       blocked: null,
     })
-    expect((await api.getTicket('DEMO-0052')).needs?.blocked).toEqual({ connection: 'gcloud-billing', status: 'wrong_identity' })
+    expect((await api.getTicket('DEMO-0054')).needs?.blocked).toEqual({ connection: 'gcloud-billing', status: 'wrong_identity' })
     // Service down does not block (only auth or identity does).
     expect((await api.getTicket('DEMO-0049')).needs).toMatchObject({ connections: [{ name: 'tariff-api', status: 'service_down' }], blocked: null })
     expect((await api.getTicket('DEMO-0047')).needs?.skills).toContainEqual({ name: 'meter-notes', needs: 'unknown' })
@@ -190,7 +190,7 @@ describe('ticket needs and the claim / start precheck', () => {
     const { store } = setup('p_mara')
     for (const g of store.grants(DEMO).filter((x) => x.person === 'p_mara' && !x.revoked)) store.revokeGrant(DEMO, g.id, { kind: 'person', id: 'p_mara' })
     const before = store.wsEventsOf(DEMO).length
-    const res = store.startSession(DEMO, { ticket: 'DEMO-0052', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_mara' })
+    const res = store.startSession(DEMO, { ticket: 'DEMO-0054', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_mara' })
     expect(res).toMatchObject({ code: 'grant.none' })
     expect(res).toMatchObject({ ok: false })
     expect((res as { code: string }).code).not.toBe('connection.blocked')
@@ -198,7 +198,7 @@ describe('ticket needs and the claim / start precheck', () => {
   })
   it('starting an agent is refused the same way (core, after the other refusals)', () => {
     const { store } = setup()
-    const res = store.startSession(DEMO, { ticket: 'DEMO-0052', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_sev' })
+    const res = store.startSession(DEMO, { ticket: 'DEMO-0054', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_sev' })
     expect(res).toMatchObject({ ok: false, status: 409, code: 'connection.blocked' })
   })
 })

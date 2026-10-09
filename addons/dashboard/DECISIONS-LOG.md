@@ -526,3 +526,7 @@ Format: date, decision, why, how to revert.
 
 - **Decision:** (1) A need with no agent offers no "Hand it to an agent" (options: I will resolve it / Take it off the queue), so no option leads nowhere; `dequeue` of a failed ticket closes its open need (it is not landing any more), as the decision's `drop` does. (2) `store.landingResolved` refuses replays with 409 `land.already_voided`: when the cited attempt already produced a `gate.invalidated` by that addon, or when its `land.resolved` is older than the verify approval standing now (a new verdict approved the resolved code; an old resolution cannot void it). (3) `member.add` accepts only person ids `^p_[a-z0-9_]{1,40}$` (400 `validation.person`), so a member id can never spell another actor (`addon:land`, `agent:session:person`) now that fixtures parse `addon:<name>`.
 - **Revert:** Revert the N9 re-review commit.
+
+## 2026-10-09 N9 × N10 seed clash
+
+- **Decision:** N10's wrong-identity example (gcloud-billing) moved from DEMO-0052 to DEMO-0054 (open, unclaimed, not in the land seeds or other start tests) because N9 puts DEMO-0052 in done (landing attempt #14), where start-agent is refused with `ticket.done` before the connection check; the databricks-prod auth-expired example stays on DEMO-0053 (testing is still claimable/blocked-checked).

@@ -139,7 +139,7 @@ describe('a ticket blocked by a connection', () => {
     render(
       <QueryClientProvider client={client}>
         <WorkspaceProvider>
-          <SpawnConfirm addon="start-agent" ticketKey="DEMO-0052" onStart={() => {}} onClose={() => {}} />
+          <SpawnConfirm addon="start-agent" ticketKey="DEMO-0054" onStart={() => {}} onClose={() => {}} />
         </WorkspaceProvider>
       </QueryClientProvider>,
     )

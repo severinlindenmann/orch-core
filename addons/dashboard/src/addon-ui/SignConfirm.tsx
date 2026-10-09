@@ -36,8 +36,8 @@ export function SignConfirm({
   return (
     <SignPrompt
       title={signTitle(action, addonTitle)}
-      covers={[`Runs the action "${action}" of the addon ${addonTitle}`, `In workspace ${workspace.prefix} · ${workspace.name}`, 'Signed as you, with your own key']}
-      confirmLabel="Sign with Touch ID"
+      covers={[`Runs the action "${action}" of the addon ${addonTitle}`, `In workspace ${workspace.prefix} · ${workspace.name}`]}
+      confirmLabel="Sign and run"
       onSign={onSign}
       onClose={onClose}
     >

@@ -122,7 +122,7 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
     expect(prompt).toHaveTextContent('Your answer: Retry last good version')
     expect(prompt).toHaveTextContent('Ops notebook failed to build: retry with the last good version?')
     expect(post).not.toHaveBeenCalled()
-    await user.click(within(prompt).getByRole('button', { name: 'Sign with Touch ID' }))
+    await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.any(String), 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }), T)
     const { mockStore } = await import('@/api/client')
     await waitFor(() => expect(mockStore.wsEventsOf(mockStore.workspaces[0].id).filter((e) => e.type === 'addon.decided')).toEqual([expect.objectContaining({ id: 'dec_publish_failed_build', option: 'retry', presence: 'touchid' })]), T)

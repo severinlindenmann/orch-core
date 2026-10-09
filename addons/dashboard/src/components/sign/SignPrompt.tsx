@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Fingerprint, ShieldCheck } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { Check, Copy, Fingerprint, ShieldCheck } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { toastApiError } from '@/app/toast'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,49 @@ export function useSignedAction() {
   }
 }
 
+/** The one sentence every signing dialog puts under its buttons: how the person confirms. */
+export function ConfirmHelper() {
+  return <p className="text-[12px] text-text-muted sm:text-right">You confirm with Touch ID or your key.</p>
+}
+
+/** Technical facts (the hash, what it covers) stay one click away, never at the first level. */
+export function SignDetails({ hash, covers }: { hash?: string; covers?: string[] }) {
+  const [done, setDone] = useState(false)
+  if (!hash && !covers?.length) return null
+  return (
+    <details className="rounded-md border border-border bg-bg px-3 py-2 text-[12px] text-text-muted">
+      <summary className="cursor-pointer select-none text-[12px] text-text-muted hover:text-text">Details</summary>
+      <div className="mt-2 space-y-2">
+        {covers && covers.length > 0 && (
+          <ul className="list-disc space-y-0.5 pl-4">
+            {covers.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        )}
+        {hash && (
+          <div className="flex items-start gap-1">
+            <code className="min-w-0 flex-1 break-all font-mono text-text">{hash}</code>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Copy hash"
+              onClick={() => {
+                void navigator.clipboard?.writeText(hash).then(() => {
+                  setDone(true)
+                  setTimeout(() => setDone(false), 1500)
+                }, () => {})
+              }}
+            >
+              {done ? <Check /> : <Copy />}
+            </Button>
+          </div>
+        )}
+      </div>
+    </details>
+  )
+}
+
 /**
  * Core-rendered signing prompt: what is covered, then "Sign with Touch ID". Render it only while a
  * signature is pending. It closes on Sign (the modal would hide the page from assistive tech) and the
@@ -45,6 +88,7 @@ export function SignPrompt({
   children,
   destructive,
   confirmLabel = 'Sign with Touch ID',
+  hash,
   disabled,
   onSign,
   onClose,
@@ -56,14 +100,23 @@ export function SignPrompt({
   destructive?: boolean
   /** Button text; the default says what happens (Touch ID). Use a verb for the action being signed. */
   confirmLabel?: string
+  /** The hash being signed; shown only inside the closed Details. */
+  hash?: string
   /** The sign button is off (something blocks what would be signed; say why in `children`). */
   disabled?: boolean
   onSign: () => void
   onClose: () => void
 }) {
+  const cancel = useRef<HTMLButtonElement>(null)
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg gap-4 border-border bg-surface">
+      <DialogContent
+        className="max-w-lg gap-4 border-border bg-surface"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          cancel.current?.focus()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
@@ -84,9 +137,10 @@ export function SignPrompt({
             </ul>
           </dd>
         </dl>
+        <SignDetails hash={hash} />
 
         <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={onClose}>
+          <Button ref={cancel} variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant={destructive ? 'destructive' : 'default'} disabled={disabled} onClick={onSign}>
@@ -94,6 +148,7 @@ export function SignPrompt({
             {confirmLabel}
           </Button>
         </DialogFooter>
+        <ConfirmHelper />
       </DialogContent>
     </Dialog>
   )

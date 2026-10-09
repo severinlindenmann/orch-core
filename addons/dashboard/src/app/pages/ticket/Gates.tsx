@@ -35,7 +35,11 @@ function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
           Approved by {viewer.name(a.by)}, {fmtDay(a.at)}
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}
           {' · '}
-          <span className={a.sig_ok === false ? 'text-danger' : 'text-success'}>{a.sig_ok === false ? 'signature failed' : 'verified signature'}</span>
+          {a.sig_ok === undefined ? (
+            <span className="text-text-muted">signature not checked</span>
+          ) : (
+            <span className={a.sig_ok ? 'text-success' : 'text-danger'}>{a.sig_ok ? 'verified signature' : 'signature failed'}</span>
+          )}
         </li>
       ))}
     </ul>
@@ -82,8 +86,8 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                 <div key={i}>
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
-                    {fmtTime(a.at)} UTC · via {VIA[a.via ?? 'cli']}
-                    {a.via === 'factory_charter' ? '' : ` · ${PRESENCE[a.presence ?? 'touchid']}`}
+                    {fmtTime(a.at)} UTC · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                    {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? PRESENCE[a.presence] ?? a.presence : 'unknown'}`}
                   </dd>
                 </div>
               ))}

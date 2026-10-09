@@ -74,6 +74,37 @@ describe('collapsible slot stack', () => {
     expect(open.map((b) => b.textContent)).toEqual([expect.stringContaining('Logs'), expect.stringContaining('Apps')])
     expect(screen.getByRole('button', { name: /Shares/ })).toHaveAttribute('aria-expanded', 'false')
   })
+  it('opens a panel that appears while the page is open (the answer to an action), closing the oldest beyond 2', async () => {
+    const user = userEvent.setup()
+    const ids = ['shares', 'logs', 'apps']
+    const view = wrap(<CollapsibleStack items={ids.map(item)} readOnly={false} />)
+    for (const n of ['Shares', 'Logs']) await user.click(screen.getByRole('button', { name: new RegExp(n) }))
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <CollapsibleStack items={[...ids, 'session'].map(item)} readOnly={false} />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: /Session/ })).toHaveAttribute('aria-expanded', 'true'))
+    expect(screen.getByRole('button', { name: /Shares/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: /Logs/ })).toHaveAttribute('aria-expanded', 'true')
+  })
+  it('the baseline is taken once states have loaded: loaded panels stay collapsed, one that later appears opens', async () => {
+    const waiting = { status: 'pending' as const, retry: () => {} }
+    const loading = ['shares', 'logs'].map((id) => ({ ...item(id), node: null, waiting }))
+    const view = wrap(<CollapsibleStack items={loading} readOnly={false} />)
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <CollapsibleStack items={['shares'].map(item)} readOnly={false} />
+      </QueryClientProvider>,
+    )
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <CollapsibleStack items={['shares', 'logs'].map(item)} readOnly={false} />
+      </QueryClientProvider>,
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: /Logs/ })).toHaveAttribute('aria-expanded', 'true'))
+    expect(screen.getByRole('button', { name: /Shares/ })).toHaveAttribute('aria-expanded', 'false')
+  })
   it('remembers what the person opened', async () => {
     const user = userEvent.setup()
     const first = stack()
@@ -147,5 +178,14 @@ describe('tokens', () => {
   })
   it('chart series never use the addon orange', () => {
     expect(tokens).not.toMatch(/--chart-\d:\s*var\(--addon\)/)
+  })
+})
+
+describe('code nodes', () => {
+  it('a shell command wraps (all of it visible in the 320 px rail); other code scrolls', () => {
+    wrap(<AddonNode node={{ type: 'code', language: 'bash', text: 'orch session start --in background DEMO-0044' }} addon="start-agent" />)
+    expect(document.querySelector('pre[data-language="bash"]')!.className).toMatch(/whitespace-pre-wrap/)
+    wrap(<AddonNode node={{ type: 'code', language: 'json', text: '{}' }} addon="start-agent" />)
+    expect(document.querySelector('pre[data-language="json"]')!.className).toMatch(/overflow-x-auto/)
   })
 })

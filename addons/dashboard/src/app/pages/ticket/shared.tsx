@@ -87,8 +87,12 @@ export function fmtDay(iso: string): string {
   return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })}`
 }
 
-/** "08:05" (UTC). */
-export const fmtClock = (iso: string): string => iso.slice(11, 16)
+/** "08:05 UTC" (parsed, so any ISO form works). */
+export function fmtClock(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`
+}
 
 /** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
 export function useWideLayout(min = 1280): boolean {

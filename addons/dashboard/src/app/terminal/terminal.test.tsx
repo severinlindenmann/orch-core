@@ -130,7 +130,6 @@ describe('terminals ticket panel', () => {
       return f as HTMLElement
     }, T)
     await user.click(within(frame).getByRole('button', { name: "Open terminal in this ticket's worktree" }))
-    await openTicketPanel(user, 'Terminal session') // the live session is its own panel, collapsed until opened
     await waitFor(() => expect(panel.querySelector('[data-terminal-session]')).not.toBeNull(), T)
     const rail = panel.querySelector('[data-terminal-session]') as HTMLElement
     expect(rail.dataset.terminalRows).toBe('12') // rail sizing

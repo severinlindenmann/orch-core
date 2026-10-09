@@ -222,17 +222,22 @@ function useAddonAction(action?: string): { run: (action: string, extra?: Record
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
+/** Core's reason an agent cannot start here (claimed ticket), shown at the control. */
+function PrecheckAlert({ id, text }: { id?: string; text: string }) {
+  return (
+    <p id={id} role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[12px] text-text">
+      <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+      {text}
+    </p>
+  )
+}
+
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
   const { run, pending, blocked, dialog, precheck } = useAddonAction(node.action)
   const reasonId = useId()
   return (
     <div className="space-y-2">
-      {precheck && (
-        <p id={reasonId} role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[12px] text-text">
-          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-          {precheck}
-        </p>
-      )}
+      {precheck && <PrecheckAlert id={reasonId} text={precheck} />}
       <Button
         size="sm"
         variant={BUTTON_VARIANT[node.variant]}
@@ -248,11 +253,14 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
 }
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
-  const { run, pending, blocked, dialog } = useAddonAction(node.action)
+  const { run, pending, blocked: roleBlocked, dialog, precheck } = useAddonAction(node.action)
+  // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
+  const blocked = roleBlocked || !!precheck
   const readOnly = blocked
   return (
     <>
       {dialog}
+      {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
         <ThemedForm
           disabled={readOnly}

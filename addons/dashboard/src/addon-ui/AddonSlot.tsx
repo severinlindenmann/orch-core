@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { AddonSlot as SlotName } from '@/api/types'
 import { cn } from '@/lib/utils'
@@ -93,6 +93,17 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
   const keys = items.map(panelKey)
   const [open, setOpen] = useState<string[]>(() => items.filter(readOpen).map(panelKey).slice(-MAX_OPEN))
   const Heading = level === 2 ? 'h2' : 'h3'
+  /** Opens `adding` on top of `current`, closing the oldest beyond MAX_OPEN; remembers the choice. */
+  const withOpened = (current: string[], adding: ResolvedContribution[]): string[] => {
+    const next = [...current, ...adding.map(panelKey).filter((k) => !current.includes(k))]
+    while (next.length > MAX_OPEN) {
+      const dropped = next.shift() as string
+      const gone = items.find((x) => panelKey(x) === dropped)
+      if (gone) writeOpen(gone, false)
+    }
+    for (const c of adding) if (next.includes(panelKey(c))) writeOpen(c, true)
+    return next
+  }
   const toggle = (c: ResolvedContribution) => {
     const k = panelKey(c)
     if (open.includes(k)) {
@@ -100,15 +111,28 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
       setOpen(open.filter((x) => x !== k))
       return
     }
-    const next = [...open, k]
-    while (next.length > MAX_OPEN) {
-      const dropped = next.shift() as string
-      const gone = items.find((x) => panelKey(x) === dropped)
-      if (gone) writeOpen(gone, false)
-    }
-    writeOpen(c, true)
-    setOpen(next)
+    setOpen(withOpened(open, [c]))
   }
+  // A panel that appears while the page is open is the result of something the person just did (e.g. "Open
+  // terminal" adds a "Terminal session" panel): it opens, so the action is visibly answered. The baseline is the
+  // first render where every panel's state has loaded (a waiting panel may still vanish on its `when`), and it
+  // starts over for another ticket.
+  const seen = useRef<{ scope: string; keys: Set<string> } | null>(null)
+  const scope = ctx.ticket?.key ?? ''
+  const ready = items.every((c) => !c.waiting)
+  const keyList = keys.join('\n')
+  useEffect(() => {
+    if (!ready) return
+    if (seen.current === null || seen.current.scope !== scope) {
+      seen.current = { scope, keys: new Set(keys) }
+      return
+    }
+    const known = seen.current.keys
+    const fresh = items.filter((c) => !known.has(panelKey(c)))
+    seen.current.keys = new Set(keys)
+    if (fresh.length) setOpen((cur) => withOpened(cur, fresh))
+    // keyList stands for `items`: only a change in which panels exist matters here.
+  }, [keyList, ready, scope])
   return (
     <div className={className ?? 'space-y-2'}>
       {items.map((c, i) => {

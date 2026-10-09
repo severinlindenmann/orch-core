@@ -389,3 +389,9 @@ Format: date, decision, why, how to revert.
 - **Tests:** `src/test/ticketPanels.ts` (`findRail`, `openTicketPanel`) — rail tests stub `innerWidth` 1440 and open the panel they read.
 - **Not done here:** SignDialog's verdict "evidence counts + Open evidence" (D11) is G4's file; the controller wires `onOpenEvidence` after G4 merges. Ticket height at 1440 for DEMO-0043 is ~2.5 screens; the rest (empty sections, widgets in Overview) is G4.
 - **Revert:** Revert the G3 commit.
+
+## 2026-10-09 G3 review fixes
+
+- **Decision:** (1) `CollapsibleStack` opens a panel that appears while the page is open (e.g. "Terminal session" after "Open terminal"), closing the oldest beyond two. Baseline = first render where every panel's state has loaded (a waiting panel may vanish on its `when`); it restarts for another ticket. (2) The spawn_agent claim precheck also disables a `form` whose action starts an agent, with the same inline alert. (3) Rail Details: agent-only roles read "none"; Watchers row restored. (4) Gate popover says "signature not checked" / "via unknown · presence unknown" when the approval lacks them, instead of guessing defaults. (5) Times are labelled UTC (agent line, Created). (6) Shell code nodes (`bash`, `sh`, …) wrap instead of scrolling sideways; other code keeps scrolling.
+- **Why:** Opus review of G3: "Open terminal" looked like it did nothing; minors.
+- **Revert:** Revert the "G3 review" commit.

@@ -1,5 +1,8 @@
+import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
 import type { Token } from './highlight'
+
+const SHELL = new Set(['bash', 'sh', 'shell', 'zsh', 'console'])
 
 export function CodeBlock({ language, text }: { language: string; text: string }) {
   const [lines, setLines] = useState<Token[][] | null>(null)
@@ -14,7 +17,8 @@ export function CodeBlock({ language, text }: { language: string; text: string }
     }
   }, [text, language])
   return (
-    <pre className="overflow-x-auto rounded-md border border-border bg-bg p-3 text-[12px] leading-5" data-language={language}>
+    // A shell command wraps so all of it is visible in a narrow rail; other code keeps its lines and scrolls.
+    <pre className={cn('rounded-md border border-border bg-bg p-3 text-[12px] leading-5', SHELL.has(language) ? 'whitespace-pre-wrap break-all' : 'overflow-x-auto')} data-language={language}>
       <code>
         {lines
           ? lines.map((line, i) => (

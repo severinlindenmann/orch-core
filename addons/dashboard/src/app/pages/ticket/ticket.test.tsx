@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import { findRail, openTicketPanel } from '@/test/ticketPanels'
+import { GatesStrip } from './Gates'
 import { WordDiff } from './History'
 
 const T = { timeout: 5000 }
@@ -181,7 +182,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
   it('the agent is one status line, without Claim or Release buttons', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 · 2 subagents')
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 UTC · 2 subagents')
     expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
   })
@@ -238,5 +239,31 @@ describe('Start agent from the ticket', () => {
     const item = await screen.findByRole('menuitem', { name: /Start agent/ })
     expect(item).toHaveAttribute('aria-disabled', 'true')
     expect(screen.queryByRole('dialog', { name: /Start/ })).toBeNull()
+  })
+})
+
+describe('rail details and gate details (G3 review)', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('lists watchers, and a role held only by agents reads "none"', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    renderApp('/ticket/DEMO-0041', { setup: (s) => void s.append('DEMO-0041', { type: 'people.set', owner: 'p_sev', assignees: ['agent:codex'], reviewers: ['p_sev'], watchers: ['p_mara'] }) })
+    const rail = await findRail()
+    const row = (label: string) => within(rail).getByText(label).closest('div')!
+    expect(row('Watchers')).toHaveTextContent('Mara')
+    expect(row('Assignees')).toHaveTextContent('none')
+  })
+
+  it('says "unknown" for an approval without channel, presence or signature check, never a guessed default', async () => {
+    const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
+    doc.gates.plan.approvals = [{ by: 'p_sev', at: '2026-10-08T09:44:00Z' }]
+    const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
+    const user = (await import('@testing-library/user-event')).default.setup()
+    render(<GatesStrip ticket={doc} viewer={viewer as never} />)
+    await user.click(screen.getByTestId('gate-plan'))
+    const pop = await screen.findByRole('dialog', { name: /Plan/ })
+    expect(within(pop).getByText(/signature not checked/)).toBeInTheDocument()
+    expect(within(pop).getByText(/via unknown · presence unknown/)).toBeInTheDocument()
+    expect(within(pop).queryByText(/Touch ID|verified signature/)).toBeNull()
   })
 })

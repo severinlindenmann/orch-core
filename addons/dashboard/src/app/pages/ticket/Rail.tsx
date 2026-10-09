@@ -61,9 +61,11 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
       <dd className="min-w-0 flex-1">{value}</dd>
     </div>
   )
-  const { owner, assignees, reviewers } = ticket.people
-  const people = (ids: string[]) =>
-    ids.length === 0 ? <span className="text-text-faint">none</span> : <span className="flex flex-wrap gap-x-3 gap-y-1">{ids.filter(isPerson).map((id) => <PersonChip key={id} id={id} viewer={viewer} />)}</span>
+  const { owner, assignees, reviewers, watchers } = ticket.people
+  const people = (all: string[]) => {
+    const ids = all.filter(isPerson)
+    return ids.length === 0 ? <span className="text-text-faint">none</span> : <span className="flex flex-wrap gap-x-3 gap-y-1">{ids.map((id) => <PersonChip key={id} id={id} viewer={viewer} />)}</span>
+  }
   return (
     <Section title="Details">
       <dl className="divide-y divide-border">
@@ -94,7 +96,8 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
         {row('Owner', people(owner ? [owner] : []))}
         {assignees.length > 0 && row('Assignees', people(assignees))}
         {reviewers.length > 0 && row('Reviewers', people(reviewers))}
-        {row('Created', <span className="text-text-muted">{fmtTime(ticket.created_at)}</span>)}
+        {watchers.length > 0 && row('Watchers', people(watchers))}
+        {row('Created', <span className="text-text-muted">{fmtTime(ticket.created_at)} UTC</span>)}
         {row('Updated', <span className="text-text-muted">{ago(ticket.updated_at)}</span>)}
       </dl>
     </Section>

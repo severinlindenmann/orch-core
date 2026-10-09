@@ -70,13 +70,13 @@ describe('Addon manager', () => {
 })
 
 describe('Grant and update dialogs list what viewers can run', () => {
-  it('the grant dialog says "Viewers can: Open page (open), Search (search)" for the wiki', async () => {
+  it('the grant dialog says "Viewers can: Open page, Search" for the wiki', async () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
     await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getAllByText('Viewers can: Open page (open), Search (search)').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('Viewers can: Open page, Search').length).toBeGreaterThan(0)
   })
   it('an addon without viewer actions says viewers can only read', async () => {
     const { user } = renderApp('/settings/addons', {
@@ -93,8 +93,22 @@ describe('Grant and update dialogs list what viewers can run', () => {
       },
     })
     await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
-    expect(await screen.findByText('+ Viewers can: Refresh pull requests (refresh)')).toBeInTheDocument()
+    expect(await screen.findByText('+ Viewers can: Refresh pull requests')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
     expect(await screen.findByText(/grant again to turn it back on/)).toBeInTheDocument()
+  })
+})
+
+describe('Grant dialog says each thing once', () => {
+  it('no repeated Viewers-can line, no pty sentence for an addon without pty, hash behind Details', async () => {
+    const { user } = renderApp('/settings/addons', {
+      setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
+    })
+    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getAllByText(/^Viewers can:/)).toHaveLength(1)
+    expect(dialog).not.toHaveTextContent(/never get pty/)
+    expect(dialog.querySelector('details')).not.toHaveAttribute('open')
+    expect(within(dialog).getByRole('button', { name: 'Copy hash' })).toBeInTheDocument()
   })
 })

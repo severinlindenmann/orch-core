@@ -17,7 +17,7 @@ describe('ticket page', () => {
     const states = ['T1', 'T2', 'T3', 'T4'].map((id) => document.getElementById(`task-${id}`)?.getAttribute('data-state'))
     expect(states).toEqual(['done', 'doing', 'doing', 'todo'])
     expect(document.getElementById('ac-AC1')).toHaveAttribute('data-state', 'evidenced')
-    expect(within(document.getElementById('ac-AC1')!).getByText('agent-asserted')).toBeInTheDocument()
+    expect(within(document.getElementById('ac-AC1')!).getByRole('img', { name: 'Agent-asserted' })).toBeInTheDocument()
     expect(document.getElementById('ac-AC3')).toHaveAttribute('data-state', 'open')
 
     await user.click(screen.getByRole('tab', { name: /Questions/ }))
@@ -35,7 +35,7 @@ describe('ticket page', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/sha256:/)).toBeInTheDocument()
     expect(within(dialog).getByText(/Your answer: DATE/)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: /Sign with Touch ID/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
 
     await waitFor(() => expect(document.getElementById('question-Q2')).toHaveAttribute('data-state', 'answered'), T)
     expect(within(document.getElementById('question-Q2')!).getByText(/Severin.*via dashboard.*Touch ID/)).toBeInTheDocument()
@@ -62,7 +62,7 @@ describe('ticket page', () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
-    expect(within(document.getElementById('ac-AC1')!).getByText('verified by receipt')).toBeInTheDocument()
+    expect(within(document.getElementById('ac-AC1')!).getByRole('img', { name: 'Proven by a receipt' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Actions/ }))
     expect(await screen.findByRole('menuitem', { name: /Give verdict/ })).toBeInTheDocument()
   })

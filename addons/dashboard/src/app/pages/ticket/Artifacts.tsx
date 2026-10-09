@@ -1,5 +1,13 @@
-import { BarChart3, ExternalLink, FileJson, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { BarChart3, Check, Copy, ExternalLink, FileJson, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { addonActive } from '@/api/addons'
+import { api } from '@/api/client'
+import { workspaceOfTicket } from '@/api/workspaces'
+import { frameDocument } from '@/api/widgetTemplates'
+import { FrameNode } from '@/addon-ui/FrameNode'
+import { frameNode } from '@/addon-ui/nodes'
+import { Button } from '@/components/ui/button'
 import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
@@ -114,7 +122,59 @@ function langOf(a: Artifact): string {
   return 'shellscript'
 }
 
-function Viewer({ a }: { a: Artifact }) {
+/** Plain text with a wrap toggle (on by default) and "Copy all": a log is read, searched and pasted, not highlighted. */
+function TextViewer({ text, label }: { text: string; label: string }) {
+  const [wrap, setWrap] = useState(true)
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>
+          {wrap && <Check />}
+          Wrap lines
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void navigator.clipboard?.writeText(text)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+        >
+          {copied ? <Check /> : <Copy />}
+          Copy all
+        </Button>
+      </div>
+      <pre tabIndex={0} aria-label={label} className={cn('max-h-[70vh] overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+/** An HTML artifact runs in the same sandboxed frame as its widget; "View source" shows the bytes instead. */
+function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+  const [source, setSource] = useState(!agentHtml)
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}), height: 520 })
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Pill tone="neutral">Sandboxed preview</Pill>
+        {agentHtml && node.success && (
+          <Button type="button" variant="outline" size="sm" aria-pressed={source} onClick={() => setSource(!source)}>
+            View source
+          </Button>
+        )}
+        {!agentHtml && <span className="text-[12px] text-text-muted">Agent HTML is off in this workspace, so only the source is shown.</span>}
+      </div>
+      {!source && node.success ? <FrameNode node={node.data} fallback={<p className="text-[13px] text-text-muted">The preview left its sandbox and was removed.</p>} /> : <CodeBlock language="html" text={a.preview!} />}
+    </div>
+  )
+}
+
+function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">
@@ -123,6 +183,8 @@ function Viewer({ a }: { a: Artifact }) {
       </div>
     )
   if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this artifact.</p>
+  if (/\.html?$/.test(a.name)) return <HtmlViewer a={a} agentHtml={agentHtml} />
+  if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
     const rows = parseCsv(a.preview)
     return (
@@ -178,10 +240,17 @@ function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
 
 export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: string }) {
   const [open, setOpen] = useState<Artifact | null>(null)
+  /** The card button that opened the drawer; closing returns focus to it. */
+  const opener = useRef<HTMLElement | null>(null)
+  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   useEffect(() => {
     if (!focus) return
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)
-    if (a && !a.url && !a.addon) setOpen(a)
+    if (a && !a.url && !a.addon) {
+      opener.current = document.getElementById(focus)?.querySelector('button') ?? null
+      setOpen(a)
+    }
   }, [focus, ticket.artifacts])
 
   if (ticket.artifacts.length === 0)
@@ -234,7 +303,10 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
               ) : a.addon ? (
                 <div>{inner}</div>
               ) : (
-                <button type="button" className={cn(frame, 'cursor-pointer')} aria-label={`Open ${a.name}`} onClick={() => setOpen(a)}>
+                <button type="button" className={cn(frame, 'cursor-pointer')} aria-label={`Open ${a.name}`} onClick={(e) => {
+                    opener.current = e.currentTarget
+                    setOpen(a)
+                  }}>
                   {inner}
                 </button>
               )}
@@ -245,7 +317,14 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
       </ul>
 
       <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        <SheetContent side="right" className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]">
+        <SheetContent
+          side="right"
+          className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            opener.current?.focus()
+          }}
+        >
           {open && (
             <>
               <SheetHeader className="border-b border-border">
@@ -257,7 +336,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 </SheetDescription>
               </SheetHeader>
               <div className="min-h-0 flex-1 overflow-auto p-4">
-                <Viewer a={open} />
+                <Viewer a={open} agentHtml={agentHtml} />
               </div>
             </>
           )}

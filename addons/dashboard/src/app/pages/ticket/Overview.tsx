@@ -41,17 +41,30 @@ export function sectionTitle(key: SectionKey, type: TicketType): string {
   return key === 'verification' && type === 'spike' ? 'Findings' : TITLES[key]
 }
 
+const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])\s/m
+
+/** Requirements written as plain lines (no list markers) read as one list item per non-empty line. */
+export function asListItems(text: string): string {
+  if (LIST_MARKER.test(text)) return text
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => `- ${l}`)
+    .join('\n')
+}
+
 /** A section's prose with its widgets drawn in place (core types inline, templates and pages in the sandboxed frame). */
-function SectionBody({ segments, ticket, agentHtml, label, drawnTotal }: { segments: Segment[]; ticket: TicketDocument; agentHtml: boolean; label: string; drawnTotal: number }) {
+function SectionBody({ segments, ticket, agentHtml, label, list }: { segments: Segment[]; ticket: TicketDocument; agentHtml: boolean; label: string; list?: boolean }) {
   return (
     <>
       {segments.map((s, i) =>
         s.kind === 'markdown' ? (
-          s.text.trim() ? <SafeMarkdown key={i} text={s.text} /> : null
+          s.text.trim() ? <SafeMarkdown key={i} text={list ? asListItems(s.text) : s.text} /> : null
         ) : (
           // Reset when the block's text changes (another ticket, or a live update that fixed it).
           <ErrorBoundary key={i} resetKey={`${ticket.key}\n${s.block.raw}`} fallback={() => <BlockProblem what="This widget" />}>
-            <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} drawnTotal={drawnTotal} />
+            <WidgetBlock block={s.block} ticket={ticket} agentHtml={agentHtml} sectionLabel={label} />
           </ErrorBoundary>
         ),
       )}
@@ -59,18 +72,21 @@ function SectionBody({ segments, ticket, agentHtml, label, drawnTotal }: { segme
   )
 }
 
+/** The handoff comes first, then the written sections in spec order. */
+const SHOW_ORDER: SectionKey[] = ['current_state', ...SECTION_ORDER.filter((k) => k !== 'current_state')]
+
 export function Overview({ ticket }: TabProps) {
   const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   const widgets = useMemo(() => resolveTicketWidgets(ticket.body, { order: SECTION_ORDER, label: (k) => sectionTitle(k as SectionKey, ticket.type) }), [ticket.body, ticket.type])
-  const drawnTotal = Object.values(widgets).reduce((n, segs) => n + segs.filter((s) => s.kind === 'widget' && s.block.index !== undefined).length, 0)
   const needs = NEEDS[ticket.type]
-  const shown = SECTION_ORDER.filter((k) => !!ticket.body[k]?.trim() || needs[k] === 'yes')
+  const written = (k: SectionKey) => !!ticket.body[k]?.trim()
+  const shown = SHOW_ORDER.filter(written)
+  const missing = SHOW_ORDER.filter((k) => !written(k) && needs[k] === 'yes')
   const handoffAt = ticket.section_history?.current_state?.at(-1)?.at
   return (
     <div className="space-y-5">
       {shown.map((key) => {
-        const text = ticket.body[key]?.trim()
         const handoff = key === 'current_state'
         return (
           <section
@@ -85,10 +101,11 @@ export function Overview({ ticket }: TabProps) {
               </h2>
               {handoff && <Pill tone="brand">handoff{handoffAt ? ` · ${ago(handoffAt)}` : ''}</Pill>}
             </div>
-            {text ? <SectionBody segments={widgets[key] ?? []} ticket={ticket} agentHtml={agentHtml} label={sectionTitle(key, ticket.type)} drawnTotal={drawnTotal} /> : <p className="rounded-md border border-dashed border-border px-3 py-2 text-[13px] text-text-faint">Not written yet.</p>}
+            <SectionBody segments={widgets[key] ?? []} ticket={ticket} agentHtml={agentHtml} label={sectionTitle(key, ticket.type)} list={key === 'requirements'} />
           </section>
         )
       })}
+      {missing.length > 0 && <p className="text-[13px] text-text-faint">Not written yet: {missing.map((k) => sectionTitle(k, ticket.type)).join(', ')}</p>}
     </div>
   )
 }

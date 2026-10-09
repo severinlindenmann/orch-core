@@ -11,11 +11,17 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
   return (
     <SignPrompt
       title={`Decide: ${d.title}`}
-      covers={[`Your answer: ${option.label}`, `Requested by the addon ${d.addon}${d.ticket ? ` about ${d.ticket}` : ''}`, `In workspace ${workspacePrefix}`, 'Signed as you, with your own key']}
+      covers={[`The question: ${d.question}`, `Your answer: ${option.label}`, `Requested by the addon ${d.addon}${d.ticket ? ` about ${d.ticket}` : ''}`, `In workspace ${workspacePrefix}`]}
+      confirmLabel="Send answer"
       onClose={onClose}
       onSign={onSign}
     >
-      <p className="text-[13px] text-text">{d.question}</p>
+      {d.detail && (
+        <section aria-label={`From addon ${d.addon}`} className="rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
+          <p className="mb-0.5 text-[12px]">From addon {d.addon}</p>
+          <p className="break-words text-text">{d.detail}</p>
+        </section>
+      )}
     </SignPrompt>
   )
 }

@@ -68,7 +68,7 @@ describe('escalation on Today', () => {
     expect(screen.getByRole('region', { name: /^From addons · \d+ · you sign every answer in orch/ })).toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Decide' }))
     await user.click(within(card).getByRole('button', { name: 'Next start on Strong' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
     await waitFor(() => expect((mockStore.addonStateView(wsOf(mockStore), 'start-agent', 'DEMO-0045')!.previews as Record<string, { model?: string }>)['DEMO-0045'].model).toBe('Model · work runs on strong: Strong (opus); subagents on haiku'), T)
   })
 })

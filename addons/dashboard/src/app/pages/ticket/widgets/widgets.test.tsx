@@ -22,7 +22,8 @@ describe('widgets in the ticket Overview (DEMO-0043)', () => {
     expect(svg.querySelector('title')).toHaveTextContent(/Bundle size, kB.*main 412.*branch 286/)
     expect(svg).toHaveAttribute('role', 'img')
     expect(w).toHaveTextContent('size.txt')
-    expect(w).toHaveTextContent('core')
+    expect(w).not.toHaveTextContent(/sandboxed/i) // a core widget is not an addon contribution
+    expect(w).not.toHaveAttribute('data-addon')
     expect(w.closest('section')).toHaveAttribute('aria-labelledby', 'sec-context')
     expect(w.querySelector('iframe')).toBeNull() // core types never use a frame
   })
@@ -52,9 +53,10 @@ describe('widgets in the ticket Overview (DEMO-0043)', () => {
     expect(frame.srcdoc).toContain("default-src 'none'")
     expect(frame.srcdoc).toContain('id="orch-data"')
     expect(frame.srcdoc).toContain('TIMESTAMP')
-    expect(w.querySelector('[data-addon="widgets"]')).toBeTruthy()
-    expect(w).toHaveTextContent(/agent HTML · before-after@1/)
-    expect(w).toHaveTextContent(/sandboxed/i)
+    expect(w).toHaveAttribute('data-addon', 'widgets')
+    expect(frame).toHaveAttribute('title', 'Sandboxed preview · before-after@1')
+    expect(within(w).getByRole('heading', { level: 3 })).toHaveTextContent(/· Sandboxed/)
+    expect(w.querySelectorAll('[data-addon]')).toHaveLength(0) // one card, no nested addon box
   })
   it('keeps agent HTML off when the widgets addon is disabled, but still draws core types', async () => {
     renderApp('/ticket/DEMO-0043', {
@@ -77,7 +79,7 @@ describe('html widgets (DEMO-0041)', () => {
     await waitFor(() => expect(widget('proto')).toBeTruthy(), T)
     const ok = widget('proto')
     expect(ok.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
-    expect(ok).toHaveTextContent(/agent HTML · one-off/)
+    expect(ok.querySelector('iframe')).toHaveAttribute('title', 'Sandboxed preview · one-off')
     const art = mockStore.ticket('DEMO-0041')!.artifacts.find((a) => a.name === 'reconciliation-demo.html')!
     expect(ok.querySelector('iframe')!.srcdoc).toContain(art.preview!.slice(0, 40))
     expect(sha256Hex(art.preview!)).toBe(art.sha256)
@@ -85,8 +87,12 @@ describe('html widgets (DEMO-0041)', () => {
     const bad = widget('proto-old')
     expect(bad).toBeTruthy()
     expect(bad.querySelector('iframe')).toBeNull()
+    expect(within(bad).getByRole('alert')).toHaveTextContent(/changed after it was pinned/)
+    expect(bad).not.toHaveTextContent('sha256 does not match') // the technical text is behind Details
+    expect(within(bad).queryByRole('button', { name: /retry/i })).toBeNull()
+    expect(bad).not.toHaveTextContent('"html"') // the raw block is behind Details > Show block
+    await user.click(within(bad).getByRole('button', { name: 'Details' }))
     expect(bad).toHaveTextContent('sha256 does not match')
-    expect(bad).not.toHaveTextContent('"html"') // the raw block is behind "Show block"
     await user.click(within(bad).getByRole('button', { name: 'Show block' }))
     expect(bad).toHaveTextContent('tolerance-demo.html')
     expect(frames()).toHaveLength(1)
@@ -103,31 +109,31 @@ describe('mixed tickets', () => {
     const bars = widget('runtime')
     expect(bars.querySelectorAll('svg rect[data-bar]').length).toBeGreaterThanOrEqual(12)
     expect(within(widget('verdict')).getByText('Dagster')).toBeInTheDocument()
-    const dups = [...document.querySelectorAll('[data-widget-error]')].filter((e) => /id "notes" is used by more than one widget/.test(e.textContent ?? ''))
-    expect(dups).toHaveLength(2)
-    expect([...document.querySelectorAll('[data-widget-error]')].some((e) => /invalid JSON/.test(e.textContent ?? ''))).toBe(true)
+    const errs = [...document.querySelectorAll('[data-widget-error]')].map((e) => e.textContent ?? '')
+    expect(errs.filter((t) => /Two widgets use the id "notes"\. Ask its author to rename one\./.test(t))).toHaveLength(2)
+    expect(errs.some((t) => /could not be read/.test(t))).toBe(true)
     expect(document.querySelectorAll('h2').length).toBeGreaterThan(2) // the page structure is intact
   })
   it('DEMO-0046: unknown template, drift, unknown key and a refused place are code with their reason; others draw', async () => {
     renderApp('/ticket/DEMO-0046')
     await waitFor(() => expect(widget('incident')).toBeTruthy(), T)
     const errs = [...document.querySelectorAll('[data-widget-error]')].map((e) => e.textContent ?? '')
-    expect(errs.some((t) => /unknown widget template/.test(t))).toBe(true)
-    expect(errs.some((t) => /Drift/.test(t) && /pin/.test(t))).toBe(true)
-    expect(errs.some((t) => /unknown key "colour"/.test(t))).toBe(true)
-    expect(errs.some((t) => /widgets are not drawn in Requirements/.test(t))).toBe(true)
+    expect(errs.some((t) => /uses a template orch does not know/.test(t))).toBe(true)
+    expect(errs.some((t) => t.includes('This preview changed after it was pinned, so it is not shown. Ask the agent that wrote it to update the pin.'))).toBe(true)
+    expect(errs.some((t) => t.includes('This widget uses a setting orch does not know ("colour"). Ask its author to fix the block.'))).toBe(true)
+    expect(errs.some((t) => /Widgets are not shown in Requirements, because approvals sign that text\./.test(t))).toBe(true)
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(widget('incident').querySelector('dl')).toBeTruthy()
   })
-  it('collapses widgets after the first two when a ticket has more than four, and expands on demand', async () => {
+  it('has no outer collapsible: every drawn widget shows its body, and Expand opens a larger view', async () => {
     const { user } = renderApp('/ticket/DEMO-0046')
     await waitFor(() => expect(widget('incident')).toBeTruthy(), T)
-    const collapsed = [...document.querySelectorAll('[data-widget][data-open="false"]')] as HTMLElement[]
-    expect(collapsed.length).toBeGreaterThan(0)
-    expect(document.querySelectorAll('[data-widget][data-open="true"]').length).toBeGreaterThanOrEqual(2)
-    const first = collapsed[0]
-    expect(first.querySelector('iframe')).toBeNull()
-    await user.click(within(first).getByRole('button', { name: /^Expand/ }))
-    expect(first).toHaveAttribute('data-open', 'true')
+    expect(document.querySelectorAll('[data-widget][data-open]').length).toBe(0)
+    const body = widget('incident').querySelector('[data-widget-body]') as HTMLElement
+    expect(body.className).toMatch(/max-h-\[280px\]|h-\[280px\]/)
+    await user.click(within(widget('incident')).getByRole('button', { name: /^Expand/ }))
+    const sheet = await screen.findByRole('dialog')
+    expect(sheet).toHaveTextContent('Drawn by core.')
   })
   it('Show text reveals the text alternative of a core widget', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
@@ -143,7 +149,7 @@ describe('mixed tickets', () => {
       },
     })
     await waitFor(() => expect(widget('proto-old')).toBeTruthy(), T)
-    expect(widget('proto-old')).toHaveTextContent('sha256 does not match')
+    expect(widget('proto-old')).toHaveTextContent(/changed after it was pinned/)
     expect(widget('proto')).toHaveTextContent(/agent HTML is off/i)
     expect(frames()).toHaveLength(0)
   })

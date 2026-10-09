@@ -27,7 +27,7 @@ describe('Schedules page', () => {
     await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Arm' }))
     const dialog = await screen.findByRole('dialog', { name: /Sign: arm · Schedules/ }, T)
     expect(within(dialog).getByText(/smoke-on-testing/)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: /Sign with Touch ID/ }))
+    await user.click(within(dialog).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(within(itemOf('Smoke test on testing')).getByText(/on the next ticket moved to testing/)).toBeInTheDocument(), T)
     await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: /^More actions for / }))
     expect(await screen.findByRole('menuitem', { name: 'Disarm' })).toBeInTheDocument()
@@ -53,7 +53,7 @@ describe('the recurring finding on Today', () => {
     const card = q.closest('[data-testid^="card-addon:"]') as HTMLElement
     await user.click(within(card).getByRole('button', { name: 'Decide' }))
     await user.click(within(card).getByRole('button', { name: 'File ticket in backlog' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
     await waitFor(() => expect(mockStore.listTickets(wsOf(mockStore)).some((t) => t.title === 'Update dependencies, week 41' && t.status === 'backlog')).toBe(true), T)
     await waitFor(() => expect(screen.queryByText('Dependency update · Monday: file it?')).not.toBeInTheDocument(), T)
   })

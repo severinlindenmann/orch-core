@@ -25,4 +25,14 @@ describe('SignConfirm', () => {
     expect(region.textContent).toContain('id = check-inbox')
     expect(region.className).toMatch(/dashed/)
   })
+
+  it('names its verb, says how you confirm, starts on Cancel and has no repeated line', () => {
+    draw()
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: 'Sign and run' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /signs with Touch ID/i })).toBeNull()
+    expect(dialog).toHaveTextContent('You confirm with Touch ID or your key.')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(within(dialog).queryByText('Signed as you, with your own key')).toBeNull()
+  })
 })

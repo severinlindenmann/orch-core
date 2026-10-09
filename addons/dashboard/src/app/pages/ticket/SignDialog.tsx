@@ -1,19 +1,22 @@
 import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { Fingerprint, Loader2, ShieldCheck } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { ApiError, type ActionRequest, type GateName, type TicketDocument } from '@/api/types'
-import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
+import { ConfirmHelper, SignDetails, TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { GATE_LABEL, policyText } from './actions'
-import { Mono, type HumanAction } from './shared'
+import type { HumanAction } from './shared'
 
-/** What the signature covers, shown before anything is signed. */
-function describe(ticket: TicketDocument, a: HumanAction): { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string; verb: string } {
+type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
+
+/** The dialog title and what the signature covers, in core's words. */
+function describe(ticket: TicketDocument, a: HumanAction): Described {
   if (a.kind === 'answer') {
     const q = ticket.questions_state.find((x) => x.id === a.question)!
     const picked = q.options?.find((o) => o.key === a.option)
@@ -21,34 +24,94 @@ function describe(ticket: TicketDocument, a: HumanAction): { title: string; gate
       title: `Answer ${q.id}`,
       hash: q.hash ?? '',
       covers: [`Question ${q.id}: ${q.text}`, picked ? `Your answer: ${picked.label}` : 'Your answer: free text', 'The current hash of the question'],
-      verb: 'Answer',
     }
   }
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
   const g = ticket.gates[gate]
-  const title =
-    a.kind === 'approve' ? `Approve ${GATE_LABEL[gate].toLowerCase()}` : a.kind === 'verdict' ? 'Give a verdict' : `Request changes on ${GATE_LABEL[gate].toLowerCase()}`
-  return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g), verb: a.kind === 'approve' ? 'Approve' : a.kind === 'verdict' ? 'Verdict' : 'Request changes' }
+  const name = GATE_LABEL[gate].toLowerCase()
+  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give a verdict' : `Request changes on ${name}`
+  return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g) }
 }
 
-export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument; action: HumanAction | null; onClose: () => void }) {
+type Content = { label: string; text: string; listLabel: string; items: { id: string; text: string }[] }
+
+/** What an approval signs: the section as written plus the list that goes with it (acceptance criteria, or tasks). */
+function signedContent(ticket: TicketDocument, gate: GateName): Content | null {
+  if (gate === 'requirements')
+    return { label: 'Requirements', text: ticket.body.requirements?.trim() ?? '', listLabel: 'Acceptance criteria', items: ticket.acceptance_state.map((a) => ({ id: a.id, text: a.text })) }
+  if (gate === 'plan') return { label: 'Plan', text: ticket.body.plan?.trim() ?? '', listLabel: 'Tasks', items: ticket.tasks_state.map((t) => ({ id: t.id, text: t.text })) }
+  return null
+}
+
+const isEmpty = (c: Content) => !c.text && c.items.length === 0
+
+function Signed({ content }: { content: Content }) {
+  return (
+    <div className="max-h-[40vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3 text-[13px]">
+      {content.text && (
+        <section aria-label={content.label}>
+          <h3 className="mb-1 text-[12px] font-medium text-text-muted">{content.label}</h3>
+          <p className="whitespace-pre-wrap break-words text-text">{content.text}</p>
+        </section>
+      )}
+      {content.items.length > 0 && (
+        <section aria-label={content.listLabel}>
+          <h3 className="mb-1 text-[12px] font-medium text-text-muted">{content.listLabel}</h3>
+          <ul className="space-y-1">
+            {content.items.map((i) => (
+              <li key={i.id} className="flex gap-2">
+                <span className="w-9 shrink-0 font-mono text-text-muted">{i.id}</span>
+                <span className="min-w-0 break-words text-text">{i.text}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Core's signing dialog for a ticket action. It shows what is signed (the text and the list), names the verb on the
+ * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
+ * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
+ */
+export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void }) {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
   const [text, setText] = useState('')
-  const [result, setResult] = useState<'pass' | 'fail'>('pass')
+  const [result, setResult] = useState<'pass' | 'fail' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const cancel = useRef<HTMLButtonElement>(null)
+  const firstRadio = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setPhase('confirm')
     setText('')
-    setResult('pass')
+    setResult(null)
     setError(null)
   }, [action])
 
   if (!action) return null
   const d = describe(ticket, action)
+  const content = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedContent(ticket, d.gate) : null) : null
+  const nothing = action.kind === 'approve' && !!content && isEmpty(content)
   const needsText = action.kind === 'request_changes' || (action.kind === 'verdict' && result === 'fail')
   const busy = phase !== 'confirm'
+  const verb =
+    action.kind === 'answer' ? 'Send answer' : action.kind === 'approve' ? d.title : action.kind === 'request_changes' ? 'Request changes' : result === 'pass' ? 'Pass' : result === 'fail' ? 'Send back' : 'Give verdict'
+  const hint = nothing
+    ? `Nothing to approve yet: the ${GATE_LABEL[d.gate!].toLowerCase()} has no text or tasks.`
+    : action.kind === 'verdict' && !result
+      ? 'Choose Pass or Send back'
+      : needsText && !text.trim()
+        ? 'Say what should change to continue'
+        : null
+  const blocked = busy || !!hint
+
+  const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
+  const receipts = ticket.tasks_state.filter((t) => t.receipt).length
 
   const request = (): ActionRequest => {
     switch (action.kind) {
@@ -57,13 +120,14 @@ export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument
       case 'request_changes':
         return { action: 'request_changes', gate: action.gate, text }
       case 'verdict':
-        return { action: 'verdict', result, text: text || undefined }
+        return { action: 'verdict', result: result!, text: text || undefined }
       case 'answer':
         return { action: 'answer', question: action.question, option: action.option, text: action.text }
     }
   }
 
   const run = async () => {
+    if (blocked) return
     setError(null)
     setPhase('touch')
     await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
@@ -79,64 +143,87 @@ export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument
     }
   }
 
+  const openEvidence = () => {
+    onClose()
+    if (onOpenEvidence) onOpenEvidence()
+    else void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
+  }
+
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
-      <DialogContent className="max-w-lg gap-4 border-border bg-surface">
+      <DialogContent
+        className="max-w-lg gap-4 border-border bg-surface"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          ;(action.kind === 'verdict' ? firstRadio.current : cancel.current)?.focus()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
             {d.title}
           </DialogTitle>
           <DialogDescription>
-            This is signed with your key on {ticket.key}. Only core shows this prompt; an addon cannot sign for you.
+            Signed with your key on {ticket.key}. Only core shows this prompt; an addon cannot sign for you.
+            {d.policy && <span className="block text-[12px] text-text-faint">{d.policy}</span>}
           </DialogDescription>
         </DialogHeader>
 
-        <dl className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-2 rounded-md border border-border bg-bg p-3 text-[13px]">
-          {d.gate && (
-            <>
-              <dt className="text-text-muted">Gate</dt>
-              <dd>
-                {GATE_LABEL[d.gate]}
-                {d.policy && <span className="block text-[12px] text-text-faint">{d.policy}</span>}
-              </dd>
-            </>
-          )}
-          <dt className="text-text-muted">Hash</dt>
-          <dd>
-            <Mono className="break-all text-text">{d.hash}</Mono>
-          </dd>
-          <dt className="text-text-muted">Covers</dt>
-          <dd>
-            <ul className="list-disc space-y-0.5 pl-4">
-              {d.covers.map((c) => (
-                <li key={c}>{c}</li>
-              ))}
-            </ul>
-          </dd>
-        </dl>
+        {content && !nothing && <Signed content={content} />}
+        {nothing && (
+          <p role="status" className="rounded-md border border-dashed border-border px-3 py-2 text-[13px] text-text-muted">
+            {hint}
+          </p>
+        )}
+
+        {action.kind === 'answer' && (
+          <div className="space-y-1 rounded-md border border-border bg-bg p-3 text-[13px]">
+            {d.covers.slice(0, 2).map((c) => (
+              <p key={c} className="break-words text-text">
+                {c}
+              </p>
+            ))}
+          </div>
+        )}
 
         {action.kind === 'verdict' && (
-          <fieldset className="flex gap-2" disabled={busy}>
-            <legend className="sr-only">Verdict</legend>
-            {(['pass', 'fail'] as const).map((r) => (
-              <label
-                key={r}
-                className="flex flex-1 cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
-              >
-                <input type="radio" name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
-                {r === 'pass' ? 'Pass: evidence is enough' : 'Fail: send back'}
-              </label>
-            ))}
-          </fieldset>
+          <>
+            <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
+              <span>
+                AC {proven}/{ticket.acceptance_state.length} evidenced · {receipts} {receipts === 1 ? 'receipt' : 'receipts'}
+              </span>
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence}>
+                Open evidence
+              </Button>
+            </p>
+            <fieldset className="grid gap-2" disabled={busy}>
+              <legend className="sr-only">Verdict</legend>
+              {(
+                [
+                  ['pass', 'Pass · the evidence is enough'],
+                  ['fail', 'Send back · something must change'],
+                ] as const
+              ).map(([r, label], i) => (
+                <label
+                  key={r}
+                  className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
+                >
+                  <input ref={i === 0 ? firstRadio : undefined} type="radio" name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+          </>
         )}
 
         {(needsText || action.kind === 'verdict') && (
           <div className="space-y-1.5">
-            <Label htmlFor="sign-text">{needsText ? 'What should change?' : 'Note (optional)'}</Label>
+            <Label htmlFor="sign-text">{needsText ? 'What should change? (required)' : 'Note (optional)'}</Label>
             <Textarea id="sign-text" value={text} onChange={(e) => setText(e.target.value)} disabled={busy} rows={3} />
           </div>
         )}
+
+        <SignDetails hash={d.hash} covers={action.kind === 'answer' ? d.covers.slice(2) : d.covers} />
 
         {error && (
           <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-[13px] text-danger">
@@ -158,17 +245,18 @@ export function SignDialog({ ticket, action, onClose }: { ticket: TicketDocument
                 Signing
               </>
             )}
+            {phase === 'confirm' && hint && !nothing && <span id="sign-hint">{hint}</span>}
           </span>
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
+            <Button ref={cancel} variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={run} disabled={busy || (needsText && !text.trim())}>
-              <Fingerprint />
-              Sign with Touch ID
+            <Button onClick={run} disabled={blocked} aria-describedby={hint && !nothing ? 'sign-hint' : undefined}>
+              {verb}
             </Button>
           </div>
         </DialogFooter>
+        <ConfirmHelper />
       </DialogContent>
     </Dialog>
   )

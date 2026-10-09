@@ -1,7 +1,6 @@
 import { manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { InstalledAddon } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
-import { CopyButton } from '../General'
 import { addedCapabilities, explain, removedCapabilities } from './capabilities'
 
 export const shortSha = (sha: string) => `${sha.slice(0, 8)}…${sha.slice(-6)}`
@@ -25,7 +24,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
   const viewerNext = update ? viewerActions({ actions: update.actions ?? addon.actions }) : viewerNow
   const viewerAdded = viewerNext.filter((a) => !viewerNow.some((b) => b.id === a.id))
   const viewerRemoved = viewerNow.filter((a) => !viewerNext.some((b) => b.id === a.id))
-  const viewersCan = `Viewers can: ${viewerNext.length ? viewerNext.map((a) => `${a.label} (${a.id})`).join(', ') : 'nothing'}`
+  const viewersCan = `Viewers can: ${viewerNext.length ? viewerNext.map((a) => a.label).join(', ') : 'nothing'}`
   const title = update ? `Update ${addon.title} to ${version}` : `Grant ${addon.title} ${version}`
 
   return (
@@ -36,10 +35,10 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         `Addon: ${addon.name} ${version}`,
         caps.length ? `Capabilities: ${caps.join(', ')}` : 'Capabilities: none',
         viewersCan,
-        `Package: sha256 ${shortSha(sha)}`,
-        'Agents never enable addons and never get pty',
+        ...(caps.includes('pty') ? ['Agents never get pty'] : []),
       ]}
       confirmLabel={update ? 'Update' : 'Grant and sign'}
+      hash={`sha256:${sha}`}
       onSign={onSign}
       onClose={onClose}
     >
@@ -47,13 +46,6 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         <div className="flex items-center gap-2">
           <span className="font-medium">{addon.title}</span>
           <span className="font-mono text-text-muted">{version}</span>
-        </div>
-        <div className="flex items-center gap-1 text-text-muted">
-          <span>sha256</span>
-          <code className="font-mono text-text" title={sha}>
-            {shortSha(sha)}
-          </code>
-          <CopyButton value={sha} label="package hash" />
         </div>
         {update && <p className="text-text-muted">{update.changelog}</p>}
         {update && (added.length > 0 || removed.length > 0) && (
@@ -66,14 +58,13 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
             ))}
           </ul>
         )}
-        <p className="text-text-muted">{viewersCan}</p>
         {(viewerAdded.length > 0 || viewerRemoved.length > 0) && (
           <ul aria-label="Viewer action changes" className="space-y-0.5 font-mono">
             {viewerAdded.map((a) => (
-              <li key={a.id} className="text-success">{`+ Viewers can: ${a.label} (${a.id})`}</li>
+              <li key={a.id} className="text-success">{`+ Viewers can: ${a.label}`}</li>
             ))}
             {viewerRemoved.map((a) => (
-              <li key={a.id} className="text-danger">{`- Viewers can: ${a.label} (${a.id})`}</li>
+              <li key={a.id} className="text-danger">{`- Viewers can: ${a.label}`}</li>
             ))}
           </ul>
         )}

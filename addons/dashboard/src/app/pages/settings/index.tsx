@@ -11,6 +11,8 @@ import { AddonManager } from './addons'
 import { Gates } from './Gates'
 import { Members } from './Members'
 import { Relay } from './relay'
+import { Skills } from './Skills'
+import { Connections } from './Connections'
 import { TABS } from './tabs'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
@@ -18,7 +20,7 @@ export const ONLY_OWNERS = 'Only owners change settings.'
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
 
-/** /settings/$tab (general | members | gates | relay | addons) and /settings/addon/$name (Addons with that addon's settings drawer open). */
+/** /settings/$tab (general | members | gates | relay | addons | skills | connections) and /settings/addon/$name (Addons with that addon's settings drawer open). */
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
@@ -55,6 +57,8 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
         {current === 'relay' && <Relay workspace={workspace} canEdit={isOwner} viewer={me.data.person} />}
         {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} settingsOf={addon} />}
+        {current === 'skills' && <Skills workspace={workspace} canEdit={isOwner} />}
+        {current === 'connections' && <Connections workspace={workspace} canEdit={isOwner} />}
       </div>
     </div>
   )

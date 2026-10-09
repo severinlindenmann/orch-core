@@ -2,6 +2,7 @@
 // data and writes back whatever it returns; the mock supplies the live data (`ShellCtx`) at command time.
 
 import type { ShellCtx } from '@/api/terminals'
+import { maskSecrets } from '@/api/secrets'
 
 export type { ShellCtx }
 
@@ -40,10 +41,27 @@ export function pasted(data: string): string {
 
 export const promptOf = (c: ShellCtx) => clean(`${c.user}@acme ${c.cwd} (${c.branch}) $ `)
 
-/** Run one command line against the live context; every output line is cleaned. */
+/**
+ * The simulated process environment of a session: the host gave it the values of `ctx.secrets` (names only reach the
+ * browser). In this mock the shell stands in for the host's pty, so it makes up stand-in values; the real host reads
+ * them from the secrets file and they never leave it.
+ */
+function sessionEnv(c: ShellCtx): { name: string; value: string }[] {
+  return (c.secrets ?? []).map((name) => {
+    let h = 2166136261
+    for (const ch of name) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0
+    return { name, value: `sim-${name.toLowerCase()}-${h.toString(16).padStart(8, '0')}` }
+  })
+}
+
+/**
+ * Run one command line against the live context. Every output line passes the host's output filter (known secret
+ * values become `•••• (NAME)`), then clean().
+ */
 export function runCommand(line: string, c: ShellCtx): CommandResult {
   const r = run(line, c)
-  return { ...r, lines: r.lines.flatMap((l) => l.split(/\r\n|\r|\n/)).map(clean) }
+  const env = sessionEnv(c)
+  return { ...r, lines: r.lines.flatMap((l) => l.split(/\r\n|\r|\n/)).map((l) => clean(maskSecrets(l, env))) }
 }
 
 function run(line: string, c: ShellCtx): CommandResult {
@@ -77,6 +95,15 @@ function run(line: string, c: ShellCtx): CommandResult {
     if (sub === 'task' && rest[0] === 'next') return { lines: [t?.next_task ? `next ${t.next_task.id} · ${t.next_task.text}` : 'no open tasks'] }
     if (sub === 'approve') return { lines: [c.owner === 'agent' ? HUMAN_ONLY : 'approve needs Touch ID: use the dashboard'] }
     return { lines: [`err unknown_command · orch ${sub ?? ''}`.trimEnd() + ' · next: help'] }
+  }
+  if (cmd === 'databricks' && sub === 'current-user' && rest[0] === 'me') {
+    // A tool that prints its credentials in debug output: the filter in runCommand masks them.
+    const env = Object.fromEntries(sessionEnv(c).map((e) => [e.name, e.value]))
+    if (!env.DATABRICKS_TOKEN || !env.DATABRICKS_HOST) return { lines: ['Error: default auth: cannot configure default credentials (no DATABRICKS_TOKEN for this session)'] }
+    const debug = rest.includes('--debug')
+      ? ['> GET /api/2.0/preview/scim/v2/Me', `> * Host: ${env.DATABRICKS_HOST}`, `> * Authorization: Bearer ${env.DATABRICKS_TOKEN}`, '< HTTP/2.0 200 OK']
+      : []
+    return { lines: [...debug, '{ "userName": "ci-orch@acme-energy.ch", "active": true }'] }
   }
   if (cmd === 'git' && sub === 'status') return { lines: [`On branch ${c.branch}`, 'Your branch is up to date with origin.', 'nothing to commit, working tree clean'] }
   if (cmd === 'git' && sub === 'log')

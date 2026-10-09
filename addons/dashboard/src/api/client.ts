@@ -34,6 +34,7 @@ import {
   type RelaySimRequest,
   type RelayState,
 } from './types'
+import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
   status?: Status | Status[]
@@ -126,6 +127,19 @@ export function createApi(transport: Transport) {
     /** Human only, signed in the dashboard. */
     issueGrant: (ws: string, req: { hours: number; scope: 'all' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
     revokeGrant: (ws: string, id: string) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants/${id}/revoke`),
+    // Skills, connections and simple auth (D55–D57). Every answer is parsed with its zod schema; none carries a secret value.
+    getSkills: async (ws: string) => skillList.parse(await call('GET', `/api/workspaces/${ws}/skills`)),
+    getConnections: async (ws: string) => connectionList.parse(await call('GET', `/api/workspaces/${ws}/connections`)),
+    /** Owners and maintainers: the secrets file's path, permissions and names (never values). */
+    getSecretsFile: async (ws: string) => secretsFileInfo.parse(await call('GET', `/api/workspaces/${ws}/secrets`)),
+    /** Members and above. `relogin`: the owner's "Run check again" after logging in (re-login prompts). */
+    runConnectionCheck: async (ws: string, name: string, trigger: 'on_demand' | 'relogin' = 'on_demand') =>
+      connectionInfo.parse(await call('POST', `/api/workspaces/${ws}/connections/${encodeURIComponent(name)}/check`, { trigger })),
+    /** `orch doctor`: every check, skills with unknown needs, the secrets file. */
+    runDoctor: async (ws: string) => doctorReport.parse(await call('POST', `/api/workspaces/${ws}/doctor`)),
+    /** Owner only, signed in core's dialog: a credential grant (connection references, env names) to a workspace skill. */
+    grantSkillCredentials: async (ws: string, skill: string, req: SkillGrantRequest) =>
+      skillInfo.parse(await call('POST', `/api/workspaces/${ws}/skills/${encodeURIComponent(skill)}/grant`, req)),
     getIdentity: (ws: string) => call<WorkspaceIdentity>('GET', `/api/workspaces/${ws}/identity`),
     /** Owner only. Everything except rename is signed in the dashboard. */
     postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),

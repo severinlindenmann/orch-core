@@ -99,7 +99,7 @@ function groupOf(type: string, ws: boolean): Group {
 }
 
 /** Grant, member and addon-grant events tell who may do what: owners and maintainers only. */
-const isSensitive = (type: string) => type.startsWith('grant.') || type.startsWith('member.') || type === 'addon.granted' || type === 'addon.action_signed' || type === 'addon.decided'
+const isSensitive = (type: string) => type.startsWith('grant.') || type.startsWith('member.') || type === 'addon.granted' || type === 'addon.action_signed' || type === 'addon.decided' || type.startsWith('skill.') || type.startsWith('connection.')
 
 function dayLabel(day: string, today: string): string {
   const d = new Date(`${day}T00:00:00Z`)

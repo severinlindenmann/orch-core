@@ -4,6 +4,8 @@ export const TABS = [
   { id: 'gates', label: 'Gates' },
   { id: 'relay', label: 'Relay & devices', preview: true },
   { id: 'addons', label: 'Addons' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'connections', label: 'Connections' },
 ] as const
 
 /** The known /settings/$tab values; anything else redirects to General. */

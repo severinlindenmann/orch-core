@@ -51,6 +51,7 @@ import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from '
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
 import { startLive } from './busy/live'
+import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
 import type { RelaySim } from './relay'
 
@@ -148,6 +149,8 @@ export class MockStore {
   readonly sim = new Simulator(this)
   /** Relay simulation per workspace (in memory: a dropped link, an open pairing code). See mocks/relay.ts. */
   readonly relaySim = new Map<string, RelaySim>()
+  /** Skills, connections, checks and the secrets file (D55–D57). */
+  readonly conn = new ConnectionsHost(this)
 
   /** Which demo dataset is loaded: today's seed, or the seed plus a generated busy day (src/mocks/busy). */
   dataset: Dataset = 'normal'
@@ -354,6 +357,8 @@ export class MockStore {
     if (def.type === 'epic') {
       doc.children = [...this.defs.values()].filter((d) => d.parent === key && this.isVisible(d.key)).map((d) => d.key)
     }
+    const needs = this.conn.needs(ws.id, key)
+    if (needs) doc.needs = needs
     return doc
   }
 
@@ -691,6 +696,9 @@ export class MockStore {
     const pending = this.startedSessions(wsId).find((x) => x.ticket === req.ticket && !x.stopped && this.sim.running().includes(x.session))
     if (doc.claim || pending)
       return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
+    // D57: the checks of the connections this ticket needs run before the start; auth or identity failures refuse.
+    const blockedBy = this.conn.precheck(wsId, req.ticket, 'session_start')
+    if (blockedBy) return blockedBy
     const grant = this.activeGrant(wsId, actor.id)
     if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
     const blocked = this.resolveLaunch(wsId, req).plan.error

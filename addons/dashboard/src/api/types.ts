@@ -2,6 +2,8 @@
 //   §3 ticket.json (definitions), §5 events, §7 ticket document (definitions + state derived from events),
 //   §10.4 error shape. Later these may be generated from the FastAPI OpenAPI schema.
 
+import type { TicketNeeds } from './connections'
+
 export type Status = 'backlog' | 'open' | 'in-progress' | 'waiting' | 'testing' | 'done'
 export const STATUSES: Status[] = ['backlog', 'open', 'in-progress', 'waiting', 'testing', 'done']
 
@@ -286,6 +288,8 @@ export interface TicketDocument extends TicketDefinition {
   children?: string[] // epic: child keys
   /** Revisions per body section (oldest first), derived from section.edited events. */
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
+  /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
+  needs?: TicketNeeds
 }
 
 export interface TicketSummary {
@@ -737,6 +741,7 @@ export type WorkspaceEventType =
   | 'view.saved' | 'view.deleted'
   | 'workspace.renamed'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
+  | 'skill.credentials_granted' | 'connection.checked'
 export interface WorkspaceEvent {
   v: 2
   id: string

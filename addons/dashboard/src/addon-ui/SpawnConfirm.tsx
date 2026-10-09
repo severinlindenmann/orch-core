@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { can } from '@/api/permissions'
 import type { CoreLaunch, LaunchPreview, TicketDocument } from '@/api/types'
+import { blockedText, type TicketNeeds } from '@/api/connections'
 import { agentName } from '@/app/pages/ticket/shared'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
@@ -34,6 +35,18 @@ export function claimedReason(ticket: { key: string; claim: { agent: string; for
   if (!c) return null
   return `${ticket.key} is claimed by ${agentName(c.agent)} for ${name(c.for)}. Stop that session on Agents first.`
 }
+
+/**
+ * Core's second precheck (D57): a ticket that needs a connection whose last check is auth expired or wrong identity
+ * gets no agent until an owner logs in again. Read from the ticket document's `needs` (core-computed), never an addon.
+ */
+export function connectionReason(ticket: { needs?: TicketNeeds }): string | null {
+  const b = ticket.needs?.blocked
+  return b ? `${blockedText(b)}. An owner logs in again first (Today or Settings > Connections); agents never handle logins.` : null
+}
+
+/** Both of core's prechecks, the claim first. */
+export const precheckReason = (ticket: Parameters<typeof claimedReason>[0] & { needs?: TicketNeeds }, name: (id: string) => string) => claimedReason(ticket, name) ?? connectionReason(ticket)
 
 /** Core's warning when gates before the work are open: the run begins with them. */
 function gateWarning(t: TicketDocument): string | null {
@@ -114,7 +127,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   if (!allowed) return plain('Start agent', 'This addon may not start agents in this workspace.')
   if (state.isSuccess && !request) return plain('Start agent', 'Pick a ticket first.')
   if (core.isError || doc.isError) return plain('Start agent', 'orch cannot start what this addon asked for (unknown ticket, mode, harness or place).')
-  const claimed = doc.data ? claimedReason(doc.data, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id) : null
+  const claimed = doc.data ? precheckReason(doc.data, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id) : null
   if (claimed) return plain('Start agent', claimed)
   if (!ws || !me.data || !today.data || !grants.data || !core.data || !doc.data) {
     return (

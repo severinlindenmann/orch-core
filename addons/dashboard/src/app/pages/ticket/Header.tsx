@@ -6,13 +6,14 @@ import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction, type RunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
-import { claimedReason } from '@/addon-ui/SpawnConfirm'
+import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
+import { BlockedByConnection } from './Needs'
 import { availableActions, GATE_LABEL, primaryAction, primaryLabel } from './actions'
 import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
 
@@ -64,7 +65,7 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
   const { data: addons } = useAddons()
   const pkg = addons?.find((a) => a.name === START_AGENT)
   if (!addonActive(workspace, START_AGENT) || !canSpawnAgent(pkg, workspace?.addons[START_AGENT]) || ticket.status === 'done') return null
-  const claimed = claimedReason(ticket, viewer.name)
+  const claimed = precheckReason(ticket, viewer.name)
   const roleBlocked = !r.allowed(START_AGENT, 'start')
   const reason = roleBlocked ? VIEWER_REASON : claimed
   return (
@@ -241,6 +242,7 @@ export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDoc
         </div>
       )}
 
+      <BlockedByConnection ticket={ticket} />
       <AgentStatus ticket={ticket} viewer={viewer} />
     </header>
   )

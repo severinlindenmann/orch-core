@@ -51,4 +51,25 @@ describe('Today rows motion', () => {
     finishers.forEach((f) => f())
     await vi.waitFor(() => expect(screen.queryByTestId('row-b')).toBeNull())
   })
+
+  it('a row whose id comes back during its collapse leaves no ghost behind (no duplicate test id)', () => {
+    window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia
+    Element.prototype.animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel() {} })) as unknown as typeof Element.prototype.animate
+    const { rerender } = render(ui(['a', 'b', 'c']))
+    rerender(ui(['a', 'c']))
+    expect(screen.getAllByTestId('row-b')).toHaveLength(1) // the ghost
+    rerender(ui(['a', 'b', 'c']))
+    expect(screen.getAllByTestId('row-b')).toHaveLength(1)
+    expect(screen.getByTestId('row-b')).not.toHaveAttribute('data-ghost')
+  })
+
+  it('a new scope starts over: rows of the other workspace neither fade nor collapse', () => {
+    window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia
+    const animate = vi.fn(() => ({ finished: new Promise(() => {}), cancel() {} }))
+    Element.prototype.animate = animate as unknown as typeof Element.prototype.animate
+    const withScope = (scope: string, ids: string[]) => <QueueGroup group={group(ids)} now="2026-10-09T11:30:00Z" scope={scope} renderRow={renderRow} />
+    const { rerender } = render(withScope('ws1', ['a', 'b']))
+    rerender(withScope('ws2', ['x', 'y']))
+    expect(animate).not.toHaveBeenCalled()
+  })
 })

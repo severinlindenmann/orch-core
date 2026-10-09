@@ -26,7 +26,7 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
   const headerId = `today-group-${group.id}`
   const visible = all ? group.rows : group.rows.filter((r, i) => i < ROWS_SHOWN || r.id === pinned)
   const hidden = itemsIn(group.rows) - itemsIn(visible)
-  const listRef = useRowMotion(open, group.rows, visible)
+  const listRef = useRowMotion(open, scope, group.rows, visible)
   return (
     <section role="region" aria-labelledby={headerId} className="overflow-hidden rounded-lg border border-border bg-surface">
       <h2 className="text-[13px]">
@@ -68,11 +68,14 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
  * Motion for the rows of one group, only where something changed: a row that is resolved collapses out where it stood
  * (height and fade, 160 ms), a row that arrives (after "Show new") fades in once. Revealing hidden rows with "Show
  * more", a plain refresh and everything under reduced motion stay still. The row that left is the element React
- * just detached; it is put back at its old spot as an inert ghost for the length of the animation.
+ * just detached; it is put back at its old spot as an inert ghost for the length of the animation. This assumes one
+ * element per row, in order (renderRow returns a single <li>); a row that renders two elements breaks the pairing.
+ * A new workspace or person (`scope`) starts over, and a row whose id comes back drops its ghost at once, so an id
+ * or test id never exists twice.
  */
-function useRowMotion(open: boolean, rows: Row[], visible: Row[]) {
+function useRowMotion(open: boolean, scope: string, rows: Row[], visible: Row[]) {
   const listRef = useRef<HTMLUListElement>(null)
-  const last = useRef<{ all: string[]; ids: string[]; els: HTMLElement[] } | null>(null)
+  const last = useRef<{ scope: string; all: string[]; ids: string[]; els: HTMLElement[] } | null>(null)
   useLayoutEffect(() => {
     const ul = listRef.current
     if (!open || !ul) {
@@ -82,8 +85,10 @@ function useRowMotion(open: boolean, rows: Row[], visible: Row[]) {
     const live = [...ul.children].filter((c): c is HTMLElement => c instanceof HTMLElement && !c.hasAttribute('data-ghost'))
     const ids = visible.map((r) => r.id)
     const all = rows.map((r) => r.id)
-    const before = last.current
-    last.current = { all, ids, els: live }
+    const before = last.current?.scope === scope ? last.current : null
+    last.current = { scope, all, ids, els: live }
+    const liveTestIds = new Set(live.map((e) => e.dataset.testid).filter(Boolean))
+    for (const g of ul.querySelectorAll<HTMLElement>('[data-ghost]')) if (liveTestIds.has(g.dataset.testid)) g.remove()
     if (!before || prefersReducedMotion()) return
     // Arrived: on screen now, in no earlier list of this group.
     ids.forEach((id, i) => {

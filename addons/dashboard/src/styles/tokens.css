@@ -206,7 +206,7 @@
   .orch-fade-in {
     animation: orch-fade-in 160ms var(--ease-out) both;
   }
-  /* Toasts: sonner's 400 ms is slow for a status line. */
+  /* Toasts: sonner's 400 ms is slow for a status line. Coupled to sonner's own attribute (sonner 2.x): if an upgrade renames it, this rule silently stops applying. */
   [data-sonner-toast] {
     transition-duration: 200ms !important;
     transition-timing-function: var(--ease-out) !important;

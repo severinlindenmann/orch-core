@@ -8,7 +8,7 @@ import { AddonLanes } from './AddonLane'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { ColumnSums } from './ColumnSum'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups, type EpicLane } from './grouping'
-import { DONE_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
+import { CELL_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 import { CardFields, TicketCard, type BoardPeople } from './TicketCard'
 
 /** What a lane cell is called as a drop target: one per lane and status, so ids stay unique. */
@@ -95,8 +95,8 @@ function Cell({
       </div>
     )
   }
-  const limited = !showAll && tickets.length > DONE_LIMIT
-  const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
+  const limited = !showAll && tickets.length > CELL_LIMIT
+  const visible = limited ? tickets.slice(0, CELL_LIMIT) : tickets
   return (
     <div
       ref={setNodeRef}
@@ -115,10 +115,10 @@ function Cell({
       ))}
       {limited && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(true)}>
-          +{tickets.length - DONE_LIMIT} more
+          +{tickets.length - CELL_LIMIT} more
         </Button>
       )}
-      {showAll && tickets.length > DONE_LIMIT && (
+      {showAll && tickets.length > CELL_LIMIT && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(false)}>
           Show fewer
         </Button>

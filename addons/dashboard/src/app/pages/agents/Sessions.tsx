@@ -29,7 +29,7 @@ export interface SessionContext {
 function StateGlyph({ state }: { state: AgentSession['state'] }) {
   const { Icon, tone } = STATE[state]
   return (
-    <span className={cn('inline-flex shrink-0', tone)} title={state}>
+    <span className={cn('inline-flex shrink-0 items-center gap-1', tone)}>
       <Icon className="size-3.5" aria-hidden />
       <span className="text-xs">{state}</span>
     </span>

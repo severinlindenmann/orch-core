@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
+import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
 import { usePageHeader } from '../../shell/ShellUi'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
@@ -84,7 +85,7 @@ export function TodayPage() {
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.
   const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
-  const reset = useQuery({ queryKey: ['demo-reset'], queryFn: () => 0, initialData: 0, enabled: false })
+  const generation = useTodayGeneration()
   const ds = dataset.data?.dataset
   const [switched, setSwitched] = useState<{ ds?: string; at: number }>({ ds, at: 0 })
   if (switched.ds !== ds) setSwitched({ ds, at: switched.ds === undefined ? 0 : dataset.dataUpdatedAt })
@@ -112,8 +113,8 @@ export function TodayPage() {
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (
     <TodayInbox
-      key={`${ws}:${me.data.person}:${readOnly}:${ds}:${reset.data}`}
-      generation={`${ds}:${reset.data}`}
+      key={`${ws}:${me.data.person}:${readOnly}:${ds}:${generation}`}
+      generation={`${ds}:${generation}`}
       items={readOnly ? today.data.read_only_open : today.data.needs_you}
       decisions={decisionsQ.data}
       readOnly={readOnly}
@@ -147,7 +148,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
   // "New" means new since the person's last look: ids not in the list they last saw here (kept per workspace and
   // person in the browser; a first visit, a dataset switch or Reset marks nothing new). New items lead their group.
-  const seenKey = `orch.today.seen.${ws}:${viewer}`
+  const seenKey = `${SEEN_PREFIX}${ws}:${viewer}`
   const [newIds, setNewIds] = useState<ReadonlySet<string>>(() => {
     const seen = readSeen(seenKey)
     return new Set(seen ? entries.filter((e) => !seen.has(e.id)).map((e) => e.id) : [])
@@ -155,13 +156,14 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
   const [order, setOrder] = useState<string[]>(() => acceptOrder(entries, newIds))
   useEffect(() => writeSeen(seenKey, order), [seenKey, order])
   const { shown, fresh } = useMemo(() => reconcile(order, entries), [order, entries])
-  // Taking arrivals in ("N new · Show", or directly when nothing is on screen) marks them new and opens their groups.
-  const [reveal, setReveal] = useState(0)
+  // Taking arrivals in ("N new · Show", or directly when nothing is on screen) marks them new and opens the groups they
+  // landed in (only those: another group the person closed stays closed).
+  const [reveal, setReveal] = useState<{ n: number; groups: string[] }>({ n: 0, groups: [] })
   const takeFresh = useCallback(() => {
     const ids = new Set([...newIds, ...fresh.map((e) => e.id)])
     setNewIds(ids)
     setOrder(acceptOrder(entries, ids))
-    setReveal((r) => r + 1)
+    setReveal((r) => ({ n: r.n + 1, groups: [...new Set(fresh.map((e) => e.group))] }))
   }, [newIds, fresh, entries])
   // With nothing on screen there is nothing to keep still: take the new items in directly. Resolved ids leave the
   // accepted order, so an item that reopens later comes back through the pill, not in its old place.
@@ -313,7 +315,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
           note={g.id === 'addons' ? 'you sign every answer in orch' : undefined}
           renderRow={renderRow}
           pinned={expanded}
-          reveal={reveal}
+          reveal={reveal.groups.includes(g.id) ? reveal.n : 0}
         />
       ))}
       {groups.length === 0 && (

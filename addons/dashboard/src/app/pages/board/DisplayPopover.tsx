@@ -78,7 +78,7 @@ export function DisplayPopover({ display, onChange }: { display: BoardDisplay; o
           <SwitchRow label="Show estimate" checked={display.estimate} onChange={(estimate) => onChange({ estimate })} />
           <SwitchRow label="Show progress" checked={display.progress} onChange={(progress) => onChange({ progress })} />
         </div>
-        {sources.map(c => <p key={c.addon} className="flex items-center gap-1 text-xs text-text-muted"><span>{c.title} from {c.addonTitle}</span><AddonBadge name={c.addonTitle} /></p>)}
+        {sources.map(c => <p key={c.addon} className="flex items-center gap-1 text-xs text-text-muted"><span>{c.title} from {c.addonTitle}</span><AddonBadge name={c.addon} title={c.addonTitle} /></p>)}
         <fieldset className="flex flex-col gap-1.5">
           <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-text-faint">Collapsed columns</legend>
           {STATUSES.map((s) => (

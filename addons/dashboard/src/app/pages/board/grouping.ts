@@ -70,3 +70,9 @@ export function isCollapsed(lane: EpicLane, overrides: Record<string, boolean>, 
 export const laneOf = (t: TicketSummary, epicKeys: ReadonlySet<string>) => (t.parent && epicKeys.has(t.parent) && t.type !== 'epic' ? t.parent : NO_EPIC)
 
 export const progressLabel = (lane: Pick<EpicLane, 'done' | 'total'>) => `${lane.done}/${lane.total} done`
+
+/** A time later than every card's `updated_at` (and not before the clock), for an optimistic move. */
+export function movedAt(tickets: TicketSummary[]): string {
+  const latest = tickets.reduce((m, t) => Math.max(m, Date.parse(t.updated_at) || 0), 0)
+  return new Date(Math.max(Date.now(), latest + 1)).toISOString()
+}

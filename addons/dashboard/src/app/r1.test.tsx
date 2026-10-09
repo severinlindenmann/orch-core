@@ -1,8 +1,10 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { groupOf } from './attention'
+import { restartToday, useTodayGeneration } from './todayRestart'
+import { reloginItems } from '@/api/attention'
 import type { AgentSession } from '@/api/types'
 
 beforeEach(() => sessionStorage.clear())
@@ -36,7 +38,7 @@ it('R-c: connections are counted and fixing one updates header and badge togethe
   const line = await screen.findByText(/· \d+ need you ·/)
   const count = () => Number(/· (\d+) need you/.exec(line.textContent!)![1])
   const ws = mockStore.workspaces[0].id
-  expect(count()).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + 2)
+  expect(count()).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + reloginItems(mockStore.conn.connections(ws)).length)
   const old = count()
   await user.click(within(screen.getByTestId('relogin-databricks-prod')).getByRole('button', { name: 'Run check again' }))
   await waitFor(() => expect(count()).toBe(old - 1))
@@ -113,7 +115,7 @@ it('Agents waiting-on-you link opens the exact question', async () => {
   await screen.findByText(/· \d+ need you ·/)
   const bar = screen.getByRole('region', { name: 'Agents' })
   await user.click(within(bar).getByRole('button', { name: 'Show' }))
-  const link = await within(await screen.findByRole('dialog')).findByRole('link', { name: /Answer Q2 on DEMO-0043/ })
+  const link = await within(await screen.findByRole('dialog')).findByRole('link', { name: /^waiting on you · Q2, answer it on DEMO-0043$/ })
   expect(link).toHaveAttribute('href', '/ticket/DEMO-0043#question-Q2')
   await user.click(link)
   expect(await screen.findByRole('tab', { name: /Questions/ })).toHaveAttribute('data-state', 'active')
@@ -158,4 +160,75 @@ it('R-d: the ticket header says Signing… with its actions off until the host c
   await waitFor(() => expect(within(header).getByRole('button', { name: 'Signing…', hidden: true })).toBeDisabled())
   expect(within(header).getByRole('button', { name: /^Actions/, hidden: true })).toBeDisabled()
   await act(async () => resolve({ ok: true } as Awaited<ReturnType<typeof api.postAction>>))
+})
+
+it('review: "blocking" agrees on Today and the ticket page: only while an agent waits on that question', async () => {
+  // A person asks a blocking question: no agent waits on it, so neither surface calls it blocking.
+  const { user } = renderApp('/', {
+    setup: (st) => st.append('DEMO-0044', { type: 'question.asked', actor: 'p_mara', question: 'Q9', def: { id: 'Q9', to: 'p_sev', text: 'Keep the old role?', options: [{ key: 'a', label: 'Yes' }], blocking: true } }),
+  })
+  expect((await api.getTicket('DEMO-0044')).questions_state.find((q) => q.id === 'Q9')!.blocking).toBe(false)
+  expect((await api.getTicket('DEMO-0043')).questions_state.find((q) => q.id === 'Q2')!.blocking).toBe(true) // Claude Code waits on Q2
+  const row = await screen.findByTestId('card-question:DEMO-0044:Q9')
+  expect(within(row).queryByText('blocking')).toBeNull()
+  expect(within(screen.getByTestId('card-question:DEMO-0043:Q2')).getByText('blocking')).toBeInTheDocument()
+  await user.click(within(row).getByRole('link', { name: 'DEMO-0044' }))
+  await user.click(await screen.findByRole('tab', { name: /Questions/ }))
+  const q9 = await screen.findByText('Keep the old role?')
+  const card = q9.closest('[id^="question-"]') as HTMLElement
+  expect(within(card).getByText('Open')).toBeInTheDocument()
+  expect(within(card).queryByText('Open, blocking')).toBeNull()
+})
+
+it('review: Reset still succeeds and restarts Today when browser storage is blocked', async () => {
+  const { user } = renderApp('/')
+  await screen.findByTestId('card-question:DEMO-0043:Q2')
+  const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+    throw new DOMException('blocked', 'SecurityError')
+  })
+  await user.click(screen.getByRole('button', { name: 'Reset demo' }))
+  await user.click(await screen.findByRole('button', { name: 'Reset demo data' }))
+  expect(await screen.findByText('Demo data reset')).toBeInTheDocument()
+  expect(screen.queryByText('Reset failed')).toBeNull()
+  blocked.mockRestore()
+  expect(await screen.findByTestId('card-question:DEMO-0043:Q2')).toBeInTheDocument()
+})
+
+it('review: restartToday moves the generation even when storage throws', () => {
+  const blocked = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+    throw new DOMException('blocked', 'SecurityError')
+  })
+  const { result } = renderHook(() => useTodayGeneration())
+  const before = result.current
+  act(() => restartToday())
+  expect(result.current).toBe(before + 1)
+  blocked.mockRestore()
+})
+
+it('review: a card moved into a capped cell shows at once, ahead of "+N more"', async () => {
+  vi.spyOn(api, 'postAction').mockImplementation(() => new Promise(() => {}))
+  const { user } = renderApp('/board', { setup: (s) => s.reset('busy', true) })
+  const target = await screen.findByRole('group', { name: 'No epic · Open' })
+  expect(within(target).getByRole('button', { name: /^\+\d+ more$/ })).toBeInTheDocument()
+  const from = screen.getByRole('group', { name: 'No epic · Backlog' })
+  const card = within(from).getAllByTestId(/^card-/)[0]
+  const key = card.getAttribute('data-testid')!.slice('card-'.length)
+  card.focus()
+  await user.keyboard('m')
+  await user.click(within(await screen.findByRole('menu', { name: 'Move to' })).getByRole('menuitem', { name: 'Open' }))
+  await waitFor(() => expect(within(screen.getByRole('group', { name: 'No epic · Open' })).getAllByTestId(/^card-/)[0]).toHaveAttribute('data-testid', `card-${key}`))
+})
+
+it('review: Show opens only the groups the new items landed in; a closed group elsewhere stays closed', async () => {
+  const { user } = renderApp('/')
+  const row = await screen.findByTestId('card-question:DEMO-0043:Q2')
+  await user.click(screen.getByRole('button', { name: /^Approvals/, expanded: true }))
+  mockStore.append('DEMO-0044', { type: 'question.asked', actor: 'p_mara', question: 'Q9', def: { id: 'Q9', to: 'p_sev', text: 'Keep the old role?', options: [{ key: 'a', label: 'Yes' }], blocking: false } })
+  // Signing an answer refreshes the inbox, as a live arrival does.
+  await user.click((await within(row).findAllByRole('radio'))[0])
+  await user.click(within(row).getByRole('button', { name: 'Send answer…' }))
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Send answer' }))
+  await user.click(await screen.findByRole('button', { name: '1 new · Show' }))
+  expect(await screen.findByTestId('card-question:DEMO-0044:Q9')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /^Approvals/ })).toHaveAttribute('aria-expanded', 'false')
 })

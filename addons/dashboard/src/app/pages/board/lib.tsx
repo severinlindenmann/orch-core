@@ -14,7 +14,9 @@ export const STATUS_LABEL: Record<Status, string> = {
 }
 
 /** Done lists its latest tickets only, until "Show all". */
-export const DONE_LIMIT = 5
+/** Cards a lane cell shows before "+N more" (R-a); the flat board's Done column uses the same number. */
+export const CELL_LIMIT = 5
+export const DONE_LIMIT = CELL_LIMIT
 
 export const TYPE_ICON: Record<TicketType, LucideIcon> = {
   feature: Sparkles,

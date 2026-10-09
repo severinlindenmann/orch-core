@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
@@ -90,6 +90,8 @@ function useHomeWorkspace(ticketKey: string): { ready: boolean } {
   return { ready: !home || home.id === workspace?.id }
 }
 
+const questionOf = (hash: string) => (/^question-[A-Za-z0-9_-]+$/.test(hash) ? hash : undefined)
+
 export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const hash = useRouterState({ select: s => s.location.hash })
   const home = useHomeWorkspace(ticketKey)
@@ -99,8 +101,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     queryFn: () => api.getTicket(ticketKey),
     retry: false,
   })
-  const [tab, setTab] = useState<TabId>('overview')
-  const [focus, setFocus] = useState<string | undefined>()
+  // A `#question-Q2` link (Today's Agents panel) opens the Questions tab on that question from the first paint.
+  const [tab, setTab] = useState<TabId>(() => (questionOf(hash) ? 'questions' : 'overview'))
+  const [focus, setFocus] = useState<string | undefined>(() => questionOf(hash))
+  const applied = useRef(`${ticketKey}#${hash}`)
   const [signing, setSigning] = useState<HumanAction | null>(null)
   // From the touch until the host confirms, the header's actions say "Signing…" and are off (R-d).
   const [signPending, setSignPending] = useState(false)
@@ -119,10 +123,14 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   )
   usePageHeader(ticketKey, breadcrumb)
 
-  useEffect(() => {
-    const question = /^question-[A-Za-z0-9_-]+$/.test(hash)
+  // Another ticket or another hash on the same page: choose the tab again, before paint.
+  useLayoutEffect(() => {
+    const now = `${ticketKey}#${hash}`
+    if (applied.current === now) return
+    applied.current = now
+    const question = questionOf(hash)
     setTab(question ? 'questions' : 'overview')
-    setFocus(question ? hash : undefined)
+    setFocus(question)
   }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
@@ -130,8 +138,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     setFocus(j.id)
   }, [])
 
+  // Runs again once the ticket is on screen, so a cold deep link highlights its target too.
+  const shown = !!q.data && viewer.ready && home.ready
   useEffect(() => {
-    if (!focus) return
+    if (!focus || !shown) return
     const t = setTimeout(() => {
       const el = document.getElementById(focus)
       el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
@@ -139,7 +149,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       setTimeout(() => el?.classList.remove('ring-2', 'ring-brand'), 1600)
     }, 60)
     return () => clearTimeout(t)
-  }, [focus, tab])
+  }, [focus, tab, shown])
 
   if (q.isLoading || !viewer.ready || !home.ready) return <TicketSkeleton />
   if (q.error) {

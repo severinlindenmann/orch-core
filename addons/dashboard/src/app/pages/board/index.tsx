@@ -30,7 +30,7 @@ import { useSlot } from '@/addon-ui'
 import { AddonLanes } from './AddonLane'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
-import { groupByEpic, hasEpics, laneOf } from './grouping'
+import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
@@ -229,7 +229,12 @@ export function BoardPage() {
     onMutate: async ({ key, status }) => {
       await qc.cancelQueries({ queryKey: ticketsKey })
       const prev = qc.getQueryData<TicketSummary[]>(ticketsKey)
-      qc.setQueryData<TicketSummary[]>(ticketsKey, (old) => old?.map((t) => (t.key === key ? { ...t, status } : t)))
+      // The moved card is the newest change: it sorts first in its cell, so a capped cell ("+N more") never hides it.
+      qc.setQueryData<TicketSummary[]>(ticketsKey, (old) => {
+        if (!old) return old
+        const updated_at = movedAt(old)
+        return old.map((t) => (t.key === key ? { ...t, status, updated_at } : t))
+      })
       return { prev }
     },
     onError: (err, { key, status }, ctx) => {

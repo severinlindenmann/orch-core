@@ -48,7 +48,7 @@ function AgentList({ rows, tickets, now, onOpen }: { onOpen?: () => void; rows: 
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-[13px] leading-4 text-text">
               <span className="truncate font-medium">{s.name}</span>
-              {waiting && blocker?.kind === 'question' && blocker.ref ? <Link to="/ticket/$key" params={{ key: blocker.ticket }} hash={`question-${blocker.ref}`} onClick={onOpen} aria-label={`Answer ${blocker.ref} on ${blocker.ticket}`} className="shrink-0 rounded text-[11px] text-warning underline focus-visible:ring-2 focus-visible:ring-ring">waiting on you · {blocker.ref}</Link> : <span className="shrink-0 text-[11px] text-text-muted">{waiting ? 'waiting on you' : state}</span>}
+              {waiting && blocker?.kind === 'question' && blocker.ref ? <Link to="/ticket/$key" params={{ key: blocker.ticket }} hash={`question-${blocker.ref}`} onClick={onOpen} aria-label={`waiting on you · ${blocker.ref}, answer it on ${blocker.ticket}`} className="shrink-0 rounded text-[11px] text-warning underline focus-visible:ring-2 focus-visible:ring-ring">waiting on you · {blocker.ref}</Link> : <span className="shrink-0 text-[11px] text-text-muted">{waiting ? 'waiting on you' : state}</span>}
             </p>
             {ticket && (
               <Link

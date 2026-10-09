@@ -1109,15 +1109,32 @@ export class MockStore {
     return fallback
   }
 
-  /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
-  private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
-    const items: NeedsYouItem[] = []
-    // A question is "blocking" only while an agent actually waits on it (seeds may flag more than that).
+  /**
+   * What the dashboard calls "blocking" (R1): an open question flagged blocking **and** an agent session waiting on
+   * exactly that question right now. Seeds and agents may flag more; the raw flag still drives the host's own logic
+   * (an agent waits on its blocking question, the turn line). Lazy: the agents are read on the first call only.
+   */
+  blockingCheck(workspaceId: string): (ticket: string, ref: string) => boolean {
     let waitingOn: Set<string> | undefined
-    const blocks = (ticket: string, ref: string) => {
+    return (ticket, ref) => {
       waitingOn ??= new Set(this.agents(workspaceId).flatMap((a) => (a.state === 'waiting' && a.waiting_on?.kind === 'question' ? [`${a.waiting_on.ticket}/${a.waiting_on.ref}`] : [])))
       return waitingOn.has(`${ticket}/${ref}`)
     }
+  }
+
+  /** The ticket as the API serves it: open questions say "blocking" by the same rule as Today (`blockingCheck`). */
+  servedTicket(key: string): TicketDocument | undefined {
+    const doc = this.ticket(key)
+    const ws = this.workspaceOf(key)
+    if (!doc || !ws) return doc
+    const blocks = this.blockingCheck(ws.id)
+    return { ...doc, questions_state: doc.questions_state.map((q) => (q.state === 'open' && q.blocking ? { ...q, blocking: blocks(key, q.id) } : q)) }
+  }
+
+  /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
+  private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
+    const items: NeedsYouItem[] = []
+    const blocks = this.blockingCheck(workspaceId)
     for (const t of this.listTickets(workspaceId)) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)

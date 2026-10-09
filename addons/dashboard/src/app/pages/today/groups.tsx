@@ -11,6 +11,7 @@ import { ago, useSessionState } from './shared'
 export const ROWS_SHOWN = 5
 
 export function QueueGroup({ group, now, scope, note, renderRow, pinned, reveal = 0 }: {
+  /** Changes when new items were taken into this group: the group opens (once per change). */
   reveal?: number
   group: Group
   now: string
@@ -24,7 +25,9 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned, reveal 
 }) {
   const [open, setOpen] = useSessionState(`orch.today.open.${scope}.${group.id}`, true)
   const [all, setAll] = useSessionState(`orch.today.all.${scope}.${group.id}`, false)
-  useEffect(() => { if (reveal > 0) setOpen(true) }, [reveal])
+  useEffect(() => {
+    if (reveal > 0) setOpen(true)
+  }, [reveal])
   const headerId = `today-group-${group.id}`
   const visible = all ? group.rows : group.rows.filter((r, i) => i < ROWS_SHOWN || r.id === pinned)
   const hidden = itemsIn(group.rows) - itemsIn(visible)

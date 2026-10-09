@@ -121,7 +121,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Sign a grant and start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByText(/Issues you a grant: all tickets in this workspace, 8 h/)).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Sign with Touch ID' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Sign and start' }))
     await waitFor(() => expect(started()).toHaveLength(1), T)
     const issued = mockStore.wsEventsOf(wsOf(mockStore)).find((e) => e.type === 'grant.issued')!
     expect(issued).toMatchObject({ presence: 'touchid', actor: { kind: 'person', id: 'p_sev' } })

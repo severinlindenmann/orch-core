@@ -4,9 +4,16 @@ import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 5000 }
 
+// The primary action sits in the header (G3); everything else is in the Actions menu.
 async function openMenuItem(user: ReturnType<typeof renderApp>['user'], name: RegExp) {
-  await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
-  await user.click(await screen.findByRole('menuitem', { name }, T))
+  const header = await screen.findByTestId('ticket-header', {}, T)
+  const primary = within(header).queryByRole('button', { name })
+  if (primary) {
+    await user.click(primary)
+  } else {
+    await user.click(await screen.findByRole('button', { name: /Actions/ }, T))
+    await user.click(await screen.findByRole('menuitem', { name }, T))
+  }
   return screen.findByRole('dialog', {}, T)
 }
 
@@ -263,11 +270,11 @@ describe('G4 artifact drawer stays closed to stale state', () => {
 })
 
 describe('G4 every SignPrompt names its verb', () => {
-  it('each <SignPrompt> element except SpawnConfirm carries confirmLabel', async () => {
+  it('each <SignPrompt> element carries confirmLabel', async () => {
     const fs = await import('node:fs')
     const path = await import('node:path')
     const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]))
-    const files = walk(path.resolve(__dirname, '../../..')).filter((f) => /\.tsx$/.test(f) && !/\.test\.|SignPrompt\.tsx|SpawnConfirm/.test(f))
+    const files = walk(path.resolve(__dirname, '../../..')).filter((f) => /\.tsx$/.test(f) && !/\.test\.|SignPrompt\.tsx/.test(f))
     const bad: string[] = []
     for (const f of files) {
       const src = fs.readFileSync(f, 'utf8')

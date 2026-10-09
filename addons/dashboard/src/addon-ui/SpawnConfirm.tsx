@@ -214,6 +214,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
       <SignPrompt
         title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
         covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${hhmm(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        confirmLabel="Sign and start"
         disabled={!!c.blocked}
         onClose={onClose}
         onSign={() => {

@@ -203,7 +203,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
         {wide && <Rail ticket={ticket} viewer={viewer} />}
       </div>
 
-      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} />
+      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} />
     </div>
   )
 }

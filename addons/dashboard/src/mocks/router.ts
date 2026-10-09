@@ -3,7 +3,7 @@ import type { HttpMethod, TransportResponse } from '@/api/transport'
 import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
-import { can } from '@/api/permissions'
+import { atLeast, can } from '@/api/permissions'
 import { APPROVER_GROUPS, unmeetablePolicy } from '@/api/gates'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
@@ -143,6 +143,9 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
     }
     case 'claim': {
       if (t.claim) return fail(409, 'claim.held', `${key} is claimed by ${t.claim.agent}.`, 'Use takeover with a reason.', false)
+      // D57: before a claim, the needed connections are checked; auth or identity failures refuse.
+      const blocked = store.conn.precheck(ws.id, key, 'claim')
+      if (blocked) return fail(blocked.status, blocked.code, blocked.message, blocked.hint)
       const event = store.append(key, {
         type: 'claim.taken',
         actor: `claude-code:s_${key.slice(-4)}:${me}`,
@@ -410,6 +413,31 @@ export function buildRouter(): MockRouter {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
     const res = s.revokeGrant(c.params.ws, c.params.id, person(s))
     return res.ok ? ok(res.grant) : fail(res.status, res.code, res.message, res.hint)
+  })
+  // Skills, connections and the secrets file (D55–D57). Answers carry names only, never a secret value.
+  readOf('/api/workspaces/:ws/skills', (s, c) => ok(s.conn.skills(c.params.ws)))
+  readOf('/api/workspaces/:ws/connections', (s, c) => ok(s.conn.connections(c.params.ws)))
+  readOf('/api/workspaces/:ws/secrets', (s, c) => {
+    if (!atLeast(s.roleIn(c.params.ws, s.viewer), 'maintainer')) return fail(403, 'forbidden', 'Only owners and maintainers see the secrets file.', 'Names only; ask an owner.')
+    return ok(s.conn.secretsFile(c.params.ws))
+  })
+  const wsExists = (s: MockStore, ws: string) => s.workspaces.some((w) => w.id === ws)
+  r.add('POST', '/api/workspaces/:ws/connections/:name/check', (s, c) => {
+    if (!wsExists(s, c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+    const t = (c.body as { trigger?: unknown } | null)?.trigger ?? 'on_demand'
+    if (t !== 'on_demand' && t !== 'relogin') return fail(400, 'validation', 'trigger must be "on_demand" or "relogin"')
+    const res = s.conn.check(c.params.ws, c.params.name, t, person(s))
+    return res.ok ? ok(res.connection) : fail(res.status, res.code, res.message, res.hint)
+  })
+  r.add('POST', '/api/workspaces/:ws/doctor', (s, c) => {
+    if (!wsExists(s, c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+    const res = s.conn.doctor(c.params.ws, person(s))
+    return res.ok ? ok(res.report) : fail(res.status, res.code, res.message, res.hint)
+  })
+  r.add('POST', '/api/workspaces/:ws/skills/:name/grant', (s, c) => {
+    if (!wsExists(s, c.params.ws)) return fail(404, 'not_found', 'No such workspace')
+    const res = s.conn.grant(c.params.ws, c.params.name, c.body, person(s))
+    return res.ok ? ok(res.skill) : fail(res.status, res.code, res.message, res.hint)
   })
   r.add('GET', '/api/tickets/:key', (s, c) => {
     const t = visibleTicket(s, c.params.key)

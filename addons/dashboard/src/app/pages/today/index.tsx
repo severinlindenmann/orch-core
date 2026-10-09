@@ -14,6 +14,7 @@ import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
+import { ReloginGroup } from './relogin'
 import { ApprovalRow, DecisionRow, FoldRow, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, WIDE_QUERY, type Directory } from './shared'
@@ -215,6 +216,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           </button>
         )}
       </div>
+      <ReloginGroup now={now} />
       {groups.map((g) => (
         <QueueGroup
           key={g.id}

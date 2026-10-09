@@ -1,0 +1,232 @@
+{
+  "built_in": [
+    {
+      "name": "orch",
+      "source": "orch-core",
+      "path": "orch-core/skills/orch/SKILL.md",
+      "description": "Work on an orch ticket: claim it, take tasks, ask questions, write the handoff. Use whenever a ticket key such as DEMO-0043 is mentioned.",
+      "sidecar": {
+        "schema_version": 1,
+        "skill_version": "2.0.0",
+        "scope": "built_in",
+        "connections": [],
+        "env": []
+      },
+      "skill_md": "---\nname: orch\ndescription: Work on an orch ticket: claim it, take tasks, ask questions, write the handoff. Use whenever a ticket key such as DEMO-0043 is mentioned.\n---\n\n# Working on an orch ticket\n\n1. `orch status` shows the ticket, whose move it is and your claim.\n2. `orch task next` gives the next task; take its lease before you start.\n3. Ask with `orch ask` when a decision belongs to a person. Never approve: approvals are human-only.\n4. Before you stop, write the handoff into **Current state**.\n\n"
+    },
+    {
+      "name": "orch-evidence",
+      "source": "orch-core",
+      "path": "orch-core/skills/orch-evidence/SKILL.md",
+      "description": "Attach evidence to acceptance criteria: test output, screenshots, query results. Use before moving a ticket to testing.",
+      "sidecar": {
+        "schema_version": 1,
+        "skill_version": "2.0.0",
+        "scope": "built_in",
+        "connections": [],
+        "env": []
+      },
+      "skill_md": "---\nname: orch-evidence\ndescription: Attach evidence to acceptance criteria: test output, screenshots, query results. Use before moving a ticket to testing.\n---\n\n# Evidence for acceptance criteria\n\nEvery criterion needs one artifact that proves it. Attach it with `orch artifact add <file> --proves AC1`.\n\n- Test output: the command and the summary line.\n- Data checks: the query and its result, not a screenshot of it.\n\n"
+    },
+    {
+      "name": "github-prs",
+      "source": "github",
+      "path": "addons/github/skills/github-prs/SKILL.md",
+      "description": "Open and update the ticket's pull request with gh. Use when the work is ready for review.",
+      "sidecar": {
+        "schema_version": 1,
+        "skill_version": "1.4.0",
+        "scope": "built_in",
+        "connections": [
+          "gh"
+        ],
+        "env": []
+      },
+      "addon": "github",
+      "skill_md": "---\nname: github-prs\ndescription: Open and update the ticket's pull request with gh. Use when the work is ready for review.\n---\n\n# Pull requests\n\nOpen the PR from the ticket's own branch: `gh pr create --fill --base develop`.\nLink it on the ticket with `orch link pr <url>`. Never push to a shared branch.\n\n"
+    }
+  ],
+  "workspace": {
+    "DEMO": [
+      {
+        "name": "dbt-seeds",
+        "path": "skills/dbt-seeds/SKILL.md",
+        "description": "Load reference tables (tariffs, meters) as dbt seeds and run their tests on Databricks. Use for any change under seeds/.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "1.2.0",
+          "scope": "workspace",
+          "connections": [
+            "gh",
+            "databricks-ci"
+          ],
+          "env": [
+            "DATABRICKS_HOST",
+            "DATABRICKS_TOKEN"
+          ]
+        },
+        "grants": [
+          {
+            "at": "2026-09-22T08:14:00Z",
+            "by": "p_sev",
+            "connections": [
+              "gh",
+              "databricks-ci"
+            ],
+            "env": [
+              "DATABRICKS_HOST"
+            ],
+            "presence": "touchid"
+          },
+          {
+            "at": "2026-10-01T15:40:00Z",
+            "by": "p_sev",
+            "connections": [],
+            "env": [
+              "DATABRICKS_TOKEN"
+            ],
+            "presence": "touchid"
+          }
+        ],
+        "skill_md": "---\nname: dbt-seeds\ndescription: Load reference tables (tariffs, meters) as dbt seeds and run their tests on Databricks. Use for any change under seeds/.\n---\n\n# dbt seeds\n\n1. Put the CSV under `seeds/<domain>/` with a `valid_from` column on every row.\n2. Declare column types in `seeds/properties.yml`.\n3. `dbt seed --select <name> --target ci` then `dbt test --select <name>`.\n\nThe CI target reads `DATABRICKS_HOST` and `DATABRICKS_TOKEN` from the environment orch gives the session.\n\n"
+      },
+      {
+        "name": "databricks-sql",
+        "path": "skills/databricks-sql/SKILL.md",
+        "description": "Query the production warehouse read-only with the databricks CLI. Use to check data before and after a change.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "0.9.1",
+          "scope": "workspace",
+          "connections": [
+            "databricks-prod"
+          ],
+          "env": [
+            "DATABRICKS_HOST"
+          ]
+        },
+        "grants": [
+          {
+            "at": "2026-09-30T09:02:00Z",
+            "by": "p_sev",
+            "connections": [
+              "databricks-prod"
+            ],
+            "env": [
+              "DATABRICKS_HOST"
+            ],
+            "presence": "touchid"
+          }
+        ],
+        "skill_md": "---\nname: databricks-sql\ndescription: Query the production warehouse read-only with the databricks CLI. Use to check data before and after a change.\n---\n\n# Databricks SQL (production, read-only)\n\nUse the `prod` profile: `databricks sql query --profile prod --warehouse wh-analytics \"select ...\"`.\n\n- Read-only: never run DDL or DML against prod.\n- Limit every query (`limit 1000`).\n\n"
+      },
+      {
+        "name": "bq-billing-export",
+        "path": "skills/bq-billing-export/SKILL.md",
+        "description": "Read the cloud billing export in BigQuery to reconcile invoice lines. Use for billing reconciliation work.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "1.0.0",
+          "scope": "workspace",
+          "connections": [
+            "gcloud-billing"
+          ],
+          "env": []
+        },
+        "grants": [
+          {
+            "at": "2026-10-03T10:20:00Z",
+            "by": "p_sev",
+            "connections": [
+              "gcloud-billing"
+            ],
+            "env": [],
+            "presence": "touchid"
+          }
+        ],
+        "skill_md": "---\nname: bq-billing-export\ndescription: Read the cloud billing export in BigQuery to reconcile invoice lines. Use for billing reconciliation work.\n---\n\n# Billing export\n\nThe export lives in `acme-energy.billing.gcp_billing_export_v1`. Query it with `bq query --use_legacy_sql=false`.\nThe agent account has BigQuery Data Viewer on that dataset only.\n\n"
+      },
+      {
+        "name": "tariff-feed",
+        "path": "skills/tariff-feed/SKILL.md",
+        "description": "Fetch tariff changes from the supplier API and turn them into seed updates. Use when a supplier announces new prices.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "0.3.0",
+          "scope": "workspace",
+          "connections": [
+            "tariff-api"
+          ],
+          "env": [
+            "TARIFF_API_TOKEN",
+            "TARIFF_WEBHOOK_SECRET"
+          ]
+        },
+        "grants": [
+          {
+            "at": "2026-10-06T11:05:00Z",
+            "by": "p_sev",
+            "connections": [
+              "tariff-api"
+            ],
+            "env": [
+              "TARIFF_API_TOKEN"
+            ],
+            "presence": "touchid"
+          }
+        ],
+        "pending_note": "TARIFF_WEBHOOK_SECRET was added to orch.skill.json in commit 3f2a9c1 by claude-code (DEMO-0049).",
+        "skill_md": "---\nname: tariff-feed\ndescription: Fetch tariff changes from the supplier API and turn them into seed updates. Use when a supplier announces new prices.\n---\n\n# Tariff feed\n\n`curl -fsS -H \"Authorization: Bearer $TARIFF_API_TOKEN\" https://api.tariffs.example.ch/v2/changes?since=<date>`\n\nWrite each change as a row in `seeds/tariffs/tariff_ch_<year>.csv` and open a ticket for review.\n\n"
+      },
+      {
+        "name": "warehouse-admin",
+        "path": "skills/warehouse-admin/SKILL.md",
+        "description": "Rotate warehouse service principals and storage keys in Azure. Use only on credential-rotation tickets.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "1.1.0",
+          "scope": "workspace",
+          "connections": [
+            "az-storage"
+          ],
+          "env": []
+        },
+        "grants": [
+          {
+            "at": "2026-09-12T13:30:00Z",
+            "by": "p_sev",
+            "connections": [
+              "az-storage"
+            ],
+            "env": [],
+            "presence": "touchid"
+          }
+        ],
+        "skill_md": "---\nname: warehouse-admin\ndescription: Rotate warehouse service principals and storage keys in Azure. Use only on credential-rotation tickets.\n---\n\n# Warehouse admin\n\nRotate with `az ad sp credential reset --id <app-id>`, then update the key vault secret. Record the new expiry on the ticket, never the secret.\n\n"
+      },
+      {
+        "name": "meter-notes",
+        "path": "skills/meter-notes/SKILL.md",
+        "description": "House rules for meter ids and reading timestamps. Use when touching dim_meter or fct_readings.",
+        "sidecar": null,
+        "skill_md": "---\nname: meter-notes\ndescription: House rules for meter ids and reading timestamps. Use when touching dim_meter or fct_readings.\n---\n\n# Meter notes\n\n- Meter ids are strings; keep leading zeros.\n- Readings are stored in UTC; convert at the edge.\n- A meter swap keeps the old id with `valid_to` set.\n\n"
+      },
+      {
+        "name": "naming-conventions",
+        "path": "skills/naming-conventions/SKILL.md",
+        "description": "Warehouse naming rules for models, columns and seeds. Use when adding or renaming a model.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "1.0",
+          "scope": "workspace",
+          "connections": [],
+          "env": [],
+          "secrets": [
+            "WAREHOUSE_KEY"
+          ]
+        },
+        "skill_md": "---\nname: naming-conventions\ndescription: Warehouse naming rules for models, columns and seeds. Use when adding or renaming a model.\n---\n\n# Naming conventions\n\n- Staging models: `stg_<source>__<entity>`.\n- Facts `fct_`, dimensions `dim_`, one grain per model.\n- Columns in snake_case; timestamps end in `_at`, dates in `_on`.\n"
+      }
+    ]
+  }
+}

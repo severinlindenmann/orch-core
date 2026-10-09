@@ -8,6 +8,7 @@ import { AddonSlotStack, AddonBadge, useAddons, useSlot } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { NeedsValue } from './Needs'
 import { ago, fmtTime, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
 
 const isHttp = (u: string) => /^https?:\/\//i.test(u)
@@ -93,6 +94,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
               ))}
             </span>,
           )}
+        {ticket.needs && row('Needs', <NeedsValue needs={ticket.needs} />)}
         {row('Owner', people(owner ? [owner] : []))}
         {assignees.length > 0 && row('Assignees', people(assignees))}
         {reviewers.length > 0 && row('Reviewers', people(reviewers))}

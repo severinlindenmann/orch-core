@@ -13,6 +13,8 @@ export interface ShellCtx {
   /** The grant the session works under (the viewer's own for a person's shell); null when there is none. */
   grant: { id: string; scope: string; until: string } | null
   claim: { agent: string; session: string; for: string; expires: string } | null
+  /** Env names this session was given (the ticket's skills declare them; D56). Names only: values stay on the host. */
+  secrets?: string[]
   ticket: {
     key: string
     title: string

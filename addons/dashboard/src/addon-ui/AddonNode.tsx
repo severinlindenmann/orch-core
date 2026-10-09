@@ -25,7 +25,7 @@ import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
 import { useRunAddonAction, type ActionError } from './useRunAddonAction'
-import { claimedReason } from './SpawnConfirm'
+import { precheckReason } from './SpawnConfirm'
 import { DestructiveConfirm } from './DestructiveConfirm'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
@@ -356,10 +356,11 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   // A refusal shows as a persistent alert under the node or row that asked (no toast).
   const r = useRunAddonAction(ctx.ticket?.key, { inlineErrors: true, onSuccess: onDone })
   const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
-  // Core's precheck before its start dialog: a claimed ticket gets no second agent (from the ticket, not the addon).
+  // Core's prechecks before its start dialog (from the ticket, not the addon): a claimed ticket gets no second agent,
+  // and a ticket whose needed connection fails auth or identity gets none until an owner logs in again.
   const precheck =
     action && r.meta(addon, action)?.confirm === 'spawn_agent' && ctx.ticket
-      ? claimedReason(ctx.ticket, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id)
+      ? precheckReason(ctx.ticket, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id)
       : null
   const run = (a: string, extra?: Record<string, unknown>, subject?: string) => {
     if (dirty.size > 0 && !dirty.has(a)) setDiscard(() => () => r.run(addon, a, extra, subject))
@@ -387,7 +388,7 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
-/** Core's reason an agent cannot start here (claimed ticket), shown at the control. */
+/** Core's reason an agent cannot start here (claimed ticket, blocked connection), shown at the control. */
 function PrecheckAlert({ id, text }: { id?: string; text: string }) {
   return (
     <p id={id} role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[12px] text-text">

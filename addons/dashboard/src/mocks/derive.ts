@@ -492,6 +492,14 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'deleted a saved view'
     case 'workspace.renamed':
       return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
+    case 'skill.credentials_granted': {
+      const refs = [...(Array.isArray(e.connections) ? e.connections : []), ...(Array.isArray(e.env) ? e.env : [])].map((x) => t(x, '')).filter(Boolean)
+      return `granted ${refs.length ? refs.join(', ') : 'credentials'} to the skill ${t(e.skill, '')}`.trimEnd()
+    }
+    case 'connection.checked': {
+      const status = (e.result as { status?: unknown } | undefined)?.status
+      return `checked ${t(e.name, 'a connection')}: ${t(typeof status === 'string' ? status.replace(/_/g, ' ') : '', 'unknown')}`
+    }
     default:
       return t(e.type, 'did something')
   }

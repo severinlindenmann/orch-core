@@ -54,8 +54,15 @@ const SESSIONS: Session[] = [
   },
 ]
 /** What the agent typed: its commands name the ticket it works on. */
-const agentTranscript = (s: Session) => ['orch status', 'orch task next', ...(s.ticket ? [`orch approve ${s.ticket} plan`] : [])]
+/** When the session got DATABRICKS_TOKEN, its run includes a tool that prints it in debug output: the host's filter shows `•••• (DATABRICKS_TOKEN)`. */
+const agentTranscript = (s: Session, ctx: ShellCtx) => [
+  'orch status',
+  'orch task next',
+  ...(ctx.secrets?.includes('DATABRICKS_TOKEN') ? ['databricks current-user me --debug'] : []),
+  ...(s.ticket ? [`orch approve ${s.ticket} plan`] : []),
+]
 const STOPPED_TRANSCRIPT = ['git status', 'exit']
+const withTranscript = (s: Session, ctx: ShellCtx) => ({ ctx, transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s, ctx)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [] })
 
 const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session[]
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string }>
@@ -85,6 +92,8 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
     cursor: store.cursor(ws),
     grant: g ? { id: g.id, scope: g.scope, until: g.until } : null,
     claim: doc?.claim ? { agent: doc.claim.agent, session: doc.claim.session, for: doc.claim.for, expires: doc.claim.expires } : null,
+    // Agent sessions get the env names their ticket's skills declare (core-computed needs); names only.
+    ...(s.kind === 'agent' && doc?.needs?.env.length ? { secrets: doc.needs.env } : {}),
     ticket: doc
       ? {
           key: doc.key,
@@ -149,8 +158,7 @@ registerAddon({
       status: s.status,
       // Typing needs a harness that takes input (an unsupported harness is a read-only transcript).
       interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member') && !!findHarness(harnessOfSession(s))?.capabilities.interactive,
-      ctx: shellCtx(c, s),
-      transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
+      ...withTranscript(s, shellCtx(c, s)),
       harness: harnessOfSession(s),
       purpose: s.kind === 'agent' ? (s.purpose ?? null) : null,
       command: harnessCommand(harnessOfSession(s), { ticket: s.ticket, context: contextOf(s) }),

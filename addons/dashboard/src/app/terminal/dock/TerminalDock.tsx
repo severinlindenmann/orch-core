@@ -4,7 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { List, MoreHorizontal } from 'lucide-react'
+import { List, MoreHorizontal, SquareTerminal } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent } from 'react'
 import { api } from '@/api/client'
 import type { TerminalSessionView } from '@/api/terminals'
@@ -46,12 +46,26 @@ export interface TerminalDockProps {
 
 export default function TerminalDock(props: TerminalDockProps) {
   const { workspace } = useWorkspace()
-  const ticket = useDockTicket()
+  const page = useDockTicket()
+  // A session started "in the workspace" from a ticket page belongs to the workspace: the dock follows it there
+  // (and offers the way back). Navigating to another page drops the switch.
+  const [wide, setWide] = useState<{ page: string | undefined; follow: string } | null>(null)
+  const inWorkspace = !!wide && wide.page === page
+  const ticket = inWorkspace ? undefined : page
   // One body per scope (workspace + ticket): its selection comes from, and goes back to, the dock's memory.
-  return <DockBody key={scopeKey(workspace?.id, ticket)} {...props} ticket={ticket} />
+  return <DockBody key={scopeKey(workspace?.id, ticket)} {...props} ticket={ticket} pageTicket={page} followFrom={inWorkspace ? wide!.follow : null}
+    toWorkspace={(follow) => setWide({ page, follow })} backToTicket={() => setWide(null)} />
 }
 
-function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, ticket }: TerminalDockProps & { ticket?: string }) {
+function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, ticket, pageTicket, followFrom, toWorkspace, backToTicket }: TerminalDockProps & {
+  ticket?: string
+  /** The ticket of the page (may differ from `ticket` after switching to the workspace scope). */
+  pageTicket?: string
+  /** Mounted after that switch: select the new session once the addon has opened it (differs from this id). */
+  followFrom: string | null
+  toWorkspace: (follow: string) => void
+  backToTicket: () => void
+}) {
   const { workspace } = useWorkspace()
   const router = useRouter()
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
@@ -71,7 +85,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
   const [browser, setBrowser] = useState(!remembered && !!ticket)
   const [newOpen, setNewOpen] = useState(false)
   const [focusId, setFocusId] = useState<string | null>(null)
-  const follow = useRef<string | null>(null) // after start/continue: select the session the addon opened
+  const follow = useRef<string | null>(followFrom) // after start/continue: select the session the addon opened
   const name = (s: TerminalSessionView) => dockName(s, ticket)
   const list = [...running, ...ended.filter((s) => opened.includes(s.id))]
   const windows: DockWindow[] = list.map((s, index) => ({ session: s, index, name: name(s) }))
@@ -133,10 +147,18 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
     if (!ok) follow.current = null // refused: nothing new to select
   }
   const start = (c: NewSessionChoice) => {
-    follow.current = currentId ?? ''
+    const from = currentId ?? ''
+    follow.current = from
     setBrowser(false)
     setPrefs((p) => ({ ...p, harness: c.harness }))
-    ;(c.inTicket ? inTicket : inWorkspace).run(DOCK_ADDON, 'start', { harness: c.harness, context: c.summary }, undefined, { onDone: followNext })
+    // Started in the workspace from a ticket page: the session has no ticket, so show the workspace scope with it.
+    const leaving = !c.inTicket && !!ticket
+    ;(c.inTicket ? inTicket : inWorkspace).run(DOCK_ADDON, 'start', { harness: c.harness, context: c.summary }, undefined, {
+      onDone: (ok) => {
+        followNext(ok)
+        if (ok && leaving) toWorkspace(from)
+      },
+    })
   }
   const continueFrom = (id: string) => {
     follow.current = currentId ?? ''
@@ -170,8 +192,12 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
       <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
-        <h2 className="sr-only">Terminal</h2>
+        <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
+        <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
         <span className="shrink-0 font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
+        {!ticket && pageTicket && (
+          <Button variant="link" size="xs" className="shrink-0 px-0" onClick={backToTicket}>Back to {pageTicket}</Button>
+        )}
         {right ? <span className="flex-1" /> : <SessionTabs windows={windows} current={current} visible={visibleTabs} onSelect={select} onClose={closeTranscript} />}
         <NewSessionButton open={newOpen} onOpenChange={setNewOpen} ticket={ticket} lastHarness={prefs.harness} canStart={canStart} onStart={start} />
         <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="Sessions" title="Sessions" aria-pressed={browser} onClick={() => setBrowser(!browser)}>

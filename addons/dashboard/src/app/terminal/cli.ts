@@ -117,7 +117,7 @@ function contextLines(s: Pick<CliSession, 'ctx' | 'context' | 'resumedFrom'>, w:
   if (s.resumedFrom) {
     out.push(dim(` ⎿  Continued from ${clean(s.resumedFrom.label)}`))
     for (const l of wrap(s.resumedFrom.summary ? clean(s.resumedFrom.summary) : 'No summary was recorded.', w - 6)) out.push(dim(`    ${l}`))
-  } else if (s.context && t) out.push(dim(` ⎿  Context: ${clean(t.key)} · ${clean(t.title)} (current state loaded)`))
+  } else if (s.context && t) wrap(`Context: ${clean(t.key)} · ${clean(t.title)} (current state loaded)`, w - 6).forEach((l, i) => out.push(dim(`${i === 0 ? ' ⎿  ' : '    '}${l}`)))
   else out.push(dim(' ⎿  Fresh window: no ticket context loaded'))
   return out
 }

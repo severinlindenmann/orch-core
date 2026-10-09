@@ -15,7 +15,8 @@ describe('dock size limits', () => {
     expect(clampDock('right', 5000, view)).toBe(800) // 1440 - 640 (the page keeps 640 px)
     expect(clampDock('right', 5000, view, 1208)).toBe(568) // a 232 px sidebar leaves 1208 for page + dock
     expect(dockMax('right', { width: 2400, height: 900 }, 2300)).toBe(1440) // 60% of the window is the cap
-    expect(rightFits({ width: 1024, height: 768 }, 968)).toBe(true) // icon sidebar: 968 - 640 = 328
+    expect(rightFits({ width: 1024, height: 768 }, 968)).toBe(false) // icon sidebar: 968 - 640 = 328 < 400: bottom
+    expect(rightFits({ width: 1440, height: 900 }, 1208)).toBe(true) // 568 px of room
     expect(rightFits({ width: 1024, height: 768 }, 792)).toBe(false) // wide sidebar: 152 px is too little
     expect(clampDock('right', Number.NaN, view)).toBe(DEFAULT_PREFS.right)
   })

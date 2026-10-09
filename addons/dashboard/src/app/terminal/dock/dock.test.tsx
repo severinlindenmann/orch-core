@@ -210,6 +210,40 @@ describe('terminal dock on a ticket page', () => {
     expect(within(d).getByRole('group', { name: /Your Codex · Type a prompt/ })).toBeInTheDocument()
     expect(prefs().harness).toBe('codex') // remembered for next time
   })
+  it('a session started in the workspace from a ticket page takes the dock to the workspace scope, with the way back', async () => {
+    const spy = vi.spyOn(api, 'runAddonAction')
+    const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    const d = await openDock(user)
+    await user.click(within(d).getByRole('button', { name: 'New session' }))
+    const form = await screen.findByRole('form', { name: 'New session' }, T)
+    await user.selectOptions(within(form).getByRole('combobox', { name: 'Harness' }), 'shell')
+    await user.click(within(form).getByRole('radio', { name: 'Workspace' }))
+    await user.click(within(form).getByRole('button', { name: 'Start Shell' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(expect.any(String), 'terminals', 'start', { harness: 'shell', context: false }), T)
+    const dd = await dock()
+    await waitFor(() => expect(within(dd).getByText('Workspace', { selector: '[data-dock-scope]' })).toBeInTheDocument(), T)
+    // The new scratch shell is listed and selected (it has no ticket, so the ticket scope would have hidden it).
+    await waitFor(() => expect(within(dd).getByRole('tab', { selected: true })).toHaveTextContent(/^\d+Shell/), T)
+    expect(within(dd).getByRole('tab', { selected: true })).not.toHaveTextContent('DEMO-0043')
+    await user.click(within(dd).getByRole('button', { name: 'Back to DEMO-0043' }))
+    // The dock body is per scope (a new element): ask for it again.
+    await waitFor(async () => expect(within(await dock()).getByText('DEMO-0043', { selector: '[data-dock-scope]' })).toBeInTheDocument(), T)
+  })
+  it('toasts sit above an open bottom dock', async () => {
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    await bar()
+    expect(document.documentElement.style.getPropertyValue('--dock-bottom')).toBe('32px')
+    await openDock(user)
+    expect(document.documentElement.style.getPropertyValue('--dock-bottom')).toBe('280px')
+    const { toast } = await import('sonner')
+    act(() => void toast.success('Saved.'))
+    const toaster = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[data-sonner-toaster]')
+      expect(el).not.toBeNull()
+      return el!
+    }, T)
+    expect(toaster.getAttribute('style')).toContain('var(--dock-bottom, 0px)')
+  })
   it('collapse keeps the selection and opened transcripts; Continue from summary opens a seeded session', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     let d = await openDock(user)

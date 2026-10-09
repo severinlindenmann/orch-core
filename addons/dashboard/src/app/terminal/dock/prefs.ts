@@ -43,8 +43,11 @@ export function dockMax(side: DockSide, view: { width: number; height: number },
   return Math.min(Math.floor(view.width * l.ratio), area - PAGE_MIN)
 }
 
-/** Is there room for a right-hand dock of at least its minimum width? */
-export const rightFits = (view: { width: number; height: number }, area = view.width) => dockMax('right', view, area) >= DOCK_LIMITS.right.min
+/** Room a right-hand dock needs to be worth having; with less it docks at the bottom. */
+export const RIGHT_ROOM = 400
+
+/** Is there room for a right-hand dock (at least RIGHT_ROOM px while the page keeps PAGE_MIN)? */
+export const rightFits = (view: { width: number; height: number }, area = view.width) => dockMax('right', view, area) >= RIGHT_ROOM
 
 export function clampDock(side: DockSide, px: number, view: { width: number; height: number }, area = view.width): number {
   const max = Math.max(DOCK_LIMITS[side].min, dockMax(side, view, area))

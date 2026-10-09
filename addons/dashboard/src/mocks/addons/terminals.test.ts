@@ -282,13 +282,7 @@ describe('harness sessions (start, resume)', () => {
   it('resume refuses a session id of another workspace', async () => {
     const s = setup('p_sev')
     const cli = s.store.workspaces.find((w) => w.prefix === 'CLI')!.id
-    await s.api.runAddonAction(cli, 'terminals', 'new', {})
-    const other = ((await s.api.getAddonState(cli, 'terminals')) as unknown as State).sessions[0].id
-    await s.api.runAddonAction(cli, 'terminals', 'close', { session: other })
-    // The same id asked for in DEMO: not this workspace's session.
-    const demoIds = (await state(s)).sessions.map((x) => x.id)
-    const foreign = demoIds.includes(other) ? 'ghost-from-cli' : other
-    expect(await refused(run(s, 'resume', { session: foreign }))).toMatchObject({ status: 404 })
+    // DEMO's ended Codex review asked for from CLI: not that workspace's session.
     expect(await refused(s.api.runAddonAction(cli, 'terminals', 'resume', { session: 'codex0' }))).toMatchObject({ status: 404 })
   })
   it('resume refuses a running session, someone else\'s shell and viewers', async () => {

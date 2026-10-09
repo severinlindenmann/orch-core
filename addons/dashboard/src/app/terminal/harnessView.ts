@@ -34,6 +34,10 @@ export function sessionScreen(s: TerminalSessionView, cols: number): Screen {
 /** The line editor of an interactive session and its first screen. `session` is read live (ctx at command time). */
 export function openSession(session: () => TerminalSessionView, cols: () => number): Shell & { start(): string; redraw?(): string } {
   const s = session()
+  // An unknown harness is never driven: its transcript, read only, and no input reaches anything.
+  if (!findHarness(s.harness)?.capabilities.interactive) {
+    return { start: () => unsupported(s).text, prompt: () => '', feed: () => '', history: () => [], exited: () => false }
+  }
   const cli = cliOf(s)
   if (!cli) {
     const shell = createShell(() => session().ctx)
@@ -61,7 +65,8 @@ export interface ScreenDriver {
  * drawn again; a running agent CLI keeps its working line ticking (not under reduced motion).
  */
 export function screenDriver(session: () => TerminalSessionView, interactive: boolean, cols: () => number): ScreenDriver {
-  const shell = interactive ? openSession(session, cols) : undefined
+  const canType = interactive && !!findHarness(session().harness)?.capabilities.interactive
+  const shell = canType ? openSession(session, cols) : undefined
   let screen: Screen | undefined
   let stop = () => {}
   let restart: ((line: LiveLine | undefined) => void) | undefined

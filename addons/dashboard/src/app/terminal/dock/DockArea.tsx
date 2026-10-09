@@ -20,6 +20,9 @@ import { clampDock, DOCK_BAR, rightFits, useDockPrefs, useViewport } from './pre
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
 
+/** CSS variable on <html>: the height a bottom dock takes (px), for things pinned to the bottom such as toasts. */
+export const DOCK_BOTTOM_VAR = '--dock-bottom'
+
 /** May the dock show here? The terminals addon must hold `pty` in this workspace (same gate as the terminal node). */
 export function useDockAllowed(): boolean {
   const { data } = useAddons()
@@ -83,6 +86,12 @@ export function DockArea({ children }: { children: ReactNode }) {
   const right = side === 'right'
   const size = clampDock(side, prefs[side], view, area)
   const pageWidth = allowed && right ? view.width - (prefs.open ? size : DOCK_BAR) : view.width
+  // Toasts sit above a bottom dock: the shell's toaster reads this variable (0 when the dock is not at the bottom).
+  const bottom = allowed && !right ? (prefs.open ? size : DOCK_BAR) : 0
+  useEffect(() => {
+    document.documentElement.style.setProperty(DOCK_BOTTOM_VAR, `${bottom}px`)
+  }, [bottom])
+  useEffect(() => () => void document.documentElement.style.removeProperty(DOCK_BOTTOM_VAR), [])
   return (
     <div ref={root} className={cn('flex min-h-0 min-w-0 flex-1', right ? 'flex-row' : 'flex-col')}>
       <PageWidthContext.Provider value={pageWidth}>

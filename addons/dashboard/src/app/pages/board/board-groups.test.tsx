@@ -19,7 +19,7 @@ vi.mock('@dnd-kit/core', async (orig) => {
   }
 })
 
-import { mockStore } from '@/api/client'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 8000 }
@@ -146,5 +146,16 @@ describe('board grouped by epic (N2)', () => {
     act(() => dnd.onDragEnd!({ active: { data: { current: { ticket: { key: 'DEMO-0043', status: 'in-progress' } } } }, over: { id: 'DEMO-0040|open' } }))
     const cell = screen.getByRole('group', { name: 'DEMO-0040 · Open' })
     await waitFor(() => expect(within(cell).getByTestId('card-DEMO-0043')).toBeInTheDocument(), T)
+  })
+
+  it('if the viewer cannot be loaded the board shows an error with Retry, not Loading forever', async () => {
+    const real = api.getMe.bind(api)
+    const spy = vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    const { user } = renderApp('/board')
+    expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/Could not load the board/)
+    spy.mockImplementation(real)
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByTestId('card-DEMO-0043', {}, T)).toBeInTheDocument()
+    spy.mockRestore()
   })
 })

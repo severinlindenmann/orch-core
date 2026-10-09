@@ -16,8 +16,8 @@ export interface BoardPeople {
   epicTitle: (key: string) => string | undefined
 }
 
-/** The addon fields of a card (estimate...). `label` is drawn before them, only when there is something to label. */
-export function CardFields({ ticket, label }: { ticket: TicketSummary; label?: React.ReactNode }) {
+/** The addon fields of a card (estimate...). `own`: an epic's own value, drawn as one dashed pill with an "own" label, so it never reads as part of a sum beside it. */
+export function CardFields({ ticket, own }: { ticket: TicketSummary; own?: boolean }) {
   const items = useSlot('board.card_field', { ticket })
   const readOnly = !can(useRole(), 'addon.action')
   const shown = items.filter((c) => {
@@ -26,13 +26,13 @@ export function CardFields({ ticket, label }: { ticket: TicketSummary; label?: R
     return data && Object.keys(data).length > 0
   })
   if (shown.length === 0) return null
+  const views = shown.map((c) => <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact readOnly={readOnly} />)
+  if (!own) return <>{views}</>
   return (
-    <>
-      {label}
-      {shown.map((c) => (
-        <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact readOnly={readOnly} />
-      ))}
-    </>
+    <span title="The epic's own estimate, not a sum of its children" className="inline-flex items-center gap-1 rounded-full border border-dashed border-border-strong pl-1.5">
+      <span className="text-[11px] text-text-faint">own</span>
+      {views}
+    </span>
   )
 }
 

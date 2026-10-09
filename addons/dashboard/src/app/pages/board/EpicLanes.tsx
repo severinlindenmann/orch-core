@@ -209,11 +209,7 @@ function LaneHeader({
         </span>
         {emptyNote && <span className="text-[12px] text-text-faint">{emptyNote}</span>}
         <ColumnSums tickets={tickets} />
-        {epic && (
-          <span title="The epic's own estimate, not a sum of its children" className="inline-flex items-center gap-1">
-            <CardFields ticket={epic} label={<span className="text-[11px] text-text-faint">own</span>} />
-          </span>
-        )}
+        {epic && <CardFields ticket={epic} own />}
       </div>
     </div>
   )

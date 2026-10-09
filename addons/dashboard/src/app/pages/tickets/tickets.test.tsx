@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
-import { mockStore } from '@/api/client'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('Tickets page', () => {
@@ -162,13 +162,16 @@ describe('Tickets grouped by epic (N2)', () => {
     mockStore.sim.stopAll()
   }, 30_000)
 
-  it('a search hit inside a big epic is shown and j/k reach it', async () => {
+  it('a search hit inside a big epic is shown and j reaches it', async () => {
     const { user } = renderApp('/tickets', { viewer: 'p_sev', setup: (st) => st.reset('busy') })
     const table = await screen.findByRole('table', { name: 'Tickets' })
     await within(table).findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, { timeout: 8000 })
     const kid = mockStore.ticket(mockStore.ticket('DEMO-0100')!.children![7])!
     await user.type(screen.getByRole('searchbox', { name: 'Search tickets' }), kid.title)
     await waitFor(() => expect(ticketRows(table).some((r) => r.dataset.key === kid.key)).toBe(true), { timeout: 8000 })
+    await user.click(document.body)
+    for (let i = 0; i < 25 && (document.activeElement as HTMLElement | null)?.dataset.key !== kid.key; i++) await user.keyboard('j')
+    expect((document.activeElement as HTMLElement | null)?.dataset.key).toBe(kid.key)
     mockStore.sim.stopAll()
   }, 30_000)
 
@@ -177,5 +180,13 @@ describe('Tickets grouped by epic (N2)', () => {
     const table = await screen.findByRole('table', { name: 'Tickets' })
     await within(table).findByText('DEMO-0043')
     expect(groupRows(table).length).toBeGreaterThan(0)
+  })
+
+  it('if the viewer cannot be loaded the list shows an error with Retry', async () => {
+    vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    renderApp('/tickets')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load tickets/)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    vi.restoreAllMocks()
   })
 })

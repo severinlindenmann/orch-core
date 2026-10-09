@@ -41,7 +41,7 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
   })
 
   it('the board scrolls inside its own region: overflow-x-auto and min-w-0, and its parents do not overflow', async () => {
-    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'none' }) } })
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'none' }) } })
     const col = await screen.findByRole('region', { name: 'Backlog' }, T)
     const scroller = col.parentElement!
     expect(scroller.className).toContain('overflow-x-auto')
@@ -53,7 +53,7 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
   })
 
   it('the grouped board scrolls inside its own region too', async () => {
-    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy') })
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
     await screen.findByRole('region', { name: 'Backlog' }, T)
     const scroller = document.querySelector<HTMLElement>('[data-grouped="epic"]')!
     expect(scroller.className).toContain('overflow-x-auto')

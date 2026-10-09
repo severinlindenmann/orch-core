@@ -35,6 +35,7 @@ import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
 import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
 import { toastApiError } from '@/app/toast'
+import { LoadFailed } from '@/components/LoadFailed'
 
 /** Left/right jump to the neighbouring column; up/down nudge. Without this the keyboard moves 25px per press. */
 const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
@@ -171,7 +172,8 @@ export function BoardPage() {
   const refocus = useRef<{ key: string; status: Status } | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = meQ.data
   const [display, setDisplay] = useBoardDisplay(me?.person)
   const ticketsKey = ['board', wsId] as const
   const { data: tickets = [], isPending } = useQuery({
@@ -316,7 +318,9 @@ export function BoardPage() {
         }
         onJump={jump}
       />
-      {isPending || !me ? (
+      {meQ.isError ? (
+        <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
+      ) : isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading board…</p>
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />

@@ -24,6 +24,7 @@ import { SavedViews } from './SavedViews'
 import { TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 import { toastApiError } from '@/app/toast'
+import { LoadFailed } from '@/components/LoadFailed'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -115,7 +116,8 @@ export function TicketsPage() {
   const wsId = workspace?.id
   const { data: addons = [] } = useAddons()
 
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = meQ.data
   const role = useRole()
   const canBulk = can(role, 'ticket.move')
 
@@ -301,7 +303,9 @@ export function TicketsPage() {
         onClear={clear}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
-      {isPending || !me ? (
+      {meQ.isError ? (
+        <LoadFailed what="tickets" onRetry={() => void meQ.refetch()} />
+      ) : isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading tickets…</p>
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">

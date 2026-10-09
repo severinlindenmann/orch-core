@@ -32,10 +32,18 @@ export class Simulator {
         return
       }
       const handle = this.clock.setTimeout(() => {
-        steps[i].run(this.store)
-        // A step may end its own script (stop) or replace it (play): then nothing more of this run is scheduled.
-        if (this.timers.get(id) !== handle) return
-        next(i + 1)
+        let finished = false
+        try {
+          steps[i].run(this.store)
+          finished = true
+        } finally {
+          // A step may end its own script (stop) or replace it (play): then nothing more of this run is scheduled.
+          // A step that throws ends the script (the error still surfaces), so running() never lists a dead one.
+          if (this.timers.get(id) === handle) {
+            if (finished) next(i + 1)
+            else this.timers.delete(id)
+          }
+        }
       }, steps[i].afterMs)
       this.timers.set(id, handle)
     }

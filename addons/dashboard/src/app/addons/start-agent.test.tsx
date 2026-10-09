@@ -1,10 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
+/** The first wait of a test also covers the lazy page chunks and a cold worker. */
+const FIRST = { timeout: 10_000 }
 const wsOf = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const started = () => mockStore.wsEventsOf(wsOf(mockStore)).filter((e) => e.type === 'agent.started')
 const COMMAND = "orch session start --in background DEMO-0044 -- claude '/orch:work DEMO-0044'"
@@ -19,15 +21,20 @@ const playRun = (ms: number) => (s: MockStore) => {
   vi.useRealTimers()
 }
 
+// Warm the lazily loaded pages and renderers once, so no test pays for the first import inside its first wait.
+beforeAll(async () => {
+  await Promise.all([import('@/app/pages/ticket'), import('@/app/pages/today'), import('@/app/pages/agents'), import('@/app/pages/AddonPage'), import('@/addon-ui/AddonForm')])
+}, 30_000)
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
-describe('start agent on the ticket rail', () => {
+describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
   it('shows the exact command; Start opens orch\'s own dialog, and confirming there starts the run', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
-    expect(await screen.findByText(code(COMMAND), {}, T)).toBeInTheDocument()
+    expect(await screen.findByText(code(COMMAND), {}, FIRST)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Start' }))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByText(code(COMMAND))).toBeInTheDocument()
@@ -58,7 +65,7 @@ describe('start agent on the ticket rail', () => {
         })
       },
     })
-    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Start Codex on DEMO-0044' }, T)
     const facts = within(dialog).getByLabelText('What orch will start')
     expect(facts.textContent).toContain('Rotate warehouse service credentials')
@@ -84,14 +91,14 @@ describe('start agent on the ticket rail', () => {
         })
       },
     })
-    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(await within(dialog).findByText(/orch cannot start what this addon asked for/, {}, T)).toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: 'Start agent' })).toBeNull()
   })
   it('Cancel starts nothing', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
     expect(started()).toHaveLength(0)
@@ -101,7 +108,7 @@ describe('start agent on the ticket rail', () => {
       viewer: 'p_sev',
       setup: (s) => void s.revokeGrant(wsOf(s), 'gr_01J9Z8', { kind: 'person', id: 'p_sev' }),
     })
-    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Sign a grant and start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByText(/Issues you a grant: all tickets in this workspace, 8 h/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Sign with Touch ID' }))
@@ -117,42 +124,42 @@ describe('start agent on the ticket rail', () => {
         s.setViewer('p_lea')
       },
     })
-    await user.click(await screen.findByRole('button', { name: 'Start' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0048' }, T)
     expect(within(dialog).getByText(/You have no active grant in this workspace/)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Start agent' })).toBeDisabled()
   })
   it('a viewer sees the panel read only', async () => {
     renderApp('/ticket/DEMO-0048', { viewer: 'p_tom' })
-    expect(await screen.findByRole('button', { name: 'Start' }, T)).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Start' }, FIRST)).toBeDisabled()
   })
   it('while a run is on, the rail shows it and Stop ends it and releases the claim', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: playRun(4000) })
-    expect(await screen.findByText(/T1 Create new service principal/, {}, T)).toBeInTheDocument()
+    expect(await screen.findByText(/T1 Create new service principal/, {}, FIRST)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     await waitFor(() => expect(mockStore.ticket('DEMO-0044')!.claim).toBeNull(), T)
     expect(mockStore.sim.running()).toEqual([])
   })
 })
 
-describe('the run is visible live across the app', () => {
+describe('the run is visible live across the app', { timeout: 20_000 }, () => {
   it('Today: the blocking question lands in Needs you for the viewer and the agent is at work', async () => {
     renderApp('/', { viewer: 'p_sev', setup: playRun(15_000) })
-    expect(await screen.findByText(/T1 is done\. Go on with T2/, {}, T)).toBeInTheDocument()
+    expect(await screen.findByText(/T1 is done\. Go on with T2/, {}, FIRST)).toBeInTheDocument()
     const atWork = screen.getByRole('region', { name: 'Agents at work' })
     expect(within(atWork).getByText('Rotate warehouse service credentials')).toBeInTheDocument()
   })
   it('Agents: the session is listed, waiting on you', async () => {
     renderApp('/agents', { viewer: 'p_sev', setup: playRun(15_000) })
     const session = started()[0]?.session as string
-    const tree = await screen.findByRole('tree', { name: 'Sessions' }, T)
+    const tree = await screen.findByRole('tree', { name: 'Sessions' }, FIRST)
     const item = within(tree).getByRole('treeitem', { name: new RegExp(session) })
     expect(within(item).getByText('waiting')).toBeInTheDocument()
     expect(within(item).getByText('waiting on you')).toBeInTheDocument()
   })
   it('the Start agent page lists the run with Stop, and the ticket form', async () => {
     renderApp('/addon/start-agent/start', { viewer: 'p_sev', setup: playRun(2000) })
-    const table = await screen.findByRole('table', {}, T)
+    const table = await screen.findByRole('table', {}, FIRST)
     expect(within(table).getByText('DEMO-0044')).toBeInTheDocument()
     expect(within(table).getByRole('button', { name: 'Stop' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: /Ticket/ })).toBeInTheDocument()

@@ -14,7 +14,9 @@ export const FORMATTERS: Record<string, (v: unknown) => string> = {
   /** A real token count: "84k", "2.4 M". */
   ktok: (v) => {
     const n = Number(v)
-    return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} M` : `${Math.round(n / 1000)}k`
+    const k = Math.round(n / 1000)
+    // Decide the unit after rounding, so 999,600 reads "1.0 M", never "1000k".
+    return k >= 1000 ? `${(n / 1_000_000).toFixed(1)} M` : `${k}k`
   },
   tokens: (v) => `${Math.round((Number(v) * 5800) / 1000)}k`,
 }

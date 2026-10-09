@@ -80,7 +80,7 @@ function groupOf(type: string, ws: boolean): Group {
 }
 
 /** Grant, member and addon-grant events tell who may do what: owners and maintainers only. */
-const isSensitive = (type: string) => type.startsWith('grant.') || type.startsWith('member.') || type === 'addon.granted' || type === 'addon.action_signed'
+const isSensitive = (type: string) => type.startsWith('grant.') || type.startsWith('member.') || type === 'addon.granted' || type === 'addon.action_signed' || type === 'addon.decided'
 
 function dayLabel(day: string, today: string): string {
   const d = new Date(`${day}T00:00:00Z`)
@@ -121,7 +121,8 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
     if (!canSeeTicket(c, key)) continue
     for (const e of c.store.eventsOf(key)) if (e.type !== 'people.set') push(e, key, key)
   }
-  for (const e of c.store.wsEventsOf(c.ws)) if (sees || !isSensitive(e.type)) push(e, '#ws', undefined)
+  // A workspace event about a ticket (addon.decided) follows that ticket's visibility.
+  for (const e of c.store.wsEventsOf(c.ws)) if ((sees || !isSensitive(e.type)) && (typeof e.ticket !== 'string' || canSeeTicket(c, e.ticket))) push(e, '#ws', undefined)
   return out.sort((a, b) => b.at.localeCompare(a.at) || (a.src === b.src ? b.seq - a.seq : a.src.localeCompare(b.src)))
 }
 

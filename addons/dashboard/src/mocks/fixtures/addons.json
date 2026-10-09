@@ -265,7 +265,7 @@
         "action": "share_once"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true } },
     "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
     "update": null
   },

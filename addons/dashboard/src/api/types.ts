@@ -502,6 +502,12 @@ export interface ActionMeta {
    * host does not move the workspace cursor (other clients do not refetch).
    */
   kind?: 'navigation'
+  /**
+   * The action answers an addon decision (`AddonDecision.action`). Core decides who may answer (`addon.decide`),
+   * checks the decision is open for the caller and the option is one of its options (400 validation.option), and
+   * records `addon.decided` in the workspace log. Today asks for presence (core's signing prompt) first.
+   */
+  decision?: boolean
 }
 
 export interface AddonUpdate {
@@ -592,7 +598,7 @@ export type WorkspaceEventType =
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'
-  | 'addon.settings_saved' | 'addon.action_signed'
+  | 'addon.settings_saved' | 'addon.action_signed' | 'addon.decided'
   | 'grant.issued' | 'grant.revoked'
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'

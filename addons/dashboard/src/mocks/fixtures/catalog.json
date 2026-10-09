@@ -288,7 +288,7 @@
     ],
     "actions": {
       "save_settings": { "minRole": "owner" },
-      "decide": { "minRole": "maintainer" },
+      "decide": { "minRole": "maintainer", "decision": true },
       "start_close": { "minRole": "member", "kind": "navigation" },
       "cancel_close": { "minRole": "member", "kind": "navigation" }
     }
@@ -424,7 +424,7 @@
     ],
     "actions": {
       "save_settings": { "minRole": "owner" },
-      "escalate": { "minRole": "maintainer" }
+      "escalate": { "minRole": "maintainer", "decision": true }
     }
   },
   {
@@ -558,27 +558,11 @@
       }
     ],
     "actions": {
-      "pause": {
-        "minRole": "maintainer",
-        "confirm": "sign",
-        "label": "Pause the AI Factory"
-      },
-      "resume": {
-        "minRole": "maintainer",
-        "confirm": "sign",
-        "label": "Resume the AI Factory"
-      },
-      "permit": {
-        "minRole": "maintainer"
-      },
-      "watch": {
-        "minRole": "member",
-        "label": "Watch live"
-      },
-      "stop_watching": {
-        "minRole": "member",
-        "label": "Stop watching"
-      }
+      "pause": { "minRole": "maintainer", "confirm": "sign", "label": "Pause the AI Factory" },
+      "resume": { "minRole": "maintainer", "confirm": "sign", "label": "Resume the AI Factory" },
+      "permit": { "minRole": "maintainer", "decision": true },
+      "watch": { "minRole": "member", "label": "Watch live" },
+      "stop_watching": { "minRole": "member", "label": "Stop watching" }
     }
   },
   {
@@ -635,7 +619,8 @@
       "arm": { "minRole": "maintainer", "confirm": "sign", "label": "Arm a schedule" },
       "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disarm a schedule" },
       "run_now": { "minRole": "member", "label": "Run now" },
-      "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" }
+      "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" },
+      "finding": { "minRole": "maintainer", "decision": true }
     }
   }
 ]

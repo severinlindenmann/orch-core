@@ -1,6 +1,6 @@
 import { isModelName } from '@/api/launch'
 import type { AddonDecision } from '@/api/types'
-import { canSeeTicket, conflict, getAddon, markDecided, openDecisions, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, markDecided, registerAddon, type AddonCtx } from './registry'
 import type { LaunchPlan } from '../sessions'
 
 // models (model routing, capability `launch`; v1 addons/model-routing): which model a start-agent session starts on.
@@ -136,11 +136,10 @@ registerAddon({
 
   actions: {
     escalate(ctx) {
+      // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, body } = ctx
-      const id = String(body.id ?? '')
-      const open = openDecisions(getAddon('models'), state, [], ctx).find((d) => d.id === id)
-      if (!open || !canSeeTicket(ctx, open.ticket)) return conflict('decision.closed', 'That decision is closed.')
-      markDecided(state, id)
+      const open = ctx.decision!
+      markDecided(state, open.id)
       if (body.option === 'strong') {
         nextStrong(state)[open.ticket!] = true
         return { ok: true, message: `The next start on ${open.ticket} runs on Strong.`, changed: true }

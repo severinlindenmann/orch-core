@@ -430,6 +430,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'pushed the records'
     case 'quick.made_ticket':
       return 'made a quick task into a ticket'
+    case 'addon.decided':
+      return `decided ${t(e.option, 'an option')} on a ${t(e.name, 'an addon')} decision`
     case 'addon.action_signed':
       return `signed ${t(e.action, 'an action')} of ${t(e.name, 'an addon')}`
     case 'permit.granted':

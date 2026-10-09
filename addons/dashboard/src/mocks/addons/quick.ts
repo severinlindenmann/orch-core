@@ -2,7 +2,7 @@ import type { AddonActionResult, AddonDecision, NewTicketRequest } from '@/api/t
 import { briefs } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore, StoreFailure } from '../store'
-import { canSeeTicket, conflict, invalid, markDecided, notFound, refusal, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, invalid, markDecided, notFound, registerAddon, type AddonCtx } from './registry'
 
 // quick tasks: one-line jobs too small for a ticket (v1 docs/quick-tasks.md).
 //  - Keys Q-001..; status open -> claimed -> done (with one line of proof). Past the limit (commits, files) a task is
@@ -260,20 +260,16 @@ registerAddon({
       if (!q) return notFound('No such quick task.')
       return makeTicket(ctx, q)
     },
+    // A decision action: core checked who decides, that it is open and that the option is one of its options.
     decide(ctx) {
-      const id = String(ctx.body.id ?? '')
-      const q = outgrew(ctx.state).find((x) => decisionId(x) === id)
-      const done = (ctx.state.decided as string[] | undefined) ?? []
-      if (!q || done.includes(id)) return conflict('decision.closed', 'That decision is closed.')
+      const id = ctx.decision!.id
+      const q = outgrew(ctx.state).find((x) => decisionId(x) === id)!
       if (ctx.body.option === 'ticket') return makeTicket(ctx, q)
-      if (ctx.body.option === 'more') {
-        q.extra_files = (q.extra_files ?? 0) + MORE_FILES
-        q.status = 'open'
-        delete q.claimed_by
-        markDecided(ctx.state, id)
-        return { ok: true, message: `${q.id} may change ${MORE_FILES} more files. It is open again.`, changed: true }
-      }
-      return refusal(400, 'validation.option', 'Choose one of the options.')
+      q.extra_files = (q.extra_files ?? 0) + MORE_FILES
+      q.status = 'open'
+      delete q.claimed_by
+      markDecided(ctx.state, id)
+      return { ok: true, message: `${q.id} may change ${MORE_FILES} more files. It is open again.`, changed: true }
     },
     save_settings: ({ state, body }) => {
       state.settings = body.formData ?? {}

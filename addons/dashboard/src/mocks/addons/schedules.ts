@@ -1,7 +1,7 @@
 import type { AddonDecision, NewTicketRequest } from '@/api/types'
 import type { StoreFailure } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, getAddon, openDecisions, registerAddon } from './registry'
+import { canSeeTicket, registerAddon } from './registry'
 
 // schedules (later, preview; v1 docs/schedules.md): agent work that starts without anyone typing.
 //  - Three kinds. `schedule`: a skill on a clock. `listener`: a skill when an orch event happens. `recurring`: no
@@ -325,17 +325,14 @@ registerAddon({
     },
 
     finding(ctx) {
+      // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, store, ws, body } = ctx
-      const id = String(body.id ?? '')
-      const open = openDecisions(getAddon('schedules'), state, [], ctx).find((d) => d.id === id)
-      const run = open && runsOf(state).find((r) => decisionId(r) === id)
-      if (!open || !run?.finding) return fail(409, 'decision.closed', 'That decision is closed.')
-      if (body.option !== 'file' && body.option !== 'dismiss') return fail(400, 'validation.option', 'Choose File ticket in backlog or Dismiss.')
+      const run = runsOf(state).find((r) => decisionId(r) === ctx.decision!.id)!
       if (body.option === 'dismiss') {
         run.findingState = 'dismissed'
         return { ok: true, message: 'Dismissed.', changed: true }
       }
-      const f = run.finding
+      const f = run.finding!
       const schedule = schedulesOf(state).find((s) => s.id === run.schedule)
       const req: NewTicketRequest = {
         type: f.type,

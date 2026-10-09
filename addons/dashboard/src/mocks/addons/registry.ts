@@ -11,6 +11,11 @@ export interface AddonCtx {
   body: Record<string, unknown>
   /** This addon's state in this workspace (mutable; saved after the action). */
   state: Record<string, unknown>
+  /**
+   * For a decision action (manifest `decision: true`): the open decision core matched and checked (caller may decide,
+   * open now, ticket visible, `body.option` is one of its options). The action only applies the answer.
+   */
+  decision?: AddonDecision
 }
 
 /** An action's result, or a refusal the router turns into an HTTP error (status, code, sentence). */

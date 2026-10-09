@@ -2,7 +2,7 @@ import type { AddonDecision } from '@/api/types'
 import { briefs, tokenOf } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { canSeeTicket, conflict, getAddon, invalid, markDecided, notFound, openDecisions, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, invalid, markDecided, notFound, registerAddon, type AddonCtx } from './registry'
 
 // publish: apps served from the workspace and read-only shares. Addon state is the single source of truth for both;
 // nothing is written to ticket addon data. The ticket panel reads `addon.sharesByTicket.$ticket` (see view()).
@@ -266,13 +266,12 @@ registerAddon({
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
     },
+    // A decision action: core checked who decides, that it is open and that the option is one of its options.
     decide(ctx) {
       const { store, state, body } = ctx
-      const id = String(body.id ?? '')
-      const option = String(body.option ?? '')
-      // The store already refuses a closed decision; look the open one up the same way (runtime list, not the package's).
-      const open = openDecisions(getAddon('publish'), state, store.addons.find((a) => a.name === 'publish')?.decisions ?? [], ctx).find((d) => d.id === id)
-      if (!open || (open.ticket && !canSeeTicket(ctx, open.ticket))) return conflict('decision.closed', 'That decision is closed.')
+      const open = ctx.decision!
+      const id = open.id
+      const option = String(body.option)
       markDecided(state, id)
       if (id === 'dec_publish_failed_build') {
         const ops = apps(state).find((a) => a.id === 'app_ops')

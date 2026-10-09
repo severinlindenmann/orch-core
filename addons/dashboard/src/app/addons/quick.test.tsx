@@ -62,6 +62,7 @@ describe('quick tasks decision on Today', () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup })
     const card = (await screen.findByText('Q-004 outgrew its limit: make it a ticket, or allow 3 more files?', {}, T)).closest('[data-testid^="card-addon:"]') as HTMLElement
     await user.click(within(card).getByRole('button', { name: 'Allow 3 more files' }))
+    await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(screen.queryByText('Q-004 outgrew its limit: make it a ticket, or allow 3 more files?')).not.toBeInTheDocument(), T)
   })
 })

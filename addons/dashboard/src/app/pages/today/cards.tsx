@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ago, displayName, shortHash, useAct, type Directory } from './shared'
 import { addonRule } from '@/addon-ui/addonClasses'
+import { SignPrompt, TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 
 interface CommonProps {
   dir: Directory
@@ -400,6 +401,17 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
   const act = useAct()
   const { workspace } = useWorkspace()
   const id = `addon:${d.id}`
+  // Every answer goes through core's signing prompt first (presence), then core records it (addon.decided).
+  const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
+  const sign = async (o: AddonDecision['options'][number]) => {
+    setSigning(null)
+    if (!workspace) return
+    await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
+    await act(id, () => api.runAddonAction(workspace.id, d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket }), {
+      toast: `${d.title}: ${o.label}`,
+      note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed with Touch ID` },
+    })
+  }
   return (
     <div data-testid={`card-${id}`}>
       <AddonFrame addon={d.addon} title={d.title} slot="decision">
@@ -414,13 +426,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
                 variant={o.primary ? 'default' : 'outline'}
                 className={cn(o.primary && PRIMARY)}
                 disabled={readOnly}
-                onClick={() =>
-                  workspace &&
-                  void act(id, () => api.runAddonAction(workspace.id, d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket }), {
-                    toast: `${d.title}: ${o.label}`,
-                    note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed by orch` },
-                  })
-                }
+                onClick={() => setSigning(o)}
               >
                 {o.label}
               </Button>
@@ -437,10 +443,20 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
             )}
           </div>
           <p className={cn('border-t pt-2 text-xs text-text-faint', addonRule)}>
-            requested by addon <span className="font-mono">{d.addon}</span> · confirmed and signed by orch
+            requested by addon <span className="font-mono">{d.addon}</span> · you sign the answer in orch, and orch records it
           </p>
         </div>
       </AddonFrame>
+      {signing && (
+        <SignPrompt
+          title={`Decide: ${d.title}`}
+          covers={[`Your answer: ${signing.label}`, `Requested by the addon ${d.addon}${d.ticket ? ` about ${d.ticket}` : ''}`, `In workspace ${workspace?.prefix ?? ''}`, 'Signed as you, with your own key']}
+          onClose={() => setSigning(null)}
+          onSign={() => void sign(signing)}
+        >
+          <p className="text-[13px] text-text">{d.question}</p>
+        </SignPrompt>
+      )}
     </div>
   )
 }

@@ -51,6 +51,7 @@ describe('the recurring finding on Today', () => {
     const q = await screen.findByText('Dependency update · Monday: file it?', {}, T)
     const card = q.closest('[data-testid^="card-addon:"]') as HTMLElement
     await user.click(within(card).getByRole('button', { name: 'File ticket in backlog' }))
+    await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(mockStore.listTickets(wsOf(mockStore)).some((t) => t.title === 'Update dependencies, week 41' && t.status === 'backlog')).toBe(true), T)
     await waitFor(() => expect(screen.queryByText('Dependency update · Monday: file it?')).not.toBeInTheDocument(), T)
   })

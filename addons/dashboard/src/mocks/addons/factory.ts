@@ -3,7 +3,7 @@ import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, conflict, getAddon, notFound, openDecisions, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -349,12 +349,9 @@ registerAddon({
 
   actions: {
     permit(ctx) {
+      // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, store, body } = ctx
-      const id = String(body.id ?? '')
-      const open = openDecisions(getAddon('factory'), state, [], ctx).find((d) => d.id === id)
-      const permit = open && permitsOf(state).find((p) => `factory.permit:${p.id}` === id)
-      if (!open || !permit || !canSeeTicket(ctx, permit.ticket)) return conflict('decision.closed', 'That decision is closed.')
-      if (body.option !== 'once' && body.option !== 'epic' && body.option !== 'refuse') return { ok: false, status: 400, code: 'validation.option', message: 'Choose Grant once, Grant for this epic or Refuse.' }
+      const permit = permitsOf(state).find((p) => `factory.permit:${p.id}` === ctx.decision!.id)!
       const epic = state.epic as string
       if (body.option === 'refuse') {
         permit.state = 'refused'

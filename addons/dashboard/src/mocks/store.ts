@@ -889,10 +889,21 @@ export class MockStore {
     // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
     if (meta?.confirm === 'spawn_agent' && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
     if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
-    // A decision that is no longer open (already decided, or its condition went away), or is about a ticket the caller cannot see, is closed for every addon.
-    const decision = typeof body.id === 'string' ? pkg?.decisions?.find((d) => d.id === body.id && d.action === id) : undefined
-    if (decision && !openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer }).some((d) => d.id === decision.id && (!d.ticket || this.isVisible(d.ticket)))) return refuse(409, 'decision.closed', 'That decision is closed.')
-    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name) })
+    // A decision action (`decision: true`) is decided by core's one rule, for every addon: owners and maintainers only,
+    // the decision must be open for this caller now (runtime decisions included) and about a ticket they can see, and
+    // the option must be one of its options. The addon then only applies the answer; core records it (addon.decided).
+    let decision: AddonDecision | undefined
+    if (meta?.decision) {
+      if (!can(role, 'addon.decide')) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
+      const open = openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer })
+      decision = open.find((d) => d.id === body.id && d.action === id && (!d.ticket || (this.wsOfKey.get(d.ticket) === ws && this.isVisible(d.ticket))))
+      if (!decision) return refuse(409, 'decision.closed', 'That decision is closed.')
+      if (!decision.options.some((o) => o.key === body.option))
+        return refuse(400, 'validation.option', `Choose ${decision.options.map((o) => o.label).join(', ')}.`)
+    }
+    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
+    if (decision && res.ok) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
     if (meta?.confirm === 'sign' && res.ok) {
       const args: Record<string, string | number | boolean> = {}

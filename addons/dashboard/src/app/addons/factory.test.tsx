@@ -67,6 +67,7 @@ describe('permits on Today', () => {
     expect(within(card).getByRole('button', { name: 'Grant for this epic' })).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Refuse' })).toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Grant once' }))
+    await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(screen.queryByTestId(`card-addon:${id}`)).not.toBeInTheDocument(), T)
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'permit.granted' && e.scope === 'once')).toBe(true)
   })

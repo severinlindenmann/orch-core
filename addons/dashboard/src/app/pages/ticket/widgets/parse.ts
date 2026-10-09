@@ -4,13 +4,10 @@
 // the ticket-wide rules (placement, unique ids, the 40-block cap). A block that breaks any rule keeps its raw text and
 // a one-line `reason`; the page draws it as code. Nothing here executes or fetches anything.
 
-export const MAX_BLOCKS = 40
-export const MAX_BLOCK_BYTES = 64 * 1024
-export const MAX_DEPTH = 8
-export const MAX_STRING = 20_000
-export const MAX_LABEL = 200
-export const MAX_ROWS = 500
-export const MAX_COLUMNS = 50
+import { MORE_CORE, isObj, type CoreType } from './coreTypes'
+import { MAX_BLOCK_BYTES, MAX_BLOCKS, MAX_COLUMNS, MAX_DEPTH, MAX_LABEL, MAX_ROWS, MAX_STRING } from './limits'
+
+export { MAX_BLOCK_BYTES, MAX_BLOCKS, MAX_COLUMNS, MAX_DEPTH, MAX_LABEL, MAX_ROWS, MAX_STRING }
 
 export type Layer = 'type' | 'widget' | 'html'
 
@@ -202,11 +199,10 @@ const AC_RE = /^AC[1-9][0-9]*$/
 
 /** Types the format defines but this mockup does not draw. */
 const OTHER_TYPES = new Set([
-  'text', 'callout', 'stats', 'chips', 'links', 'health', 'gates', 'tests', 'runs', 'spark', 'series', 'bullet', 'scores', 'gantt', 'diffstat', 'diff', 'options', 'matrix', 'risk',
+  'text', 'chips', 'links', 'health', 'tests', 'runs', 'bullet', 'scores', 'gantt', 'diffstat', 'options', 'matrix', 'risk',
   'deps', 'flow', 'trail', 'deploy', 'compare', 'screens', 'video', 'gallery', 'preview', 'review', 'summary',
 ])
 
-const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 type Checked<T> = { ok: true; value: T } | { ok: false; reason: string }
 const bad = (reason: string): { ok: false; reason: string } => ({ ok: false, reason })
 
@@ -309,12 +305,6 @@ function check(raw: string): Checked<WidgetSpec> {
 const label = (s: string) => s.length <= MAX_LABEL
 const cellOk = (c: unknown) => c === null || ['string', 'number', 'boolean'].includes(typeof c)
 
-interface CoreType {
-  keys: string[]
-  /** A one-line reason, or undefined when the block is valid. */
-  check: (v: Record<string, unknown>) => string | undefined
-}
-
 /** bars `data` as ordered [label, value] pairs (the object form keeps insertion order). */
 export function barPairs(data: unknown): [string, number][] {
   if (Array.isArray(data)) return data.map((p) => [String((p as unknown[])[0]), (p as unknown[])[1] as number])
@@ -322,6 +312,7 @@ export function barPairs(data: unknown): [string, number][] {
 }
 
 const CORE: Record<string, CoreType> = {
+  ...MORE_CORE,
   bars: {
     keys: ['unit', 'data', 'highlight'],
     check(v) {
@@ -390,7 +381,8 @@ const CORE: Record<string, CoreType> = {
   },
 }
 
-export const CORE_TYPES = ['bars', 'table', 'checks', 'kv'] as const
+/** Every core type core draws (the first four here, the rest in coreTypes.ts). */
+export const CORE_TYPES = ['bars', 'table', 'checks', 'kv', 'stats', 'series', 'spark', 'gates', 'diff', 'callout', 'timeline', 'progress'] as const
 
 // ------------------------------------------------------------------ ticket-wide rules
 

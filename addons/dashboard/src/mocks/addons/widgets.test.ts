@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { addonActive } from '@/api/addons'
-import { TEMPLATES, templateDigest } from '@/api/widgetTemplates'
+import { findTemplate, TEMPLATES, templateDigest } from '@/api/widgetTemplates'
 import { sha256Hex } from '@/api/sha256'
 import { createMockStore } from '@/mocks/store'
+import { CORE_TYPES, parseSection } from '@/app/pages/ticket/widgets/parse'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -24,7 +25,8 @@ describe('widgets addon (starts installed)', () => {
     const st = (await api.getAddonState(ws, 'widgets')) as unknown as { templates: { name: string; version: number; digest: string }[]; coreTypes: { type: string }[] }
     expect(st.templates.map((t) => `${t.name}@${t.version}`)).toEqual(expect.arrayContaining(['before-after@1', 'line-chart@1', 'option-prototype@1']))
     for (const t of st.templates) expect(t.digest).toMatch(/^[0-9a-f]{64}$/)
-    expect(st.coreTypes.map((c) => c.type)).toEqual(['bars', 'table', 'checks', 'kv'])
+    expect(st.coreTypes.map((c) => c.type).sort()).toEqual([...CORE_TYPES].sort())
+    expect(st.templates.map((t) => t.name)).toEqual(expect.arrayContaining(['image-compare', 'flow-diagram', 'table-explorer']))
   })
 })
 
@@ -42,6 +44,22 @@ describe('template registry', () => {
   })
 })
 
+describe('gallery state', () => {
+  it('is a list of nodes: two group headings, then per type a heading and a core-drawn widget node with its source', async () => {
+    const { api, ws } = setup()
+    const st = (await api.getAddonState(ws, 'widgets')) as unknown as { gallery: { type: string; children?: { type: string; block?: string; source?: boolean }[]; text?: string }[] }
+    const heads = st.gallery.filter((n) => n.type === 'markdown').map((n) => n.text!.split('\n')[0])
+    expect(heads).toEqual([`## Core types (${CORE_TYPES.length})`, `## Templates (${TEMPLATES.length})`])
+    const entries = st.gallery.filter((n) => n.type === 'stack')
+    expect(entries).toHaveLength(CORE_TYPES.length + TEMPLATES.length)
+    for (const e of entries) {
+      expect(e.children!.map((c) => c.type)).toEqual(['markdown', 'widget'])
+      expect(e.children![1].source).toBe(true)
+      expect(() => JSON.parse(e.children![1].block!)).not.toThrow()
+    }
+  })
+})
+
 describe('seeded widget fixtures pin what they show', () => {
   const ws = () => setup()
   it('every html widget pin matches the sha256 of the artifact content, except the one seeded to mismatch', async () => {
@@ -55,12 +73,16 @@ describe('seeded widget fixtures pin what they show', () => {
     expect(t.body.verification).toContain(good.sha256)
     expect(t.body.verification).not.toContain(other.sha256) // pinned to an older version of the page
   })
-  it('every template widget in the seed pins the current digest, except the drift case', () => {
+  it('every template widget in the seed pins the current digest of its own template, except the drift case', () => {
     const { store } = ws()
-    const pins = new Set(TEMPLATES.map(templateDigest))
-    const all = ['DEMO-0043', 'DEMO-0046'].flatMap((k) => Object.values(store.ticket(k)!.body).flatMap((t) => [...(t ?? '').matchAll(/"widget"\s*:\s*"([^"@]+)@\d+"\s*,\s*"sha256"\s*:\s*"([0-9a-f]{64})"/g)].filter((m) => TEMPLATES.some((t) => t.name === m[1])).map((m) => m[2])))
-    expect(all.length).toBeGreaterThanOrEqual(4)
-    expect(all.filter((p) => pins.has(p)).length).toBeGreaterThanOrEqual(3)
-    expect(all.filter((p) => !pins.has(p)).length).toBe(1)
+    // Parse the seeded blocks as the page does (strict JSON), never by key order.
+    const blocks = ['DEMO-0043', 'DEMO-0046'].flatMap((k) =>
+      Object.entries(store.ticket(k)!.body).flatMap(([section, text]) => parseSection(text ?? '', section).flatMap((s) => (s.kind === 'widget' && s.block.spec?.layer === 'widget' ? [{ k, spec: s.block.spec }] : []))),
+    )
+    const known = blocks.filter((b) => findTemplate(b.spec.widget!))
+    expect(known.length).toBeGreaterThanOrEqual(4)
+    const drifted = known.filter((b) => b.spec.sha256 !== templateDigest(findTemplate(b.spec.widget!)!)).map((b) => `${b.k} ${b.spec.id}`)
+    // The one drift case is DEMO-0046's "rule-diff" block, on purpose: every other template block is current.
+    expect(drifted).toEqual(['DEMO-0046 rule-diff'])
   })
 })

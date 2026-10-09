@@ -28,6 +28,14 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
     if (!t) return { ok: false, reason: `unknown widget template "${spec.widget}"`, plain: 'This widget uses a template orch does not know. Ask its author to fix the block.' }
     const now = templateDigest(t)
     if (now !== spec.sha256) return { ok: false, reason: `Drift: ${spec.widget} no longer matches this block's pin (the template is now ${now.slice(0, 12)}…, the block pins ${spec.sha256!.slice(0, 12)}…). It is not shown until the block is re-pinned.`, plain: DRIFT }
+    // Fail closed: data the template's check refuses never reaches the frame.
+    let why: string | undefined
+    try {
+      why = t.check?.(spec.data ?? Object.create(null))
+    } catch {
+      why = 'data could not be read'
+    }
+    if (why) return { ok: false, reason: `data does not fit ${spec.widget}: ${why}`, plain: `This widget's data does not fit the ${t.title.toLowerCase()} template, so it is not shown. Ask its author to fix the block.` }
     return { ok: true, html: frameDocument(t.html, spec.data), layerLabel: spec.widget! }
   }
   if (spec.artifactTicket && spec.artifactTicket !== ticket.key)
@@ -131,7 +139,7 @@ function Drawn({ block, spec, res, agentHtml }: { block: Block; spec: WidgetSpec
   const [text, setText] = useState(false)
   const [big, setBig] = useState(false)
   const framed = spec.layer !== 'type'
-  const title = spec.title ?? (framed ? (spec.widget ?? spec.artifact ?? 'Widget') : (spec.type ?? 'Widget'))
+  const title = spec.title ?? (framed ? (spec.widget ?? spec.artifact ?? 'Widget') : spec.type ? spec.type[0].toUpperCase() + spec.type.slice(1) : 'Widget')
   const alt = framed ? (spec.caption ?? 'No text alternative given.') : widgetText(spec)
   const meta = (
     <>

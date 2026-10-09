@@ -154,3 +154,36 @@ describe('mixed tickets', () => {
     expect(frames()).toHaveLength(0)
   })
 })
+
+describe('catalog examples in the demo tickets', () => {
+  it('DEMO-0043 shows stats and a series next to its checks, all drawn by core', async () => {
+    renderApp('/ticket/DEMO-0043')
+    await waitFor(() => expect(widget('seed-load')).toBeTruthy(), T)
+    expect(within(widget('seed-load')).getByText('+9 since 09:00')).toBeInTheDocument()
+    expect(within(widget('seed-load')).getByText('Warning')).toBeInTheDocument()
+    expect(widget('seed-load').closest('section')).toHaveAttribute('aria-labelledby', 'sec-context')
+    expect(widget('seed-time').querySelectorAll('[data-series]')).toHaveLength(2)
+    expect(widget('seed-time').closest('section')).toHaveAttribute('aria-labelledby', 'sec-verification')
+    expect(widget('ac-status')).toBeTruthy()
+    for (const id of ['seed-load', 'seed-time']) expect(widget(id).querySelector('iframe')).toBeNull()
+  })
+  it('DEMO-0045 shows a timeline and a diff in Current state', async () => {
+    renderApp('/ticket/DEMO-0045')
+    await waitFor(() => expect(widget('so-far')).toBeTruthy(), T)
+    expect(within(widget('so-far')).getByText('Failed')).toBeInTheDocument()
+    expect(widget('mask-fix').querySelectorAll('[data-line="add"]')).toHaveLength(2)
+    expect(widget('mask-fix').closest('section')).toHaveAttribute('aria-labelledby', 'sec-current_state')
+  })
+  it('DEMO-0046 shows a flow and an image compare in the sandbox, and a callout drawn by core', async () => {
+    renderApp('/ticket/DEMO-0046')
+    await waitFor(() => expect(widget('dup-flow')).toBeTruthy(), T)
+    for (const id of ['dup-flow', 'report-card']) {
+      const f = widget(id).querySelector('iframe')!
+      expect(f, id).toHaveAttribute('sandbox', 'allow-scripts')
+      expect(widget(id)).toHaveAttribute('data-addon', 'widgets')
+    }
+    expect(widget('report-card').querySelector('iframe')!.srcdoc).toContain('data:image/png;base64,')
+    expect(widget('wait-rule').querySelector('[data-callout="warn"]')).toHaveTextContent(/^Warning: Do not merge/)
+    expect(widget('wait-rule')).not.toHaveAttribute('data-addon')
+  })
+})

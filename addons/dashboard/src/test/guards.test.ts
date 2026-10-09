@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // Every non-test source file, read as text by Vite (keys look like "/src/app/router.tsx").
@@ -25,7 +27,6 @@ describe('orange guard (orange is reserved for addons)', () => {
     /(?<![\w-])(?:[a-z0-9-]+:)*[a-z]+-orange-\d/, // Tailwind palette: bg-orange-500, text-orange-300 ...
     /(?<![\w-])(?:[a-z0-9-]+:)*(?:bg|text|border|ring|fill|stroke|outline|from|to|via|shadow|divide|decoration|accent|caret)-(?:on-)?addon(?:-soft|-border)?(?![\w-])/, // the addon token as a utility
     /var\(--(?:on-)?addon/, // the token used directly
-    /chart-4/, // --chart-4 is the addon orange
     /#f07a2e/i,
     /240,\s*122,\s*46/,
   ]
@@ -38,6 +39,23 @@ describe('orange guard (orange is reserved for addons)', () => {
       })
     }
     expect(hits).toEqual([])
+  })
+  it('no --chart-* token resolves to the addon orange', () => {
+    const css = readFileSync(resolvePath(process.cwd(), 'src/styles/tokens.css'), 'utf8')
+    const tokens = new Map([...css.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].replace(/\/\*.*?\*\//g, '').trim().toLowerCase()]))
+    const resolve = (v: string, depth = 0): string => {
+      const m = /^var\(--([a-z0-9-]+)\)$/.exec(v)
+      return m && depth < 10 && tokens.has(m[1]) ? resolve(tokens.get(m[1])!, depth + 1) : v
+    }
+    const orange = resolve('var(--addon)')
+    expect(orange).toBe('#f07a2e')
+    const charts = [...tokens.keys()].filter((k) => /^chart-\d+$/.test(k))
+    expect(charts.length).toBeGreaterThanOrEqual(4)
+    for (const k of charts) {
+      const v = resolve(tokens.get(k)!)
+      expect(v, k).not.toBe(orange)
+      expect(v, k).not.toMatch(/240,\s*122,\s*46/)
+    }
   })
 })
 

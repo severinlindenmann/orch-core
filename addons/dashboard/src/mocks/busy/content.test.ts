@@ -115,6 +115,13 @@ describe('widgets', () => {
     expect(Math.max(...all.filter((b) => b.spec!.type === 'checks').map((b) => (b.spec!.fields.rows as unknown[]).length))).toBeGreaterThanOrEqual(30)
   })
 
+  it('uses the catalog: every newer core type and every template appears, and each of them draws', () => {
+    const all = heavy().flatMap((x) => x.blocks)
+    const kinds = new Set(all.filter((b) => b.spec && !b.reason).map((b) => b.spec!.type ?? b.spec!.widget?.split('@')[0] ?? 'html'))
+    for (const k of ['series', 'spark', 'stats', 'progress', 'timeline', 'diff', 'gates', 'callout', 'image-compare', 'flow-diagram', 'table-explorer']) expect(kinds.has(k), k).toBe(true)
+    for (const b of all.filter((x) => x.spec?.widget)) expect(findTemplate(b.spec!.widget!)!.check?.(b.spec!.data ?? {}), b.spec!.widget).toBeUndefined()
+  })
+
   it('pins templates to their digest and html pages to the sha256 of the artifact they name', () => {
     let good = 0
     let drifted = 0

@@ -103,6 +103,23 @@ export const frameNode = z.object({
 /** One open decision of this addon (by id), rendered and signed by core in place. The id is looked up in core's list. */
 export const decisionNode = z.object({ type: z.literal('decision'), id: z.string().min(1).max(200) })
 export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
+/**
+ * A ticket widget (format orch.widgets.v1) drawn by core: `block` is the JSON inside an `orch` fence, read by the same
+ * strict parser as ticket text (fail closed). Templates run in the sandboxed frame only on the widgets addon's own
+ * surfaces and only while it is active; any other addon's widget node draws core types only. `source: true` shows the
+ * block beside it with a Copy button (the widgets gallery). Strict: unknown keys are refused, not stripped.
+ */
+export const widgetNode = z.object({ type: z.literal('widget'), block: z.string().max(64 * 1024), source: z.boolean().default(false) }).strict()
+/** A jump list for a page of widget nodes: chips that scroll to the widget with that id on the same page. */
+export const widgetIndexNode = z
+  .object({
+    type: z.literal('widget-index'),
+    groups: z
+      .array(z.object({ label: z.string().max(60), items: z.array(z.object({ label: z.string().max(60), widget: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/) }).strict()).max(40) }).strict())
+      .min(1)
+      .max(6),
+  })
+  .strict()
 
 export const nodeSchema = z.discriminatedUnion('type', [
   stackNode,
@@ -121,6 +138,8 @@ export const nodeSchema = z.discriminatedUnion('type', [
   frameNode,
   terminalNode,
   decisionNode,
+  widgetNode,
+  widgetIndexNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

@@ -25,6 +25,9 @@ const ThemedForm = lazy(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
 const DecisionNode = lazy(() => import('./DecisionNode'))
 const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
+// Ticket widgets (parser, core types, template frames) load on first use too.
+const WidgetNodeView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode'))
+const WidgetIndexView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
 
 interface Runtime {
   addon: string
@@ -150,6 +153,18 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return (
         <Suspense fallback={<Skeleton className="h-12 w-full" />}>
           <DecisionNode addon={addon} id={n.id} />
+        </Suspense>
+      )
+    case 'widget':
+      return (
+        <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+          <WidgetNodeView block={n.block} source={n.source} addon={addon} />
+        </Suspense>
+      )
+    case 'widget-index':
+      return (
+        <Suspense fallback={null}>
+          <WidgetIndexView groups={n.groups} />
         </Suspense>
       )
     case 'link':

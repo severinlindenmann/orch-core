@@ -104,6 +104,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </ul>
       )
     case 'table':
+      if (n.rows.length === 0) return <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
       return (
         <Table>
           <TableHeader>

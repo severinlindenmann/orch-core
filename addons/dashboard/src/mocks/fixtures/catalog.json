@@ -68,6 +68,7 @@
               "rows": {
                 "$ref": "addon.rowsByRepo.energy-dbt"
               },
+              "empty": "No worktrees in this repository.",
               "rowActions": {
                 "$ref": "addon.rowActions"
               }
@@ -107,6 +108,7 @@
               "rows": {
                 "$ref": "addon.rowsByRepo.billing-api"
               },
+              "empty": "No worktrees in this repository.",
               "rowActions": {
                 "$ref": "addon.rowActions"
               }
@@ -146,6 +148,7 @@
               "rows": {
                 "$ref": "addon.rowsByRepo.ingest"
               },
+              "empty": "No worktrees in this repository.",
               "rowActions": {
                 "$ref": "addon.rowActions"
               }
@@ -331,7 +334,8 @@
                 { "key": "events", "label": "Events" },
                 { "key": "last", "label": "Latest" }
               ],
-              "rows": { "$ref": "addon.rows" }
+              "rows": { "$ref": "addon.rows" },
+              "empty": "Everything is recorded."
             },
             { "type": "markdown", "text": "### Record commits" },
             { "type": "list", "items": { "$ref": "addon.historyItems" }, "empty": "No record commits yet." }

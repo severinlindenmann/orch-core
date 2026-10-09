@@ -56,6 +56,8 @@ export const tableNode = z.object({
   columns: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(12),
   rows: orEmpty(z.record(z.string(), cell)),
   rowActions: z.array(itemAction).max(3).optional(),
+  /** Shown instead of the table when there are no rows (like a list's `empty`). */
+  empty: text.optional(),
 })
 export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000) })
 export const codeNode = z.object({ type: z.literal('code'), language: z.string().max(32).default('text'), text: z.string().max(20000) })

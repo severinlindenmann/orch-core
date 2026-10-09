@@ -215,3 +215,21 @@ describe('new node types', () => {
     expect(screen.getByRole('progressbar', { name: 'Children' })).toHaveAttribute('aria-valuenow', '7')
   })
 })
+
+describe('table empty text', () => {
+  const columns = [{ key: 'a', label: 'A' }]
+  it('an empty table shows its `empty` text instead of a header with no rows', () => {
+    renderNode({ type: 'table', columns, rows: [], empty: 'No worktrees in this repository.' }, { addon: 'worktrees' })
+    expect(screen.getByText('No worktrees in this repository.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).toBeNull()
+  })
+  it('without `empty` it says "Nothing here.", like a list', () => {
+    renderNode({ type: 'table', columns, rows: [] }, { addon: 'worktrees' })
+    expect(screen.getByText('Nothing here.')).toBeInTheDocument()
+  })
+  it('a table with rows ignores the empty text', () => {
+    renderNode({ type: 'table', columns, rows: [{ a: 'x' }], empty: 'none' }, { addon: 'worktrees' })
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.queryByText('none')).toBeNull()
+  })
+})

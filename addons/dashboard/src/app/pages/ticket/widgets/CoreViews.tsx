@@ -274,8 +274,10 @@ export function niceTicks(lo: number, hi: number): number[] {
   if (!(step > 0) || !Number.isFinite(step)) return [lo, hi]
   const start = Math.floor(lo / step) * step
   const count = Math.min(MAX_TICKS, Math.ceil((hi - start) / step - 1e-9) + 1)
+  // Round to the step's own decimals (plus one), so 1e-7 steps stay distinct and 0.1 + 0.2 reads 0.3.
+  const decimals = Math.min(20, Math.max(0, Math.ceil(-Math.log10(step)) + 1))
   const out: number[] = []
-  for (let i = 0; i < count; i++) out.push(Math.round((start + i * step) * 1e6) / 1e6)
+  for (let i = 0; i < count; i++) out.push(Number((start + i * step).toFixed(decimals)))
   return out
 }
 
@@ -293,14 +295,16 @@ function SeriesChart({ spec }: { spec: WidgetSpec }) {
   const X = (i: number) => XV(numeric ? xn[i] : i)
   const Y = (y: number) => LH - PAD.b - ((y - lo) / (hi - lo || 1)) * (LH - PAD.t - PAD.b)
   const unit = unitOf(spec.fields.unit)
+  // A marker outside the data's x range is valid but not drawn (it stays in the text alternative).
+  const shownMarkers = numeric ? markers.filter((m) => (m.x as number) >= x0 && (m.x as number) <= x1) : markers
   const labelIdx = numeric ? [] : [...new Set([0, Math.floor((x.length - 1) / 2), x.length - 1])]
   const xLabels: [number, string][] = numeric ? [...new Set([x0, x1])].map((v) => [XV(v), n(v)]) : labelIdx.map((i) => [X(i), String(x[i])])
   return (
     <div className="space-y-1">
       <svg role="img" viewBox={`0 0 ${LW} ${LH}`} width="100%" style={{ maxWidth: LW * 1.5 }} className="block">
         <title>{`${spec.title ?? 'Series'}: ${moreText(spec)}`}</title>
-        {ticks.map((t) => (
-          <g key={t}>
+        {ticks.map((t, i) => (
+          <g key={i}>
             <line x1={PAD.l} x2={LW - PAD.r} y1={Y(t)} y2={Y(t)} className="stroke-border" strokeWidth={1} />
             <text x={PAD.l - 6} y={Y(t) + 3} textAnchor="end" className="fill-text-muted text-[10px]">
               {n(t)}
@@ -312,7 +316,7 @@ function SeriesChart({ spec }: { spec: WidgetSpec }) {
             {label}
           </text>
         ))}
-        {markers.map((m, i) => {
+        {shownMarkers.map((m, i) => {
           const at = numeric ? XV(m.x as number) : X(x.findIndex((xv) => xv === m.x))
           return (
             <g key={i} data-marker={m.label}>

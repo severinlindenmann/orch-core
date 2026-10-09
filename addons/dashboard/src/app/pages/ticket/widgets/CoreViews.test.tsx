@@ -48,6 +48,15 @@ describe('newer core types are drawn by core, without a frame, with words as wel
     expect(container.querySelector('[data-marker="cache on"]')).toBeTruthy()
     expect(container.innerHTML).not.toMatch(/chart-5/)
   })
+  it('a flat series and a tiny-spread series draw; a marker outside the data is valid but not drawn', () => {
+    const flat = draw(JSON.stringify({ type: 'series', points: [[1, 5], [2, 5], [3, 5]] }))
+    expect(flat.container.querySelectorAll('[data-series] polyline')).toHaveLength(1)
+    const tiny = draw(JSON.stringify({ type: 'series', points: [[1, 1e-7], [2, 2e-7], [3, 1.5e-7]], markers: [{ x: 2, label: 'in' }, { x: 99, label: 'out' }] }))
+    expect(tiny.container.querySelector('[data-state="refused"]')).toBeNull()
+    expect(tiny.container.querySelector('[data-marker="in"]')).toBeTruthy()
+    expect(tiny.container.querySelector('[data-marker="out"]')).toBeNull()
+    expect(tiny.container.querySelector('svg title')!.textContent).toMatch(/Marker at 99: out/)
+  })
   it('a series at the edge of the allowed range draws promptly; a degenerate one is refused promptly', () => {
     const t0 = performance.now()
     const edge = draw(JSON.stringify({ type: 'series', points: [[1, -1e15], [2, 1e15]] }))
@@ -116,9 +125,9 @@ describe('templates: core checks the data before the frame (fail closed)', () =>
     expect(container.querySelector('[data-addon="widgets"]')).toBeTruthy()
   })
   it('flow and table-explorer examples draw; a looping flow is refused', () => {
-    expect(draw(example('flow@1')).container.querySelector('iframe')).toBeTruthy()
+    expect(draw(example('flow-diagram@1')).container.querySelector('iframe')).toBeTruthy()
     expect(draw(example('table-explorer@1')).container.querySelector('iframe')).toBeTruthy()
-    const loop = JSON.stringify({ widget: 'flow@1', sha256: templateDigest(findTemplate('flow@1')!), data: { nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }] } })
+    const loop = JSON.stringify({ widget: 'flow-diagram@1', sha256: templateDigest(findTemplate('flow-diagram@1')!), data: { nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }] } })
     const { container } = draw(loop)
     expect(container.querySelector('iframe')).toBeNull()
     expect(container.querySelector('[data-state="refused"]')).toBeTruthy()

@@ -33,7 +33,7 @@ describe('widgets addon page', () => {
     expect(screen.getAllByText(/Where it's allowed:/)).toHaveLength(CATALOG.length)
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
-    await user.click(within(nav).getByRole('button', { name: 'flow@1' }))
+    await user.click(within(nav).getByRole('button', { name: 'flow-diagram@1' }))
     expect(scroll).toHaveBeenCalled()
     expect(scroll.mock.contexts[0]).toBe(document.querySelector('figure[data-widget="ex-flow"]'))
   })

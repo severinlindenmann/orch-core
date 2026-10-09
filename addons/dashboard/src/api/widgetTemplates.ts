@@ -143,7 +143,7 @@ export const TEMPLATES: WidgetTemplate[] = [
   { name: 'line-chart', version: 1, title: 'Line chart', description: 'A small line over x with a value label per point.', moment: 'understand', minHeight: 190, libs: [], html: LINE_CHART },
   { name: 'option-prototype', version: 1, title: 'Option prototype', description: 'Options with cost and risk that the reader can click through.', moment: 'decide', minHeight: 230, libs: [], html: OPTION_PROTOTYPE },
   { name: 'image-compare', version: 1, title: 'Image compare', description: 'Two screenshots, a slider or side by side. Inline data: images only.', moment: 'review', minHeight: 240, libs: [], html: IMAGE_COMPARE, check: checkImageCompare },
-  { name: 'flow', version: 1, title: 'Flow', description: 'Boxes and arrows from a list of steps and links, left to right.', moment: 'understand', minHeight: 160, libs: [], html: FLOW, check: checkFlow },
+  { name: 'flow-diagram', version: 1, title: 'Flow diagram', description: 'Boxes and arrows from a list of steps and links, left to right.', moment: 'understand', minHeight: 160, libs: [], html: FLOW, check: checkFlow },
   { name: 'table-explorer', version: 1, title: 'Table explorer', description: 'A table the reader can sort and filter.', moment: 'debug', minHeight: 240, libs: [], html: TABLE_EXPLORER, check: checkTableExplorer },
 ]
 

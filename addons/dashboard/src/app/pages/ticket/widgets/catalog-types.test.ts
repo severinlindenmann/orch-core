@@ -28,7 +28,7 @@ describe('series', () => {
     expect(reason({ type: 'series', points: [[1, 'a'], [2, 3]] })).toMatch(/two numbers/)
     expect(reason({ type: 'series', points: [[1, 2], [2, 3]], series: [] })).toMatch(/exactly one of points or x with series/)
     expect(reason({ type: 'series', points: [[1, 2], [2, 3]], x: [1, 2] })).toMatch(/x goes with series/)
-    expect(reason({ type: 'series', points: [[1, 2], [2, 3]], markers: [{ x: 9, label: 'late' }] })).toMatch(/not on the x axis/)
+    expect(reason({ type: 'series', points: [[1, 2], [2, 3]], markers: [{ x: '9', label: 'late' }] })).toMatch(/marker x must be a number/)
     expect(reason({ ...multi, x: ['a'] })).toMatch(/x needs 2 to 500 values/)
     expect(reason({ ...multi, x: ['a', 2, 'c'] })).toMatch(/all numbers or all labels/)
     expect(reason({ ...multi, series: [] })).toMatch(/series needs 1 to 4 lines/)
@@ -38,15 +38,41 @@ describe('series', () => {
     expect(reason({ ...multi, series: [{ name: 'a', values: [1, 2, 3], colour: 'red' }] })).toMatch(/unknown key "colour" in a series/)
     expect(reason({ ...multi, series: [{ name: 'a', values: [1, 2, 3] }, { name: 'a', values: [1, 2, 3] }] })).toMatch(/used twice/)
     expect(reason({ ...multi, markers: [{ at: '10-02', label: 'x' }] })).toMatch(/unknown key "at" in a marker/)
+    expect(reason({ ...multi, markers: [{ x: '11-30', label: 'x' }] })).toMatch(/not one of the x labels/)
     expect(reason({ ...multi, smooth: true })).toMatch(/unknown key "smooth"/)
   })
-  it('refuses numbers a chart cannot place: huge values, or a spread below their precision', () => {
-    // -3e17 and the next representable doubles: the spread is below the values' own precision.
+  it('refuses only numbers beyond ±1e15 (where the axis math could fail)', () => {
+    // -3e17 and the next representable double: the spread is below the values' own precision.
     expect(reason({ type: 'series', points: [[1, -300000000000000000], [2, -299999999999999936]] })).toMatch(/between -1e15 and 1e15/)
     expect(reason({ type: 'series', points: [[1, 1e308], [2, -1e308]] })).toMatch(/between -1e15 and 1e15/)
-    expect(reason({ type: 'series', points: [[1, 1e14], [2, 1e14 + 0.01]] })).toMatch(/differ by less than a chart can show/)
     expect(reason({ type: 'series', points: [[1e16, 1], [2e16, 2]] })).toMatch(/x values must be between/)
     expect(reason({ type: 'spark', values: [-300000000000000000, -299999999999999936], text: '{spark}' })).toMatch(/between -1e15 and 1e15/)
+  })
+})
+
+describe('caps match the v1 Python schemas (no v1-valid block is refused)', () => {
+  it('series: a tiny spread and a flat line are accepted (no precision refusal)', () => {
+    ok({ type: 'series', points: [[1, 1e14], [2, 1e14 + 0.02]] })
+    ok({ type: 'series', points: [[1, 5], [2, 5], [3, 5]] })
+    ok({ type: 'series', points: [[1, 1e-7], [2, 2e-7], [3, 1.5e-7]] })
+  })
+  it('series: a marker x may be any finite number on a numeric axis, also outside the data', () => {
+    ok({ type: 'series', points: [[1, 2], [2, 3]], markers: [{ x: 9, label: 'later' }, { x: -1e12, label: 'far' }] })
+    ok({ type: 'series', x: [1, 2, 3], series: [{ name: 'a', values: [1, 2, 3] }], markers: [{ x: 2.5, label: 'between' }] })
+  })
+  it('stats: up to 12 items, value and delta strings up to 200 characters', () => {
+    ok({ type: 'stats', items: Array.from({ length: 12 }, (_, i) => ({ label: `s${i}`, value: i })) })
+    expect(reason({ type: 'stats', items: Array.from({ length: 13 }, (_, i) => ({ label: `s${i}`, value: i })) })).toMatch(/1 to 12/)
+    ok({ type: 'stats', items: [{ label: 'a', value: 'v'.repeat(200), delta: 'd'.repeat(200) }] })
+    expect(reason({ type: 'stats', items: [{ label: 'a', value: 'v'.repeat(201) }] })).toMatch(/at most 200/)
+  })
+  it('diff: file up to 500 characters', () => {
+    ok({ type: 'diff', file: 'f'.repeat(500), lines: '+x' })
+    expect(reason({ type: 'diff', file: 'f'.repeat(501), lines: '+x' })).toMatch(/longer than 500/)
+  })
+  it('gates: seconds up to 1e12', () => {
+    ok({ type: 'gates', items: [{ name: 'soak', status: 'pass', seconds: 1e12 }] })
+    expect(reason({ type: 'gates', items: [{ name: 'soak', status: 'pass', seconds: 1e12 + 1 }] })).toMatch(/0 to 1e12/)
   })
 })
 
@@ -59,6 +85,11 @@ describe('niceTicks (the y axis) always ends', () => {
       expect(t.length, `${lo}..${hi}`).toBeLessThanOrEqual(12)
     }
     expect(niceTicks(0, 72)).toEqual([0, 25, 50, 75])
+    // Ticks for 1e-7-sized values stay distinct (no rounding collisions).
+    const tiny = niceTicks(0, 3e-7)
+    expect(new Set(tiny).size).toBe(tiny.length)
+    expect(tiny.length).toBeGreaterThan(2)
+    expect(niceTicks(0, 0.3)).toEqual([0, 0.1, 0.2, 0.3])
     expect(performance.now() - t0).toBeLessThan(100)
   })
 })
@@ -80,7 +111,7 @@ describe('stats', () => {
     ok({ type: 'stats', items: [{ label: 'Seeds', value: 31, delta: 9, role: 'ok' }, { label: 'Status', value: 'green', delta: '+2 today' }, { label: 'Old', value: 1, role: 'note' }] })
   })
   it('refuses bad items', () => {
-    expect(reason({ type: 'stats', items: [] })).toMatch(/1 to 8 numbers/)
+    expect(reason({ type: 'stats', items: [] })).toMatch(/1 to 12 numbers/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: '' }] })).toMatch(/non-empty/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: '   ' }] })).toMatch(/non-empty/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: 1, role: 'decision' }] })).toMatch(/role must be ok, info, warn, err or neu/)

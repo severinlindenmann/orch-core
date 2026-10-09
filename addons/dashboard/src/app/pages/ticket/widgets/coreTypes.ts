@@ -22,13 +22,14 @@ const shortStr = (v: unknown, max: number) => typeof v === 'string' && v.length 
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const oneOf = (v: unknown, list: readonly string[]) => typeof v === 'string' && list.includes(v)
 
-/** Numbers a chart can place: |v| ≤ 1e15, and a spread that is not lost in the values' own precision. */
+/**
+ * Numbers a chart can place: |v| ≤ 1e15. Within that bound the axis math (spread, ticks, scale) is always finite, so
+ * nothing else is refused: equal values draw as a flat line, a tiny spread draws with fine ticks. (The Python schema
+ * bounds chart numbers at ±1e12, so every v1-valid block passes.)
+ */
 export const MAX_MAGNITUDE = 1e15
 function plottable(values: number[], what: string): string | undefined {
   if (values.some((v) => Math.abs(v) > MAX_MAGNITUDE)) return `${what} must be between -1e15 and 1e15`
-  const lo = Math.min(...values)
-  const hi = Math.max(...values)
-  if (hi > lo && hi - lo < Math.max(Math.abs(lo), Math.abs(hi)) * 1e-9) return `${what} differ by less than a chart can show`
 }
 
 /** A list of item objects: min..max entries, each an object with only `allowed` keys, then `each` per item. */
@@ -132,8 +133,9 @@ function checkSeries(v: Obj): string | undefined {
     return items(v.markers, {
       name: 'markers', min: 0, max: 20, size: 'at most 20 markers', allowed: ['x', 'label'], where: 'a marker',
       each(o) {
-        const ok = pointsForm ? num(o.x) && o.x >= Math.min(...(xs as number[])) && o.x <= Math.max(...(xs as number[])) : xs.some((xv) => xv === o.x)
-        if (!ok) return `marker at "${String(o.x)}" is not on the x axis`
+        // On a numeric axis any finite x is accepted (as in the v1 schema); one outside the data range is not drawn.
+        const ok = numericX ? num(o.x) : xs.some((xv) => xv === o.x)
+        if (!ok) return numericX ? 'a marker x must be a number' : `marker at "${String(o.x)}" is not one of the x labels`
         return labelReq(o, 'label', 'a marker label')
       },
     })
@@ -144,12 +146,12 @@ export const MORE_CORE: Record<string, CoreType> = {
     keys: ['items'],
     check(v) {
       return items(v.items, {
-        name: 'items', max: 8, size: '1 to 8 numbers', allowed: ['label', 'value', 'delta', 'role'], where: 'a stat',
+        name: 'items', max: 12, size: '1 to 12 numbers', allowed: ['label', 'value', 'delta', 'role'], where: 'a stat',
         each(o) {
           const r = labelReq(o, 'label', 'a stat label')
           if (r) return r
-          if (!num(o.value) && !(shortStr(o.value, 40) && (o.value as string).trim() !== '')) return 'value must be a number or a short non-empty string'
-          if (has(o, 'delta') && !num(o.delta) && !(shortStr(o.delta, 40) && (o.delta as string).trim() !== '')) return 'delta must be a number or a short non-empty string'
+          if (!num(o.value) && !(shortStr(o.value, 200) && (o.value as string).trim() !== '')) return 'value must be a number or a non-empty string of at most 200 characters'
+          if (has(o, 'delta') && !num(o.delta) && !(shortStr(o.delta, 200) && (o.delta as string).trim() !== '')) return 'delta must be a number or a non-empty string of at most 200 characters'
           if (has(o, 'role') && !roleOk(o.role)) return 'role must be ok, info, warn, err or neu'
         },
       })
@@ -175,7 +177,7 @@ export const MORE_CORE: Record<string, CoreType> = {
           const r = labelReq(o, 'name', 'a gate name')
           if (r) return r
           if (o.status !== 'ok' && !oneOf(o.status, GATE_STATES)) return 'status must be pass, fail, skip or running'
-          if (has(o, 'seconds') && !(num(o.seconds) && o.seconds >= 0 && o.seconds <= 1e7)) return 'seconds must be a number from 0 to 10000000'
+          if (has(o, 'seconds') && !(num(o.seconds) && o.seconds >= 0 && o.seconds <= 1e12)) return 'seconds must be a number from 0 to 1e12'
         },
       })
     },
@@ -184,7 +186,7 @@ export const MORE_CORE: Record<string, CoreType> = {
     keys: ['file', 'lines'],
     check(v) {
       if (typeof v.file !== 'string' || v.file.length === 0) return 'diff needs file (the path the lines come from)'
-      if (v.file.length > 300) return 'file is longer than 300 characters'
+      if (v.file.length > 500) return 'file is longer than 500 characters'
       if (typeof v.lines !== 'string' || v.lines.trim() === '') return 'lines must be a non-empty unified diff'
       if (v.lines.split('\n').length > MAX_DIFF_LINES) return `a diff shows at most ${MAX_DIFF_LINES} lines`
     },

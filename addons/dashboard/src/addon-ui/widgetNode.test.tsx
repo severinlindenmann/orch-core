@@ -36,12 +36,12 @@ describe('widget node schema', () => {
 
 describe('widget node template gate', () => {
   it('the widgets addon, active: a template draws in the sandboxed frame', async () => {
-    render(<AddonNode addon="widgets" node={{ type: 'widget', block: ex('flow@1') }} />)
+    render(<AddonNode addon="widgets" node={{ type: 'widget', block: ex('flow-diagram@1') }} />)
     const f = await figure('ex-flow')
     expect(f.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
   })
   it('another addon, even with widgets active: no frame, the "off" card instead', async () => {
-    render(<AddonNode addon="other" node={{ type: 'widget', block: ex('flow@1') }} />)
+    render(<AddonNode addon="other" node={{ type: 'widget', block: ex('flow-diagram@1') }} />)
     const f = await figure('ex-flow')
     expect(f.querySelector('iframe')).toBeNull()
     expect(within(f).getByText(/Agent HTML is off/)).toBeInTheDocument()

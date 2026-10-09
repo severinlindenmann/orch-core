@@ -63,7 +63,7 @@ describe('template data checks (core, before the frame)', () => {
     expect(checkTableExplorer(obj({ columns: [], rows: [] }))).toMatch(/1 to 12/)
   })
   it('a __proto__ key in template data is an unknown key, not a prototype', () => {
-    const r = parseBlock(`{"widget":"flow@1","sha256":"${templateDigest(findTemplate('flow@1')!)}","data":{"nodes":[{"id":"a","label":"A"}],"__proto__":{"edges":[]}}}`)
+    const r = parseBlock(`{"widget":"flow-diagram@1","sha256":"${templateDigest(findTemplate('flow-diagram@1')!)}","data":{"nodes":[{"id":"a","label":"A"}],"__proto__":{"edges":[]}}}`)
     expect(r.reason).toBeUndefined() // the parser keeps data opaque; the template check refuses it
     expect(checkFlow(r.spec!.data!)).toMatch(/unknown key "__proto__" in data/)
   })

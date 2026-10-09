@@ -64,6 +64,7 @@ describe('permits on Today', () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
     const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]
     const id = card.getAttribute('data-testid')!.replace('card-addon:', '')
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
     expect(within(card).getByRole('button', { name: 'Grant for this epic' })).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Refuse' })).toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Grant once' }))

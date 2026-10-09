@@ -43,17 +43,77 @@ export const LONG_CLAUSES = [
   'before the quarterly regulatory report is due, with a fallback if the export is late',
 ]
 
-export const ASKS = [
-  'Which source is the source of truth?', 'Should this be a date or a timestamp?', 'Is a one-day delay acceptable here?',
-  'Do we keep the history or replace it?', 'Which tolerance should the check use?', 'Who owns the fix on the finance side?',
-  'May we drop the old column after the migration?', 'Is rounding per line or per invoice?', 'Do estimated readings count as readings?',
-  'Which time zone is the customer\'s bill in?', 'Should the job fail or warn on a missing file?',
-]
 export const WHYS = [
   'The two sources differ for a few records and the model must pick one.', 'The choice changes the schema, so it has to be settled before the tests are written.',
   'A wrong guess means a backfill later.', 'Finance reads this number in the monthly close.',
 ]
-export const OPTION_PAIRS: [string, string][] = [['Yes', 'No'], ['Keep history', 'Replace'], ['Date', 'Timestamp'], ['Per line', 'Per invoice'], ['Fail', 'Warn']]
+
+/**
+ * Questions agents ask on the busy day. Each one comes with the options that answer it, what each option costs and
+ * which one the agent recommends (the first), so a person can judge them without guessing.
+ */
+export interface PoolQuestion {
+  text: string
+  whys: string[]
+  options: { label: string; cost: string }[]
+}
+export const QUESTIONS: PoolQuestion[] = [
+  {
+    text: 'Which system is the source of truth for meter readings?',
+    whys: ['The two sources differ for a few records and the model must pick one.', 'Finance reads this number in the monthly close.'],
+    options: [{ label: 'Meter head-end', cost: 'no change to billing' }, { label: 'Billing system', cost: '+1 day to remap' }],
+  },
+  {
+    text: 'Should `valid_from` be a date or a timestamp?',
+    whys: ['The choice changes the schema, so it has to be settled before the tests are written.', 'Tariffs change at midnight local time, but readings join on UTC.'],
+    options: [{ label: 'Date (local midnight)', cost: 'simpler joins' }, { label: 'Timestamp (UTC)', cost: '+2 tests, one cast' }],
+  },
+  {
+    text: 'Is a one-day delay acceptable for the finance export?',
+    whys: ['Finance reads this number in the monthly close.', 'Same-day needs a second run after the late files arrive.'],
+    options: [{ label: 'Yes, next day is fine', cost: 'no extra run' }, { label: 'No, same day', cost: '+1 nightly run' }],
+  },
+  {
+    text: 'Do we keep the contract history or replace it?',
+    whys: ['A wrong guess means a backfill later.', 'Support looks up old contracts when a customer disputes a bill.'],
+    options: [{ label: 'Keep history', cost: '+1 snapshot table' }, { label: 'Replace', cost: 'no backfill, history lost' }],
+  },
+  {
+    text: 'Which tolerance should the reconciliation check use?',
+    whys: ['Finance reads this number in the monthly close.', 'Too tight fails on rounding, too loose hides real gaps.'],
+    options: [{ label: '0.1 %', cost: 'may fail on rounding' }, { label: '1 %', cost: 'hides small gaps' }],
+  },
+  {
+    text: 'Who owns the fix on the finance side?',
+    whys: ['The export changes the numbers finance closes the month with.', 'Someone has to sign off the reconciled totals.'],
+    options: [{ label: 'Mara', cost: 'knows the export' }, { label: 'Severin', cost: 'free from Monday' }],
+  },
+  {
+    text: 'May we drop the old `tariff_code` column after the migration?',
+    whys: ['The choice changes the schema, so it has to be settled before the tests are written.', 'Two reports still read the old column.'],
+    options: [{ label: 'Keep it one release', cost: 'one release of cleanup later' }, { label: 'Drop it now', cost: '2 reports to update first' }],
+  },
+  {
+    text: 'Is VAT rounded per line or per invoice?',
+    whys: ['Finance reads this number in the monthly close.', 'The two give different totals by a few cents.'],
+    options: [{ label: 'Per line', cost: '+2 tests' }, { label: 'Per invoice', cost: 'matches the PDF' }],
+  },
+  {
+    text: 'Do estimated readings count as readings in the usage report?',
+    whys: ['A wrong guess means a backfill later.', 'About 4 % of September readings are estimates.'],
+    options: [{ label: 'Yes, flagged as estimated', cost: '+1 column' }, { label: 'No, leave them out', cost: 'usage looks lower' }],
+  },
+  {
+    text: "Which time zone is the customer's bill in?",
+    whys: ['Daylight saving days have 23 and 25 hours.', 'The choice changes the schema, so it has to be settled before the tests are written.'],
+    options: [{ label: 'Europe/Zurich', cost: 'matches the bill' }, { label: 'UTC', cost: 'shifts one hour twice a year' }],
+  },
+  {
+    text: 'Should the nightly job fail or warn on a missing meter file?',
+    whys: ['A missing file today means a gap in tomorrow\'s bills.', 'A wrong guess means a backfill later.'],
+    options: [{ label: 'Fail the run', cost: 'nothing ships until fixed' }, { label: 'Warn and continue', cost: 'gap filled next night' }],
+  },
+]
 
 export const COMMENTS = [
   'Looks right to me. Going ahead.', 'Can we split this? The plan is bigger than one ticket.', 'Checked against the September data, the numbers match.',

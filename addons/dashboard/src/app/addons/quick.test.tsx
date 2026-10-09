@@ -60,7 +60,8 @@ describe('quick tasks page', () => {
 describe('quick tasks decision on Today', () => {
   it('shows the outgrew decision and removes it once decided', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup })
-    const card = (await screen.findByText('Q-004 outgrew its limit: make it a ticket, or allow 3 more files?', {}, T)).closest('[data-testid^="card-addon:"]') as HTMLElement
+    const card = (await screen.findAllByText('Q-004 outgrew its limit: make it a ticket, or allow 3 more files?', {}, T))[0].closest('[data-testid^="card-addon:"]') as HTMLElement
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
     await user.click(within(card).getByRole('button', { name: 'Allow 3 more files' }))
     await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(screen.queryByText('Q-004 outgrew its limit: make it a ticket, or allow 3 more files?')).not.toBeInTheDocument(), T)

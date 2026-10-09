@@ -145,9 +145,10 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
 
 describe('the run is visible live across the app', { timeout: 20_000 }, () => {
   it('Today: the blocking question lands in Needs you for the viewer and the agent is at work', async () => {
-    renderApp('/', { viewer: 'p_sev', setup: playRun(15_000) })
+    const { user } = renderApp('/', { viewer: 'p_sev', setup: playRun(15_000) })
     expect(await screen.findByText(/T1 is done\. Go on with T2/, {}, FIRST)).toBeInTheDocument()
-    const atWork = screen.getByRole('region', { name: 'Agents at work' })
+    await user.click(within(screen.getByRole('region', { name: 'Agents' })).getByRole('button', { name: 'Show' }))
+    const atWork = await screen.findByRole('dialog', { name: 'Agents' })
     expect(within(atWork).getByText('Rotate warehouse service credentials')).toBeInTheDocument()
   })
   it('Agents: the session is listed, waiting on you', async () => {

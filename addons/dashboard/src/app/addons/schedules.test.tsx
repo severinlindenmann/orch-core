@@ -48,8 +48,9 @@ describe('Schedules page', () => {
 describe('the recurring finding on Today', () => {
   it('"Dependency update · Monday: file it?" files a backlog ticket', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
-    const q = await screen.findByText('Dependency update · Monday: file it?', {}, T)
+    const q = (await screen.findAllByText('Dependency update · Monday: file it?', {}, T))[0]
     const card = q.closest('[data-testid^="card-addon:"]') as HTMLElement
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
     await user.click(within(card).getByRole('button', { name: 'File ticket in backlog' }))
     await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect(mockStore.listTickets(wsOf(mockStore)).some((t) => t.title === 'Update dependencies, week 41' && t.status === 'backlog')).toBe(true), T)

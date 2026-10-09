@@ -2,7 +2,7 @@
 // The histories use the same event types as the fixtures, so the store derives everything the usual way.
 import { fnvHex } from '../derive'
 import {
-  AC_TEXTS, ASKS, COMMENTS, LABELS, MODELS, OPTION_PAIRS, PERSON_NAME, REPOS, TASK_CMDS, TASK_VERBS, VERDICT_TEXTS, WHYS,
+  AC_TEXTS, COMMENTS, LABELS, MODELS, PERSON_NAME, QUESTIONS, REPOS, TASK_CMDS, TASK_VERBS, VERDICT_TEXTS, WHYS,
   longTitle, pickTitle,
 } from './pools'
 import type { Rng } from './rng'
@@ -153,14 +153,18 @@ export function buildTicket(st: BuildState, plan: Plan): Built {
   }))
   const questions: GenDefinition['questions'] = []
   const ask = (to: string, blocking: boolean) => {
-    const [a, b] = rng.pick(OPTION_PAIRS)
+    const pool = rng.pick(QUESTIONS)
+    rng.next() // the draw that picked the question text before the pool was coherent; kept so the rest of the day stays the same
+    const why = rng.pick(pool.whys)
+    rng.next() // likewise: the old coin for a cost on the second option (every option names its cost now)
+    const options = pool.options.map((o, i) => ({ key: slug(o.label) || `o${i + 1}`, label: o.label, cost: o.cost }))
     const q = {
       id: `Q${questions.length + 1}`,
       to,
-      text: rng.pick(ASKS),
-      why: rng.pick(WHYS),
-      options: [{ key: slug(a) || 'a', label: a }, { key: slug(b) || 'b', label: b, ...(rng.chance(0.3) ? { cost: '+1 day' } : {}) }],
-      recommended: slug(a) || 'a',
+      text: pool.text,
+      why,
+      options,
+      recommended: options[0].key,
       blocking,
     }
     questions.push(q)

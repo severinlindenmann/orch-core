@@ -7,6 +7,7 @@ import { resolveTicketWidgets, type Block } from '@/app/pages/ticket/widgets/par
 import type { TicketDocument } from '@/api/types'
 import { createMockStore } from '../store'
 import { generateBusy } from './generate'
+import { QUESTIONS } from './pools'
 
 // Agents, artifacts and widgets of the busy day.
 const busy = () => {
@@ -155,5 +156,23 @@ describe('speed with the biggest ticket', () => {
     const t0 = performance.now()
     await s.api.getTicket(t.key)
     expect(performance.now() - t0).toBeLessThan(50)
+  })
+})
+
+describe('questions', () => {
+  it('ask coherent questions: the options answer the question, every option says what it costs, the recommendation is one of them', () => {
+    const open = generated().flatMap((t) => t.questions_state.filter((q) => q.state === 'open'))
+    expect(open.length).toBeGreaterThan(10)
+    for (const q of open) {
+      const pool = QUESTIONS.find((p) => p.text === q.text)
+      expect(pool, q.text).toBeDefined()
+      expect(q.options!.map((o) => o.label)).toEqual(pool!.options.map((o) => o.label))
+      expect(q.options!.every((o) => !!o.cost), q.text).toBe(true)
+      expect(q.options!.some((o) => o.key === q.recommended), q.text).toBe(true)
+      expect(pool!.whys).toContain(q.why)
+    }
+  })
+  it('the pool pairs no question with yes / no options it does not ask for', () => {
+    for (const p of QUESTIONS) if (!/^(Is|Do|May|Should we|Can)\b/.test(p.text)) expect(p.options.map((o) => o.label), p.text).not.toEqual(['Yes', 'No'])
   })
 })

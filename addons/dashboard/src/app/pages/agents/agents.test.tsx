@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { groupOf } from '@/app/attention'
 
 describe('Agents page', () => {
   it('groups sessions by state: waiting on you first, stopped collapsed', async () => {
@@ -35,11 +36,12 @@ describe('Agents page', () => {
     const n = Number(/(\d+) agent session/.exec(line.textContent ?? '')![1])
     expect(n).toBe(mockStore.agents(mockStore.workspaces[0].id).filter((s) => !s.parent).length)
   })
-  it('Today counts the same agent sessions', async () => {
+  it('Today counts agents working from the same root sessions (not waiting on you, not stopped)', async () => {
     renderApp('/')
-    const line = await screen.findByText(/decisions? need you/)
-    const n = Number(/(\d+) agent sessions?/.exec(line.textContent ?? '')![1])
-    expect(n).toBe(mockStore.agents(mockStore.workspaces[0].id).filter((s) => !s.parent).length)
+    const line = await screen.findByText(/· \d+ need you ·/)
+    const n = Number(/(\d+) agents? working/.exec(line.textContent ?? '')![1])
+    const all = mockStore.agents(mockStore.workspaces[0].id)
+    expect(n).toBe(all.filter((s) => !s.parent && groupOf(s, all, mockStore.viewer) === 'working').length)
   })
   it('revokes a grant after signing, and its sessions stop', async () => {
     const { user } = renderApp('/agents')

@@ -9,3 +9,5 @@ export const addonRule = 'border-addon-border/60'
 export const addonTile = 'border-addon-border bg-addon-soft'
 /** A board lane an addon contributes. */
 export const addonLane = 'border-addon-border bg-addon-soft/40'
+/** Orange left edge only, for a row of core anatomy that stands for an addon (other borders keep their colour). */
+export const addonEdge = 'border-l border-l-addon-border'

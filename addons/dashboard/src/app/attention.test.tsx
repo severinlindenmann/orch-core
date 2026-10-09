@@ -4,8 +4,8 @@ import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const headerCount = async () => {
-  const line = await screen.findByText(/decisions? need you/)
-  return Number(/(\d+) decisions?/.exec(line.textContent ?? '')![1])
+  const line = await screen.findByText(/· \d+ need you ·/)
+  return Number(/· (\d+) need you/.exec(line.textContent ?? '')![1])
 }
 
 describe('one attention count', () => {

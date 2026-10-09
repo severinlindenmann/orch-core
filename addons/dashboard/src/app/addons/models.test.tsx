@@ -63,9 +63,10 @@ describe('core\'s dialog renders the model fact itself', () => {
 describe('escalation on Today', () => {
   it('core renders "T2 failed its check in two sessions" and Next start on Strong routes DEMO-0045 to opus', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
-    const q = await screen.findByText('T2 failed its check in two sessions: start the next session on Strong?', {}, T)
+    const q = (await screen.findAllByText('T2 failed its check in two sessions: start the next session on Strong?', {}, T))[0]
     const card = q.closest('[data-testid^="card-addon:"]') as HTMLElement
-    expect(within(card).getByText(/you sign the answer in orch/)).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^From addons · \d+ · you sign every answer in orch/ })).toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
     await user.click(within(card).getByRole('button', { name: 'Next start on Strong' }))
     await user.click(await screen.findByRole('button', { name: 'Sign with Touch ID' }, T))
     await waitFor(() => expect((mockStore.addonStateView(wsOf(mockStore), 'start-agent', 'DEMO-0045')!.previews as Record<string, { model?: string }>)['DEMO-0045'].model).toBe('Model · work runs on strong: Strong (opus); subagents on haiku'), T)

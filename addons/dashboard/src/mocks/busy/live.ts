@@ -1,7 +1,7 @@
 // The gentle background script of the busy day (store.sim): one meaningful event every 4 to 8 seconds on a random
 // ticket everybody can see (a task done, a comment, a question asked, a claim taken), capped at 300 events per rolling
 // hour. It runs only when the store is `live` (the app, not the tests) and the dataset is busy; reset stops it.
-import { COMMENTS, ASKS, OPTION_PAIRS, WHYS } from './pools'
+import { COMMENTS, QUESTIONS } from './pools'
 import { makeRng, type Rng } from './rng'
 import { GRANT_OF, ROOTS, SESSIONS, actorOf } from './roster'
 import { BUSY_SEED } from './generate'
@@ -54,15 +54,17 @@ function liveStep(st: MockStore, rng: Rng): number[] {
   } else if (kind >= 0.7 && kind < 0.82) {
     const t = rng.shuffle(docs).find((d) => ['open', 'in-progress', 'waiting'].includes(d.status) && !d.questions_state.some((q) => q.state === 'open'))
     if (t) {
-      const [a, b] = rng.pick(OPTION_PAIRS)
+      const pool = rng.pick(QUESTIONS)
       const id = `Q${t.questions_state.length + 1}`
       const to = rng.pick(people)
       const actor = isDemo && t.claim ? `${t.claim.agent}:${t.claim.session}:${t.claim.for}` : rng.pick(people)
+      rng.next() // the draw that picked the question text before the pool was coherent; kept so later live events stay the same
+      const why = rng.pick(pool.whys)
       st.append(t.key, {
         type: 'question.asked',
         actor,
         question: id,
-        def: { id, to, text: rng.pick(ASKS), why: rng.pick(WHYS), options: [{ key: 'a', label: a }, { key: 'b', label: b }], recommended: 'a', blocking: false },
+        def: { id, to, text: pool.text, why, options: pool.options.map((o, i) => ({ key: String.fromCharCode(97 + i), ...o })), recommended: 'a', blocking: false },
       })
       return [1]
     }

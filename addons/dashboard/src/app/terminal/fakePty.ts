@@ -29,6 +29,15 @@ const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g
  */
 export const clean = (s: unknown): string => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
 
+/**
+ * Typed or pasted text for a line editor: a key or paste that starts with ESC (an escape sequence) is ignored; a
+ * multi-line paste keeps its text with line breaks turned into spaces and every other control character dropped.
+ */
+export function pasted(data: string): string {
+  if (!data || data.startsWith('\x1b') || data.startsWith('\x9b')) return ''
+  return clean(data.replace(/\r\n|\r|\n/g, ' '))
+}
+
 export const promptOf = (c: ShellCtx) => clean(`${c.user}@acme ${c.cwd} (${c.branch}) $ `)
 
 /** Run one command line against the live context; every output line is cleaned. */
@@ -152,10 +161,10 @@ export function createShell(ctx: () => ShellCtx): Shell {
       out += promptOf(c)
       return out
     }
-    // Printable text (a paste may carry several characters); control and escape sequences are ignored.
-    if (/^[^\x00-\x1f\x7f-\x9f]+$/.test(data)) {
-      buf += data
-      return data
+    const text = pasted(data)
+    if (text) {
+      buf += text
+      return text
     }
     return ''
   }

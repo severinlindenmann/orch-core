@@ -162,7 +162,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           }}
           className="min-w-0 gap-4"
         >
-          <TabsList variant="line" className="h-9 w-full justify-start gap-1 border-b border-border">
+          <TabsList variant="line" className="h-9 w-full min-w-0 justify-start gap-1 overflow-x-auto overflow-y-hidden border-b border-border [&>*]:flex-none" data-scroll-tabs>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="acceptance">
               Acceptance &amp; tasks

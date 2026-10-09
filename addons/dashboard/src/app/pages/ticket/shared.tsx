@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Cpu, User } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { Member, Priority, Role, Status, TicketDocument } from '@/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { usePageWidth } from '../../pageWidth'
 
 // ------------------------------------------------------------------ viewer + people
 
@@ -95,15 +96,9 @@ export function fmtClock(iso: string): string {
 }
 
 /** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
+/** Room for the wide layout? Reads the page's layout width (the window minus a right-hand terminal dock). */
 export function useWideLayout(min = 1280): boolean {
-  const read = () => typeof window !== 'undefined' && window.innerWidth >= min
-  const [wide, setWide] = useState(read)
-  useEffect(() => {
-    const on = () => setWide(read())
-    window.addEventListener('resize', on)
-    return () => window.removeEventListener('resize', on)
-  }, [min])
-  return wide
+  return usePageWidth() >= min
 }
 
 export function fmtDuration(ms: number): string {

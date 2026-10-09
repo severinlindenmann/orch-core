@@ -4,11 +4,11 @@
 // Every data-derived string (ticket title, branch, typed text, summaries, command output) goes through clean(); the
 // only escape sequences written are the constant SGR colours and cursor moves defined in this file.
 
-import type { HarnessId } from '@/api/harnesses'
 import type { ShellCtx } from '@/api/terminals'
-import { clean, runCommand, type Shell } from './fakePty'
+import { clean, pasted, runCommand, type Shell } from './fakePty'
 
-export type CliHarness = Exclude<HarnessId, 'shell'>
+/** The CLI look to draw (from the harness's `view`). */
+export type CliHarness = 'claude' | 'codex'
 
 /** What a CLI screen needs from a session. */
 export interface CliSession {
@@ -68,6 +68,31 @@ export function wrap(s: string, n: number): string[] {
   return out
 }
 
+/**
+ * Fit one output line to `n` columns: lines that fit keep their spacing; longer ones break between words (a single
+ * word longer than the line is cut into pieces), so xterm never breaks mid-word.
+ */
+export function fitLine(s: string, n: number): string[] {
+  if (len(s) <= n) return [s]
+  const out: string[] = []
+  let line = ''
+  for (const word of s.split(/(\s+)/)) {
+    if (!word) continue
+    if (len(line) + len(word) <= n) {
+      line += word
+      continue
+    }
+    if (line.trim()) out.push(line.trimEnd())
+    line = /^\s+$/.test(word) ? '' : word
+    while (len(line) > n) {
+      out.push(chars(line).slice(0, n).join(''))
+      line = chars(line).slice(n).join('')
+    }
+  }
+  if (line.trim()) out.push(line.trimEnd())
+  return out
+}
+
 export const boxWidth = (cols: number) => Math.max(30, Math.min(cols - 1, 76))
 
 /** A rounded box of `w` columns around `lines` (each cut to fit). */
@@ -90,7 +115,7 @@ function contextLines(s: Pick<CliSession, 'ctx' | 'context' | 'resumedFrom'>, w:
   const t = s.ctx.ticket
   const out: string[] = []
   if (s.resumedFrom) {
-    out.push(dim(` ⎿  Resumed from ${clean(s.resumedFrom.label)}`))
+    out.push(dim(` ⎿  Continued from ${clean(s.resumedFrom.label)}`))
     for (const l of wrap(s.resumedFrom.summary ? clean(s.resumedFrom.summary) : 'No summary was recorded.', w - 6)) out.push(dim(`    ${l}`))
   } else if (s.context && t) out.push(dim(` ⎿  Context: ${clean(t.key)} · ${clean(t.title)} (current state loaded)`))
   else out.push(dim(' ⎿  Fresh window: no ticket context loaded'))
@@ -108,23 +133,24 @@ function narrate(cmd: string): string {
 }
 
 /** A tool call and its (cut) result, in the harness's own style. */
-function toolCall(h: CliHarness, cmd: string, c: ShellCtx): string[] {
-  const lines = runCommand(cmd, c).lines
-  const failed = lines.some((l) => l.startsWith('err '))
+function toolCall(h: CliHarness, cmd: string, c: ShellCtx, w: number): string[] {
+  const raw = runCommand(cmd, c).lines
+  const failed = raw.some((l) => l.startsWith('err '))
+  const lines = raw.flatMap((l) => fitLine(l, Math.max(10, w - 6)))
   const shown = lines.slice(0, 3)
   const more = lines.length - shown.length
   if (h === 'claude') {
     const mark = failed ? red('⏺') : green('⏺')
     return [
-      `${mark} ${bold('Bash')}(${clean(cmd)})`,
+      ...fitLine(`${clean(cmd)})`, Math.max(10, w - 8)).map((l, i) => (i === 0 ? `${mark} ${bold('Bash')}(${l}` : `  ${l}`)),
       ...shown.map((l, i) => `${dim(i === 0 ? '  ⎿  ' : '     ')}${l}`),
       ...(lines.length === 0 ? [dim('  ⎿  (no output)')] : []),
-      ...(more > 0 ? [dim(`     … +${more} lines (ctrl+r to expand)`)] : []),
+      ...(more > 0 ? [dim(`     … +${more} lines`)] : []),
       '',
     ]
   }
   return [
-    `${failed ? red('•') : green('•')} ${bold('Ran')} ${clean(cmd)}`,
+    ...fitLine(clean(cmd), Math.max(10, w - 6)).map((l, i) => (i === 0 ? `${failed ? red('•') : green('•')} ${bold('Ran')} ${l}` : `  ${l}`)),
     ...shown.map((l, i) => `${dim(i === 0 ? '  └ ' : '    ')}${l}`),
     ...(more > 0 ? [dim(`    … +${more} lines`)] : []),
     '',
@@ -146,7 +172,7 @@ export function cliScreen(s: CliSession, cols: number): Screen {
   let waiting = false
   for (const cmd of s.transcript) {
     out.push(...say(h, narrate(cmd), w), '')
-    out.push(...toolCall(h, cmd, s.ctx))
+    out.push(...toolCall(h, cmd, s.ctx, w))
     waiting = cmd.startsWith('orch approve')
     if (waiting) out.push(...say(h, 'Approving is human-only. Waiting for a person to approve the plan in orch.', w), '')
   }
@@ -154,16 +180,16 @@ export function cliScreen(s: CliSession, cols: number): Screen {
     out.push(...say(h, s.summary ? `Session ended. Summary: ${clean(s.summary)}` : 'Session ended. No summary was recorded.', w), '')
     return { text: out.join(NL) + NL + '[process completed]' + NL }
   }
-  // Running mirror: a working line above an inert input, as the CLI shows while it works.
+  // Running agent session: the working line is last. No input box and no key hints: nobody can type here (the dock
+  // says so below the terminal).
   const verb = waiting ? 'Waiting for approval' : 'Working'
   const base = Math.max(0, Math.round((Date.parse(s.ctx.now) - Date.parse(s.started)) / 1000)) || 0
   const frame = (tick: number) =>
     h === 'claude'
-      ? `${teal(SPIN[tick % SPIN.length])} ${teal(`${verb}…`)} ${dim(`(esc to interrupt · ${elapsed(base + Math.floor(tick / 5))})`)}`
-      : `${teal(tick % 2 ? '◦' : '•')} ${bold(verb)} ${dim(`(${elapsed(base + Math.floor(tick / 5))} • esc to interrupt)`)}`
-  const input = h === 'claude' ? [...box(['> '], w, dim), dim('  view only · agent session')] : [dim('▌ '), dim('  view only · agent session')]
-  out.push(frame(0), '', ...input)
-  return { text: out.join(NL), live: { up: input.length + 1, frame } }
+      ? `${teal(SPIN[tick % SPIN.length])} ${teal(`${verb}…`)} ${dim(`(${elapsed(base + Math.floor(tick / 5))})`)}`
+      : `${teal(tick % 2 ? '◦' : '•')} ${bold(verb)} ${dim(`(${elapsed(base + Math.floor(tick / 5))})`)}`
+  out.push(frame(0))
+  return { text: out.join(NL), live: { up: 0, frame } }
 }
 
 // ------------------------------------------------------------------------------------------------ interactive CLI
@@ -173,18 +199,19 @@ function inputFrame(h: CliHarness, buf: string, hint: string, w: number) {
   if (h === 'claude') {
     const room = w - 6
     const shown = len(buf) > room ? '…' + chars(buf).slice(-(room - 1)).join('') : buf
-    return { lines: [dim(`╭${'─'.repeat(w - 2)}╮`), `${dim('│')} > ${fit(shown, w - 6)} ${dim('│')}`, dim(`╰${'─'.repeat(w - 2)}╯`), dim(`  ${hint}`)], row: 1, col: 5 + len(shown) }
+    return { lines: [dim(`╭${'─'.repeat(w - 2)}╮`), `${dim('│')} > ${fit(shown, w - 6)} ${dim('│')}`, dim(`╰${'─'.repeat(w - 2)}╯`), dim(`  ${fit(hint, w - 3).trimEnd()}`)], row: 1, col: 5 + len(shown) }
   }
   const room = w - 3
   const shown = len(buf) > room ? '…' + chars(buf).slice(-(room - 1)).join('') : buf
-  return { lines: [`${teal('▌')} ${shown}`, dim(`  ${hint}`)], row: 0, col: 3 + len(shown) }
+  return { lines: [`${teal('▌')} ${shown}`, dim(`  ${fit(hint, w - 3).trimEnd()}`)], row: 0, col: 3 + len(shown) }
 }
 /** Draws the frame from the current line, leaving the cursor in the input. */
 const drawFrame = (f: ReturnType<typeof inputFrame>) => {
   const up = f.lines.length - 1 - f.row
   return f.lines.join(NL) + (up > 0 ? `${ESC}${up}A` : '') + `${ESC}${f.col}G`
 }
-const HINT = { claude: '? for shortcuts', codex: '⏎ send   ⌃C quit   /status' } as const
+// Only hints for keys that work here.
+const HINT = { claude: '/help for commands · Ctrl-C twice to quit', codex: 'Enter to send · Ctrl-C twice to quit · /help' } as const
 
 /** Prompts both CLIs understand. */
 const COMMANDS = ['/help', '/status', '/clear', '/exit']
@@ -195,8 +222,8 @@ function reply(h: CliHarness, text: string, c: ShellCtx, context: boolean, w: nu
   if (text.startsWith('/orch:'))
     return [...out, ...say(h, 'Agent work on a ticket starts from Start agent in the dashboard, which you sign. This simulated CLI does not claim tickets.', w), '']
   out.push(...say(h, t ? `Looking at ${clean(t.key)} first.` : 'Looking around the worktree first.', w), '')
-  if (t) out.push(...toolCall(h, 'orch status', c))
-  out.push(...toolCall(h, 'ls', c))
+  if (t) out.push(...toolCall(h, 'orch status', c, w))
+  out.push(...toolCall(h, 'ls', c, w))
   out.push(...say(h, `(Simulated) This mockup does not run ${h === 'claude' ? 'Claude Code' : 'Codex'}. A real session would answer "${text.length > 60 ? text.slice(0, 59) + '…' : text}" here.`, w), '')
   return out
 }
@@ -292,9 +319,9 @@ export function createCli(s: Omit<CliSession, 'kind' | 'status' | 'transcript' |
       shown = [...shown, text]
       return clear + answer(text).join(NL) + NL + drawFrame(frame())
     }
-    // Printable text (a paste may carry several characters); control and escape sequences are ignored.
-    if (/^[^\x00-\x1f\x7f-\x9f]+$/.test(data)) {
-      buf += data
+    const text = pasted(data)
+    if (text) {
+      buf += text
       return redrawInput()
     }
     return ''

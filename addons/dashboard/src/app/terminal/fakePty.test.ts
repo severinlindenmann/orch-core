@@ -174,3 +174,12 @@ describe('replay (agent mirror transcript)', () => {
     expect(out).toContain('err human_only approve · retry:false · next: orch ask or orch wait')
   })
 })
+
+describe('createShell: pastes', () => {
+  it('a multi-line paste keeps its text (line breaks become spaces, controls are dropped); an escape sequence is ignored', () => {
+    const sh = createShell(() => ctx())
+    expect(sh.feed('git\r\nstatus\x07')).toBe('git status')
+    expect(sh.feed('\x1b]52;c;ZXZpbA==\x07')).toBe('')
+    expect(sh.feed('\r')).toContain('On branch')
+  })
+})

@@ -229,11 +229,11 @@ describe('harness sessions (start, resume)', () => {
     const by = Object.fromEntries(st.sessions.map((x) => [x.id, x]))
     expect(by.shell1).toMatchObject({ harness: 'shell', command: '$SHELL -l', summary: null })
     expect(by.agent1).toMatchObject({ harness: 'claude', context: true })
-    expect(by.codex0).toMatchObject({ harness: 'codex', status: 'stopped' })
+    expect(by.codex0).toMatchObject({ harness: 'codex', status: 'stopped', purpose: 'Review' })
   })
   it('start opens your own session of a harness with the ticket context, or a fresh window', async () => {
     const s = setup('p_sev')
-    await run(s, 'start', { harness: 'claude', ticket: 'DEMO-0043' })
+    await run(s, 'start', { harness: 'claude', ticket: 'DEMO-0043', context: true })
     let st = await state(s)
     const a = st.sessions.find((x) => x.id === st.current.id)!
     expect(a).toMatchObject({ kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', harness: 'claude', context: true, interactive: true, label: 'DEMO-0043 · Your Claude Code' })
@@ -263,6 +263,33 @@ describe('harness sessions (start, resume)', () => {
     expect(r.resumedFrom).toMatchObject({ id: 'codex0', label: 'DEMO-0043 · Codex' })
     expect(r.resumedFrom!.summary).toMatch(/Reviewed the DEMO-0043 plan/)
     expect(st.sessions.find((x) => x.id === 'codex0')!.status).toBe('stopped') // the old one stays as it was
+  })
+  it('an agent of an unknown harness is listed as that harness (unsupported), read only, and cannot be continued', async () => {
+    const s = setup('p_sev')
+    const raw = s.store.addonState(s.ws, 'terminals').sessions as { id: string; owner: string; status: string }[]
+    raw.find((x) => x.id === 'codex0')!.owner = 'agent:gemini'
+    const g = (await state(s)).sessions.find((x) => x.id === 'codex0')!
+    expect(g).toMatchObject({ harness: 'gemini', interactive: false })
+    expect(await refused(run(s, 'resume', { session: 'codex0' }))).toMatchObject({ status: 409, code: 'terminals.unsupported' })
+  })
+  it('start and resume refuse when the terminals grant does not cover pty', async () => {
+    const s = setup('p_sev')
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    w.addons.terminals.granted = { ...w.addons.terminals.granted!, capabilities: [] }
+    expect(await refused(run(s, 'start', { harness: 'shell' }))).toMatchObject({ status: 409 })
+    expect(await refused(run(s, 'resume', { session: 'codex0' }))).toMatchObject({ status: 409 })
+  })
+  it('resume refuses a session id of another workspace', async () => {
+    const s = setup('p_sev')
+    const cli = s.store.workspaces.find((w) => w.prefix === 'CLI')!.id
+    await s.api.runAddonAction(cli, 'terminals', 'new', {})
+    const other = ((await s.api.getAddonState(cli, 'terminals')) as unknown as State).sessions[0].id
+    await s.api.runAddonAction(cli, 'terminals', 'close', { session: other })
+    // The same id asked for in DEMO: not this workspace's session.
+    const demoIds = (await state(s)).sessions.map((x) => x.id)
+    const foreign = demoIds.includes(other) ? 'ghost-from-cli' : other
+    expect(await refused(run(s, 'resume', { session: foreign }))).toMatchObject({ status: 404 })
+    expect(await refused(s.api.runAddonAction(cli, 'terminals', 'resume', { session: 'codex0' }))).toMatchObject({ status: 404 })
   })
   it('resume refuses a running session, someone else\'s shell and viewers', async () => {
     const s = setup('p_sev')

@@ -1,4 +1,5 @@
-import { harnessCommand, harnessForAgent, harnessOf, isHarness, type HarnessId } from '@/api/harnesses'
+import { grantCovers } from '@/api/addons'
+import { findHarness, harnessCommand, harnessForAgent, isHarness } from '@/api/harnesses'
 import type { ShellCtx, TerminalSessionView } from '@/api/terminals'
 import { atLeast } from '@/api/permissions'
 import { briefs } from '../busy/helpers'
@@ -29,8 +30,10 @@ interface Session {
   started: string
   /** What an agent mirror shows it typed (default: a few commands). The busy day gives some a long one. */
   transcript?: string[]
-  /** Default: a person's session is a shell, an agent mirror runs its agent's harness. */
-  harness?: HarnessId
+  /** Default: a person's session is a shell, an agent mirror runs its agent's harness (an unknown agent: its own id). */
+  harness?: string
+  /** What an agent session is for ("Review"); default "Agent". */
+  purpose?: string
   /** Started with the ticket's context (default: true when it has a ticket). */
   context?: boolean
   /** What an ended session left behind; a resume is seeded with it. */
@@ -45,6 +48,7 @@ const SESSIONS: Session[] = [
   { id: 'old1', kind: 'person', owner: 'p_sev', ticket: null, branch: 'main', status: 'stopped', started: '2026-10-08T15:05:00Z' },
   {
     id: 'codex0', kind: 'agent', owner: 'agent:codex', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'stopped', started: '2026-10-08T16:40:00Z',
+    purpose: 'Review',
     transcript: ['git log --oneline -5', 'orch show DEMO-0043 --section current_state', 'git status'],
     summary: 'Reviewed the DEMO-0043 plan: tariff seeds before the billing join is the right order. Flagged VAT rounding on mixed tariffs (answered since). No code changes.',
   },
@@ -57,7 +61,7 @@ const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string }>
 const hhmm = (iso: string) => iso.slice(11, 16)
 
-const harnessOfSession = (s: Session): HarnessId => s.harness ?? (s.kind === 'agent' ? harnessForAgent(s.owner.slice('agent:'.length)) : 'shell')
+const harnessOfSession = (s: Session): string => s.harness ?? (s.kind === 'agent' ? harnessForAgent(s.owner.slice('agent:'.length)) : 'shell')
 const contextOf = (s: Session) => !!s.ticket && (s.context ?? true)
 
 const nameOf = (ctx: Pick<AddonCtx, 'store' | 'ws'>, person: string) => ctx.store.workspaces.find((w) => w.id === ctx.ws)?.members.find((m) => m.person === person)?.name ?? person
@@ -143,10 +147,12 @@ registerAddon({
       owner: s.owner,
       ticket: s.ticket,
       status: s.status,
-      interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member'),
+      // Typing needs a harness that takes input (an unsupported harness is a read-only transcript).
+      interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member') && !!findHarness(harnessOfSession(s))?.capabilities.interactive,
       ctx: shellCtx(c, s),
       transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [],
       harness: harnessOfSession(s),
+      purpose: s.kind === 'agent' ? (s.purpose ?? null) : null,
       command: harnessCommand(harnessOfSession(s), { ticket: s.ticket, context: contextOf(s) }),
       context: contextOf(s),
       summary: s.status === 'stopped' ? (s.summary ?? null) : null,
@@ -162,7 +168,7 @@ registerAddon({
       sessionByTicket,
       items: shown.map((s) => ({
         title: sessionTitle(s),
-        subtitle: `${harnessOf(harnessOfSession(s)).window} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
+        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
       })),
@@ -201,30 +207,38 @@ registerAddon({
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }
     },
-    /** Start the viewer's own session of a harness: in the ticket's worktree (`ticket`) with its context, or a fresh window. */
+    /**
+     * Start the viewer's own session of a harness: in the ticket's worktree when `ticket` is given, else in the
+     * workspace; `context: true` also loads the ticket's current-state summary (harnesses with contextInjection only).
+     */
     start(ctx) {
       const { state, store, viewer, ticket, body } = ctx
-      if (!isHarness(body.harness)) return invalid('Pick Shell, Claude Code or Codex.')
+      if (!ptyGranted(ctx)) return noPty()
+      const h = isHarness(body.harness) ? findHarness(body.harness) : undefined
+      if (!h || !h.capabilities.interactive) return invalid('Pick Shell, Claude Code or Codex.')
       if (ticket && !canSeeTicket(ctx, ticket)) return notFound('No such ticket.')
       const s = newShell(state, store, viewer, ticket ?? null)
-      s.harness = body.harness
-      s.context = !!ticket && body.context !== false
+      s.harness = h.id
+      s.context = !!ticket && body.context === true && h.capabilities.contextInjection
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Started ${harnessOf(s.harness).label}${ticket ? ` in ${ticket}` : ''}${s.context ? ' with the ticket context' : ' in a fresh window'}.`, changed: true }
+      return { ok: true, message: `Started ${h.label}${ticket ? ` in the ${ticket} worktree` : ' in the workspace'}${s.context ? ' with the ticket summary' : ''}.`, changed: true }
     },
-    /** Resume an ended session: a new session of the same harness, seeded with the ended one's summary. */
+    /** Continue from an ended session's summary: a new session of the same harness, seeded with that summary. */
     resume(ctx) {
       const { state, store, viewer, body } = ctx
+      if (!ptyGranted(ctx)) return noPty()
       const old = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
       if (!old) return notFound('No such terminal session.')
       if (old.status !== 'stopped') return refusal(409, 'terminals.running', 'That session is still running: join it instead.')
+      const h = findHarness(harnessOfSession(old))
+      if (!h || !h.capabilities.interactive) return refusal(409, 'terminals.unsupported', `This dashboard cannot start ${harnessOfSession(old)} sessions.`)
       const s = newShell(state, store, viewer, old.ticket)
-      s.harness = harnessOfSession(old)
-      s.context = !!old.ticket
+      s.harness = h.id
+      s.context = !!old.ticket && h.capabilities.contextInjection
       s.resumedFrom = old.id
       if (old.ticket) s.branch = old.branch
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Resumed ${sessionTitle(old)} in a new ${harnessOf(s.harness).label} session.`, changed: true }
+      return { ok: true, message: `Continued from ${sessionTitle(old)} in a new ${h.label} session.`, changed: true }
     },
     save_settings: ({ state, body }) => {
       const d = (body.formData ?? {}) as { shell?: unknown; font_size?: unknown }
@@ -235,6 +249,13 @@ registerAddon({
   },
 })
 
+/** Core lets terminals run only while its grant covers `pty` here; start/continue check it again (defence in depth). */
+function ptyGranted(c: Pick<AddonCtx, 'store' | 'ws'>): boolean {
+  const a = c.store.workspaces.find((w) => w.id === c.ws)?.addons.terminals
+  return !!a && a.enabled && a.capabilities.includes('pty') && grantCovers(a, a.granted) && a.granted.capabilities.includes('pty')
+}
+const noPty = () => refusal(409, 'terminals.no_pty', 'Terminals is not granted pty in this workspace.', 'An owner grants it in Settings → Addons.')
+
 /** The session this one resumed, as the viewer may see it (a source the viewer cannot see is left out). */
 function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Record<string, unknown>, s: Session): TerminalSessionView['resumedFrom'] {
   const old = s.resumedFrom ? sessionsOf(state).find((x) => x.id === s.resumedFrom && visibleTo(c, x)) : undefined
@@ -244,7 +265,7 @@ function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Re
 /** What the person sees: ticket first ("DEMO-0043 · Claude Code", "DEMO-0043 · Your shell", "Scratch shell"). */
 function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness'>): string {
   if (s.kind === 'person') {
-    const h = s.harness && s.harness !== 'shell' ? harnessOf(s.harness).label : null
+    const h = s.harness && s.harness !== 'shell' ? (findHarness(s.harness)?.label ?? s.harness) : null
     return h ? (s.ticket ? `${s.ticket} · Your ${h}` : `Your ${h}`) : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'
   }
   const agent = s.owner.slice('agent:'.length).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')

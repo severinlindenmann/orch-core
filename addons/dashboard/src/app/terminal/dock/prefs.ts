@@ -12,6 +12,8 @@ export interface DockPrefs {
   bottom: number
   /** Width when docked on the right, px. */
   right: number
+  /** The harness last started from the dock (the New session form starts with it). */
+  harness: string
 }
 
 /** Size limits: bottom 160 px to 70% of the window height, right 320 px to 60% of the window width. */
@@ -23,17 +25,30 @@ export const DOCK_LIMITS = {
 /** The collapsed bar, px. */
 export const DOCK_BAR = 32
 
-export const DEFAULT_PREFS: DockPrefs = { side: 'bottom', open: false, bottom: 280, right: 440 }
+export const DEFAULT_PREFS: DockPrefs = { side: 'bottom', open: false, bottom: 280, right: 440, harness: 'claude' }
+
+/** The page keeps at least this much width beside a right-hand dock. */
+export const PAGE_MIN = 640
 
 const keyOf = (viewer: string) => `orch.dock.${viewer}`
 
-export function dockMax(side: DockSide, view: { width: number; height: number }): number {
+/**
+ * The largest dock: bottom 70% of the window height; right 60% of the window width, and never so wide that the page
+ * area (`area`: page plus dock, i.e. the window minus the sidebar) drops under PAGE_MIN. Can be under the minimum: then
+ * the right side does not fit (see rightFits).
+ */
+export function dockMax(side: DockSide, view: { width: number; height: number }, area = view.width): number {
   const l = DOCK_LIMITS[side]
-  return Math.max(l.min, Math.floor((side === 'bottom' ? view.height : view.width) * l.ratio))
+  if (side === 'bottom') return Math.max(l.min, Math.floor(view.height * l.ratio))
+  return Math.min(Math.floor(view.width * l.ratio), area - PAGE_MIN)
 }
 
-export function clampDock(side: DockSide, px: number, view: { width: number; height: number }): number {
-  return Math.round(Math.min(dockMax(side, view), Math.max(DOCK_LIMITS[side].min, Number.isFinite(px) ? px : DEFAULT_PREFS[side])))
+/** Is there room for a right-hand dock of at least its minimum width? */
+export const rightFits = (view: { width: number; height: number }, area = view.width) => dockMax('right', view, area) >= DOCK_LIMITS.right.min
+
+export function clampDock(side: DockSide, px: number, view: { width: number; height: number }, area = view.width): number {
+  const max = Math.max(DOCK_LIMITS[side].min, dockMax(side, view, area))
+  return Math.round(Math.min(max, Math.max(DOCK_LIMITS[side].min, Number.isFinite(px) ? px : DEFAULT_PREFS[side])))
 }
 
 export function readDockPrefs(viewer: string | undefined): DockPrefs {
@@ -46,6 +61,7 @@ export function readDockPrefs(viewer: string | undefined): DockPrefs {
       open: raw.open === true,
       bottom: typeof raw.bottom === 'number' ? raw.bottom : DEFAULT_PREFS.bottom,
       right: typeof raw.right === 'number' ? raw.right : DEFAULT_PREFS.right,
+      harness: typeof raw.harness === 'string' && raw.harness ? raw.harness : DEFAULT_PREFS.harness,
     }
   } catch {
     return DEFAULT_PREFS

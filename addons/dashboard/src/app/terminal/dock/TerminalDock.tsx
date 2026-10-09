@@ -1,72 +1,108 @@
-// The open terminal dock (lazy chunk: xterm comes with it). Header with the context (ticket or workspace) and addon
-// chips, the session picker, the terminal (core's TerminalView in its dock placement) and a tmux-style status line
-// whose window list is the dock's tabs. The terminals addon's rules hold unchanged: TerminalView decides who may type.
+// The open terminal dock (lazy chunk: xterm comes with it). One toolbar — the session switcher, New session,
+// Sessions, ticket info and a menu — then the session browser when asked for, the terminal (core's TerminalView in
+// its dock placement) and its strip. The terminals addon's rules hold unchanged: TerminalView decides who may type.
 
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { ChevronDown, ChevronRight, ExternalLink, List, PanelBottom, PanelRight } from 'lucide-react'
+import { List, MoreHorizontal } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent } from 'react'
 import { api } from '@/api/client'
-import type { HarnessId } from '@/api/harnesses'
 import type { TerminalSessionView } from '@/api/terminals'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
 import { useAddonStates } from '@/addon-ui/slots'
 import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import TerminalView from '../TerminalView'
 import { useWorkspace } from '../../workspace'
-import { DOCK_ADDON, DOCK_KEYS, sessionsIn, useDockTicket } from './context'
-import { DockChips } from './DockChips'
-import { clampDock, DOCK_LIMITS, dockMax, type DockPrefs } from './prefs'
-import { SessionPicker } from './SessionPicker'
-import { TmuxStatus } from './TmuxStatus'
+import { DOCK_ADDON, DOCK_KEYS, dockName, scopeKey, sessionsIn, useDockTicket, type DockMemory } from './context'
+import { NewSessionButton, type NewSessionChoice } from './NewSession'
+import { DOCK_LIMITS, dockMax, type DockPrefs, type DockSide } from './prefs'
+import { SessionBrowser } from './SessionBrowser'
+import { SessionTabs, type DockWindow } from './SessionTabs'
+import { TicketInfo } from './TicketInfo'
 
 const STEP = 16
 const BIG_STEP = 64
+const NO_ROOM = 'Not enough room — dock at the bottom'
 
-export default function TerminalDock({ prefs, size, view, setPrefs, focusOnOpen }: {
+export interface TerminalDockProps {
   prefs: DockPrefs
+  /** The side drawn (bottom when the right does not fit, whatever is stored). */
+  side: DockSide
   size: number
   view: { width: number; height: number }
+  /** Page plus dock width. */
+  area: number
+  rightFits: boolean
   setPrefs: (change: (p: DockPrefs) => DockPrefs) => void
-  focusOnOpen: MutableRefObject<boolean>
-}) {
+  focus: MutableRefObject<'dock' | 'bar' | null>
+  memory: DockMemory
+  collapse: () => void
+}
+
+export default function TerminalDock(props: TerminalDockProps) {
   const { workspace } = useWorkspace()
   const ticket = useDockTicket()
+  // One body per scope (workspace + ticket): its selection comes from, and goes back to, the dock's memory.
+  return <DockBody key={scopeKey(workspace?.id, ticket)} {...props} ticket={ticket} />
+}
+
+function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, ticket }: TerminalDockProps & { ticket?: string }) {
+  const { workspace } = useWorkspace()
   const router = useRouter()
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const { [DOCK_ADDON]: state } = useAddonStates(workspace?.id, [DOCK_ADDON])
-  const actions = useRunAddonAction(ticket)
+  const inTicket = useRunAddonAction(ticket)
+  const inWorkspace = useRunAddonAction()
   const region = useRef<HTMLElement>(null)
-  const right = prefs.side === 'right'
+  const strip = useRef<HTMLDivElement>(null)
+  const right = side === 'right'
+  const key = scopeKey(workspace?.id, ticket)
+  const remembered = memory.get(key)
 
   const sessions = (state?.sessions as TerminalSessionView[] | undefined) ?? []
   const { running, ended } = sessionsIn(sessions, ticket)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [opened, setOpened] = useState<string[]>([]) // ended sessions opened as windows (transcripts)
-  const [picker, setPicker] = useState<boolean>(!!ticket)
+  const [selected, setSelected] = useState<string | null>(remembered?.selected ?? null)
+  const [opened, setOpened] = useState<string[]>(remembered?.opened ?? [])
+  const [browser, setBrowser] = useState(!remembered && !!ticket)
+  const [newOpen, setNewOpen] = useState(false)
   const [focusId, setFocusId] = useState<string | null>(null)
-  const follow = useRef<string | null>(null) // after start/resume: select the session the addon opened
-  const windows = [...running, ...ended.filter((s) => opened.includes(s.id))]
+  const follow = useRef<string | null>(null) // after start/continue: select the session the addon opened
+  const name = (s: TerminalSessionView) => dockName(s, ticket)
+  const list = [...running, ...ended.filter((s) => opened.includes(s.id))]
+  const windows: DockWindow[] = list.map((s, index) => ({ session: s, index, name: name(s) }))
   const mine = running.find((s) => s.interactive)
-  const current = windows.find((s) => s.id === selected)?.id ?? mine?.id ?? running[0]?.id ?? null
+  const current = list.find((s) => s.id === selected)?.id ?? mine?.id ?? running[0]?.id ?? null
+  const currentSession = list.find((s) => s.id === current)
   const currentId = (state?.current as { id?: string } | undefined)?.id
 
-  // Another page: start again from that page's sessions.
   useEffect(() => {
-    setSelected(null)
-    setOpened([])
-    setPicker(!!ticket)
-  }, [ticket, workspace?.id])
+    memory.set(key, { selected, opened })
+  }, [memory, key, selected, opened])
   useEffect(() => {
     if (follow.current === null || !currentId || currentId === follow.current) return
     follow.current = null
     setSelected(currentId)
     setFocusId(currentId)
   }, [currentId])
+  // Opening the dock puts focus on the session strip (or the dock), so the keyboard is where the eye is.
+  useEffect(() => {
+    if (focus.current !== 'dock') return
+    focus.current = null
+    let tries = 0
+    const timer = setInterval(() => {
+      const target = region.current?.querySelector<HTMLElement>('[data-session-strip]')
+      if (target || ++tries > 20) {
+        clearInterval(timer)
+        ;(target ?? region.current)?.focus({ preventScroll: true })
+      }
+    }, 50)
+    return () => clearInterval(timer)
+  }, [focus])
   // Joining or starting a session puts the keyboard in its terminal once xterm has mounted.
   useEffect(() => {
     if (!focusId) return
@@ -82,85 +118,108 @@ export default function TerminalDock({ prefs, size, view, setPrefs, focusOnOpen 
     }, 50)
     return () => clearInterval(timer)
   }, [focusId])
-  useEffect(() => {
-    if (!focusOnOpen.current) return
-    focusOnOpen.current = false
-    region.current?.focus()
-  }, [focusOnOpen])
 
   const select = (id: string) => {
     if (ended.some((s) => s.id === id)) setOpened((o) => (o.includes(id) ? o : [...o, id]))
     setSelected(id)
     setFocusId(id)
+    setBrowser(false)
   }
-  const start = (harness: HarnessId, context: boolean) => {
-    follow.current = currentId ?? ''
-    actions.run(DOCK_ADDON, 'start', { harness, context })
+  const closeTranscript = (id: string) => {
+    setOpened((o) => o.filter((x) => x !== id))
+    if (selected === id) setSelected(null)
   }
-  const resume = (id: string) => {
+  const followNext = (ok: boolean) => {
+    if (!ok) follow.current = null // refused: nothing new to select
+  }
+  const start = (c: NewSessionChoice) => {
     follow.current = currentId ?? ''
-    actions.run(DOCK_ADDON, 'resume', { session: id })
+    setBrowser(false)
+    setPrefs((p) => ({ ...p, harness: c.harness }))
+    ;(c.inTicket ? inTicket : inWorkspace).run(DOCK_ADDON, 'start', { harness: c.harness, context: c.summary }, undefined, { onDone: followNext })
+  }
+  const continueFrom = (id: string) => {
+    follow.current = currentId ?? ''
+    setBrowser(false)
+    inTicket.run(DOCK_ADDON, 'resume', { session: id }, undefined, { onDone: followNext })
   }
   const openFull = () => {
-    if (current) actions.run(DOCK_ADDON, 'open', { session: current })
+    if (current) inTicket.run(DOCK_ADDON, 'open', { session: current })
     void router.navigate({ to: '/addon/$name/$page', params: { name: DOCK_ADDON, page: 'sessions' } })
   }
-  const collapse = () => setPrefs((p) => ({ ...p, open: false }))
-  const resize = (px: number) => setPrefs((p) => ({ ...p, [p.side]: clampDock(p.side, px, view) }))
+  const resize = (px: number) => setPrefs((p) => ({ ...p, [side]: Math.round(Math.min(dockMax(side, view, area), Math.max(DOCK_LIMITS[side].min, px))) }))
 
-  const canStart = actions.allowed(DOCK_ADDON, 'start')
+  const canStart = inTicket.allowed(DOCK_ADDON, 'start')
   const now = sessions[0]?.ctx.now
-  const title = ticket ?? 'Workspace'
-  const pane = right ? 'max-h-[55%] border-b border-border' : 'w-80 shrink-0 border-r border-border'
+  const scope = ticket ?? 'Workspace'
+  const width = right ? size : area
+  const visibleTabs = Math.max(1, Math.floor((width - (right ? 60 : 470)) / 150)) // right: the tabs have a row of their own
+  const pane = right ? 'max-h-[60%] border-b border-border' : 'w-80 shrink-0 border-r border-border'
+  const watching = currentSession && currentSession.status === 'running' && !currentSession.interactive
+  const footer = watching ? (
+    <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-2 py-1 text-xs text-text-muted">
+      <span>Read only — this is the agent's session.</span>
+      {canStart && <Button variant="link" size="xs" onClick={() => setNewOpen(true)}>Start your own session</Button>}
+    </div>
+  ) : undefined
 
   return (
-    <section ref={region} tabIndex={-1} aria-label="Terminal dock" data-addon={DOCK_ADDON} data-dock-side={prefs.side}
+    <section ref={region} tabIndex={-1} aria-label="Terminal dock" data-addon={DOCK_ADDON} data-dock-side={side}
       className={cn('relative flex shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
       style={right ? { width: size } : { height: size }}>
-      <ResizeHandle side={prefs.side} size={size} max={dockMax(prefs.side, view)} onResize={resize} />
-      <header className={cn("flex h-8 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs", addonRule)}>
+      <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
+      <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
-        <h2 className="shrink-0 text-[13px] font-semibold">Terminal</h2>
-        <span className="min-w-0 truncate text-text-muted" title={title}>{ticket ? <TicketTitle ticket={ticket} /> : 'Workspace'}</span>
-        {!right && <DockChips ticket={ticket} />}
-        <span className="flex-1" />
-        <Button variant="ghost" size="xs" aria-pressed={picker} onClick={() => setPicker(!picker)}><List />Sessions</Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Open in Terminals" title="Open in Terminals" onClick={openFull}><ExternalLink /></Button>
-        <Button variant="ghost" size="icon-xs" aria-label={right ? 'Move dock to the bottom' : 'Move dock to the right'} title={right ? 'Move dock to the bottom' : 'Move dock to the right'}
-          onClick={() => setPrefs((p) => ({ ...p, side: right ? 'bottom' : 'right' }))}>
-          {right ? <PanelBottom /> : <PanelRight />}
+        <h2 className="sr-only">Terminal</h2>
+        <span className="shrink-0 font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
+        {right ? <span className="flex-1" /> : <SessionTabs windows={windows} current={current} visible={visibleTabs} onSelect={select} onClose={closeTranscript} />}
+        <NewSessionButton open={newOpen} onOpenChange={setNewOpen} ticket={ticket} lastHarness={prefs.harness} canStart={canStart} onStart={start} />
+        <Button variant="ghost" size={right ? 'icon-xs' : 'xs'} aria-label="Sessions" title="Sessions" aria-pressed={browser} onClick={() => setBrowser(!browser)}>
+          <List />{!right && 'Sessions'}
         </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Collapse terminal dock" title={`Collapse (${DOCK_KEYS})`} aria-expanded={true} onClick={collapse}>
-          {right ? <ChevronRight /> : <ChevronDown />}
-        </Button>
+        <TicketInfo ticket={ticket} compact={right} />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-xs" aria-label="Dock menu"><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={openFull}>Open in Terminals</DropdownMenuItem>
+            {right ? (
+              <DropdownMenuItem onSelect={() => setPrefs((p) => ({ ...p, side: 'bottom' }))}>Move to the bottom</DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled={!rightFits} onSelect={() => setPrefs((p) => ({ ...p, side: 'right' }))}>{rightFits ? 'Move to the right' : NO_ROOM}</DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
-      {right && <DockChips ticket={ticket} row />}
+      {right && (
+        <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">
+          <SessionTabs windows={windows} current={current} visible={visibleTabs} onSelect={select} onClose={closeTranscript} />
+        </div>
+      )}
       <div className={cn('flex min-h-0 flex-1', right ? 'flex-col' : 'flex-row')}>
-        {(picker || !current) && me.data && (
-          <SessionPicker className={current ? pane : 'flex-1'} ticket={ticket} running={running} ended={ended} current={current} me={me.data.person} now={now} canStart={canStart}
-            onSelect={select} onStart={start} onResume={resume} />
+        {(browser || !current) && state && (
+          <SessionBrowser className={current ? pane : 'flex-1'} title={ticket ? `Sessions for ${ticket}` : 'Sessions in this workspace'} running={running} ended={ended} names={name}
+            current={current} now={now} canStart={canStart} onSelect={select} onContinue={continueFrom} />
         )}
         {current && (
           <div className="min-h-0 min-w-0 flex-1">
-            <TerminalView key={current} addon={DOCK_ADDON} session={current} placement="dock" fallback={<p className="p-3 text-xs text-text-muted">This session is no longer available.</p>} />
+            <TerminalView key={current} addon={DOCK_ADDON} session={current} placement="dock" dock={{ name: `${windows.find((w) => w.session.id === current)?.index ?? 0} ${name(currentSession!)}`, footer, stripRef: strip, compact: right }}
+              fallback={<p className="p-3 text-xs text-text-muted">This session is no longer available.</p>} />
           </div>
         )}
-        {!state && <Skeleton className="m-3 h-24 flex-1" />}
+        {(!state || !me.data) && <Skeleton className="m-3 h-24 flex-1" />}
       </div>
-      <TmuxStatus name={workspace?.prefix ?? 'orch'} windows={windows} current={current} ticket={ticket} now={now} canNew={canStart} onSelect={select} onNew={() => setPicker(true)} />
-      {actions.dialog}
+      {inTicket.dialog}
+      {inWorkspace.dialog}
     </section>
   )
 }
 
-/** "DEMO-0043 · Load tariff tables" from the ticket query the page already holds. */
-function TicketTitle({ ticket }: { ticket: string }) {
-  const t = useQuery({ queryKey: ['ticket', ticket], queryFn: () => api.getTicket(ticket), staleTime: 10_000 })
-  return <>{ticket}{t.data ? ` · ${t.data.title}` : ''}</>
-}
-
-/** The drag edge: pointer drag, or arrow keys (Shift for bigger steps), Home/End for the limits. */
-function ResizeHandle({ side, size, max, onResize }: { side: DockPrefs['side']; size: number; max: number; onResize: (px: number) => void }) {
+/** The drag edge with a visible grip: pointer drag, or arrow keys (Shift for bigger steps), Home/End for the limits. */
+function ResizeHandle({ side, size, max, onResize }: { side: DockSide; size: number; max: number; onResize: (px: number) => void }) {
   const right = side === 'right'
   const min = DOCK_LIMITS[side].min
   const drag = useRef<{ start: number; size: number } | null>(null)
@@ -184,8 +243,13 @@ function ResizeHandle({ side, size, max, onResize }: { side: DockPrefs['side']; 
     onResize(next)
   }
   return (
-    <div role="separator" tabIndex={0} aria-label="Resize terminal dock" aria-orientation={right ? 'vertical' : 'horizontal'} aria-valuemin={min} aria-valuemax={max} aria-valuenow={size}
+    <div role="separator" tabIndex={0} aria-label="Resize terminal dock" title="Drag to resize · Arrow keys" aria-orientation={right ? 'vertical' : 'horizontal'} aria-valuemin={min} aria-valuemax={max} aria-valuenow={size}
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => (drag.current = null)} onPointerCancel={() => (drag.current = null)} onKeyDown={onKey}
-      className={cn('absolute z-10 outline-none hover:bg-brand/40 focus-visible:bg-brand/60', right ? '-left-1 top-0 h-full w-2 cursor-col-resize' : '-top-1 left-0 h-2 w-full cursor-row-resize')} />
+      className={cn('group absolute z-10 flex items-center justify-center outline-none', right ? '-left-1.5 top-0 h-full w-3 cursor-col-resize' : '-top-1.5 left-0 h-3 w-full cursor-row-resize')}>
+      <span aria-hidden="true" className={cn('rounded-full bg-border-strong group-hover:bg-brand group-focus-visible:bg-brand', right ? 'h-10 w-1' : 'h-1 w-10')} />
+      <span className="pointer-events-none absolute hidden whitespace-nowrap rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-text group-hover:block group-focus-visible:block" style={right ? { left: 12 } : { top: -22 }}>
+        Drag to resize · Arrow keys
+      </span>
+    </div>
   )
 }

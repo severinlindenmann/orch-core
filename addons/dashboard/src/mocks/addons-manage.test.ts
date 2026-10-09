@@ -20,7 +20,7 @@ const grantReq = (store: ReturnType<typeof createMockStore>, ws: string, name: s
 }
 const updateReq = (store: ReturnType<typeof createMockStore>) => {
   const u = store.addons.find((a) => a.name === 'github')!.update!
-  return { op: 'update' as const, version: u.version, package_sha256: u.package_sha256, capabilities: u.capabilities, viewer_actions: [] }
+  return { op: 'update' as const, version: u.version, package_sha256: u.package_sha256, capabilities: u.capabilities, viewer_actions: ['open'] } // github's viewer-level open
 }
 const code = async (p: Promise<unknown>) => {
   try {
@@ -105,7 +105,7 @@ describe('addon manager API', () => {
     expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant' })
     expect(pendingUpdate(gh)).toBeNull()
     expect(store.addonStateView(ws, 'github')).toBeNull()
-    await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'], viewer_actions: [] })
+    await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'], viewer_actions: ['open'] })
     gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
     expect(gh.ws.status).toBe('active')
     expect(gh.ws.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })

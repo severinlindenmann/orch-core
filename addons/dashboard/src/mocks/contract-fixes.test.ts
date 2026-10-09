@@ -81,8 +81,8 @@ describe('signed grant payload covers the viewer-level actions', () => {
     const gh = store.addons.find((a) => a.name === 'github')!
     gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh' } }
     const u = { op: 'update' as const, version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities }
-    expect(await fail(api.postAddonOp(ws, 'github', { ...u, viewer_actions: [] }))).toMatchObject({ status: 409, code: 'addon.changed' })
-    expect(await api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['refresh'] })).toMatchObject({ name: 'github' })
+    expect(await fail(api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['open'] }))).toMatchObject({ status: 409, code: 'addon.changed' })
+    expect(await api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['open', 'refresh'] })).toMatchObject({ name: 'github' })
   })
 })
 
@@ -107,7 +107,7 @@ describe('the signed manifest is the one enforced after an update', () => {
     store.setViewer('p_tom')
     expect(await fail(api.runAddonAction(ws, 'github', 'refresh', {}))).toMatchObject({ status: 403 })
     store.setViewer('p_sev')
-    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['refresh'] }
+    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['open', 'refresh'] }
     await api.postAddonOp(ws, 'github', { op: 'update', ...u })
     await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
     store.setViewer('p_tom')
@@ -122,12 +122,12 @@ describe('the signed manifest is the one enforced after an update', () => {
   it('records the signed viewer_actions in addon.granted and addon.updated', async () => {
     const { store, api, ws } = setup()
     const gh = store.addons.find((a) => a.name === 'github')!
-    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: [] as string[] }
+    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['open'] }
     await api.postAddonOp(ws, 'github', { op: 'update', ...u })
     await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
     const evs = store.wsEventsOf(ws).filter((e) => e.type === 'addon.updated' || e.type === 'addon.granted').slice(-2)
     expect(evs.map((e) => e.type)).toEqual(['addon.updated', 'addon.granted'])
-    for (const e of evs) expect(e.viewer_actions).toEqual([])
+    for (const e of evs) expect(e.viewer_actions).toEqual(['open'])
     const w = store.addons.find((a) => a.name === 'wiki')!
     store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
     await api.postAddonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [], viewer_actions: viewerActions(w).map((a) => a.id) })

@@ -168,7 +168,9 @@ registerAddon({
     const byTicket: Record<string, ReturnType<typeof shareItem>[]> = {}
     for (const x of sh) if (x.ticket) (byTicket[x.ticket] ??= []).push(shareItem(x))
     return {
-      shares: sh, // overrides the raw list
+      // Overrides the raw list. Secret tokens never ride in the state (anyone with the page would hold every link):
+      // a member gets a link from copy_link or share_once, in the action's answer.
+      shares: sh.map(({ token: _token, ...x }) => x),
       summary: `${plural(running, 'app', 'apps')} running · ${plural(failed.length, 'failed build', 'failed builds')}`,
       liveShares: sh.length,
       views: sh.reduce((n, x) => n + x.views, 0),

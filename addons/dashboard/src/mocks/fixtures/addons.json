@@ -265,7 +265,7 @@
         "action": "share_once"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true } },
+    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" } },
     "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
     "update": null
   },
@@ -516,7 +516,7 @@
         "action": "refresh"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "member", "kind": "navigation" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "kind": "navigation", "label": "Open pull request" } },
     "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
     "update": {
       "version": "0.6.0",

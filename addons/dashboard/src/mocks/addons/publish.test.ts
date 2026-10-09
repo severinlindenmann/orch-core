@@ -168,3 +168,25 @@ describe('closed decisions are refused by the store, for any addon', () => {
   })
 })
 
+
+describe('reads are viewer-level; secret tokens never ride in the state', () => {
+  it('a viewer reads app logs (publish.logs) and opens a pull request (github.open), but cannot copy a link', async () => {
+    const s = setup()
+    s.store.setViewer('p_tom')
+    expect((await s.api.runAddonAction(s.ws, 'publish', 'logs', { id: 'app_ops' })).message).toContain('ModuleNotFoundError')
+    expect((await s.api.runAddonAction(s.ws, 'github', 'open', { id: 'acme-energy/energy-dbt#29' })).url).toMatch(/^https:\/\/github\.com\//)
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: 'sh_report' }))).toMatchObject({ status: 403 })
+  })
+  it.each(['p_tom', 'p_mara', 'p_sev'])('%s: no share token is in the publish state; a member gets it from copy_link', async (viewer) => {
+    const s = setup()
+    const raw = s.store.addonState(s.ws, 'publish').shares as { id: string; token: string | null }[]
+    const tokens = raw.map((x) => x.token).filter((t): t is string => !!t)
+    expect(tokens.length).toBeGreaterThan(0)
+    s.store.setViewer(viewer)
+    const json = JSON.stringify(await s.api.getAddonState(s.ws, 'publish'))
+    for (const t of tokens) expect(json).not.toContain(t)
+    if (viewer === 'p_tom') return
+    const withToken = raw.find((x) => x.token)!
+    expect((await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: withToken.id })).message).toContain(withToken.token)
+  })
+})

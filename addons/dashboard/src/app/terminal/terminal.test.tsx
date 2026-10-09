@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { beforeEach, afterEach, vi } from 'vitest'
 import { api } from '@/api/client'
@@ -112,7 +112,9 @@ describe('terminals hostile text and exit', () => {
     const term = document.querySelector('[data-terminal-session="shell1"]') as HTMLElement
     expect(term.className).not.toMatch(/overflow-x-auto/)
     expect(term.dataset.terminalRows).toBe('24') // page sizing
-    expect(term.style.height).toBe('calc(100vh - 220px)')
+    // fills the viewport below its own top edge, never under 360 px
+    await waitFor(() => expect(parseInt(term.style.height)).toBeGreaterThanOrEqual(360), T)
+    expect(term.style.minHeight).toBe('360px')
   })
 })
 
@@ -167,5 +169,68 @@ describe('terminal keyboard exits and lifecycle', () => {
     renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
     await screen.findByRole('textbox', {}, T)
     expect(errors).not.toHaveBeenCalled()
+  })
+})
+
+describe('terminal workspace layout', () => {
+  it('below 1280 the session list becomes a picker in the header', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    await screen.findByRole('group', { name: /Terminal:/ }, T)
+    expect(screen.queryByRole('navigation', { name: 'Terminal sessions' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Choose terminal session' }))
+    const list = await screen.findByRole('navigation', { name: 'Terminal sessions' })
+    await user.click(within(list).getByRole('button', { name: /DEMO-0043 · Claude Code/ }))
+    expect(await screen.findByText('Agent output · view only')).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Terminal sessions' })).not.toBeInTheDocument()
+  })
+  it('keeps at most two live terminals; the evicted one shows its last lines and re-attaches on click', async () => {
+    const apps = [renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })]
+    await screen.findByRole('group', { name: /Terminal:/ }, T)
+    apps.push(renderApp('/addon/terminals/sessions', { viewer: 'p_sev' }))
+    await waitFor(() => expect(document.querySelectorAll('[data-terminal-session]')).toHaveLength(2), T)
+    apps.push(renderApp('/addon/terminals/sessions', { viewer: 'p_sev' }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Attach terminal' })).toHaveLength(1), T)
+    expect(document.querySelectorAll('[data-terminal-session]')).toHaveLength(2)
+    expect(screen.getByLabelText(/Last 20 lines/)).toBeInTheDocument()
+    await apps[0].user.click(screen.getByRole('button', { name: 'Attach terminal' }))
+    await waitFor(() => expect(document.querySelectorAll('[data-terminal-session]')).toHaveLength(2), T)
+    expect(screen.getAllByRole('button', { name: 'Attach terminal' })).toHaveLength(1)
+  }, 30000)
+  it('leave terminal moves focus out of the terminal; Find is Cmd+F only and Ctrl+F reaches the shell', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    const input = await screen.findByRole('textbox', {}, T)
+    input.focus()
+    await user.keyboard('{Control>}f{/Control}')
+    expect(screen.queryByRole('textbox', { name: 'Find in terminal' })).not.toBeInTheDocument()
+    await user.keyboard('{Meta>}f{/Meta}')
+    expect(await screen.findByRole('textbox', { name: 'Find in terminal' })).toBeInTheDocument()
+    const group = screen.getByRole('group', { name: /Terminal:/ })
+    await user.click(screen.getByRole('button', { name: 'Leave terminal' }))
+    expect(group).not.toContainElement(document.activeElement as HTMLElement)
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Leave terminal' }))
+  })
+  it('opens Ended when the selected session is in it', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    const list = await screen.findByRole('navigation', { name: 'Terminal sessions' }, T)
+    await user.click(within(list).getByText(/Ended \(1\)/))
+    await user.click(within(list).getByRole('button', { name: /Scratch shell/ }))
+    await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Terminal sessions' })).getByRole('button', { name: /Scratch shell/ })).toHaveAttribute('aria-current', 'true'), T)
+    expect(document.querySelector('details')).toHaveAttribute('open')
+  })
+  it('stops following when the person scrolls up and offers Jump to latest', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    await user.click(await screen.findByRole('button', { name: /DEMO-0117 · Claude Code/ }, T))
+    const group = await screen.findByRole('group', { name: 'Terminal: DEMO-0117 · Claude Code' }, T)
+    await waitFor(() => expect(group.querySelector('.xterm-viewport')).not.toBeNull(), T)
+    expect(screen.queryByRole('button', { name: /Jump to latest/ })).not.toBeInTheDocument()
+    const input = within(group).getByRole('textbox')
+    await waitFor(() => {
+      input.focus()
+      fireEvent.keyDown(input, { key: 'PageUp', code: 'PageUp', keyCode: 33, shiftKey: true })
+      expect(screen.getByRole('button', { name: /Jump to latest/ })).toBeInTheDocument()
+    }, T)
+    await user.click(screen.getByRole('button', { name: /Jump to latest/ }))
+    expect(screen.queryByRole('button', { name: /Jump to latest/ })).not.toBeInTheDocument()
   })
 })

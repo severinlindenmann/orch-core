@@ -1,24 +1,35 @@
+import { ArrowRightFromLine, Copy, Download, Search } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
-export function TerminalHeader({ session, interactive, rail, picker, leaveRef, onCopy, onFind, onDownload, onEnd, onOpen }: {
-  session: TerminalSessionView; interactive: boolean; rail: boolean; picker?: ReactNode; leaveRef: Ref<HTMLButtonElement>
-  onCopy: () => void; onFind: () => void; onDownload: () => void; onEnd: () => void; onOpen: () => void
+function IconButton({ label, onClick, disabled, innerRef, children }: { label: string; onClick: () => void; disabled?: boolean; innerRef?: Ref<HTMLButtonElement>; children: ReactNode }) {
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <Button ref={innerRef as never} variant="ghost" size="icon-xs" aria-label={label.replace(/ \(.*\)$/, '')} disabled={disabled} onClick={onClick}>{children}</Button>
+    </TooltipTrigger>
+    <TooltipContent side="bottom">{label}</TooltipContent>
+  </Tooltip>
+}
+
+export function TerminalHeader({ session, interactive, rail, picker, leaveRef, canFind, onCopy, onFind, onDownload, onEnd, onLeave, onOpen }: {
+  session: TerminalSessionView; interactive: boolean; rail: boolean; picker?: ReactNode; leaveRef: Ref<HTMLButtonElement>; canFind: boolean
+  onCopy: () => void; onFind: () => void; onDownload: () => void; onEnd: () => void; onLeave: () => void; onOpen: () => void
 }) {
-  const control = 'shrink-0 rounded px-1.5 text-xs hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-brand'
-  return <header className="flex h-8 min-w-0 items-center gap-1 border-b border-border bg-surface px-1 text-xs">
+  return <header className="flex h-8 min-w-0 items-center gap-1.5 border-b border-border bg-surface px-2 text-xs">
     {picker}
-    <span title={session.label} className="min-w-0 truncate font-medium">{session.label}</span>
-    <span className="shrink-0 rounded bg-surface-2 px-1 text-text-muted">{session.status === 'running' ? 'Live' : 'Ended'}</span>
-    <span className="shrink-0 rounded bg-surface-2 px-1">{session.kind === 'agent' ? 'Agent output · view only' : interactive ? 'Your shell · interactive' : 'Your shell · view only'}</span>
+    <span title={session.label} className="max-w-[45%] min-w-0 shrink-0 truncate font-medium">{session.label}</span>
+    <span className="shrink-0 rounded bg-surface-2 px-1.5 text-text-muted">{session.status === 'running' ? 'Live' : 'Ended'}</span>
+    <span className="shrink-0 rounded bg-surface-2 px-1.5">{session.kind === 'agent' ? 'Agent output · view only' : interactive ? 'Your shell · interactive' : 'Your shell · view only'}</span>
+    {rail ? <span className="flex-1" /> : <span title={`${session.ctx.branch} · ${session.ctx.cwd}`} className="flex min-w-0 flex-1 gap-1 font-mono text-text-muted"><span className="shrink-0 truncate">{session.ctx.branch}</span><span className="min-w-0 truncate">· {session.ctx.cwd}</span></span>}
     {!rail && <>
-      <span title={`${session.ctx.branch} · ${session.ctx.cwd}`} className="min-w-0 flex-1 truncate font-mono text-text-muted">{session.ctx.branch} · {session.ctx.cwd}</span>
-      <button className={control} onClick={onCopy}>Copy</button>
-      <button className={control} onClick={onFind} title="Find (⌘F)">Find</button>
-      <button className={control} onClick={onDownload} aria-label="Download transcript" title="Download transcript">↓</button>
-      {interactive && <button className={control} onClick={onEnd}>End session</button>}
+      <IconButton label="Copy selection or transcript" onClick={onCopy}><Copy /></IconButton>
+      <IconButton label="Find (⌘F)" onClick={onFind} disabled={!canFind}><Search /></IconButton>
+      <IconButton label="Download transcript" onClick={onDownload}><Download /></IconButton>
+      {interactive && <Button variant="ghost" size="xs" onClick={onEnd}>End session</Button>}
     </>}
-    <button ref={leaveRef} className={control} aria-label="Leave terminal" title="Leave terminal">{interactive ? 'Esc Esc to leave' : 'Tab to leave'}</button>
-    {rail && <button className={control} onClick={onOpen}>Open in Terminals</button>}
+    <IconButton label={interactive ? 'Leave terminal (Esc Esc)' : 'Leave terminal (Tab)'} onClick={onLeave} innerRef={leaveRef}><ArrowRightFromLine /></IconButton>
+    {rail && <Button variant="ghost" size="xs" onClick={onOpen}>Open in Terminals</Button>}
   </header>
 }

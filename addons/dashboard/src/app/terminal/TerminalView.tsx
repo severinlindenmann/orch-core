@@ -5,11 +5,14 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Terminal } from '@xterm/xterm'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { ArrowDown, ChevronDown, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { TerminalSessionView } from '@/api/terminals'
 import { useAddonStates } from '@/addon-ui/slots'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
@@ -23,6 +26,23 @@ const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
 const live = new Map<symbol, () => void>()
 const saved = new WeakMap<QueryClient, Map<string, { output: string; viewport: number; following: boolean }>>()
 
+/** Height that fills the viewport from the element's top edge down (never below `min`); re-measured on every render and resize. */
+function useFillHeight(ref: RefObject<HTMLElement | null>, enabled: boolean, min: number, bottom: number) {
+  const [h, setH] = useState<number>()
+  const measure = () => {
+    const el = ref.current
+    if (!enabled || !el) return
+    const next = Math.max(min, Math.floor(window.innerHeight - el.getBoundingClientRect().top - bottom))
+    setH((cur) => (cur === next ? cur : next))
+  }
+  useLayoutEffect(measure)
+  useEffect(() => {
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  })
+  return enabled ? h : undefined
+}
+
 export default function TerminalView({ addon, session, fallback, placement = 'page' }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
@@ -32,6 +52,8 @@ export default function TerminalView({ addon, session, fallback, placement = 'pa
   const [wide, setWide] = useState(() => window.innerWidth >= 1280)
   const [picker, setPicker] = useState(false)
   const [error, setError] = useState('')
+  const aside = useRef<HTMLElement>(null)
+  const listHeight = useFillHeight(aside, placement === 'page' && wide, 200, 40)
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1280px)')
     const change = () => setWide(media.matches)
@@ -54,11 +76,11 @@ export default function TerminalView({ addon, session, fallback, placement = 'pa
   }
   const list = <SessionList sessions={sessions} selected={s.id} onSelect={(id) => { void action('open', id); setPicker(false) }} />
   return <div className="min-w-0">
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert" className="mb-2 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">{error}</p>}
     <div className={`grid min-w-0 gap-3 ${placement === 'page' && wide ? 'grid-cols-[260px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
-      {placement === 'page' && wide && <aside className="max-h-[calc(100vh-188px)] overflow-y-auto">{list}</aside>}
+      {placement === 'page' && wide && <aside ref={aside} style={{ maxHeight: listHeight }} className="overflow-y-auto">{list}</aside>}
       <XtermSession key={`${workspace.id}:${me.data.person}:${s.id}:${interactive}`} addon={addon} session={s} interactive={interactive} fontSize={fontSize} rail={placement === 'rail'} cacheKey={`${workspace.id}:${me.data.person}:${addon}:${s.id}:${s.status}`} canCreate={can(role, 'addon.action')} action={action}
-        picker={placement === 'page' && !wide ? <div className="relative shrink-0"><button aria-label="Choose terminal session" aria-expanded={picker} onClick={() => setPicker(!picker)} className="rounded px-1 hover:bg-surface-2">Sessions ▾</button>{picker && <div className="absolute left-0 top-7 z-20 max-h-80 w-[260px] overflow-auto rounded border border-border bg-surface p-1 shadow-lg">{list}</div>}</div> : undefined} />
+        picker={placement === 'page' && !wide ? <div className="relative shrink-0"><Button variant="ghost" size="xs" aria-label="Choose terminal session" aria-expanded={picker} onClick={() => setPicker(!picker)}>Sessions<ChevronDown /></Button>{picker && <div className="absolute left-0 top-7 z-20 max-h-80 w-[260px] overflow-auto rounded border border-border bg-surface p-1 shadow-lg">{list}</div>}</div> : undefined} />
     </div>
   </div>
 }
@@ -70,6 +92,7 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
   const router = useRouter()
   const host = useRef<HTMLDivElement>(null)
   const leave = useRef<HTMLButtonElement>(null)
+  const region = useRef<HTMLElement>(null)
   const terminal = useRef<Terminal | null>(null)
   const search = useRef<SearchAddon | null>(null)
   const latest = useRef({ session, action })
@@ -103,7 +126,7 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     const cache = saved.get(qc) ?? new Map()
     saved.set(qc, cache)
     const previous = cache.get(cacheKey)
-    output.current = previous?.output ?? (interactive ? createShell(() => latest.current.session.ctx).prompt() : replay(latest.current.session.ctx, latest.current.session.transcript) + (session.status === 'stopped' ? '[process completed]\r\n' : ''))
+    output.current = (interactive ? previous?.output : undefined) ?? (interactive ? createShell(() => latest.current.session.ctx).prompt() : replay(latest.current.session.ctx, latest.current.session.transcript) + (session.status === 'stopped' ? '[process completed]\r\n' : ''))
     preview.current = output.current.split(/\r?\n/).slice(-20).map(clean).join('\n')
     followingRef.current = previous?.following ?? true
     setFollowing(followingRef.current)
@@ -117,7 +140,10 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
         if (cache.size > 40) cache.delete(cache.keys().next().value!)
         preview.current = Array.from({ length: term.buffer.active.length }, (_, i) => term!.buffer.active.getLine(i)?.translateToString(true) ?? '').slice(-20).join('\n')
         subscriptions.forEach((s) => s.dispose())
-        term.dispose()
+        // xterm schedules animation-frame work (viewport sync) when it opens; disposing before it runs throws
+        // "reading 'dimensions'" (hit by StrictMode's mount/unmount/mount). Dispose after those frames have run.
+        const dying = term
+        requestAnimationFrame(() => requestAnimationFrame(() => dying.dispose()))
         terminal.current = null
         search.current = null
       }
@@ -141,11 +167,12 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
       let lastEscape = -Infinity
       term.attachCustomKeyEventHandler((e) => {
         if (e.type !== 'keydown') return true
-        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); setFinding(true); return false }
+        if (e.metaKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFinding(true); return false }
         if (!interactive) {
           if (e.key === 'Tab' || e.key === 'Escape') { e.preventDefault(); leave.current?.focus(); return false }
-          if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) showNote()
-          return false
+          if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) { showNote(); return false }
+          return /^(Page(Up|Down)|Home|End|Arrow(Up|Down))$/.test(e.key) // reading keys scroll; stdin is disabled, so nothing is sent
+
         }
         if (e.key === 'Tab') e.preventDefault() // the shell gets Tab; the browser must not move focus
         if (e.key === 'Escape') {
@@ -192,30 +219,40 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     ro.observe(el)
     mountOrFit()
     return cleanup
-  }, [cacheKey, attached, interactive, fontSize, qc, session.id, session.status])
+  }, [cacheKey, attached, interactive, fontSize, qc, session.id, session.status, session.transcript.length])
 
   const transcript = () => {
     const term = terminal.current
     return term ? Array.from({ length: term.buffer.active.length }, (_, i) => term.buffer.active.getLine(i)?.translateToString(true) ?? '').join('\n') : output.current.split(/\r?\n/).map(clean).join('\n')
   }
+  // Leave: hand focus to the next focusable thing after this terminal (or just drop it).
+  const leaveTerminal = () => {
+    const section = region.current
+    const all = Array.from(document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'))
+    const next = all.find((el) => !section?.contains(el) && !!(section!.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
+    if (next) next.focus()
+    else (document.activeElement as HTMLElement | null)?.blur()
+  }
   const find = () => {
     if (!query) return
     setFindResult(search.current?.findNext(query, { caseSensitive: false }) ? 'Match found' : 'No matches')
   }
-  return <section className="min-w-0 overflow-hidden rounded-md border border-border bg-bg" onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); setFinding(true) } }}>
-    <TerminalHeader session={session} interactive={interactive} rail={rail} picker={picker} leaveRef={leave}
+  const fill = useFillHeight(host, !rail && attached, 360, 40)
+  return <section ref={region} className="min-w-0 overflow-hidden rounded-md border border-border bg-bg" onKeyDown={(e) => { if (e.metaKey && e.key.toLowerCase() === 'f' && attached) { e.preventDefault(); setFinding(true) } }}>
+    <TerminalHeader session={session} interactive={interactive} rail={rail} picker={picker} leaveRef={leave} canFind={attached} onLeave={leaveTerminal}
       onCopy={() => { void navigator.clipboard.writeText(terminal.current?.getSelection() || transcript()).then(() => setFeedback('Copied transcript'), () => setFeedback('Could not copy transcript')) }}
       onFind={() => setFinding(!finding)}
       onDownload={() => { const url = URL.createObjectURL(new Blob([transcript()], { type: 'text/plain' })); const a = document.createElement('a'); a.href = url; a.download = `${session.id}.txt`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0) }}
       onEnd={() => void action('close', session.id)}
       onOpen={() => { void action('open', session.id).then(() => router.navigate({ to: '/addon/$name/$page', params: { name: addon, page: 'sessions' } })) }} />
-    {finding && <form className="flex gap-2 p-2 text-xs" onSubmit={(e) => { e.preventDefault(); find() }}><input autoFocus aria-label="Find in terminal" value={query} onChange={(e) => setQuery(e.target.value)} className="min-w-0 rounded border border-border bg-surface px-2" /><button type="submit">Find next</button><button type="button" onClick={() => setFinding(false)}>Close find</button><span role="status">{findResult}</span></form>}
-    {note && <div role="status" className="px-2 py-1 text-xs text-text-muted">Agent output is view only. Open your own shell to type. <button disabled={!canCreate} onClick={() => void action('new')} className="text-brand disabled:text-text-faint">New terminal</button></div>}
+    {finding && attached && <form className="flex items-center gap-2 border-b border-border bg-surface px-2 py-1 text-xs" onSubmit={(e) => { e.preventDefault(); find() }}><Input autoFocus aria-label="Find in terminal" value={query} onChange={(e) => setQuery(e.target.value)} className="h-6 min-w-0 flex-1 px-2 text-xs md:text-xs" /><Button type="submit" variant="secondary" size="xs">Find next</Button><Button type="button" variant="ghost" size="icon-xs" aria-label="Close find" onClick={() => setFinding(false)}><X /></Button><span role="status" className="text-text-muted">{findResult}</span></form>}
+    {note && <div role="status" className="px-2 py-1 text-xs text-text-muted">Agent output is view only. Open your own shell to type. <Button variant="link" size="xs" disabled={!canCreate} onClick={() => void action('new')}>New terminal</Button></div>}
     {feedback && <p role="status" className="px-2 text-xs text-text-muted">{feedback}</p>}
-    {attached ? <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : 24}
-      style={{ height: rail ? `${Math.ceil(12 * fontSize * 1.25) + 16}px` : 'calc(100vh - 220px)', minHeight: rail ? undefined : 360 }} className="w-full overflow-hidden bg-bg p-2" />
-      : <div className="p-2"><pre aria-label={`Last 20 lines: ${session.label}`} className="max-h-96 overflow-auto text-xs">{preview.current}</pre><button onClick={() => setAttached(true)}>Attach terminal</button></div>}
-    {!following && <button className="m-2 rounded bg-brand px-2 py-1 text-xs text-on-brand" onClick={() => { followingRef.current = true; terminal.current?.scrollToBottom(); setFollowing(true) }}>Jump to latest</button>}
-    {!interactive && <details className="px-2 text-xs text-text-muted"><summary>Plain-text transcript</summary><pre tabIndex={0} aria-label="Terminal transcript" className="max-h-64 overflow-auto whitespace-pre-wrap">{replay(session.ctx, session.transcript)}</pre></details>}
+    {attached ? <div className="relative">
+      <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : 24}
+        style={{ height: rail ? `${Math.ceil(12 * fontSize * 1.25) + 16}px` : fill ?? 'calc(100vh - 300px)', minHeight: rail ? undefined : 360 }} className="w-full overflow-hidden bg-bg p-2" />
+      {!following && <Button size="xs" className="absolute bottom-3 right-4 z-10" onClick={() => { followingRef.current = true; terminal.current?.scrollToBottom(); setFollowing(true) }}><ArrowDown />Jump to latest</Button>}
+    </div>
+      : <div className="p-2"><pre aria-label={`Last 20 lines: ${session.label}`} className="max-h-96 overflow-auto text-xs">{preview.current}</pre><Button variant="secondary" size="xs" className="mt-2" onClick={() => setAttached(true)}>Attach terminal</Button></div>}
   </section>
 }

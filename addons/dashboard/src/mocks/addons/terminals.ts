@@ -16,7 +16,6 @@ import { canSeeTicket, invalid, notFound, refusal, registerAddon, type AddonCtx 
 
 interface Session {
   id: string
-  label: string
   kind: 'person' | 'agent'
   owner: string // person id or "agent:<id>"
   for?: string // agent mirrors: the person whose grant the agent works under
@@ -29,9 +28,9 @@ interface Session {
 }
 
 const SESSIONS: Session[] = [
-  { id: 'shell1', label: 'Severin · DEMO-0043 worktree', kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:12:00Z' },
-  { id: 'agent1', label: 'agent: claude-code (read only, no typing)', kind: 'agent', owner: 'agent:claude-code', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:40:00Z' },
-  { id: 'old1', label: 'Scratch', kind: 'person', owner: 'p_sev', ticket: null, branch: 'main', status: 'stopped', started: '2026-10-08T15:05:00Z' },
+  { id: 'shell1', kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:12:00Z' },
+  { id: 'agent1', kind: 'agent', owner: 'agent:claude-code', for: 'p_sev', ticket: 'DEMO-0043', branch: 'feat/billing-join', status: 'running', started: '2026-10-09T09:40:00Z' },
+  { id: 'old1', kind: 'person', owner: 'p_sev', ticket: null, branch: 'main', status: 'stopped', started: '2026-10-08T15:05:00Z' },
 ]
 /** What the agent typed: its commands name the ticket it works on. */
 const agentTranscript = (s: Session) => ['orch status', 'orch task next', ...(s.ticket ? [`orch approve ${s.ticket} plan`] : [])]
@@ -98,7 +97,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const working = briefs(store, ws).filter((t) => t.claimed && !t.restricted)
   const asked = rng.shuffle(working).slice(0, 3)
   asked.forEach((t, i) => {
-    state.sessions.push({ id: `agent${i + 2}`, label: `agent: ${i % 2 ? 'codex' : 'claude-code'} (read only, no typing)`, kind: 'agent', owner: `agent:${i % 2 ? 'codex' : 'claude-code'}`, for: i % 2 ? 'p_mara' : 'p_sev', ticket: t.key, branch: t.branch, status: 'running', started: `2026-10-09T${String(8 + i).padStart(2, '0')}:${10 + i * 7}:00Z`, transcript: longTranscript(rng, t.key, 160 + i * 120) })
+    state.sessions.push({ id: `agent${i + 2}`, kind: 'agent', owner: `agent:${i % 2 ? 'codex' : 'claude-code'}`, for: i % 2 ? 'p_mara' : 'p_sev', ticket: t.key, branch: t.branch, status: 'running', started: `2026-10-09T${String(8 + i).padStart(2, '0')}:${10 + i * 7}:00Z`, transcript: longTranscript(rng, t.key, 160 + i * 120) })
   })
   // The seeded mirror also gets a long run.
   const first = state.sessions.find((s) => s.id === 'agent1')
@@ -118,7 +117,7 @@ registerAddon({
     const shown = sessionsOf(state).filter((s) => visibleTo(c, s))
     const sessions: TerminalSessionView[] = shown.map((s) => ({
       id: s.id,
-      label: s.kind === 'agent' ? `${s.ticket ? `${s.ticket} · ` : ''}${s.owner === 'agent:claude-code' ? 'Claude Code' : s.owner.slice(6).replace(/(^|-)([a-z])/g, (_, sep: string, ch: string) => `${sep ? ' ' : ''}${ch.toUpperCase()}`)}` : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell',
+      label: sessionTitle(s),
       started: s.started,
       kind: s.kind,
       owner: s.owner,
@@ -137,7 +136,7 @@ registerAddon({
       current: { id: cur?.id ?? 'none' },
       sessionByTicket,
       items: shown.map((s) => ({
-        title: s.label,
+        title: sessionTitle(s),
         subtitle: `zsh · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
@@ -155,12 +154,12 @@ registerAddon({
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
       if (!s) return notFound('No such terminal session.')
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Opened ${s.label}.`, changed: true }
+      return { ok: true, message: `Opened ${sessionTitle(s)}.`, changed: true }
     },
-    new({ state, store, ws, viewer }) {
-      const s = newShell(state, store, ws, viewer, null)
+    new({ state, store, viewer }) {
+      const s = newShell(state, store, viewer, null)
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Started ${s.label}.`, changed: true }
+      return { ok: true, message: `Started ${sessionTitle(s)}.`, changed: true }
     },
     close(ctx) {
       const { state, body, viewer } = ctx
@@ -168,12 +167,12 @@ registerAddon({
       if (!s) return notFound('No such terminal session.')
       if (s.kind !== 'person' || s.owner !== viewer) return refusal(403, 'forbidden', 'Only the owner can close a terminal; agent sessions are mirrors.')
       s.status = 'stopped'
-      return { ok: true, message: `Closed ${s.label}.`, changed: true }
+      return { ok: true, message: `Closed ${sessionTitle(s)}.`, changed: true }
     },
     open_ticket(ctx) {
-      const { state, store, ws, viewer, ticket } = ctx
+      const { state, store, viewer, ticket } = ctx
       if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
-      const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, ws, viewer, ticket)
+      const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, viewer, ticket)
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }
     },
@@ -186,12 +185,18 @@ registerAddon({
   },
 })
 
-function newShell(state: Record<string, unknown>, store: AddonCtx['store'], ws: string, viewer: string, ticket: string | null): Session {
+/** What the person sees: ticket first ("DEMO-0043 · Claude Code", "DEMO-0043 · Your shell", "Scratch shell"). */
+function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket'>): string {
+  if (s.kind === 'person') return s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'
+  const agent = s.owner.slice('agent:'.length).split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+  return s.ticket ? `${s.ticket} · ${agent}` : agent
+}
+
+function newShell(state: Record<string, unknown>, store: AddonCtx['store'], viewer: string, ticket: string | null): Session {
   const n = ((state.seq as number) ?? 1) + 1
   state.seq = n
   const s: Session = {
     id: `sh${n}`,
-    label: ticket ? `${nameOf({ store, ws }, viewer)} · ${ticket} worktree` : `${nameOf({ store, ws }, viewer)} · shell ${n}`,
     kind: 'person',
     owner: viewer,
     ticket,

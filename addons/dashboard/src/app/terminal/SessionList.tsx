@@ -1,7 +1,11 @@
+import { useEffect, useState } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
 
 export function SessionList({ sessions, selected, onSelect }: { sessions: TerminalSessionView[]; selected: string; onSelect: (id: string) => void }) {
   const ended = sessions.filter((s) => s.status === 'stopped')
+  const selectedEnded = ended.some((s) => s.id === selected)
+  const [open, setOpen] = useState(selectedEnded)
+  useEffect(() => { if (selectedEnded) setOpen(true) }, [selectedEnded])
   const row = (s: TerminalSessionView) => <li key={s.id}>
     <button type="button" aria-current={selected === s.id ? 'true' : undefined} onClick={() => onSelect(s.id)} className={`w-full rounded px-3 py-2 text-left hover:bg-surface-2 ${selected === s.id ? 'bg-surface-2' : ''}`}>
       <span className="flex items-center gap-2 text-[13px]">
@@ -13,6 +17,6 @@ export function SessionList({ sessions, selected, onSelect }: { sessions: Termin
   </li>
   return <nav aria-label="Terminal sessions" className="min-w-0 space-y-2">
     <ul>{sessions.filter((s) => s.status === 'running').map(row)}</ul>
-    {ended.length > 0 && <details><summary className="cursor-pointer px-3 py-2 text-xs text-text-muted">Ended ({ended.length})</summary><ul>{ended.map(row)}</ul></details>}
+    {ended.length > 0 && <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}><summary className="cursor-pointer px-3 py-2 text-xs text-text-muted">Ended ({ended.length})</summary><ul>{ended.map(row)}</ul></details>}
   </nav>
 }

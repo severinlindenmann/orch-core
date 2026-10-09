@@ -147,9 +147,10 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
   return (
     <>
       <Sheet open onOpenChange={(o) => !o && requestClose()}>
+        {/* Over a page with the terminal docked on the right it stops at the dock and sizes to the page area (N11). */}
         <SheetContent
           side="right"
-          className="w-[calc(100vw-4rem)] gap-0 border-border bg-surface p-0 sm:max-w-none xl:w-[min(92vw,56rem)]"
+          className="right-[var(--dock-right,0px)] w-[min(56rem,calc(100vw-var(--dock-right,0px)-4rem))] gap-0 border-border bg-surface p-0 sm:max-w-none"
           onOpenAutoFocus={(e) => {
             e.preventDefault()
             quickRef.current?.focus()

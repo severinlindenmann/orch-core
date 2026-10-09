@@ -206,14 +206,15 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
 
   return (
     <section ref={region} tabIndex={-1} aria-label="Terminal dock" data-addon={DOCK_ADDON} data-dock-side={side}
-      className={cn('relative flex shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
+      className={cn('@container/dock relative flex min-w-0 shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
       style={right ? { width: size } : { height: size }}>
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
       <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
+        {/* At the narrowest right-hand dock (320 px) the header still fits: the scope truncates, "New session" is an icon. */}
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
-        <span className="shrink-0 font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
+        <span className="min-w-0 truncate font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
         {!ticket && pageTicket && (
           <Button variant="link" size="xs" className="shrink-0 px-0" onClick={backToTicket}>Back to {pageTicket}</Button>
         )}

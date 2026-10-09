@@ -21,7 +21,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
 import { SavedViews } from './SavedViews'
-import { TicketsTable, type AddonColumn } from './TicketsTable'
+import { useElementWidth } from '@/lib/useElementWidth'
+import { TICKETS_FOLD_BELOW, TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -254,6 +255,10 @@ export function TicketsPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [navigate, toggle])
 
+  // A narrow page area (the terminal docked on the right): filters in one popover, saved views in a select (N11).
+  const [frame, pageWidth] = useElementWidth<HTMLDivElement>()
+  const compact = pageWidth > 0 && pageWidth < TICKETS_FOLD_BELOW
+
   const sort: SortKey = search.sort ?? 'updated'
   const shown: TicketSummary[] = rows
   // Grouped, epics are headers and not tickets: "150 tickets · 6 epics".
@@ -261,7 +266,7 @@ export function TicketsPage() {
   const allCards = groups ? everything.filter((t) => t.type !== 'epic').length : everything.length
   const countLabel = cardRows === (allCards || cardRows) ? `${plural(cardRows, 'ticket')}${groups ? ` · ${plural(groups.lanes.length, 'epic')}` : ''}` : `${cardRows} of ${allCards}`
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div ref={frame} className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Tickets</h1>
         <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
@@ -290,6 +295,7 @@ export function TicketsPage() {
           canShare={can(role, 'view.share')}
           onApply={(params) => void navigate({ search: params })}
           onClear={clear}
+          compact={compact}
         />
       )}
       <Filters
@@ -302,6 +308,7 @@ export function TicketsPage() {
         searchRef={searchRef}
         dirty={dirty || qInput !== ''}
         onClear={clear}
+        compact={compact}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
       {meQ.isError ? (

@@ -430,7 +430,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
         </aside>
       </div>
-      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky bottom-0 -mx-6 mt-8 border-t border-border bg-bg px-6 py-3'}>
+      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky bottom-0 -mx-4 mt-8 border-t border-border bg-bg px-4 py-3 @[60rem]/page:-mx-6 @[60rem]/page:px-6'}>
         {(summary || serverError) && (
           <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />

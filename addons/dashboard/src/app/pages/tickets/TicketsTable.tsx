@@ -6,6 +6,8 @@ import type { TicketSummary } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { foldedColumns } from '@/lib/columnFold'
+import { useElementWidth } from '@/lib/useElementWidth'
 import { cn } from '@/lib/utils'
 import { CardFields, People, ProgressBar, type BoardPeople } from '../board/TicketCard'
 import { PriorityMarker, TypeIcon } from '../board/lib'
@@ -17,6 +19,13 @@ export interface AddonColumn {
   addon: string
   title: string
 }
+
+/** Below this table width People, Turn, Progress and the addon fields move under the title (N11). */
+export const TICKETS_FOLD_BELOW = 960
+/** The addon fields (chips such as "back to review") need a wider column: they move under the title below this. */
+const ADDON_FOLD_BELOW = 1120
+const FOLDABLE = ['people', 'turn', 'progress', 'addon'] as const
+type Foldable = (typeof FOLDABLE)[number]
 
 function turnLabel(t: TicketSummary, me: string | undefined, people: BoardPeople): string {
   if (t.status === 'done' || t.turn.who === 'nobody') return 'nobody'
@@ -92,7 +101,17 @@ export function TicketsTable({
     row?.scrollIntoView?.({ block: 'nearest' })
   }, [focusKey])
 
-  const colSpan = (canSelect ? 1 : 0) + 9 + (addonColumns.length > 0 ? 1 : 0)
+  const [frame, width] = useElementWidth<HTMLDivElement>()
+  // Core's column rule with declared thresholds: Key and Title stay, so do Type, Pri, Status and Updated.
+  const folded = new Set(
+    foldedColumns(
+      ['key', 'title', 'type', 'pri', 'status', ...FOLDABLE].map((key) => ({ key, ...(key === 'addon' ? { hideBelow: ADDON_FOLD_BELOW } : (FOLDABLE as readonly string[]).includes(key) ? { hideBelow: TICKETS_FOLD_BELOW } : { keep: true }) })),
+      width,
+    ) as Foldable[],
+  )
+  const show = (c: Foldable) => !folded.has(c)
+  const hasAddon = addonColumns.length > 0
+  const colSpan = (canSelect ? 1 : 0) + 9 + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
   const renderRow = (t: TicketSummary, indent = false) => {
     const isSel = selected.has(t.key)
     const turn = turnLabel(t, me, people)
@@ -137,6 +156,23 @@ export function TicketsTable({
               )}
             </div>
           )}
+          {[...folded].some((c) => c !== 'addon' || hasAddon) && (
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted" data-fold-line>
+              {folded.has('people') && <People ticket={t} people={people} />}
+              {folded.has('turn') && (
+                <span className={cn('truncate', turn === 'you' && 'font-medium text-brand')} title={t.turn.why}>
+                  <span className="text-text-faint">Turn </span>
+                  {turn}
+                </span>
+              )}
+              {folded.has('progress') && <ProgressBar ticket={t} />}
+              {folded.has('addon') && hasAddon && (
+                <span className="flex gap-1">
+                  <CardFields ticket={t} />
+                </span>
+              )}
+            </div>
+          )}
         </TableCell>
         <TableCell className="px-1.5 py-1.5">
           <TypeIcon type={t.type} />
@@ -145,21 +181,27 @@ export function TicketsTable({
           <PriorityMarker priority={t.priority} />
         </TableCell>
         <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell>
-        <TableCell className="px-1.5 py-1.5">
-          <People ticket={t} people={people} />
-        </TableCell>
-        <TableCell className={cn('truncate px-1.5 py-1.5 text-[12px]', turn === 'you' ? 'font-medium text-brand' : 'text-text-muted')} title={t.turn.why}>
-          {turn}
-        </TableCell>
-        <TableCell className="px-1.5 py-1.5">
-          <ProgressBar ticket={t} />
-        </TableCell>
+        {show('people') && (
+          <TableCell className="px-1.5 py-1.5">
+            <People ticket={t} people={people} />
+          </TableCell>
+        )}
+        {show('turn') && (
+          <TableCell className={cn('truncate px-1.5 py-1.5 text-[12px]', turn === 'you' ? 'font-medium text-brand' : 'text-text-muted')} title={t.turn.why}>
+            {turn}
+          </TableCell>
+        )}
+        {show('progress') && (
+          <TableCell className="px-1.5 py-1.5">
+            <ProgressBar ticket={t} />
+          </TableCell>
+        )}
         <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
           {ago(t.updated_at)}
         </TableCell>
-        {addonColumns.length > 0 && (
+        {hasAddon && show('addon') && (
           <TableCell className="px-1.5 py-1.5">
-            <span className="flex gap-1">
+            <span className="flex flex-wrap gap-1">
               <CardFields ticket={t} />
             </span>
           </TableCell>
@@ -169,8 +211,8 @@ export function TicketsTable({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
-      <Table aria-label="Tickets" className="min-w-[800px] table-fixed">
+    <div ref={frame} className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
+      <Table aria-label="Tickets" className={cn('table-fixed', folded.size === 0 && 'min-w-[800px]')}>
         <TableHeader className="sticky top-0 z-10 bg-surface-2">
           <TableRow>
             {canSelect && <TableHead className="h-8 w-8 px-2"><span className="sr-only">Select</span></TableHead>}
@@ -179,12 +221,12 @@ export function TicketsTable({
             <SortHeader label="Type" sort={sort} onSort={onSort} className="w-[44px]" />
             <SortHeader label="Pri" sr="ority" id="priority" sort={sort} onSort={onSort} className="w-[40px]" />
             <SortHeader label="Status" id="status" sort={sort} onSort={onSort} className="w-[84px]" />
-            <SortHeader label="People" sort={sort} onSort={onSort} className="w-[52px]" />
-            <SortHeader label="Turn" sort={sort} onSort={onSort} className="w-[60px]" />
-            <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />
+            {show('people') && <SortHeader label="People" sort={sort} onSort={onSort} className="w-[52px]" />}
+            {show('turn') && <SortHeader label="Turn" sort={sort} onSort={onSort} className="w-[60px]" />}
+            {show('progress') && <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />}
             <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />
-            {addonColumns.length > 0 && (
-              <TableHead className="h-8 w-[84px] px-1.5 text-[12px] font-medium text-text-muted">
+            {hasAddon && show('addon') && (
+              <TableHead className="h-8 w-[132px] px-1.5 text-[12px] font-medium text-text-muted">
                 <span className="inline-flex items-center gap-1">
                   {addonColumns.map((c) => (
                     <AddonBadge key={c.addon} name={c.addon} />

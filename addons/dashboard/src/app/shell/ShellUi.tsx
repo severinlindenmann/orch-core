@@ -1,5 +1,6 @@
 import { useRouterState } from '@tanstack/react-router'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { railCollapsed, railToggle, type RailPref } from './railRule'
 
 interface ShellUi {
   paletteOpen: boolean
@@ -9,9 +10,11 @@ interface ShellUi {
   setPaletteSeed: (q: string) => void
   header: PageHeaderState
   setHeader: (h: PageHeaderState) => void
-  /** The sidebar is the icon rail (the viewer's choice wins; without one, below 1280 px). */
+  /** The sidebar is the icon rail (the viewer's choice wins; without one, below 1280 px or beside a squeezing dock). */
   railCollapsed: boolean
   toggleRail: () => void
+  /** The terminal dock reports whether it squeezes the page (open on the right, little room): see railRule.ts. */
+  setDockSqueeze: (squeezed: boolean) => void
   /** The New ticket overlay (a right-hand sheet over the current page). */
   newTicketOpen: boolean
   setNewTicketOpen: (open: boolean) => void
@@ -19,37 +22,44 @@ interface ShellUi {
   newTicketOpener: { current: HTMLElement | null }
 }
 
-type RailPref = 'auto' | 'wide' | 'narrow'
 const RAIL_KEY = 'orch.sidebar'
+/** The choice made while the right-hand dock squeezes the page (N11), kept apart from the usual one. */
+const RAIL_DOCK_KEY = 'orch.sidebar.docked'
 
-function readRailPref(): RailPref {
+function readRailPref(key: string): RailPref {
   try {
-    const v = localStorage.getItem(RAIL_KEY)
+    const v = localStorage.getItem(key)
     return v === 'wide' || v === 'narrow' ? v : 'auto'
   } catch {
     return 'auto'
   }
 }
 
-/** Wide or narrow (icon rail). Lives in the shell so the sidebar and the toaster agree on the rail width. */
+/** Wide or narrow (icon rail). Lives in the shell so the sidebar, the toaster and the dock agree on the rail width. */
 function useRailState() {
-  const [pref, setPref] = useState<RailPref>(readRailPref)
-  const [narrowWindow, setNarrowWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1280)
+  const [pref, setPref] = useState<RailPref>(() => readRailPref(RAIL_KEY))
+  const [dockPref, setDockPref] = useState<RailPref>(() => readRailPref(RAIL_DOCK_KEY))
+  // Set by the terminal dock: open on the right and squeezing the page (see dockSqueezesSidebar).
+  const [squeezed, setSqueezed] = useState(false)
+  const [windowWidth, setWindowWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
   useEffect(() => {
-    const onResize = () => setNarrowWindow(window.innerWidth < 1280)
+    const onResize = () => setWindowWidth(window.innerWidth)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
-  const collapsed = pref === 'auto' ? narrowWindow : pref === 'narrow'
+  const inputs = { pref, dockPref, windowWidth, squeezed }
+  const collapsed = railCollapsed(inputs)
+  const latest = useRef(inputs)
+  latest.current = inputs
   const toggle = useCallback(() => {
-    const next: RailPref = collapsed ? 'wide' : 'narrow'
-    setPref(next)
+    const { which, value } = railToggle(latest.current)
+    ;(which === 'pref' ? setPref : setDockPref)(value)
     try {
-      localStorage.setItem(RAIL_KEY, next)
+      localStorage.setItem(which === 'pref' ? RAIL_KEY : RAIL_DOCK_KEY, value)
     } catch {
       /* storage unavailable: the choice lasts for this page only */
     }
-  }, [collapsed])
+  }, [])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '[' || e.metaKey || e.ctrlKey || e.altKey) return
@@ -61,7 +71,7 @@ function useRailState() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [toggle])
-  return { collapsed, toggle }
+  return { collapsed, toggle, setSqueezed }
 }
 
 export interface PageHeaderState {
@@ -81,8 +91,8 @@ export function ShellUiProvider({ children }: { children: ReactNode }) {
   const [newTicketOpen, setNewTicketOpen] = useState(false)
   const newTicketOpener = useRef<HTMLElement | null>(null)
   const value = useMemo(
-    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, newTicketOpen, setNewTicketOpen, newTicketOpener }),
-    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, newTicketOpen],
+    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, setDockSqueeze: rail.setSqueezed, newTicketOpen, setNewTicketOpen, newTicketOpener }),
+    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, rail.setSqueezed, newTicketOpen],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

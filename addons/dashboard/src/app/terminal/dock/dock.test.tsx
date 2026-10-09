@@ -77,8 +77,10 @@ describe('terminal dock: open, collapse, resize, side', () => {
     renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     const d = await dock()
     expect(d).toHaveAttribute('data-dock-side', 'right')
-    // 1440 window, 232 px sidebar: page + dock = 1208; the page keeps 640, so the dock is at most 568.
-    expect(within(d).getByRole('separator')).toHaveAttribute('aria-valuemax', '568')
+    // The dock squeezes the page (1440 - 232 - 440 < 900): the sidebar is the 56 px rail, so page + dock = 1384; the
+    // page keeps 720, so the dock is at most 664.
+    expect(document.querySelector('aside[data-collapsed]')).toHaveAttribute('data-collapsed', 'true')
+    expect(within(d).getByRole('separator')).toHaveAttribute('aria-valuemax', '664')
     expect(d).toHaveStyle({ width: '440px' })
     expect(await screen.findByRole('button', { name: /^Panels \(/ }, T)).toBeInTheDocument()
     expect(screen.queryByRole('complementary', { name: 'Ticket details' })).not.toBeInTheDocument()
@@ -265,5 +267,29 @@ describe('terminal dock on a ticket page', () => {
     const tab = await within(d).findByRole('tab', { name: /Codex · Yours/ }, T)
     await waitFor(() => expect(tab).toHaveAttribute('aria-selected', 'true'), T)
     await waitFor(() => expect(Array.from(d.querySelectorAll('.xterm-rows')).map((r) => r.textContent).join('')).toContain('Continued from DEMO-0043 · Codex'), T)
+  })
+})
+
+describe('the sidebar beside a right-hand dock (N11)', () => {
+  const sidebar = () => document.querySelector('aside[data-collapsed]')!
+  afterEach(() => {
+    localStorage.removeItem('orch.sidebar')
+    localStorage.removeItem('orch.sidebar.docked')
+  })
+  it('becomes the rail while the dock squeezes the page; expanding it there is remembered for that situation only', async () => {
+    withPrefs({ open: true, side: 'right' })
+    localStorage.setItem('orch.sidebar', 'wide')
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const d = await dock()
+    await waitFor(() => expect(sidebar()).toHaveAttribute('data-collapsed', 'true'), T)
+    await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
+    expect(sidebar()).toHaveAttribute('data-collapsed', 'false')
+    expect(localStorage.getItem('orch.sidebar.docked')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar')).toBe('wide')
+    // Collapsing it on the wide screen (dock moved to the bottom) is the usual choice and does not touch the docked one.
+    await user.click(await menu(user, d, 'Move to the bottom'))
+    await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
+    expect(localStorage.getItem('orch.sidebar')).toBe('narrow')
+    expect(localStorage.getItem('orch.sidebar.docked')).toBe('wide')
   })
 })

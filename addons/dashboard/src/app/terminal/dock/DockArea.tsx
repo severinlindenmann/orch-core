@@ -16,13 +16,17 @@ import { cn } from '@/lib/utils'
 import { PageWidthContext } from '../../pageWidth'
 import { useWorkspace } from '../../workspace'
 import { DOCK_ADDON, DOCK_KEYS, sessionsIn, useDockTicket, type DockMemory } from './context'
-import { clampDock, DOCK_BAR, rightFits, useDockPrefs, useViewport } from './prefs'
+import { clampDock, DOCK_BAR, dockSqueezesSidebar, rightFits, useDockPrefs, useViewport } from './prefs'
 import { onDockRequest } from './request'
+import { useShellState } from '../../shell/ShellUi'
+import { RAIL_SQUEEZE, SIDEBAR_RAIL, SIDEBAR_WIDE } from '../../shell/railRule'
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
 
 /** CSS variable on <html>: the height a bottom dock takes (px), for things pinned to the bottom such as toasts. */
 export const DOCK_BOTTOM_VAR = '--dock-bottom'
+/** CSS variable on <html>: the width a right-hand dock takes (px), 0 otherwise. */
+export const DOCK_RIGHT_VAR = '--dock-right'
 
 /** May the dock show here? The terminals addon must hold `pty` in this workspace (same gate as the terminal node). */
 export function useDockAllowed(): boolean {
@@ -51,7 +55,7 @@ function useDockShortcut(enabled: boolean, toggle: () => void) {
 }
 
 /** The width of the page-plus-dock area (the window minus the sidebar); measured, with a fallback where layout is not real. */
-function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: number): number {
+function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: number, rail: boolean): number {
   const [w, setW] = useState(0)
   useLayoutEffect(() => {
     const el = ref.current
@@ -62,7 +66,7 @@ function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: nu
     ro.observe(el)
     return () => ro.disconnect()
   }, [ref])
-  return w > 0 ? w : viewWidth - (viewWidth >= 1280 ? 232 : 56)
+  return w > 0 ? w : viewWidth - (rail ? SIDEBAR_RAIL : SIDEBAR_WIDE)
 }
 
 export function DockArea({ children }: { children: ReactNode }) {
@@ -71,7 +75,11 @@ export function DockArea({ children }: { children: ReactNode }) {
   const [prefs, setPrefs] = useDockPrefs(me.data?.person)
   const view = useViewport()
   const root = useRef<HTMLDivElement>(null)
-  const area = useAreaWidth(root, view.width)
+  const { railCollapsed, setDockSqueeze } = useShellState()
+  const area = useAreaWidth(root, view.width, railCollapsed)
+  // Open on the right with little room: the sidebar becomes the rail unless the person chose otherwise (railRule.ts).
+  const squeezes = allowed && dockSqueezesSidebar(prefs, view, { wide: SIDEBAR_WIDE, rail: SIDEBAR_RAIL, squeeze: RAIL_SQUEEZE })
+  useLayoutEffect(() => setDockSqueeze(squeezes), [squeezes, setDockSqueeze])
   const focus = useRef<'dock' | 'bar' | null>(null)
   // What the dock had selected, per workspace and ticket scope: survives collapse and navigation.
   const memory = useRef<DockMemory>(new Map())
@@ -98,14 +106,24 @@ export function DockArea({ children }: { children: ReactNode }) {
   const pageWidth = allowed && right ? view.width - (prefs.open ? size : DOCK_BAR) : view.width
   // Toasts sit above a bottom dock: the shell's toaster reads this variable (0 when the dock is not at the bottom).
   const bottom = allowed && !right ? (prefs.open ? size : DOCK_BAR) : 0
+  // Overlays that slide in from the right (New ticket) stop at a right-hand dock: they read this one.
+  const rightPx = allowed && right ? (prefs.open ? size : DOCK_BAR) : 0
   useEffect(() => {
     document.documentElement.style.setProperty(DOCK_BOTTOM_VAR, `${bottom}px`)
-  }, [bottom])
-  useEffect(() => () => void document.documentElement.style.removeProperty(DOCK_BOTTOM_VAR), [])
+    document.documentElement.style.setProperty(DOCK_RIGHT_VAR, `${rightPx}px`)
+  }, [bottom, rightPx])
+  useEffect(
+    () => () => {
+      document.documentElement.style.removeProperty(DOCK_BOTTOM_VAR)
+      document.documentElement.style.removeProperty(DOCK_RIGHT_VAR)
+    },
+    [],
+  )
   return (
     <div ref={root} className={cn('flex min-h-0 min-w-0 flex-1', right ? 'flex-row' : 'flex-col')}>
       <PageWidthContext.Provider value={pageWidth}>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        {/* The page area is a container (`@container/page`): pages lay out for their own width, not the window's. */}
+        <div className="@container/page flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
       </PageWidthContext.Provider>
       {allowed &&
         (prefs.open ? (

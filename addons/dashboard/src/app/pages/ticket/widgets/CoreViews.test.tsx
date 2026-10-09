@@ -23,15 +23,17 @@ describe('newer core types are drawn by core, without a frame, with words as wel
       unmount()
     }
   })
-  it('metric shows value, unit and the delta with better or worse in words', () => {
-    draw(example('metric'))
+  it('stats show value, the change and the role in words', () => {
+    const { container } = draw(example('stats'))
     expect(screen.getByText('Tables loaded')).toBeInTheDocument()
-    expect(screen.getByText('+9 since 09:00 (better)')).toBeInTheDocument()
-    expect(screen.getByText('−12 s (better)')).toBeInTheDocument()
-    expect(screen.getByText('1.2 M')).toBeInTheDocument()
+    expect(screen.getByText('+9 since 09:00')).toBeInTheDocument()
+    expect(screen.getByText('−12')).toBeInTheDocument()
+    expect(screen.getByText('OK')).toBeInTheDocument()
+    expect(screen.getByText('Warning')).toBeInTheDocument()
+    expect(container.textContent).toContain('31 of 40')
   })
-  it('line draws one polyline per run of values (a null is a gap), a marker and a legend', () => {
-    const { container } = draw(example('line'))
+  it('series draws one polyline per run of values (a null is a gap), a marker and a legend', () => {
+    const { container } = draw(example('series'))
     const seed = container.querySelector('[data-series="seed"]')!
     expect(seed.querySelectorAll('polyline')).toHaveLength(2) // 10-06 is null
     expect(seed.querySelector('polyline')!.getAttribute('class')).toMatch(/stroke-chart-1/)
@@ -40,16 +42,31 @@ describe('newer core types are drawn by core, without a frame, with words as wel
     expect(container.querySelector('svg title')!.textContent).toMatch(/seed: 10-02 61 s.*10-06 no value/)
     expect(screen.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['seed', 'test'])
   })
-  it('progress segments are sized against max and named with their state', () => {
+  it('series in the widgets.md points shape draws one line over numeric x, and never uses the danger colour for a series', () => {
+    const { container } = draw(JSON.stringify({ type: 'series', unit: 'ms', points: [[1, 120], [2, 140], [5, 90]], markers: [{ x: 2, label: 'cache on' }] }))
+    expect(container.querySelectorAll('[data-series] polyline')).toHaveLength(1)
+    expect(container.querySelector('[data-marker="cache on"]')).toBeTruthy()
+    expect(container.innerHTML).not.toMatch(/chart-5/)
+  })
+  it('a series at the edge of the allowed range draws promptly; a degenerate one is refused promptly', () => {
+    const t0 = performance.now()
+    const edge = draw(JSON.stringify({ type: 'series', points: [[1, -1e15], [2, 1e15]] }))
+    expect(edge.container.querySelectorAll('[data-series] polyline')).toHaveLength(1)
+    const bad = draw(JSON.stringify({ type: 'series', points: [[1, -300000000000000000], [2, -299999999999999936]] }))
+    expect(bad.container.querySelector('[data-state="refused"]')).toBeTruthy()
+    expect(performance.now() - t0).toBeLessThan(2000)
+  })
+  it('progress (proposed) segments are sized against max and named with their state', () => {
     const { container } = draw(example('progress'))
     const segs = [...container.querySelectorAll<HTMLElement>('[data-segment]')]
     expect(segs.map((s) => s.style.width)).toEqual(['25%', '50%', '25%'])
     expect(screen.getByRole('img', { name: /Tasks: Done: 1, Blocked on Q2: 2, Not started: 1; 4 of 4/ })).toBeInTheDocument()
     expect(screen.getByText('(Warning)')).toBeInTheDocument()
   })
-  it('status and timeline carry a glyph and a word per state', () => {
-    draw(example('status'))
-    for (const w of ['OK', 'Warning', 'Failed', 'Skipped', 'Running']) expect(screen.getByText(w)).toBeInTheDocument()
+  it('gates and timeline carry a glyph and a word per state', () => {
+    draw(example('gates'))
+    for (const w of ['Passed', 'Failed', 'Skipped', 'Running']) expect(screen.getAllByText(w).length).toBeGreaterThan(0)
+    expect(screen.getByText('4 min 12 s')).toBeInTheDocument()
     draw(example('timeline'))
     expect(screen.getAllByText('Done')).toHaveLength(2)
     expect(screen.getByText('Now')).toBeInTheDocument()
@@ -68,10 +85,15 @@ describe('newer core types are drawn by core, without a frame, with words as wel
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('strong')).toBeNull()
   })
-  it('sparkline shows the latest value with min and max', () => {
-    const { container } = draw(example('sparkline'))
-    expect(container.querySelector('p > span.font-semibold')).toHaveTextContent('6.1 min')
-    expect(screen.getByText('min 6.1 · max 9.1')).toBeInTheDocument()
+  it('spark sits inside its sentence, at {spark}', () => {
+    const { container } = draw(example('spark'))
+    const p = container.querySelector('p')!
+    expect(p.textContent).toMatch(/^CI time over the last 12 runs\s*\d.*now 6\.1 min\.$/s)
+    expect(p.querySelector('svg[role="img"] title')!.textContent).toMatch(/min 6\.1, max 9\.1/)
+  })
+  it('callout note is shown as Info', () => {
+    const { container } = draw(JSON.stringify({ type: 'callout', role: 'note', text: 'x' }))
+    expect(container.querySelector('[data-callout="info"]')).toHaveTextContent('Info: x')
   })
 })
 

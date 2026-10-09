@@ -118,7 +118,7 @@ describe('widgets', () => {
   it('uses the catalog: every newer core type and every template appears, and each of them draws', () => {
     const all = heavy().flatMap((x) => x.blocks)
     const kinds = new Set(all.filter((b) => b.spec && !b.reason).map((b) => b.spec!.type ?? b.spec!.widget?.split('@')[0] ?? 'html'))
-    for (const k of ['line', 'sparkline', 'metric', 'progress', 'timeline', 'diff', 'status', 'callout', 'image-compare', 'flow', 'table-explorer']) expect(kinds.has(k), k).toBe(true)
+    for (const k of ['series', 'spark', 'stats', 'progress', 'timeline', 'diff', 'gates', 'callout', 'image-compare', 'flow', 'table-explorer']) expect(kinds.has(k), k).toBe(true)
     for (const b of all.filter((x) => x.spec?.widget)) expect(findTemplate(b.spec!.widget!)!.check?.(b.spec!.data ?? {}), b.spec!.widget).toBeUndefined()
   })
 

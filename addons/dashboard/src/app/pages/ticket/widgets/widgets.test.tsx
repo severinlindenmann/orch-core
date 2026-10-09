@@ -156,10 +156,11 @@ describe('mixed tickets', () => {
 })
 
 describe('catalog examples in the demo tickets', () => {
-  it('DEMO-0043 shows a metric and a line next to its checks, all drawn by core', async () => {
+  it('DEMO-0043 shows stats and a series next to its checks, all drawn by core', async () => {
     renderApp('/ticket/DEMO-0043')
     await waitFor(() => expect(widget('seed-load')).toBeTruthy(), T)
-    expect(within(widget('seed-load')).getByText('+9 since 09:00 (better)')).toBeInTheDocument()
+    expect(within(widget('seed-load')).getByText('+9 since 09:00')).toBeInTheDocument()
+    expect(within(widget('seed-load')).getByText('Warning')).toBeInTheDocument()
     expect(widget('seed-load').closest('section')).toHaveAttribute('aria-labelledby', 'sec-context')
     expect(widget('seed-time').querySelectorAll('[data-series]')).toHaveLength(2)
     expect(widget('seed-time').closest('section')).toHaveAttribute('aria-labelledby', 'sec-verification')

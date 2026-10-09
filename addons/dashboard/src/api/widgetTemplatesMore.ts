@@ -4,13 +4,9 @@
 // BEFORE the frame is drawn (fail closed: data that does not fit is refused as code with a reason, the frame never gets it).
 // The checks are display-side like a template's schema in widgets.md: they are not part of the pin.
 
-type Obj = Record<string, unknown>
-const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
-const has = (o: Obj, k: string) => Object.prototype.hasOwnProperty.call(o, k)
+import { has, isObj, unknownKey as extra, type Obj } from './strictObject'
+
 const str = (v: unknown, min: number, max: number) => typeof v === 'string' && v.length >= min && v.length <= max
-const extra = (o: Obj, allowed: string[], where: string) => {
-  for (const k of Object.keys(o)) if (!allowed.includes(k)) return `unknown key "${k}" in ${where}`
-}
 
 /** Only inline raster images: no URL of any kind, no SVG (it is a document, not a picture). */
 export const DATA_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/

@@ -160,11 +160,13 @@ export function findTemplate(ref: string): WidgetTemplate | undefined {
 /**
  * The frame document for a template or a one-off page: the block's data as inert JSON (`<` escaped), a tiny `orch`
  * object (data only; the text/ready/resize hooks are no-ops in the mock), then the page. The frame node prepends the CSP.
+ * Core's base style keeps an SVG inside the frame's height (a width-100% chart in a wide card would otherwise be cut
+ * off); it is core's wrapper, not part of any template's pinned bytes.
  */
 export function frameDocument(page: string, data: unknown): string {
   const json = JSON.stringify(data ?? {}).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16))
   return (
-    '<style>:root{color-scheme:dark}html,body{margin:0}body{padding:8px;font:12px/1.45 ui-sans-serif,system-ui,sans-serif;color:CanvasText;background:Canvas}</style>' +
+    '<style>:root{color-scheme:dark}html,body{margin:0}body{padding:8px;font:12px/1.45 ui-sans-serif,system-ui,sans-serif;color:CanvasText;background:Canvas}svg{max-height:calc(100vh - 16px)}</style>' +
     `<script type="application/json" id="orch-data">${json}</script>` +
     '<script>window.orch={data:JSON.parse(document.getElementById("orch-data").textContent),text:function(){},ready:function(){},resize:function(){}}</script>' +
     page

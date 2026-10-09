@@ -199,7 +199,7 @@ const AC_RE = /^AC[1-9][0-9]*$/
 
 /** Types the format defines but this mockup does not draw. */
 const OTHER_TYPES = new Set([
-  'text', 'stats', 'chips', 'links', 'health', 'gates', 'tests', 'runs', 'spark', 'series', 'bullet', 'scores', 'gantt', 'diffstat', 'options', 'matrix', 'risk',
+  'text', 'chips', 'links', 'health', 'tests', 'runs', 'bullet', 'scores', 'gantt', 'diffstat', 'options', 'matrix', 'risk',
   'deps', 'flow', 'trail', 'deploy', 'compare', 'screens', 'video', 'gallery', 'preview', 'review', 'summary',
 ])
 
@@ -382,7 +382,7 @@ const CORE: Record<string, CoreType> = {
 }
 
 /** Every core type core draws (the first four here, the rest in coreTypes.ts). */
-export const CORE_TYPES = ['bars', 'table', 'checks', 'kv', 'line', 'sparkline', 'metric', 'progress', 'timeline', 'diff', 'status', 'callout'] as const
+export const CORE_TYPES = ['bars', 'table', 'checks', 'kv', 'stats', 'series', 'spark', 'gates', 'diff', 'callout', 'timeline', 'progress'] as const
 
 // ------------------------------------------------------------------ ticket-wide rules
 

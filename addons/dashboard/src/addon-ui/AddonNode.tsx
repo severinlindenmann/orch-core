@@ -25,6 +25,7 @@ const ThemedForm = lazy(() => import('./AddonForm'))
 const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
 // Ticket widgets (parser, core types, template frames) load on first use too.
 const WidgetNodeView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode'))
+const WidgetIndexView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
 
 interface Runtime {
   addon: string
@@ -178,7 +179,13 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'widget':
       return (
         <Suspense fallback={<Skeleton className="h-24 w-full" />}>
-          <WidgetNodeView block={n.block} source={n.source} />
+          <WidgetNodeView block={n.block} source={n.source} addon={addon} />
+        </Suspense>
+      )
+    case 'widget-index':
+      return (
+        <Suspense fallback={null}>
+          <WidgetIndexView groups={n.groups} />
         </Suspense>
       )
     case 'link':

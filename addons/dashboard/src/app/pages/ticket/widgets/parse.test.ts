@@ -121,7 +121,7 @@ describe('core types', () => {
   })
   it('refuses an unknown type and a documented type this mockup does not draw', () => {
     expect(reason({ type: 'sparkly' })).toMatch(/unknown widget type "sparkly"/)
-    expect(reason({ type: 'stats', items: [] })).toMatch(/type "stats" is not drawn in this mockup/)
+    expect(reason({ type: 'chips', items: [] })).toMatch(/type "chips" is not drawn in this mockup/)
   })
   it('validates bars', () => {
     expect(reason({ type: 'bars' })).toMatch(/data/)

@@ -80,5 +80,8 @@ describe('seeded widget fixtures pin what they show', () => {
     expect(all.length).toBeGreaterThanOrEqual(4)
     expect(all.filter((p) => pins.has(p)).length).toBeGreaterThanOrEqual(3)
     expect(all.filter((p) => !pins.has(p)).length).toBe(1)
+    // The one drift case is DEMO-0046's "rule-diff" block, on purpose: every other template block is current.
+    const drifted = ['DEMO-0043', 'DEMO-0046'].flatMap((k) => Object.values(store.ticket(k)!.body).flatMap((t) => [...(t ?? '').matchAll(/"widget":"[^"]+","sha256":"([0-9a-f]{64})","id":"([a-z0-9-]+)"/g)].filter((m) => !pins.has(m[1])).map((m) => `${k} ${m[2]}`)))
+    expect(drifted.filter((d) => !d.endsWith(' heat'))).toEqual(['DEMO-0046 rule-diff'])
   })
 })

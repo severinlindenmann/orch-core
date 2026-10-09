@@ -1,6 +1,6 @@
 // Widgets for the busy day (format orch.widgets.v1, plugins/orch-core/docs/widgets.md): eight DEMO tickets carry 4 to 10
-// blocks each: bars with many bars, long tables, checks with 30 rows, kv, the catalog's newer types (line, metric,
-// progress, status, timeline, diff, callout, sparkline), every template, one-off html pages and a few blocks the page
+// blocks each: bars with many bars, long tables, checks with 30 rows, kv, the catalog's newer types (series, stats,
+// gates, spark, diff, callout and the proposed timeline and progress), every template, one-off html pages and a few blocks the page
 // must refuse. Pins are computed here (template digest, sha256 of the artifact the block names).
 import { findTemplate, templateDigest } from '@/api/widgetTemplates'
 import { sha256Hex } from '@/api/sha256'
@@ -50,16 +50,16 @@ const options = (id: string) =>
   })
 /** A catalog example under another id (pinned to the template's current digest when it is a template). */
 const fromCatalog = (ref: string, id: string) => fence(pinned({ ...CATALOG.find((c) => c.ref === ref)!.example, id }))
-const line = (rng: Rng, id: string) => {
+const series = (rng: Rng, id: string) => {
   const days = Array.from({ length: 14 }, (_, i) => new Date(Date.UTC(2026, 8, 26 + i)).toISOString().slice(5, 10)) // 09-26 … 10-09
-  return fence({ type: 'line', id, title: 'Build minutes per night', source: 'CI history', unit: 'min', x: days, series: [{ name: 'build', values: days.map(() => rng.int(8, 30)) }, { name: 'tests', values: days.map((_, i) => (i === 6 ? null : rng.int(3, 12))) }], markers: [{ at: days[9], label: 'cache on' }] })
+  return fence({ type: 'series', id, title: 'Build minutes per night', source: 'CI history', unit: 'min', x: days, series: [{ name: 'build', values: days.map(() => rng.int(8, 30)) }, { name: 'tests', values: days.map((_, i) => (i === 6 ? null : rng.int(3, 12))) }], markers: [{ x: days[9], label: 'cache on' }] })
 }
-const metric = (rng: Rng, id: string) =>
-  fence({ type: 'metric', id, title: 'Run so far', source: 'agent-measured', items: [{ label: 'Rows checked', value: rng.int(1000, 90000), delta: rng.int(-500, 4000), better: 'up' }, { label: 'Failures', value: rng.int(0, 40), delta: rng.int(-10, 5), better: 'down' }, { label: 'Run time', value: rng.int(2, 40), unit: 'min' }] })
+const stats = (rng: Rng, id: string) =>
+  fence({ type: 'stats', id, title: 'Run so far', source: 'agent-measured', items: [{ label: 'Rows checked', value: rng.int(1000, 90000), delta: rng.int(-500, 4000), role: 'ok' }, { label: 'Failures', value: rng.int(0, 40), delta: rng.int(-10, 5), role: 'warn' }, { label: 'Run time, min', value: rng.int(2, 40) }] })
 const progress = (rng: Rng, id: string) => {
   const done = rng.int(1, 6)
   const blocked = rng.int(0, 3)
-  return fence({ type: 'progress', id, title: 'Tasks', max: done + blocked + 2, segments: [{ label: 'Done', value: done, status: 'ok' }, { label: 'Blocked', value: blocked, status: 'warn' }, { label: 'Open', value: 2, status: 'neutral' }] })
+  return fence({ type: 'progress', id, title: 'Tasks', max: done + blocked + 2, segments: [{ label: 'Done', value: done, status: 'ok' }, { label: 'Blocked', value: blocked, status: 'warn' }, { label: 'Open', value: 2, status: 'neu' }] })
 }
 
 const PAGE = (n: number) =>
@@ -84,11 +84,11 @@ function blocksFor(b: Built, rng: Rng, variant: number): { section: 'context' | 
     case 0: // ten blocks, every layer
       return [...core(0), { section: 'current_state', text: beforeAfter('diff-0') }, { section: 'current_state', text: lineChart(rng, 'line-0') }, { section: 'current_state', text: options('options-0') }, { section: 'verification', text: html(1) }, { section: 'context', text: html(2) }, { section: 'verification', text: bars(rng, 'bars-small', 5) }]
     case 1: // with a page whose pin no longer matches, and a negative bar
-      return [...core(1), { section: 'verification', text: html(3, true) }, { section: 'current_state', text: fence({ type: 'bars', id: 'neg', title: 'Delta by day', data: { mon: 4, tue: -2, wed: 3 } }) }, { section: 'current_state', text: lineChart(rng, 'line-1') }, { section: 'current_state', text: metric(rng, 'metric-1') }, { section: 'context', text: fromCatalog('timeline', 'timeline-1') }]
+      return [...core(1), { section: 'verification', text: html(3, true) }, { section: 'current_state', text: fence({ type: 'bars', id: 'neg', title: 'Delta by day', data: { mon: 4, tue: -2, wed: 3 } }) }, { section: 'current_state', text: lineChart(rng, 'line-1') }, { section: 'current_state', text: stats(rng, 'stats-1') }, { section: 'context', text: fromCatalog('timeline', 'timeline-1') }]
     case 2: // two blocks sharing an id (both refused), an unknown type
-      return [{ section: 'context', text: bars(rng, 'dup', 12) }, { section: 'verification', text: kv(rng, 'dup', 6) }, { section: 'verification', text: fence({ type: 'heatmap', id: 'heat', title: 'By day' }) }, { section: 'current_state', text: beforeAfter('diff-2') }, { section: 'verification', text: checks(rng, 'checks-2', 8) }, { section: 'current_state', text: fromCatalog('callout', 'callout-2') }, { section: 'verification', text: fromCatalog('status', 'status-2') }, { section: 'current_state', text: fromCatalog('diff', 'patch-2') }]
+      return [{ section: 'context', text: bars(rng, 'dup', 12) }, { section: 'verification', text: kv(rng, 'dup', 6) }, { section: 'verification', text: fence({ type: 'heatmap', id: 'heat', title: 'By day' }) }, { section: 'current_state', text: beforeAfter('diff-2') }, { section: 'verification', text: checks(rng, 'checks-2', 8) }, { section: 'current_state', text: fromCatalog('callout', 'callout-2') }, { section: 'verification', text: fromCatalog('gates', 'gates-2') }, { section: 'current_state', text: fromCatalog('diff', 'patch-2') }]
     case 3: // a block in a gated section (refused), plus fine ones
-      return [{ section: 'requirements', text: bars(rng, 'req-bars', 4) }, { section: 'context', text: table(rng, 'table-3', 25) }, { section: 'verification', text: checks(rng, 'checks-3', 12) }, { section: 'current_state', text: options('options-3') }, { section: 'context', text: fromCatalog('flow@1', 'flow-3') }, { section: 'current_state', text: fromCatalog('image-compare@1', 'shots-3') }, { section: 'verification', text: line(rng, 'line-3') }, { section: 'current_state', text: progress(rng, 'progress-3') }, { section: 'context', text: fromCatalog('sparkline', 'spark-3') }]
+      return [{ section: 'requirements', text: bars(rng, 'req-bars', 4) }, { section: 'context', text: table(rng, 'table-3', 25) }, { section: 'verification', text: checks(rng, 'checks-3', 12) }, { section: 'current_state', text: options('options-3') }, { section: 'context', text: fromCatalog('flow@1', 'flow-3') }, { section: 'current_state', text: fromCatalog('image-compare@1', 'shots-3') }, { section: 'verification', text: series(rng, 'series-3') }, { section: 'current_state', text: progress(rng, 'progress-3') }, { section: 'context', text: fromCatalog('spark', 'spark-3') }]
     default: {
       const n = rng.int(4, 9)
       const pool = [
@@ -100,10 +100,10 @@ function blocksFor(b: Built, rng: Rng, variant: number): { section: 'context' | 
         () => lineChart(rng, `lc-${key.toLowerCase()}`),
         () => options(`op-${key.toLowerCase()}`),
         () => html(4),
-        () => line(rng, `line-${key.toLowerCase()}`),
-        () => metric(rng, `metric-${key.toLowerCase()}`),
+        () => series(rng, `series-${key.toLowerCase()}`),
+        () => stats(rng, `stats-${key.toLowerCase()}`),
         () => progress(rng, `progress-${key.toLowerCase()}`),
-        () => fromCatalog('status', `status-${key.toLowerCase()}`),
+        () => fromCatalog('gates', `gates-${key.toLowerCase()}`),
         () => fromCatalog('table-explorer@1', `tx-${key.toLowerCase()}`),
       ]
       // distinct ids: a suffix per block

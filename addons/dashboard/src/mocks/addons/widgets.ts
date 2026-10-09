@@ -1,4 +1,4 @@
-import { blockText, CATALOG, type CatalogEntry } from '@/api/widgetCatalog'
+import { blockText, CATALOG, PROPOSED_NOTE, type CatalogEntry } from '@/api/widgetCatalog'
 import { findTemplate, TEMPLATES, templateDigest } from '@/api/widgetTemplates'
 import { registerAddon } from './registry'
 
@@ -13,7 +13,7 @@ const entry = (c: CatalogEntry) => {
   return {
     type: 'stack',
     children: [
-      { type: 'markdown', text: `### ${c.title} · \`${c.ref}\`\n\n${c.shows}\n\n**Where it's allowed:** ${c.allowed}${pin}` },
+      { type: 'markdown', text: `### ${c.title} · \`${c.ref}\`\n\n${c.proposed ? `\`${PROPOSED_NOTE}\` ` : ''}${c.shows}\n\n**Where it's allowed:** ${c.allowed}${pin}` },
       { type: 'widget', block: blockText(c.example), source: true },
     ],
   }
@@ -29,7 +29,14 @@ registerAddon({
     templates: TEMPLATES.map((t) => ({ name: t.name, version: t.version, title: t.title, moment: t.moment, digest: templateDigest(t) })),
     coreTypes: core.map((c) => ({ type: c.ref })),
     gallery: [
-      { type: 'markdown', text: `## Core types (${core.length})\n\nDrawn by core: no script, colours from the dashboard palette, a text alternative behind "Show text".` },
+      {
+        type: 'widget-index',
+        groups: [
+          { label: 'Core', items: core.map((c) => ({ label: c.ref, widget: String(c.example.id) })) },
+          { label: 'Templates', items: templates.map((c) => ({ label: c.ref, widget: String(c.example.id) })) },
+        ],
+      },
+      { type: 'markdown', text: `## Core types (${core.length})\n\nDrawn by core: no script, colours from the dashboard palette, a text alternative behind "Show text". Names and shapes follow orch.widgets.v1; types marked Proposed are not in v1 yet.` },
       ...core.map(entry),
       { type: 'markdown', text: `## Templates (${templates.length})\n\nAgent HTML, reused: it runs in a sandboxed frame with no network and no navigation, marked with the orange A. Core checks each block's data before the frame gets it.` },
       ...templates.map(entry),

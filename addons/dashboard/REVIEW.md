@@ -213,8 +213,8 @@ The merge lane: approval, checks and merge bind to one candidate.
 
 - [ ] **Landing page** — Queues | Needs | History. Page: `/addon/land/landing`.
 - [ ] **A voided approval** — DEMO-0053: a conflict resolution voided the verify approval; back to review. Page: `/ticket/DEMO-0053`.
-- [ ] **Resolve it yourself** — Today → From addons → "I will resolve it", then Mark resolved on the Landing page. Page: `/`.
-- [ ] **Board chips** — Landing state on cards (landing, checking, conflict); no extra column. Page: `/board`.
+- [ ] **Resolve it yourself** — Today → From addons → "I will resolve it", then Mark resolved on the Landing page (Busy day). Page: `/`, Busy day.
+- [ ] **Board chips** — Landing state on cards (landing, checking, conflict); no extra column (Busy day). Page: `/board`, Busy day.
 
 ### 17. Artifacts and Drop
 
@@ -232,7 +232,7 @@ A ticket that needs a login that expired.
 - [ ] **Blocked tickets** — DEMO-0053 (databricks-prod auth expired) and DEMO-0054 (gcloud-billing wrong identity). Page: `/ticket/DEMO-0054`.
 - [ ] **Start agent is refused** — Actions → Start agent… is off with the reason. Page: `/ticket/DEMO-0053`.
 - [ ] **Re-login from Today** — Connections group: copy the login hint, Run check again (Demo). Page: `/`.
-- [ ] **Unblocked** — The ticket no longer says Blocked; Start agent works. Page: `/ticket/DEMO-0053`.
+- [ ] **Unblocked** — After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works. Page: `/ticket/DEMO-0054`.
 
 ## What is simulated
 
@@ -282,7 +282,8 @@ Decisions the mockup made that need your yes or no. Each is cheap to change.
    the static fallback page and apple-app-site-association cover `/d/` the way they cover `/pair`?
 4. **Connections.** Who may run checks and the doctor (here: members and up; viewers read only)? Who sees the secrets
    file's path and unreferenced names (here: owners and maintainers)? Referenced env names are shown to every member
-   (they are not secret; values are).
+   (they are not secret; values are). And in the demo, a check run from Today's re-login row is the only way a failing
+   CLI login comes back ok (a plain Run check keeps the failure); is that the flow you want?
 5. **Starting agents.** Members cannot issue grants, so a member without one cannot start an agent. Is that right,
    or should members get their own grants?
 6. **AI Factory charter approvals.** The factory auto-approves its children's gates under the signed charter (v1

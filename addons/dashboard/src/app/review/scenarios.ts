@@ -166,8 +166,8 @@ export const SCENARIOS: TourScenario[] = [
   S(16, 'Landing (D53)', 'The merge lane: approval, checks and merge bind to one candidate.', [
     { title: 'Landing page', detail: 'Queues | Needs | History.', go: { path: '/addon/land/landing' } },
     { title: 'A voided approval', detail: 'DEMO-0053: a conflict resolution voided the verify approval; back to review.', go: { path: '/ticket/DEMO-0053' } },
-    { title: 'Resolve it yourself', detail: 'Today → From addons → "I will resolve it", then Mark resolved on the Landing page.', go: { path: '/' } },
-    { title: 'Board chips', detail: 'Landing state on cards (landing, checking, conflict); no extra column.', go: { path: '/board' } },
+    { title: 'Resolve it yourself', detail: 'Today → From addons → "I will resolve it", then Mark resolved on the Landing page (Busy day).', go: { path: '/', dataset: 'busy' } },
+    { title: 'Board chips', detail: 'Landing state on cards (landing, checking, conflict); no extra column (Busy day).', go: { path: '/board', dataset: 'busy' } },
   ]),
   S(17, 'Artifacts and Drop', 'All artifacts in one place; files shared through the relay.', [
     { title: 'Artifacts', detail: 'List and grid, filters, preview in the drawer.', go: { path: '/artifacts' } },
@@ -179,7 +179,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Blocked tickets', detail: 'DEMO-0053 (databricks-prod auth expired) and DEMO-0054 (gcloud-billing wrong identity).', go: { path: '/ticket/DEMO-0054' } },
     { title: 'Start agent is refused', detail: 'Actions → Start agent… is off with the reason.', go: { path: '/ticket/DEMO-0053' } },
     { title: 'Re-login from Today', detail: 'Connections group: copy the login hint, Run check again (Demo).', go: { path: '/' } },
-    { title: 'Unblocked', detail: 'The ticket no longer says Blocked; Start agent works.', go: { path: '/ticket/DEMO-0053' } },
+    { title: 'Unblocked', detail: 'After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works.', go: { path: '/ticket/DEMO-0054' } },
   ]),
 ]
 

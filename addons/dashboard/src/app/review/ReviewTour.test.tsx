@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
@@ -47,6 +47,24 @@ describe('review tour', () => {
     await openScenario(user, sheet, /^6\. Owner admin/)
     await user.click(within(sheet).getByRole('button', { name: 'Go: Owner admin · Change a gate policy' }))
     await waitFor(() => expect(mockStore.viewer).toBe('p_sev'))
+  })
+
+  it('an unsaved New ticket overlay holds Go: nothing changes until Discard is confirmed', async () => {
+    const { user } = renderApp('/')
+    await user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const overlay = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await user.type(within(overlay).getByRole('textbox', { name: 'Quick ticket' }), 'Something to keep')
+    // The overlay is modal, so the tour is opened and used without pointer checks.
+    fireEvent.click(screen.getByRole('button', { name: /^Review tour/, hidden: true }))
+    const sheet = await screen.findByRole('dialog', { name: 'Review tour' }, T)
+    const head = within(sheet).getByRole('button', { name: /^4\. Maintainer/, hidden: true })
+    if (head.getAttribute('aria-expanded') !== 'true') fireEvent.click(head)
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Go: Maintainer (Mara) · Settings are read-only', hidden: true }))
+    expect(await screen.findByText('Discard unsaved changes?', undefined, T)).toBeInTheDocument()
+    expect(mockStore.viewer).toBe('p_sev')
+    await user.click(screen.getByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(mockStore.viewer).toBe('p_mara'), T)
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Settings'), T)
   })
 
   it('Go switches the workspace back to DEMO', async () => {

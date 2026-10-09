@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { ChevronRight, ListChecks } from 'lucide-react'
@@ -78,9 +78,15 @@ export function ReviewTour() {
     write(OPEN_KEY, [...next])
   }
 
-  // Sets up the step (dataset, person, workspace), then opens its page. The viewer and workspace default to Severin
-  // in DEMO, so a step never inherits the person of the step before it.
-  const run = async (step: TourStep, switchTo?: TourDataset) => {
+  // Opens the step's page first; only once the router has really arrived there does it set up the step (dataset,
+  // person, workspace). A route blocker (unsaved New ticket overlay, settings drawer, wiki edit) therefore asks
+  // before anything changes, and "Keep editing" leaves the demo exactly as it was. The viewer and workspace default
+  // to Severin in DEMO, so a step never inherits the person of the step before.
+  // The workspace is set with setWorkspaceId, not switchWorkspace: every screen that holds a switch guard also holds
+  // a route blocker, so the navigation above has already asked; and switchWorkspace's page-keeping redirects (to
+  // Tickets or Today) would undo the page the step just opened.
+  const pendingSetup = useRef<(() => void) | null>(null)
+  const run = (step: TourStep, switchTo?: TourDataset) => {
     const g = step.go
     if (!g) return
     setAsk(null)
@@ -91,20 +97,35 @@ export function ReviewTour() {
     } catch {
       /* kept for this page only */
     }
-    try {
-      if (switchTo) {
-        await api.resetDemo(switchTo)
-        restartToday()
+    const setUp = async () => {
+      try {
+        if (switchTo) {
+          await api.resetDemo(switchTo)
+          restartToday()
+        }
+        const viewer = g.viewer ?? 'p_sev'
+        if (switchTo || viewer !== me) await api.setViewer(viewer)
+        const ws = workspaces.find((w) => w.prefix === (g.workspace ?? 'DEMO'))
+        if (ws && ws.id !== workspace?.id) setWorkspaceId(ws.id)
+        await qc.invalidateQueries()
+      } catch (e) {
+        toastApiError(e, 'Could not set up that step')
       }
-      const viewer = g.viewer ?? 'p_sev'
-      if (switchTo || viewer !== me) await api.setViewer(viewer)
-      const ws = workspaces.find((w) => w.prefix === (g.workspace ?? 'DEMO'))
-      if (ws && ws.id !== workspace?.id) setWorkspaceId(ws.id)
-      await qc.invalidateQueries()
-      await router.history.push(g.path)
-    } catch (e) {
-      toastApiError(e, 'Could not set up that step')
     }
+    pendingSetup.current?.()
+    pendingSetup.current = null
+    if (router.state.location.pathname === g.path) {
+      void setUp()
+      return
+    }
+    // One shot: the next resolved navigation either is this step's page (set up) or something else (forget it).
+    const unsubscribe = router.subscribe('onResolved', (evt) => {
+      unsubscribe()
+      pendingSetup.current = null
+      if (evt.toLocation.pathname === g.path) void setUp()
+    })
+    pendingSetup.current = unsubscribe
+    router.history.push(g.path)
   }
   const go = (step: TourStep) => {
     if (step.go?.dataset && step.go.dataset !== mode) setAsk({ kind: 'dataset', step })

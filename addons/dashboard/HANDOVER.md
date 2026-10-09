@@ -106,7 +106,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | … `ask` | `ask` |
 | … `comment` | no operation yet — proposal `comment` (closest: `log`, which is the agent's) |
 | … `claim` / `release` | `claim` / `release` (agents only; the dashboard never offers them) |
-| … `set_status` | no operation yet — proposal `move` (owners/maintainers; `done` refused: only a verdict) |
+| … `set_status` | `close` / `reopen` for leaving or returning from done (`done` itself is refused here: only a verdict reaches it); intermediate moves (backlog, open, in progress, waiting, testing): no operation yet — proposal `move` (owners/maintainers) |
 | … `add_label` | `set REF labels=…` |
 | GET/POST `/api/workspaces/:ws/views`, POST `…/views/:id/delete` | no operation yet — proposal `view.save` / `view.delete` (dashboard-only data) |
 | GET `/api/workspaces/:ws/artifacts?kind&ticket&by&since&q&page` | `artifact list` is per ticket; the workspace-wide, paged listing is a proposal `artifact.search` |
@@ -166,7 +166,7 @@ undecided). Everything below that is not in that list is **provisional**.
   (format: `policy.changed`). Rename when the host lands.
 - Provisional, ticket: `ticket.created`, `people.set`, `labels.changed`, `section.edited`, `handoff.written`,
   `status.changed`, `claim.taken`, `claim.released`, `lease.taken`, `lease.released`, `task.run`, `task.blocked`,
-  `task.skipped`, `log.added`, `comment.added`, `question.asked`, `question.answered`, `gate.changes_requested`,
+  `task.skipped` (these two are derived by `derive.ts` but never written by the mock), `log.added`, `comment.added`, `question.asked`, `question.answered`, `gate.changes_requested`,
   `gate.invalidated` (also core's landing void), `verdict.given`, `agent.refused`.
 - Provisional, workspace log: `ticket.discarded`, `workspace.renamed`, `member.removed`, `view.saved`,
   `view.deleted`, `grant.issued`, `grant.revoked`, `agent.started`, `agent.stopped`, `addon.installed`,
@@ -193,7 +193,7 @@ undecided). Everything below that is not in that list is **provisional**.
   approval (re-checked), a conflict resolution voids it — through core (`store.landingResolved`: core checks the
   failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
   (D33, normalised names). Open question for the owner: the bound approval is the **verify** approval (the verdict).
-- **D54.** No relay-hosted page anywhere; Drop links are app-only (open owner question about a `/d/` fallback).
+- **D54.** The relay is API only; its one allowed page is the static, script-free fallback for the pairing link (`/pair`). The dashboard draws no relay-hosted page; Drop links are app-only (open owner question: should that fallback also cover `/d/`?).
 
 ## How to run, test and preview
 

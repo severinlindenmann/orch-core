@@ -42,7 +42,9 @@ export function ticketRank(t: { key: string; title: string }, needle: string): n
   const n = needle.trim().toLowerCase()
   if (!n) return 3
   const key = t.key.toLowerCase()
-  if (key === n) return 0
-  if (key.startsWith(n) || plain(key).startsWith(plain(n))) return 1
+  const squash = (s: string) => plain(s).replace(/ /g, '')
+  if (!squash(n)) return 3 // only dashes or underscores: nothing to rank
+  if (key === n || squash(key) === squash(n)) return 0
+  if (key.startsWith(n) || plain(key).startsWith(plain(n)) || squash(key).startsWith(squash(n))) return 1
   return ` ${plain(t.title)}`.includes(` ${plain(n)}`) ? 2 : 3
 }

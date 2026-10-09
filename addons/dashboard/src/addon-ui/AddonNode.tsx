@@ -351,6 +351,7 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 interface AddonAction {
   run: (action: string, extra?: Record<string, unknown>, subject?: string) => void
   pending: boolean
+  pendingAction: string | null
   blocked: boolean
   blockedFor: (action: string) => boolean
   dialog: ReactNode
@@ -399,7 +400,7 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
       )}
     </>
   )
-  return { run, pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
+  return { run, pending: r.pending, pendingAction: r.pendingAction, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -685,6 +686,12 @@ function InlineAsk({ action, act, label }: { action: ItemAction; act: AddonActio
   return (
     <form
       className="col-span-2 flex flex-wrap items-center gap-2 pb-1"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation()
+          act.onCancelAsk?.()
+        }
+      }}
       onSubmit={(e) => {
         e.preventDefault()
         if (value.trim()) act.run(action.action, { ...resolveRowArgs(action.args), [input.name]: value.trim() }, label)
@@ -705,8 +712,15 @@ function InlineAsk({ action, act, label }: { action: ItemAction; act: AddonActio
 }
 
 function ListItemView({ it, act, asking, onAsk }: { it: ListEntry; act?: AddonAction; asking?: ItemAction | null; onAsk?: (a: ItemAction | null) => void }) {
+  const li = useRef<HTMLLIElement>(null)
+  // Cancelling the row's field puts focus back on the button that opened it.
+  const cancelAsk = () => {
+    const label = asking?.label
+    onAsk?.(null)
+    setTimeout(() => [...(li.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label)?.focus(), 0)
+  }
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
+    <li ref={li} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
       <div className="flex min-w-0 items-start gap-2">
         {it.status && <StatusDot status={it.status} className="mt-1.5" />}
         <div className="min-w-0">
@@ -724,7 +738,7 @@ function ListItemView({ it, act, asking, onAsk }: { it: ListEntry; act?: AddonAc
           {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} onAsk={onAsk} />}
         </div>
       )}
-      {asking?.input && act && <InlineAsk action={asking} act={{ ...act, onCancelAsk: () => onAsk?.(null) }} label={it.title} />}
+      {asking?.input && act && <InlineAsk action={asking} act={{ ...act, onCancelAsk: cancelAsk }} label={it.title} />}
       {act?.error && <ErrorAlert error={act.error} onDismiss={act.dismissError} className="col-span-2" />}
     </li>
   )
@@ -824,7 +838,7 @@ function ItemActions({ act, actions: all, row, label, onAsk }: { act: AddonActio
     <div className="flex shrink-0 items-center gap-1">
       {dialog}
       <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action) || !!blockedWhy(lead, row)} title={blockedWhy(lead, row) ?? undefined} onClick={() => start(lead)}>
-        {pending && lead.pendingLabel ? lead.pendingLabel : lead.label}
+        {act.pendingAction === lead.action && lead.pendingLabel ? lead.pendingLabel : lead.label}
         {blockedWhy(lead, row) && <span className="sr-only"> ({blockedWhy(lead, row)})</span>}
       </Button>
       {menu.length > 0 && (

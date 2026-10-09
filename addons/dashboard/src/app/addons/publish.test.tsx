@@ -52,7 +52,14 @@ describe('publish page', () => {
     const ask = await screen.findByRole('alertdialog')
     expect(ask).toHaveTextContent(/Anyone using the app loses it/)
     expect((await apps()).find((a) => a.id === 'app_billing')!.status).toBe('running') // nothing yet
+    // While it runs only this action's button says "Stopping…" (the row's other buttons keep their names).
+    let release: () => void = () => {}
+    const real = api.runAddonAction.bind(api)
+    vi.spyOn(api, 'runAddonAction').mockImplementationOnce((...a) => new Promise((res) => (release = () => void real(...a).then(res))))
     await user.click(within(ask).getByRole('button', { name: 'Stop app' }))
+    expect(await within(row).findByRole('button', { name: 'Stopping…' })).toBeDisabled()
+    expect(within(row).queryByRole('button', { name: 'Stop' })).toBeNull() // only the pressed button changed its text
+    release()
     await waitFor(() => expect(success).toHaveBeenCalledWith('Billing explorer stopped.', expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) })), T)
     const opts = success.mock.calls[0][1] as unknown as { action: { onClick: () => void } }
     opts.action.onClick()

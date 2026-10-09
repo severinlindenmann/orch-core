@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
@@ -135,6 +136,38 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
     const ws = mockStore.workspaces[0].id
     await expect(api.runAddonAction(ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' })).rejects.toMatchObject({ status: 409, code: 'confirm.required' })
     expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided')).toBe(false)
+  })
+})
+
+describe('confirm: options fails closed', () => {
+  const press = async (user: ReturnType<typeof renderApp>['user']) => {
+    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
+    await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
+  }
+  it('options core cannot read: an inline error, nothing is posted, no dialog', async () => {
+    const post = vi.spyOn(api, 'runAddonAction')
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', { minRole: 'member', confirm: 'options', options: { fields: [] } } as ActionMeta) })
+    await press(user)
+    expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/did not describe correctly/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('confirm options without any options object posts nothing either', async () => {
+    const post = vi.spyOn(api, 'runAddonAction')
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', { minRole: 'member', confirm: 'options' }) })
+    await press(user)
+    expect(await screen.findByRole('alert', {}, T)).toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+  it('a default outside the choices shows the first choice and posts the same value', async () => {
+    const post = vi.spyOn(api, 'runAddonAction')
+    const meta = { minRole: 'member', confirm: 'options', label: 'Create show-once link', options: { fields: [{ key: 'expires_days', label: 'Works for', default: 99, choices: [{ value: 3, label: '3 days' }, { value: 7, label: '7 days' }] }] } } as ActionMeta
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', meta) })
+    await press(user)
+    const ask = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    expect(within(ask).getByLabelText('Works for')).toHaveValue('3')
+    await userEvent.click(within(ask).getByRole('button', { name: 'Create show-once link' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'share_once', expect.objectContaining({ expires_days: 3 })), T)
   })
 })
 

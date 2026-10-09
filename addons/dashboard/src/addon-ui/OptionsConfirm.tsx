@@ -1,12 +1,12 @@
 import { useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import type { ActionMeta } from '@/api/types'
+import type { ParsedOptions } from './optionsSchema'
 
 const MAX = 120
 const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
 
-type Options = NonNullable<ActionMeta['options']>
+type Options = ParsedOptions
 
 /**
  * Core's small dialog for an action the manifest marks `confirm: 'options'`: one native select per field, the

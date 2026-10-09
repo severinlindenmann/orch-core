@@ -103,10 +103,11 @@ export function CommandPalette() {
   // The prefix restricts what is listed; the rest is the search text.
   const prefix = mode ? '' : q.startsWith('>') || q.startsWith('#') || q.startsWith('@') ? q[0] : ''
   const text = mode ? q : q.slice(prefix.length)
-  const needle = text.trim().toLowerCase()
-  const debounced = useDebounced(text.trim(), 150)
+  // A query of only dashes or underscores is no query.
+  const needle = /^[\s_-]*$/.test(text) ? '' : text.trim().toLowerCase()
+  const debounced = useDebounced(needle ? text.trim() : '', 150)
   // A key (DEMO-0041) is searched at once, so Enter never opens the previous search's first hit.
-  const dq = /^[a-z]{2,}-?\d+$/i.test(text.trim()) ? text.trim() : debounced
+  const dq = needle && /^[a-z]{2,}-?\d+$/i.test(text.trim()) ? text.trim() : debounced
 
   const { data: tickets = [] } = useQuery({
     queryKey: ['palette-tickets', workspace?.id, dq],
@@ -294,7 +295,7 @@ export function CommandPalette() {
 
   const visible = (entries: Entry[]) => entries.filter((e) => matches(needle, typeof e.label === 'string' ? e.label : '', e.hint))
   // The exact key, then key prefixes, then title-word matches come first (stable within a rank), so Enter opens what was typed.
-  const ranked = tickets.map((t, i) => ({ t, i, r: ticketRank(t, needle) })).sort((a, b) => a.r - b.r || a.i - b.i)
+  const ranked = (needle ? tickets : []).map((t, i) => ({ t, i, r: ticketRank(t, needle) })).sort((a, b) => a.r - b.r || a.i - b.i)
   const topRank = ranked[0]?.r ?? 3
   const ticketEntries: Entry[] = ranked.slice(0, 8).map(({ t }) => ({
     id: t.key,

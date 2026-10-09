@@ -39,6 +39,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         caps.length ? `Capabilities: ${caps.join(', ')}` : 'Capabilities: none',
         viewersCan,
         ...(turnsOn ? ['Grants these capabilities and turns it on in this workspace'] : []),
+        ...(update ? [`The new capabilities take effect now and ${addon.title} stays on`] : []),
         ...(caps.includes('pty') ? ['Agents never get pty'] : []),
       ]}
       confirmLabel={update ? 'Update' : 'Grant and turn on'}

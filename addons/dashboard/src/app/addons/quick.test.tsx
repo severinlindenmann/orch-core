@@ -74,6 +74,15 @@ describe('quick tasks page', () => {
     await user.click(screen.getByRole('button', { name: 'Close task' }))
     await waitFor(async () => expect((await items()).find((q) => q.id === 'Q-003')!.status).toBe('done'), T)
   })
+  it('Escape in the proof field cancels it and focus returns to Close with proof', async () => {
+    const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    await user.click(within(await rowOf('Q-003')).getByRole('button', { name: 'Close with proof' }))
+    await user.type(await screen.findByLabelText(/^Proof/, {}, T), 'x')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText(/^Proof/)).toBeNull())
+    await waitFor(async () => expect(within((await rowOf('Q-003'))).getByRole('button', { name: 'Close with proof' })).toHaveFocus())
+    expect((await items()).find((q) => q.id === 'Q-003')!.status).toBe('claimed')
+  })
   it('Make a ticket converts the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
     await user.click(within(await rowOf('Q-002')).getByRole('button', { name: 'Make a ticket' }))

@@ -28,6 +28,7 @@ describe('Addon manager', () => {
     const row = await screen.findByRole('row', { name: /GitHub/ })
     await user.click(within(row).getByRole('button', { name: /Update to 0\.6\.0/ }))
     expect(await screen.findByText('+ spawn_agent')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and GitHub stays on')
     await user.click(screen.getByRole('button', { name: 'Update' }))
     await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('Active')).toBeInTheDocument())
     expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument()

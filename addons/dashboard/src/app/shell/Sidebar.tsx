@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -83,7 +84,13 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
   useEffect(() => {
     const on = (e: Event) => {
       const key = (e as CustomEvent<string>).detail
-      if (typeof key === 'string' && !latest.current.pinned.includes(key) && latest.current.pinned.length < MAX_PINNED) latest.current.toggle(key)
+      if (typeof key !== 'string') return
+      if (latest.current.pinned.includes(key)) toast.message('Already pinned')
+      else if (latest.current.pinned.length >= MAX_PINNED) toast.message('Sidebar is full — unpin one')
+      else {
+        latest.current.toggle(key)
+        toast.success('Pinned to the sidebar')
+      }
     }
     window.addEventListener(PIN_ADDON_EVENT, on)
     return () => window.removeEventListener(PIN_ADDON_EVENT, on)

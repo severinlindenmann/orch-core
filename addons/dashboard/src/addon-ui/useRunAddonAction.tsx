@@ -17,6 +17,7 @@ import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { DecisionSignPrompt, decisionBody } from './DecisionSignPrompt'
 import { DestructiveConfirm } from './DestructiveConfirm'
 import { OptionsConfirm } from './OptionsConfirm'
+import { parseOptions } from './optionsSchema'
 import { SecretDialog } from './SecretDialog'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
@@ -38,6 +39,8 @@ export interface RunAddonAction {
   /** The manifest entry of an action (installed version). */
   meta: (addon: string, action: string) => ActionMeta | undefined
   pending: boolean
+  /** The action the direct path is posting right now (null when none): a button says "Stopping…" only for its own action. */
+  pendingAction: string | null
   /** The last refusal of this hook's own action (when `inlineErrors`): the surface shows it under the trigger until the next success. */
   error: ActionError | null
   dismissError: () => void
@@ -181,7 +184,11 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
     else if (confirm === 'destructive') setDestroying({ addon, action, extra, subject })
-    else if (confirm === 'options' && m0?.options) setChoosing({ addon, action, extra, subject })
+    else if (confirm === 'options') {
+      // Fails closed: a manifest whose options core cannot read posts nothing.
+      if (parseOptions(m0?.options)) setChoosing({ addon, action, extra, subject })
+      else fail(new Error('invalid options'), 'This action asks for choices the addon did not describe correctly, so nothing was sent.')
+    }
     else m.mutate({ addon, action, extra }, call?.onDone ? { onSuccess: () => call.onDone!(true), onError: () => call.onDone!(false) } : undefined)
   }
 
@@ -240,11 +247,12 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     />
   )
   // `confirm: 'options'`: core's small dialog asks first; the choices ride along as args and the host validates them.
-  const chooseDialog = choosing && meta(choosing.addon, choosing.action)?.options && (
+  const chosen = choosing ? parseOptions(meta(choosing.addon, choosing.action)?.options) : null
+  const chooseDialog = choosing && chosen && (
     <OptionsConfirm
       label={meta(choosing.addon, choosing.action)?.label ?? 'Continue'}
       subject={choosing.subject}
-      options={meta(choosing.addon, choosing.action)!.options!}
+      options={chosen}
       onClose={() => setChoosing(null)}
       onConfirm={(values) => {
         const c = choosing
@@ -257,5 +265,5 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   const dialog = secretDialog || decisionDialog || signDialog || destroyDialog || chooseDialog || (confirming && (
     <SpawnConfirm addon={confirming.addon} ticketKey={ticket} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   ))
-  return { run, allowed, meta, pending: m.isPending || signPending, error, dismissError: () => setError(null), dialog }
+  return { run, allowed, meta, pending: m.isPending || signPending, pendingAction: m.isPending ? (m.variables?.action ?? null) : null, error, dismissError: () => setError(null), dialog }
 }

@@ -1,5 +1,5 @@
 import type { RJSFValidationError } from '@rjsf/utils'
-import { createContext, lazy, Suspense, useContext, useId, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useId, type ReactNode } from 'react'
 import { Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -36,8 +36,18 @@ interface Runtime {
   compact: boolean
   /** Core says the viewer may not change anything: forms, buttons and item actions render disabled. */
   readOnly: boolean
+  formControl?: FormControl
 }
 const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false })
+
+/**
+ * A form node whose submit button the caller draws itself (a drawer footer): the form gets this `id`, renders no
+ * submit button, and reports whether a save is running or not allowed so the caller's `<button type="submit" form={id}>` can follow.
+ */
+export interface FormControl {
+  id: string
+  onState: (s: { pending: boolean; blocked: boolean }) => void
+}
 
 /** Box shown instead of anything that is not one of the allowed node types or fails validation. */
 export function AddonUnavailable({ addon }: { addon: string }) {
@@ -54,9 +64,9 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  * Renders one declarative node tree from an addon. The node is untrusted: it is validated against the closed
  * set of node types (nodes.ts) and anything unknown or malformed becomes the "could not be shown" box.
  */
-export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean }) {
+export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl }) {
   return (
-    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly }}>
+    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl }}>
       <NodeView node={node} depth={0} />
     </RuntimeCtx.Provider>
   )
@@ -296,16 +306,21 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
   const readOnly = blocked
+  const { formControl } = useContext(RuntimeCtx)
+  const report = formControl?.onState
+  useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
+  const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
   return (
     <>
       {dialog}
       {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
         <ThemedForm
+          id={formControl?.id}
           disabled={readOnly}
           key={JSON.stringify(node.formData ?? null)}
           schema={node.schema}
-          uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } } }}
+          uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
           formData={node.formData ?? undefined}
           noHtml5Validate
           showErrorList={false}

@@ -48,7 +48,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
     <div className="space-y-4">
       <div className="flex items-start gap-3">
         <div className="flex-1">
-          <h2 className="text-base font-semibold">Addons</h2>
+          <h2 tabIndex={-1} data-addons-heading className="text-base font-semibold outline-none">Addons</h2>
           <p className="mt-1 text-[13px] text-text-muted">The owner grants what each addon may do. Every update needs a new grant; agents never enable addons.</p>
         </div>
         <Button variant="outline" onClick={() => setBrowsing(true)}>
@@ -104,7 +104,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
           void run(name, { op: 'install' })
         }}
       />
-      {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} onClose={() => void navigate({ to: '/settings/$tab', params: { tab: 'addons' } })} />}
+      {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} />}
       {ask && <GrantDialog ask={ask} onSign={() => sign(ask)} onClose={() => setAsk(null)} />}
       {removing && (
         <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>

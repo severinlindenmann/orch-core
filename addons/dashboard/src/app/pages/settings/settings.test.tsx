@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
 import { ApiError } from '@/api/types'
+import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 
 afterEach(() => vi.restoreAllMocks())
@@ -58,10 +59,58 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Publish settings/ })).toBeNull())
     await waitFor(() => expect(within(screen.getByRole('row', { name: /Publish/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
   })
-  it('the deep link opens the Addons tab with the drawer open', async () => {
-    renderApp('/settings/addon/estimate')
-    expect(await screen.findByRole('dialog', { name: /Estimate settings/ })).toBeInTheDocument()
+  it('the deep link opens the Addons tab with the drawer open; closing returns to the Addons list', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    const drawer = await screen.findByRole('dialog', { name: /Estimate settings/ })
     expect(await screen.findByRole('row', { name: /Publish/, hidden: true })).toBeInTheDocument() // the list is behind it
+    expect(await within(drawer).findByRole('region', { name: /Estimate settings/ })).toBeInTheDocument()
+    await user.click(within(drawer).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull()
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
+  })
+  it('the footer Save is the form submit (form=id), and the form draws no button of its own', async () => {
+    const { user } = renderApp('/settings/addon/models', { setup: (st) => installAndGrant(st, st.workspaces[0].id, 'models') })
+    const field = await screen.findByRole('textbox', { name: 'Standard model' })
+    expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1) // the form draws no button of its own
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('form', 'addon-settings-models')
+    await user.clear(field)
+    await user.type(field, 'haiku') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'models')).settings as { standard: string }).standard).toBe('haiku'))
+  })
+  it('changing a value and putting it back asks nothing', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    const scale = await screen.findByLabelText(/Scale/)
+    await user.selectOptions(scale, 't-shirt')
+    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument()
+    await user.selectOptions(scale, 'fibonacci')
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+  it('a palette navigation with unsaved changes asks first, and keeps the edits on request', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
+    await user.keyboard('{Meta>}k{/Meta}')
+    await user.keyboard('Board{Enter}')
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(await screen.findByLabelText(/Scale/)).toHaveValue('t-shirt')
+    await user.keyboard('{Meta>}k{/Meta}')
+    await user.keyboard('Board{Enter}')
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    expect(await screen.findByRole('heading', { name: 'Board' })).toBeInTheDocument()
+  })
+  it('a workspace switch with unsaved changes asks first', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
+    await user.keyboard('{Meta>}k{/Meta}')
+    await user.keyboard('Switch to INT{Enter}')
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText(/Scale/)).toHaveValue('t-shirt')
   })
   it('asks before closing with unsaved changes, and keeps editing on request', async () => {
     const { user } = renderApp('/settings/addon/estimate')

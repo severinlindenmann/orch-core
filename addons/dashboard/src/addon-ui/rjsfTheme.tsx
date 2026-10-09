@@ -97,7 +97,7 @@ function FieldTemplate({ id, label, children, errors, help, description, hidden,
  * `ui:globalOptions.layout: 'row'` (rjsf puts that on `registry.globalUiOptions`, which the SubmitButton can read).
  */
 const isRow = (uiSchema?: Record<string, unknown>) => (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.layout === 'row'
-type SubmitOptions = { submitText?: string; props?: { disabled?: boolean } }
+type SubmitOptions = { submitText?: string; norender?: boolean; props?: { disabled?: boolean } }
 const submitOptions = (uiSchema?: Record<string, unknown>) =>
   (uiSchema?.['ui:submitButtonOptions'] ?? (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions) as SubmitOptions | undefined
 
@@ -112,6 +112,7 @@ function ObjectFieldTemplate({ properties, title, description, uiSchema, fieldPa
           </div>
         ))}
         {/* Same shape as a field (label row, then the control) so the button lines up with the inputs. */}
+        {!o?.norender && (
         <div className="space-y-1.5">
           <Label aria-hidden className="invisible text-[12px]">
             .
@@ -120,6 +121,7 @@ function ObjectFieldTemplate({ properties, title, description, uiSchema, fieldPa
             {o?.submitText ?? 'Save'}
           </Button>
         </div>
+        )}
       </div>
     )
   }
@@ -137,6 +139,7 @@ function ObjectFieldTemplate({ properties, title, description, uiSchema, fieldPa
 function SubmitButton({ uiSchema, registry }: SubmitButtonProps) {
   if (registry.globalUiOptions?.layout === 'row') return null // the row layout draws it inline
   const o = submitOptions(uiSchema)
+  if (o?.norender) return null // the caller draws its own submit button (form={id})
   const label = o?.submitText ?? 'Save'
   return (
     <Button type="submit" size="sm" disabled={o?.props?.disabled}>

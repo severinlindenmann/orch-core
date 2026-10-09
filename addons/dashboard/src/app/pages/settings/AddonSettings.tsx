@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useSlot } from '@/addon-ui/slots'
 import { addonActive } from '@/api/addons'
@@ -19,38 +19,10 @@ function Loading() {
 
 const ONLY_OWNERS_FORM = 'Only owners change settings.'
 
-/**
- * The form's own Save button lives inside the addon's form node. In the drawer it is hidden and mirrored by the
- * footer's Save, so the drawer ends in Save / Cancel. Submitting still goes through the node (same action, same path).
- */
-function useExternalSubmit(body: React.RefObject<HTMLDivElement | null>, onForm: () => void) {
-  const [button, setButton] = useState<{ present: boolean; disabled: boolean }>({ present: false, disabled: true })
-  useEffect(() => {
-    const el = body.current
-    if (!el) return
-    const sync = () => {
-      const b = el.querySelector<HTMLButtonElement>('form button[type="submit"]')
-      if (b) {
-        b.hidden = true
-        onForm()
-      }
-      setButton((prev) => {
-        const next = { present: !!b, disabled: b?.disabled ?? true }
-        return prev.present === next.present && prev.disabled === next.disabled ? prev : next
-      })
-    }
-    sync()
-    const mo = new MutationObserver(sync)
-    mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] })
-    return () => mo.disconnect()
-  }, [body, onForm])
-  const submit = () => body.current?.querySelector<HTMLFormElement>('form')?.requestSubmit()
-  return { ...button, submit }
-}
-
 /** What the person has typed into the form, as one comparable string. */
-function formSnapshot(root: HTMLElement | null): string {
+function formSnapshot(root: HTMLElement | null): string | null {
   const els = Array.from(root?.querySelectorAll<HTMLInputElement>('form input, form select, form textarea') ?? [])
+  if (els.length === 0) return null // the form is not there yet: there is nothing to compare with
   return JSON.stringify(els.map((e) => [e.id, e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value]))
 }
 
@@ -59,12 +31,14 @@ export function AddonSettings({
   name,
   workspace,
   canEdit,
+  labelledBy,
   onDirtyChange,
   onClose,
 }: {
   name: string
   workspace: Workspace
   canEdit: boolean
+  labelledBy: string
   onDirtyChange: (dirty: boolean) => void
   onClose: () => void
 }) {
@@ -83,18 +57,21 @@ export function AddonSettings({
   const body = useRef<HTMLDivElement>(null)
   const [dirty, setDirty] = useState(false)
   const saved = JSON.stringify(state.data?.settings ?? null)
-  // The values as they were when the person first touched the form; a save (or a reload) puts fresh values in, so start over.
+  // The values as they were just before the person first touched the form (focus, pointer or key, all before the change); a save (or a reload) puts fresh values in, so start over.
   const baseline = useRef<string | null>(null)
   const touch = useCallback(() => {
     baseline.current ??= formSnapshot(body.current)
   }, [])
-  const submit = useExternalSubmit(body, touch)
+  const [save, setSave] = useState({ pending: false, blocked: true })
+  const formControl = useMemo(() => ({ id: `addon-settings-${name}`, onState: setSave }), [name])
   useEffect(() => {
     baseline.current = null
     setDirty(false)
     touch()
   }, [saved, touch])
-  const check = () => setDirty(baseline.current !== null && formSnapshot(body.current) !== baseline.current)
+  const check = () => {
+    setDirty(baseline.current !== null && formSnapshot(body.current) !== baseline.current)
+  }
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
   const title = pkg?.title ?? name
@@ -112,11 +89,11 @@ export function AddonSettings({
   else if (state.error) content = failed(state.error)
   else if (!state.data) content = <Loading />
   else if (!c) content = <p className="text-sm text-text-muted">{title} has no settings.</p>
-  else content = <AddonContributionView c={c} ctx={{ workspace }} readOnly={!canEdit} bare />
+  else content = <AddonContributionView c={c} ctx={{ workspace }} readOnly={!canEdit} bare formControl={formControl} />
 
   return (
     <>
-      <div ref={body} className="min-h-0 flex-1 overflow-y-auto px-4" onFocusCapture={touch} onInputCapture={check} onChangeCapture={check}>
+      <div ref={body} role="region" aria-labelledby={labelledBy} className="min-h-0 flex-1 overflow-y-auto px-4" onFocusCapture={touch} onPointerDownCapture={touch} onKeyDownCapture={touch} onInputCapture={check} onChangeCapture={check}>
         {content}
       </div>
       <div className="flex items-center gap-2 border-t border-border p-4">
@@ -124,8 +101,8 @@ export function AddonSettings({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        {submit.present && (
-          <Button onClick={submit.submit} disabled={!canEdit || submit.disabled}>
+        {c && active && (
+          <Button type="submit" form={formControl.id} disabled={!canEdit || save.pending || save.blocked}>
             Save
           </Button>
         )}

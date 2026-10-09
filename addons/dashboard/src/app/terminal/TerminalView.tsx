@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { ArrowDown, ChevronDown, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { TerminalSessionView } from '@/api/terminals'
@@ -93,6 +93,7 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
   const host = useRef<HTMLDivElement>(null)
   const leave = useRef<HTMLButtonElement>(null)
   const region = useRef<HTMLElement>(null)
+  const helpId = useId()
   const terminal = useRef<Terminal | null>(null)
   const search = useRef<SearchAddon | null>(null)
   const latest = useRef({ session, action })
@@ -228,8 +229,10 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
   // Leave: hand focus to the next focusable thing after this terminal (or just drop it).
   const leaveTerminal = () => {
     const section = region.current
-    const all = Array.from(document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'))
-    const next = all.find((el) => !section?.contains(el) && !!(section!.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
+    if (!section) return
+    const usable = (el: HTMLElement) => !section.contains(el) && !el.hidden && !el.closest('[hidden], [inert], [aria-hidden="true"]') && (el.getClientRects().length > 0 || import.meta.env.MODE === 'test')
+    const all = Array.from(document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+    const next = all.find((el) => usable(el) && !!(section.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))
     if (next) next.focus()
     else (document.activeElement as HTMLElement | null)?.blur()
   }
@@ -249,7 +252,8 @@ function XtermSession({ addon, session, interactive, fontSize, rail, picker, cac
     {note && <div role="status" className="px-2 py-1 text-xs text-text-muted">Agent output is view only. Open your own shell to type. <Button variant="link" size="xs" disabled={!canCreate} onClick={() => void action('new')}>New terminal</Button></div>}
     {feedback && <p role="status" className="px-2 text-xs text-text-muted">{feedback}</p>}
     {attached ? <div className="relative">
-      <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : 24}
+      <span id={helpId} className="sr-only">Terminal output is drawn on screen; use Download transcript for a text copy.</span>
+      <div ref={host} role="group" aria-label={`Terminal: ${session.label}`} aria-describedby={helpId} aria-readonly={interactive ? undefined : true} data-terminal-session={session.id} data-terminal-rows={rail ? 12 : 24}
         style={{ height: rail ? `${Math.ceil(12 * fontSize * 1.25) + 16}px` : fill ?? 'calc(100vh - 300px)', minHeight: rail ? undefined : 360 }} className="w-full overflow-hidden bg-bg p-2" />
       {!following && <Button size="xs" className="absolute bottom-3 right-4 z-10" onClick={() => { followingRef.current = true; terminal.current?.scrollToBottom(); setFollowing(true) }}><ArrowDown />Jump to latest</Button>}
     </div>

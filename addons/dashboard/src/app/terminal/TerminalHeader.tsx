@@ -22,7 +22,7 @@ export function TerminalHeader({ session, interactive, rail, picker, leaveRef, c
     <span title={session.label} className="max-w-[45%] min-w-0 shrink-0 truncate font-medium">{session.label}</span>
     <span className="shrink-0 rounded bg-surface-2 px-1.5 text-text-muted">{session.status === 'running' ? 'Live' : 'Ended'}</span>
     <span className="shrink-0 rounded bg-surface-2 px-1.5">{session.kind === 'agent' ? 'Agent output · view only' : interactive ? 'Your shell · interactive' : 'Your shell · view only'}</span>
-    {rail ? <span className="flex-1" /> : <span title={`${session.ctx.branch} · ${session.ctx.cwd}`} className="flex min-w-0 flex-1 gap-1 font-mono text-text-muted"><span className="shrink-0 truncate">{session.ctx.branch}</span><span className="min-w-0 truncate">· {session.ctx.cwd}</span></span>}
+    {rail ? <span className="flex-1" /> : <span title={`${session.ctx.branch} · ${session.ctx.cwd}`} className="flex min-w-0 flex-1 gap-1 overflow-hidden font-mono text-text-muted"><span className="max-w-full shrink-0 truncate">{session.ctx.branch}</span><span className="min-w-0 truncate">· {session.ctx.cwd}</span></span>}
     {!rail && <>
       <IconButton label="Copy selection or transcript" onClick={onCopy}><Copy /></IconButton>
       <IconButton label="Find (⌘F)" onClick={onFind} disabled={!canFind}><Search /></IconButton>

@@ -16,6 +16,7 @@ import { useSignedAction } from '@/components/sign/SignPrompt'
 import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { DecisionSignPrompt, decisionBody } from './DecisionSignPrompt'
 import { DestructiveConfirm } from './DestructiveConfirm'
+import { OptionsConfirm } from './OptionsConfirm'
 import { SecretDialog } from './SecretDialog'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
@@ -89,6 +90,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   const [error, setError] = useState<ActionError | null>(null)
   const [secret, setSecret] = useState<{ addon: string; secret: NonNullable<AddonActionResult['secret']> } | null>(null)
   const [destroying, setDestroying] = useState<Pending | null>(null)
+  const [choosing, setChoosing] = useState<Pending | null>(null)
 
   const meta = (addon: string, action: string): ActionMeta | undefined => {
     const pkg = packages?.find((a) => a.name === addon)
@@ -179,6 +181,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
     else if (confirm === 'destructive') setDestroying({ addon, action, extra, subject })
+    else if (confirm === 'options' && m0?.options) setChoosing({ addon, action, extra, subject })
     else m.mutate({ addon, action, extra }, call?.onDone ? { onSuccess: () => call.onDone!(true), onError: () => call.onDone!(false) } : undefined)
   }
 
@@ -236,8 +239,22 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       }}
     />
   )
+  // `confirm: 'options'`: core's small dialog asks first; the choices ride along as args and the host validates them.
+  const chooseDialog = choosing && meta(choosing.addon, choosing.action)?.options && (
+    <OptionsConfirm
+      label={meta(choosing.addon, choosing.action)?.label ?? 'Continue'}
+      subject={choosing.subject}
+      options={meta(choosing.addon, choosing.action)!.options!}
+      onClose={() => setChoosing(null)}
+      onConfirm={(values) => {
+        const c = choosing
+        setChoosing(null)
+        m.mutate({ ...c, extra: { ...c.extra, ...values } })
+      }}
+    />
+  )
   const secretDialog = secret && <SecretDialog addon={secret.addon} secret={secret.secret} onDone={() => setSecret(null)} />
-  const dialog = secretDialog || decisionDialog || signDialog || destroyDialog || (confirming && (
+  const dialog = secretDialog || decisionDialog || signDialog || destroyDialog || chooseDialog || (confirming && (
     <SpawnConfirm addon={confirming.addon} ticketKey={ticket} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   ))
   return { run, allowed, meta, pending: m.isPending || signPending, error, dismissError: () => setError(null), dialog }

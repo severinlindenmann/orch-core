@@ -29,7 +29,6 @@ const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>]
   ['guide', 'open', { slug: 'getting-around' }],
   ['schedules', 'open_run', { run: 'R-4' }],
   ['terminals', 'open', {}],
-  ['quick', 'cancel_close', {}],
   ['github', 'open', { id: 'acme-energy/energy-dbt#29' }],
 ]
 

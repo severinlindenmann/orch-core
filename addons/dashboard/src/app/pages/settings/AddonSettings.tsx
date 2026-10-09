@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -40,7 +41,7 @@ export function AddonSettings({
   canEdit: boolean
   labelledBy: string
   onDirtyChange: (dirty: boolean) => void
-  onClose: () => void
+  onClose: () => void | Promise<void>
 }) {
   const addons = useAddons()
   const contributions = useSlot('settings')
@@ -63,7 +64,16 @@ export function AddonSettings({
     baseline.current ??= formSnapshot(body.current)
   }, [])
   const [save, setSave] = useState({ pending: false, blocked: true })
-  const formControl = useMemo(() => ({ id: `addon-settings-${name}`, onState: setSave }), [name])
+  // A successful save closes the drawer with a toast; what was just saved is not "unsaved changes" that would stop it.
+  const title = pkg?.title ?? name
+  const closing = useRef(onClose)
+  closing.current = onClose
+  const onSaved = useCallback(() => {
+    onDirtyChange(false)
+    // Toasts of the old page go with the route change, so the confirmation is shown once the list is back.
+    void Promise.resolve(closing.current()).then(() => setTimeout(() => toast.success(`${title} settings saved`), 0))
+  }, [onDirtyChange, title])
+  const formControl = useMemo(() => ({ id: `addon-settings-${name}`, onState: setSave, onSaved }), [name, onSaved])
   useEffect(() => {
     baseline.current = null
     setDirty(false)
@@ -74,7 +84,6 @@ export function AddonSettings({
   }
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange])
 
-  const title = pkg?.title ?? name
   const failed = (e: unknown) => (
     <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-[13px]">
       Could not load the {title} settings: {e instanceof Error ? e.message : 'something went wrong'}.

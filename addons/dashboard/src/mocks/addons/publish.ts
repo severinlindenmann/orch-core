@@ -27,6 +27,8 @@ interface Share {
   expires_in_days: number
   views: number
   last_viewer: string | null
+  /** Most views before the link stops (show-once links choose it; absent = no limit). */
+  view_limit?: number
   /** Token of the link; null for a show-once link (only ever shown in core's "Copy this link now" dialog) and for a sealed share. */
   token: string | null
 }
@@ -65,6 +67,10 @@ const linkOf = (s: Settings, token: string) => `https://p.${s.namespace}.example
 const visibleShare = (c: AddonCtx, id: unknown) => shares(c.state).find((s) => s.id === id && (!s.ticket || canSeeTicket(c, s.ticket)))
 /** The one line that says why a build failed (the last error-looking log line). */
 const failedLine = (x: App) => [...x.log].reverse().find((l) => /error/i.test(l)) ?? x.log[x.log.length - 2] ?? 'Build failed'
+/** What a show-once link can share, how long it works and how often it opens (the dialog's choices; the host checks them). */
+const SHARE_WHAT: Record<string, string> = { ticket: 'ticket page', report: 'before/after report' }
+const SHARE_DAYS = [1, 3, 7, 30]
+const SHARE_VIEWS = [1, 3, 10, 0]
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** Deterministic 10-character token (mock only), so tests and screenshots are stable. */
@@ -88,7 +94,7 @@ function newShare(state: Record<string, unknown>, ticket: string | undefined, ki
 }
 
 const subtitle = (x: Share) =>
-  [x.kind === 'sealed' ? `sealed to ${x.recipient}` : x.kind, `expires in ${plural(x.expires_in_days, 'day', 'days')}`, plural(x.views, 'view', 'views'), x.last_viewer ? `last: ${x.last_viewer}` : null]
+  [x.kind === 'sealed' ? `sealed to ${x.recipient}` : x.kind, `expires in ${plural(x.expires_in_days, 'day', 'days')}`, plural(x.views, 'view', 'views'), x.view_limit ? `limit ${x.view_limit}` : null, x.last_viewer ? `last: ${x.last_viewer}` : null]
     .filter(Boolean)
     .join(' · ')
 
@@ -242,16 +248,26 @@ registerAddon({
       }
     },
     share_once(ctx) {
-      const { store, ticket, state } = ctx
+      const { store, ticket, state, body } = ctx
+      // Core's small dialog asks first (manifest `confirm: 'options'`); the host checks what came back.
+      const what = body.what === undefined ? 'ticket' : String(body.what)
+      const days = body.expires_days === undefined ? settingsOf(state).default_expiry_days : Number(body.expires_days)
+      const limit = body.view_limit === undefined ? 1 : Number(body.view_limit)
+      if (!(what in SHARE_WHAT)) return invalid('Choose what to share: the ticket or its report.')
+      if (!SHARE_DAYS.includes(days)) return invalid(`Choose how long the link works: ${SHARE_DAYS.join(', ')} days.`)
+      if (!SHARE_VIEWS.includes(limit)) return invalid('Choose how many times it can be opened.')
       const tok = token(state)
       const label = canSeeTicket(ctx, ticket) ? ticket : undefined
-      newShare(state, label, 'show-once', label ? `${label} one-time link` : 'One-time link', null)
+      const sh = newShare(state, label, 'show-once', label ? `${label} ${SHARE_WHAT[what]} one-time link` : 'One-time link', null)
+      sh.expires_in_days = days
+      if (limit > 0) sh.view_limit = limit
       if (label) store.append(label, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
+      const rule = `${limit > 0 ? `opens ${limit === 1 ? 'once' : `${limit} times`}` : 'no view limit'}, works for ${plural(days, 'day', 'days')}`
       return {
         ok: true,
-        message: 'Created a one-time link.',
+        message: `Created a one-time link (${rule}).`,
         changed: true,
-        secret: { label: label ? `One-time link for ${label}` : 'One-time link', value: linkOf(settingsOf(state), tok), note: 'This link is shown once and cannot be copied again. Revoke it and make a new one if you lose it.' },
+        secret: { label: label ? `One-time link for ${label}` : 'One-time link', value: linkOf(settingsOf(state), tok), note: `${SHARE_WHAT[what][0].toUpperCase()}${SHARE_WHAT[what].slice(1)}: ${rule}. It is shown once and cannot be copied again. Revoke it and make a new one if you lose it.` },
       }
     },
     copy_link(ctx) {

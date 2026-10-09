@@ -43,6 +43,7 @@ import { iconByName } from '../icons'
 import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
+import { PIN_ADDON_EVENT } from './pinEvent'
 
 const RailContext = createContext(false)
 
@@ -76,6 +77,17 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
       /* storage unavailable: the choice lasts for this page only */
     }
   }
+  // "Pin to sidebar" from the toast after an install: add the page unless it is there or the sidebar is full.
+  const latest = useRef({ pinned, toggle })
+  latest.current = { pinned, toggle }
+  useEffect(() => {
+    const on = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail
+      if (typeof key === 'string' && !latest.current.pinned.includes(key) && latest.current.pinned.length < MAX_PINNED) latest.current.toggle(key)
+    }
+    window.addEventListener(PIN_ADDON_EVENT, on)
+    return () => window.removeEventListener(PIN_ADDON_EVENT, on)
+  }, [])
   return { pinned, toggle, full: pinned.length >= MAX_PINNED }
 }
 
@@ -169,7 +181,8 @@ export function Sidebar() {
   }, [navItems.length, shown.length, collapsed])
 
   const link = cn(
-    'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text',
+    // Keyboard focus is a brand ring, not the grey fill of the current page (aria-current) or of hover.
+    'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted outline-none transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
     collapsed ? 'justify-center px-0 py-2' : 'px-2.5 py-1.5',
   )
   const activeProps = { className: 'bg-surface-2 !text-text' }

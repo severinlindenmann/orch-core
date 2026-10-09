@@ -52,7 +52,7 @@ export function AddonSettingsDrawer({ name, workspace, canEdit }: { name: string
   )
   useSwitchGuard(guard)
 
-  const close = () => void navigate({ to: '/settings/$tab', params: { tab: 'addons' } })
+  const close = () => navigate({ to: '/settings/$tab', params: { tab: 'addons' } })
   const answer = (f: () => void) => {
     setAsking(null)
     f()
@@ -60,7 +60,7 @@ export function AddonSettingsDrawer({ name, workspace, canEdit }: { name: string
 
   return (
     <>
-      <Sheet open onOpenChange={(o) => !o && close()}>
+      <Sheet open onOpenChange={(o) => !o && void close()}>
         <SheetContent
           side="right"
           className="w-[min(90vw,40rem)] gap-0 border-border bg-surface p-0 sm:max-w-none"

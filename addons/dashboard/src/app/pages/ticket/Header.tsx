@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
 import { BlockedByConnection } from './Needs'
-import { availableActions, GATE_LABEL, primaryAction, primaryLabel } from './actions'
+import { availableActions, blockedApproval, GATE_LABEL, primaryAction, primaryLabel } from './actions'
 import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -143,6 +143,20 @@ export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocu
 /** The header's one primary button: what the viewer should do next (hidden when nothing needs them). */
 function PrimaryButton({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
   const p = primaryAction(availableActions(ticket, viewer))
+  const blocked = blockedApproval(ticket, viewer)
+  // Someone who cannot sign the next gate sees the button, off, with the reason (not an empty header).
+  if (!p && blocked)
+    return (
+      <span title={blocked.reason} className="inline-flex">
+        <Button size="sm" disabled aria-describedby={`why-${ticket.key}`}>
+          <Check />
+          {blocked.label}
+        </Button>
+        <span id={`why-${ticket.key}`} className="sr-only">
+          {blocked.reason}
+        </span>
+      </span>
+    )
   if (!p) return null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: p.question })

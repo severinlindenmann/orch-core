@@ -14,6 +14,27 @@ export function canApproveGate(t: TicketDocument, gate: GateName, viewer: Viewer
   return true
 }
 
+const WHO: Record<string, string> = { owner: 'owners', maintainer: 'owners and maintainers', reviewers: 'reviewers' }
+
+/**
+ * The next approval this person would give if their role allowed it, and why it does not: a member or maintainer on a
+ * ticket whose pending gate needs a higher role. Shown as a disabled button with the reason instead of nothing.
+ * Null when the person can approve it, or the gate is not up for approval.
+ */
+export function blockedApproval(t: TicketDocument, viewer: Viewer): { gate: 'requirements' | 'plan'; label: string; reason: string } | null {
+  if (t.status === 'done' || !can(viewer.role, 'ticket.act')) return null
+  const req = t.gates.requirements
+  const plan = t.gates.plan
+  const gate = req.state !== 'approved' && !!t.body.requirements?.trim() ? 'requirements' : plan.state !== 'approved' && req.state === 'approved' && t.tasks.length > 0 ? 'plan' : null
+  if (!gate || canApproveGate(t, gate, viewer)) return null
+  const g = t.gates[gate]
+  // Only a role (or reviewer list) that excludes the person: not "you already approved" or "assignees cannot approve".
+  const byRole = g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !roleMeets(viewer.role, g.approvers)
+  if (!byRole) return null
+  const who = WHO[g.approvers] ?? 'a higher role'
+  return { gate, label: `Approve ${gate} (${who} only)`, reason: `${GATE_LABEL[gate]} needs ${g.needed} ${g.needed === 1 ? 'approval' : 'approvals'} from ${g.approvers === 'reviewers' ? "the ticket's reviewers" : who}.` }
+}
+
 export function canAnswer(q: QuestionStatus, viewer: Viewer): boolean {
   if (q.state !== 'open') return false
   if (!can(viewer.role, 'ticket.act')) return false

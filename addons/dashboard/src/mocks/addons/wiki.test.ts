@@ -114,7 +114,8 @@ describe('wiki actions', () => {
     const back = body.children.find((c) => c.type === 'table')!
     expect(back.rows!.map((r) => r.ticket)).toEqual(['DEMO-0041', 'DEMO-0043'])
     expect(back.rows!.every((r) => r.title)).toBe(true)
-    const text = body.children.at(-1)!
+    const text = body.children.find((c) => c.toc)!
+    expect(body.children.at(-1)).toBe(back) // the backlinks come after the content
     expect(text.toc).toBe(true)
     expect(text.text!.startsWith('# ')).toBe(false) // the title is not repeated in the body
   })

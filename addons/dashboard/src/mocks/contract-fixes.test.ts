@@ -123,8 +123,7 @@ describe('the signed manifest is the one enforced after an update', () => {
     const { store, api, ws } = setup()
     const gh = store.addons.find((a) => a.name === 'github')!
     const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['open'] }
-    await api.postAddonOp(ws, 'github', { op: 'update', ...u })
-    await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
+    await api.postAddonOp(ws, 'github', { op: 'update', ...u }) // one signature: the update is the grant of the new version
     const evs = store.wsEventsOf(ws).filter((e) => e.type === 'addon.updated' || e.type === 'addon.granted').slice(-2)
     expect(evs.map((e) => e.type)).toEqual(['addon.updated', 'addon.granted'])
     for (const e of evs) expect(e.viewer_actions).toEqual(['open'])

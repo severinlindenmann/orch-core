@@ -11,16 +11,16 @@ describe('Settings', () => {
   it('changes a member role after signing', async () => {
     const { user } = renderApp('/settings/members')
     const row = await screen.findByRole('row', { name: /Tom/ })
-    await user.selectOptions(within(row).getByRole('combobox', { name: 'Role' }), 'member')
+    await user.selectOptions(within(row).getByRole('combobox', { name: /^Role of / }), 'member')
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await within(screen.getByRole('row', { name: /Tom/ })).findByDisplayValue('member')
-    expect(within(screen.getByRole('row', { name: /Tom/ })).getByRole('combobox', { name: 'Role' })).toHaveValue('member')
+    expect(within(screen.getByRole('row', { name: /Tom/ })).getByRole('combobox', { name: /^Role of / })).toHaveValue('member')
   })
   it('refuses to demote the last owner', async () => {
     const { user } = renderApp('/settings/members')
     const row = await screen.findByRole('row', { name: /Severin/ })
-    expect(within(row).getByRole('combobox', { name: 'Role' })).toBeDisabled()
-    await user.hover(within(row).getByRole('combobox', { name: 'Role' }))
+    expect(within(row).getByRole('combobox', { name: /^Role of / })).toBeDisabled()
+    await user.hover(within(row).getByRole('combobox', { name: /^Role of / }))
     expect(await screen.findByText(/last owner/)).toBeInTheDocument()
   })
   it('describes a gate policy in a sentence and saves it', async () => {
@@ -34,7 +34,7 @@ describe('Settings', () => {
   it('Mara sees settings read-only', async () => {
     renderApp('/settings/members', { viewer: 'p_mara' })
     expect(await screen.findByText('Only owners change settings.')).toBeInTheDocument()
-    expect(within(await screen.findByRole('row', { name: /Tom/ })).getByRole('combobox', { name: 'Role' })).toBeDisabled()
+    expect(within(await screen.findByRole('row', { name: /Tom/ })).getByRole('combobox', { name: /^Role of / })).toBeDisabled()
   })
   it('shows the relay as not connected and links to Relay & devices', async () => {
     renderApp('/settings/general')
@@ -79,6 +79,11 @@ describe('Settings', () => {
     await user.type(field, 'haiku') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'models')).settings as { standard: string }).standard).toBe('haiku'))
+    // A successful save closes the drawer and says so (the toast outlives the route change); no "discard?" question.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(await screen.findByText(/settings saved$/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
   })
   it('changing a value and putting it back asks nothing', async () => {
     const { user } = renderApp('/settings/addon/estimate')
@@ -152,7 +157,7 @@ describe('Settings', () => {
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     expect(await screen.findByRole('row', { name: /Ida/ })).toBeInTheDocument()
   })
-  it('Add member offers people by name, never ids, and Enter submits', async () => {
+  it('Add member offers people by name, never ids; Enter picks the highlighted one, a second Enter adds', async () => {
     const { user } = renderApp('/settings/members')
     await user.click(await screen.findByRole('button', { name: 'Add member' }))
     const box = screen.getByRole('combobox', { name: 'Person' })
@@ -160,6 +165,13 @@ describe('Settings', () => {
     expect(await screen.findByRole('option', { name: /Ida/ })).toBeInTheDocument()
     expect(screen.queryByText(/p_ida/)).toBeNull()
     expect(screen.getByText(/Maintainer: can approve plans and verdicts, cannot change settings/)).toBeInTheDocument()
+    // The note about email addresses is there before anything is pressed, and the list does not cover the Role field.
+    expect(screen.getByText(/Adding by an email address that is not in it comes later/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Role')).toBeVisible()
+    await user.keyboard('{Enter}')
+    expect(screen.queryByRole('button', { name: 'Sign and save' })).toBeNull() // Enter only picked
+    expect(box).toHaveValue('Ida')
+    expect(screen.queryByRole('listbox')).toBeNull()
     await user.keyboard('{Enter}')
     expect(await screen.findByRole('button', { name: 'Sign and save' })).toBeInTheDocument()
   })

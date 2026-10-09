@@ -44,11 +44,15 @@ describe('publish page', () => {
     expect(within(stopped).getByRole('button', { name: 'Start' })).toBeInTheDocument()
     expect(within(stopped).queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
   })
-  it('stopping an app acts at once and the toast offers Undo', async () => {
+  it('stopping an app asks first (people are using it), then the toast offers Undo', async () => {
     const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
     const row = (await screen.findByText('Billing explorer', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Stop' }))
+    const ask = await screen.findByRole('alertdialog')
+    expect(ask).toHaveTextContent(/Anyone using the app loses it/)
+    expect((await apps()).find((a) => a.id === 'app_billing')!.status).toBe('running') // nothing yet
+    await user.click(within(ask).getByRole('button', { name: 'Stop app' }))
     await waitFor(() => expect(success).toHaveBeenCalledWith('Billing explorer stopped.', expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) })), T)
     const opts = success.mock.calls[0][1] as unknown as { action: { onClick: () => void } }
     opts.action.onClick()
@@ -73,10 +77,32 @@ describe('publish page', () => {
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
     await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
     await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
+    await user.click(await within(await screen.findByRole('dialog', { name: 'Create show-once link' }, T)).findByRole('button', { name: 'Create show-once link' }))
     await user.click(await screen.findByRole('button', { name: 'I saved it' }, T))
     const item = (await screen.findByText('One-time link', {}, T)).closest('tr')!
     expect(within(item).getByRole('button', { name: 'Shown once' })).toBeInTheDocument()
     expect(within(item).queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument()
+  })
+  it('a show-once link asks first what to share, how long it works and how often it opens; Cancel makes nothing', async () => {
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
+    await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
+    const ask = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    expect(screen.queryByRole('dialog', { name: /Copy this link now/ })).toBeNull() // the secret dialog comes after
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText('One-time link')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'New show-once link' }))
+    const ask2 = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    await user.selectOptions(within(ask2).getByLabelText('What to share'), 'report')
+    await user.selectOptions(within(ask2).getByLabelText('Works for'), '3')
+    await user.selectOptions(within(ask2).getByLabelText('Opens'), '3')
+    await user.click(within(ask2).getByRole('button', { name: 'Create show-once link' }))
+    const secret = await screen.findByRole('dialog', { name: /Copy this link now/ }, T)
+    expect(secret).toHaveTextContent(/before\/after report: opens 3 times, works for 3 days/i)
+    await user.click(within(secret).getByRole('button', { name: 'I saved it' }))
+    const item = (await screen.findByText('One-time link', {}, T)).closest('tr')!
+    expect(item).toHaveTextContent('3 days')
   })
   it('viewer sees the page with disabled actions', async () => {
     renderApp('/addon/publish/shares', { viewer: 'p_tom' })

@@ -117,6 +117,17 @@ describe('publish shares', () => {
     expect(again.message).toMatch(/shown once/i)
     expect(again.message).not.toMatch(/https:/)
   })
+  it('share_once takes the dialog\'s choices (what, expiry, view limit) and refuses values outside them', async () => {
+    const s = setup()
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', what: 'report', expires_days: 3, view_limit: 3 })
+    expect(r.message).toMatch(/opens 3 times, works for 3 days/)
+    expect(r.secret!.note).toMatch(/before\/after report/i)
+    const once = (await state(s)).shares[0] as Share & { view_limit?: number }
+    expect(once).toMatchObject({ kind: 'show-once', expires_in_days: 3, view_limit: 3 })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', expires_days: 99 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', view_limit: 7 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', what: 'everything' }))).toMatchObject({ status: 400, code: 'validation' })
+  })
 })
 
 describe('publish decisions', () => {

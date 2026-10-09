@@ -33,3 +33,16 @@ export function Group({ heading, entries }: { heading: string; entries: Entry[] 
 }
 
 export const matches = (needle: string, ...parts: (string | undefined)[]) => !needle || parts.join(' ').toLowerCase().includes(needle)
+
+/** Lower-case, with `_` and `-` read as spaces, so "tariff code" finds tariff_code. */
+export const plain = (s: string) => s.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** 0 = the key itself, 1 = a key prefix, 2 = a title word starts with it, 3 = anything else that matched. */
+export function ticketRank(t: { key: string; title: string }, needle: string): number {
+  const n = needle.trim().toLowerCase()
+  if (!n) return 3
+  const key = t.key.toLowerCase()
+  if (key === n) return 0
+  if (key.startsWith(n) || plain(key).startsWith(plain(n))) return 1
+  return ` ${plain(t.title)}`.includes(` ${plain(n)}`) ? 2 : 3
+}

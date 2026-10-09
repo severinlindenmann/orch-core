@@ -9,7 +9,7 @@ import { canSeeTicket, conflict, invalid, markDecided, notFound, registerAddon, 
 //    `outgrew`; it then asks the owner for a decision (runtime decision, rendered by core on Today).
 //  - "Make a ticket" creates a backlog chore through the store's ticket-creation path (same validation as POST tickets)
 //    and marks the task `converted` with the new key.
-//  - Closing needs a proof line: "Close with proof" stores which task in the viewer's nav state, and the page shows the form.
+//  - Closing needs a proof line: "Close with proof" opens a one-line field in the task's own row (list item `input`), then posts `close {id, proof}`.
 //  - "Agents may add" is a setting (off). The mock's add action is a person action either way.
 
 type Status = 'open' | 'claimed' | 'done' | 'outgrew' | 'converted'
@@ -53,7 +53,6 @@ const settingsOf = (state: Record<string, unknown>): Settings => {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const nameOf = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === c.viewer)?.name ?? c.viewer
 const find = (state: Record<string, unknown>, id: unknown) => list(state).find((q) => q.id === id)
-const nav = (state: Record<string, unknown>, viewer: string) => ((state.nav ?? {}) as Record<string, { closing?: string }>)[viewer]
 const oneLine = (v: unknown): string | null => {
   if (typeof v !== 'string') return null
   const t = v.trim()
@@ -137,7 +136,7 @@ registerAddon({
               { label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'ghost' as const },
             ]
           : q.status === 'claimed'
-            ? [{ label: 'Close with proof', action: 'start_close', args: { id: q.id }, variant: 'secondary' as const }]
+            ? [{ label: 'Close with proof', action: 'close', args: { id: q.id }, variant: 'secondary' as const, input: { name: 'proof', label: 'Proof (one line)', placeholder: 'e.g. removed, 4f2a91c', submitLabel: 'Close task', maxLength: 200 } }]
             : q.status === 'outgrew'
               ? [{ label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'secondary' as const, primary: true }]
               : undefined
@@ -155,24 +154,6 @@ registerAddon({
                 : `added by ${q.added_by}`
       return { title: `${q.id} ${q.title}`, subtitle: detail, badge: q.status, status: STATUS_TONE[q.status], actions }
     }
-    const closing = nav(state, c.viewer)?.closing
-    const target = closing ? find(state, closing) : undefined
-    const closePanel =
-      target && target.status === 'claimed'
-        ? {
-            type: 'stack',
-            children: [
-              { type: 'markdown', text: `**Close ${target.id}** ${target.title}` },
-              {
-                type: 'form',
-                schema: { type: 'object', required: ['proof'], properties: { proof: { type: 'string', title: 'Proof (one line)', maxLength: 200 } } },
-                action: 'close',
-                submitLabel: 'Close task',
-              },
-              { type: 'button', label: 'Cancel', action: 'cancel_close', variant: 'ghost' },
-            ],
-          }
-        : { type: 'stack', children: [] }
     const count = (st: Status) => items.filter((q) => q.status === st).length
     return {
       items,
@@ -185,11 +166,11 @@ registerAddon({
       doneList: items.filter((q) => q.status === 'done' || q.status === 'converted').map(row),
       openTotal: items.filter((q) => q.status === 'open' || q.status === 'claimed' || q.status === 'outgrew').length,
       doneTotal: items.filter((q) => q.status === 'done' || q.status === 'converted').length,
-      closePanel,
       open: count('open'),
       claimed: count('claimed'),
       done: count('done'),
       outgrew: count('outgrew'),
+      addUi: { 'ui:options': { layout: 'row' }, 'ui:globalOptions': { layout: 'row' }, title: { 'ui:placeholder': 'Fix the typo in README' } },
       addSchema: { type: 'object', required: ['title'], properties: { title: { type: 'string', title: 'Quick task (one line)', maxLength: MAX_TITLE } } },
     }
   },
@@ -239,28 +220,14 @@ registerAddon({
       q.claimed_by = nameOf(ctx)
       return { ok: true, message: `${q.id} claimed.`, changed: true }
     },
-    start_close(ctx) {
+    close(ctx) {
       const q = find(ctx.state, ctx.body.id)
       if (!q) return notFound('No such quick task.')
-      if (q.status !== 'claimed') return conflict('quick.not_claimed', 'Only a claimed task can be closed.')
-      const all = (ctx.state.nav ??= {}) as Record<string, { closing?: string }>
-      all[ctx.viewer] = { ...all[ctx.viewer], closing: q.id }
-      return { ok: true, message: `Closing ${q.id}: add one line of proof.`, changed: true }
-    },
-    cancel_close(ctx) {
-      const mine = nav(ctx.state, ctx.viewer)
-      if (mine) delete mine.closing
-      return { ok: true, message: 'Not closed.', changed: true }
-    },
-    close(ctx) {
-      const id = nav(ctx.state, ctx.viewer)?.closing
-      const q = id ? find(ctx.state, id) : undefined
-      if (!q || q.status !== 'claimed') return conflict('quick.not_claimed', 'Pick a claimed task to close first.')
-      const proof = oneLine((ctx.body.formData as { proof?: unknown } | undefined)?.proof)
+      if (q.status !== 'claimed') return conflict('quick.not_claimed', 'Pick a claimed task to close first.')
+      const proof = oneLine(ctx.body.proof)
       if (!proof) return invalid('Write one line of proof.')
       q.status = 'done'
       q.proof = proof.slice(0, 200)
-      delete nav(ctx.state, ctx.viewer)!.closing
       return { ok: true, message: `${q.id} closed.`, changed: true }
     },
     make_ticket(ctx) {

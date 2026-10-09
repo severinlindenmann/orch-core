@@ -9,6 +9,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 // Simulated sensor wait. Zero under vitest: 600 ms of real sleep per signing tipped the 5 s test timeout under parallel load.
 export const TOUCH_ID_MS = import.meta.env.MODE === 'test' ? 0 : 600
 
+/** A run may return its own success toast (a message with up to two buttons) instead of the default sentence. */
+export interface SignedToast {
+  signedToast: true
+  message: string
+  description?: string
+  action?: { label: string; onClick: () => void }
+  cancel?: { label: string; onClick: () => void }
+}
+
 /**
  * Touch ID simulation for signatures that are not bound to a ticket (grants, workspace settings).
  * Waits for the "sensor", runs the request, refetches everything and reports through a toast.
@@ -24,7 +33,10 @@ export function useSignedAction() {
       const result = await run()
       await qc.invalidateQueries()
       // A run that returns a sentence (an addon action's message) is the one success toast; otherwise the default.
-      toast.success(typeof result === 'string' ? result : `${title}: signed with Touch ID`, { id })
+      if (result && typeof result === 'object' && 'signedToast' in result) {
+        const t = result as SignedToast
+        toast.success(t.message, { id, description: t.description, action: t.action, cancel: t.cancel })
+      } else toast.success(typeof result === 'string' ? result : `${title}: signed with Touch ID`, { id })
       return true
     } catch (e) {
       if (onError) {

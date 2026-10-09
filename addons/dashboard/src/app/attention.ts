@@ -1,14 +1,15 @@
-import { countAttention } from '@/api/attention'
-import { useRole } from './useRole'
-import { can } from '@/api/permissions'
-import { useConnections } from './pages/settings/connectionUi'
 import { useQuery } from '@tanstack/react-query'
+import { countAttention } from '@/api/attention'
 import { api } from '@/api/client'
+import { can } from '@/api/permissions'
 import type { AgentSession } from '@/api/types'
+import { useConnections } from './pages/settings/connectionUi'
+import { useRole } from './useRole'
 
 export interface Attention {
-  /** Everything that needs the viewer: open questions, gates and verdicts, plus open addon decisions (both permission-filtered). */
-  needsYou: { core: number; addon: number; total: number }
+  /** Everything Today lists for the viewer: open questions, gates and verdicts, open addon decisions (both
+   *  permission-filtered) and, for the owner, connections that need a new login (R-c, one count everywhere). */
+  needsYou: { core: number; addon: number; connections: number; total: number }
   /** Open items the viewer cannot act on, and the people (ids) who can. */
   waitingOnOthers: { count: number; who: string[] }
   /** Agent sessions: root sessions only (subagents are counted apart). They add up: sessions = working + waitingOnYou + waitingOnOthers + idle + stopped. */
@@ -37,7 +38,7 @@ export function useAttention(ws: string | undefined): Attention {
   const agents = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
 
   const viewer = me.data?.person
-  const owner = can(useRole(), 'settings')
+  const owner = can(useRole(ws), 'settings')
   const connections = useConnections(owner ? ws : undefined)
   const counts = countAttention(today.data?.needs_you ?? [], decisions.data ?? [], owner ? connections.data ?? [] : [])
   const ready = !!today.data && !!decisions.data && !!agents.data && !!me.data && (!owner || !!connections.data)

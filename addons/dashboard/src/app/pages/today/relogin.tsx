@@ -1,7 +1,7 @@
-import { countAttention, reloginItems } from '@/api/attention'
 // Today's "Re-login needed" items (D57): one per connection whose last check is auth expired or wrong identity, for
 // the owner only. It shows the connection's login_hint to copy and "Run check again"; agents never handle logins and
 // no password is ever stored.
+import { reloginItems } from '@/api/attention'
 import { ChevronDown, KeyRound, Loader2, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { CHECK_LABEL, type ConnectionInfo } from '@/api/connections'
@@ -92,7 +92,7 @@ export function ReloginGroup({ now }: { now: string }) {
         >
           <ChevronDown className={cn('mr-1 size-4 shrink-0 text-text-muted transition-transform', !open && '-rotate-90')} aria-hidden />
           <span className="font-semibold text-text">Connections</span>{' '}
-          <span className="min-w-0 truncate tabular-nums text-text-muted">· {countAttention([], [], items).connections} · only the owner logs in again</span>
+          <span className="min-w-0 truncate tabular-nums text-text-muted">· {items.length} · only the owner logs in again</span>
         </button>
       </h2>
       {open && (

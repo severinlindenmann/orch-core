@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, Copy, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
@@ -85,7 +85,7 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
   )
 }
 
-export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
   // The primary action is the header's button; the menu holds the rest.
@@ -99,7 +99,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocu
     <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="outline">
+        <Button size="sm" variant="outline" disabled={signing}>
           Actions
           <ChevronDown />
         </Button>
@@ -141,8 +141,15 @@ export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocu
 }
 
 /** The header's one primary button: what the viewer should do next (hidden when nothing needs them). */
-function PrimaryButton({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing: boolean }) {
   const p = primaryAction(availableActions(ticket, viewer))
+  if (signing)
+    return (
+      <Button size="sm" disabled aria-busy>
+        <Loader2 className="animate-spin" />
+        Signing…
+      </Button>
+    )
   if (!p) return null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: p.question })
@@ -159,7 +166,7 @@ function PrimaryButton({ ticket, viewer, sign, jump }: { ticket: TicketDocument;
 
 const MAX_LABELS = 3
 
-export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const children = useQuery({
     queryKey: ['ticket-children', ticket.key],
     queryFn: async () => {
@@ -195,8 +202,8 @@ export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDoc
       <div className="flex min-w-0 items-start gap-3">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex shrink-0 items-center gap-2">
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} />
+          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

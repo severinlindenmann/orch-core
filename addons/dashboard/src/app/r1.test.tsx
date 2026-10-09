@@ -75,7 +75,7 @@ it('viewer sees collapsed per-person summaries before individual decisions', asy
   const { user } = renderApp('/', { viewer: 'p_tom' })
   await screen.findByText(/Nothing needs you/)
   expect(screen.queryByTestId('card-question:DEMO-0043:Q2')).toBeNull()
-  await user.click(await screen.findByRole('button', { name: /^Severin · \d+ decisions/, expanded: false }))
+  await user.click(await screen.findByRole('button', { name: /^Severin decides · \d+ open/, expanded: false }))
   expect(await screen.findByTestId('card-question:DEMO-0043:Q2')).toBeInTheDocument()
 })
 
@@ -118,4 +118,44 @@ it('Agents waiting-on-you link opens the exact question', async () => {
   await user.click(link)
   expect(await screen.findByRole('tab', { name: /Questions/ })).toHaveAttribute('data-state', 'active')
   expect(document.getElementById('question-Q2')).toBeInTheDocument()
+})
+
+it('items new since the last look lead their group with the new dot; the rest carry none', async () => {
+  const ws = mockStore.workspaces[0].id
+  const ids = [...mockStore.needsYou(ws).map((i) => (i.kind === 'verdict' ? `verdict:${i.ticket}` : `${i.kind}:${i.ticket}:${i.ref}`)), ...mockStore.addonDecisions(ws).map((d) => `addon:${d.id}`)]
+  const unseen = ids.filter((id) => id.startsWith('question:')).at(-1)!
+  renderApp('/', { storage: { [`orch.today.seen.${ws}:p_sev`]: JSON.stringify(ids.filter((id) => id !== unseen)) } })
+  const questions = await screen.findByRole('region', { name: /^Questions ·/ })
+  const first = within(questions).getAllByRole('listitem')[0]
+  expect(first).toHaveAttribute('data-testid', `card-${unseen}`)
+  expect(within(questions).getAllByLabelText('New since your last look')).toHaveLength(1)
+  expect(within(first).getByLabelText('New since your last look')).toBeInTheDocument()
+})
+
+it('R-d: the Today row being signed is dimmed and busy until the host confirms', async () => {
+  let resolve!: (v: Awaited<ReturnType<typeof api.postAction>>) => void
+  vi.spyOn(api, 'postAction').mockImplementation(() => new Promise((r) => { resolve = r }))
+  const { user } = renderApp('/')
+  const row = await screen.findByTestId('card-question:DEMO-0043:Q2')
+  await user.click((await within(row).findAllByRole('radio'))[0])
+  await user.click(within(row).getByRole('button', { name: 'Send answer…' }))
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Send answer' }))
+  await waitFor(() => expect(row).toHaveAttribute('aria-busy', 'true'))
+  expect(within(row).getByText('Signing…')).toBeInTheDocument()
+  // Only the row being signed: the others stay as they are.
+  for (const other of screen.getAllByTestId(/^card-/)) if (other !== row) expect(other).not.toHaveAttribute('aria-busy')
+  await act(async () => resolve({ ok: true } as Awaited<ReturnType<typeof api.postAction>>))
+})
+
+it('R-d: the ticket header says Signing… with its actions off until the host confirms', async () => {
+  let resolve!: (v: Awaited<ReturnType<typeof api.postAction>>) => void
+  vi.spyOn(api, 'postAction').mockImplementation(() => new Promise((r) => { resolve = r }))
+  const { user } = renderApp('/ticket/DEMO-0048')
+  await user.click(await screen.findByRole('button', { name: 'Approve plan' }))
+  const dialog = await screen.findByRole('dialog')
+  await user.click(within(dialog).getAllByRole('button', { name: /Approve/ }).at(-1)!)
+  const header = screen.getByTestId('ticket-header')
+  await waitFor(() => expect(within(header).getByRole('button', { name: 'Signing…', hidden: true })).toBeDisabled())
+  expect(within(header).getByRole('button', { name: /^Actions/, hidden: true })).toBeDisabled()
+  await act(async () => resolve({ ok: true } as Awaited<ReturnType<typeof api.postAction>>))
 })

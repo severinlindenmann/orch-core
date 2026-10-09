@@ -1,6 +1,6 @@
-import { countAttention } from '@/api/attention'
 // In-memory mock store seeded from fixtures. Mutations append events; state is re-derived from events.
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
+import { countAttention } from '@/api/attention'
 import type {
   AddonActionResult,
   AddonDecision,
@@ -1112,13 +1112,18 @@ export class MockStore {
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
   private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
-    const agents = this.agents(workspaceId)
+    // A question is "blocking" only while an agent actually waits on it (seeds may flag more than that).
+    let waitingOn: Set<string> | undefined
+    const blocks = (ticket: string, ref: string) => {
+      waitingOn ??= new Set(this.agents(workspaceId).flatMap((a) => (a.state === 'waiting' && a.waiting_on?.kind === 'question' ? [`${a.waiting_on.ticket}/${a.waiting_on.ref}`] : [])))
+      return waitingOn.has(`${ticket}/${ref}`)
+    }
     for (const t of this.listTickets(workspaceId)) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
         if (q.state === 'open' && (!eligible || this.addressedTo(t, q.to, eligible)))
-          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: !!q.blocking && agents.some(a => a.state === 'waiting' && a.waiting_on?.kind === 'question' && a.waiting_on.ticket === t.key && a.waiting_on.ref === q.id) })
+          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: !!q.blocking && blocks(t.key, q.id) })
       }
       if (t.status === 'testing' && !t.verdict && can('verify'))
         items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: this.lastEventAt(t.key, (e) => e.type === 'status.changed' && e.to === 'testing', t.created_at), ref: 'verify' })

@@ -102,6 +102,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const [tab, setTab] = useState<TabId>('overview')
   const [focus, setFocus] = useState<string | undefined>()
   const [signing, setSigning] = useState<HumanAction | null>(null)
+  // From the touch until the host confirms, the header's actions say "Signing…" and are off (R-d).
+  const [signPending, setSignPending] = useState(false)
   const wide = useWideLayout()
 
   const breadcrumb = useMemo(
@@ -154,7 +156,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
 
   return (
     <div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
-      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
+      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <GatesStrip ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 
@@ -209,7 +211,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
         {wide && <Rail ticket={ticket} viewer={viewer} />}
       </div>
 
-      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} />
+      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} onPending={setSignPending} />
     </div>
   )
 }

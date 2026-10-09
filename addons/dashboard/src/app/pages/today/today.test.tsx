@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/api/types'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { reloginItems } from '@/api/attention'
 
 const T = { timeout: 6000 }
 const busy = { setup: (s: typeof mockStore) => s.reset('busy', true) }
@@ -26,7 +27,10 @@ describe('Today: a calm, grouped queue', () => {
     const line = await screen.findByText(/· \d+ need you · \d+ agents? working$/, {}, T)
     const ws = mockStore.workspaces[0].id
     const n = Number(/· (\d+) need you/.exec(line.textContent!)![1])
-    expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length)
+    // R-c: the owner's count includes the connections that need a new login, as listed.
+    const relogin = reloginItems(mockStore.conn.connections(ws)).length
+    expect(relogin).toBeGreaterThan(0)
+    expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
   })
 
   it('opens the first blocking question; picking an option posts nothing, "Send answer…" opens core\'s dialog', async () => {
@@ -220,8 +224,10 @@ describe('Today: busy day', { timeout: 20_000 }, () => {
 
 describe('Today by role', () => {
   it('Tom: nothing needs you, read-only rows without buttons, each names who decides', async () => {
-    renderApp('/', { viewer: 'p_tom' })
+    const { user } = renderApp('/', { viewer: 'p_tom' })
     expect(await screen.findByText(/Nothing needs you · \d+ open in the workspace/, {}, T)).toBeInTheDocument()
+    // A viewer sees one summary per person who decides; the rows open on demand.
+    for (const b of await screen.findAllByRole('button', { name: / decides · \d+ open/, expanded: false }, T)) await user.click(b)
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
     expect(within(row).queryAllByRole('button')).toHaveLength(0)
     expect(within(row).queryAllByRole('radio')).toHaveLength(0)

@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { reloginItems } from '@/api/attention'
 
 const headerCount = async () => {
   const line = await screen.findByText(/· \d+ need you ·/)
@@ -17,7 +18,9 @@ describe('one attention count', () => {
         const link = await screen.findByRole('link', { name: /Today, \d+ need you/ })
         expect(link).toHaveAccessibleName(`Today, ${n} need you`)
         const ws = mockStore.workspaces[0].id
-        expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length)
+        // R-c: the owner also counts the connections that need a new login (Today lists them).
+        const relogin = viewer === 'p_sev' ? reloginItems(mockStore.conn.connections(ws)).length : 0
+        expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
         expect(mockStore.workspaceList()[0].needs_you).toBe(n)
       })
     }

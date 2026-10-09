@@ -100,10 +100,10 @@ export function createApi(transport: Transport) {
     /** Addons installed in a workspace: the package plus that workspace's version, grant and status under `ws`. */
     getWorkspaceAddons: (ws: string) => call<InstalledAddon[]>('GET', `/api/workspaces/${ws}/addons`),
     /** Packages not installed in this workspace. */
-    getAddonCatalog: (ws: string) => call<AddonPackage[]>('GET', `/api/workspaces/${ws}/addons/catalog`),
+    getAddonCatalog: (ws: string) => call<AddonPackage[]>('GET', `/api/workspaces/${ws}/addon-catalog`),
     /** Owner only. grant and update are signed in the dashboard; agents are refused (human_only). Returns the addon as it is now (as it was, for uninstall). */
     postAddonOp: (ws: string, name: string, req: AddonOpRequest) => call<InstalledAddon>('POST', `/api/workspaces/${ws}/addons/${name}`, req),
-    getAddonDecisions: (ws: string) => call<AddonDecision[]>('GET', `/api/workspaces/${ws}/addons/decisions`),
+    getAddonDecisions: (ws: string) => call<AddonDecision[]>('GET', `/api/workspaces/${ws}/addon-decisions`),
     /** Runs an addon action in workspace `ws`. A `ticket` in the body must belong to `ws` (409 ticket.other_workspace). */
     runAddonAction: (ws: string, addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/workspaces/${ws}/addons/${addon}/actions/${action}`, body),

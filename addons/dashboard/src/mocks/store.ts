@@ -872,7 +872,9 @@ export class MockStore {
     if (!w) return refuse(404, 'not_found', 'No such workspace')
     const ticket = typeof body.ticket === 'string' ? body.ticket : undefined
     if (ticket !== undefined) {
-      if (!this.hasTicket(ticket) || !this.isVisible(ticket)) return refuse(404, 'not_found', `No ticket ${ticket}`)
+      // The same answers as the ticket routes: unknown is not_found, hidden is not_visible.
+      if (!this.hasTicket(ticket)) return refuse(404, 'not_found', `No ticket ${ticket}`)
+      if (!this.isVisible(ticket)) return refuse(404, 'not_visible', `No ticket ${ticket}`, 'The ticket is restricted to other people.')
       if (this.wsOfKey.get(ticket) !== ws) return refuse(409, 'ticket.other_workspace', `${ticket} is not in ${w.prefix}.`, 'Run the action in the ticket\'s own workspace.')
     }
     // A disabled addon, or one whose installed version has no grant, runs nothing.

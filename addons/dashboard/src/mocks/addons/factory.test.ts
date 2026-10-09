@@ -394,6 +394,6 @@ describe('visibility', () => {
     const st = await state(s)
     expect(JSON.stringify(st)).not.toContain(hidden)
     expect(JSON.stringify(await permitsOf(s))).not.toContain(hidden)
-    expect(await fail(run(s, 'permit', { id: `factory.permit:P-1`, option: 'once', ticket: hidden }))).toBe('404 not_found')
+    expect(await fail(run(s, 'permit', { id: `factory.permit:P-1`, option: 'once', ticket: hidden }))).toBe('404 not_visible')
   })
 })

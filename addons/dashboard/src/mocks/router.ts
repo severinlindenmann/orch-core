@@ -5,6 +5,7 @@ import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { can } from '@/api/permissions'
 import { APPROVER_GROUPS } from '@/api/gates'
+import { addonActive } from '@/api/addons'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -400,7 +401,8 @@ export function buildRouter(): MockRouter {
   readOf('/api/workspaces/:ws/addons', (s, c) =>
     ok(s.workspaceAddons(c.params.ws)),
   )
-  readOf('/api/workspaces/:ws/addons/catalog', (s, c) =>
+  // Decisions and the catalog sit outside /addons/:name, so no addon name can collide with them.
+  readOf('/api/workspaces/:ws/addon-catalog', (s, c) =>
     ok(s.workspaceCatalog(c.params.ws)),
   )
   r.add('POST', '/api/workspaces/:ws/addons/:name', (s, c) => {
@@ -409,7 +411,7 @@ export function buildRouter(): MockRouter {
     const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
     return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
   })
-  readOf('/api/workspaces/:ws/addons/decisions', (s, c) =>
+  readOf('/api/workspaces/:ws/addon-decisions', (s, c) =>
     ok(s.addonDecisions(c.params.ws)),
   )
   readOf('/api/workspaces/:ws/addons/:name/state', (s, c) => {
@@ -419,8 +421,11 @@ export function buildRouter(): MockRouter {
       if (!s.hasTicket(ticket) || s.workspaceOf(ticket)?.id !== c.params.ws) return fail(404, 'not_found', `No ticket ${ticket}`)
       if (!s.isVisible(ticket)) return fail(404, 'not_visible', `No ticket ${ticket}`, 'The ticket is restricted to other people.')
     }
+    if (!s.addons.some((a) => a.name === c.params.name)) return fail(404, 'not_found', 'No such addon')
+    if (!addonActive(s.workspaces.find((w) => w.id === c.params.ws), c.params.name))
+      return fail(409, 'addon.inactive', `${c.params.name} is not active in this workspace.`, 'Enable it, or grant its capabilities, in Settings > Addons.')
     const v = s.addonStateView(c.params.ws, c.params.name, ticket)
-    return v ? ok(v) : fail(404, 'not_found', 'Addon is not enabled in this workspace')
+    return v ? ok(v) : fail(404, 'not_found', 'No such addon')
   })
   r.add('POST', '/api/workspaces/:ws/addons/:name/actions/:id', (s, c) => {
     const addon = s.addons.find((a) => a.name === c.params.name)

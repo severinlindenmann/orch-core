@@ -133,10 +133,10 @@ describe('starting a run', () => {
   })
   it('runs in the ticket\'s own workspace only, and only on tickets the viewer can see', async () => {
     const s = setup('p_tom')
-    expect(await fail(start(s))).toBe('404 not_found') // Tom is not on DEMO-0044's list
+    expect(await fail(start(s))).toBe('404 not_visible') // Tom is not on DEMO-0044's list
     const mara = setup('p_mara')
     ;(mara.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get('DEMO-0044')!.visibility = { restricted: ['p_sev'] }
-    expect(await fail(start(mara))).toBe('404 not_found')
+    expect(await fail(start(mara))).toBe('404 not_visible')
     const sev = setup()
     const other = sev.store.workspaces.find((w) => w.prefix === 'INT')!.id
     expect(await fail(sev.api.runAddonAction(other, 'start-agent', 'start', { ticket: 'DEMO-0044', confirmed: true, launch: LAUNCH }))).toMatch(/^(409 addon.inactive|409 ticket.other_workspace)$/)

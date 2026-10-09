@@ -13,7 +13,7 @@ const cases = store.workspaces.flatMap((w) => w.members.map((m) => [w.prefix, m.
 
 describe('busy day visibility sweep: all workspaces, all members', () => {
   it('has restricted tickets to hide, so the sweep tests something', () => {
-    for (const w of store.workspaces) expect(store.listTickets(w.id, 'p_sev').some((t) => t.restricted), w.prefix).toBe(true)
+    for (const w of store.workspaces) expect(store.ticketKeys(w.id).some((k) => w.members.some((m) => !store.isVisible(k, m.person))), w.prefix).toBe(true)
   })
   it.each(cases)('%s · %s: 0 leaks', async (prefix, person) => {
     const w = store.workspaces.find((x) => x.prefix === prefix)!

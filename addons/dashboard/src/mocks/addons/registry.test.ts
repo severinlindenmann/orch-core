@@ -20,10 +20,10 @@ describe('addon registry', () => {
     const s = await api.getAddonState(ws, 'publish')
     expect((s.shares as unknown[]).length).toBeGreaterThan(0)
   })
-  it('404s for an addon disabled in the workspace', async () => {
+  it('is 409 addon.inactive for an addon disabled in the workspace', async () => {
     const { api, store, ws } = setup()
     store.appendWs(ws, { type: 'addon.disabled', name: 'wiki' })
-    await expect(api.getAddonState(ws, 'wiki')).rejects.toMatchObject({ status: 404 })
+    await expect(api.getAddonState(ws, 'wiki')).rejects.toMatchObject({ status: 409, code: 'addon.inactive' })
   })
   it('keeps the six iteration-1 actions working', async () => {
     const { api, ws } = setup()

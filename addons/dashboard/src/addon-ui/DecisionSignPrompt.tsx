@@ -4,9 +4,6 @@ import { AddonBadge } from './AddonBadge'
 import { addonName, Raw } from './SignConfirm'
 import { useAddons } from './slots'
 
-const MAX = 400
-const cap = (t: string) => (t.length > MAX ? `${t.slice(0, MAX)}…` : t)
-
 /**
  * Core's signing prompt for an addon decision (Today's cards and any addon surface that posts a decision action).
  * Every fact comes from the decision core holds (GET addon-decisions), never from the addon node's args.
@@ -37,21 +34,22 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
       onClose={onClose}
       onSign={onSign}
     >
-      <section aria-label={`From addon ${d.addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
+      {/* Shown in full, never cut (a permit's question carries the exact command): long text wraps and scrolls in the box. */}
+      <section aria-label={`From addon ${d.addon}`} className="max-h-[40vh] space-y-1 overflow-auto rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
         <p className="flex items-center gap-1.5 text-[12px]">
           <AddonBadge name={d.addon} title={title} />
           <span>From the addon {named}</span>
         </p>
-        <p className="break-words">
-          Title: <span className="text-text">{cap(d.title)}</span>
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+          Title: <span className="text-text">{d.title}</span>
         </p>
-        <p className="break-words">
-          Question: <span className="text-text">{cap(d.question)}</span>
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+          Question: <span className="text-text">{d.question}</span>
         </p>
-        <p className="break-words">
-          Option <Raw>{option.key}</Raw> is labelled: <span className="text-text">{cap(option.label)}</span>
+        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+          Option <Raw>{option.key}</Raw> is labelled: <span className="text-text">{option.label}</span>
         </p>
-        {d.detail && <p className="whitespace-pre-line break-words text-text">{cap(d.detail)}</p>}
+        {d.detail && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{d.detail}</p>}
       </section>
     </SignPrompt>
   )

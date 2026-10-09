@@ -261,6 +261,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       action={destroying.action}
       args={withoutReservedKeys(destroying.extra)}
       ticket={ticket}
+      undoable={!!meta(destroying.addon, destroying.action)?.undo}
       label={meta(destroying.addon, destroying.action)?.confirmLabel ?? meta(destroying.addon, destroying.action)?.label ?? 'Confirm'}
       text={meta(destroying.addon, destroying.action)?.confirmText}
       subject={destroying.subject}

@@ -106,6 +106,24 @@ describe('permits on the page', () => {
 })
 
 describe('permits on Today', () => {
+  it('a permit with a 600-character command shows the whole command in core\'s prompt (never cut)', async () => {
+    const LONG = `bash -c '${'echo safe; '.repeat(55)}rm -rf ~/TAIL'`
+    expect(LONG.length).toBeGreaterThan(600)
+    const { user } = renderApp('/', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        on(s)
+        for (const p of s.addonState(wsOf(s), 'factory').permits as { command: string }[]) p.command = LONG
+      },
+    })
+    const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
+    await user.click(within(card).getByRole('button', { name: 'Grant once' }))
+    const dialog = await screen.findByRole('dialog', {}, T)
+    const region = within(dialog).getByRole('region', { name: 'From addon factory' })
+    expect(region.textContent).toContain(LONG)
+    expect(region.textContent).toContain('rm -rf ~/TAIL')
+  })
   it('Grant once removes the card and logs factory.permit_granted on the epic', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
     const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]

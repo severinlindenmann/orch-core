@@ -1,6 +1,7 @@
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
 
+/** Only for naming a key in an error sentence; what is signed or shown is never cut. */
 const MAX = 120
 /** "arm_schedule" → "Arm schedule": an id said in words (core's own rendering of the action id and arg names). */
 export const words = (id: string) => {
@@ -19,13 +20,12 @@ const scalar = (v: unknown) => typeof v === 'string' || typeof v === 'number' ||
 
 /**
  * Why core cannot show these args exactly as they would be posted (null when it can). A signature covers every arg
- * the host receives, so an arg that is not a plain value, or a key or value longer than the dialog shows, fails
- * closed: nothing is signed or posted.
+ * the host receives, so an arg that is not a plain value fails closed: nothing is signed or posted. Long plain values
+ * are shown in full (wrapped, scrolling in the region), never cut.
  */
 export function signArgsProblem(args: Record<string, unknown> = {}): string | null {
   for (const [k, v] of Object.entries(args)) {
     if (!scalar(v)) return `The addon sent "${cap(k)}" as a value core cannot show, so nothing was signed or sent.`
-    if (k.length > MAX || String(v).length > MAX) return `The addon sent "${cap(k)}" longer than core shows (${MAX} characters), so nothing was signed or sent.`
   }
   return null
 }
@@ -34,7 +34,7 @@ export function signArgsProblem(args: Record<string, unknown> = {}): string | nu
  * Core's signing prompt for an addon action the manifest marks `confirm: 'sign'` (arm a schedule, pause the factory).
  * Trust split (as for the start dialog): the title and the covers are core's own words, built from what core knows
  * (the action id, the addon's title, the workspace). Everything the addon wrote (the manifest label, the args it sent)
- * is shown apart, as capped plain text, in the dashed "From addon" region. Only core posts the action afterwards.
+ * is shown apart, in full as plain text, in the dashed "From addon" region. Only core posts the action afterwards.
  */
 export function SignConfirm({
   addon,
@@ -95,24 +95,25 @@ export function SignConfirm({
  */
 export function FromAddon({ addon, addonTitle, label, text, subject, args }: { addon: string; addonTitle: string; label?: string; text?: string; subject?: string; args?: Record<string, unknown> }) {
   return (
-    <section aria-label={`From addon ${addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
+    // Everything in full, never cut: long text wraps, and the box scrolls when it is taller than 40 % of the screen.
+    <section aria-label={`From addon ${addon}`} className="max-h-[40vh] space-y-1 overflow-auto rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
       <p className="flex items-center gap-1.5">
         <AddonBadge name={addon} title={addonTitle} />
         <span>
           From the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
         </span>
       </p>
-      {label && <p className="break-words text-text">{cap(label)}</p>}
-      {text && <p className="break-words text-text">{cap(text)}</p>}
+      {label && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{label}</p>}
+      {text && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{text}</p>}
       {subject && (
-        <p className="break-words text-text-muted">
-          Addon says: <span className="text-text">{cap(subject)}</span>
+        <p className="whitespace-pre-wrap text-text-muted [overflow-wrap:anywhere]">
+          Addon says: <span className="text-text">{subject}</span>
         </p>
       )}
       {/* What is sent: each arg's words, its exact key when they differ, and the exact value. */}
       {Object.entries(args ?? {}).map(([k, v]) => (
-        <p key={k} className="break-words text-[13px] text-text">
-          {words(k) === k ? cap(k) : <>{cap(words(k))} (<Raw>{cap(k)}</Raw>)</>}: <Raw>{cap(v)}</Raw>
+        <p key={k} data-arg-key={k} data-arg-value={String(v)} className="text-[13px] text-text [overflow-wrap:anywhere]">
+          {words(k) === k ? k : <>{words(k)} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
         </p>
       ))}
     </section>

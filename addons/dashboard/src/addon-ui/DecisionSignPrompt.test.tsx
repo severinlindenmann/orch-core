@@ -37,4 +37,17 @@ describe('DecisionSignPrompt', () => {
     expect(region).toHaveTextContent('Trust me.')
     expect(within(dialog).getByRole('button', { name: 'Send answer' })).toBeInTheDocument()
   })
+  it('shows a long question (a permit\'s command) in full, never cut', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(['addons'], [{ name: 'factory', title: 'AI Factory' }])
+    const cmd = `${'a'.repeat(600)} --TAIL`
+    render(
+      <QueryClientProvider client={qc}>
+        <DecisionSignPrompt d={{ ...d, addon: 'factory', question: `DEMO-0050 asks to run: ${cmd}` }} option={d.options[0]} workspacePrefix="DEMO" onSign={() => {}} onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    const region = within(screen.getByRole('dialog')).getByRole('region', { name: 'From addon factory' })
+    expect(region.textContent).toContain(cmd)
+    expect(region.textContent).not.toContain('…')
+  })
 })

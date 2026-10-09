@@ -36,7 +36,9 @@ describe('model routing in the start-agent panel', () => {
     await user.click(screen.getByRole('button', { name: 'Start' }))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByRole('alert').textContent).toContain(SENTENCE)
-    expect(within(dialog).getByRole('alert').textContent).toContain('Start is blocked by models')
+    expect(within(dialog).getByRole('alert').textContent).toContain('Start is blocked by the addon Model routing (models)')
+    // The reason is the addon's sentence: inside its labelled region.
+    expect(within(dialog).getByRole('region', { name: 'From addon models' })).toHaveTextContent(SENTENCE)
     expect(within(dialog).getByRole('button', { name: 'Start agent' })).toBeDisabled()
     expect(mockStore.wsEventsOf(wsOf(mockStore)).some((e) => e.type === 'agent.started')).toBe(false)
   })

@@ -19,14 +19,12 @@ import { fmtClock, fmtExact } from '@/lib/time'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
-/** Longest addon-supplied text shown in the dialog. */
-const ADDON_TEXT_MAX = 300
 const timeOfDay = (iso: string) => fmtClock(iso)
 const withId = (label: string, id: string) => (label === id ? label : `${label} (${id})`)
-const cap = (v: unknown) => {
-  const t = typeof v === 'string' ? v : ''
-  return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
-}
+/** Addon-supplied text, shown in full (never cut): only strings are drawn. */
+const text = (v: unknown) => (typeof v === 'string' ? v : '')
+/** The addon regions wrap long text and scroll inside a bounded box. */
+const REGION = 'max-h-[30vh] overflow-auto rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted'
 
 /**
  * Core's precheck before any start dialog: a ticket an agent already holds cannot get a second one. Computed from the
@@ -203,28 +201,31 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
       {c.blocked && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[13px] text-text">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-          <div>
-            <p>Start is blocked by {c.blocked_by ?? 'an addon'}:</p>
-            <p className="mt-0.5 text-text-muted">{cap(c.blocked)}</p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p>Start is blocked by the addon {titleOf(c.blocked_by ?? 'launch')}. Its reason:</p>
+            {/* The reason is the addon's sentence: labelled as its words, in full. */}
+            <section aria-label={`From addon ${c.blocked_by ?? 'launch'}`} className={REGION}>
+              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text(c.blocked)}</p>
+            </section>
           </div>
         </div>
       )}
       {differs && (
-        <section aria-label={`From addon ${addon}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
+        <section aria-label={`From addon ${addon}`} className={REGION}>
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={addon} />
             From the addon {titleOf(addon)}: its panel shows something else; orch starts only what is listed above.
           </p>
-          <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(cap).filter(Boolean).join(' · ')}</p>
+          <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(text).filter(Boolean).join(' · ')}</p>
         </section>
       )}
       {c.line && (
-        <section aria-label={`From addon ${c.line_by ?? 'launch'}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
+        <section aria-label={`From addon ${c.line_by ?? 'launch'}`} className={REGION}>
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={c.line_by ?? 'launch'} />
             From the addon {titleOf(c.line_by ?? 'launch')}:
           </p>
-          <p className="whitespace-pre-wrap break-all">{cap(c.line)}</p>
+          <p className="whitespace-pre-wrap break-all">{text(c.line)}</p>
         </section>
       )}
     </>

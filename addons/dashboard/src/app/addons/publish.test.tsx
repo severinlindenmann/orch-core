@@ -52,6 +52,7 @@ describe('publish page', () => {
     await user.click(within(row).getByRole('button', { name: 'Stop' }))
     const ask = await screen.findByRole('alertdialog')
     expect(ask).toHaveTextContent(/Anyone using the app loses it/)
+    expect(within(ask).getByTestId('consequence')).toHaveTextContent('You can undo this right after.') // core's line: stop declares undo
     expect((await apps()).find((a) => a.id === 'app_billing')!.status).toBe('running') // nothing yet
     // While it runs only this action's button says "Stopping…" (the row's other buttons keep their names).
     let release: () => void = () => {}

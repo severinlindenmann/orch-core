@@ -82,6 +82,9 @@ describe('destructive confirm', () => {
     expect(region).toHaveTextContent('Revoke link')
     expect(region).toHaveTextContent('Id (id): x')
     expect(within(dialog).getByRole('button', { name: 'Revoke link' })).toBeInTheDocument()
+    // Core's consequence line (revoke declares no undo), outside the addon's region.
+    expect(within(dialog).getByTestId('consequence')).toHaveTextContent('This cannot be undone.')
+    expect(region).not.toContainElement(within(dialog).getByTestId('consequence'))
   })
 })
 
@@ -109,14 +112,19 @@ describe('a signed action shows everything the host receives, or posts nothing',
     pkg.actions = { ...pkg.actions, share: { minRole: 'member', confirm: 'sign' } }
     return () => (pkg.actions = before)
   }
-  it('an arg longer than the dialog shows fails closed: an inline error, no dialog, nothing posted', async () => {
+  it('a long arg is shown in full (never cut) and posted as shown', async () => {
     const restore = signShare()
-    const post = vi.spyOn(api, 'runAddonAction')
-    draw({ type: 'button', label: 'Share it', action: 'share', args: { note: 'x'.repeat(121) } })
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Done.' })
+    const long = `${'x'.repeat(590)}-TAIL`
+    draw({ type: 'button', label: 'Share it', action: 'share', args: { note: long } })
     await press('Share it')
-    expect(await screen.findByRole('alert')).toHaveTextContent(/longer than core shows .* nothing was signed or sent/)
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(post).not.toHaveBeenCalled()
+    const dialog = await screen.findByRole('dialog')
+    const line = dialog.querySelector('[data-arg-key="note"]')!
+    expect(line.getAttribute('data-arg-value')).toBe(long)
+    expect(line.textContent).toContain(long)
+    expect(dialog.textContent).not.toContain('…')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sign and run' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'share', expect.objectContaining({ note: long, confirmed: true })), T)
     restore()
   })
   it('an arg that is not a plain value (a form posting formData) fails closed the same way', async () => {

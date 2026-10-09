@@ -21,6 +21,7 @@ export function DestructiveConfirm({
   subject,
   args,
   ticket,
+  undoable,
   onConfirm,
   onClose,
 }: {
@@ -33,6 +34,8 @@ export function DestructiveConfirm({
   subject?: string
   args?: Record<string, unknown>
   ticket?: string
+  /** The manifest declares an undo for it (`undo`): core says so instead of "This cannot be undone." */
+  undoable?: boolean
   onConfirm: () => void
   onClose: () => void
 }) {
@@ -51,7 +54,11 @@ export function DestructiveConfirm({
           {addon && action ? (
             <>
               <DialogTitle>{confirmTitle(action, addonTitle ?? addon, addon)}</DialogTitle>
-              <DialogDescription>{ticket ? `About ${ticket}. ` : ''}The addon marks this action as one that changes or removes something. Read what it says before you go on.</DialogDescription>
+              <DialogDescription>
+                {ticket ? `About ${ticket}. ` : ''}
+                {/* Core's consequence line, from the manifest's undo pair (not from the addon's sentence). */}
+                <span data-testid="consequence">{undoable ? 'You can undo this right after.' : 'This cannot be undone.'}</span>
+              </DialogDescription>
             </>
           ) : (
             <>

@@ -7,7 +7,9 @@ describe('board page', () => {
     renderApp('/board')
     const col = await screen.findByRole('region', { name: 'In progress' })
     expect(await within(col).findByTestId('card-DEMO-0043')).toBeInTheDocument()
-    for (const name of ['Backlog', 'Open', 'Waiting', 'Testing', 'Done']) expect(screen.getByRole('region', { name })).toBeInTheDocument()
+    for (const name of ['Backlog', 'Open', 'Waiting', 'Testing']) expect(screen.getByRole('region', { name })).toBeInTheDocument()
+    // Done starts collapsed to a rail (Display > Collapsed columns).
+    expect(screen.getByRole('button', { name: /Expand Done/ })).toBeInTheDocument()
   })
 
   it('filter Mine reduces the cards', async () => {

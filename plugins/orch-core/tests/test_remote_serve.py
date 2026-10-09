@@ -525,6 +525,41 @@ def test_stream_frames_are_coalesced_to_the_latest_at_most_every_frame_interval(
     arun(main())
 
 
+def test_a_burst_of_differently_named_events_loses_none_of_the_latest(ws, fake):
+    """The terminal page sends `screen` then `info` at once, and again after every change. Coalescing to the latest chunk
+    dropped the screen (only the `info` after it went out), so a watched terminal never updated over the bridge (found
+    by the end-to-end run, #94). The latest event of EACH name goes out; older ones of the same name are still dropped."""
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+    from orch.dashboard.remote_gate import RemoteGate
+
+    app = FastAPI()
+    app.state.token = TOKEN
+
+    @app.get("/events")
+    async def events():
+        async def gen():
+            yield b": connected\n\n"
+            for i in range(10):
+                yield f"event: screen\ndata: S{i}\n\n".encode()
+                yield f"event: info\ndata: I{i}\n\n".encode()
+            await asyncio.sleep(30)
+        return StreamingResponse(gen(), media_type="text/event-stream")
+    app.add_middleware(RemoteGate, routes=app.routes, ws=ws)
+    host, a = make_host(), Device_(KEY_A)
+
+    async def main():
+        loop = make_loop(ws, host, app=app, frame_s=0.3, keepalive_s=60)
+        task = await started(loop)
+        rid = fake.request(_stream(a))
+        await until(lambda: b"data: I9" in b"".join(d for _, _, d in fake.chunks(rid)), timeout=5)
+        body = b"".join(d for _, _, d in fake.chunks(rid))
+        assert b"data: S9\n\n" in body and b"data: I9\n\n" in body, body
+        assert body.count(b"event: screen") < 10 and body.count(b"event: info") < 10, "older events of a name were kept"
+        await finish(loop, task)
+    arun(main())
+
+
 def test_an_idle_stream_gets_keepalives(ws, fake):
     host, a = make_host(), Device_(KEY_A)
 

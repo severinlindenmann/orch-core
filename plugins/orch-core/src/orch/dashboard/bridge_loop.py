@@ -98,6 +98,31 @@ def _header_map(pairs) -> dict:
     return out
 
 
+MAX_PENDING_FRAMES = 1 << 20   # most a stream's waiting events may add up to before only the newest chunk is kept
+
+
+def _event_name(event: bytes) -> bytes:
+    """The name of one server-sent event ("" when it has none); a comment line (": ping") is its own kind."""
+    for line in event.split(b"\n"):
+        if line.startswith(b"event:"):
+            return line[6:].strip()
+    return b":" if event.startswith(b":") else b""
+
+
+def _merge_frames(waiting: bytes | None, chunk: bytes) -> bytes:
+    """Frames of a stream that come faster than they may be sent: of events with the same name only the latest goes out
+    (each one is a whole state: a screen, an info line), but an event of another name is kept. The terminal page sends
+    `screen` and `info` together; keeping only the last chunk dropped the screen, so a watched terminal never updated
+    over the bridge. A chunk that is not made of events (no blank line in it) is replaced, as before."""
+    if waiting is None or b"\n\n" not in chunk:
+        return chunk
+    events = (waiting + chunk).split(b"\n\n")
+    rest = events.pop()                                   # what follows the last blank line: normally nothing
+    newest = {_event_name(ev): i for i, ev in enumerate(events) if ev}
+    kept = b"".join(ev + b"\n\n" for i, ev in enumerate(events) if ev and newest[_event_name(ev)] == i) + rest
+    return kept if len(kept) <= MAX_PENDING_FRAMES else chunk
+
+
 def _is_dashboard_page(start, path: str) -> bool:
     """A navigation answer the device may draw in its frame: HTML, from a route that has the dashboard's own policy."""
     ctype = next((v for k, v in start.headers if k.lower() == "content-type"), "")
@@ -531,7 +556,7 @@ class HostLoop:
                     if isinstance(e, Start):
                         got["start"] = e
                     elif isinstance(e, Body):
-                        got["frame"] = e.chunk  # coalesced: only the latest frame waits to be sent
+                        got["frame"] = _merge_frames(got["frame"], e.chunk)  # coalesced: the latest event of each name waits
                     else:
                         got["end"] = e.reason if isinstance(e, Refused) else "end"
                     st.wake.set()

@@ -28,6 +28,8 @@ export interface ResolvedContribution {
    * core draws a skeleton ('pending') or a calm error with Retry ('error') instead of the node.
    */
   waiting?: AddonStateWait
+  /** The contribution has a `when` that held: it shows by its own condition, not by the ticket carrying addon data. */
+  guarded?: boolean
 }
 
 export interface AddonStateWait {
@@ -57,7 +59,7 @@ export function selectContributions(addons: AddonPackage[], slot: AddonSlot, ctx
         continue
       }
       if (c.when && (getPath(ctx, c.when) ?? null) === null) continue
-      out.push({ ...base, node: resolveBindings(c.node, ctx) })
+      out.push({ ...base, node: resolveBindings(c.node, ctx), ...(c.when ? { guarded: true } : {}) })
     }
   }
   return out

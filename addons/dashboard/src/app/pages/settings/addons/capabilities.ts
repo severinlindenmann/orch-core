@@ -5,6 +5,7 @@ export const CAPABILITY_EXPLAINERS: Record<string, string> = {
   pty: 'opens terminals; never for agents',
   spawn_agent: 'starts agent sessions',
   launch: 'changes how agents start',
+  git_push: "pushes a ticket's own branch and merges into allowed targets",
 }
 
 export const explain = (cap: string) => CAPABILITY_EXPLAINERS[cap] ?? 'an unknown capability'

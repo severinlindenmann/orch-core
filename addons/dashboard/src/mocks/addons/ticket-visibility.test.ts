@@ -9,7 +9,7 @@ import { refused as refusal } from '@/test/refused'
 // Security sweep: an addon's state and actions must not reveal a ticket the viewer cannot see.
 // DEMO-0041 and DEMO-0043 are restricted to Severin; Mara (a maintainer) is outside the list.
 const HIDDEN = ['DEMO-0041', 'DEMO-0043']
-const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules']
+const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules', 'drop', 'land']
 
 const setup = (viewer: string) => {
   const store = createMockStore({ persist: false })

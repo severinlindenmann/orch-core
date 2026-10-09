@@ -2008,6 +2008,42 @@
         "type": "status.changed",
         "actor": "claude-code:s_f101:p_sev",
         "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T09:50:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-09T10:40:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "Proration matches the three worked examples in the plan."
+      },
+      {
+        "at": "2026-10-09T10:40:01Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify",
+        "via": "dashboard",
+        "presence": "touchid"
+      },
+      {
+        "at": "2026-10-09T10:40:02Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      },
+      {
+        "at": "2026-10-09T11:19:30Z",
+        "type": "land.queued",
+        "actor": "addon:land",
+        "remote": "github.com/acme-energy/billing-api",
+        "target": "develop",
+        "source_sha": "2e45f05",
+        "by": "p_mara"
       }
     ]
   },
@@ -2078,6 +2114,107 @@
         "type": "status.changed",
         "actor": "claude-code:s_f101:p_sev",
         "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T09:30:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-09T10:20:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "Every invoice line carries billing_run_id."
+      },
+      {
+        "at": "2026-10-09T10:20:01Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify",
+        "via": "dashboard",
+        "presence": "touchid"
+      },
+      {
+        "at": "2026-10-09T10:20:02Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      },
+      {
+        "at": "2026-10-09T10:58:00Z",
+        "type": "gate.invalidated",
+        "actor": "host",
+        "gate": "verify",
+        "addon": "land",
+        "reason": "Landing attempt #13: a resolution changed the code (land).",
+        "attempt": 13
+      },
+      {
+        "at": "2026-10-09T10:58:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-09T10:40:30Z",
+        "type": "land.queued",
+        "actor": "addon:land",
+        "remote": "github.com/acme-energy/billing-api",
+        "target": "develop",
+        "source_sha": "3378c92",
+        "by": "p_mara"
+      },
+      {
+        "at": "2026-10-09T10:48:00Z",
+        "type": "land.attempt",
+        "actor": "addon:land",
+        "attempt": 12,
+        "ticket": "DEMO-0053",
+        "remote": "github.com/acme-energy/billing-api",
+        "target": "develop",
+        "source_sha": "3378c92",
+        "target_sha": "759a460",
+        "candidate_sha": "1804f99",
+        "checks": [
+          {
+            "name": "T2 integration checks",
+            "result": "pass",
+            "url": "https://github.com/acme-energy/billing-api/commit/1804f99/checks"
+          },
+          {
+            "name": "CI on the pull request",
+            "result": "waiting",
+            "url": "https://github.com/acme-energy/billing-api/actions/runs/1025186201"
+          }
+        ],
+        "outcome": "requeued",
+        "reason": "target_moved"
+      },
+      {
+        "at": "2026-10-09T10:50:00Z",
+        "type": "land.attempt",
+        "actor": "addon:land",
+        "attempt": 13,
+        "ticket": "DEMO-0053",
+        "remote": "github.com/acme-energy/billing-api",
+        "target": "develop",
+        "source_sha": "3378c92",
+        "target_sha": "9dbf05c",
+        "candidate_sha": "0c98f91",
+        "checks": [],
+        "outcome": "failed",
+        "reason": "conflict"
+      },
+      {
+        "at": "2026-10-09T10:57:30Z",
+        "type": "land.resolved",
+        "actor": "addon:land",
+        "attempt": 13,
+        "kind": "conflict",
+        "file": "models/marts/fct_invoice_lines.sql",
+        "by": "claude-code:s_f101:p_sev"
       }
     ]
   },

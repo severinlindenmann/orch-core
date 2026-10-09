@@ -70,6 +70,18 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
       return `Linked pull request #${s('number')}`
     case 'usage.recorded':
       return `Recorded usage: CHF ${(Number(e.cents) / 100).toFixed(2)}`
+    case 'land.queued':
+      return `Queued for landing on ${s('target')} (${s('remote')})`
+    case 'land.dequeued':
+      return `Taken off the landing queue${e.reason ? `: ${s('reason')}` : ''}`
+    case 'land.attempt':
+      return e.outcome === 'merged'
+        ? `Landed on ${s('target')}: candidate ${s('candidate_sha')} merged`
+        : e.outcome === 'requeued'
+          ? `Landing candidate ${s('candidate_sha')} rebuilt: ${s('target')} moved`
+          : `Landing failed (${e.reason === 'conflict' ? 'conflict' : 'red checks'}) on candidate ${s('candidate_sha')}`
+    case 'land.resolved':
+      return `Landing ${e.kind === 'red_checks' ? 'red checks fixed' : 'conflict resolved'} in ${s('file')}: the approval is void, back to review`
     default:
       return e.type
   }

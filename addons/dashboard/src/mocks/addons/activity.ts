@@ -94,7 +94,7 @@ function groupOf(type: string, ws: boolean): Group {
   if (type.startsWith('question.')) return 'questions'
   if (type.startsWith('lease.') || type.startsWith('claim.') || type.startsWith('task.') || type === 'agent.refused' || type === 'handoff.written') return 'tasks'
   if (type.startsWith('artifact.')) return 'artifacts'
-  if (/^(publish|estimate|github|usage|records|quick|wiki|factory|schedules|addon)\./.test(type)) return 'addons'
+  if (/^(publish|estimate|github|usage|records|quick|wiki|factory|schedules|land|addon)\./.test(type)) return 'addons'
   return ws ? 'workspace' : 'status'
 }
 

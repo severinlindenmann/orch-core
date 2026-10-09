@@ -26,11 +26,13 @@ function stepState(name: GateName, gate: GateStatus, ticket: TicketDocument, min
 
 /** Who signed, in plain words; the hash, channel and presence live under Details. */
 function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
-  if (gate.approvals.length === 0) return <p className="text-[12px] text-text-muted">0 of {gate.needed} approvals</p>
-  const stale = gate.state === 'invalidated'
+  // An invalidation voids the approvals (they no longer count); they stay visible, struck through, until a new one.
+  const voided = gate.state === 'invalidated' && gate.approvals.length === 0 ? (gate.voided ?? []) : []
+  if (gate.approvals.length === 0 && voided.length === 0) return <p className="text-[12px] text-text-muted">0 of {gate.needed} approvals</p>
+  const stale = voided.length > 0
   return (
     <ul className="space-y-1">
-      {gate.approvals.map((a, i) => (
+      {(stale ? voided : gate.approvals).map((a, i) => (
         <li key={i} className={cn('text-[12px]', stale ? 'text-text-muted line-through decoration-text-faint' : 'text-text')}>
           Approved by {viewer.name(a.by)}, {fmtDay(a.at)}
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}

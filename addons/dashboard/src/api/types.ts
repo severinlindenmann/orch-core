@@ -248,6 +248,8 @@ export interface GateStatus {
   covers?: string[]
   /** Why an approval was invalidated (state === 'invalidated'). */
   reason?: string
+  /** Approvals an invalidation voided (for the record; they never count toward `needed`). */
+  voided?: GateStatus['approvals']
 }
 
 export interface SectionRevision {

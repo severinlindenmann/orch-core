@@ -18,3 +18,4 @@ export type { AddonAction, AddonActionFn, AddonCtx, MockAddon } from './registry
 import './factory'
 import './schedules'
 import './drop'
+import './land'

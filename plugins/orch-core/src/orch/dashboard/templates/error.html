@@ -1,9 +1,0 @@
-{% extends "layout.html" %}
-{% block main %}
-<div class="page-head">
-  <div><h1>{{ heading }}</h1></div>
-  <div class="actions"><a class="btn" href="/board">Back to the board</a></div>
-</div>
-<p class="flash err" role="alert">{{ message }}</p>
-{% if raw %}<section class="card"><h2>File content</h2><pre>{{ raw }}</pre></section>{% endif %}
-{% endblock %}

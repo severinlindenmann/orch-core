@@ -1,7 +1,0 @@
-/* deps: the svg keeps its natural size and scrolls inside .w-scroll, so labels stay readable when narrow */
-.w-dg { display: block; max-width: none; font-family: var(--font-body); }
-.w-dg-e { fill: none; stroke: var(--ctl); stroke-width: 1.5; }
-.w-dg-a { fill: var(--ctl); }
-.w-dg-n rect { fill: var(--w-bg, var(--neu-bg)); stroke: var(--w-mark, var(--neu-mark)); stroke-width: 1.5; }
-.w-dg-l { fill: var(--w-fg, var(--text)); font-size: 13px; font-weight: 650; }
-.w-dg-s { fill: var(--w-fg, var(--muted)); font-size: 12px; }

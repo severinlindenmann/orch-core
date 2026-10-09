@@ -1,7 +1,0 @@
-{
-  "uplot": {"unit": "ms", "x": [1, 2, 3, 4], "y": [5, 3, 6, 2]},
-  "vega": {"rows": [{"a": "x", "b": 3}, {"a": "y", "b": 5}]},
-  "plot": {"rows": [{"a": "x", "b": 3}, {"a": "y", "b": 5}]},
-  "diff2html": {"diff": "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n line\n-old\n+new\n"},
-  "leaflet": {"line": [[47.37, 8.53], [47.375, 8.54], [47.38, 8.55]]}
-}

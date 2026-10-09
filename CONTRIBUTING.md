@@ -1,8 +1,24 @@
 # Contributing
 
+> **develop = orch v2 in progress; v1 lives on `main`.** The v1 instructions below apply to `main`; the v2 core workflow is in the next section.
+
 Thanks for helping. A few rules keep the project healthy.
 
-## Before you push
+## orch v2 core (develop)
+
+The v2 core lives in `plugins/orch-core` (layout: `docs/architecture/orch-v2-core.md`, test tiers: `docs/architecture/orch-v2.md` Part B). The v1 steps below (addons, `orch-session` fixtures) apply to `main` only.
+
+```bash
+cd plugins/orch-core
+uv sync --locked
+uv run pytest tests/model/test_gates.py -x -q      # T0: one module, under 30 s, after every small change
+uv run pytest -q -m "not slow" tests/store && uv run ruff check   # T1: the touched package plus lint
+uv run pytest -q -n auto                           # T2: the whole core with slow tests (CI skips slow)
+```
+
+The shared protocol vectors in `tests/vectors/` come from orch-relay. Refresh them (and `SOURCE`, the orch-relay commit) with `scripts/sync-vectors.sh [ref]`; the default ref is `origin/develop` and the clone is `~/orch-dev/orch-relay` (override with `ORCH_RELAY_DIR`). Commit the result.
+
+## Before you push (v1, `main`)
 
 Run the same steps CI runs, locally:
 

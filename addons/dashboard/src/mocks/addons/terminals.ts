@@ -98,7 +98,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   const working = briefs(store, ws).filter((t) => t.claimed && !t.restricted)
   const asked = rng.shuffle(working).slice(0, 3)
   asked.forEach((t, i) => {
-    state.sessions.push({ id: `agent${i + 2}`, label: `agent: ${i % 2 ? 'codex' : 'claude-code'} (read only, no typing)`, kind: 'agent', owner: `agent:${i % 2 ? 'codex' : 'claude-code'}`, for: i % 2 ? 'p_mara' : 'p_sev', ticket: t.key, branch: t.branch, status: 'running', started: `2026-10-09T0${8 + i}:${10 + i * 7}:00Z`, transcript: longTranscript(rng, t.key, 160 + i * 120) })
+    state.sessions.push({ id: `agent${i + 2}`, label: `agent: ${i % 2 ? 'codex' : 'claude-code'} (read only, no typing)`, kind: 'agent', owner: `agent:${i % 2 ? 'codex' : 'claude-code'}`, for: i % 2 ? 'p_mara' : 'p_sev', ticket: t.key, branch: t.branch, status: 'running', started: `2026-10-09T${String(8 + i).padStart(2, '0')}:${10 + i * 7}:00Z`, transcript: longTranscript(rng, t.key, 160 + i * 120) })
   })
   // The seeded mirror also gets a long run.
   const first = state.sessions.find((s) => s.id === 'agent1')
@@ -118,7 +118,8 @@ registerAddon({
     const shown = sessionsOf(state).filter((s) => visibleTo(c, s))
     const sessions: TerminalSessionView[] = shown.map((s) => ({
       id: s.id,
-      label: s.label,
+      label: s.kind === 'agent' ? `${s.ticket ? `${s.ticket} · ` : ''}${s.owner === 'agent:claude-code' ? 'Claude Code' : s.owner.slice(6).replace(/(^|-)([a-z])/g, (_, sep: string, ch: string) => `${sep ? ' ' : ''}${ch.toUpperCase()}`)}` : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell',
+      started: s.started,
       kind: s.kind,
       owner: s.owner,
       ticket: s.ticket,

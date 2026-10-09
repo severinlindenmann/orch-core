@@ -34,6 +34,7 @@ export interface TerminalSessionView {
   /** person id, or "agent:<id>". */
   owner: string
   ticket: string | null
+  started: string
   status: 'running' | 'stopped'
   /** May this viewer type? Only the owner of a running person's shell, and only as a member or above. */
   interactive: boolean

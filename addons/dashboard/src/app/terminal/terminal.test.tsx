@@ -1,19 +1,23 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { vi } from 'vitest'
+import { beforeEach, afterEach, vi } from 'vitest'
 import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 8000 }
+beforeEach(() => {
+  vi.stubGlobal('innerWidth', 1440)
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(500)
+})
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('terminals page', () => {
   it('lists the sessions, states the rules, and opens a session into an xterm with a text input', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
-    expect(await screen.findByText('Terminals are never granted to agents.', {}, T)).toBeInTheDocument()
-    const stopped = (await screen.findByText('Scratch', {}, T)).closest('li')!
-    expect(within(stopped).getByText('stopped')).toBeInTheDocument()
-    const shell = (await screen.findByText('Severin · DEMO-0043 worktree', {}, T)).closest('li')!
-    await user.click(within(shell).getByRole('button', { name: 'Open' }))
+    expect(await screen.findByText('Your shells are private to you. Agent sessions are view-only mirrors; agents never get a terminal.', {}, T)).toBeInTheDocument()
+    const sessions = await screen.findByRole('navigation', { name: 'Terminal sessions' }, T)
+    await user.click(within(sessions).getByRole('button', { name: /DEMO-0043 · Your shell/ }))
     const box = await screen.findByRole('textbox', {}, T)
     expect(box).toBeInTheDocument()
     expect(box).not.toHaveAttribute('aria-readonly', 'true')
@@ -24,8 +28,8 @@ describe('terminals page', () => {
   })
   it('the agent mirror is view-only: aria-readonly on the container and no typing', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
-    const mirror = (await screen.findByText('agent: claude-code (read only, no typing)', {}, T)).closest('li')!
-    await user.click(within(mirror).getByRole('button', { name: 'Open' }))
+    await user.click(await screen.findByRole('button', { name: /DEMO-0043 · Claude Code/ }, T))
+    expect(await screen.findByText('Agent output · view only')).toBeInTheDocument()
     await waitFor(() => expect(document.querySelector('[data-terminal-session="agent1"]')).not.toBeNull(), T)
     const term = document.querySelector('[data-terminal-session="agent1"]')!
     expect(term).toHaveAttribute('aria-readonly', 'true')
@@ -38,10 +42,7 @@ describe('terminals page', () => {
   })
   it('a viewer opens the agent mirror view-only and has no New terminal', async () => {
     const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_tom' })
-    const mirror = (await screen.findByText('agent: claude-code (read only, no typing)', {}, T)).closest('li')!
-    const open = within(mirror).getByRole('button', { name: 'Open' })
-    await waitFor(() => expect(open).toBeEnabled(), T)
-    await user.click(open)
+    await user.click(await screen.findByRole('button', { name: /DEMO-0043 · Claude Code/ }, T))
     await waitFor(() => expect(document.querySelector('[data-terminal-session="agent1"]')).toHaveAttribute('aria-readonly', 'true'), T)
     expect(screen.getByRole('button', { name: 'New terminal' })).toBeDisabled()
   })
@@ -62,7 +63,7 @@ describe('terminals page', () => {
         ;(nav.node as { children: unknown[] }).children.push({ type: 'terminal', session: 'ghost' })
       },
     })
-    await screen.findByText('Severin · DEMO-0043 worktree', {}, T)
+    await screen.findByRole('button', { name: /DEMO-0043 · Your shell/ }, T)
     await waitFor(() => expect(screen.getByText('This addon panel could not be shown.')).toBeInTheDocument(), T)
   })
 })
@@ -98,10 +99,7 @@ describe('terminals hostile text and exit', () => {
     const term = document.querySelector('[data-terminal-session="shell1"]')
     if (term) expect((term.querySelector('.xterm-rows')?.textContent ?? '').match(/process completed/g)?.length ?? 0).toBeLessThanOrEqual(1)
     spy.mockRestore()
-    await waitFor(() => {
-      const li = screen.getByText('Severin · DEMO-0043 worktree').closest('li')!
-      expect(within(li).getByText('stopped')).toBeInTheDocument()
-    }, T)
+    expect(await screen.findByText('Ended', {}, T)).toBeInTheDocument()
   })
   it('shows an empty state, not an error, when there are no visible sessions', async () => {
     renderApp('/addon/terminals/sessions', { viewer: 'p_sev', setup: (s) => void (s.addonState(s.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'terminals').sessions = []) })
@@ -114,7 +112,7 @@ describe('terminals hostile text and exit', () => {
     const term = document.querySelector('[data-terminal-session="shell1"]') as HTMLElement
     expect(term.className).not.toMatch(/overflow-x-auto/)
     expect(term.dataset.terminalRows).toBe('24') // page sizing
-    expect(parseInt(term.style.height)).toBeGreaterThan(300)
+    expect(term.style.height).toBe('calc(100vh - 220px)')
   })
 })
 
@@ -132,5 +130,42 @@ describe('terminals ticket panel', () => {
     const rail = panel.querySelector('[data-terminal-session]') as HTMLElement
     expect(rail.dataset.terminalRows).toBe('12') // rail sizing
     expect(parseInt(rail.style.height)).toBeLessThan(250)
+  })
+})
+
+describe('terminal keyboard exits and lifecycle', () => {
+  it('releases mirror Tab, Shift+Tab and Escape and explains refused typing', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('button', { name: /DEMO-0043 · Claude Code/ }, T))
+    const group = await screen.findByRole('group', { name: 'Terminal: DEMO-0043 · Claude Code' })
+    const input = within(group).getByRole('textbox')
+    for (const key of ['Tab', 'ShiftTab', 'Escape']) {
+      input.focus()
+      if (key === 'Escape') await user.keyboard('{Escape}')
+      else await user.tab({ shift: key === 'ShiftTab' })
+      expect(group).not.toContainElement(document.activeElement as HTMLElement)
+    }
+    await user.type(input, 'hello')
+    expect(screen.getByRole('status')).toHaveTextContent('Agent output is view only. Open your own shell to type.')
+  })
+  it('lets a shell use Tab and single Escape, then releases double Escape', async () => {
+    const { user } = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    const input = await screen.findByRole('textbox', {}, T)
+    input.focus()
+    await user.tab()
+    expect(input).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(input).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Leave terminal' })).toHaveFocus()
+  })
+  it('mounts, unmounts and remounts without console errors', async () => {
+    const errors = vi.spyOn(console, 'error')
+    const first = renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    await screen.findByRole('textbox', {}, T)
+    first.unmount()
+    renderApp('/addon/terminals/sessions', { viewer: 'p_sev' })
+    await screen.findByRole('textbox', {}, T)
+    expect(errors).not.toHaveBeenCalled()
   })
 })

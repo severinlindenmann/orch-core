@@ -725,9 +725,7 @@
         "node": {
           "type": "stack",
           "children": [
-            { "type": "markdown", "text": "Terminals are never granted to agents." },
-            { "type": "markdown", "text": "Agent sessions are view-only mirrors: you can watch them, not type in them." },
-            { "type": "list", "items": { "$ref": "addon.items" }, "empty": "No terminal sessions." },
+            { "type": "markdown", "text": "Your shells are private to you. Agent sessions are view-only mirrors; agents never get a terminal." },
             { "type": "button", "label": "New terminal", "action": "new", "variant": "secondary" },
             { "type": "terminal", "session": "${addon.current.id}" }
           ]

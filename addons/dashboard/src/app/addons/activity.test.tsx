@@ -9,7 +9,9 @@ const ws = () => mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const setup = (store: typeof mockStore) => installAndGrant(store, store.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'activity')
 const PATH = '/addon/activity/activity'
 const rows = () => screen.getAllByRole('listitem').filter((li) => !li.closest('[data-sonner-toaster]'))
-const rowTexts = () => rows().map((li) => li.textContent)
+// Row identity and order without relative times: posting an event moves the mock clock, so "2 min ago" may become "3 min ago".
+const TIME = /just now|\d+ (?:min|h|days?) ago|\d{1,2} [A-Z][a-z]{2} \d{2}:\d{2}/g
+const rowTexts = () => rows().map((li) => (li.textContent ?? '').replace(TIME, '·'))
 
 describe('activity page', () => {
   it('leads with the timeline: the Timeline heading precedes any table and the period is Today', async () => {

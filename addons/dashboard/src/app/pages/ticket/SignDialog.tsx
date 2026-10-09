@@ -25,7 +25,7 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
     return {
       title: `Answer ${q.id}`,
       hash: q.hash ?? '',
-      covers: [`Question ${q.id}: ${q.text}`, picked ? `Your answer: ${picked.label}` : 'Your answer: free text', 'The current hash of the question'],
+      covers: [`Question ${q.id}: ${q.text}`, picked ? `Your answer: ${picked.label} (option ${picked.key})` : 'Your answer: free text', 'The current hash of the question'],
     }
   }
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate

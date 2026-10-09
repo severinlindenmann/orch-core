@@ -133,12 +133,14 @@ describe('Today: addon decisions are core rows, signed in core', () => {
 
   it('an option opens core\'s prompt; signing posts with the workspace id and core records addon.decided', async () => {
     const spy = vi.spyOn(api, 'runAddonAction')
+    const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     const option = within(row).getByRole('button', { name: 'Retry last good version' })
     await user.click(option)
-    const prompt = await screen.findByRole('dialog', { name: /^Decide: / })
-    expect(prompt).toHaveTextContent('Your answer: Retry last good version')
+    const prompt = await screen.findByRole('dialog', { name: /^Decide for / })
+    expect(within(prompt).getByText('Covers').nextElementSibling).toHaveTextContent('Answer: option retry')
+    expect(within(prompt).getByRole('region', { name: 'From addon publish' })).toHaveTextContent('Retry last good version')
     expect(spy).not.toHaveBeenCalled()
     await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(spy).toHaveBeenCalled())
@@ -146,7 +148,10 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     expect(spy.mock.calls[0][0]).toBe(ws)
     await waitFor(() => expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided' && e.id === 'dec_publish_failed_build' && e.presence === 'touchid')).toBe(true))
     await waitFor(() => expect(screen.queryByTestId('card-addon:dec_publish_failed_build')).toBeNull(), T)
+    // The confirmation: core's sentence as the title, the addon's own message below it, labelled.
+    expect(success).toHaveBeenCalledWith('Signed: answer retry · Publish (publish)', { description: expect.stringMatching(/^Addon says: /) })
     spy.mockRestore()
+    success.mockRestore()
   })
 
   it('options are off from the click until the post resolves (no second prompt or post)', async () => {
@@ -155,7 +160,7 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     await user.click(within(row).getByRole('button', { name: 'Retry last good version' }))
-    await user.click(within(await screen.findByRole('dialog', { name: /^Decide: / })).getByRole('button', { name: 'Send answer' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /^Decide for / })).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
     for (const b of within(row).getAllByRole('button', { name: /Retry last good version|Leave it/ })) expect(b).toBeDisabled()
     release()
@@ -168,7 +173,7 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     await user.click(within(row).getByRole('button', { name: 'Leave it' }))
-    await user.click(within(await screen.findByRole('dialog', { name: /^Decide: / })).getByRole('button', { name: 'Cancel' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /^Decide for / })).getByRole('button', { name: 'Cancel' }))
     expect(spy).not.toHaveBeenCalled()
     expect(screen.getByTestId('card-addon:dec_publish_failed_build')).toBeInTheDocument()
     spy.mockRestore()

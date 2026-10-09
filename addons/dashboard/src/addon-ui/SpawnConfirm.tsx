@@ -15,13 +15,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AddonBadge } from './AddonBadge'
 import { canSpawnAgent } from './capabilities'
 import { addonStateKey, useAddons } from './slots'
-import { fmtClock } from '@/lib/time'
+import { fmtClock, fmtExact } from '@/lib/time'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
 /** Longest addon-supplied text shown in the dialog. */
 const ADDON_TEXT_MAX = 300
 const timeOfDay = (iso: string) => fmtClock(iso)
+const withId = (label: string, id: string) => (label === id ? label : `${label} (${id})`)
 const cap = (v: unknown) => {
   const t = typeof v === 'string' ? v : ''
   return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
@@ -152,9 +153,10 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const facts: [string, string][] = [
     ['Workspace', c.workspace],
     ['Ticket', `${c.ticket} · ${c.title}`],
-    ['Mode', c.mode],
-    ['Harness', c.harness],
-    ['Where', c.where],
+    // Core's name and, when it differs, the exact id that is posted (launch.mode / harness / where).
+    ['Mode', withId(c.mode, launch.mode)],
+    ['Harness', withId(c.harness, launch.harness)],
+    ['Where', withId(c.where, launch.where)],
     // Rendered by core from the validated plan, never from the addon's text.
     ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
     ['Grant', grant ? `active until ${timeOfDay(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${timeOfDay(until)}`],
@@ -232,7 +234,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     return (
       <SignPrompt
         title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
-        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${timeOfDay(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${fmtExact(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
         confirmLabel="Sign and start"
         disabled={!!c.blocked}
         onClose={onClose}

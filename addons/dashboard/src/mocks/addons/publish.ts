@@ -249,6 +249,8 @@ registerAddon({
     },
     share_once(ctx) {
       const { store, ticket, state, body } = ctx
+      // A link is always to one ticket (or its report): outside a ticket there is nothing to share.
+      if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       // Core's small dialog asks first (manifest `confirm: 'options'`); the host checks what came back.
       const what = body.what === undefined ? 'ticket' : String(body.what)
       const days = body.expires_days === undefined ? settingsOf(state).default_expiry_days : Number(body.expires_days)
@@ -257,17 +259,16 @@ registerAddon({
       if (!SHARE_DAYS.includes(days)) return invalid(`Choose how long the link works: ${SHARE_DAYS.join(', ')} days.`)
       if (!SHARE_VIEWS.includes(limit)) return invalid('Choose how many times it can be opened.')
       const tok = token(state)
-      const label = canSeeTicket(ctx, ticket) ? ticket : undefined
-      const sh = newShare(state, label, 'show-once', label ? `${label} ${SHARE_WHAT[what]} one-time link` : 'One-time link', null)
+      const sh = newShare(state, ticket, 'show-once', `${ticket} ${SHARE_WHAT[what]} one-time link`, null)
       sh.expires_in_days = days
       if (limit > 0) sh.view_limit = limit
-      if (label) store.append(label, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
+      store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
       const rule = `${limit > 0 ? `opens ${limit === 1 ? 'once' : `${limit} times`}` : 'no view limit'}, works for ${plural(days, 'day', 'days')}`
       return {
         ok: true,
         message: `Created a one-time link (${rule}).`,
         changed: true,
-        secret: { label: label ? `One-time link for ${label}` : 'One-time link', value: linkOf(settingsOf(state), tok), note: `${SHARE_WHAT[what][0].toUpperCase()}${SHARE_WHAT[what].slice(1)}: ${rule}. It is shown once and cannot be copied again. Revoke it and make a new one if you lose it.` },
+        secret: { label: `One-time link for ${ticket}`, value: linkOf(settingsOf(state), tok), note: `${SHARE_WHAT[what][0].toUpperCase()}${SHARE_WHAT[what].slice(1)}: ${rule}. It is shown once and cannot be copied again. Revoke it and make a new one if you lose it.` },
       }
     },
     copy_link(ctx) {

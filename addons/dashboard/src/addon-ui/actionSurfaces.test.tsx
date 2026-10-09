@@ -7,9 +7,13 @@ import { installAndGrant } from '@/test/installAddon'
 import type { ActionMeta } from '@/api/types'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
 
 const T = { timeout: 8000 }
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 /** Changes one action's manifest entry of a package (as a new published manifest would). */
 const manifest = (addon: string, action: string, meta: ActionMeta) => (s: MockStore) => {
@@ -115,14 +119,17 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
       return { ...st, attentionNode: { ...node, children: node.children.map((c) => (c === list ? { ...c, items } : c)) } }
     })
   }
-  it('an item action that posts decide opens "Decide: …" with core\'s facts; nothing is posted until signed, then addon.decided is recorded', async () => {
+  it('an item action that posts decide opens "Decide for …" with core\'s facts; nothing is posted until signed, then addon.decided is recorded', async () => {
     decideFromNode()
     const post = vi.spyOn(api, 'runAddonAction')
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
     await user.click(await screen.findByRole('button', { name: 'Roll back now' }, T))
-    const prompt = await screen.findByRole('dialog', { name: 'Decide: Retry failed build' }, T)
-    expect(prompt).toHaveTextContent('Your answer: Retry last good version')
-    expect(prompt).toHaveTextContent('Ops notebook failed to build: retry with the last good version?')
+    const prompt = await screen.findByRole('dialog', { name: 'Decide for Publish (publish)' }, T)
+    expect(within(prompt).getByText('Covers').nextElementSibling).toHaveTextContent('Answer: option retry')
+    // The addon's own words: in the labelled region, never in the title or covers.
+    const from = within(prompt).getByRole('region', { name: 'From addon publish' })
+    expect(from).toHaveTextContent('Retry last good version')
+    expect(from).toHaveTextContent('Ops notebook failed to build: retry with the last good version?')
     expect(post).not.toHaveBeenCalled()
     await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.any(String), 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }), T)
@@ -139,31 +146,37 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
 })
 
 describe('confirm: options fails closed', () => {
+  // The show-once button lives in a ticket's Shares panel (a link is always to one ticket).
+  const open = (setup: (s: MockStore) => void) => {
+    vi.stubGlobal('innerWidth', 1440)
+    return renderApp('/ticket/DEMO-0041', { viewer: 'p_sev', setup })
+  }
   const press = async (user: ReturnType<typeof renderApp>['user']) => {
-    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
-    await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
+    const panel = await openTicketPanel(user, 'Shares')
+    await user.click(await within(panel).findByRole('button', { name: 'New show-once link' }, T))
+    return panel
   }
   it('options core cannot read: an inline error, nothing is posted, no dialog', async () => {
     const post = vi.spyOn(api, 'runAddonAction')
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', { minRole: 'member', confirm: 'options', options: { fields: [] } } as ActionMeta) })
-    await press(user)
-    expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/did not describe correctly/)
+    const { user } = open(manifest('publish', 'share_once', { minRole: 'member', confirm: 'options', options: { fields: [] } } as ActionMeta))
+    const panel = await press(user)
+    expect(await within(panel).findByRole('alert', {}, T)).toHaveTextContent(/did not describe correctly/)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(post).not.toHaveBeenCalled()
   })
   it('confirm options without any options object posts nothing either', async () => {
     const post = vi.spyOn(api, 'runAddonAction')
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', { minRole: 'member', confirm: 'options' }) })
-    await press(user)
-    expect(await screen.findByRole('alert', {}, T)).toBeInTheDocument()
+    const { user } = open(manifest('publish', 'share_once', { minRole: 'member', confirm: 'options' }))
+    const panel = await press(user)
+    expect(await within(panel).findByRole('alert', {}, T)).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
   it('a default outside the choices shows the first choice and posts the same value', async () => {
     const post = vi.spyOn(api, 'runAddonAction')
     const meta = { minRole: 'member', confirm: 'options', label: 'Create show-once link', options: { fields: [{ key: 'expires_days', label: 'Works for', default: 99, choices: [{ value: 3, label: '3 days' }, { value: 7, label: '7 days' }] }] } } as ActionMeta
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup: manifest('publish', 'share_once', meta) })
+    const { user } = open(manifest('publish', 'share_once', meta))
     await press(user)
-    const ask = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    const ask = await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)
     expect(within(ask).getByLabelText('Works for')).toHaveValue('3')
     await userEvent.click(within(ask).getByRole('button', { name: 'Create show-once link' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'share_once', expect.objectContaining({ expires_days: 3 })), T)

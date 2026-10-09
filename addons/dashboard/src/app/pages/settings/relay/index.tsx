@@ -273,7 +273,7 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
           title={`Remove ${removing.label} from ${workspace.name}`}
           destructive
           covers={[
-            `Device: ${removing.label} (${nameOf(removing.person)})`,
+            `Device: ${removing.label} (${nameOf(removing.person)}) · ${removing.id}`,
             `Starts epoch ${r.epoch + 1}: the new key is sealed to the ${remaining === 1 ? 'remaining device' : `${remaining} remaining devices`}`,
             'It keeps what it already downloaded; it gets nothing new',
           ]}

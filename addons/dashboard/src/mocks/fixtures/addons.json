@@ -216,12 +216,6 @@
                             "variant": "danger"
                           }
                         ]
-                      },
-                      {
-                        "type": "button",
-                        "label": "New show-once link",
-                        "action": "share_once",
-                        "variant": "secondary"
                       }
                     ]
                   }
@@ -262,6 +256,12 @@
               "type": "button",
               "label": "Share report…",
               "action": "share",
+              "variant": "secondary"
+            },
+            {
+              "type": "button",
+              "label": "New show-once link",
+              "action": "share_once",
               "variant": "secondary"
             }
           ]

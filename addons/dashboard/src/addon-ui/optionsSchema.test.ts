@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { RESERVED_KEYS } from './actionRuntime'
 import { parseOptions } from './optionsSchema'
 
 const field = (over: Record<string, unknown> = {}) => ({ key: 'days', label: 'Works for', default: 7, choices: [{ value: 1, label: '1 day' }, { value: 7, label: '7 days' }], ...over })
@@ -26,6 +27,10 @@ describe('parseOptions (core checks the package\'s options)', () => {
     expect(parseOptions({ fields: [field({ key: 'bad key' })] })).toBeNull()
     expect(parseOptions({ note: 'x'.repeat(201), fields: [field()] })).toBeNull()
     expect(parseOptions({ fields: [field({ choices: [{ value: 'v'.repeat(61), label: 'a' }], default: 'v' })] })).toBeNull()
+  })
+  it('refuses a field keyed like an arg core sets itself (it would be stripped, never sent)', () => {
+    expect(RESERVED_KEYS).toEqual(expect.arrayContaining(['ticket', 'confirmed', 'launch', 'ws']))
+    for (const key of RESERVED_KEYS) expect(parseOptions({ fields: [field({ key })] }), key).toBeNull()
   })
   it('coerces a default that is not a choice to the first choice', () => {
     expect(parseOptions({ fields: [field({ default: 99 })] })?.fields[0].default).toBe(1)

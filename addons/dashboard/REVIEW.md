@@ -255,10 +255,10 @@ Nothing here talks to a real system. Each simulation says so where you meet it (
 
 ## Known polish items
 
-Being worked on now (round R4, in a parallel branch): ticket page density (first 2 widgets, then "N more"; one
-Terminal panel; addon panels in one section), the prototype widget caption, widgets gallery details, breadcrumb from
-where you came, Usage tiles with one period each, Size vs Points, Publish vs Drop wording, and a richer Busy day
-(every widget type, every artifact kind, Usage that scales).
+Round R4 is built and merged: ticket page density (first 2 widgets, then "N more"; one Terminal panel; addon panels
+in one section), the prototype widget caption, widgets gallery details, breadcrumb from where you came, Usage tiles
+with one period each, Size vs Points, Publish vs Drop wording, and a richer Busy day (every widget type, every
+artifact kind, Usage that scales).
 
 Known and left for later:
 

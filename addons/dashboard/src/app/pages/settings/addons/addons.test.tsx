@@ -28,11 +28,25 @@ describe('Addon manager', () => {
     const row = await screen.findByRole('row', { name: /GitHub/ })
     await user.click(within(row).getByRole('button', { name: /Update to 0\.6\.0/ }))
     expect(await screen.findByText('+ spawn_agent')).toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and GitHub stays on')
+    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and GitHub (github) stays on')
+    // The changelog is the addon's text: shown apart, labelled as the addon's.
+    expect(within(screen.getByRole('dialog')).getByRole('region', { name: 'From the addon: changelog' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
     await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('Active')).toBeInTheDocument())
     expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument()
     expect(screen.queryByText(/grant again/)).toBeNull()
+  })
+  it('updating a disabled addon says it stays off (the host keeps on/off)', async () => {
+    const { user } = renderApp('/settings/addons')
+    await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('switch', { name: 'GitHub enabled' }))
+    await within(screen.getByRole('row', { name: /GitHub/ })).findByRole('switch', { name: 'GitHub disabled' })
+    await user.click(within(screen.getByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
+    const dialog = await screen.findByRole('dialog', { name: /Update GitHub \(github\) to 0\.6\.0/ })
+    expect(dialog).toHaveTextContent('GitHub (github) stays off')
+    expect(dialog).not.toHaveTextContent('stays on')
+    await user.click(within(dialog).getByRole('button', { name: 'Update' }))
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /GitHub/ })).getByRole('switch', { name: 'GitHub disabled' })).toBeInTheDocument()
   })
   it('disabling an addon removes its nav, palette commands and Today card', async () => {
     const { user } = renderApp('/settings/addons')
@@ -74,13 +88,16 @@ describe('Addon manager', () => {
 })
 
 describe('Grant and update dialogs list what viewers can run', () => {
-  it('the grant dialog says "Viewers can: Open page, Search, All pages, Clear search" for the wiki', async () => {
+  it('the grant dialog says which action ids viewers can run, in core\'s words; the addon\'s labels sit apart', async () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
     await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getAllByText('Viewers can: Open page, Search, All pages, Clear search').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('Viewers can: Open (open), Search (search), Close (close), Clear search (clear_search)').length).toBeGreaterThan(0)
+    // "All pages" is what the addon calls `close`: shown, labelled as the addon's, never in core's covers.
+    expect(within(dialog).getByText('Covers').nextElementSibling).not.toHaveTextContent('All pages')
+    expect(within(dialog).getByRole('region', { name: 'From the addon: viewer action labels' })).toHaveTextContent('close: All pages')
   })
   it('an addon without viewer actions says viewers can only read', async () => {
     const { user } = renderApp('/settings/addons', {
@@ -97,7 +114,7 @@ describe('Grant and update dialogs list what viewers can run', () => {
       },
     })
     await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
-    expect(await screen.findByText('+ Viewers can: Refresh pull requests')).toBeInTheDocument()
+    expect(await screen.findByText('+ Viewers can: Refresh (refresh)')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
     await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument())
     expect(screen.queryByText(/grant again/)).toBeNull()

@@ -2,7 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/api/client'
+import { toast } from 'sonner'
+import { api, mockStore } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { WorkspaceProvider } from '@/app/workspace'
 import { AddonNode } from './AddonNode'
@@ -71,12 +72,16 @@ describe('list items with equal titles', () => {
 })
 
 describe('destructive confirm', () => {
-  it('names the row as the addon\'s words; title and button are the manifest label', async () => {
+  it('core writes the title; the row\'s name, the manifest label and sentence and the args sit in the From-addon region; the button is the label', async () => {
     draw({ type: 'list', items: [{ title: 'Tariff API notes', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'x' }, variant: 'danger' }] }] })
     await press('Revoke')
     const dialog = await screen.findByRole('alertdialog')
-    expect(within(dialog).getByRole('heading', { name: 'Revoke link?' })).toBeInTheDocument()
-    expect(dialog).toHaveTextContent(/Addon says:\s*Tariff API notes/)
+    expect(within(dialog).getByRole('heading', { name: 'Confirm: Revoke (revoke) · Publish (publish)' })).toBeInTheDocument()
+    const region = within(dialog).getByRole('region', { name: 'From addon publish' })
+    expect(region).toHaveTextContent(/Addon says:\s*Tariff API notes/)
+    expect(region).toHaveTextContent('Revoke link')
+    expect(region).toHaveTextContent('Id (id): x')
+    expect(within(dialog).getByRole('button', { name: 'Revoke link' })).toBeInTheDocument()
   })
 })
 
@@ -86,12 +91,52 @@ describe('a secret is not kept', () => {
     vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Made a link.', secret: { label: 'Link', value: SECRET } })
     const { client } = draw({ type: 'button', label: 'Make link', action: 'share_once', variant: 'secondary' })
     await press('Make link')
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Create show-once link' })).getByRole('button', { name: 'Create show-once link' }))
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' })).getByRole('button', { name: 'Create show-once link' }))
     const dialog = await screen.findByRole('dialog', { name: /Copy this link now/ })
     const held = () => JSON.stringify([client.getMutationCache().getAll().map((m) => m.state), client.getQueryCache().getAll().map((q) => q.state.data)])
     expect(held()).not.toContain('TOPSECRET123')
     await userEvent.click(within(dialog).getByRole('button', { name: 'I saved it' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(held()).not.toContain('TOPSECRET123')
+  })
+})
+
+describe('a signed action shows everything the host receives, or posts nothing', () => {
+  // Publish's `share` made a signed action for these tests (as a new manifest would); restored after each.
+  const signShare = () => {
+    const pkg = mockStore.addons.find((a) => a.name === 'publish')!
+    const before = pkg.actions
+    pkg.actions = { ...pkg.actions, share: { minRole: 'member', confirm: 'sign' } }
+    return () => (pkg.actions = before)
+  }
+  it('an arg longer than the dialog shows fails closed: an inline error, no dialog, nothing posted', async () => {
+    const restore = signShare()
+    const post = vi.spyOn(api, 'runAddonAction')
+    draw({ type: 'button', label: 'Share it', action: 'share', args: { note: 'x'.repeat(121) } })
+    await press('Share it')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/longer than core shows .* nothing was signed or sent/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(post).not.toHaveBeenCalled()
+    restore()
+  })
+  it('an arg that is not a plain value (a form posting formData) fails closed the same way', async () => {
+    const restore = signShare()
+    const post = vi.spyOn(api, 'runAddonAction')
+    draw({ type: 'form', schema: { type: 'object', properties: { a: { type: 'string', title: 'Note' } } }, action: 'share', submitLabel: 'Share' })
+    await press('Share')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/a value core cannot show/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(post).not.toHaveBeenCalled()
+    restore()
+  })
+  it('the confirmation toast: core\'s sentence as the title, the addon\'s message as the labelled description', async () => {
+    const restore = signShare()
+    const success = vi.spyOn(toast, 'success')
+    vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Approved DEMO-0042 for release.' })
+    draw({ type: 'button', label: 'Share it', action: 'share', args: { id: 'x' } })
+    await press('Share it')
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign and run' }))
+    await waitFor(() => expect(success).toHaveBeenCalledWith('Signed: Share (share) · Publish (publish)', expect.objectContaining({ description: 'Addon says: Approved DEMO-0042 for release.' })), T)
+    restore()
   })
 })

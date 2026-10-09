@@ -117,6 +117,15 @@ describe('publish shares', () => {
     expect(again.message).toMatch(/shown once/i)
     expect(again.message).not.toMatch(/https:/)
   })
+  it('share_once outside a ticket refuses like share ("Pick a ticket first"), makes no share', async () => {
+    const s = setup()
+    const before = (await state(s)).shares.length
+    for (const action of ['share', 'share_once']) {
+      const r = await refused(s.api.runAddonAction(s.ws, 'publish', action, {}))
+      expect(r, action).toMatchObject({ status: 400, code: 'validation', message: 'Pick a ticket first.' })
+    }
+    expect((await state(s)).shares).toHaveLength(before)
+  })
   it('share_once takes the dialog\'s choices (what, expiry, view limit) and refuses values outside them', async () => {
     const s = setup()
     const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', what: 'report', expires_days: 3, view_limit: 3 })

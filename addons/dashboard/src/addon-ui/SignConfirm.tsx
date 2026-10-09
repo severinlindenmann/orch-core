@@ -15,6 +15,20 @@ const cap = (v: unknown) => {
   const t = String(v)
   return t.length > MAX ? `${t.slice(0, MAX)}…` : t
 }
+const scalar = (v: unknown) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+
+/**
+ * Why core cannot show these args exactly as they would be posted (null when it can). A signature covers every arg
+ * the host receives, so an arg that is not a plain value, or a key or value longer than the dialog shows, fails
+ * closed: nothing is signed or posted.
+ */
+export function signArgsProblem(args: Record<string, unknown> = {}): string | null {
+  for (const [k, v] of Object.entries(args)) {
+    if (!scalar(v)) return `The addon sent "${cap(k)}" as a value core cannot show, so nothing was signed or sent.`
+    if (k.length > MAX || String(v).length > MAX) return `The addon sent "${cap(k)}" longer than core shows (${MAX} characters), so nothing was signed or sent.`
+  }
+  return null
+}
 
 /**
  * Core's signing prompt for an addon action the manifest marks `confirm: 'sign'` (arm a schedule, pause the factory).
@@ -30,6 +44,7 @@ export function SignConfirm({
   label,
   args,
   subject,
+  ticket,
   onSign,
   onClose,
 }: {
@@ -41,10 +56,14 @@ export function SignConfirm({
   args?: Record<string, unknown>
   /** What the action is about as the row names it ("Check inbox"). The addon wrote it: shown as extra context, labelled, never instead of the args that are signed. */
   subject?: string
+  /** The ticket in core's render context: posted as `ticket`, so it is covered. */
+  ticket?: string
   onSign: () => void
   onClose: () => void
 }) {
-  const sent = Object.entries(args ?? {}).filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+  // Every arg the host receives is shown; anything core could not show exactly blocks the signature.
+  const problem = signArgsProblem(args)
+  const sent = problem ? [] : Object.entries(args ?? {})
   return (
     <SignPrompt
       title={signTitle(action, addonTitle, addon)}
@@ -52,33 +71,51 @@ export function SignConfirm({
         <>
           Runs "{words(action)}" (<Raw>{action}</Raw>) of the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
         </>,
+        ...(ticket ? [`About ${ticket}`] : []),
         `In workspace ${workspace.name} (${workspace.prefix})`,
       ]}
       confirmLabel="Sign and run"
+      disabled={!!problem}
       onSign={onSign}
       onClose={onClose}
     >
-      <section aria-label={`From addon ${addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
-        <p className="flex items-center gap-1.5">
-          <AddonBadge name={addon} title={addonTitle} />
-          <span>
-            From the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
-          </span>
+      <FromAddon addon={addon} addonTitle={addonTitle} label={label} subject={subject} args={Object.fromEntries(sent)} />
+      {problem && (
+        <p role="alert" className="text-[13px] text-danger">
+          {problem}
         </p>
-        {label && <p className="break-words text-text">{cap(label)}</p>}
-        {subject && (
-          <p className="break-words text-text-muted">
-            Addon says: <span className="text-text">{cap(subject)}</span>
-          </p>
-        )}
-        {/* What is signed: each arg's words, its exact key when they differ, and the exact value. */}
-        {sent.map(([k, v]) => (
-          <p key={k} className="break-words text-[13px] text-text">
-            {words(k) === k ? cap(k) : <>{cap(words(k))} (<Raw>{cap(k)}</Raw>)</>}: <Raw>{cap(v)}</Raw>
-          </p>
-        ))}
-      </section>
+      )}
     </SignPrompt>
+  )
+}
+
+/**
+ * The dashed "From the addon" region every core confirm and signing dialog uses for what the addon wrote: its label,
+ * its sentence, the row's name ("Addon says:") and the args it picked (words, exact key, exact value). Capped plain text.
+ */
+export function FromAddon({ addon, addonTitle, label, text, subject, args }: { addon: string; addonTitle: string; label?: string; text?: string; subject?: string; args?: Record<string, unknown> }) {
+  return (
+    <section aria-label={`From addon ${addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
+      <p className="flex items-center gap-1.5">
+        <AddonBadge name={addon} title={addonTitle} />
+        <span>
+          From the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
+        </span>
+      </p>
+      {label && <p className="break-words text-text">{cap(label)}</p>}
+      {text && <p className="break-words text-text">{cap(text)}</p>}
+      {subject && (
+        <p className="break-words text-text-muted">
+          Addon says: <span className="text-text">{cap(subject)}</span>
+        </p>
+      )}
+      {/* What is sent: each arg's words, its exact key when they differ, and the exact value. */}
+      {Object.entries(args ?? {}).map(([k, v]) => (
+        <p key={k} className="break-words text-[13px] text-text">
+          {words(k) === k ? cap(k) : <>{cap(words(k))} (<Raw>{cap(k)}</Raw>)</>}: <Raw>{cap(v)}</Raw>
+        </p>
+      ))}
+    </section>
   )
 }
 

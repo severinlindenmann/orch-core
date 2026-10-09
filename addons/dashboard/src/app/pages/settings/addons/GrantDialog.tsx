@@ -1,5 +1,6 @@
 import { manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonPackage, InstalledAddon } from '@/api/types'
+import { addonName, Raw, wordsAndId } from '@/addon-ui/SignConfirm'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { addedCapabilities, explain, removedCapabilities } from './capabilities'
 
@@ -27,8 +28,14 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
   const turnsOn = ask.kind !== 'update'
   const viewerAdded = viewerNext.filter((a) => !viewerNow.some((b) => b.id === a.id))
   const viewerRemoved = viewerNow.filter((a) => !viewerNext.some((b) => b.id === a.id))
-  const viewersCan = `Viewers can: ${viewerNext.length ? viewerNext.map((a) => a.label).join(', ') : 'nothing'}`
-  const title = update ? `Update ${addon.title} to ${version}` : `${ask.kind === 'install' ? 'Install' : 'Grant'} ${addon.title} ${version}`
+  // Core's words for the action ids that are signed (viewer_actions); the manifest's labels are the addon's, shown apart.
+  const viewersCan = `Viewers can: ${viewerNext.length ? viewerNext.map((a) => wordsAndId(a.id)).join(', ') : 'nothing'}`
+  const labelled = viewerNext.filter((a) => a.label !== a.id)
+  // The addon by its manifest title (it could say anything) and always its package id.
+  const named = addonName(addon.title, addon.name)
+  // An update keeps the addon's on/off state (the host does not touch it): say which one it is.
+  const staysOn = ask.kind === 'update' && ask.addon.ws.enabled
+  const title = update ? `Update ${named} to ${version}` : `${ask.kind === 'install' ? 'Install' : 'Grant'} ${named} ${version}`
 
   return (
     <SignPrompt
@@ -39,7 +46,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         caps.length ? `Capabilities: ${caps.join(', ')}` : 'Capabilities: none',
         viewersCan,
         ...(turnsOn ? ['Grants these capabilities and turns it on in this workspace'] : []),
-        ...(update ? [`The new capabilities take effect now and ${addon.title} stays on`] : []),
+        ...(update ? [staysOn ? `The new capabilities take effect now and ${named} stays on` : `${named} stays off; the new capabilities apply when it is turned on`] : []),
         ...(caps.includes('pty') ? ['Agents never get pty'] : []),
       ]}
       confirmLabel={update ? 'Update' : 'Grant and turn on'}
@@ -52,7 +59,12 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
           <span className="font-medium">{addon.title}</span>
           <span className="font-mono text-text-muted">{version}</span>
         </div>
-        {update && <p className="text-text-muted">{update.changelog}</p>}
+        {update && (
+          <section aria-label="From the addon: changelog" className="rounded-md border border-dashed border-border p-2 text-text-muted">
+            <p className="mb-0.5 text-[12px]">From the addon: changelog</p>
+            <p className="break-words text-text">{update.changelog}</p>
+          </section>
+        )}
         {update && (added.length > 0 || removed.length > 0) && (
           <ul aria-label="Capability changes" className="space-y-0.5 font-mono">
             {added.map((c) => (
@@ -66,12 +78,22 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         {(viewerAdded.length > 0 || viewerRemoved.length > 0) && (
           <ul aria-label="Viewer action changes" className="space-y-0.5 font-mono">
             {viewerAdded.map((a) => (
-              <li key={a.id} className="text-success">{`+ Viewers can: ${a.label}`}</li>
+              <li key={a.id} className="text-success">{`+ Viewers can: ${wordsAndId(a.id)}`}</li>
             ))}
             {viewerRemoved.map((a) => (
-              <li key={a.id} className="text-danger">{`- Viewers can: ${a.label}`}</li>
+              <li key={a.id} className="text-danger">{`- Viewers can: ${wordsAndId(a.id)}`}</li>
             ))}
           </ul>
+        )}
+        {labelled.length > 0 && (
+          <section aria-label="From the addon: viewer action labels" className="rounded-md border border-dashed border-border p-2 text-text-muted">
+            <p className="mb-0.5 text-[12px]">From the addon: what it calls these actions</p>
+            {labelled.map((a) => (
+              <p key={a.id} className="break-words">
+                <Raw>{a.id}</Raw>: <span className="text-text">{a.label}</span>
+              </p>
+            ))}
+          </section>
         )}
         <ul className="space-y-1">
           {caps.map((c) => (

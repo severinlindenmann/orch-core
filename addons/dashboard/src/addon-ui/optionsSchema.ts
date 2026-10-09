@@ -1,9 +1,12 @@
 import { z } from 'zod'
+import { RESERVED_KEYS } from './actionRuntime'
 
 const word = z.string().min(1).max(80)
 const value = z.union([z.string().min(1).max(60), z.number().finite()])
 const field = z.object({
-  key: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/),
+  // A choice is posted as an arg under its key: a key core sets itself (ticket, confirmed, ...) would be stripped or
+  // would collide, so the dialog would show a choice that is never sent. Refused.
+  key: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/).refine((k) => !RESERVED_KEYS.includes(k), 'reserved key'),
   label: word,
   choices: z.array(z.object({ value, label: word })).min(1).max(20),
   default: value,

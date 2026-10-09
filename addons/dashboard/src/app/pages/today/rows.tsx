@@ -11,7 +11,8 @@ import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
 import type { ActionError } from '@/addon-ui/useRunAddonAction'
-import { DecisionSignPrompt, decisionBody } from '@/addon-ui/DecisionSignPrompt'
+import { DecisionSignPrompt, decisionBody, decisionToast } from '@/addon-ui/DecisionSignPrompt'
+import { useAddons } from '@/addon-ui/slots'
 import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -284,6 +285,7 @@ const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'tic
 function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
+  const { data: packages } = useAddons()
   const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
   // From the click until the post resolves the options are off: no second prompt, no second post.
   const [pending, setPending] = useState(false)
@@ -293,8 +295,10 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
     setPending(true)
     try {
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
-      await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
-      toast.success(`${d.title}: ${o.label}`)
+      const res = await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
+      // Core's sentence is the title; the addon's own answer rides below it, labelled as the addon's.
+      const t = decisionToast(packages?.find((p) => p.name === d.addon)?.title ?? d.addon, d.addon, o.key, res.message)
+      toast.success(t.message, { description: t.description })
       onDone?.()
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
       await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))

@@ -17,6 +17,23 @@ describe('addon registry', () => {
       expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/core event namespace/)
     for (const p of [...addonsFixture, ...catalogFixture]) expect(CORE_EVENT_NAMESPACES, p.name).not.toContain(p.name)
   })
+  it('knows every core namespace of the ticket format (§5): role, policy, edit, projection, restore', () => {
+    for (const name of ['role', 'policy', 'edit', 'projection', 'restore']) {
+      expect(CORE_EVENT_NAMESPACES, name).toContain(name)
+      expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/core event namespace/)
+    }
+  })
+  it('the host refuses to install a package named like a core namespace (409 addon.reserved_name), records nothing', async () => {
+    const { api, store, ws } = setup()
+    const base = store.workspaceCatalog(ws)[0]
+    for (const name of ['role', 'policy', 'gate']) {
+      store.addons.push({ ...base, name })
+      const before = store.wsEventsOf(ws).length
+      await expect(api.postAddonOp(ws, name, { op: 'install', version: base.version, package_sha256: base.package_sha256, capabilities: base.capabilities, viewer_actions: [], enable: true })).rejects.toMatchObject({ status: 409, code: 'addon.reserved_name' })
+      await expect(api.postAddonOp(ws, name, { op: 'install' })).rejects.toMatchObject({ status: 409, code: 'addon.reserved_name' })
+      expect(store.wsEventsOf(ws)).toHaveLength(before)
+    }
+  })
   it('serves per-workspace addon state', async () => {
     const { api, ws } = setup()
     const s = await api.getAddonState(ws, 'publish')

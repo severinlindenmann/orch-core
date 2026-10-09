@@ -13,14 +13,14 @@ import { ApiError, type ActionMeta, type AddonActionResult, type AddonDecision, 
 import { toastApiError } from '@/app/toast'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
-import { useSignedAction } from '@/components/sign/SignPrompt'
+import { useSignedAction, type SignedToast } from '@/components/sign/SignPrompt'
 import { openResultUrl, withoutReservedKeys } from './actionRuntime'
-import { DecisionSignPrompt, decisionBody } from './DecisionSignPrompt'
+import { DecisionSignPrompt, decisionBody, decisionTitle, decisionToast } from './DecisionSignPrompt'
 import { DestructiveConfirm } from './DestructiveConfirm'
 import { OptionsConfirm } from './OptionsConfirm'
 import { parseOptions } from './optionsSchema'
 import { SecretDialog } from './SecretDialog'
-import { SignConfirm, signTitle } from './SignConfirm'
+import { addonName, SignConfirm, signArgsProblem, signTitle, wordsAndId } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { addonStateKey, useAddons } from './slots'
 
@@ -117,6 +117,12 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
   }
   const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
+  /** The confirmation of a signed action: core's sentence as the title, the addon's own message below it, labelled. */
+  const signedToast = (action: string, addon: string, message?: string): SignedToast => ({
+    signedToast: true,
+    message: `Signed: ${wordsAndId(action)} · ${addonName(titleOf(addon), addon)}`,
+    ...(message ? { description: `Addon says: ${message}` } : {}),
+  })
   const body = (extra?: Record<string, unknown>) => ({ ...withoutReservedKeys(extra), ...(ticket ? { ticket } : {}) })
 
   /** A refusal: in place under the trigger when the surface shows it (`inlineErrors`), else a toast that stays until dismissed. */
@@ -191,7 +197,12 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     const confirm = m0?.confirm
     if (m0?.decision) void openDecision(addon, action, extra)
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
-    else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
+    else if ((confirm === 'sign' || confirm === 'destructive' || confirm === 'options') && signArgsProblem(withoutReservedKeys(extra))) {
+      // Fails closed: core's dialog shows every arg it sends, so args it cannot show exactly (not a plain value, or
+      // longer than the dialog shows) are never signed, confirmed or posted.
+      const problem = signArgsProblem(withoutReservedKeys(extra))!
+      fail(new Error(problem), problem)
+    } else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
     else if (confirm === 'destructive') setDestroying({ addon, action, extra, subject })
     else if (confirm === 'options') {
       // Fails closed: a manifest whose options core cannot read posts nothing.
@@ -211,6 +222,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       label={meta(signing.addon, signing.action)?.label}
       args={withoutReservedKeys(signing.extra)}
       subject={signing.subject}
+      ticket={ticket}
       onClose={() => setSigning(null)}
       onSign={() => {
         const s = signing
@@ -220,7 +232,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
           const { secret: shown, ...res } = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
           openResultUrl(res)
           if (shown) setSecret({ addon: s.addon, secret: shown })
-          return res.message
+          return signedToast(s.action, s.addon, res.message)
         }, (e) => fail(e, 'Could not sign')).then((ok) => ok && setError(null)).finally(() => setSignPending(false))
       }}
     />
@@ -235,15 +247,20 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         const x = deciding
         setDeciding(null)
         setSignPending(true)
-        void signed(`Decide: ${x.d.title}`, async () => {
+        void signed(decisionTitle(titleOf(x.addon), x.addon), async () => {
           const res = await api.runAddonAction(workspace.id, x.addon, x.action, decisionBody(x.d, x.option.key))
-          return res.message
+          return decisionToast(titleOf(x.addon), x.addon, x.option.key, res.message)
         }, (e) => fail(e, 'Could not send the answer')).then((ok) => ok && setError(null)).finally(() => setSignPending(false))
       }}
     />
   )
   const destroyDialog = destroying && (
     <DestructiveConfirm
+      addon={destroying.addon}
+      addonTitle={titleOf(destroying.addon)}
+      action={destroying.action}
+      args={withoutReservedKeys(destroying.extra)}
+      ticket={ticket}
       label={meta(destroying.addon, destroying.action)?.confirmLabel ?? meta(destroying.addon, destroying.action)?.label ?? 'Confirm'}
       text={meta(destroying.addon, destroying.action)?.confirmText}
       subject={destroying.subject}
@@ -259,6 +276,11 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   const chosen = choosing ? parseOptions(meta(choosing.addon, choosing.action)?.options) : null
   const chooseDialog = choosing && chosen && (
     <OptionsConfirm
+      addon={choosing.addon}
+      addonTitle={titleOf(choosing.addon)}
+      action={choosing.action}
+      args={withoutReservedKeys(choosing.extra)}
+      ticket={ticket}
       label={meta(choosing.addon, choosing.action)?.label ?? 'Continue'}
       subject={choosing.subject}
       options={chosen}

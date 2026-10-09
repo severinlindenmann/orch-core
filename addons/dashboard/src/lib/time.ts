@@ -60,7 +60,7 @@ export function fmtDateTime(iso: string): string {
   return d ? `${fmtDay(iso)} ${fmtClock(iso)}` : iso
 }
 
-/** "9 Oct 2026 11:36 UTC": the exact instant, for Details and tooltips only. */
+/** "9 Oct 2026 11:36 UTC": the exact instant, for Details, tooltips and what a signature covers ("until …"). */
 export function fmtExact(iso: string): string {
   const d = parse(iso)
   return d ? `${fmtDay(iso)} ${d.getUTCFullYear()} ${fmtClock(iso)} UTC` : iso

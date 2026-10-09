@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { GrantInfo } from '@/api/types'
 import { grantLabel } from '@/api/grants'
-import { fmtClock } from '@/lib/time'
+import { fmtExact } from '@/lib/time'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { Label } from '@/components/ui/label'
 import { useWorkspace } from '../../workspace'
@@ -33,7 +33,8 @@ export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAct
 
   if (!action) return null
   const issue = action.kind === 'issue'
-  const until = fmtClock(new Date(Date.parse(now) + hours * 3600_000).toISOString())
+  // What is signed is an instant: the covers say it exactly, with its time zone (the table may stay short).
+  const until = fmtExact(new Date(Date.parse(now) + hours * 3600_000).toISOString())
   const sessionName = (id: string) => {
     const s = sessions.data?.find((x) => x.session === id)
     return s ? `${s.name} for ${person(s.for)}` : id

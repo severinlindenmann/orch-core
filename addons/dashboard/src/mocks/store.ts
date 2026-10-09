@@ -32,6 +32,7 @@ import type {
 } from '@/api/types'
 import { addonActive, pendingUpdate, manifestFor, sameSet, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
+import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
@@ -926,6 +927,8 @@ export class MockStore {
     const pkg = this.addons.find((a) => a.name === name)
     const done = () => ({ ok: true as const, addon: this.workspaceAddons(wsId).find((a) => a.name === name)! })
     if (req.op === 'install') {
+      // A package named like a core namespace could write `<name>.<verb>` records that read as core's own.
+      if (isCoreNamespace(name)) return refuse(409, 'addon.reserved_name', `"${name}" is one of core's own names; an addon cannot be installed under it.`, 'The addon must be published under another package name.')
       if (st) return refuse(409, 'addon.installed', `${name} is already installed.`)
       const c = pkg
       if (!c) return refuse(404, 'not_found', `No addon ${name} in the catalog`)

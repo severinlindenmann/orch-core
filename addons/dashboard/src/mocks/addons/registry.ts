@@ -113,16 +113,21 @@ const registry = new Map<string, MockAddon>()
 /**
  * Core's own event namespaces (`<namespace>.<verb>`). An addon writes only `<its name>.<verb>` records (the seedLog
  * guard and the event rules check that prefix), so an addon named like one of these could pass core events off as its
- * own: such names are refused at registration.
+ * own: such names are refused at registration and at install (409 `addon.reserved_name`). From the ticket format
+ * (orch-v2-ticket-format.md §5: `role.changed`, `policy.changed`, `edit.external`, `projection.repaired`, `restore`)
+ * and the events core writes in this mock.
  */
 export const CORE_EVENT_NAMESPACES: readonly string[] = [
-  'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'epoch', 'gate', 'grant', 'handoff',
-  'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'question', 'relay', 'section', 'skill', 'status', 'task',
-  'ticket', 'verdict', 'verify', 'view', 'workspace',
+  'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'edit', 'epoch', 'gate', 'grant',
+  'handoff', 'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'policy', 'projection', 'question', 'relay',
+  'restore', 'role', 'section', 'skill', 'status', 'task', 'ticket', 'verdict', 'verify', 'view', 'workspace',
 ]
 
+/** A package name the host refuses (install and registration alike): one of core's own event namespaces. */
+export const isCoreNamespace = (name: string): boolean => CORE_EVENT_NAMESPACES.includes(name)
+
 export function registerAddon(a: MockAddon): void {
-  if (CORE_EVENT_NAMESPACES.includes(a.name)) throw new Error(`Addon name "${a.name}" is a core event namespace; pick another name.`)
+  if (isCoreNamespace(a.name)) throw new Error(`Addon name "${a.name}" is a core event namespace; pick another name.`)
   registry.set(a.name, a)
 }
 

@@ -81,27 +81,32 @@ describe('publish page', () => {
     await user.click(within(dialog).getByRole('button', { name: 'I saved it' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Copy this link now/ })).not.toBeInTheDocument())
   })
+  // A show-once link is always to one ticket: the button lives in the ticket's Shares panel.
+  const showOnce = async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const r = renderApp('/ticket/DEMO-0041', { viewer: 'p_sev' })
+    const panel = await openTicketPanel(r.user, 'Shares')
+    return { ...r, panel, press: async () => r.user.click(await within(panel).findByRole('button', { name: 'New show-once link' }, T)) }
+  }
   it('a show-once row says "Shown once" instead of Copy link', async () => {
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
-    await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
-    await user.click(await within(await screen.findByRole('dialog', { name: 'Create show-once link' }, T)).findByRole('button', { name: 'Create show-once link' }))
+    const { user, panel, press } = await showOnce()
+    await press()
+    await user.click(await within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)).findByRole('button', { name: 'Create show-once link' }))
     await user.click(await screen.findByRole('button', { name: 'I saved it' }, T))
-    const item = (await screen.findByText('One-time link', {}, T)).closest('tr')!
+    const item = (await within(panel).findByText('DEMO-0041 ticket page one-time link', {}, T)).closest('li')!
     expect(within(item).getByRole('button', { name: 'Shown once' })).toBeInTheDocument()
     expect(within(item).queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument()
   })
   it('a show-once link asks first what to share, how long it works and how often it opens; Cancel makes nothing', async () => {
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
-    await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
-    const ask = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    const { user, panel, press } = await showOnce()
+    await press()
+    const ask = await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)
     expect(screen.queryByRole('dialog', { name: /Copy this link now/ })).toBeNull() // the secret dialog comes after
     await user.click(within(ask).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.queryByText('One-time link')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'New show-once link' }))
-    const ask2 = await screen.findByRole('dialog', { name: 'Create show-once link' }, T)
+    expect(within(panel).queryByText(/one-time link/)).toBeNull()
+    await press()
+    const ask2 = await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)
     await user.selectOptions(within(ask2).getByLabelText('What to share'), 'report')
     await user.selectOptions(within(ask2).getByLabelText('Works for'), '3')
     await user.selectOptions(within(ask2).getByLabelText('Opens'), '3')
@@ -109,7 +114,7 @@ describe('publish page', () => {
     const secret = await screen.findByRole('dialog', { name: /Copy this link now/ }, T)
     expect(secret).toHaveTextContent(/before\/after report: opens 3 times, works for 3 days/i)
     await user.click(within(secret).getByRole('button', { name: 'I saved it' }))
-    const item = (await screen.findByText('One-time link', {}, T)).closest('tr')!
+    const item = (await within(panel).findByText('DEMO-0041 before/after report one-time link', {}, T)).closest('li')!
     expect(item).toHaveTextContent('3 days')
   })
   it('viewer sees the page with disabled actions', async () => {

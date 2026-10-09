@@ -2,7 +2,8 @@
 
 State on 9 Oct 2026, **after the complete mockup** (iterations 1–3, the UX review rounds and the owner's wave-3
 input). Branch `feat/dashboard-mockup`; PR #330 (iteration 1 and 2, up to 906a87b) was merged into `develop`
-(9381ac6) and the remote branch was deleted. This file tells the next agent where the mockup stands, what the backend
+(9381ac6). The remote branch exists again (`origin/feat/dashboard-mockup`), and `origin/develop` is merged in; the next
+PR goes against `develop`. This file tells the next agent where the mockup stands, what the backend
 has to provide, and what comes next. The owner's review guide is [REVIEW.md](REVIEW.md); every non-trivial decision
 is in [DECISIONS-LOG.md](DECISIONS-LOG.md) with how to revert it.
 
@@ -68,7 +69,10 @@ Paths are under `src/`.
 | Pages | `app/pages/` | Today (grouped inbox, new-since-last-look, sign feedback), Board (dnd, epic lanes, auto rails), Tickets (filters, saved views, epic groups, column folding), Ticket (next action, gates stepper, tabs, rail/Panels, widgets, landing state, connection blocks), New ticket (page + overlay + quick + simulated dictation), Artifacts, Agents (sessions, grants, refusals), Settings (General, Members, Gates, Relay & devices, Addons + drawer, Skills, Connections), AddonPage. |
 | Addon UI | `addon-ui/` | Closed node vocabulary validated with zod (`nodes.ts`: stack, tabs, table with column priorities, list, form, chart, widget, decision, fold, popover, terminal, frame …), `AddonFrame`/`AddonBadge`/`PreviewChip`, slots, one action hook (`useRunAddonAction`) with core's confirm dialogs: `SignConfirm`, `SpawnConfirm`, `DecisionSignPrompt`, `DestructiveConfirm`, `OptionsConfirm`, `SecretDialog`. |
 | Addons (18) | `mocks/addons/*`, `mocks/fixtures/addons.json`, `catalog.json` | Installed in DEMO: guide, start-agent, widgets, estimate, publish, github, usage, terminals, wiki, land. Catalog: worktrees, quick, records, activity, models, factory, schedules, drop (the Busy day installs all but drop in DEMO). |
-| Tests | `**/*.test.ts(x)`, `test/` | About 1,750 vitest tests (jsdom): contract, visibility sweep, orange guard, a11y smoke, per page and per addon. `scripts/layout-guard.mjs` for real layout (below). |
+| Ticket page density (R4) | `app/pages/ticket/` (`Overview.tsx`, `Rail.tsx`, `widgets/`) | Current state shows 2 widgets, then "N more widgets"; question prototypes point to Questions → Answer; the rail holds addon panels under one "Addons · N" heading and one Terminal panel; the breadcrumb leads back to where the ticket was opened. Points (Estimate on) or Size, never both. |
+| Widgets, Usage, Busy day (R4) | `api/widgetCatalog.ts`, `api/widgetTemplates*.ts`, `mocks/addons/usage.ts`, `mocks/busy/` | Widgets gallery ("Where it's allowed" once per section); Usage tiles with one measure and one period each, scaled on the Busy day; Apps & shares vs Drop say what each is for; Busy day widgets on 20 tickets covering every core widget type and two templates, every artifact kind. |
+| Signing surface | `addon-ui/SignConfirm.tsx`, `DecisionSignPrompt.tsx`, `DestructiveConfirm.tsx`, `OptionsConfirm.tsx`, `app/pages/settings/addons/GrantDialog.tsx`, `test/signing-surface.test.tsx` | Every signing and confirm dialog: core's words in the title and covers (an addon named "Title (package id)"), the addon's own text only in a labelled dashed "From the addon" region, every posted value shown; args core cannot show exactly fail closed. One table-driven test covers every path. |
+| Tests | `**/*.test.ts(x)`, `test/` | About 1,790 vitest tests (jsdom): contract, visibility sweep, orange guard, a11y smoke, signing surface, per page and per addon. `scripts/layout-guard.mjs` for real layout (below). Local only: CI does not run the dashboard suite or the layout guard. |
 
 ## Backend contract (for the host)
 
@@ -140,6 +144,10 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/addons/:name/state[?ticket=KEY]` | no operation yet — proposal `addon.state` (the addon's view for this person; per-ticket for panels) |
 | POST `/api/workspaces/:ws/addons/:name/actions/:id` | the addon's own command group (format §8 `cli`), run by the host; `confirm: 'sign'` and `decision: true` actions are signed by core (events `addon.action_signed`, `addon.decided`) |
 
+The host refuses package names that are core namespaces (`addon`, `gate`, `role`, `policy`, `edit`, `projection`,
+`restore`, … : `CORE_EVENT_NAMESPACES` in `mocks/addons/registry.ts`; install answers 409 `addon.reserved_name`) and
+accepts only `<name>.<verb>` records from an addon.
+
 Addon action ids the mock implements (manifest `actions` sets roles; default member): publish `share`, `share_once`,
 `copy_link`, `extend`, `revoke`, `start`, `stop`, `logs`, `redeploy`, `decide`; github `import`, `refresh`,
 `approve`, `open`; estimate `set`; wiki `open`, `search`, `clear_search`, `close`, `edit`, `done`, `create`, `save`,
@@ -202,7 +210,7 @@ cd addons/dashboard
 npm install
 npm run dev                      # dev server (the session uses 5180 live and 5181 as a stable snapshot)
 npx vitest run <path>            # targeted tests after each change
-npx vitest run                   # full suite, ~1,750 tests, a few minutes; once per phase
+npx vitest run --maxWorkers=3    # full suite, ~1,790 tests, a few minutes; once per phase (local only, not in CI)
 npm run typecheck
 npm run build                    # dist/
 npm run layout:guard             # 13" notebook check (below)
@@ -246,18 +254,15 @@ http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
 - The land worker's real push is a fast-forward with a lease on the target SHA, and `main` must be refused at push
   time too (see DECISIONS-LOG "N9 review fixes").
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
-- Parked engineering minors: a duplicate import in the palette; a dock open-request for a session that never appears
-  is not cleared. R4 (running in parallel) takes the rest of the parked list.
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
 
 ## Next
 
-1. **Finish round R4** (ticket page density, widgets, busy richness, usage; worktree `ux/r4`) and merge it; the
-   layout guard (`--docks min,max`) must stay at 0 failing.
-2. **Owner review** with [REVIEW.md](REVIEW.md) and the in-app Review tour; answer its open questions.
-3. **Next PR:** merge `origin/develop` into `feat/dashboard-mockup` (the remote branch was deleted after #330),
-   push, open a PR against `develop`, ping the orch v2 build session (orch-4e) when it is open. Merge only on green CI.
-4. **Backend swap**, once the P2 host exposes the operation registry over its socket:
+1. **Owner review** with [REVIEW.md](REVIEW.md) and the in-app Review tour; answer its open questions.
+2. **Next PR:** push `feat/dashboard-mockup` (`origin/develop` is already merged in), open a PR against `develop`,
+   ping the orch v2 build session (orch-4e) when it is open. Merge only on green CI. The dashboard's vitest suite and
+   `npm run layout:guard` run locally only (CI does not run them): run both before asking for the merge.
+3. **Backend swap**, once the P2 host exposes the operation registry over its socket:
    - implement the operations named in "Backend contract", and the proposals the owner accepts;
    - point `client.ts` at a transport over the host (`createFetchTransport` or a socket transport with the same
      `Transport` shape); remove `/api/dev/*` and the review tour;

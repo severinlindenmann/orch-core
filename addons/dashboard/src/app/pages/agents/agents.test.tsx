@@ -96,4 +96,12 @@ describe('Agents page', () => {
     await user.click(await screen.findByRole('button', { name: /Issue grant/ }))
     await waitFor(() => expect(screen.getAllByRole('row', { name: /gr_/ })).toHaveLength(5))
   })
+  it('the issue covers say the exact end of the grant, with its time zone', async () => {
+    const { user } = renderApp('/agents')
+    await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
+    const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    // Mock now 11:30 UTC + 8 h.
+    expect(covers).toHaveTextContent('Duration: 8 h, until 9 Oct 2026 19:30 UTC')
+  })
 })

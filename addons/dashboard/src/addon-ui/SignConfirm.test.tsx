@@ -73,6 +73,24 @@ describe('SignConfirm', () => {
     expect(one('arm', 'schedules', 'schedules').heading).toBe('Sign: Arm (arm) · schedules')
   })
 
+  it('covers the render-context ticket (posted as `ticket`); args core cannot show block the sign button', () => {
+    const view = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SignConfirm addon="schedules" addonTitle="Schedules" action="arm" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={{ id: 'a' }} ticket="DEMO-0041" onSign={() => {}} onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    expect(within(screen.getByRole('dialog')).getByText('Covers').nextElementSibling).toHaveTextContent('About DEMO-0041')
+    view.unmount()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SignConfirm addon="schedules" addonTitle="Schedules" action="arm" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={{ id: 'a', more: { x: 1 } }} onSign={() => {}} onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/nothing was signed or sent/)
+    expect(within(dialog).getByRole('button', { name: 'Sign and run' })).toBeDisabled()
+  })
+
   it('names its verb, says how you confirm, starts on Cancel and has no repeated line', () => {
     draw()
     const dialog = screen.getByRole('dialog')

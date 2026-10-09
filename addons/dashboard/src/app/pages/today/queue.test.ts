@@ -10,11 +10,11 @@ const dec = (id: string, addon = 'quick', action = 'decide', title = `${id} outg
 })
 
 describe('today queue: grouping and order', () => {
-  it('orders blocking first, then the oldest `since`, then the id, whatever the input order', () => {
+  it('orders newest `since` first, then blocking, then the id, whatever the input order', () => {
     const items = [q('D-3', '2026-10-09T09:00:00Z'), q('D-1', '2026-10-09T10:00:00Z', true), q('D-2', '2026-10-08T09:00:00Z'), q('D-4', '2026-10-08T09:00:00Z')]
     const a = sortEntries(toEntries(items, [])).map((e) => e.id)
     const b = sortEntries(toEntries([...items].reverse(), [])).map((e) => e.id)
-    expect(a).toEqual(['question:D-1:Q1', 'question:D-2:Q1', 'question:D-4:Q1', 'question:D-3:Q1'])
+    expect(a).toEqual(['question:D-1:Q1', 'question:D-3:Q1', 'question:D-2:Q1', 'question:D-4:Q1'])
     expect(b).toEqual(a) // `since` decides, never the position in the list
   })
 
@@ -59,7 +59,7 @@ describe('today queue: new items are buffered', () => {
 
   it('accepting re-sorts everything once', () => {
     const all = toEntries([ap('D-2', '2026-10-08T10:00:00Z'), q('D-0', '2026-10-01T10:00:00Z', true), q('D-1', '2026-10-09T10:00:00Z', true)], [])
-    expect(acceptOrder(all)).toEqual(['question:D-0:Q1', 'question:D-1:Q1', 'approval:D-2:plan'])
+    expect(acceptOrder(all)).toEqual(['question:D-1:Q1', 'approval:D-2:plan', 'question:D-0:Q1'])
   })
 
   it('an item resolved and later reopened comes back as new, not in its old place', () => {

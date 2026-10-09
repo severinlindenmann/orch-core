@@ -1,6 +1,6 @@
 // One group of Today's queue: a header button with the count and the oldest age, five rows, "Show N more".
 // Whether a group is open and whether it shows all rows is kept for the browser session.
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { collapseOut, fadeIn, prefersReducedMotion } from '@/lib/motion'
@@ -10,7 +10,8 @@ import { ago, useSessionState } from './shared'
 /** Rows a group shows before "Show N more". */
 export const ROWS_SHOWN = 5
 
-export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
+export function QueueGroup({ group, now, scope, note, renderRow, pinned, reveal = 0 }: {
+  reveal?: number
   group: Group
   now: string
   /** Keys the remembered open / show-all state (workspace and person). */
@@ -23,6 +24,7 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
 }) {
   const [open, setOpen] = useSessionState(`orch.today.open.${scope}.${group.id}`, true)
   const [all, setAll] = useSessionState(`orch.today.all.${scope}.${group.id}`, false)
+  useEffect(() => { if (reveal > 0) setOpen(true) }, [reveal])
   const headerId = `today-group-${group.id}`
   const visible = all ? group.rows : group.rows.filter((r, i) => i < ROWS_SHOWN || r.id === pinned)
   const hidden = itemsIn(group.rows) - itemsIn(visible)

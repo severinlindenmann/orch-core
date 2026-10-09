@@ -62,7 +62,7 @@ function Signed({ sections }: { sections: SignedSection[] }) {
  * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
  * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
  */
-export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void }) {
+export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
@@ -122,15 +122,18 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
     if (blocked) return
     setError(null)
     setPhase('touch')
+    onPending?.(true)
     await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
     setPhase('sending')
     try {
       await api.postAction(ticket.key, request())
       await qc.invalidateQueries()
       toast.success(`${d.title}: signed with Touch ID`)
+      onPending?.(false)
       onClose()
     } catch (e) {
       setPhase('confirm')
+      onPending?.(false)
       setError(e instanceof ApiError ? e.message : 'Could not sign')
     }
   }
@@ -184,7 +187,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
               <span>
                 AC {proven}/{ticket.acceptance_state.length} evidenced · {receipts} {receipts === 1 ? 'receipt' : 'receipts'}
               </span>
-              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence}>
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence} disabled={busy}>
                 Open evidence
               </Button>
             </p>
@@ -234,7 +237,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
             {phase === 'sending' && (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Signing
+                Signing…
               </>
             )}
             {phase === 'confirm' && hint && !nothing && <span id="sign-hint">{hint}</span>}

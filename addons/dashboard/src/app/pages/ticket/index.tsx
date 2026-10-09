@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useRouterState } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
@@ -91,6 +91,7 @@ function useHomeWorkspace(ticketKey: string): { ready: boolean } {
 }
 
 export function TicketPage({ ticketKey }: { ticketKey: string }) {
+  const hash = useRouterState({ select: s => s.location.hash })
   const home = useHomeWorkspace(ticketKey)
   const viewer = useViewer(ticketKey)
   const q = useQuery({
@@ -117,9 +118,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   usePageHeader(ticketKey, breadcrumb)
 
   useEffect(() => {
-    setTab('overview')
-    setFocus(undefined)
-  }, [ticketKey])
+    const question = /^question-[A-Za-z0-9_-]+$/.test(hash)
+    setTab(question ? 'questions' : 'overview')
+    setFocus(question ? hash : undefined)
+  }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
     setTab(j.tab)

@@ -37,3 +37,9 @@ describe('groupByEpic', () => {
     expect(isCollapsed(lane, { 'E-1': true })).toBe(true)
   })
 })
+
+ it('orders lanes by latest activity of the epic or any child', () => {
+ const all = [t('E-1', { type: 'epic', updated_at: '2026-10-08' }), t('E-2', { type: 'epic', updated_at: '2026-10-09' }), t('K-1', { parent: 'E-1', updated_at: '2026-10-10' })]
+ expect(groupByEpic(all, all, false).lanes.map(l => l.epic.key)).toEqual(['E-1', 'E-2'])
+ expect(groupByEpic(all.slice(0, 2), all.slice(0, 2), false).lanes.map(l => l.epic.key)).toEqual(['E-2', 'E-1'])
+})

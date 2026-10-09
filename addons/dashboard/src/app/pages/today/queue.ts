@@ -1,3 +1,4 @@
+import { countAttention } from '@/api/attention'
 // Today's attention queue as pure data: which group an item belongs to, its stable order, folding of repeated addon
 // asks, and the buffer that keeps new arrivals out of the list until the person asks for them.
 import type { AddonDecision, NeedsYouItem } from '@/api/types'
@@ -46,19 +47,19 @@ export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): En
   ]
 }
 
-/** Blocking first, then the oldest `since`, then the id: the same items always give the same order. */
+/** Most recent first, then blocking and id for ties. Live arrivals keep their place until accepted. */
 export function compareEntries(a: Entry, b: Entry): number {
-  if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
   const sa = a.since ? Date.parse(a.since) : Infinity
   const sb = b.since ? Date.parse(b.since) : Infinity
-  if (sa !== sb) return sa < sb ? -1 : 1
+  if (sa !== sb) return sa > sb ? -1 : 1
+  if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 export const sortEntries = (entries: Entry[]) => [...entries].sort(compareEntries)
 
 /** The order the person sees until the next load or "Show new": every current entry, sorted. */
-export const acceptOrder = (entries: Entry[]) => sortEntries(entries).map((e) => e.id)
+export const acceptOrder = (entries: Entry[], fresh: ReadonlySet<string> = new Set()) => sortEntries(entries).sort((a, b) => Number(fresh.has(b.id)) - Number(fresh.has(a.id))).map((e) => e.id)
 
 /**
  * Splits the current entries into what is on screen (accepted ids, in the accepted order, resolved ones gone)
@@ -88,7 +89,7 @@ export function buildGroups(entries: Entry[]): Group[] {
     const members = entries.filter((e) => e.group === id)
     if (members.length === 0) return []
     const oldest = members.reduce<string | undefined>((o, e) => (e.since && (!o || Date.parse(e.since) < Date.parse(o)) ? e.since : o), undefined)
-    return [{ id, label, count: members.length, oldest, rows: id === 'addons' ? foldRows(members as DecisionEntry[]) : members.map((e): Row => ({ kind: 'one', id: e.id, entry: e })) }]
+    return [{ id, label, count: countAttention(members.flatMap(e => e.group === 'addons' ? [] : [e.item]), members.flatMap(e => e.group === 'addons' ? [e.decision] : []))[id], oldest, rows: id === 'addons' ? foldRows(members as DecisionEntry[]) : members.map((e): Row => ({ kind: 'one', id: e.id, entry: e })) }]
   })
 }
 

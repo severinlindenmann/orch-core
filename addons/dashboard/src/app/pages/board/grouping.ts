@@ -52,6 +52,8 @@ export function groupByEpic(all: TicketSummary[], shown: TicketSummary[], filter
     const done = all.filter((t) => t.status === 'done').length
     lanes.push({ epic, children: visible, total: all.length, done, open: all.length - done })
   }
+  const activity = (lane: EpicLane) => [lane.epic, ...(kids.get(lane.epic.key) ?? [])].reduce((latest, t) => t.updated_at > latest ? t.updated_at : latest, '')
+  lanes.sort((a, b) => activity(b).localeCompare(activity(a)) || a.epic.key.localeCompare(b.epic.key))
   return { lanes, none }
 }
 

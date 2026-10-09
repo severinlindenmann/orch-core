@@ -1,3 +1,4 @@
+import { countAttention } from '@/api/attention'
 // In-memory mock store seeded from fixtures. Mutations append events; state is re-derived from events.
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
 import type {
@@ -1111,12 +1112,13 @@ export class MockStore {
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
   private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
+    const agents = this.agents(workspaceId)
     for (const t of this.listTickets(workspaceId)) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
         if (q.state === 'open' && (!eligible || this.addressedTo(t, q.to, eligible)))
-          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: q.blocking })
+          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: !!q.blocking && agents.some(a => a.state === 'waiting' && a.waiting_on?.kind === 'question' && a.waiting_on.ticket === t.key && a.waiting_on.ref === q.id) })
       }
       if (t.status === 'testing' && !t.verdict && can('verify'))
         items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: this.lastEventAt(t.key, (e) => e.type === 'status.changed' && e.to === 'testing', t.created_at), ref: 'verify' })
@@ -1202,7 +1204,7 @@ export class MockStore {
     return this.workspaces.map((w) => {
       const counts: Partial<Record<Status, number>> = {}
       for (const t of this.listTickets(w.id)) counts[t.status] = (counts[t.status] ?? 0) + 1
-      return { ...w, counts, needs_you: this.needsYou(w.id).length + this.addonDecisions(w.id).length }
+      return { ...w, counts, needs_you: countAttention(this.needsYou(w.id), this.addonDecisions(w.id), can(this.roleIn(w.id, this.viewer), 'settings') ? this.conn.connections(w.id) : []).total }
     })
   }
 

@@ -15,7 +15,7 @@ import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
-import { ApprovalRow, DecisionRow, FoldRow, QuestionRow, VerdictRow } from './rows'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, WIDE_QUERY, type Directory } from './shared'
 
@@ -36,6 +36,7 @@ export function TodayPage() {
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.
   const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const reset = useQuery({ queryKey: ['demo-reset'], queryFn: () => 0, initialData: 0, enabled: false })
   const ds = dataset.data?.dataset
   const [switched, setSwitched] = useState<{ ds?: string; at: number }>({ ds, at: 0 })
   if (switched.ds !== ds) setSwitched({ ds, at: switched.ds === undefined ? 0 : dataset.dataUpdatedAt })
@@ -51,7 +52,7 @@ export function TodayPage() {
   const role = useRole()
   const readOnly = !can(role, 'ticket.act')
 
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale) {
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready) {
     return (
       <div className="space-y-4" aria-busy="true">
         <h1 className="text-xl font-semibold tracking-tight">Today</h1>
@@ -63,7 +64,8 @@ export function TodayPage() {
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (
     <TodayInbox
-      key={`${ws}:${me.data.person}:${readOnly}:${ds}`}
+      key={`${ws}:${me.data.person}:${readOnly}:${ds}:${reset.data}`}
+      generation={`${ds}:${reset.data}`}
       items={readOnly ? today.data.read_only_open : today.data.needs_you}
       decisions={decisionsQ.data}
       readOnly={readOnly}
@@ -74,7 +76,8 @@ export function TodayPage() {
   )
 }
 
-function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }: {
+function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, generation }: {
+  generation: string
   items: NeedsYouItem[]
   decisions: AddonDecision[]
   readOnly: boolean
@@ -94,7 +97,13 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
 
   const entries = useMemo(() => toEntries(items, decisions), [items, decisions])
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
-  const [order, setOrder] = useState<string[]>(() => acceptOrder(entries))
+  const seenKey = `orch.today.seen.${ws}:${viewer}`
+  const [seen] = useState<Set<string> | null>(() => {
+    try { const value = localStorage.getItem(seenKey); return value ? new Set(JSON.parse(value) as string[]) : null } catch { return null }
+  })
+  const [newIds, setNewIds] = useState(() => new Set(seen ? entries.filter(e => !seen.has(e.id)).map(e => e.id) : []))
+  const [order, setOrder] = useState<string[]>(() => acceptOrder(entries, newIds))
+  useEffect(() => { try { localStorage.setItem(seenKey, JSON.stringify(order)) } catch { /* storage unavailable */ } }, [seenKey, order])
   const { shown, fresh } = useMemo(() => reconcile(order, entries), [order, entries])
   // With nothing on screen there is nothing to keep still: take the new items in directly. Resolved ids leave the
   // accepted order, so an item that reopens later comes back through the pill, not in its old place.
@@ -102,18 +111,19 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
     if (shown.length === 0 && fresh.length > 0) setOrder(acceptOrder(entries))
     else setOrder((o) => pruneOrder(o, entries))
   }, [shown.length, fresh.length, entries])
+  const [reveal, setReveal] = useState(0)
   const groups = useMemo(() => buildGroups(shown), [shown])
 
   // Exactly one open row: on load the first blocking question, else the first row.
   const [expanded, setExpanded] = useState<string | null>(() => {
     if (readOnly) return null
     const first = buildGroups(reconcile(order, entries).shown)
-    const blockingQ = first.find((g) => g.id === 'questions')?.rows.find((r) => r.kind === 'one' && r.entry.blocking)
-    return blockingQ?.id ?? first[0]?.rows[0]?.id ?? null
+    return first[0]?.rows[0]?.id ?? null
   })
   const toggle = (id: string) => setExpanded((e) => (e === id ? null : id))
 
   const [signing, setSigning] = useState<{ ticket: string; action: HumanAction } | null>(null)
+  const [pending, setPending] = useState(false)
   const sign = (ticket: string, action: HumanAction) => setSigning({ ticket, action })
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
@@ -133,7 +143,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
     return person ? displayName(dir, person) : fallbackDecider
   }
 
-  const renderRow = (row: Row) => {
+  const renderContent = (row: Row) => {
     if (row.kind === 'fold') {
       const ds = row.entries.map((e) => e.decision)
       const title = addonTitle(row.addon)
@@ -174,12 +184,21 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
     return <VerdictRow key={row.id} {...props} />
   }
 
+  const renderRow = (row: Row) => {
+    const ids = row.kind === 'one' ? [row.entry.id] : row.entries.map(e => e.id)
+    const active = row.kind === 'one' && row.entry.group !== 'addons' && signing?.ticket === row.entry.item.ticket
+    return <NewItemContext.Provider key={row.id} value={ids.some(id => newIds.has(id))}><SigningContext.Provider value={pending && active}>{renderContent(row)}</SigningContext.Provider></NewItemContext.Provider>
+  }
+  const [peopleOpen, setPeopleOpen] = useState<string[]>([])
+  const byPerson = new Map<string, Entry[]>()
+  if (readOnly) for (const e of shown) { const name = deciderOf(e); byPerson.set(name, [...(byPerson.get(name) ?? []), e]) }
+
   const n = attention.needsYou.total
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')
   const allOwners = waiting.who.length > 0 && waiting.who.every((p) => owners.includes(p))
-  const scope = `${ws}:${viewer}`
+  const scope = `${ws}:${viewer}:${generation}`
 
   const header = (
     <div className="space-y-1">
@@ -205,19 +224,30 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
   const queue = (
     <section aria-label={readOnly ? 'Open in the workspace' : 'Needs you'} className="min-w-0 space-y-3">
       {/* A zero-height sticky slot: the pill floats over the top of the queue, so its arrival moves no row. top-7 less the pill's -mt-5 leaves it 8 px below the scroll edge when stuck. */}
-      <div data-testid="new-items" className="pointer-events-none sticky top-7 z-10 mb-0 flex h-0 justify-center">
+      <div data-testid="new-items" className="sticky top-0 z-10 flex min-h-0 justify-start bg-bg">
         {fresh.length > 0 && (
           <button
             type="button"
-            onClick={() => setOrder(acceptOrder(entries))}
-            className="orch-pill-in pointer-events-auto -mt-5 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => {
+              const ids = new Set([...newIds, ...fresh.map(e => e.id)])
+              setNewIds(ids)
+              setOrder(acceptOrder(entries, ids))
+              setReveal(n => n + 1)
+              for (const g of buildGroups(fresh)) sessionStorage.removeItem(`orch.today.open.${scope}.${g.id}`)
+            }}
+            className="orch-pill-in pointer-events-auto flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
           >
             {fresh.length} new · Show
           </button>
         )}
       </div>
       <ReloginGroup now={now} />
-      {groups.map((g) => (
+      {readOnly ? [...byPerson].map(([person, personEntries]) => (
+        <section key={person} className="rounded-lg border border-border bg-surface">
+          <h2><button type="button" aria-expanded={peopleOpen.includes(person)} onClick={() => setPeopleOpen(p => p.includes(person) ? p.filter(n => n !== person) : [...p, person])} className="w-full rounded px-3 py-3 text-left text-sm text-text focus-visible:ring-2 focus-visible:ring-ring">{person} · {personEntries.length} decisions</button></h2>
+          {peopleOpen.includes(person) && <ul>{buildGroups(personEntries).flatMap(g => g.rows).map(renderRow)}</ul>}
+        </section>
+      )) : groups.map((g) => (
         <QueueGroup
           key={g.id}
           group={g}
@@ -226,6 +256,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           note={g.id === 'addons' ? 'you sign every answer in orch' : undefined}
           renderRow={renderRow}
           pinned={expanded}
+          reveal={reveal}
         />
       ))}
       {groups.length === 0 && (
@@ -267,7 +298,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           <Glance readOnly={!canAddon} />
         </div>
       )}
-      {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} />}
+      {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} onPending={setPending} />}
     </div>
   )
 }

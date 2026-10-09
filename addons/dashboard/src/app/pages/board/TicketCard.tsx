@@ -28,7 +28,7 @@ export function CardFields({ ticket, own }: { ticket: TicketSummary; own?: boole
     return data && Object.keys(data).length > 0
   })
   if (shown.length === 0) return null
-  const views = shown.map((c) => <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact readOnly={readOnly} />)
+  const views = shown.map((c) => <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact bare readOnly={readOnly} />)
   if (!own) return <>{views}</>
   return (
     <span title="The epic's own estimate, not a sum of its children" className="inline-flex items-center gap-1 rounded-full border border-dashed border-border-strong pl-1.5">

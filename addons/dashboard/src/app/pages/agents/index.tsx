@@ -69,6 +69,8 @@ export function AgentsPage() {
 
       <div className="space-y-3">
         {waiting.length > 0 && <SessionGroup id="waiting-h" title="Waiting on you" list={waiting} ctx={ctx} />}
+        {group('waiting-others').length > 0 && <SessionGroup id="waiting-others-h" title="Waiting on others" list={group('waiting-others')} ctx={ctx} />}
+        {group('idle').length > 0 && <SessionGroup id="idle-h" title="Idle" list={group('idle')} ctx={ctx} />}
         <SessionGroup id="working-h" title="Working" list={working} ctx={ctx} empty="No agent session is working." />
         {stoppedList.length > 0 && <SessionGroup id="stopped-h" title="Stopped" list={stoppedList} ctx={ctx} defaultOpen={false} />}
       </div>

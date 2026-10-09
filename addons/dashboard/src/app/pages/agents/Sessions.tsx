@@ -31,7 +31,7 @@ function StateGlyph({ state }: { state: AgentSession['state'] }) {
   return (
     <span className={cn('inline-flex shrink-0', tone)} title={state}>
       <Icon className="size-3.5" aria-hidden />
-      <span className="sr-only">{state}</span>
+      <span className="text-xs">{state}</span>
     </span>
   )
 }

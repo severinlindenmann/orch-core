@@ -1,6 +1,6 @@
 // Today's compact rows: one per open item, 56 px, the ask on the first line, the ticket on the second and one inline
 // action on the right. A row expands in place for what the action needs; signing always happens in core's dialogs.
-import { useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
@@ -19,6 +19,9 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import type { HumanAction } from '../ticket/shared'
 import { ago } from './shared'
+
+export const NewItemContext = createContext(false)
+export const SigningContext = createContext(false)
 
 export type Sign = (ticket: string, action: HumanAction) => void
 
@@ -63,8 +66,12 @@ export function RowShell({
   children?: ReactNode
   addon?: boolean
 }) {
+  const fresh = useContext(NewItemContext)
+  const pending = useContext(SigningContext)
   return (
-    <li data-testid={testId} className={cn('border-b border-border last:border-b-0', addon && addonEdge)}>
+    <li data-testid={testId} aria-busy={pending || undefined} className={cn('border-b border-border last:border-b-0', addon && addonEdge, pending && 'opacity-50')}>
+      {pending && <p role="status" className="px-3 pt-2 text-xs text-text-muted">Signing…</p>}
+      <fieldset disabled={pending} className="min-w-0">
       <div className="flex min-h-14 items-center gap-3 px-3 py-2">
         {icon && <span className="flex w-4 shrink-0 justify-center text-text-muted">{icon}</span>}
         <div className="min-w-0 flex-1">
@@ -78,6 +85,7 @@ export function RowShell({
                 {ask}
               </p>
             )}
+            {fresh && <span aria-label="New since your last look" title="New since your last look" className="size-1.5 shrink-0 rounded-full bg-brand" />}
             {blocking && <BlockingChip />}
           </div>
           <div className="min-w-0 truncate text-xs leading-5 text-text-muted">{sub}</div>
@@ -86,6 +94,7 @@ export function RowShell({
         <div className="flex shrink-0 items-center gap-1">{action}</div>
       </div>
       {expanded && children && <div className={cn('space-y-3 pb-3 pr-3', icon ? 'pl-10' : 'pl-3')}>{children}</div>}
+      </fieldset>
     </li>
   )
 }
@@ -145,7 +154,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       action={
         readOnly ? (
           <Decides who={decider} />
-        ) : (
+        ) : expanded ? null : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={onToggle}>
             Answer
           </Button>
@@ -301,15 +310,17 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
   return { choose: setSigning, busy: pending || !!signing, pending, prompt }
 }
 
-function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean }) {
+function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void }) {
   const [error, setError] = useState<ActionError | null>(null)
   const { choose, busy, pending, prompt } = useDecide(
     d,
     inlineErrors ? (e) => setError(e instanceof ApiError ? { message: e.message, hint: e.hint } : { message: 'That did not work.' }) : undefined,
     () => setError(null),
   )
+  useEffect(() => { onPending?.(pending) }, [pending, onPending])
   return (
     <>
+      {pending && showQuestion && <p role="status" className="text-xs text-text-muted">Signing…</p>}
       {showQuestion && <p className="text-[13px] leading-relaxed text-text">{d.question}</p>}
       {d.detail && <p className="whitespace-pre-line text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
       {!readOnly && (
@@ -357,9 +368,11 @@ export function DecisionRow({
   inline?: boolean
 }) {
   const [own, setOwn] = useState(false)
+  const [pending, setPending] = useState(false)
   const expanded = controlled ?? own
   const toggle = onToggle ?? (() => setOwn((o) => !o))
   return (
+    <SigningContext.Provider value={pending}>
     <RowShell
       testId={`card-addon:${d.id}`}
       addon={!inline}
@@ -378,8 +391,9 @@ export function DecisionRow({
         )
       }
     >
-      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} />
+      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} />
     </RowShell>
+    </SigningContext.Provider>
   )
 }
 

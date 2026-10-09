@@ -107,7 +107,9 @@ export function createApi(transport: Transport) {
     /** Runs an addon action in workspace `ws`. A `ticket` in the body must belong to `ws` (409 ticket.other_workspace). */
     runAddonAction: (ws: string, addon: string, action: string, body: Record<string, unknown> = {}) =>
       call<AddonActionResult>('POST', `/api/workspaces/${ws}/addons/${addon}/actions/${action}`, body),
-    getAddonState: (ws: string, name: string) => call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state`),
+    /** An addon's state in `ws`. With `ticket`, per-ticket data is computed for that ticket only (ticket panels). */
+    getAddonState: (ws: string, name: string, ticket?: string) =>
+      call<Record<string, unknown>>('GET', `/api/workspaces/${ws}/addons/${name}/state${ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''}`),
     getAgents: (workspaceId: string) => call<AgentSession[]>('GET', `/api/workspaces/${workspaceId}/agents`),
     /** What core would start for this choice (core-computed: ticket, labels, command, model line). */
     previewLaunch: (ws: string, req: { ticket: string; mode: string; harness: string; where: string }) =>

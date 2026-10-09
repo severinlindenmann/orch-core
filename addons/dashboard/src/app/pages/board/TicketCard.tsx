@@ -18,6 +18,7 @@ export function CardFields({ ticket }: { ticket: TicketSummary }) {
   const items = useSlot('board.card_field', { ticket })
   const readOnly = !can(useRole(), 'addon.action')
   const shown = items.filter((c) => {
+    if (c.waiting) return false // a field that reads addon state appears once it has loaded
     const data = ticket.addons?.[c.addon]
     return data && Object.keys(data).length > 0
   })

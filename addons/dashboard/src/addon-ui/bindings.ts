@@ -39,13 +39,19 @@ function interpolate(s: string, ctx: unknown): string {
   })
 }
 
+const LIST_KEYS = new Set(['oneOf', 'enum'])
+
 export function resolveBindings(node: unknown, ctx: unknown): unknown {
   if (typeof node === 'string') return interpolate(node, ctx)
   if (Array.isArray(node)) return node.map((n) => resolveBindings(n, ctx))
   if (node && typeof node === 'object') {
     const obj = node as Record<string, unknown>
     if (typeof obj.$ref === 'string' && Object.keys(obj).length === 1) return getPath(ctx, obj.$ref) ?? null
-    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, resolveBindings(v, ctx)]))
+    // A form's choices bound to state that is not there yet are no choices (rjsf cannot draw a null oneOf/enum).
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => {
+      const r = resolveBindings(v, ctx)
+      return [k, r === null && LIST_KEYS.has(k) ? [] : r]
+    }))
   }
   return node
 }

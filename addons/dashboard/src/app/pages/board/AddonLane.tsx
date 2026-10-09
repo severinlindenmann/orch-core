@@ -15,6 +15,7 @@ import { useRole } from '@/app/useRole'
 import { can } from '@/api/permissions'
 import { toastApiError } from '@/app/toast'
 import { addonLane } from '@/addon-ui/addonClasses'
+import { AddonStatePlaceholder } from '@/addon-ui/AddonSlot'
 
 interface LaneItem {
   title: string
@@ -99,7 +100,11 @@ export function AddonLanes() {
               <span className="font-mono text-[11px] text-text-faint">{items.length}</span>
             </header>
             <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
-              {items.length === 0 ? (
+              {c.waiting ? (
+                <li className="px-2 py-2">
+                  <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} />
+                </li>
+              ) : items.length === 0 ? (
                 <li className="px-2 py-6 text-center text-[12px] text-text-faint">Nothing to import.</li>
               ) : (
                 items.map((it, i) => <LaneCard key={i} c={c} item={it} />)

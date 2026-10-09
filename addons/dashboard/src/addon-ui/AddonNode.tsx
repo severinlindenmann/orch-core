@@ -1,7 +1,7 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
@@ -794,6 +794,14 @@ function TableNodeView({ n }: { n: NodeOf<'table'> }) {
   const more = extra.width === width ? extra.n : 0
   const folded = new Set(foldedColumns(n.columns, width, { actions: !!n.rowActions, extra: more }))
   const box = useRef<HTMLDivElement | null>(null)
+  // One stable ref for both: an inline callback would detach and re-attach the observer on every commit.
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      ref(el)
+      box.current = el
+    },
+    [ref],
+  )
   useLayoutEffect(() => {
     const scroller = box.current?.querySelector<HTMLElement>('[data-slot="table-container"]')
     if (!scroller || width === 0 || scroller.scrollWidth <= scroller.clientWidth + 1 || more >= n.columns.length) return
@@ -803,13 +811,7 @@ function TableNodeView({ n }: { n: NodeOf<'table'> }) {
   const fold = n.columns.filter((c) => folded.has(c.key))
   const numeric = numericKeys(n)
   return (
-    <div
-      ref={(el) => {
-        ref(el)
-        box.current = el
-      }}
-      data-folded={fold.length || undefined}
-    >
+    <div ref={attach} data-folded={fold.length || undefined}>
       <Table>
         <TableHeader>
           <TableRow>

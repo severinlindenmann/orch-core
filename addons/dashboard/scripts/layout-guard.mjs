@@ -14,7 +14,7 @@
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
 // Options: --url <base> (default http://127.0.0.1:5201), --quick, --only <regex>, --dataset normal|busy, --docks min,default,max,
-// --selftest (plants overflow on a page and checks the detector finds it), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
+// --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
 import { spawn } from 'node:child_process'
@@ -35,6 +35,8 @@ const ONLY = opt('only') ? new RegExp(opt('only')) : null
 const SHOTS = opt('shots')
 const PREFIX = opt('prefix', 'page')
 const QUICK = flag('quick')
+/** Self-test only: break one step on purpose ('tabs', 'overlay' or 'loading') to prove the guard then fails. */
+const BREAK = opt('break')
 /** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Artifacts, History, Raw. */
 const TICKET_TABS = 6
 
@@ -246,6 +248,8 @@ async function main() {
   let stillLoading = ''
   const go = async (path) => {
     await evaluate((p) => window.__orchRouter.history.push(p), path)
+    // Self-test: a page that never finishes loading.
+    if (BREAK === 'loading') await evaluate(() => setTimeout(() => document.querySelector('main')?.prepend(Object.assign(document.createElement('p'), { textContent: 'Loading forever…' })), 0))
     // A loaded machine can be slow: one more round before calling it stuck.
     stillLoading = (await settle()) && (await settle())
   }
@@ -292,8 +296,24 @@ async function main() {
       return { scroller: has(res.problems, 'SCROLLER'), cut: has(res.problems, 'CUTBUTTON'), clip: has(res.warnings, 'SILENTCLIP'), ellipsis: has([...res.problems, ...res.warnings], 'ELLIPSIS') }
     }, findOverflow.toString(), ALLOWED)
     close()
-    const ok = r.scroller && r.cut && r.clip && !r.ellipsis
-    console.log(`selftest: ${JSON.stringify(r)} → ${ok ? 'ok' : 'FAIL'}`)
+    let ok = r.scroller && r.cut && r.clip && !r.ellipsis
+    console.log(`selftest detector: ${JSON.stringify(r)} → ${ok ? 'ok' : 'FAIL'}`)
+    // The steps that must not pass silently: run the guard with each one broken; it has to exit 1 and say why.
+    const runs = [
+      ['tabs', 'ticket-overview', /expected 6 ticket tabs/],
+      ['overlay', 'new-ticket-overlay', /New ticket overlay \(\[role=dialog\]\) did not open/],
+      ['loading', 'tickets', /still loading after 30 s: a "Loading…" text/],
+    ]
+    for (const [what, only, says] of runs) {
+      const child = spawn(process.execPath, [process.argv[1], '--quick', '--url', BASE, '--only', `^(${only}|ticket-tabs)$`, '--break', what], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let out = ''
+      child.stdout.on('data', (d) => (out += d))
+      child.stderr.on('data', (d) => (out += d))
+      const code = await new Promise((res) => child.on('close', res))
+      const pass = code === 1 && says.test(out)
+      ok &&= pass
+      console.log(`selftest --break ${what}: exit ${code}, ${says.test(out) ? 'reason reported' : 'reason missing'} → ${pass ? 'ok' : 'FAIL'}`)
+    }
     process.exit(ok ? 0 : 1)
   }
 
@@ -359,6 +379,8 @@ async function main() {
           if (!ONLY || ONLY.source.includes('ticket-')) {
             await go('/ticket/DEMO-0043')
             // The ticket's own tab row: the first tablist in the page.
+            // Self-test: the tab row went missing.
+            if (BREAK === 'tabs') await evaluate(() => document.querySelector('main [role="tablist"]')?.remove())
             const tabs = await evaluate(() => [...(document.querySelector('main [role="tablist"]')?.querySelectorAll('[role="tab"]') ?? [])].map((t) => t.textContent.trim()))
             if (tabs.length < TICKET_TABS && (!ONLY || ONLY.test('ticket-tabs'))) await check(config, 'ticket-tabs', [`expected ${TICKET_TABS} ticket tabs on DEMO-0043, found ${tabs.length}`])
             for (let i = 0; i < tabs.length; i++) {
@@ -379,10 +401,11 @@ async function main() {
           // The New ticket overlay over a page.
           if (!ONLY || ONLY.test('new-ticket-overlay')) {
             await go('/tickets')
-            await evaluate(() => {
+            const BREAK_OVERLAY = BREAK === 'overlay'
+            await evaluate((BREAK_OVERLAY) => {
               document.activeElement?.blur()
-              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))
-            })
+              if (!BREAK_OVERLAY) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))
+            }, BREAK_OVERLAY)
             await settle()
             const open = await evaluate(() => !!document.querySelector('[role="dialog"]'))
             await check(config, 'new-ticket-overlay', open ? undefined : ['the New ticket overlay ([role=dialog]) did not open'])

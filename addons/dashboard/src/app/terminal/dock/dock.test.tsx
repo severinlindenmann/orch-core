@@ -275,6 +275,7 @@ describe('the sidebar beside a right-hand dock (N11)', () => {
   afterEach(() => {
     localStorage.removeItem('orch.sidebar.p_sev')
     localStorage.removeItem('orch.sidebar.docked.p_sev')
+    localStorage.removeItem('orch.sidebar.lastViewer')
   })
   it('becomes the rail while the dock squeezes the page; expanding it there is remembered for that situation only', async () => {
     withPrefs({ open: true, side: 'right' })
@@ -288,6 +289,8 @@ describe('the sidebar beside a right-hand dock (N11)', () => {
     expect(localStorage.getItem('orch.sidebar.docked.p_sev')).toBe('wide')
     expect(localStorage.getItem('orch.sidebar.p_sev')).toBe('wide')
     expect(localStorage.getItem('orch.sidebar')).toBeNull()
+    // Remembered so the next load uses this viewer's choice before the viewer has loaded (no wide-sidebar flash).
+    expect(localStorage.getItem('orch.sidebar.lastViewer')).toBe('p_sev')
     // Collapsing it on the wide screen (dock moved to the bottom) is the usual choice and does not touch the docked one.
     await user.click(await menu(user, d, 'Move to the bottom'))
     await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }))

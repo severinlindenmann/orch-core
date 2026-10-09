@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouterState } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -27,37 +27,50 @@ interface ShellUi {
 /** The usual sidebar choice and the one made while the right-hand dock squeezes the page (N11), per viewer. */
 const railKey = (viewer: string) => `orch.sidebar.${viewer}`
 const railDockKey = (viewer: string) => `orch.sidebar.docked.${viewer}`
-/** The earlier, browser-wide key: moved to the first viewer who loads the app, then removed. */
+/** The earlier, browser-wide key: moved to the first viewer who loads the app (in an effect), then removed. */
 const LEGACY_RAIL_KEY = 'orch.sidebar'
+/** Who used this browser last: their choice applies while the viewer is still loading, so the sidebar does not flash. */
+const LAST_VIEWER_KEY = 'orch.sidebar.lastViewer'
 
-function readPref(key: string, legacy?: string): RailPref {
+const get = (key: string): string | null => {
   try {
-    let v = localStorage.getItem(key)
-    if (v === null && legacy) {
-      const old = localStorage.getItem(legacy)
-      if (old !== null) {
-        localStorage.setItem(key, old)
-        localStorage.removeItem(legacy)
-        v = old
-      }
-    }
-    return v === 'wide' || v === 'narrow' ? v : 'auto'
+    return localStorage.getItem(key)
   } catch {
-    return 'auto'
+    return null
   }
 }
+const asPref = (v: string | null): RailPref => (v === 'wide' || v === 'narrow' ? v : 'auto')
 
+/** Reads only; the legacy key counts until it has been moved. */
 function readRailPrefs(viewer: string | undefined): { viewer: string | undefined; pref: RailPref; dockPref: RailPref } {
-  if (!viewer) return { viewer, pref: 'auto', dockPref: 'auto' }
-  return { viewer, pref: readPref(railKey(viewer), LEGACY_RAIL_KEY), dockPref: readPref(railDockKey(viewer)) }
+  const who = viewer ?? get(LAST_VIEWER_KEY) ?? undefined
+  if (!who) return { viewer, pref: asPref(get(LEGACY_RAIL_KEY)), dockPref: 'auto' }
+  return { viewer, pref: asPref(get(railKey(who)) ?? get(LEGACY_RAIL_KEY)), dockPref: asPref(get(railDockKey(who))) }
+}
+
+/** Once the viewer is known: remember them, and move the legacy key to them if they have no choice of their own. */
+function settleViewer(viewer: string) {
+  try {
+    localStorage.setItem(LAST_VIEWER_KEY, viewer)
+    const old = localStorage.getItem(LEGACY_RAIL_KEY)
+    if (old === null) return
+    if (localStorage.getItem(railKey(viewer)) === null) localStorage.setItem(railKey(viewer), old)
+    localStorage.removeItem(LEGACY_RAIL_KEY)
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /** Wide or narrow (icon rail). Lives in the shell so the sidebar, the toaster and the dock agree on the rail width. */
 function useRailState() {
-  const viewer = useQuery({ queryKey: ['me'], queryFn: api.getMe }).data?.person
+  const qc = useQueryClient()
+  const fetched = useQuery({ queryKey: ['me'], queryFn: api.getMe }).data?.person
+  // The cache may already know the viewer before this query settles (another component asked first).
+  const viewer = fetched ?? qc.getQueryData<{ person: string }>(['me'])?.person
   const [stored, setStored] = useState(() => readRailPrefs(viewer))
   const current = stored.viewer === viewer ? stored : readRailPrefs(viewer)
   useEffect(() => {
+    if (viewer) settleViewer(viewer)
     if (stored.viewer !== viewer) setStored(readRailPrefs(viewer))
   }, [viewer, stored.viewer])
   const { pref, dockPref } = current

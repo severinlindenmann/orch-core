@@ -1,4 +1,5 @@
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
+import { gateSignedContent } from '@/api/gates'
 import type {
   AcceptanceStatus,
   Actor,
@@ -316,15 +317,10 @@ export function deriveTicket(
 function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[]): { covers: string[]; material: string } {
   switch (g) {
     case 'requirements':
-      return {
-        covers: ['Section: Requirements', 'Section: Out of scope', `Acceptance criteria (${def.acceptance.length})`, 'Type and size'],
-        material: JSON.stringify([body.requirements, body.out_of_scope, def.acceptance, def.type, def.size]),
-      }
-    case 'plan':
-      return {
-        covers: ['Section: Plan', `Tasks (${def.tasks.length}): ids, text, verify, proves`, 'Section: Decisions'],
-        material: JSON.stringify([body.plan, def.tasks, body.decisions]),
-      }
+    case 'plan': {
+      const { covers, material } = gateSignedContent(g, { ...def, body })
+      return { covers, material }
+    }
     case 'verify':
       return {
         covers: ['Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],

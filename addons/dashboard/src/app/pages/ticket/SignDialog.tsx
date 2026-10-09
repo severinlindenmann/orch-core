@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { gateSignedContent, type SignedSection } from '@/api/gates'
 import { GATE_LABEL, policyText } from './actions'
 import type { HumanAction } from './shared'
 
@@ -33,40 +34,24 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
   return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g) }
 }
 
-type Content = { label: string; text: string; listLabel: string; items: { id: string; text: string }[] }
-
-/** What an approval signs: the section as written plus the list that goes with it (acceptance criteria, or tasks). */
-function signedContent(ticket: TicketDocument, gate: GateName): Content | null {
-  if (gate === 'requirements')
-    return { label: 'Requirements', text: ticket.body.requirements?.trim() ?? '', listLabel: 'Acceptance criteria', items: ticket.acceptance_state.map((a) => ({ id: a.id, text: a.text })) }
-  if (gate === 'plan') return { label: 'Plan', text: ticket.body.plan?.trim() ?? '', listLabel: 'Tasks', items: ticket.tasks_state.map((t) => ({ id: t.id, text: t.text })) }
-  return null
+/** What an approval signs, from the same fields the gate hash covers (api/gates.ts). Type and size are shown but never count as content. */
+function signedSections(ticket: TicketDocument, gate: GateName): SignedSection[] | null {
+  return gate === 'verify' ? null : gateSignedContent(gate, ticket).sections
 }
 
-const isEmpty = (c: Content) => !c.text && c.items.length === 0
+const written = (sections: SignedSection[]) => sections.filter((s) => s.text && !s.meta)
 
-function Signed({ content }: { content: Content }) {
+function Signed({ sections }: { sections: SignedSection[] }) {
   return (
     <div className="max-h-[40vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3 text-[13px]">
-      {content.text && (
-        <section aria-label={content.label}>
-          <h3 className="mb-1 text-[12px] font-medium text-text-muted">{content.label}</h3>
-          <p className="whitespace-pre-wrap break-words text-text">{content.text}</p>
-        </section>
-      )}
-      {content.items.length > 0 && (
-        <section aria-label={content.listLabel}>
-          <h3 className="mb-1 text-[12px] font-medium text-text-muted">{content.listLabel}</h3>
-          <ul className="space-y-1">
-            {content.items.map((i) => (
-              <li key={i.id} className="flex gap-2">
-                <span className="w-9 shrink-0 font-mono text-text-muted">{i.id}</span>
-                <span className="min-w-0 break-words text-text">{i.text}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      {sections
+        .filter((s) => s.text)
+        .map((s) => (
+          <section key={s.label} aria-label={s.label}>
+            <h3 className="mb-1 text-[12px] font-medium text-text-muted">{s.label}</h3>
+            <p className="whitespace-pre-wrap break-words text-text">{s.text}</p>
+          </section>
+        ))}
     </div>
   )
 }
@@ -95,8 +80,9 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
 
   if (!action) return null
   const d = describe(ticket, action)
-  const content = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedContent(ticket, d.gate) : null) : null
-  const nothing = action.kind === 'approve' && !!content && isEmpty(content)
+  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections(ticket, d.gate) : null) : null
+  const hasContent = !!sections && written(sections).length > 0
+  const nothing = action.kind === 'approve' && !!sections && !hasContent
   const needsText = action.kind === 'request_changes' || (action.kind === 'verdict' && result === 'fail')
   const busy = phase !== 'confirm'
   const verb =
@@ -169,7 +155,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
           </DialogDescription>
         </DialogHeader>
 
-        {content && !nothing && <Signed content={content} />}
+        {sections && hasContent && <Signed sections={sections} />}
         {nothing && (
           <p role="status" className="rounded-md border border-dashed border-border px-3 py-2 text-[13px] text-text-muted">
             {hint}

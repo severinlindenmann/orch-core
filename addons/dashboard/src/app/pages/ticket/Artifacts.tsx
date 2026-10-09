@@ -138,9 +138,10 @@ function TextViewer({ text, label }: { text: string; label: string }) {
           variant="outline"
           size="sm"
           onClick={() => {
-            void navigator.clipboard?.writeText(text)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
+            void navigator.clipboard?.writeText(text).then(() => {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            }, () => {})
           }}
         >
           {copied ? <Check /> : <Copy />}
@@ -154,22 +155,33 @@ function TextViewer({ text, label }: { text: string; label: string }) {
   )
 }
 
-/** An HTML artifact runs in the same sandboxed frame as its widget; "View source" shows the bytes instead. */
+/** Only these kinds are documents; an `.html` name on a log or a dataset is shown as the text it is. */
+const DOCUMENT_KINDS: Artifact['kind'][] = ['report', 'diagram', 'other']
+const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.html?$/.test(a.name)
+
+/**
+ * An HTML document runs in the same sandboxed frame as its widget, and only while agent HTML is on: the frame is
+ * drawn from the live `agentHtml` value on every render, so turning the widgets addon off replaces it with source.
+ * "View source" shows the bytes instead.
+ */
 function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
-  const [source, setSource] = useState(!agentHtml)
+  const [source, setSource] = useState(false)
   const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}), height: 520 })
+  const framed = agentHtml && !source && node.success
   return (
-    <div className="space-y-2">
+    <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>
       <div className="flex items-center gap-2">
-        <Pill tone="neutral">Sandboxed preview</Pill>
+        {agentHtml && <AddonBadge name="widgets" />}
+        {framed && <Pill tone="neutral">Sandboxed preview</Pill>}
         {agentHtml && node.success && (
           <Button type="button" variant="outline" size="sm" aria-pressed={source} onClick={() => setSource(!source)}>
+            {source && <Check />}
             View source
           </Button>
         )}
         {!agentHtml && <span className="text-[12px] text-text-muted">Agent HTML is off in this workspace, so only the source is shown.</span>}
       </div>
-      {!source && node.success ? <FrameNode node={node.data} fallback={<p className="text-[13px] text-text-muted">The preview left its sandbox and was removed.</p>} /> : <CodeBlock language="html" text={a.preview!} />}
+      {framed ? <FrameNode node={node.data} fallback={<p className="text-[13px] text-text-muted">The preview left its sandbox and was removed.</p>} /> : <CodeBlock language="html" text={a.preview!} />}
     </div>
   )
 }
@@ -183,7 +195,7 @@ function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
       </div>
     )
   if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this artifact.</p>
-  if (/\.html?$/.test(a.name)) return <HtmlViewer a={a} agentHtml={agentHtml} />
+  if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
     const rows = parseCsv(a.preview)
@@ -336,7 +348,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 </SheetDescription>
               </SheetHeader>
               <div className="min-h-0 flex-1 overflow-auto p-4">
-                <Viewer a={open} agentHtml={agentHtml} />
+                <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />
               </div>
             </>
           )}

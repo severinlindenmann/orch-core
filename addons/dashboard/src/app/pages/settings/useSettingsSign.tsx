@@ -19,6 +19,7 @@ export function useSettingsSign(ws: string): { ask: (p: Pending) => void; prompt
       title={pending.title}
       covers={pending.covers}
       destructive={pending.destructive}
+      confirmLabel="Sign and save"
       onClose={() => setPending(null)}
       onSign={() => {
         const p = pending

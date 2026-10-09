@@ -60,9 +60,10 @@ export function SignDetails({ hash, covers }: { hash?: string; covers?: string[]
               size="icon-sm"
               aria-label="Copy hash"
               onClick={() => {
-                void navigator.clipboard?.writeText(hash)
-                setDone(true)
-                setTimeout(() => setDone(false), 1500)
+                void navigator.clipboard?.writeText(hash).then(() => {
+                  setDone(true)
+                  setTimeout(() => setDone(false), 1500)
+                }, () => {})
               }}
             >
               {done ? <Check /> : <Copy />}

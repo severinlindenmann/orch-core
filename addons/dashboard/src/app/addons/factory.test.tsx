@@ -68,7 +68,10 @@ describe('permits on Today', () => {
     expect(within(card).getByRole('button', { name: 'Grant for this epic' })).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Refuse' })).toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Grant once' }))
-    await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
+    const dialog = await screen.findByRole('dialog', {}, T)
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    expect(covers.textContent).toMatch(/The question: .* asks to run: \S+/) // the command is quoted under Covers
+    await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(screen.queryByTestId(`card-addon:${id}`)).not.toBeInTheDocument(), T)
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted' && e.scope === 'once')).toBe(true)
   })

@@ -17,7 +17,7 @@ import type { Block, WidgetSpec } from './parse'
 export const BODY_HEIGHT = 280
 
 /** `reason` is the technical text (behind "Details"); `plain` says what happened and who fixes it. */
-type Resolved = { ok: true; html: string; height: number; layerLabel: string; text?: string } | { ok: false; reason: string; plain: string }
+type Resolved = { ok: true; html: string; layerLabel: string } | { ok: false; reason: string; plain: string }
 
 const DRIFT = 'This preview changed after it was pinned, so it is not shown. Ask the agent that wrote it to update the pin.'
 
@@ -28,7 +28,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
     if (!t) return { ok: false, reason: `unknown widget template "${spec.widget}"`, plain: 'This widget uses a template orch does not know. Ask its author to fix the block.' }
     const now = templateDigest(t)
     if (now !== spec.sha256) return { ok: false, reason: `Drift: ${spec.widget} no longer matches this block's pin (the template is now ${now.slice(0, 12)}…, the block pins ${spec.sha256!.slice(0, 12)}…). It is not shown until the block is re-pinned.`, plain: DRIFT }
-    return { ok: true, html: frameDocument(t.html, spec.data), height: spec.height ?? t.minHeight, layerLabel: spec.widget! }
+    return { ok: true, html: frameDocument(t.html, spec.data), layerLabel: spec.widget! }
   }
   if (spec.artifactTicket && spec.artifactTicket !== ticket.key)
     return { ok: false, reason: `artifact belongs to ${spec.artifactTicket}, not to this ticket`, plain: `This widget shows a page from ${spec.artifactTicket}, not from this ticket. Ask its author to fix the block.` }
@@ -37,7 +37,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
   const now = sha256Hex(a.preview)
   if (now !== spec.sha256)
     return { ok: false, reason: `sha256 does not match: ${spec.artifact} has ${now.slice(0, 12)}…, the block pins ${spec.sha256!.slice(0, 12)}…. The page changed since this widget was written, so it does not run.`, plain: DRIFT }
-  return { ok: true, html: frameDocument(a.preview, spec.data), height: spec.height ?? 240, layerLabel: 'one-off' }
+  return { ok: true, html: frameDocument(a.preview, spec.data), layerLabel: 'one-off' }
 }
 
 /** What a parse refusal means for the reader and who fixes it. The technical text stays behind "Details". */

@@ -5,7 +5,7 @@ import type { NewTicketRequest, TicketType } from '@/api/types'
  * Pure rules, shared by the overlay and the palette. The type is guessed from words; the first match in this order wins.
  */
 const TYPE_WORDS: [TicketType, RegExp][] = [
-  ['bug', /\b(bugs?|fix(es|ed|ing)?|broken|breaks?|crash(es|ed|ing)?|errors?|fails?|failing|failed|regression|wrong)\b/],
+  ['bug', /\b(bugs?|fix(es|ed|ing)?|broken|breaks?|crash(es|ed|ing)?|fails?|failing|failed|regression)\b/],
   ['spike', /\b(spike|investigate|research|explore|find out|figure out|evaluate)\b/],
   ['chore', /\b(chore|clean ?up|bump|upgrade|update dependenc(y|ies)|rename|refactor|tidy)\b/],
 ]
@@ -28,9 +28,10 @@ export function quickTitle(text: string): string {
   return `${(space > 40 ? cut.slice(0, space) : cut).replace(/[.,;:\s]+$/, '')}…`
 }
 
-/** Why the text cannot become a ticket yet, or null. */
+/** Why the text cannot become a ticket yet, or null: at least two words, and a title of 3 characters or more. */
 export function quickProblem(text: string): string | null {
-  return quickTitle(text).length < 3 ? 'Write a few words first.' : null
+  const words = text.trim().split(/\s+/).filter(Boolean).length
+  return words < 2 || quickTitle(text).length < 3 ? 'Write at least two words.' : null
 }
 
 /** The request the host gets: a backlog ticket with the text as its requirements. */

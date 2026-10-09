@@ -84,7 +84,7 @@ function parseDraft(raw: unknown): Draft | null {
 }
 
 /** The stored draft; a malformed one is removed and treated as no draft. */
-function readDraft(key: string): Draft | null {
+export function readDraft(key: string): Draft | null {
   try {
     const raw = localStorage.getItem(key)
     if (!raw) return null

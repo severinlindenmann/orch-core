@@ -16,7 +16,7 @@ let nextSample = 0
  * Dictation, simulated: no microphone is opened (no getUserMedia, no MediaRecorder). Recording shows a timer and a
  * level meter; Stop hands over the next sample transcription. The meter holds still under prefers-reduced-motion.
  */
-export function Dictate({ onTranscript, disabled }: { onTranscript: (text: string) => void; disabled?: boolean }) {
+export function Dictate({ onTranscript, onCancel, disabled }: { onTranscript: (text: string) => void; onCancel?: () => void; disabled?: boolean }) {
   const [recording, setRecording] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const [levels, setLevels] = useState<number[]>(() => Array(BARS).fill(0.2))
@@ -27,12 +27,21 @@ export function Dictate({ onTranscript, disabled }: { onTranscript: (text: strin
     setRecording(false)
     setSeconds(0)
     if (keep) onTranscript(SAMPLE_TRANSCRIPTS[nextSample++ % SAMPLE_TRANSCRIPTS.length])
+    else onCancel?.()
   }
   stopRef.current = () => stop(true)
 
   useEffect(() => {
     if (!recording) return
     const started = Date.now()
+    // Esc stops the recording (like Stop) instead of closing the sheet: caught on the window before the dialog sees it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      stopRef.current()
+    }
+    window.addEventListener('keydown', onKey, true)
     const tick = window.setInterval(() => {
       const s = Math.floor((Date.now() - started) / 1000)
       if (s >= DICTATE_MAX_S) stopRef.current()
@@ -40,6 +49,7 @@ export function Dictate({ onTranscript, disabled }: { onTranscript: (text: strin
     }, 250)
     const meter = still.current ? null : window.setInterval(() => setLevels((prev) => prev.map((_, i) => 0.15 + Math.abs(Math.sin(Date.now() / 180 + i * 1.7)) * (0.35 + Math.random() * 0.5))), 120)
     return () => {
+      window.removeEventListener('keydown', onKey, true)
       window.clearInterval(tick)
       if (meter !== null) window.clearInterval(meter)
     }
@@ -58,7 +68,7 @@ export function Dictate({ onTranscript, disabled }: { onTranscript: (text: strin
       <span role="status" className="sr-only">
         Recording (simulated)
       </span>
-      <span className="font-mono text-[12px] tabular-nums text-text" aria-label={`Recording, ${seconds} seconds`}>
+      <span className="font-mono text-[12px] tabular-nums text-text">
         {clock(seconds)}
       </span>
       <span aria-hidden data-testid="level-meter" data-still={still.current || undefined} className="flex h-5 items-center gap-[2px]">

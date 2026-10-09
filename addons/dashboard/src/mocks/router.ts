@@ -342,6 +342,11 @@ export function buildRouter(): MockRouter {
     if (!res.ok) return fail(res.status, res.code, res.message, res.hint)
     return ok({ ok: true, ticket: res.ticket }, 201)
   })
+  r.add('POST', '/api/workspaces/:ws/tickets/:key/undo-create', (s, c) => {
+    const res = s.undoCreate(c.params.ws, c.params.key)
+    if (!res.ok) return fail(res.status, res.code, res.message, res.hint)
+    return ok({ ok: true })
+  })
   readOf('/api/workspaces/:ws/views', (s, c) =>
     ok(s.views(c.params.ws)),
   )

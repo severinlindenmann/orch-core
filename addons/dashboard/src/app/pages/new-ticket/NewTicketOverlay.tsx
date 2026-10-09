@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSwitchGuard, useWorkspace } from '@/app/workspace'
-import { EMPTY, NewTicketForm, carryDraftToPage, draftKey, writeDraft } from './index'
+import { EMPTY, NewTicketForm, carryDraftToPage, draftKey, readDraft, writeDraft } from './index'
 import { QuickTicket } from './QuickTicket'
 import { guessType, quickTitle } from './quickRules'
 import { useCreatedToast } from './useQuickCreate'
@@ -32,17 +32,37 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
   const leaving = useRef(false)
   const restoreFocus = useRef(true)
   const dirty = () => !leaving.current && (formDirty.current || !!quick.trim())
-  const [asking, setAsking] = useState<{ keep: () => void; discard: () => void } | null>(null)
+  /** The prompt's answers; `keepDraft` (close and keep the autosaved form draft) only when the form has text. */
+  const [asking, setAsking] = useState<{ keep: () => void; discard: () => void; keepDraft?: () => void } | null>(null)
   const onDirtyChange = useCallback((d: boolean) => void (formDirty.current = d), [])
 
   const discardDraft = () => {
     if (me && workspace) writeDraft(draftKey(me.person, workspace.id), null)
+  }
+  /** Puts the quick line into the stored draft so it is never dropped: appended to the requirements, or a new draft. */
+  const foldQuickIntoDraft = () => {
+    const text = quick.trim()
+    if (!me || !workspace || !text) return
+    const key = draftKey(me.person, workspace.id)
+    const stored = formDirty.current ? readDraft(key) : null
+    if (stored) {
+      const req = stored.sections.requirements?.trim()
+      writeDraft(key, { ...stored, sections: { ...stored.sections, requirements: req ? `${req}\n\n${text}` : text } })
+    } else writeDraft(key, { ...EMPTY, type: guessType(text), title: quickTitle(text), sections: { requirements: text } })
+  }
+  /** Close and keep the draft (the form autosaves it; the quick line goes into it). */
+  const keepDraftThen = (go: () => void) => () => {
+    foldQuickIntoDraft()
+    leaving.current = true
+    go()
   }
   // The workspace guard is registered once; it reads the current state through these.
   const dirtyRef = useRef(dirty)
   dirtyRef.current = dirty
   const discardDraftRef = useRef(discardDraft)
   discardDraftRef.current = discardDraft
+  const keepDraftThenRef = useRef(keepDraftThen)
+  keepDraftThenRef.current = keepDraftThen
 
   // Route changes while something is typed (Back, the palette, a toast's Open).
   const blocker = useBlocker({ shouldBlockFn: dirty, withResolver: true, enableBeforeUnload: false })
@@ -55,6 +75,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
           leaving.current = true
           blocker.proceed()
         },
+        keepDraft: formDirty.current ? keepDraftThen(blocker.proceed) : undefined,
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocker.status])
@@ -70,6 +91,12 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
           proceed()
           onClose()
         },
+        keepDraft: formDirty.current
+          ? keepDraftThenRef.current(() => {
+              proceed()
+              onClose()
+            })
+          : undefined,
       })
     },
     [onClose],
@@ -85,6 +112,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
         leaving.current = true
         onClose()
       },
+      keepDraft: formDirty.current ? keepDraftThen(onClose) : undefined,
     })
   }
   const answer = (f: () => void) => {
@@ -92,21 +120,22 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
     f()
   }
 
+  /** The full form's Create: say so (Open, Undo) and close. */
   const created = (ticket: TicketDocument) => {
-    createdToast(ticket)
+    if (workspace) createdToast(ticket, workspace.id)
     leaving.current = true
     onClose()
   }
-  const quickCreated = (ticket: TicketDocument) => {
-    // A half-written form below stays open; the quick line is ready for the next one.
-    if (!formDirty.current) return created(ticket)
-    createdToast(ticket)
-    quickRef.current?.focus()
+  /** A quick ticket (useQuickCreate has already said so): close, unless a half-written form below stays open. */
+  const quickCreated = () => {
+    if (formDirty.current) return quickRef.current?.focus()
+    leaving.current = true
+    onClose()
   }
 
   const openFullPage = () => {
-    // The form autosaves its draft; a quick line typed into an empty form goes along as that draft.
-    if (me && workspace && !formDirty.current && quick.trim()) writeDraft(draftKey(me.person, workspace.id), { ...EMPTY, type: guessType(quick), title: quickTitle(quick), sections: { requirements: quick.trim() } })
+    // The form autosaves its draft; the quick line goes along (appended to the requirements, or as the draft).
+    foldQuickIntoDraft()
     leaving.current = true
     restoreFocus.current = false
     carryDraftToPage()
@@ -120,7 +149,7 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
       <Sheet open onOpenChange={(o) => !o && requestClose()}>
         <SheetContent
           side="right"
-          className="w-[min(92vw,56rem)] gap-0 border-border bg-surface p-0 sm:max-w-none"
+          className="w-[calc(100vw-4rem)] gap-0 border-border bg-surface p-0 sm:max-w-none xl:w-[min(92vw,56rem)]"
           onOpenAutoFocus={(e) => {
             e.preventDefault()
             quickRef.current?.focus()
@@ -131,8 +160,11 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
             ;(opener?.isConnected ? opener : document.getElementById('main'))?.focus()
           }}
         >
-          <SheetHeader className="border-b border-border pr-12">
+          <SheetHeader className="border-b border-border pr-20">
             <SheetTitle className="text-base">New ticket</SheetTitle>
+            <Button type="button" variant="ghost" size="icon" className="absolute right-10 top-2.5 size-7 text-text-muted" aria-label="Open full page" title="Open full page" onClick={openFullPage}>
+              <Maximize2 className="size-4" />
+            </Button>
             <SheetDescription className="sr-only">Create a ticket in one line, or fill in the form.</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4">
@@ -171,12 +203,19 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
           <DialogContent className="max-w-md border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Discard unsaved changes?</DialogTitle>
-              <DialogDescription>What you typed has not been saved as a ticket.</DialogDescription>
+              <DialogDescription>
+                What you typed has not been saved as a ticket.{asking.keepDraft && ' You can close and keep it as a draft for next time.'}
+              </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => answer(asking.keep)}>
                 Keep editing
               </Button>
+              {asking.keepDraft && (
+                <Button variant="outline" onClick={() => answer(asking.keepDraft!)}>
+                  Close, keep draft
+                </Button>
+              )}
               <Button variant="destructive" onClick={() => answer(asking.discard)}>
                 Discard changes
               </Button>

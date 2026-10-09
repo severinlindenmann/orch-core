@@ -508,6 +508,32 @@ export class MockStore {
     return { ok: true, ticket }
   }
 
+  /**
+   * Undo of a create (the "Created … · Undo" toast): removes a ticket its creator made a moment ago. Only while nothing
+   * else has happened to it (its events are still `ticket.created` and maybe `people.set`, all by that person);
+   * otherwise 409 `ticket.undo_too_late`. Seeded tickets and other people's tickets are never removed.
+   */
+  undoCreate(wsId: string, key: string, person = this.viewer): { ok: true } | StoreFailure {
+    if (!this.workspaces.some((w) => w.id === wsId)) return refuse(404, 'not_found', 'No such workspace')
+    if (!can(this.roleIn(wsId, person), 'ticket.create')) return refuse(403, 'forbidden', 'Viewers cannot create or remove tickets.', 'Ask an owner or maintainer.')
+    const made = this.created[key]
+    if (!made || made.ws !== wsId || !this.hasTicket(key) || !this.isVisible(key, person)) return refuse(404, 'not_found', `No ticket ${key}`)
+    const evs = this.eventsOf(key)
+    const byPerson = (e: OrchEvent) => e.actor.kind === 'person' && e.actor.id === person
+    if (!evs.length || evs[0].type !== 'ticket.created' || !byPerson(evs[0])) return refuse(403, 'forbidden', `Only who created ${key} can undo it.`)
+    if (evs.some((e) => !(e.type === 'ticket.created' || e.type === 'people.set') || !byPerson(e)))
+      return refuse(409, 'ticket.undo_too_late', `Something already happened on ${key}, so it is kept.`, 'Open the ticket to change or close it.')
+    this.defs.delete(key)
+    this.bodies.delete(key)
+    this.wsOfKey.delete(key)
+    this.events.delete(key)
+    this.seeded.delete(key)
+    delete this.created[key]
+    this.bump(wsId)
+    this.save()
+    return { ok: true }
+  }
+
   // ------------------------------------------------------------ live cursor
 
   /** Counter that increases on every ticket/workspace append (and addon action) in the workspace. */

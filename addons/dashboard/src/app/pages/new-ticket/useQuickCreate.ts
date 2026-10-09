@@ -7,16 +7,33 @@ import type { TicketDocument } from '@/api/types'
 import { toastApiError } from '@/app/toast'
 import { quickRequest } from './quickRules'
 
-/** "Created DEMO-0051" with the title and an Open button; the person stays where they are. */
+/**
+ * "Created DEMO-0051 · bug" with the title, Open and Undo; the person stays where they are. One toast per ticket
+ * (`id` = the key). Undo removes the ticket through the host, which refuses once anything else happened to it.
+ */
 export function useCreatedToast() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   return useCallback(
-    (ticket: TicketDocument) =>
+    (ticket: TicketDocument, workspaceId: string) =>
       toast.success(`Created ${ticket.key} · ${ticket.type}`, {
+        id: ticket.key,
         description: ticket.title,
         action: { label: 'Open', onClick: () => void navigate({ to: '/ticket/$key', params: { key: ticket.key } }) },
+        cancel: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              await api.undoCreateTicket(workspaceId, ticket.key)
+              await qc.invalidateQueries()
+              toast.success(`Removed ${ticket.key}`, { id: ticket.key, description: ticket.title })
+            } catch (e) {
+              toastApiError(e, `Could not undo ${ticket.key}.`)
+            }
+          },
+        },
       }),
-    [navigate],
+    [navigate, qc],
   )
 }
 
@@ -37,7 +54,7 @@ export function useQuickCreate(workspaceId: string | undefined) {
       try {
         const { ticket } = await api.createTicket(workspaceId, quickRequest(text))
         void qc.invalidateQueries()
-        created(ticket)
+        created(ticket, workspaceId)
         return ticket
       } catch (e) {
         toastApiError(e, 'Could not create the ticket.')

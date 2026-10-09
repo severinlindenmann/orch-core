@@ -1,4 +1,4 @@
-import { Zap } from 'lucide-react'
+import { CornerDownLeft, Zap } from 'lucide-react'
 import { useState, type RefObject } from 'react'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ export function QuickTicket({
   canCreate: boolean
   value: string
   onChange: (text: string) => void
+  /** After the ticket exists (the created toast has already been shown). */
   onCreated: (ticket: TicketDocument) => void
   inputRef: RefObject<HTMLInputElement | null>
 }) {
@@ -76,9 +77,10 @@ export function QuickTicket({
             setError(null)
             inputRef.current?.focus()
           }}
+          onCancel={() => inputRef.current?.focus()}
         />
-        <Button type="submit" variant="outline" className="h-9" aria-label="Create quick ticket" disabled={!canCreate || pending || !text}>
-          Create
+        <Button type="submit" variant="outline" size="icon" className="size-9 shrink-0" aria-label="Create quick ticket" title="Create quick ticket (Enter)" disabled={!canCreate || pending || !text}>
+          <CornerDownLeft />
         </Button>
       </div>
       {error && (

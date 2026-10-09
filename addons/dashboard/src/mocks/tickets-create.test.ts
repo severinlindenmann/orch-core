@@ -77,3 +77,31 @@ describe('create ticket', () => {
     expect((await api.getTicket(r.ticket.key)).key).toBe(r.ticket.key)
   })
 })
+
+describe('undo a create', () => {
+  const req = { ...base, sections: { requirements: 'Something' } }
+  it('removes a ticket you just created, and its key is free again', async () => {
+    const { api, store, ws } = setup()
+    const { ticket } = await api.createTicket(ws, req)
+    await expect(api.undoCreateTicket(ws, ticket.key)).resolves.toEqual({ ok: true })
+    expect(store.hasTicket(ticket.key)).toBe(false)
+    await expect(api.getTicket(ticket.key)).rejects.toMatchObject({ status: 404 })
+  })
+  it('refuses once anything else happened to the ticket', async () => {
+    const { api, store, ws } = setup()
+    const { ticket } = await api.createTicket(ws, req)
+    await api.postAction(ticket.key, { action: 'comment', text: 'On it' })
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 409, code: 'ticket.undo_too_late' })
+    expect(store.hasTicket(ticket.key)).toBe(true)
+  })
+  it('refuses for a seeded ticket, for someone else, and for a viewer', async () => {
+    const { api, store, ws } = setup()
+    await expect(api.undoCreateTicket(ws, 'DEMO-0043')).rejects.toMatchObject({ status: 404 })
+    const { ticket } = await api.createTicket(ws, req)
+    store.setViewer('p_mara')
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 403 })
+    store.setViewer('p_tom')
+    await expect(api.undoCreateTicket(ws, ticket.key)).rejects.toMatchObject({ status: 403 })
+    expect(store.hasTicket(ticket.key)).toBe(true)
+  })
+})

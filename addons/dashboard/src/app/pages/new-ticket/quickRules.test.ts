@@ -27,9 +27,14 @@ describe('quick ticket rules', () => {
     expect(long.length).toBeLessThanOrEqual(80)
     expect(long.endsWith('…')).toBe(true)
   })
-  it('refuses text too short for a title', () => {
-    expect(quickProblem('ok')).toMatch(/few words/)
+  it('needs at least two words', () => {
+    expect(quickProblem('ok')).toBe('Write at least two words.')
+    expect(quickProblem('Refactoring')).toBe('Write at least two words.')
     expect(quickProblem('Do it')).toBeNull()
+  })
+  it('does not call vague words a bug', () => {
+    expect(guessType('Show a friendly error page')).toBe('feature')
+    expect(guessType('Wrong colour on the legend')).toBe('feature')
   })
   it('every sample transcription is accepted by the host as a backlog ticket', async () => {
     const store = createMockStore({ persist: false })

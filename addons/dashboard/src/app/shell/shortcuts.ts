@@ -12,7 +12,12 @@ export interface Shortcut {
   keys: string
   label: string
   /** Absent when another component owns the key. */
-  run?: (go: (to: string) => void) => void
+  run?: (go: (to: string) => void, shell: ShortcutShell) => void
+}
+
+/** What a shortcut can do besides navigating. */
+export interface ShortcutShell {
+  openNewTicket: () => void
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
@@ -24,12 +29,9 @@ const WORKSPACE_SHORTCUTS: Shortcut[] = Array.from({ length: 9 }, (_, i) => ({
   label: `Switch to workspace ${i + 1}`,
 }))
 
-/**
- * Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet).
- * `c` (new-ticket) opens the New ticket overlay; `useShortcuts` does that instead of navigating.
- */
+/** Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet). */
 const RUN: Record<string, Shortcut['run']> = {
-  'new-ticket': (go) => go('/tickets/new'),
+  'new-ticket': (_go, shell) => shell.openNewTicket(),
   'go.today': (go) => go('/'),
   'go.board': (go) => go('/board'),
   'go.tickets': (go) => go('/tickets'),
@@ -62,6 +64,7 @@ export function useShortcuts() {
   const role = useRole()
   useEffect(() => {
     const go = (to: string) => void router.navigate({ to } as never)
+    const shell: ShortcutShell = { openNewTicket }
     let armed: number | null = null
     const disarm = () => {
       if (armed !== null) window.clearTimeout(armed)
@@ -86,7 +89,7 @@ export function useShortcuts() {
         const hit = SHORTCUTS.find((s) => s.run && s.keys === `g ${e.key}`)
         if (hit) {
           e.preventDefault()
-          hit.run!(go)
+          hit.run!(go, shell)
         }
         return
       }
@@ -97,15 +100,13 @@ export function useShortcuts() {
       const hit = SHORTCUTS.find((s) => s.run && s.keys === e.key)
       if (hit) {
         e.preventDefault()
-        if (hit.id === 'new-ticket') {
-          if (role && !can(role, 'ticket.create')) {
-            // A viewer gets the reason, in the palette, instead of a form they cannot submit.
-            setPaletteSeed('New ticket')
-            setPaletteOpen(true)
-          } else openNewTicket()
+        if (hit.id === 'new-ticket' && role && !can(role, 'ticket.create')) {
+          // A viewer gets the reason, in the palette, instead of a form they cannot submit.
+          setPaletteSeed('New ticket')
+          setPaletteOpen(true)
           return
         }
-        hit.run!(go)
+        hit.run!(go, shell)
       }
     }
     window.addEventListener('keydown', onKey)

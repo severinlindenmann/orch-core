@@ -92,7 +92,7 @@ describe('publish page', () => {
   it('a show-once row says "Shown once" instead of Copy link', async () => {
     const { user, panel, press } = await showOnce()
     await press()
-    await user.click(await within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)).findByRole('button', { name: 'Create show-once link' }))
+    await user.click(await within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)).findByRole('button', { name: 'Continue: Share once (share_once)' }))
     await user.click(await screen.findByRole('button', { name: 'I saved it' }, T))
     const item = (await within(panel).findByText('DEMO-0041 ticket page one-time link', {}, T)).closest('li')!
     expect(within(item).getByRole('button', { name: 'Shown once' })).toBeInTheDocument()
@@ -111,7 +111,7 @@ describe('publish page', () => {
     await user.selectOptions(within(ask2).getByLabelText('What to share'), 'report')
     await user.selectOptions(within(ask2).getByLabelText('Works for'), '3')
     await user.selectOptions(within(ask2).getByLabelText('Opens'), '3')
-    await user.click(within(ask2).getByRole('button', { name: 'Create show-once link' }))
+    await user.click(within(ask2).getByRole('button', { name: 'Continue: Share once (share_once)' }))
     const secret = await screen.findByRole('dialog', { name: /Copy this link now/ }, T)
     expect(secret).toHaveTextContent(/before\/after report: opens 3 times, works for 3 days/i)
     await user.click(within(secret).getByRole('button', { name: 'I saved it' }))

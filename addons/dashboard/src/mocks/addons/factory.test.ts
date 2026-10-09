@@ -361,6 +361,8 @@ describe('signed actions leave a core record', () => {
     expect(await fail(run(s, 'pause'))).toBe('409 confirm.required')
     expect(await fail(run(s, 'pause', { confirmed: true, nested: { a: 1 } }))).toBe('400 validation')
     expect(await fail(run(s, 'pause', { confirmed: true, n: Number.NaN }))).toBe('400 validation')
+    expect(await fail(run(s, 'pause', { confirmed: true, 'Target (target)': 'staging' }))).toBe('400 validation')
+    expect(await fail(run(s, 'pause', { confirmed: true, ticket: { key: 'DEMO-0052' } }))).toBe('400 validation') // ticket is signed too
     expect(await fail(run(s, 'pause', { confirmed: true, ...Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`a${i}`, i])) }))).toBe('400 validation')
     expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'addon.action_signed')).toBe(false)
     const long = `${'x'.repeat(500)}\u202etail`

@@ -14,7 +14,7 @@
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
 // Options: --url <base> (default http://127.0.0.1:5201), --quick, --only <regex>, --dataset normal|busy, --docks min,default,max,
-// --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
+// --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading|tabrow and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
 import { spawn } from 'node:child_process'
@@ -303,6 +303,7 @@ async function main() {
       ['tabs', 'ticket-overview', /expected 6 ticket tabs/],
       ['overlay', 'new-ticket-overlay', /New ticket overlay \(\[role=dialog\]\) did not open/],
       ['loading', 'tickets', /still loading after 30 s: a "Loading…" text/],
+      ['tabrow', 'ticket-overview', /ticket tab row disappeared/],
     ]
     for (const [what, only, says] of runs) {
       const child = spawn(process.execPath, [process.argv[1], '--quick', '--url', BASE, '--only', `^(${only}|ticket-tabs)$`, '--break', what], { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -386,12 +387,21 @@ async function main() {
             for (let i = 0; i < tabs.length; i++) {
               const name = `ticket-${tabs[i].toLowerCase().replace(/[^a-z]+.*$/, '')}`
               if (ONLY && !ONLY.test(name)) continue
-              await evaluate(async (n) => {
-                const tab = document.querySelector('main [role="tablist"]').querySelectorAll('[role="tab"]')[n]
+              // The tab row can vanish between steps (a hot reload, a page that re-renders): a failing check, never a crash.
+              // Self-test: the tab row vanishes after it was read.
+              if (BREAK === 'tabrow') await evaluate(() => document.querySelector('main [role="tablist"]')?.remove())
+              const found = await evaluate(async (n) => {
+                const tab = document.querySelector('main [role="tablist"]')?.querySelectorAll('[role="tab"]')[n]
+                if (!tab) return false
                 tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
                 tab.focus()
                 tab.click()
+                return true
               }, i)
+              if (!found) {
+                await check(config, name, [`ticket tab row disappeared (before opening the ${tabs[i]} tab)`])
+                continue
+              }
               await settle()
               const selected = await evaluate((n) => document.querySelector('main [role="tablist"]')?.querySelectorAll('[role="tab"]')[n]?.getAttribute('aria-selected') === 'true', i)
               await check(config, name, selected ? undefined : [`the ${tabs[i]} tab did not open`])

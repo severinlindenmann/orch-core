@@ -13,6 +13,7 @@ import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AddonBadge } from './AddonBadge'
+import { addonName } from './SignConfirm'
 import { canSpawnAgent } from './capabilities'
 import { addonStateKey, useAddons } from './slots'
 import { fmtClock, fmtExact } from '@/lib/time'
@@ -162,10 +163,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
   // Display name (manifest-written) plus the package id, so no addon passes as another or as core.
-  const titleOf = (name: string) => {
-    const t = addons?.find((p) => p.name === name)?.title
-    return t && t !== name ? `${t} (${name})` : name
-  }
+  const titleOf = (name: string) => addonName(addons?.find((p) => p.name === name)?.title ?? name, name)
   const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
 
   const body: ReactNode = (

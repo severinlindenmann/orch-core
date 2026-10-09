@@ -2,6 +2,7 @@
 // Children of `stack` stay `unknown` here: every child is validated again when it is rendered, so one bad
 // child shows the "could not be shown" box instead of taking the whole panel down.
 import { z } from 'zod'
+import { ARG_KEY } from '@/api/addons'
 
 const text = z.string().max(4000)
 const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
@@ -10,7 +11,7 @@ const cell = scalar.nullable()
 const actionId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
 /** Plain values sent with an action: a few, short keys. */
 const argsRecord = z
-  .record(z.string().max(64), scalar)
+  .record(z.string().regex(ARG_KEY), scalar)
   .refine((o) => Object.keys(o).length <= 16, 'at most 16 args')
 const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
 

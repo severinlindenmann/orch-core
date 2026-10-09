@@ -121,7 +121,7 @@ describe('SignConfirm', () => {
     expect(covers.closest('[class*="overflow-auto"]')).toBeNull()
   })
 
-  it('values with invisible characters, newlines, edge spaces or nothing are shown distinguishably; NaN, Infinity and more than 12 args fail closed', () => {
+  it('values with invisible characters, newlines, edge spaces or nothing are shown distinguishably; NaN, Infinity, odd keys and more than 12 args fail closed', () => {
     const args = { a: 'ab\u202Ecd', b: 'ab\u200Bcd', c: 'a\n\nb', d: ' x ', e: '' }
     const view = render(
       <QueryClientProvider client={new QueryClient()}>
@@ -137,7 +137,7 @@ describe('SignConfirm', () => {
     expect(lineOf('e').textContent).toBe('E (e): ""')
     for (const [k, v] of Object.entries(args)) expect(lineOf(k).getAttribute('data-arg-value')).toBe(v)
     view.unmount()
-    for (const bad of [{ n: Number.NaN }, { n: Number.POSITIVE_INFINITY }, Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`a${i}`, i]))]) {
+    for (const bad of [{ n: Number.NaN }, { n: Number.POSITIVE_INFINITY }, { 'Target (target)': 'staging' }, { 'a\u202Eb': 1 }, Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`a${i}`, i]))]) {
       const v = render(
         <QueryClientProvider client={new QueryClient()}>
           <SignConfirm addon="schedules" addonTitle="Schedules" action="arm" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={bad} onSign={() => {}} onClose={() => {}} />

@@ -1,6 +1,7 @@
-import { manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
+import { manifestFor, manifestProblem, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonPackage, InstalledAddon } from '@/api/types'
 import { addonName, Raw, wordsAndId } from '@/addon-ui/SignConfirm'
+import { plain } from '@/components/sign/visible'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { addedCapabilities, explain, removedCapabilities } from './capabilities'
 
@@ -33,31 +34,41 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
   const labelled = viewerNext.filter((a) => a.label !== a.id)
   // The addon by its manifest title (it could say anything) and always its package id.
   const named = addonName(addon.title, addon.name)
+  // A name or title core cannot say plainly in its own lines is never signed (the host refuses it too).
+  const bad = manifestProblem(addon)
   // An update keeps the addon's on/off state (the host does not touch it): say which one it is.
   const staysOn = ask.kind === 'update' && ask.addon.ws.enabled
-  const title = update ? `Update ${named} to ${version}` : `${ask.kind === 'install' ? 'Install' : 'Grant'} ${named} ${version}`
+  // Version and capabilities come from the package: every invisible character shown (plain), as for any addon string.
+  const v = plain(version)
+  const title = update ? `Update ${named} to ${v}` : `${ask.kind === 'install' ? 'Install' : 'Grant'} ${named} ${v}`
 
   return (
     <SignPrompt
       title={title}
       description={update ? 'Signing grants the new version. The addon stays as it is now (on or off).' : 'One signature grants these capabilities and turns the addon on.'}
       covers={[
-        `Addon: ${addon.name} ${version}`,
-        caps.length ? `Capabilities: ${caps.join(', ')}` : 'Capabilities: none',
+        `Addon: ${plain(addon.name)} ${v}`,
+        caps.length ? `Capabilities: ${caps.map(plain).join(', ')}` : 'Capabilities: none',
         viewersCan,
         ...(turnsOn ? ['Grants these capabilities and turns it on in this workspace'] : []),
         ...(update ? [staysOn ? `The new capabilities take effect now and ${named} stays on` : `${named} stays off; the new capabilities apply when it is turned on`] : []),
         ...(caps.includes('pty') ? ['Agents never get pty'] : []),
       ]}
       confirmLabel={update ? 'Update' : 'Grant and turn on'}
+      disabled={!!bad}
       hash={`sha256:${sha}`}
       onSign={onSign}
       onClose={onClose}
     >
       <div className="space-y-3 text-[13px]">
+        {bad && (
+          <p role="alert" className="text-danger">
+            Core cannot sign this package. {bad}
+          </p>
+        )}
         <div className="flex items-center gap-2">
-          <span className="font-medium">{addon.title}</span>
-          <span className="font-mono text-text-muted">{version}</span>
+          <span className="font-medium">{named}</span>
+          <Raw>{version}</Raw>
         </div>
         {update && (
           <section aria-label="From the addon: changelog" className="rounded-md border border-dashed border-border p-2 text-text-muted">
@@ -68,10 +79,10 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         {update && (added.length > 0 || removed.length > 0) && (
           <ul aria-label="Capability changes" className="space-y-0.5 font-mono">
             {added.map((c) => (
-              <li key={c} className="text-success">{`+ ${c}`}</li>
+              <li key={c} className="text-success">{`+ ${plain(c)}`}</li>
             ))}
             {removed.map((c) => (
-              <li key={c} className="text-danger">{`- ${c}`}</li>
+              <li key={c} className="text-danger">{`- ${plain(c)}`}</li>
             ))}
           </ul>
         )}
@@ -98,7 +109,7 @@ export function GrantDialog({ ask, onSign, onClose }: { ask: GrantAsk; onSign: (
         <ul className="space-y-1">
           {caps.map((c) => (
             <li key={c} className="flex gap-2">
-              <code className="font-mono">{c}</code>
+              <Raw>{c}</Raw>
               <span className="text-text-muted">{explain(c)}</span>
             </li>
           ))}

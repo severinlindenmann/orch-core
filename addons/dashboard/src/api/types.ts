@@ -633,21 +633,23 @@ export interface ActionMeta {
    * Core confirms this action in its own dialog before it is posted (the addon's node cannot skip it).
    * 'spawn_agent': the start-agent dialog (signs a grant first when the person has none). The host refuses the
    * action without core's `confirmed` flag (409 confirm.required).
-   * 'sign': core's own signing prompt (what is covered, then Touch ID). The dialog title is `label`; the host
+   * 'sign': core's own signing prompt (what is covered, then Touch ID). Title, covers and button are core's words
+   * (the action id, the addon's "Title (id)", every arg); `label` is shown in the addon's labelled region. The host
    * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
   confirm?: 'spawn_agent' | 'sign' | 'destructive' | 'options'
   /**
-   * 'destructive': core's own confirm dialog (not a signature) whose button names the consequence ("Revoke link").
-   * `confirmLabel` is that button's text, `confirmText` the sentence above it. Both are the package's words, shown
-   * as plain text; the dialog's title and Cancel are core's. It is a confirmation, not a signature: the host sets no flag.
+   * 'destructive': core's own confirm dialog (not a signature). Title, the args it sends, the consequence line and
+   * the button ("Confirm: Revoke (revoke)") are core's; `confirmLabel` and `confirmText` are the package's words, shown
+   * in full in its labelled region. The host refuses the action without core's `confirmed` flag (409 confirm.required).
    */
   confirmLabel?: string
   confirmText?: string
   /**
-   * 'options': core's small dialog asks for these choices first (a select per field, `label` is the title and the
-   * button), then posts the action with `{ [field.key]: chosen value }` merged into its args. The host validates the values.
-   * Not a signature. The package's words are plain text; core builds the structure.
+   * 'options': core's small dialog asks for these choices first (a select per field), then posts the action with
+   * `{ [field.key]: chosen value }` merged into its args and core's `confirmed` flag (the host refuses it without).
+   * Not a signature. Title, the args it sends and the button ("Continue: Share once (share_once)") are core's; the
+   * label, note, field and choice labels are the package's words, shown in its labelled regions.
    */
   options?: { fields: { key: string; label: string; choices: { value: string | number; label: string }[]; default: string | number }[]; note?: string }
   /**

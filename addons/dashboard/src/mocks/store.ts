@@ -30,7 +30,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, pendingUpdate, manifestFor, sameSet, viewerActions } from '@/api/addons'
+import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
@@ -932,6 +932,9 @@ export class MockStore {
       if (st) return refuse(409, 'addon.installed', `${name} is already installed.`)
       const c = pkg
       if (!c) return refuse(404, 'not_found', `No addon ${name} in the catalog`)
+      // Core names the addon "Title (id)" in its own lines: a name or title it cannot say plainly is refused.
+      const bad = manifestProblem(c)
+      if (bad) return refuse(409, 'addon.invalid_manifest', `${name} cannot be installed. ${bad}`, 'The addon must be published with a valid name and title.')
       // One signed act (R-f): the values the owner saw must be the catalog's now; install, grant and turn on are recorded together.
       const signedInstall = 'version' in req
       if (signedInstall && (req.version !== c.version || req.package_sha256 !== c.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, c.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(manifestFor(c, c.version)).map((a) => a.id))))
@@ -1028,9 +1031,11 @@ export class MockStore {
     if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
     // A signature covers exactly what core showed: plain finite values only, at most 12 besides core's flag and ticket.
     if (meta?.confirm === 'sign') {
-      const signedArgs = Object.entries(body).filter(([k]) => k !== 'confirmed' && k !== 'ticket')
-      if (signedArgs.length > 12 || signedArgs.some(([, v]) => !(typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))))
-        return refuse(400, 'validation', 'A signed action carries at most 12 plain values.', 'Nothing was signed.')
+      // Every key and value is checked, `ticket` included (it is part of what is signed); only core's flag is left out.
+      const signed = Object.entries(body).filter(([k]) => k !== 'confirmed')
+      const plainValue = (v: unknown) => typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))
+      if (signed.filter(([k]) => k !== 'ticket').length > 12 || signed.some(([k, v]) => !ARG_KEY.test(k) || !plainValue(v)))
+        return refuse(400, 'validation', 'A signed action carries at most 12 plain values under plain keys.', 'Nothing was signed.')
     }
     // Core's confirm (destructive) and choice (options) dialogs come first too; addon args cannot set `confirmed`.
     if ((meta?.confirm === 'destructive' || meta?.confirm === 'options') && body.confirmed !== true) return refuse(409, 'confirm.required', 'This asks first in orch\'s own dialog.', 'Press the button and confirm in the dialog.')

@@ -35,3 +35,9 @@ describe('tables that are often empty say so', () => {
     }
   })
 })
+
+describe('arg keys', () => {
+  const withArgs = (args: Record<string, unknown>) => parseNode({ type: 'button', label: 'Go', action: 'share', args })
+  it.each(['id', 'schedule_id', 'A1', 'x'.repeat(32)])('accepts %s', (k) => expect(withArgs({ [k]: 1 }).ok).toBe(true))
+  it.each(['', '1x', '_x', 'bad key', 'a-b', 'a.b', 'x'.repeat(33), 'ab\u202Ecd', 'Target (target)'])('rejects %j', (k) => expect(withArgs({ [k]: 1 }).ok).toBe(false))
+})

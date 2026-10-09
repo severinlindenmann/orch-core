@@ -1,6 +1,7 @@
 import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
+import { plain } from '@/components/sign/visible'
 import { addonName, Raw } from './SignConfirm'
 import { useAddons } from './slots'
 
@@ -61,7 +62,7 @@ export const decisionTitle = (title: string, addon: string) => `Decide for ${add
 /** The confirmation toast: core's sentence as the title, the addon's own answer as the labelled description. */
 export const decisionToast = (title: string, addon: string, option: string, message?: string) => ({
   signedToast: true as const,
-  message: `Signed: answer ${option} · ${addonName(title, addon)}`,
+  message: `Signed: answer ${plain(option)} · ${addonName(title, addon)}`,
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 

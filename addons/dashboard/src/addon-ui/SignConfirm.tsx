@@ -1,3 +1,4 @@
+import { ARG_KEY } from '@/api/addons'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { plain, Raw } from '@/components/sign/visible'
 import { AddonBadge } from './AddonBadge'
@@ -24,6 +25,7 @@ export function signArgsProblem(args: Record<string, unknown> = {}): string | nu
   const entries = Object.entries(args)
   if (entries.length > MAX_SIGNED_ARGS) return `The addon sent ${entries.length} values; core signs at most ${MAX_SIGNED_ARGS} at once, so nothing was signed or sent.`
   for (const [k, v] of entries) {
+    if (!ARG_KEY.test(k)) return `The addon sent a value under the key "${plain(k)}", which core does not accept, so nothing was signed or sent.`
     if (!scalar(v)) return `The addon sent "${plain(k)}" as a value core cannot show, so nothing was signed or sent.`
   }
   return null

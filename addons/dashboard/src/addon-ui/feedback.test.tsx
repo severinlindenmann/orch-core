@@ -108,7 +108,7 @@ describe('a secret is not kept', () => {
     vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Made a link.', secret: { label: 'Link', value: SECRET } })
     const { client } = draw({ type: 'button', label: 'Make link', action: 'share_once', variant: 'secondary' })
     await press('Make link')
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' })).getByRole('button', { name: 'Create show-once link' }))
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' })).getByRole('button', { name: 'Continue: Share once (share_once)' }))
     const dialog = await screen.findByRole('dialog', { name: /Copy this link now/ })
     const held = () => JSON.stringify([client.getMutationCache().getAll().map((m) => m.state), client.getQueryCache().getAll().map((q) => q.state.data)])
     expect(held()).not.toContain('TOPSECRET123')

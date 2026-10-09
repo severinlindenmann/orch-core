@@ -117,14 +117,13 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
   }
   /**
-   * The static half of undoAllowed: the manifest names an undo target, and that target is a plain action this viewer
-   * may run (no manifest entry means a plain member action, as for every action).
+   * The static half of undoAllowed, for core's consequence line: the manifest names an undo target that it also
+   * declares, and that target is a plain action this viewer may run.
    */
   const undoOffered = (addon: string, action: string) => {
     const target = meta(addon, action)?.undo
-    if (!target || target === action) return false
-    const t = meta(addon, target)
-    return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
+    const t = target && target !== action ? meta(addon, target) : undefined
+    return !!t && !t.confirm && !t.decision && t.kind !== 'navigation' && allowed(addon, target!)
   }
   const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
   /** The confirmation of a signed action: core's sentence as the title, the addon's own message below it, labelled. */

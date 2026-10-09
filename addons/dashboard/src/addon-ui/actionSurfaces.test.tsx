@@ -178,7 +178,7 @@ describe('confirm: options fails closed', () => {
     await press(user)
     const ask = await screen.findByRole('dialog', { name: 'Choose: Share once (share_once) · Publish (publish)' }, T)
     expect(within(ask).getByLabelText('Works for')).toHaveValue('3')
-    await userEvent.click(within(ask).getByRole('button', { name: 'Create show-once link' }))
+    await userEvent.click(within(ask).getByRole('button', { name: 'Continue: Share once (share_once)' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'share_once', expect.objectContaining({ expires_days: 3 })), T)
   })
 })

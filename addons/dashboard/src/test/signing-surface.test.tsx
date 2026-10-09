@@ -157,10 +157,10 @@ const CASES: Case[] = [
       await user.click(await within(panel).findByRole('button', { name: 'New show-once link' }, T))
       return dialogNamed('Choose: Share once (share_once) · Publish (publish)')
     },
-    confirm: press('Create show-once link'),
+    confirm: press('Continue: Share once (share_once)'),
     method: 'runAddonAction',
     arg: 3,
-    addon: ['Create show-once link', 'The link is shown once'],
+    addon: ['Create show-once link', 'The link is shown once', 'What to share', 'The ticket page (read-only)', 'Works for', 'At most 3 times'],
     skip: ['confirmed'],
     args: true,
   },
@@ -405,7 +405,10 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
     for (const r of regions) expect(r.querySelector('[data-arg-key]'), 'an arg line sits inside the addon region').toBeNull()
 
     // (a) Core's words only in the title and covers; the addon's words are shown, inside a labelled region.
+    // The button that confirms is core's too (it makes core send `confirmed` or sign).
+    const buttons = within(dialog).getAllByRole('button').map((b) => b.textContent ?? '')
     for (const s of c.addon ?? []) {
+      expect(buttons.some((b) => b.includes(s)), `a button says "${s}"`).toBe(false)
       expect(title, `title has "${s}"`).not.toContain(s)
       expect(covers, `covers have "${s}"`).not.toContain(s)
       expect(regions.some((r) => r.textContent?.includes(s)), `"${s}" is not shown inside a labelled addon region`).toBe(true)

@@ -1,3 +1,4 @@
+import { PACKAGE_NAME } from '@/api/addons'
 import type { AddonActionResult, AddonDecision } from '@/api/types'
 import type { LaunchPlan, LaunchRequest } from '../sessions'
 import type { Rng } from '../busy/rng'
@@ -127,6 +128,7 @@ export const CORE_EVENT_NAMESPACES: readonly string[] = [
 export const isCoreNamespace = (name: string): boolean => CORE_EVENT_NAMESPACES.includes(name)
 
 export function registerAddon(a: MockAddon): void {
+  if (!PACKAGE_NAME.test(a.name)) throw new Error(`Addon name "${a.name}" must be lower case letters, digits and dashes (starting with a letter, at most 40).`)
   if (isCoreNamespace(a.name)) throw new Error(`Addon name "${a.name}" is a core event namespace; pick another name.`)
   registry.set(a.name, a)
 }

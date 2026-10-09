@@ -2,19 +2,19 @@ import { useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ParsedOptions } from './optionsSchema'
+import { plain } from '@/components/sign/visible'
 import { addonName, argLines, FromAddon, wordsAndId } from './SignConfirm'
 import { SentArgs } from './SentArgs'
 
-const MAX = 120
-const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
 
 type Options = ParsedOptions
 
 /**
- * Core's small dialog for an action the manifest marks `confirm: 'options'`: one native select per field, the
- * package's labels as plain capped text, Cancel as the default focus. Not a signature; the chosen values are posted
- * with the action and the host validates them. Core builds the title and the structure; the package's words (label,
- * note, the row's name) and every arg that will be sent, the chosen values included, sit in the "From the addon" region.
+ * Core's small dialog for an action the manifest marks `confirm: 'options'`: one native select per field, Cancel as
+ * the default focus. Not a signature; the chosen values are posted with the action and core's `confirmed` flag, and the
+ * host validates them. Core's words: the title, the "Sends" list (every arg, the chosen values included, live) and the
+ * button ("Continue: …"). The package's words (label, note, the row's name, field and choice labels) sit in its labelled
+ * regions, in full.
  */
 export function OptionsConfirm({
   addon,
@@ -65,34 +65,39 @@ export function OptionsConfirm({
             onConfirm(values)
           }}
         >
-          {options.fields.map((f) => (
-            <div key={f.key} className="grid gap-1">
-              <label htmlFor={`${id}-${f.key}`} className="text-[13px] text-text-muted">
-                {cap(f.label)}
-              </label>
-              <select
-                id={`${id}-${f.key}`}
-                name={f.key}
-                value={String(values[f.key])}
-                onChange={(e) => {
-                  const c = f.choices.find((x) => String(x.value) === e.target.value)
-                  if (c) setValues((v) => ({ ...v, [f.key]: c.value }))
-                }}
-                className="h-9 rounded-md border border-border bg-bg px-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand"
-              >
-                {f.choices.map((c) => (
-                  <option key={String(c.value)} value={String(c.value)}>
-                    {cap(c.label)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
+          {/* The fields and choices are the package's words: inside its labelled region, apart from core's "Sends". */}
+          <section aria-label={`From the addon: choices of ${addon}`} className="max-h-[40vh] space-y-3 overflow-auto rounded-md border border-dashed border-border p-2">
+            <p className="text-[12px] text-text-muted">The addon's choices ({plain(addonTitle)})</p>
+            {options.fields.map((f) => (
+              <div key={f.key} className="grid gap-1">
+                <label htmlFor={`${id}-${f.key}`} className="text-[13px] text-text-muted">
+                  {f.label}
+                </label>
+                <select
+                  id={`${id}-${f.key}`}
+                  name={f.key}
+                  value={String(values[f.key])}
+                  onChange={(e) => {
+                    const c = f.choices.find((x) => String(x.value) === e.target.value)
+                    if (c) setValues((v) => ({ ...v, [f.key]: c.value }))
+                  }}
+                  className="h-9 rounded-md border border-border bg-bg px-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                  {f.choices.map((c) => (
+                    <option key={String(c.value)} value={String(c.value)}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </section>
           <DialogFooter className="gap-2">
             <Button ref={cancel} type="button" variant="ghost" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">{cap(label)}</Button>
+            {/* Core's words: this button makes core send the action with its `confirmed` flag. */}
+            <Button type="submit">{`Continue: ${wordsAndId(action)}`}</Button>
           </DialogFooter>
         </form>
       </DialogContent>

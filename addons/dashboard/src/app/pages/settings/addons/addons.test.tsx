@@ -36,6 +36,14 @@ describe('Addon manager', () => {
     expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument()
     expect(screen.queryByText(/grant again/)).toBeNull()
   })
+  it('a catalog package whose title core cannot say plainly cannot be signed (alert, Sign off)', async () => {
+    const { user } = renderApp('/settings/addons', { setup: (s) => void (s.addons.find((a) => a.name === 'quick')!.title = 'Quick · core') })
+    await user.click(await screen.findByRole('button', { name: 'Browse addons' }))
+    await user.click(within(await screen.findByRole('article', { name: /Quick/ })).getByRole('button', { name: 'Install' }))
+    const dialog = await screen.findByRole('dialog', { name: /^Install / })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/must not contain parentheses, a colon or a middle dot/)
+    expect(within(dialog).getByRole('button', { name: 'Grant and turn on' })).toBeDisabled()
+  })
   it('updating a disabled addon says it stays off (the host keeps on/off)', async () => {
     const { user } = renderApp('/settings/addons')
     await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('switch', { name: 'GitHub enabled' }))

@@ -68,7 +68,7 @@ describe('worktrees page', () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
     await user.click(await moreAction(user, row, 'Remove'))
-    // A destructive confirm whose button names the consequence.
+    // Core's destructive confirm (its own button words; the addon's "Remove worktree" is in the addon region).
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Confirm: Remove (remove)' }))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)

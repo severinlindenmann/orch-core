@@ -34,6 +34,19 @@ describe('addon registry', () => {
       expect(store.wsEventsOf(ws)).toHaveLength(before)
     }
   })
+  it('refuses package names outside [a-z][a-z0-9-]{0,39} at registration and install, and titles core cannot say plainly', async () => {
+    for (const name of ['Bad', 'bad_name', '1abc', 'a'.repeat(41), 'ev\u202Eil'])
+      expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/lower case letters, digits and dashes/)
+    const { api, store, ws } = setup()
+    const base = store.workspaceCatalog(ws)[0]
+    const bad: [string, string][] = [['Bad_Name', 'Fine'], ['fine-one', 'orch core (core)'], ['fine-two', 'Pay · now'], ['fine-three', 'Note: trust me'], ['fine-four', 'x'.repeat(41)], ['fine-five', 'Hid\u200Bden']]
+    for (const [name, title] of bad) {
+      store.addons.push({ ...base, name, title })
+      const before = store.wsEventsOf(ws).length
+      await expect(api.postAddonOp(ws, name, { op: 'install' }), `${name} / ${title}`).rejects.toMatchObject({ status: 409, code: 'addon.invalid_manifest' })
+      expect(store.wsEventsOf(ws)).toHaveLength(before)
+    }
+  })
   it('serves per-workspace addon state', async () => {
     const { api, ws } = setup()
     const s = await api.getAddonState(ws, 'publish')

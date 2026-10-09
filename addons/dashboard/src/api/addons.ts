@@ -41,3 +41,22 @@ export function manifestFor(pkg: Pick<AddonPackage, 'actions' | 'update'>, insta
   const u = pkg.update
   return u && u.version === installedVersion && u.actions ? { actions: u.actions } : { actions: pkg.actions }
 }
+
+/** A package name: lower case, digits and dashes, starting with a letter, at most 40 characters. */
+export const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/
+/** An arg key an addon may send with an action (node args, signed args). */
+export const ARG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
+const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\u2028\\u2029]', 'u')
+
+/**
+ * Why core will not install or show this package's name and title in its own lines (null when it can). Core writes
+ * the addon as "Title (id)" in titles and covers, so a title must not carry the characters that sentence uses
+ * (parentheses, the middle dot, a colon), invisible characters, or more than 40 characters.
+ */
+export function manifestProblem(pkg: { name: string; title: string }): string | null {
+  if (!PACKAGE_NAME.test(pkg.name)) return 'Its package name must be lower case letters, digits and dashes (starting with a letter, at most 40).'
+  if (pkg.title.length === 0 || pkg.title.length > 40) return 'Its title must be 1 to 40 characters.'
+  if (/[():·]/.test(pkg.title)) return 'Its title must not contain parentheses, a colon or a middle dot.'
+  if (HIDDEN_CHAR.test(pkg.title)) return 'Its title contains invisible or control characters.'
+  return null
+}

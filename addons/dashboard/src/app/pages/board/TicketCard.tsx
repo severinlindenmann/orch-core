@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDraggable } from '@dnd-kit/core'
 import { Bot, CircleAlert, Lock } from 'lucide-react'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
@@ -168,13 +169,23 @@ export function TicketCardBody({
       {d.progress && <ProgressBar ticket={ticket} />}
       <div className="flex min-w-0 items-center gap-1.5">
         <People ticket={ticket} people={people} max={2} />
-        {d.labels && chip && (
-          <span className="inline-flex min-w-0 max-w-[110px] items-center rounded-full border border-border px-1.5 text-[10px] leading-4 text-text-muted">
-            <span className="truncate">{chip}</span>
-          </span>
-        )}
-        {d.labels && more > 0 && <span className="text-[10px] text-text-faint">+{more}</span>}
-        <span className="flex-1" />
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          {d.labels && chip && (
+            <span title={chip} className="inline-flex min-w-0 items-center rounded-full border border-border px-1.5 text-[10px] leading-4 text-text-muted">
+              <span className="truncate">{chip}</span>
+            </span>
+          )}
+          {d.labels && more > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="shrink-0 text-[10px] text-text-faint">+{more}</span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {more} more label{more > 1 ? 's' : ''}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </span>
         {d.estimate && <CardFields ticket={ticket} />}
       </div>
     </div>
@@ -182,32 +193,54 @@ export function TicketCardBody({
 }
 
 /** "Move to…" for the keyboard: a menu of statuses beside the card. */
-function MoveMenu({ ticket, onPick, onClose }: { ticket: TicketSummary; onPick: (s: Status) => void; onClose: () => void }) {
+function MoveMenu({
+  ticket,
+  anchor,
+  onPick,
+  onClose,
+}: {
+  ticket: TicketSummary
+  anchor: HTMLElement | null
+  onPick: (s: Status) => void
+  /** `refocus`: the person dismissed it (Esc); false when focus already went elsewhere. */
+  onClose: (refocus: boolean) => void
+}) {
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.querySelector<HTMLElement>('[role=menuitem]:not([aria-disabled=true])')?.focus()
-  }, [])
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  // Drawn in a portal at the card's corner so the column's scroller cannot clip it; flips up near the bottom of the window.
+  useLayoutEffect(() => {
+    const menu = ref.current
+    if (!menu || !anchor) return
+    const a = anchor.getBoundingClientRect()
+    const h = menu.offsetHeight
+    const top = a.top + 28 + h > window.innerHeight - 8 ? Math.max(8, a.bottom - 28 - h) : a.top + 28
+    setPos({ left: Math.min(a.left + 8, window.innerWidth - menu.offsetWidth - 8), top })
+  }, [anchor])
+  useLayoutEffect(() => {
+    if (pos) ref.current?.querySelector<HTMLElement>('[role=menuitem]:not([aria-disabled=true])')?.focus()
+  }, [pos])
   const items = STATUSES.filter((s) => s !== ticket.status)
-  return (
+  return createPortal(
     <div
       ref={ref}
       role="menu"
       aria-label="Move to"
-      className="absolute left-2 top-8 z-30 flex min-w-40 flex-col rounded-md border border-border-strong bg-popover p-1 shadow-lg shadow-black/40"
+      style={{ position: 'fixed', left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      className="z-50 flex min-w-40 flex-col rounded-md border border-border-strong bg-popover p-1 shadow-lg shadow-black/40"
       onKeyDown={(e) => {
         e.stopPropagation()
         const els = [...(ref.current?.querySelectorAll<HTMLElement>('[role=menuitem]:not([aria-disabled=true])') ?? [])]
         const at = els.indexOf(document.activeElement as HTMLElement)
         if (e.key === 'Escape') {
           e.preventDefault()
-          onClose()
+          onClose(true)
         } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault()
           els[(at + (e.key === 'ArrowDown' ? 1 : -1) + els.length) % els.length]?.focus()
-        } else if (e.key === 'Tab') onClose()
+        } else if (e.key === 'Tab') onClose(false)
       }}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onClose()
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onClose(false)
       }}
     >
       <div className="px-2 py-1 text-[11px] text-text-faint">Move {ticket.key} to</div>
@@ -231,7 +264,8 @@ function MoveMenu({ ticket, onPick, onClose }: { ticket: TicketSummary; onPick: 
           </button>
         )
       })}
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -239,9 +273,9 @@ export function TicketCard({ ticket, people, me, task, canMove, display, onOpen,
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: ticket.key, data: { ticket }, disabled: !canMove })
   const [menu, setMenu] = useState(false)
   const cardRef = useRef<HTMLDivElement | null>(null)
-  const closeMenu = () => {
+  const closeMenu = (refocus: boolean) => {
     setMenu(false)
-    cardRef.current?.focus()
+    if (refocus) cardRef.current?.focus()
   }
   return (
     <div className="relative">
@@ -281,6 +315,7 @@ export function TicketCard({ ticket, people, me, task, canMove, display, onOpen,
       {menu && (
         <MoveMenu
           ticket={ticket}
+          anchor={cardRef.current}
           onClose={closeMenu}
           onPick={(s) => {
             setMenu(false)

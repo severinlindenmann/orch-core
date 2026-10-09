@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
+import { useSlot } from '@/addon-ui'
 import { AddonLanes } from './AddonLane'
 import { ColumnSums } from './ColumnSum'
 import { ListView } from './ListView'
@@ -95,7 +96,8 @@ function Column({
   onMove: (key: string, status: Status) => void
   onCollapse: (collapse: boolean) => void
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status })
+  // A collapsed Done rail is not a drop target: Done is reached by a verdict, never by a drop.
+  const { setNodeRef, isOver } = useDroppable({ id: status, disabled: collapsedRail && status === 'done' })
   const [showAll, setShowAll] = useState(false)
   const limited = status === 'done' && !showAll && tickets.length > DONE_LIMIT
   const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
@@ -111,16 +113,22 @@ function Column({
           isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
         )}
       >
-        <button
-          type="button"
-          aria-label={`Expand ${STATUS_LABEL[status]}, ${total} tickets`}
-          onClick={() => onCollapse(false)}
-          className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 rounded-lg py-2 text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          <ChevronsRight className="size-3.5" aria-hidden />
-          <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px]">{total}</span>
-          <span className="text-[13px] font-semibold [writing-mode:vertical-rl]">{STATUS_LABEL[status]}</span>
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Expand ${STATUS_LABEL[status]}, ${total} tickets`}
+              onClick={() => onCollapse(false)}
+              className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 rounded-lg py-2 text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <ChevronsRight className="size-3.5" aria-hidden />
+              <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px]">{total}</span>
+              <span className="text-[13px] font-semibold [writing-mode:vertical-rl]">{STATUS_LABEL[status]}</span>
+              {humanOnly && <Lock className="size-3 text-text-faint" aria-hidden />}
+            </button>
+          </TooltipTrigger>
+          {humanOnly && <TooltipContent side="left">Human-only: Done is reached by a verdict in Testing.</TooltipContent>}
+        </Tooltip>
       </section>
     )
   }
@@ -133,18 +141,18 @@ function Column({
         isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
       )}
     >
-      <header className="flex items-center gap-2 px-3 py-2">
-        <h2 className="whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
-        <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
+      <header className="@container flex items-center gap-1.5 px-2.5 py-2">
+        <h2 className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
+        <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
           {total}
         </span>
         <ColumnSums tickets={tickets} />
-        <span className="flex-1" />
+        <span className="min-w-0 flex-1" />
         <button
           type="button"
           aria-label={`Collapse ${STATUS_LABEL[status]}`}
           onClick={() => onCollapse(true)}
-          className="rounded p-0.5 text-text-faint outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+          className="shrink-0 rounded p-0.5 text-text-faint outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
         >
           <ChevronsLeft className="size-3.5" aria-hidden />
         </button>
@@ -196,6 +204,9 @@ export function BoardPage() {
   const role = useRole()
   const canMove = can(role, 'ticket.move')
   const boardRef = useRef<HTMLDivElement>(null)
+  const lanes = useSlot('board.lane')
+  const refocus = useRef<{ key: string; status: Status } | null>(null)
+  const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const ticketsKey = ['board', wsId] as const
@@ -240,6 +251,7 @@ export function BoardPage() {
     onSuccess: (_r, { key, status, from }) => {
       if (!from) return
       toast.success(`Moved ${key} to ${STATUS_LABEL[status]}`, {
+        duration: 8000,
         action: { label: 'Undo', onClick: () => move.mutate({ key, status: from }) },
       })
     },
@@ -260,6 +272,17 @@ export function BoardPage() {
     },
   })
 
+  // After a move from the menu, keep the keyboard on the card it moved.
+  useEffect(() => {
+    const r = refocus.current
+    if (!r) return
+    const el = boardRef.current?.querySelector<HTMLElement>(`[data-status="${r.status}"] [data-testid="card-${r.key}"]`)
+    if (el) {
+      refocus.current = null
+      el.focus()
+    }
+  }, [tickets])
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -271,6 +294,7 @@ export function BoardPage() {
   const open = (key: string) => void navigate({ to: '/ticket/$key', params: { key } })
 
   function onDragStart(e: DragStartEvent) {
+    setOverlayWidth(e.active.rect.current.initial?.width)
     setDragging((e.active.data.current?.ticket as TicketSummary | undefined) ?? null)
   }
   function onDragEnd(e: DragEndEvent) {
@@ -284,10 +308,14 @@ export function BoardPage() {
   }
   function moveFromMenu(key: string, to: Status) {
     const from = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === key)?.status
-    if (from && from !== to) move.mutate({ key, status: to, from })
+    if (from && from !== to) {
+      refocus.current = { key, status: to }
+      move.mutate({ key, status: to, from })
+    }
   }
-  function jump(status: Status) {
-    boardRef.current?.querySelector<HTMLElement>(`[data-status="${status}"]`)?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })
+  function jump(target: string) {
+    const sel = STATUSES.includes(target as Status) ? `[data-status="${target}"]` : `[data-lane="${target}"]`
+    boardRef.current?.querySelector<HTMLElement>(sel)?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })
   }
 
   return (
@@ -306,8 +334,15 @@ export function BoardPage() {
         total={tickets.length}
         display={display}
         onDisplay={setDisplay}
-        readOnly={!!role && !canMove}
-        columns={view === 'board' ? STATUSES.map((s) => ({ status: s, label: STATUS_LABEL[s], count: byStatus.get(s)?.length ?? 0 })) : null}
+        moveLimit={!role || canMove ? null : role === 'viewer' ? 'viewer' : 'cannot-move'}
+        columns={
+          view === 'board'
+            ? [
+                ...STATUSES.map((s) => ({ key: s as string, label: STATUS_LABEL[s], count: byStatus.get(s)?.length ?? 0 })),
+                ...lanes.map((l) => ({ key: `${l.addon}/${l.id}`, label: l.title, addon: l.addon })),
+              ]
+            : null
+        }
         onJump={jump}
       />
       {isPending ? (
@@ -353,7 +388,7 @@ export function BoardPage() {
           </div>
           <DragOverlay dropAnimation={null}>
             {dragging ? (
-              <div className="w-[284px]">
+              <div style={{ width: overlayWidth }}>
                 <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} display={display} overlay />
               </div>
             ) : null}

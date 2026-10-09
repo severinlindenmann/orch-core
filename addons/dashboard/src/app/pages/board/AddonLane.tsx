@@ -71,6 +71,7 @@ export function AddonLanes() {
             key={`${c.addon}/${c.id}`}
             aria-label={c.title}
             data-addon={c.addon}
+            data-lane={`${c.addon}/${c.id}`}
             className={cn('relative flex min-h-0 min-w-0 flex-col rounded-lg border', addonLane)}
           >
             <header className="flex items-center gap-2 px-3 py-2">

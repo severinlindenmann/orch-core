@@ -5,7 +5,8 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
 import { DisplayPopover } from './DisplayPopover'
 import { NO_FILTERS, type BoardDisplay, type Filters } from './lib'
-import type { Status } from '@/api/types'
+import { AddonBadge } from '@/addon-ui'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export type View = 'board' | 'list'
 
@@ -55,7 +56,7 @@ export function Toolbar({
   total,
   display,
   onDisplay,
-  readOnly,
+  moveLimit,
   columns,
   onJump,
 }: {
@@ -71,10 +72,11 @@ export function Toolbar({
   total: number
   display: BoardDisplay
   onDisplay: (patch: Partial<BoardDisplay>) => void
-  readOnly: boolean
+  /** 'viewer': read only; 'cannot-move': can act but not move; null: can move. */
+  moveLimit: 'viewer' | 'cannot-move' | null
   /** Column counts for the jump chips (board view only). */
-  columns: { status: Status; label: string; count: number }[] | null
-  onJump: (status: Status) => void
+  columns: { key: string; label: string; count?: number; addon?: string }[] | null
+  onJump: (key: string) => void
 }) {
   const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch })
   const dirty = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
@@ -141,10 +143,18 @@ export function Toolbar({
           </button>
         )}
         <span className="flex-1" />
-        {readOnly && (
-          <span title="Your role cannot move tickets" className="rounded-md border border-border px-2 py-1 text-[11px] text-text-muted">
-            Read only
-          </span>
+        {moveLimit === 'viewer' && (
+          <span className="rounded-md border border-border px-2 py-1 text-[11px] text-text-muted">Read only</span>
+        )}
+        {moveLimit === 'cannot-move' && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0} className="rounded-md border border-border px-2 py-1 text-[11px] text-text-muted outline-none focus-visible:ring-2 focus-visible:ring-brand">
+                Can't move tickets
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Your role can't move tickets</TooltipContent>
+          </Tooltip>
         )}
         {view === 'board' && <DisplayPopover display={display} onChange={onDisplay} />}
         <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
@@ -152,16 +162,18 @@ export function Toolbar({
         </span>
       </div>
       {columns && (
-        <nav aria-label="Jump to column" className="flex flex-wrap items-center gap-1.5 min-[1280px]:hidden">
+        <nav aria-label="Jump to column" className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-text-faint">Jump to</span>
           {columns.map((c) => (
             <button
-              key={c.status}
+              key={c.key}
               type="button"
-              onClick={() => onJump(c.status)}
-              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+              onClick={() => onJump(c.key)}
+              className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
             >
-              {c.label} <span className="font-mono text-text-faint">{c.count}</span>
+              {c.addon && <AddonBadge name={c.addon} />}
+              {c.label}
+              {c.count !== undefined && <span className="font-mono text-text-faint">{c.count}</span>}
             </button>
           ))}
         </nav>

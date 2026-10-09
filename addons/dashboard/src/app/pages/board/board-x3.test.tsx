@@ -40,11 +40,22 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
     expect(card).not.toHaveAttribute('aria-describedby')
   })
 
-  it('a viewer on the busy day has no page-level horizontal scroll', async () => {
+  it('the board scrolls inside its own region: overflow-x-auto and min-w-0, and its parents do not overflow', async () => {
     renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy') })
-    await screen.findAllByTestId(/^card-/, {}, T)
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth)
+    const col = await screen.findByRole('region', { name: 'Backlog' }, T)
+    const scroller = col.parentElement!
+    expect(scroller.className).toContain('overflow-x-auto')
+    expect(scroller.className).toContain('min-w-0')
+    for (let el = scroller.parentElement; el && el !== document.body; el = el.parentElement) {
+      expect(getComputedStyle(el).overflowX, el.className).not.toBe('scroll')
+    }
     mockStore.sim.stopAll()
+  })
+
+  it('the jump nav lists the addon lanes, so they are discoverable at every width', async () => {
+    renderApp('/board')
+    const nav = await screen.findByRole('navigation', { name: 'Jump to column' }, T)
+    expect(await within(nav).findByRole('button', { name: /GitHub issues/ }, T)).toBeInTheDocument()
   })
 
   it('m on a focused card opens Move to, choosing Open moves it, the toast offers Undo', async () => {
@@ -56,6 +67,7 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
     await user.click(within(menu).getByRole('menuitem', { name: 'Open' }))
     const open = screen.getByRole('region', { name: 'Open' })
     await waitFor(() => expect(within(open).getByTestId('card-DEMO-0043')).toBeInTheDocument(), T)
+    await waitFor(() => expect(document.activeElement).toBe(within(open).getByTestId('card-DEMO-0043')), T)
     expect(await screen.findByText('Moved DEMO-0043 to Open', {}, T)).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Undo' }))
     const prog = screen.getByRole('region', { name: 'In progress' })

@@ -73,6 +73,15 @@ export function reconcile(order: string[], entries: Entry[]): { shown: Entry[]; 
   }
 }
 
+/**
+ * Drops ids that are no longer open, so an item resolved and later reopened arrives as new (behind "N new") instead of
+ * silently in its old place. Returns the same array when nothing is dropped.
+ */
+export function pruneOrder(order: string[], entries: Entry[]): string[] {
+  const open = new Set(entries.map((e) => e.id))
+  return order.every((id) => open.has(id)) ? order : order.filter((id) => open.has(id))
+}
+
 /** Groups in fixed order, empty ones left out. Entries keep the order they come in. */
 export function buildGroups(entries: Entry[]): Group[] {
   return GROUPS.flatMap(({ id, label }) => {

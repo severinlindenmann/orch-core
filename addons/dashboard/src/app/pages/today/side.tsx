@@ -43,7 +43,7 @@ function AgentList({ rows, tickets, now }: { rows: AgentRowData[]; tickets: Reco
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-[13px] leading-4 text-text">
               <span className="truncate font-medium">{s.name}</span>
-              {waiting && <span className="shrink-0 text-[11px] text-danger">waiting on you</span>}
+              {waiting && <span className="shrink-0 text-[11px] text-warning">waiting on you</span>}
             </p>
             {ticket && (
               <Link

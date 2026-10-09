@@ -111,13 +111,15 @@ interface CoreRowProps {
   expanded: boolean
   onToggle: () => void
   sign: Sign
+  /** Who asked (questions): shown muted on the second line. */
+  askedBy?: string
   /** Set for people who only read: the row has no buttons and names who decides. */
   decider?: string
 }
 
 // ------------------------------------------------------------------ question
 
-export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, decider }: CoreRowProps) {
+export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const id = `question:${item.ticket}:${item.ref}`
@@ -127,7 +129,12 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, decid
       testId={`card-${id}`}
       icon={<HelpCircle className="size-4" aria-label="question" />}
       ask={item.text}
-      sub={<TicketLine ticket={item.ticket} title={item.title} />}
+      sub={
+        <>
+          <TicketLine ticket={item.ticket} title={item.title} />
+          {askedBy && <span className="text-text-faint"> · Asked by {askedBy}</span>}
+        </>
+      }
       blocking={item.blocking}
       age={ago(item.since, now)}
       expanded={expanded}
@@ -363,10 +370,15 @@ export function FoldRow({
   readOnly,
   expanded,
   onToggle,
+  ticketTitle,
+  decider,
 }: {
   label: string
   decisions: AddonDecision[]
   addonTitle: string
+  ticketTitle?: (key: string) => string | undefined
+  /** Set for people who only read: the row names who decides. */
+  decider?: string
   readOnly: boolean
   expanded: boolean
   onToggle: () => void
@@ -381,7 +393,9 @@ export function FoldRow({
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
-        readOnly ? null : (
+        readOnly ? (
+          decider ? <Decides who={decider} /> : null
+        ) : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={onToggle} aria-label={`Review ${decisions.length}`}>
             Review {decisions.length}
             <ChevronDown className={cn('transition-transform', expanded && 'rotate-180')} />
@@ -392,6 +406,11 @@ export function FoldRow({
       <ul className="divide-y divide-border rounded-md border border-border">
         {decisions.map((d) => (
           <li key={d.id} data-testid={`card-addon:${d.id}`} className="space-y-2 px-3 py-2.5">
+            {d.ticket && (
+              <p className="truncate text-xs text-text-muted">
+                <TicketLine ticket={d.ticket} title={ticketTitle?.(d.ticket) ?? d.title} />
+              </p>
+            )}
             <DecisionBody d={d} readOnly={readOnly} />
           </li>
         ))}

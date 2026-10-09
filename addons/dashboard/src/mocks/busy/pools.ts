@@ -64,7 +64,7 @@ export const QUESTIONS: PoolQuestion[] = [
     options: [{ label: 'Meter head-end', cost: 'no change to billing' }, { label: 'Billing system', cost: '+1 day to remap' }],
   },
   {
-    text: 'Should `valid_from` be a date or a timestamp?',
+    text: 'Should valid_from be a date or a timestamp?',
     whys: ['The choice changes the schema, so it has to be settled before the tests are written.', 'Tariffs change at midnight local time, but readings join on UTC.'],
     options: [{ label: 'Date (local midnight)', cost: 'simpler joins' }, { label: 'Timestamp (UTC)', cost: '+2 tests, one cast' }],
   },
@@ -86,10 +86,10 @@ export const QUESTIONS: PoolQuestion[] = [
   {
     text: 'Who owns the fix on the finance side?',
     whys: ['The export changes the numbers finance closes the month with.', 'Someone has to sign off the reconciled totals.'],
-    options: [{ label: 'Mara', cost: 'knows the export' }, { label: 'Severin', cost: 'free from Monday' }],
+    options: [{ label: 'Mara', cost: 'fix lands after the close, in 3 days' }, { label: 'Severin', cost: '+1 day to hand over the export' }],
   },
   {
-    text: 'May we drop the old `tariff_code` column after the migration?',
+    text: 'May we drop the old tariff_code column after the migration?',
     whys: ['The choice changes the schema, so it has to be settled before the tests are written.', 'Two reports still read the old column.'],
     options: [{ label: 'Keep it one release', cost: 'one release of cleanup later' }, { label: 'Drop it now', cost: '2 reports to update first' }],
   },

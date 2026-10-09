@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AddonDecision, NeedsYouItem } from '@/api/types'
-import { acceptOrder, buildGroups, foldLabel, reconcile, sortEntries, toEntries } from './queue'
+import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, sortEntries, toEntries } from './queue'
 
 const q = (ticket: string, since: string, blocking = false, ref = 'Q1'): NeedsYouItem => ({ kind: 'question', ticket, title: `T ${ticket}`, text: 'Which?', since, ref, blocking })
 const ap = (ticket: string, since: string): NeedsYouItem => ({ kind: 'approval', ticket, title: `T ${ticket}`, text: 'Approve the plan.', since, ref: 'plan' })
@@ -60,5 +60,15 @@ describe('today queue: new items are buffered', () => {
   it('accepting re-sorts everything once', () => {
     const all = toEntries([ap('D-2', '2026-10-08T10:00:00Z'), q('D-0', '2026-10-01T10:00:00Z', true), q('D-1', '2026-10-09T10:00:00Z', true)], [])
     expect(acceptOrder(all)).toEqual(['question:D-0:Q1', 'question:D-1:Q1', 'approval:D-2:plan'])
+  })
+
+  it('an item resolved and later reopened comes back as new, not in its old place', () => {
+    const order = acceptOrder(first)
+    const pruned = pruneOrder(order, first.slice(1)) // D-1 resolved
+    expect(pruned).toEqual(['approval:D-2:plan'])
+    expect(pruneOrder(pruned, first.slice(1))).toBe(pruned) // nothing to drop: same array, no re-render
+    const { shown, fresh } = reconcile(pruned, first) // D-1 reopened
+    expect(shown.map((e) => e.id)).toEqual(['approval:D-2:plan'])
+    expect(fresh.map((e) => e.id)).toEqual(['question:D-1:Q1'])
   })
 })

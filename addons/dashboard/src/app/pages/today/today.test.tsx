@@ -34,6 +34,7 @@ describe('Today: a calm, grouped queue', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
     expect(within(row).getByText('blocking')).toBeInTheDocument()
+    expect(within(row).getByText(/Asked by /)).toBeInTheDocument()
     const radios = await within(row).findAllByRole('radio', {}, T)
     expect(within(row).getByText('Recommended')).toBeInTheDocument()
     const send = within(row).getByRole('button', { name: 'Send answer…' })
@@ -81,6 +82,11 @@ describe('Today: a calm, grouped queue', () => {
   it('keeps a new question out of the list until "Show" (nothing moves under the pointer)', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
+    // The pill's slot is there before anything is new, first in the queue, and holds nothing yet.
+    const slot = screen.getByTestId('new-items')
+    const slotClass = slot.className
+    expect(screen.getByRole('region', { name: 'Needs you' }).firstElementChild).toBe(slot)
+    expect(within(slot).queryByRole('button')).toBeNull()
     mockStore.append('DEMO-0044', {
       type: 'question.asked',
       actor: 'p_mara',
@@ -91,6 +97,9 @@ describe('Today: a calm, grouped queue', () => {
     await user.click(within(row).getByRole('button', { name: 'Send answer…' }))
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Sign with Touch ID' }))
     const pill = await screen.findByRole('button', { name: /^1 new · Show$/ }, T)
+    expect(within(slot).getByRole('button', { name: /^1 new · Show$/ })).toBe(pill)
+    expect(slot.className).toBe(slotClass) // the slot takes no space and does not change: nothing below it moves
+    expect(screen.getByRole('region', { name: 'Needs you' }).firstElementChild).toBe(slot)
     expect(screen.queryByTestId('card-question:DEMO-0044:Q9')).toBeNull()
     await user.click(pill)
     expect(await screen.findByTestId('card-question:DEMO-0044:Q9')).toBeInTheDocument()
@@ -190,6 +199,14 @@ describe('Today: busy day', { timeout: 20_000 }, () => {
     expect(await screen.findByRole('button', { name: /^Verdicts · 9/ }, T)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /new · Show/ })).toBeNull()
     mockStore.sim.stopAll()
+  })
+
+  it('fold sub-rows name their ticket like any row', async () => {
+    const { user } = renderApp('/', { viewer: 'p_sev', ...busy })
+    await user.click(await screen.findByRole('button', { name: /^5 × AI Factory permit/ }, T))
+    const subs = screen.getAllByTestId(/^card-addon:factory\.permit:/)
+    expect(subs).toHaveLength(5)
+    for (const sub of subs) expect(within(sub).getByRole('link', { name: /^DEMO-\d{4}$/ })).toBeInTheDocument()
   })
 
   it('collapses a group from its header', async () => {

@@ -13,7 +13,7 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
-import { acceptOrder, buildGroups, foldLabel, reconcile, toEntries, type Entry, type Row } from './queue'
+import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ApprovalRow, DecisionRow, FoldRow, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, WIDE_QUERY, type Directory } from './shared'
@@ -95,9 +95,11 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
   const [order, setOrder] = useState<string[]>(() => acceptOrder(entries))
   const { shown, fresh } = useMemo(() => reconcile(order, entries), [order, entries])
-  // With nothing on screen there is nothing to keep still: take the new items in directly.
+  // With nothing on screen there is nothing to keep still: take the new items in directly. Resolved ids leave the
+  // accepted order, so an item that reopens later comes back through the pill, not in its old place.
   useEffect(() => {
     if (shown.length === 0 && fresh.length > 0) setOrder(acceptOrder(entries))
+    else setOrder((o) => pruneOrder(o, entries))
   }, [shown.length, fresh.length, entries])
   const groups = useMemo(() => buildGroups(shown), [shown])
 
@@ -140,6 +142,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           label={foldLabel(ds.length, title, ds.map((d) => d.title))}
           decisions={ds}
           addonTitle={title}
+          ticketTitle={(k) => byKey[k]?.title}
+          decider={!canAddon ? deciderOf(row.entries[0]) : undefined}
           readOnly={!canAddon}
           expanded={expanded === row.id}
           onToggle={() => toggle(row.id)}
@@ -162,7 +166,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
         />
       )
     }
-    const props = { item: e.item, ticket: byKey[e.item.ticket], now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined }
+    const askedBy = e.item.kind === 'question' ? byKey[e.item.ticket]?.questions_state.find((q) => q.id === e.item.ref)?.asked_by : undefined
+    const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined }
     if (e.item.kind === 'question') return <QuestionRow key={row.id} {...props} />
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
     return <VerdictRow key={row.id} {...props} />
@@ -198,15 +203,18 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
 
   const queue = (
     <section aria-label={readOnly ? 'Open in the workspace' : 'Needs you'} className="min-w-0 space-y-3">
-      {fresh.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setOrder(acceptOrder(entries))}
-          className="mx-auto flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 text-xs text-text outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {fresh.length} new · Show
-        </button>
-      )}
+      {/* A zero-height sticky slot: the pill floats over the top of the queue, so its arrival moves no row. */}
+      <div data-testid="new-items" className="pointer-events-none sticky top-2 z-10 mb-0 flex h-0 justify-center">
+        {fresh.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOrder(acceptOrder(entries))}
+            className="pointer-events-auto -mt-5 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {fresh.length} new · Show
+          </button>
+        )}
+      </div>
       {groups.map((g) => (
         <QueueGroup
           key={g.id}

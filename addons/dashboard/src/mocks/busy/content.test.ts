@@ -172,6 +172,9 @@ describe('questions', () => {
       expect(pool!.whys).toContain(q.why)
     }
   })
+  it('the pool text is plain: no literal backticks', () => {
+    for (const p of QUESTIONS) expect(`${p.text} ${p.whys.join(' ')} ${p.options.map((o) => `${o.label} ${o.cost}`).join(' ')}`, p.text).not.toContain('`')
+  })
   it('the pool pairs no question with yes / no options it does not ask for', () => {
     for (const p of QUESTIONS) if (!/^(Is|Do|May|Should we|Can)\b/.test(p.text)) expect(p.options.map((o) => o.label), p.text).not.toEqual(['Yes', 'No'])
   })

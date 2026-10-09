@@ -121,7 +121,9 @@ describe('Tickets grouped by epic (N2)', () => {
     expect(ticketRows(table).some((r) => r.dataset.key === 'DEMO-0040')).toBe(false)
     const order = within(table).getAllByRole('row').map((r) => r.getAttribute('data-group') ?? r.getAttribute('data-key'))
     expect(order.indexOf('DEMO-0043')).toBeGreaterThan(order.indexOf('DEMO-0040'))
-    expect(order.indexOf('DEMO-0043')).toBeLessThan(order.indexOf('_none'))
+    // single tickets come first, so a big epic never pushes them out of sight
+    expect(order.indexOf('_none')).toBeLessThan(order.indexOf('DEMO-0040'))
+    expect(screen.getByText(/^\d+ tickets · 2 epics$/)).toBeInTheDocument()
   })
 
   it('Group: None restores the flat list and is remembered', async () => {
@@ -131,7 +133,7 @@ describe('Tickets grouped by epic (N2)', () => {
     await user.click(screen.getByRole('radio', { name: 'None' }))
     await waitFor(() => expect(within(table).queryAllByRole('row').some((r) => r.hasAttribute('data-group'))).toBe(false))
     expect(ticketRows(table).some((r) => r.dataset.key === 'DEMO-0040')).toBe(true)
-    expect(JSON.parse(localStorage.getItem('orch.tickets.group')!).group).toBe('none')
+    expect(JSON.parse(localStorage.getItem('orch.tickets.group.p_sev')!).group).toBe('none')
   })
 
   it('a 40-child epic starts folded to one row; the chevron opens it with Enter and the arrows fold and unfold', async () => {
@@ -159,4 +161,21 @@ describe('Tickets grouped by epic (N2)', () => {
     expect(kids).not.toContain((document.activeElement as HTMLElement | null)?.dataset.key)
     mockStore.sim.stopAll()
   }, 30_000)
+
+  it('a search hit inside a big epic is shown and j/k reach it', async () => {
+    const { user } = renderApp('/tickets', { viewer: 'p_sev', setup: (st) => st.reset('busy') })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, { timeout: 8000 })
+    const kid = mockStore.ticket(mockStore.ticket('DEMO-0100')!.children![7])!
+    await user.type(screen.getByRole('searchbox', { name: 'Search tickets' }), kid.title)
+    await waitFor(() => expect(ticketRows(table).some((r) => r.dataset.key === kid.key)).toBe(true), { timeout: 8000 })
+    mockStore.sim.stopAll()
+  }, 30_000)
+
+  it('is remembered per viewer: Tom does not inherit Severin\'s choice', async () => {
+    renderApp('/tickets', { viewer: 'p_tom', storage: { 'orch.tickets.group.p_sev': JSON.stringify({ group: 'none' }) } })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByText('DEMO-0043')
+    expect(groupRows(table).length).toBeGreaterThan(0)
+  })
 })

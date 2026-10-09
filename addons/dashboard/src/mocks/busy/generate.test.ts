@@ -113,6 +113,7 @@ describe('busy store: counts and mix', () => {
       expect(n, e.key).toBeGreaterThanOrEqual(8)
       expect(n, e.key).toBeLessThanOrEqual(e.key === 'DEMO-0100' ? 40 : 20)
     }
+    expect(new Set(epics.map((e) => e.title)).size).toBe(epics.length)
     // The big one shadows the board unless it is grouped (N2): 40 children.
     expect(s.store.ticket('DEMO-0100')!.children).toHaveLength(40)
     expect(s.store.ticket('DEMO-0050')!.children).toHaveLength(20)

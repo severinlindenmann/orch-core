@@ -51,6 +51,7 @@ export function TicketsTable({
   tickets,
   groups,
   sections,
+  filtering = false,
   onSection,
   people,
   me,
@@ -68,6 +69,8 @@ export function TicketsTable({
   /** Grouped by epic: epic rows with indented children, then "No epic". */
   groups?: EpicGroups | null
   sections?: Record<string, boolean>
+  /** A filter or search is on: big epics are folded by their visible children. */
+  filtering?: boolean
   onSection?: (key: string, collapse: boolean) => void
   people: BoardPeople
   me: string | undefined
@@ -109,13 +112,13 @@ export function TicketsTable({
             <Checkbox checked={isSel} onCheckedChange={() => onToggle(t.key)} aria-label={`Select ${t.key}`} />
           </TableCell>
         )}
-        <TableCell className="px-1.5 py-1.5 font-mono text-[12px] text-text-muted">
+        <TableCell className={cn('px-1.5 py-1.5 font-mono text-[12px] text-text-muted', indent && 'pl-5')}>
           <Link to="/ticket/$key" params={{ key: t.key }} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 rounded outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand">
             {t.key}
             {t.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
           </Link>
         </TableCell>
-        <TableCell className={cn('px-1.5 py-1.5', indent && 'pl-6')}>
+        <TableCell className="px-1.5 py-1.5">
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
           </div>
@@ -197,6 +200,13 @@ export function TicketsTable({
         <TableBody ref={body}>
           {groups
             ? [
+                ...(groups.none.length > 0
+                  ? [
+                      <GroupRows key={NO_EPIC} id={NO_EPIC} colSpan={colSpan} count={groups.none.length} collapsed={sections?.[NO_EPIC] ?? false} onToggle={(c) => onSection?.(NO_EPIC, c)}>
+                        {groups.none.map((t) => renderRow(t))}
+                      </GroupRows>,
+                    ]
+                  : []),
                 ...groups.lanes.map((l) => (
                   <GroupRows
                     key={l.epic.key}
@@ -206,19 +216,12 @@ export function TicketsTable({
                     done={l.done}
                     total={l.total}
                     count={l.children.length}
-                    collapsed={isCollapsed(l, sections ?? {})}
+                    collapsed={isCollapsed(l, sections ?? {}, filtering)}
                     onToggle={(c) => onSection?.(l.epic.key, c)}
                   >
                     {l.children.map((t) => renderRow(t, true))}
                   </GroupRows>
                 )),
-                ...(groups.none.length > 0
-                  ? [
-                      <GroupRows key={NO_EPIC} id={NO_EPIC} colSpan={colSpan} count={groups.none.length} collapsed={sections?.[NO_EPIC] ?? false} onToggle={(c) => onSection?.(NO_EPIC, c)}>
-                        {groups.none.map((t) => renderRow(t))}
-                      </GroupRows>,
-                    ]
-                  : []),
               ]
             : tickets.map((t) => renderRow(t))}
         </TableBody>
@@ -280,13 +283,13 @@ function GroupRows({
                 <Link to="/ticket/$key" params={{ key: epic.key }} className="rounded font-mono text-[12px] font-semibold text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand">
                   {epic.key}
                 </Link>
-                <span className="truncate text-[13px] font-semibold text-text" title={epic.title}>
+                <h3 className="truncate text-[13px] font-semibold text-text" title={epic.title}>
                   {epic.title}
-                </span>
+                </h3>
                 <span className="shrink-0 font-mono text-[11px] text-text-muted">{progressLabel({ done: done ?? 0, total: total ?? 0 })}</span>
               </>
             ) : (
-              <span className="text-[13px] font-semibold text-text">No epic</span>
+              <h3 className="text-[13px] font-semibold text-text">No epic</h3>
             )}
             <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${count} tickets shown`}>
               {count}

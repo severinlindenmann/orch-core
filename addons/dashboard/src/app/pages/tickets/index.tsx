@@ -134,17 +134,18 @@ export function TicketsPage() {
   const { data: everything = [] } = useQuery({ queryKey: ['tickets', wsId, 'all'], queryFn: () => api.listTickets(wsId!), enabled: !!wsId })
 
   const rows = useMemo(() => (all ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [all, search.status])
-  const [grouping, setGrouping] = useTicketsGroup()
+  const [grouping, setGrouping] = useTicketsGroup(me?.person)
   const dirty = hasFilters(search)
   const grouped = grouping.group === 'epic' && hasEpics(everything)
-  const groups = useMemo(
-    () => (grouped ? groupByEpic(everything, rows, dirty || !!search.status?.length) : null),
-    [grouped, everything, rows, dirty, search.status],
-  )
-  // What j/k walks: the rows on screen, so a folded epic's children and the epic rows themselves are skipped.
+  const filtering = dirty || !!search.status?.length
+  const groups = useMemo(() => (grouped ? groupByEpic(everything, rows, filtering) : null), [grouped, everything, rows, filtering])
+  // What j/k walks and what bulk actions act on: the rows on screen ("No epic" first, as in the table).
   const navRows = useMemo(
-    () => (groups ? [...groups.lanes.filter((l) => !isCollapsed(l, grouping.sections)).flatMap((l) => l.children), ...(grouping.sections[NO_EPIC] ? [] : groups.none)] : rows),
-    [groups, grouping.sections, rows],
+    () =>
+      groups
+        ? [...(grouping.sections[NO_EPIC] ? [] : groups.none), ...groups.lanes.filter((l) => !isCollapsed(l, grouping.sections, filtering)).flatMap((l) => l.children)]
+        : rows,
+    [groups, grouping.sections, rows, filtering],
   )
   const counts = useMemo(() => {
     const c = Object.fromEntries(STATUSES.map((s) => [s, 0])) as Record<Status, number>
@@ -209,7 +210,7 @@ export function TicketsPage() {
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const toggle = useCallback((key: string) => setSelected((s) => (s.has(key) ? new Set([...s].filter((k) => k !== key)) : new Set(s).add(key))), [])
-  const visibleKeys = useMemo(() => new Set(rows.map((r) => r.key)), [rows])
+  const visibleKeys = useMemo(() => new Set(navRows.map((r) => r.key)), [navRows])
   const picked = [...selected].filter((k) => visibleKeys.has(k))
 
   const searchRef = useRef<HTMLInputElement>(null)
@@ -252,12 +253,16 @@ export function TicketsPage() {
 
   const sort: SortKey = search.sort ?? 'updated'
   const shown: TicketSummary[] = rows
+  // Grouped, epics are headers and not tickets: "150 tickets · 6 epics".
+  const cardRows = groups ? rows.filter((t) => t.type !== 'epic').length : rows.length
+  const allCards = groups ? everything.filter((t) => t.type !== 'epic').length : everything.length
+  const countLabel = cardRows === (allCards || cardRows) ? `${cardRows} tickets${groups ? ` · ${groups.lanes.length} epics` : ''}` : `${cardRows} of ${allCards}`
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Tickets</h1>
         <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
-          {shown.length === (everything.length || shown.length) ? `${shown.length} tickets` : `${shown.length} of ${everything.length}`}
+          {countLabel}
         </span>
         <span className="flex-1" />
         {hasEpics(everything) && (
@@ -296,7 +301,7 @@ export function TicketsPage() {
         onClear={clear}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
-      {isPending ? (
+      {isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading tickets…</p>
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">
@@ -313,6 +318,7 @@ export function TicketsPage() {
           <TicketsTable
             tickets={shown}
             groups={groups}
+            filtering={filtering}
             sections={grouping.sections}
             onSection={(key, collapse) => setGrouping({ sections: { ...grouping.sections, [key]: collapse } })}
             people={people}

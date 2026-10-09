@@ -29,7 +29,7 @@ import { useSlot } from '@/addon-ui'
 import { AddonLanes } from './AddonLane'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
-import { groupByEpic, hasEpics } from './grouping'
+import { groupByEpic, hasEpics, laneOf } from './grouping'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
@@ -164,7 +164,6 @@ export function BoardPage() {
   const [view, setView] = useState<View>('board')
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
-  const [display, setDisplay] = useBoardDisplay()
   const role = useRole()
   const canMove = can(role, 'ticket.move')
   const boardRef = useRef<HTMLDivElement>(null)
@@ -173,6 +172,7 @@ export function BoardPage() {
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const [display, setDisplay] = useBoardDisplay(me?.person)
   const ticketsKey = ['board', wsId] as const
   const { data: tickets = [], isPending } = useQuery({
     queryKey: ticketsKey,
@@ -193,6 +193,7 @@ export function BoardPage() {
   const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
   // Grouped by epic (the default) when this workspace has epics: epics are lane headers, not cards.
   const grouped = display.group === 'epic' && hasEpics(tickets)
+  const epicKeys = useMemo(() => new Set(tickets.filter((t) => t.type === 'epic').map((t) => t.key)), [tickets])
   const groups = useMemo(() => groupByEpic(tickets, filtered, filtering), [tickets, filtered, filtering])
   const byStatus = useMemo(() => {
     const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
@@ -200,13 +201,6 @@ export function BoardPage() {
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
   }, [filtered, grouped])
-  // Estimate sums count every ticket of the status, epics included, so they read the same grouped or flat.
-  const sumsByStatus = useMemo(() => {
-    const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
-    for (const t of filtered) m.get(t.status)?.push(t)
-    return m
-  }, [filtered])
-
   const options = useMemo(
     () => ({
       types: [...new Set(tickets.map((t) => t.type))].sort(),
@@ -277,6 +271,9 @@ export function BoardPage() {
     const to = e.over ? statusOfDrop(e.over.id) : undefined
     if (!t || !to) return
     const current = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === t.key)
+    // A lane cell only takes its own lane's cards: the status changes, the epic never does by a drop.
+    const dropLane = e.over ? String(e.over.id).split('|')[0] : ''
+    if (e.over && String(e.over.id).includes('|') && grouped && dropLane !== laneOf(current ?? t, epicKeys)) return
     if ((current?.status ?? t.status) === to) return
     move.mutate({ key: t.key, status: to, from: current?.status ?? t.status })
   }
@@ -304,8 +301,8 @@ export function BoardPage() {
         labels={options.labels}
         people={options.people}
         epics={options.epics}
-        shown={filtered.length}
-        total={tickets.length}
+        shown={grouped ? filtered.filter((t) => t.type !== 'epic').length : filtered.length}
+        total={grouped ? tickets.filter((t) => t.type !== 'epic').length : tickets.length}
         display={display}
         onDisplay={setDisplay}
         moveLimit={!role || canMove ? null : role === 'viewer' ? 'viewer' : 'cannot-move'}
@@ -319,7 +316,7 @@ export function BoardPage() {
         }
         onJump={jump}
       />
-      {isPending ? (
+      {isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading board…</p>
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
@@ -336,7 +333,8 @@ export function BoardPage() {
               <EpicLanes
                 groups={groups}
                 byStatus={byStatus}
-                sumsByStatus={sumsByStatus}
+                filtering={filtering}
+                dragLane={dragging ? laneOf(dragging, epicKeys) : null}
                 draggingFrom={dragging?.status ?? null}
                 setDisplay={setDisplay}
                 people={people}

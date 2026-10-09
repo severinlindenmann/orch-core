@@ -55,9 +55,16 @@ export function groupByEpic(all: TicketSummary[], shown: TicketSummary[], filter
   return { lanes, none }
 }
 
-/** An explicit choice wins; otherwise a big epic starts folded. */
-export function isCollapsed(lane: EpicLane, overrides: Record<string, boolean>): boolean {
-  return overrides[lane.epic.key] ?? lane.open > COLLAPSE_OVER
+/**
+ * An explicit choice wins; otherwise a big epic starts folded. While a filter or search is on, "big" counts the open
+ * children that are shown, so a hit is never hidden inside a fold.
+ */
+export function isCollapsed(lane: EpicLane, overrides: Record<string, boolean>, filtering = false): boolean {
+  const open = filtering ? lane.children.filter((t) => t.status !== 'done').length : lane.open
+  return overrides[lane.epic.key] ?? open > COLLAPSE_OVER
 }
+
+/** The lane a ticket sits in: its epic's key, or NO_EPIC. */
+export const laneOf = (t: TicketSummary, epicKeys: ReadonlySet<string>) => (t.parent && epicKeys.has(t.parent) && t.type !== 'epic' ? t.parent : NO_EPIC)
 
 export const progressLabel = (lane: Pick<EpicLane, 'done' | 'total'>) => `${lane.done}/${lane.total} done`

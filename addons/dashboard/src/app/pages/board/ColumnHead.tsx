@@ -5,7 +5,7 @@ import { ColumnSums } from './ColumnSum'
 import { STATUS_LABEL } from './lib'
 
 /** Name, count, estimate sums and collapse button of a status column. Shared by the flat board and the lane grid. */
-export function ColumnHeader({ status, tickets, sumOf, total, onCollapse }: { status: Status; tickets: TicketSummary[]; sumOf?: TicketSummary[]; total: number; onCollapse: () => void }) {
+export function ColumnHeader({ status, tickets, total, onCollapse }: { status: Status; tickets: TicketSummary[]; total: number; onCollapse: () => void }) {
   const humanOnly = status === 'done'
   return (
     <header className="@container flex items-center gap-1.5 px-2.5 py-2">
@@ -13,7 +13,7 @@ export function ColumnHeader({ status, tickets, sumOf, total, onCollapse }: { st
       <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
         {total}
       </span>
-      <ColumnSums tickets={sumOf ?? tickets} />
+      <ColumnSums tickets={tickets} />
       <span className="min-w-0 flex-1" />
       <button
         type="button"

@@ -32,15 +32,12 @@ interface Shared {
 function HeaderCell({
   status,
   tickets,
-  sumOf,
   collapsed,
   draggingFrom,
   onCollapse,
 }: {
   status: Status
   tickets: TicketSummary[]
-  /** What the estimate sums add up: the cards plus the epics of this status. */
-  sumOf: TicketSummary[]
   collapsed: boolean
   draggingFrom: Status | null
   onCollapse: (c: boolean) => void
@@ -61,7 +58,7 @@ function HeaderCell({
       {collapsed ? (
         <ExpandRail status={status} total={tickets.length} vertical={false} onExpand={() => onCollapse(false)} />
       ) : (
-        <ColumnHeader status={status} tickets={tickets} sumOf={sumOf} total={tickets.length} onCollapse={() => onCollapse(true)} />
+        <ColumnHeader status={status} tickets={tickets} total={tickets.length} onCollapse={() => onCollapse(true)} />
       )}
     </div>
   )
@@ -74,6 +71,7 @@ function Cell({
   tickets,
   collapsedRail,
   draggingFrom,
+  foreign,
   variant,
   shared,
 }: {
@@ -83,10 +81,12 @@ function Cell({
   tickets: TicketSummary[]
   collapsedRail: boolean
   draggingFrom: Status | null
+  /** Another lane's card is being dragged: this cell is not a drop target. */
+  foreign: boolean
   variant: 'card' | 'lane'
   shared: Shared
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: cellId(laneKey, status), disabled: collapsedRail && status === 'done' })
+  const { setNodeRef, isOver } = useDroppable({ id: cellId(laneKey, status), disabled: foreign || (collapsedRail && status === 'done') })
   const [showAll, setShowAll] = useState(false)
   if (collapsedRail) {
     return (
@@ -188,12 +188,12 @@ function LaneHeader({
             >
               {epic.key}
             </button>
-            <span className="max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
+            <h3 className="max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
               {epic.title}
-            </span>
+            </h3>
           </>
         ) : (
-          <span className="text-[13px] font-semibold text-text">{title}</span>
+          <h3 className="text-[13px] font-semibold text-text">{title}</h3>
         )}
         {progress && (
           <>
@@ -210,8 +210,8 @@ function LaneHeader({
         {emptyNote && <span className="text-[12px] text-text-faint">{emptyNote}</span>}
         <ColumnSums tickets={tickets} />
         {epic && (
-          <span title="The epic's own estimate" className="inline-flex items-center gap-1">
-            <CardFields ticket={epic} />
+          <span title="The epic's own estimate, not a sum of its children" className="inline-flex items-center gap-1">
+            <CardFields ticket={epic} label={<span className="text-[11px] text-text-faint">own</span>} />
           </span>
         )}
       </div>
@@ -226,16 +226,19 @@ function LaneHeader({
 export function EpicLanes({
   groups,
   byStatus,
-  sumsByStatus,
   draggingFrom,
+  dragLane,
+  filtering,
   setDisplay,
   ...shared
 }: Shared & {
   groups: EpicGroups
   /** Every card on the board per status (all lanes, folded or not): the header counts and estimate sums. */
   byStatus: Map<Status, TicketSummary[]>
-  sumsByStatus: Map<Status, TicketSummary[]>
   draggingFrom: Status | null
+  /** The lane of the card being dragged: only its cells take a drop. */
+  dragLane: string | null
+  filtering: boolean
   setDisplay: (patch: Partial<BoardDisplay>) => void
 }) {
   const { display } = shared
@@ -249,9 +252,10 @@ export function EpicLanes({
   }
   const cols = STATUSES.map((s) => (railed(s) ? '40px' : 'minmax(216px, 1fr)')).join(' ')
   const minWidth = STATUSES.reduce((n, s) => n + (railed(s) ? 40 : 216), 0) + (STATUSES.length - 1) * 8
+  // "No epic" comes first: single tickets are what a big epic would otherwise push out of sight.
   const lanes = [
+    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null as EpicLane | null, tickets: groups.none }] : []),
     ...groups.lanes.map((l) => ({ key: l.epic.key, lane: l as EpicLane | null, tickets: l.children })),
-    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null, tickets: groups.none }] : []),
   ]
   return (
     <>
@@ -261,7 +265,6 @@ export function EpicLanes({
             key={s}
             status={s}
             tickets={byStatus.get(s) ?? []}
-            sumOf={sumsByStatus.get(s) ?? []}
             collapsed={railed(s)}
             draggingFrom={draggingFrom}
             onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
@@ -269,7 +272,7 @@ export function EpicLanes({
         ))}
         {lanes.map(({ key, lane, tickets }) => {
           const none = key === NO_EPIC
-          const collapsed = tickets.length === 0 ? true : lane ? isCollapsed(lane, display.lanes) : (display.lanes[NO_EPIC] ?? false)
+          const collapsed = tickets.length === 0 ? true : lane ? isCollapsed(lane, display.lanes, filtering) : (display.lanes[NO_EPIC] ?? false)
           const cells = split(tickets)
           const label = none ? 'No epic' : lane!.epic.key
           return (
@@ -296,6 +299,7 @@ export function EpicLanes({
                     tickets={cells.get(s) ?? []}
                     collapsedRail={railed(s)}
                     draggingFrom={draggingFrom}
+                    foreign={dragLane !== null && dragLane !== key}
                     variant={none ? 'card' : 'lane'}
                     shared={shared}
                   />

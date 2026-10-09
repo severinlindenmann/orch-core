@@ -75,7 +75,7 @@ describe('state requests per surface', () => {
   it('the busy board asks each addon for its state at most once, and never per card', async () => {
     const spy = vi.spyOn(api, 'getAddonState')
     // Flat: every card is on screen (grouped, the big epics start folded).
-    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy'), storage: { 'orch.board.display': JSON.stringify({ group: 'none' }) } })
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'none' }) } })
     await waitFor(() => expect(screen.getAllByTestId(/^card-DEMO-/).length).toBeGreaterThan(50), { timeout: 15_000 })
     await new Promise((r) => setTimeout(r, 300))
     expect(spy.mock.calls.filter((c) => c[2] !== undefined)).toEqual([])

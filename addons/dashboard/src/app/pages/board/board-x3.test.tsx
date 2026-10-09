@@ -20,7 +20,7 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
     await user.click(screen.getByRole('button', { name: 'Display' }))
     await user.click(await screen.findByRole('switch', { name: 'Show progress' }))
     expect(screen.getAllByRole('progressbar').length).toBeGreaterThan(0)
-    expect(JSON.parse(localStorage.getItem('orch.board.display')!).progress).toBe(true)
+    expect(JSON.parse(localStorage.getItem('orch.board.display.p_sev')!).progress).toBe(true)
   })
 
   it('Done is a collapsed rail by default and expands on click', async () => {
@@ -41,7 +41,7 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
   })
 
   it('the board scrolls inside its own region: overflow-x-auto and min-w-0, and its parents do not overflow', async () => {
-    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy'), storage: { 'orch.board.display': JSON.stringify({ group: 'none' }) } })
+    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'none' }) } })
     const col = await screen.findByRole('region', { name: 'Backlog' }, T)
     const scroller = col.parentElement!
     expect(scroller.className).toContain('overflow-x-auto')

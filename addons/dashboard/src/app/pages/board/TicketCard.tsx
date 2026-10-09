@@ -16,7 +16,8 @@ export interface BoardPeople {
   epicTitle: (key: string) => string | undefined
 }
 
-export function CardFields({ ticket }: { ticket: TicketSummary }) {
+/** The addon fields of a card (estimate...). `label` is drawn before them, only when there is something to label. */
+export function CardFields({ ticket, label }: { ticket: TicketSummary; label?: React.ReactNode }) {
   const items = useSlot('board.card_field', { ticket })
   const readOnly = !can(useRole(), 'addon.action')
   const shown = items.filter((c) => {
@@ -27,6 +28,7 @@ export function CardFields({ ticket }: { ticket: TicketSummary }) {
   if (shown.length === 0) return null
   return (
     <>
+      {label}
       {shown.map((c) => (
         <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={{ ticket }} compact readOnly={readOnly} />
       ))}
@@ -133,7 +135,7 @@ interface CardProps {
   onMove?: (key: string, status: Status) => void
 }
 
-/** Two lines for a child under its epic: key, state, estimate, priority; then the title. The epic is the lane, so no chip. */
+/** Two lines for a child under its epic: key, state, priority; then the title with the estimate at its end. The epic is the lane, so no chip. */
 function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showProgress }: { ticket: TicketSummary; people: BoardPeople; me: string | undefined; task?: string; overlay?: boolean; showEstimate: boolean; showProgress: boolean }) {
   return (
     <div className={cn('flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lg shadow-black/40')}>
@@ -142,12 +144,14 @@ function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showPro
         <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{ticket.key}</span>
         <StateGlyph ticket={ticket} people={people} me={me} task={task} />
         {ticket.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
-        <span className="flex-1" />
-        {showEstimate && <CardFields ticket={ticket} />}
+        <span className="min-w-0 flex-1" />
         <PriorityMarker priority={ticket.priority} />
       </div>
-      <div className="line-clamp-1 text-[12px] leading-snug text-text" title={ticket.title}>
-        {ticket.title}
+      <div className="flex min-w-0 items-center gap-1.5">
+        <div className="min-w-0 flex-1 truncate text-[12px] leading-snug text-text" title={ticket.title}>
+          {ticket.title}
+        </div>
+        {showEstimate && <CardFields ticket={ticket} />}
       </div>
       {showProgress && <ProgressBar ticket={ticket} />}
     </div>

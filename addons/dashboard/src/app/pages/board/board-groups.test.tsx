@@ -23,7 +23,7 @@ import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 8000 }
-const DISPLAY = 'orch.board.display'
+const DISPLAY = 'orch.board.display.p_sev'
 
 describe('board grouped by epic (N2)', () => {
   beforeEach(() => {
@@ -59,14 +59,55 @@ describe('board grouped by epic (N2)', () => {
     expect(await screen.findByTestId('card-DEMO-0040', {}, T)).toBeInTheDocument()
   })
 
-  it('the estimate sum of a column is the same grouped and flat (the epic counts too)', async () => {
+  it('grouped, a column sums only its cards; the epic\'s own points show in its lane header, labelled own', async () => {
     const { user } = renderApp('/board')
-    const sumOf = async () => (await within(await screen.findByRole('region', { name: 'In progress' })).findByLabelText(/^Sum of /)).textContent
+    const sumOf = async () => Number(/(\d+) pts?$/.exec((await within(await screen.findByRole('region', { name: 'In progress' })).findByLabelText(/^Sum of /)).textContent ?? '')?.[1])
     const grouped = await sumOf()
+    const lane = (await screen.findByRole('button', { name: /^Collapse DEMO-0040 / })).closest('div.sticky')!
+    expect(lane).toHaveTextContent(/own\s*A?\s*21\s*pt/)
     await user.click(screen.getByRole('button', { name: 'Display' }))
     await user.click(await screen.findByRole('radio', { name: 'None' }))
-    await waitFor(async () => expect(await sumOf()).toBe(grouped))
+    // flat, the epic is a card in its column and its 21 points are in the sum
+    await waitFor(async () => expect(await sumOf()).toBe(grouped + 21))
   })
+
+  it('No epic comes first, and lane titles are h3 headings', async () => {
+    renderApp('/board')
+    const none = await screen.findByRole('button', { name: /^Collapse No epic/ }, T)
+    const epic = screen.getByRole('button', { name: /^Collapse DEMO-0040 / })
+    expect(none.compareDocumentPosition(epic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 3, name: 'No epic' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: /Tariff and billing/ })).toBeInTheDocument()
+  })
+
+  it('the toolbar counts tickets, not epics, when grouped', async () => {
+    const { user } = renderApp('/board')
+    await screen.findByTestId('card-DEMO-0043', {}, T)
+    expect(screen.getByText('17 tickets')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Display' }))
+    await user.click(await screen.findByRole('radio', { name: 'None' }))
+    expect(await screen.findByText('19 tickets')).toBeInTheDocument()
+  })
+
+  it('is remembered per viewer: Tom does not inherit Severin\'s choice, and Tom can fold a lane', async () => {
+    const { user } = renderApp('/board', { viewer: 'p_tom', storage: { [DISPLAY]: JSON.stringify({ group: 'none' }) } })
+    const fold = await screen.findByRole('button', { name: /^Collapse DEMO-0040 /, expanded: true }, T)
+    expect(screen.queryByTestId('card-DEMO-0040')).toBeNull()
+    await user.click(fold)
+    expect(await screen.findByRole('button', { name: /^Expand DEMO-0040 /, expanded: false })).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('orch.board.display.p_tom')!).lanes['DEMO-0040']).toBe(true)
+    expect(JSON.parse(localStorage.getItem(DISPLAY)!).group).toBe('none')
+  })
+
+  it('a search hit inside a big epic is shown, not hidden in the fold', async () => {
+    const { user } = renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    await screen.findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, T)
+    const kid = mockStore.ticket(mockStore.ticket('DEMO-0100')!.children![7])!
+    await user.type(screen.getByLabelText('Filter tickets'), kid.title)
+    expect(await screen.findByTestId(`card-${kid.key}`, {}, T)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Collapse DEMO-0100 /, expanded: true })).toBeInTheDocument()
+    mockStore.sim.stopAll()
+  }, 30_000)
 
   it('a big epic (40 children) starts folded: one lane header, no child cards; Enter unfolds, the arrow keys fold and unfold', async () => {
     const { user } = renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
@@ -89,6 +130,15 @@ describe('board grouped by epic (N2)', () => {
     expect(await screen.findByRole('button', { name: /^Collapse DEMO-0100 / })).toBeInTheDocument()
     mockStore.sim.stopAll()
   }, 30_000)
+
+  it('only the card\'s own lane takes a drop: another epic\'s cell is not a target and a drop there does nothing', async () => {
+    renderApp('/board')
+    await screen.findByTestId('card-DEMO-0043', {}, T)
+    act(() => dnd.onDragEnd!({ active: { data: { current: { ticket: { key: 'DEMO-0043', status: 'in-progress' } } } }, over: { id: 'DEMO-0050|open' } }))
+    await new Promise((r) => setTimeout(r, 300))
+    expect(within(screen.getByRole('group', { name: 'DEMO-0040 · In progress' })).getByTestId('card-DEMO-0043')).toBeInTheDocument()
+    expect(mockStore.ticket('DEMO-0043')!.status).toBe('in-progress')
+  })
 
   it('dropping a child on another status cell of its lane moves its status', async () => {
     renderApp('/board')

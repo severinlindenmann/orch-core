@@ -36,15 +36,15 @@ describe('Settings', () => {
     expect(await screen.findByText('Only owners change settings.')).toBeInTheDocument()
     expect(within(await screen.findByRole('row', { name: /Tom/ })).getByRole('combobox', { name: 'Role' })).toBeDisabled()
   })
-  it('shows the relay as not connected', async () => {
+  it('shows the relay as not connected and links to Relay & devices', async () => {
     renderApp('/settings/general')
     expect(await screen.findByText(/Not connected yet/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: 'Open Relay & devices' })).toHaveAttribute('href', '/settings/relay')
   })
-  it('the nav shows General, Members, Gates and Addons only: no entry per addon', async () => {
+  it('the nav shows General, Members, Gates, Relay & devices (Preview) and Addons only: no entry per addon', async () => {
     renderApp('/settings/general')
     const nav = await screen.findByRole('navigation', { name: 'Settings' })
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Addons'])
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons'])
     expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
   it("an addon's settings open in a drawer over the list, with Addons marked as the current section", async () => {

@@ -7,6 +7,9 @@ import { can } from '@/api/permissions'
 import { APPROVER_GROUPS } from '@/api/gates'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
+import type { RelayRequest, RelaySimRequest } from '@/api/types'
+import { listArtifacts } from './artifacts'
+import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -357,9 +360,21 @@ export function buildRouter(): MockRouter {
   })
   readOf('/api/workspaces/:ws/identity', (s, c) => {
     const ws = s.workspaces.find((w) => w.id === c.params.ws)!
-    return ok({ uuid: ws.id, prefix: ws.prefix, created_at: '2026-08-14T07:42:10Z', key_fingerprint: fingerprint(ws.id), epoch: 1 } satisfies WorkspaceIdentity)
+    return ok({ uuid: ws.id, prefix: ws.prefix, created_at: '2026-08-14T07:42:10Z', key_fingerprint: fingerprint(ws.id), epoch: relayEpoch(s, ws.id) } satisfies WorkspaceIdentity)
   })
   r.add('POST', '/api/workspaces/:ws/settings', postSettings)
+  // Every artifact of the tickets the viewer can see (visibility decided here, never by the client).
+  readOf('/api/workspaces/:ws/artifacts', (s, c) => {
+    const q = (k: string) => c.query.get(k) ?? undefined
+    const num = (k: string) => (q(k) !== undefined && Number.isFinite(Number(q(k))) ? Number(q(k)) : undefined)
+    return ok(listArtifacts(s, c.params.ws, { kind: q('kind'), ticket: q('ticket'), by: q('by'), since: q('since'), q: q('q'), page: num('page'), per: num('per') }))
+  })
+  // Relay & devices (simulated, see mocks/relay.ts). Members read; owners change (signed in the dashboard).
+  readOf('/api/workspaces/:ws/relay', (s, c) => ok(relayState(s, c.params.ws)))
+  r.add('POST', '/api/workspaces/:ws/relay', (s, c) => {
+    const res = relayRequest(s, c.params.ws, c.body as RelayRequest | null)
+    return res.ok ? ok(res.relay) : fail(res.status, res.code, res.message, res.hint)
+  })
   readOf('/api/workspaces/:ws/cursor', (s, c) =>
     ok({ cursor: s.cursor(c.params.ws) }),
   )
@@ -443,6 +458,10 @@ export function buildRouter(): MockRouter {
     return ok({ ok: true })
   })
   r.add('GET', '/api/dev/dataset', (s) => ok({ dataset: s.dataset }))
+  r.add('POST', '/api/dev/relay/:ws', (s, c) => {
+    const res = relaySim(s, c.params.ws, c.body as RelaySimRequest | null)
+    return res.ok ? ok(res.relay) : fail(res.status, res.code, res.message, res.hint)
+  })
   r.add('POST', '/api/dev/viewer', (s, c) => {
     const person = (c.body as { person?: string } | null)?.person
     if (!person || !s.workspaces.some((w) => w.members.some((m) => m.person === person))) return fail(400, 'validation', 'Unknown person')

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useRouterState } from '@tanstack/react-router'
-import { Bot, Check, Clock, FileText, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
+import { Bot, Check, Clock, FileText, Files, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
@@ -134,6 +134,7 @@ export function CommandPalette() {
     { id: 'today', label: 'Go to Today', icon: <LayoutDashboard />, keys: keysFor('go.today'), run: () => go('/') },
     { id: 'board', label: 'Go to Board', icon: <SquareKanban />, keys: keysFor('go.board'), run: () => go('/board') },
     { id: 'tickets', label: 'Go to Tickets', icon: <ListChecks />, keys: keysFor('go.tickets'), run: () => go('/tickets') },
+    { id: 'artifacts', label: 'Go to Artifacts', icon: <Files />, run: () => go('/artifacts') },
     { id: 'agents', label: 'Go to Agents', icon: <Bot />, keys: keysFor('go.agents'), run: () => go('/agents') },
     { id: 'settings', label: 'Go to Settings', icon: <Settings />, run: () => go('/settings') },
     ...addonNav.map((n): Entry => {

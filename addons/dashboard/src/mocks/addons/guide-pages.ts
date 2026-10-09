@@ -182,7 +182,7 @@ This is a clickable mockup. Nothing leaves your browser. The buttons really chan
 - **Touch ID.** The sign dialog waits about half a second and then signs. No fingerprint is read.
 - **Terminals.** The terminal is a fake shell that understands a few commands. No process runs on your computer.
 - **GitHub.** Pull requests, issues and checks come from sample data. Nothing is read from or sent to GitHub.
-- **The relay.** The link between this dashboard and your machines is not built. The grey dot beside the workspace name stands for it and is never connected.
+- **The relay.** The link between this dashboard and your devices is not built. Settings > Relay & devices simulates it: connecting, pairing a phone with a mock QR code, removing a device and the sync queue. The dot beside the workspace name turns green while the simulated link is on. The Drop addon's files and links are simulated too.
 - **Agent runs.** When you start an agent it plays a short script: it claims the ticket, takes a task, logs a line, finishes with a receipt and asks you a question. No model is called.
 - **Time.** The clock is fixed at 2026-10-09 11:30 UTC and moves forward only while the page is open. Grants and claims run out against that clock.
 - **Demo data.** The workspaces, tickets and people are made up. Your changes are kept in this browser. The **Demo data** pill in the top bar resets everything, and switches between the Normal demo and a **Busy day** with a lot of tickets, agents and addon data.

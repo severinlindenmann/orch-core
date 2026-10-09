@@ -10,6 +10,7 @@ import { General } from './General'
 import { AddonManager } from './addons'
 import { Gates } from './Gates'
 import { Members } from './Members'
+import { Relay } from './relay'
 import { TABS } from './tabs'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
@@ -17,7 +18,7 @@ export const ONLY_OWNERS = 'Only owners change settings.'
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
 
-/** /settings/$tab (general | members | gates | addons) and /settings/addon/$name (Addons with that addon's settings drawer open). */
+/** /settings/$tab (general | members | gates | relay | addons) and /settings/addon/$name (Addons with that addon's settings drawer open). */
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
@@ -41,7 +42,8 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         <h1 className="mb-2 px-2.5 text-xl font-semibold tracking-tight">Settings</h1>
         {TABS.map((t) => (
           <Link key={t.id} to="/settings/$tab" params={{ tab: t.id }} className={cn(link, current === t.id && active)} aria-current={current === t.id ? 'page' : undefined}>
-            {t.label}
+            <span className="flex-1">{t.label}</span>
+            {'preview' in t && t.preview && <span className="rounded-full border border-border px-1.5 py-px text-[10px] font-medium leading-4 text-text-muted">Preview</span>}
           </Link>
         ))}
       </nav>
@@ -51,6 +53,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
         {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
+        {current === 'relay' && <Relay workspace={workspace} canEdit={isOwner} viewer={me.data.person} />}
         {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} settingsOf={addon} />}
       </div>
     </div>

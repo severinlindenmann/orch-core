@@ -25,7 +25,10 @@ const toggle = <T,>(list: T[] | undefined, v: T): T[] | undefined => {
   return next.length ? next : undefined
 }
 
-export const SearchBox = forwardRef<HTMLInputElement, { value: string; onChange: (v: string) => void }>(function SearchBox({ value, onChange }, ref) {
+export const SearchBox = forwardRef<HTMLInputElement, { value: string; onChange: (v: string) => void; placeholder?: string; label?: string }>(function SearchBox(
+  { value, onChange, placeholder = 'Search tickets (press /)', label = 'Search tickets' },
+  ref,
+) {
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-text-faint" aria-hidden />
@@ -34,8 +37,8 @@ export const SearchBox = forwardRef<HTMLInputElement, { value: string; onChange:
         type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search tickets (press /)"
-        aria-label="Search tickets"
+        placeholder={placeholder}
+        aria-label={label}
         className="h-8 w-[240px] pl-7 text-[12px]"
       />
     </div>

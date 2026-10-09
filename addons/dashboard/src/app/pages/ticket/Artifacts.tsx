@@ -8,6 +8,7 @@ import { frameDocument } from '@/api/widgetTemplates'
 import { FrameNode } from '@/addon-ui/FrameNode'
 import { frameNode } from '@/addon-ui/nodes'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
@@ -17,7 +18,7 @@ import { cn } from '@/lib/utils'
 import { agentName, fmtBytes, fmtTime, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 
-const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
+export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
   log: ScrollText,
   report: FileText,
@@ -328,32 +329,59 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
         })}
       </ul>
 
-      <Sheet open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        <SheetContent
-          side="right"
-          className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
-          onCloseAutoFocus={(e) => {
-            e.preventDefault()
-            opener.current?.focus()
-          }}
-        >
-          {open && (
-            <>
-              <SheetHeader className="border-b border-border">
-                <SheetTitle className="break-all font-mono text-[14px]">{open.name}</SheetTitle>
-                <SheetDescription>
-                  {open.kind} · {fmtBytes(open.bytes)} · sha256 {shortHash(open.sha256, 12)} · by {open.added_by === 'host' ? 'orch' : agentName(open.added_by)} · {fmtTime(open.at)}
-                  {open.ac && ` · proves ${open.ac}`}
-                  {open.task && ` · from ${open.task}`}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="min-h-0 flex-1 overflow-auto p-4">
-                <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
+      <ArtifactDrawer artifact={open} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
     </>
+  )
+}
+
+/**
+ * The artifact drawer (ticket tab and the workspace Artifacts page). The viewer is keyed by name + sha256, HTML runs
+ * only for document kinds and only while agent HTML is on (see HtmlViewer). Closing returns focus to `opener`.
+ */
+export function ArtifactDrawer({
+  artifact: open,
+  agentHtml,
+  onClose,
+  opener,
+  context,
+  loading = false,
+}: {
+  /** The content is still on its way: a skeleton instead of the viewer. */
+  loading?: boolean
+  artifact: Artifact | null
+  agentHtml: boolean
+  onClose: () => void
+  opener: { current: HTMLElement | null }
+  /** Extra line under the description (the Artifacts page names the ticket). */
+  context?: ReactNode
+}) {
+  return (
+    <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        side="right"
+        className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
+        onCloseAutoFocus={(e) => {
+          e.preventDefault()
+          opener.current?.focus()
+        }}
+      >
+        {open && (
+          <>
+            <SheetHeader className="border-b border-border">
+              <SheetTitle className="break-all font-mono text-[14px]">{open.name}</SheetTitle>
+              <SheetDescription>
+                {open.kind} · {fmtBytes(open.bytes)} · sha256 {shortHash(open.sha256, 12)} · by {open.added_by === 'host' ? 'orch' : agentName(open.added_by)} · {fmtTime(open.at)}
+                {open.ac && ` · proves ${open.ac}`}
+                {open.task && ` · from ${open.task}`}
+              </SheetDescription>
+              {context}
+            </SheetHeader>
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              {loading ? <Skeleton className="h-60 w-full" aria-label="Loading the artifact" /> : <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />}
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   )
 }

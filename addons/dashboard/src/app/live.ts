@@ -5,7 +5,7 @@ import { api } from '@/api/client'
 import { useWorkspace } from './workspace'
 
 const POLL_MS = 2000
-const LIVE_KEYS = ['today', 'tickets', 'ticket', 'agents', 'agent-activity', 'grants', 'addon-state', 'addon-decisions', 'workspaces']
+const LIVE_KEYS = ['today', 'tickets', 'ticket', 'agents', 'agent-activity', 'grants', 'addon-state', 'addon-decisions', 'workspaces', 'artifacts', 'relay', 'identity']
 
 export function useLiveUpdates() {
   const qc = useQueryClient()

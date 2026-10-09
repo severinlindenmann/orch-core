@@ -28,6 +28,11 @@ import {
   type Workspace,
   type WorkspaceIdentity,
   type SettingsRequest,
+  type ArtifactPage,
+  type ArtifactQuery,
+  type RelayRequest,
+  type RelaySimRequest,
+  type RelayState,
 } from './types'
 
 export interface ListTicketsParams {
@@ -124,6 +129,19 @@ export function createApi(transport: Transport) {
     getIdentity: (ws: string) => call<WorkspaceIdentity>('GET', `/api/workspaces/${ws}/identity`),
     /** Owner only. Everything except rename is signed in the dashboard. */
     postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),
+    /** Artifacts of the tickets the viewer can see in `ws`, filtered and paged by the host. */
+    listArtifacts: (ws: string, q: ArtifactQuery = {}) =>
+      call<ArtifactPage>(
+        'GET',
+        `/api/workspaces/${ws}/artifacts` +
+          qs({ kind: q.kind, ticket: q.ticket, by: q.by, since: q.since, q: q.q, page: q.page === undefined ? undefined : String(q.page), per: q.per === undefined ? undefined : String(q.per) }),
+      ),
+    /** Relay link, devices, pairing and sync queue (simulated in the mockup). */
+    getRelay: (ws: string) => call<RelayState>('GET', `/api/workspaces/${ws}/relay`),
+    /** Owner only. connect, stop, pair.confirm and device.remove are signed in the dashboard first. */
+    postRelay: (ws: string, req: RelayRequest) => call<RelayState>('POST', `/api/workspaces/${ws}/relay`, req),
+    /** Mock only: a dropped connection, or a phone scanning the pairing code. */
+    simulateRelay: (ws: string, req: RelaySimRequest) => call<RelayState>('POST', `/api/dev/relay/${ws}`, req),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */

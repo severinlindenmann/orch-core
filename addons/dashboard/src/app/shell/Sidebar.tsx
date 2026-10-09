@@ -5,6 +5,7 @@ import {
   Bot,
   ChevronsUpDown,
   Ellipsis,
+  Files,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
@@ -368,5 +369,6 @@ const CORE_NAV = [
   { to: '/', label: 'Today', icon: LayoutDashboard },
   { to: '/board', label: 'Board', icon: SquareKanban },
   { to: '/tickets', label: 'Tickets', icon: ListChecks },
+  { to: '/artifacts', label: 'Artifacts', icon: Files },
   { to: '/agents', label: 'Agents', icon: Bot },
 ] as const

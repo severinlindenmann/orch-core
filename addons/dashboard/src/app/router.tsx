@@ -10,6 +10,7 @@ const BoardPage = lazyPage(() => import('./pages/board'), 'BoardPage')
 const TicketsPage = lazyPage(() => import('./pages/tickets'), 'TicketsPage')
 const NewTicketPage = lazyPage(() => import('./pages/new-ticket'), 'NewTicketPage')
 const TicketPage = lazyPage(() => import('./pages/ticket'), 'TicketPage')
+const ArtifactsPage = lazyPage(() => import('./pages/artifacts'), 'ArtifactsPage')
 const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
@@ -34,6 +35,7 @@ const ticketRoute = createRoute({
     return <TicketPage ticketKey={key} />
   },
 })
+const artifactsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'artifacts', component: ArtifactsPage })
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage })
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -79,7 +81,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 export function createAppRouter(initialPath = '/') {
   return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) })

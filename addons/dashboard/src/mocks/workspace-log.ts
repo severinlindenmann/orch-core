@@ -76,6 +76,19 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'workspace.renamed':
         ws.name = String(e.name)
         break
+      // Relay & devices (simulated): the link switch and each member's device count.
+      case 'relay.connected':
+      case 'relay.stopped':
+        ws.relay = e.type === 'relay.connected' ? 'on' : 'off'
+        break
+      case 'device.paired':
+      case 'device.removed': {
+        const m = ws.members.find((x) => x.person === e.person)
+        if (m) m.devices = Math.max(0, (m.devices ?? 0) + (e.type === 'device.paired' ? 1 : -1))
+        break
+      }
+      case 'epoch.rotated':
+        break
       // Recorded in the log but not part of Workspace state (later tasks read them directly).
       case 'addon.settings_saved':
       case 'grant.issued':

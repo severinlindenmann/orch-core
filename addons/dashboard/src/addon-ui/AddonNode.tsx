@@ -27,6 +27,7 @@ import { ErrorAlert } from './ErrorAlert'
 import { useRunAddonAction, type ActionError } from './useRunAddonAction'
 import { precheckReason } from './SpawnConfirm'
 import { DestructiveConfirm } from './DestructiveConfirm'
+import { Collapse } from '@/components/Collapse'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -305,11 +306,11 @@ function FoldView({ node, depth }: { node: NodeOf<'fold'>; depth: number }) {
         {node.label}
         {node.count !== null && node.count !== undefined && <span className="font-mono text-[11px] tabular-nums text-text-faint">{node.count}</span>}
       </button>
-      {open && (
-        <div id={id} className="mt-2">
+      <Collapse open={open} id={id}>
+        <div className="mt-2">
           <NodeView node={node.node} depth={depth + 1} />
         </div>
-      )}
+      </Collapse>
     </div>
   )
 }

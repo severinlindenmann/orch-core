@@ -23,6 +23,7 @@ import { api } from '@/api/client'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { noteRect } from '@/lib/motion'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
@@ -271,17 +272,23 @@ export function BoardPage() {
     setDragging(null)
     const t = e.active.data.current?.ticket as TicketSummary | undefined
     const to = e.over ? statusOfDrop(e.over.id) : undefined
-    if (!t || !to) return
+    // Where the lifted card was let go: the card settles from there into its place (FLIP), in this column or the next.
+    const dropped = e.active.rect?.current?.translated
+    const settle = (moved: boolean) => t && dropped && noteRect(t.key, dropped, moved ? 'mount' : 'settle', 1.02)
+    if (!t || !to) return settle(false)
     const current = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === t.key)
     // A lane cell only takes its own lane's cards: the status changes, the epic never does by a drop.
     const dropLane = e.over ? String(e.over.id).split('|')[0] : ''
-    if (e.over && String(e.over.id).includes('|') && grouped && dropLane !== laneOf(current ?? t, epicKeys)) return
-    if ((current?.status ?? t.status) === to) return
+    if (e.over && String(e.over.id).includes('|') && grouped && dropLane !== laneOf(current ?? t, epicKeys)) return settle(false)
+    if ((current?.status ?? t.status) === to) return settle(false)
+    settle(true)
     move.mutate({ key: t.key, status: to, from: current?.status ?? t.status })
   }
   function moveFromMenu(key: string, to: Status) {
     const from = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === key)?.status
     if (from && from !== to) {
+      const at = boardRef.current?.querySelector<HTMLElement>(`[data-testid="card-${key}"]`)?.getBoundingClientRect()
+      if (at) noteRect(key, at, 'mount')
       refocus.current = { key, status: to }
       move.mutate({ key, status: to, from })
     }
@@ -381,9 +388,10 @@ export function BoardPage() {
               <AddonLanes />
             </div>
           )}
+          {/* No dnd-kit drop animation: it would fly back to the old column first. The card settles by FLIP in TicketCard. */}
           <DragOverlay dropAnimation={null}>
             {dragging ? (
-              <div style={{ width: overlayWidth }}>
+              <div style={{ width: overlayWidth }} className="orch-lift">
                 <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} display={display} overlay variant={grouped && dragging.parent && groups.lanes.some((l) => l.epic.key === dragging.parent) ? 'lane' : 'card'} />
               </div>
             ) : null}

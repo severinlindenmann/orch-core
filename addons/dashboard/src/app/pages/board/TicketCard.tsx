@@ -9,6 +9,7 @@ import { useRole } from '@/app/useRole'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { flip, takeNoted } from '@/lib/motion'
 import { initials, PriorityMarker, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 
 export interface BoardPeople {
@@ -138,7 +139,7 @@ interface CardProps {
 /** Two lines for a child under its epic: key, state, priority; then the title with the estimate at its end. The epic is the lane, so no chip. */
 function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showProgress }: { ticket: TicketSummary; people: BoardPeople; me: string | undefined; task?: string; overlay?: boolean; showEstimate: boolean; showProgress: boolean }) {
   return (
-    <div className={cn('flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lg shadow-black/40')}>
+    <div className={cn('flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lift')}>
       <div className="flex items-center gap-1.5">
         <TypeIcon type={ticket.type} />
         <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{ticket.key}</span>
@@ -186,7 +187,7 @@ export function TicketCardBody({
       className={cn(
         'flex flex-col rounded-lg border border-border bg-surface text-left',
         compact ? 'gap-1 p-2' : 'gap-1.5 p-2.5',
-        overlay && 'border-brand shadow-lg shadow-black/40',
+        overlay && 'border-brand shadow-lift',
       )}
     >
       <div className="flex items-center gap-1.5">
@@ -305,6 +306,19 @@ export function TicketCard({ ticket, people, me, task, canMove, display, variant
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: ticket.key, data: { ticket }, disabled: !canMove })
   const [menu, setMenu] = useState(false)
   const cardRef = useRef<HTMLDivElement | null>(null)
+  // A card that was moved plays from where it was: new in this column (menu or drop), or dropped back into place.
+  useLayoutEffect(() => {
+    const n = takeNoted(ticket.key, 'mount')
+    if (n) flip(cardRef.current, n, { scaleFrom: n.scaleFrom })
+  }, [ticket.key])
+  const wasDragging = useRef(false)
+  useLayoutEffect(() => {
+    if (wasDragging.current && !isDragging) {
+      const n = takeNoted(ticket.key, 'settle')
+      if (n) flip(cardRef.current, n, { scaleFrom: n.scaleFrom })
+    }
+    wasDragging.current = isDragging
+  }, [isDragging, ticket.key])
   const closeMenu = (refocus: boolean) => {
     setMenu(false)
     if (refocus) cardRef.current?.focus()

@@ -210,7 +210,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           <button
             type="button"
             onClick={() => setOrder(acceptOrder(entries))}
-            className="pointer-events-auto -mt-5 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
+            className="orch-pill-in pointer-events-auto -mt-5 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
           >
             {fresh.length} new · Show
           </button>

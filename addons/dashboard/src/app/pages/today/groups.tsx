@@ -1,8 +1,9 @@
 // One group of Today's queue: a header button with the count and the oldest age, five rows, "Show N more".
 // Whether a group is open and whether it shows all rows is kept for the browser session.
-import type { ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { collapseOut, fadeIn, prefersReducedMotion } from '@/lib/motion'
 import { itemsIn, type Group, type Row } from './queue'
 import { ago, useSessionState } from './shared'
 
@@ -25,6 +26,7 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
   const headerId = `today-group-${group.id}`
   const visible = all ? group.rows : group.rows.filter((r, i) => i < ROWS_SHOWN || r.id === pinned)
   const hidden = itemsIn(group.rows) - itemsIn(visible)
+  const listRef = useRowMotion(open, group.rows, visible)
   return (
     <section role="region" aria-labelledby={headerId} className="overflow-hidden rounded-lg border border-border bg-surface">
       <h2 className="text-[13px]">
@@ -46,7 +48,7 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
       </h2>
       {open && (
         <>
-          <ul className="border-t border-border">{visible.map((r) => renderRow(r))}</ul>
+          <ul ref={listRef} className="border-t border-border">{visible.map((r) => renderRow(r))}</ul>
           {(hidden > 0 || all) && group.rows.length > ROWS_SHOWN && (
             <button
               type="button"
@@ -60,4 +62,44 @@ export function QueueGroup({ group, now, scope, note, renderRow, pinned }: {
       )}
     </section>
   )
+}
+
+/**
+ * Motion for the rows of one group, only where something changed: a row that is resolved collapses out where it stood
+ * (height and fade, 160 ms), a row that arrives (after "Show new") fades in once. Revealing hidden rows with "Show
+ * more", a plain refresh and everything under reduced motion stay still. The row that left is the element React
+ * just detached; it is put back at its old spot as an inert ghost for the length of the animation.
+ */
+function useRowMotion(open: boolean, rows: Row[], visible: Row[]) {
+  const listRef = useRef<HTMLUListElement>(null)
+  const last = useRef<{ all: string[]; ids: string[]; els: HTMLElement[] } | null>(null)
+  useLayoutEffect(() => {
+    const ul = listRef.current
+    if (!open || !ul) {
+      last.current = null
+      return
+    }
+    const live = [...ul.children].filter((c): c is HTMLElement => c instanceof HTMLElement && !c.hasAttribute('data-ghost'))
+    const ids = visible.map((r) => r.id)
+    const all = rows.map((r) => r.id)
+    const before = last.current
+    last.current = { all, ids, els: live }
+    if (!before || prefersReducedMotion()) return
+    // Arrived: on screen now, in no earlier list of this group.
+    ids.forEach((id, i) => {
+      if (!before.all.includes(id)) fadeIn(live[i])
+    })
+    // Resolved: was on screen, is no longer in the group at all (hiding by "Show fewer" is not resolving).
+    before.ids.forEach((id, i) => {
+      const el = before.els[i]
+      if (all.includes(id) || !el || el.isConnected) return
+      const survivors = before.ids.slice(0, i).filter((x) => ids.includes(x)).length
+      el.setAttribute('data-ghost', '')
+      el.setAttribute('aria-hidden', 'true')
+      el.setAttribute('inert', '')
+      ul.insertBefore(el, live[survivors] ?? null)
+      collapseOut(el, () => el.remove())
+    })
+  })
+  return listRef
 }

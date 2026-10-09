@@ -6,9 +6,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import type { AddonDecision, GateName, NeedsYouItem, TicketDocument } from '@/api/types'
+import { ApiError, type AddonDecision, type GateName, type NeedsYouItem, type TicketDocument } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
+import { ErrorAlert } from '@/addon-ui/ErrorAlert'
+import type { ActionError } from '@/addon-ui/useRunAddonAction'
 import { DecisionSignPrompt, decisionBody } from '@/addon-ui/DecisionSignPrompt'
 import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
@@ -265,7 +267,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
 // ------------------------------------------------------------------ addon decisions (rendered and signed by core)
 
 /** Core's flow for one addon decision: core's prompt, presence, then the post with `confirmed`. */
-function useDecide(d: AddonDecision) {
+function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
@@ -279,9 +281,11 @@ function useDecide(d: AddonDecision) {
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
       await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
       toast.success(`${d.title}: ${o.label}`)
+      onDone?.()
       await qc.invalidateQueries()
     } catch (e) {
-      toastApiError(e, 'That did not work.')
+      if (onError) onError(e)
+      else toastApiError(e, 'That did not work.')
     } finally {
       setPending(false)
     }
@@ -292,8 +296,13 @@ function useDecide(d: AddonDecision) {
   return { choose: setSigning, busy: pending || !!signing, pending, prompt }
 }
 
-function DecisionBody({ d, readOnly, showQuestion = true }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean }) {
-  const { choose, busy, pending, prompt } = useDecide(d)
+function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean }) {
+  const [error, setError] = useState<ActionError | null>(null)
+  const { choose, busy, pending, prompt } = useDecide(
+    d,
+    inlineErrors ? (e) => setError(e instanceof ApiError ? { message: e.message, hint: e.hint } : { message: 'That did not work.' }) : undefined,
+    () => setError(null),
+  )
   return (
     <>
       {showQuestion && <p className="text-[13px] leading-relaxed text-text">{d.question}</p>}
@@ -308,6 +317,7 @@ function DecisionBody({ d, readOnly, showQuestion = true }: { d: AddonDecision; 
           ))}
         </div>
       )}
+      {error && <ErrorAlert error={error} onDismiss={() => setError(null)} />}
       {prompt}
     </>
   )
@@ -326,9 +336,12 @@ export function DecisionRow({
   expanded: controlled,
   onToggle,
   decider,
+  inlineErrors,
 }: {
   d: AddonDecision
   readOnly: boolean
+  /** The page shows a refusal under the row (addon pages); Today keeps the sticky toast. */
+  inlineErrors?: boolean
   ticketTitle?: string
   addonTitle?: string
   expanded?: boolean
@@ -357,7 +370,7 @@ export function DecisionRow({
         )
       }
     >
-      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} />
+      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} />
     </RowShell>
   )
 }

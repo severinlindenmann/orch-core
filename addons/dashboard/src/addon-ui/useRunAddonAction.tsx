@@ -187,10 +187,11 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         setSigning(null)
         setSignPending(true)
         void signed(signTitle(s.action, titleOf(s.addon)), async () => {
-          const res = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
+          const { secret: shown, ...res } = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
           openResultUrl(res)
+          if (shown) setSecret({ addon: s.addon, secret: shown })
           return res.message
-        }, (e) => fail(e, 'Could not sign')).finally(() => setSignPending(false))
+        }, (e) => fail(e, 'Could not sign')).then((ok) => ok && setError(null)).finally(() => setSignPending(false))
       }}
     />
   )
@@ -207,7 +208,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         void signed(`Decide: ${x.d.title}`, async () => {
           const res = await api.runAddonAction(workspace.id, x.addon, x.action, decisionBody(x.d, x.option.key))
           return res.message
-        }, (e) => fail(e, 'Could not send the answer')).finally(() => setSignPending(false))
+        }, (e) => fail(e, 'Could not send the answer')).then((ok) => ok && setError(null)).finally(() => setSignPending(false))
       }}
     />
   )

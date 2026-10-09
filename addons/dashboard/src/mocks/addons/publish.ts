@@ -91,6 +91,7 @@ const subtitle = (x: Share) =>
     .join(' · ')
 
 const shareItem = (x: Share) => ({
+  id: x.id,
   title: x.title,
   subtitle: subtitle(x),
   badge: x.ticket ?? 'workspace',

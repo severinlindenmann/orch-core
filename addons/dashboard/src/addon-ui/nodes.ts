@@ -44,6 +44,8 @@ export const listNode = z.object({
   type: z.literal('list'),
   items: orEmpty(
     z.object({
+      /** A stable id for the item (keeps its feedback with it when items are inserted or removed). */
+      id: z.string().max(200).optional(),
       title: text,
       subtitle: text.optional(),
       badge: text.optional(),

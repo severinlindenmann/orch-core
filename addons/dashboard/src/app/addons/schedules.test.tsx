@@ -57,6 +57,45 @@ describe('Schedules page', () => {
     expect(error).not.toHaveBeenCalled()
     vi.restoreAllMocks()
   })
+  it('a later successful Arm clears the row\'s earlier error', async () => {
+    const post = vi.spyOn(api, 'runAddonAction')
+    post.mockRejectedValueOnce(new ApiError(409, { code: 'x', message: 'Not now.', retryable: false }))
+    post.mockResolvedValueOnce({ ok: true, message: 'Armed.' })
+    const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
+    await screen.findByText('Smoke test on testing', {}, T)
+    const arm = async () => {
+      await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Arm' }))
+      await user.click(within(await screen.findByRole('dialog', { name: /Sign: arm/ }, T)).getByRole('button', { name: /Sign and run/ }))
+    }
+    await arm()
+    await within(itemOf('Smoke test on testing')).findByRole('alert', {}, T)
+    await arm()
+    await waitFor(() => expect(within(itemOf('Smoke test on testing')).queryByRole('alert')).not.toBeInTheDocument(), T)
+    vi.restoreAllMocks()
+  })
+  it('a secret from a signed action opens the Copy this link now dialog', async () => {
+    vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Armed.', secret: { label: 'Link', value: 'https://p.acme.example/s/abc' } })
+    const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
+    await screen.findByText('Smoke test on testing', {}, T)
+    await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Arm' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /Sign: arm/ }, T)).getByRole('button', { name: /Sign and run/ }))
+    expect(await screen.findByRole('dialog', { name: /Copy this link now/ }, T)).toBeInTheDocument()
+    vi.restoreAllMocks()
+  })
+  it('a refused in-place decision shows under the row, not in a toast', async () => {
+    const error = vi.spyOn(toast, 'error')
+    const real = api.runAddonAction.bind(api)
+    vi.spyOn(api, 'runAddonAction').mockImplementation((ws, addon, action, body) =>
+      action === 'finding' ? Promise.reject(new ApiError(409, { code: 'decision.closed', message: 'That decision is closed.', retryable: false })) : real(ws, addon, action, body),
+    )
+    const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('button', { name: /File ticket/ }, T))
+    await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
+    const alert = await screen.findByRole('alert', {}, T)
+    expect(alert).toHaveTextContent('That decision is closed.')
+    expect(error).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
   it('Run now adds a run and shows its report as markdown', async () => {
     const { user, container } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
     await screen.findByText('Check inbox', {}, T)

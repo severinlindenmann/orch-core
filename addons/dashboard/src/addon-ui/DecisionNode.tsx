@@ -27,6 +27,7 @@ export default function DecisionNode({ addon, id }: { addon: string; id: string 
       <DecisionRow
         d={d}
         readOnly={!canDecide}
+        inlineErrors
         addonTitle={packages?.find((p) => p.name === addon)?.title ?? addon}
         expanded={open}
         onToggle={() => setOpen((o) => !o)}

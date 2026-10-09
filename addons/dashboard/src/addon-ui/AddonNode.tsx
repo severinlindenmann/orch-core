@@ -1,6 +1,6 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { createContext, lazy, Suspense, useContext, useId, type ReactNode } from 'react'
-import { Ellipsis, ExternalLink, TriangleAlert, X } from 'lucide-react'
+import { Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
@@ -17,6 +17,7 @@ import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
+import { ErrorAlert } from './ErrorAlert'
 import { useRunAddonAction, type ActionError } from './useRunAddonAction'
 import { claimedReason } from './SpawnConfirm'
 
@@ -93,7 +94,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
       ) : (
         <ul className="divide-y divide-border">
-          {stableKeys(n.items.map((it) => it.title)).map((k, i) => (
+          {stableKeys(n.items.map((it) => it.id ?? it.actions?.[0]?.args?.id ?? it.title)).map((k, i) => (
             n.items[i].actions ? <ActionListItem key={k} it={n.items[i]} /> : <ListItemView key={k} it={n.items[i]} />
           ))}
         </ul>
@@ -245,22 +246,6 @@ function PrecheckAlert({ id, text }: { id?: string; text: string }) {
       <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
       {text}
     </p>
-  )
-}
-
-/** Why an action was refused, in place of a toast: stays until the next success or until the person dismisses it. */
-function ErrorAlert({ error, onDismiss, className }: { error: ActionError; onDismiss: () => void; className?: string }) {
-  return (
-    <div role="alert" className={cn('flex items-start gap-2 rounded-md border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-left text-[12px] text-text', className)}>
-      <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden />
-      <p className="min-w-0 flex-1 whitespace-normal break-words">
-        {error.message}
-        {error.hint && <span className="text-text-muted"> {error.hint}</span>}
-      </p>
-      <button type="button" aria-label="Dismiss" onClick={onDismiss} className="shrink-0 rounded-sm text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
-        <X className="size-3.5" aria-hidden />
-      </button>
-    </div>
   )
 }
 

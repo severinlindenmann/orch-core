@@ -50,6 +50,25 @@ describe('row feedback follows the row', () => {
   })
 })
 
+describe('list items with equal titles', () => {
+  const list = (ids: string[]) => ({
+    type: 'list',
+    items: ids.map((id) => ({ id, title: 'One-time link', actions: [{ label: 'Extend', action: 'extend', args: { id } }] })),
+  })
+  it('an error stays with the pressed item after another with the same title is prepended', async () => {
+    vi.spyOn(api, 'runAddonAction').mockRejectedValue(new ApiError(409, { code: 'x', message: 'Gone.', retryable: false }))
+    const { rerender } = draw(list(['s1', 's2']))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Extend' })[1]).toBeEnabled(), T)
+    const pressed = screen.getAllByRole('listitem')[1]
+    await userEvent.click(within(pressed).getByRole('button', { name: 'Extend' }))
+    await within(pressed).findByRole('alert')
+    rerender(list(['s0', 's1', 's2']))
+    expect(screen.getAllByRole('listitem')[2]).toBe(pressed)
+    expect(within(pressed).getByRole('alert')).toBeInTheDocument()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+})
+
 describe('destructive confirm', () => {
   it('names the row as the addon\'s words; title and button are the manifest label', async () => {
     draw({ type: 'list', items: [{ title: 'Tariff API notes', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'x' }, variant: 'danger' }] }] })

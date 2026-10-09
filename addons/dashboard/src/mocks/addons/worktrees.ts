@@ -86,6 +86,7 @@ registerAddon({
   view(state, c) {
     const terminalsActive = addonActive(c.store.workspaces.find((w) => w.id === c.ws), 'terminals')
     const item = (w: Worktree) => ({
+      id: w.id,
       title: w.path,
       subtitle: `${w.branch} from ${w.base} · ${w.ticket} · ${plural(w.dirty)} · ahead ${w.ahead}, behind ${w.behind} · by ${w.created_by}`,
       badge: w.dirty ? 'dirty' : 'clean',

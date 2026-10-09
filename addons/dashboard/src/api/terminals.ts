@@ -1,5 +1,6 @@
 // Shapes shared by the terminals mock and the terminal view (part of the API contract). Pure types.
 
+
 /** Everything the fake shell may read, supplied live by the host at command time. */
 export interface ShellCtx {
   user: string
@@ -41,4 +42,16 @@ export interface TerminalSessionView {
   ctx: ShellCtx
   /** Commands replayed on open (agent mirrors and stopped sessions). Person shells start empty. */
   transcript: string[]
+  /** What runs in the session: a harness id from src/api/harnesses.ts; an unknown id is shown as unsupported. */
+  harness: string
+  /** What an agent session is for ("Review"); null for the default ("Agent"). */
+  purpose: string | null
+  /** The command the session runs (harnessCommand). */
+  command: string
+  /** Started with the ticket's context loaded; false is a fresh window (an empty context window). */
+  context: boolean
+  /** An ended session's summary (what a resume is seeded with); null when none was recorded. */
+  summary: string | null
+  /** Set when this session resumed an earlier one: its title and the summary it was seeded with. */
+  resumedFrom: { id: string; label: string; summary: string | null } | null
 }

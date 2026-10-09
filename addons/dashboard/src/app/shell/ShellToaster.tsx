@@ -25,5 +25,5 @@ export function ShellToaster() {
   const { railCollapsed } = useShellState()
   const rail = railCollapsed ? NARROW_RAIL : WIDE_RAIL
 
-  return <Toaster position="bottom-left" visibleToasts={2} duration={6000} offset={{ left: rail + GUTTER, bottom: GUTTER }} />
+  return <Toaster position="bottom-left" visibleToasts={2} duration={6000} offset={{ left: rail + GUTTER, bottom: `calc(var(--dock-bottom, 0px) + ${GUTTER}px)` }} />
 }

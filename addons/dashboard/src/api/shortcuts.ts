@@ -16,6 +16,7 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'go.agents', keys: 'g a', label: 'Go to Agents' },
   { id: 'help', keys: '?', label: 'Open the help for this page' },
   { id: 'sidebar', keys: '[', label: 'Collapse or expand the sidebar' },
+  { id: 'terminal.dock', keys: 'Ctrl+`', label: 'Open or collapse the terminal dock (when the Terminals addon is on)' },
 ]
 
 /** Shown in the guide as one row; the app binds ⌘1–⌘9 (Ctrl+1–9 elsewhere) one by one. */

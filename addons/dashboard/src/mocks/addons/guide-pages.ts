@@ -20,7 +20,7 @@ A key written as two letters, such as \`g b\`, is a sequence: press the first, t
 
 | Keys | What it does |
 | --- | --- |
-${[...SHORTCUT_DEFS.map((d) => [d.keys, d.label]), [WORKSPACE_SWITCH.keys, WORKSPACE_SWITCH.label]].map(([k, l]) => `| \`${k}\` | ${l} |`).join('\n')}
+${[...SHORTCUT_DEFS.map((d) => [d.keys, d.label]), [WORKSPACE_SWITCH.keys, WORKSPACE_SWITCH.label]].map(([k, l]) => `| ${k.includes('`') ? `\`\` ${k} \`\`` : `\`${k}\``} | ${l} |`).join('\n')}
 | \`Ctrl+K\` or \`Cmd+K\` | Open the search and command palette |
 
 Press \`Esc\` to close the help sheet, a dialog or the palette.

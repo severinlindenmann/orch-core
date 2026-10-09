@@ -31,7 +31,7 @@ interface Pending {
 
 export interface RunAddonAction {
   /** Runs `action` of `addon`; opens core's dialog first when the manifest says so. `subject`: what it is about, as the row names it. */
-  run: (addon: string, action: string, extra?: Record<string, unknown>, subject?: string) => void
+  run: (addon: string, action: string, extra?: Record<string, unknown>, subject?: string, call?: RunCallOptions) => void
   /** May the viewer run it (role in this workspace meets the installed manifest's minRole)? */
   allowed: (addon: string, action: string) => boolean
   /** The manifest entry of an action (installed version). */
@@ -47,6 +47,14 @@ export interface RunAddonAction {
 export interface ActionError {
   message: string
   hint?: string
+}
+
+/**
+ * Per-call options of `run`. `onDone` fires only on the direct path (an action posted without core's confirm, sign,
+ * destructive or decision dialog): told whether it was honoured. Dialog paths never call it.
+ */
+export interface RunCallOptions {
+  onDone?: (ok: boolean) => void
 }
 
 export interface RunOptions {
@@ -161,14 +169,14 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     }
   }
 
-  const run = (addon: string, action: string, extra?: Record<string, unknown>, subject?: string) => {
+  const run = (addon: string, action: string, extra?: Record<string, unknown>, subject?: string, call?: RunCallOptions) => {
     const m0 = meta(addon, action)
     const confirm = m0?.confirm
     if (m0?.decision) void openDecision(addon, action, extra)
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
     else if (confirm === 'destructive') setDestroying({ addon, action, extra, subject })
-    else m.mutate({ addon, action, extra })
+    else m.mutate({ addon, action, extra }, call?.onDone ? { onSuccess: () => call.onDone!(true), onError: () => call.onDone!(false) } : undefined)
   }
 
   // `confirm: 'sign'`: core's signing prompt first; only after Touch ID is the action posted, with core's `confirmed` flag.

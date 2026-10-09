@@ -8,6 +8,7 @@ import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
 import { WorkspaceProvider } from '../workspace'
 import { HelpSheet } from './HelpSheet'
+import { NewTicketHost } from './NewTicketHost'
 import { CommandPalette } from './palette'
 import { ShellUiProvider } from './ShellUi'
 import { useShortcuts } from './shortcuts'
@@ -78,6 +79,7 @@ export function Shell() {
             </div>
           </div>
           <CommandPalette />
+          <NewTicketHost />
           <HelpSheet />
           <ShellToaster />
         </TooltipProvider>

@@ -2,12 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { Lock, TriangleAlert, X } from 'lucide-react'
 import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
-import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketType, type Visibility, type Workspace } from '@/api/types'
+import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketDocument, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -25,7 +25,7 @@ const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRI
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
 
-interface Draft {
+export interface Draft {
   type: TicketType
   title: string
   priority: Priority
@@ -39,7 +39,7 @@ interface Draft {
   acceptance: string[]
 }
 
-const EMPTY: Draft = {
+export const EMPTY: Draft = {
   type: 'feature',
   title: '',
   priority: 'medium',
@@ -56,7 +56,7 @@ const EMPTY: Draft = {
 /** Unsaved text: what the draft bar and the leave guard care about. */
 const hasText = (d: Draft) => !!d.title.trim() || d.acceptance.length > 0 || Object.values(d.sections).some((s) => s?.trim())
 
-const draftKey = (person: string, ws: string) => `orch.dashboard.new-ticket.draft.${person}.${ws}`
+export const draftKey = (person: string, ws: string) => `orch.dashboard.new-ticket.draft.${person}.${ws}`
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string')
@@ -100,7 +100,7 @@ function readDraft(key: string): Draft | null {
     return null
   }
 }
-function writeDraft(key: string, d: Draft | null) {
+export function writeDraft(key: string, d: Draft | null) {
   try {
     if (d && hasText(d)) localStorage.setItem(key, JSON.stringify(d))
     else localStorage.removeItem(key)
@@ -202,13 +202,42 @@ const Field = ({ label, htmlFor, children }: { label: string; htmlFor?: string; 
   </div>
 )
 
-function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
+/**
+ * The page carries the overlay's draft (Open full page) without the "Draft restored" note:
+ * set right before that navigation, read once by the page's form.
+ */
+let carriedFromOverlay = false
+export const carryDraftToPage = () => void (carriedFromOverlay = true)
+
+
+export interface NewTicketFormProps {
+  me: Me
+  workspace: Workspace
+  /** `page` is the /tickets/new route; `overlay` is the same form in the New ticket sheet. */
+  variant?: 'page' | 'overlay'
+  /** Overlay: what is typed changed between nothing and something (the sheet asks before closing). */
+  onDirtyChange?: (dirty: boolean) => void
+  /** Overlay: a ticket was created with Create (the sheet closes and says so). */
+  onCreated?: (ticket: TicketDocument) => void
+  /** Overlay: Cancel. */
+  onCancel?: () => void
+  /** Overlay: extra buttons in the footer (Open full page). */
+  footerExtra?: ReactNode
+}
+
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onCancel, footerExtra }: NewTicketFormProps) {
+  const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
   const key = draftKey(me.person, workspace.id)
   const restored = useMemo(() => readDraft(key), [key])
   const [draft, setDraft] = useState<Draft>(restored ?? EMPTY)
-  const [showRestored, setShowRestored] = useState(!!restored && hasText(restored))
+  // Read in the initializer (twice under StrictMode, so it is cleared in an effect, not here).
+  const [showRestored, setShowRestored] = useState(() => !(variant === 'page' && carriedFromOverlay) && !!restored && hasText(restored))
+  useEffect(() => {
+    if (variant === 'page') carriedFromOverlay = false
+  }, [variant])
+  const root = useRef<HTMLDivElement>(null)
   const [attempted, setAttempted] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const leaving = useRef(false)
@@ -217,8 +246,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
   const canCreate = can(roleOf(workspace, me.person), 'ticket.create')
   const dirty = hasText(draft)
   const check = problems(draft)
-
-  usePageHeader('New ticket')
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
 
   const patch = useCallback((p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p })), [])
   useEffect(() => writeDraft(key, draft), [key, draft])
@@ -227,7 +255,8 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
   const labels = useMemo(() => [...new Set(all.flatMap((t) => t.labels))].sort(), [all])
   const epics = all.filter((t) => t.type === 'epic')
 
-  const blocker = useBlocker({ shouldBlockFn: () => dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => dirty && !leaving.current })
+  // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
+  const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
@@ -276,6 +305,9 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
       setAttempted(false)
       toast.success(`Created ${ticket.key}`)
       titleRef.current?.focus()
+    } else if (overlay) {
+      setDraft(EMPTY)
+      onCreated?.(ticket)
     } else {
       leaving.current = true
       void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
@@ -284,7 +316,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
 
   // A refused submit: focus the first invalid field (title, then the sections in page order).
   useEffect(() => {
-    if (refused) document.querySelector<HTMLElement>('main [aria-invalid="true"]')?.focus()
+    if (refused) root.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
   }, [refused])
 
   const discardAll = () => {
@@ -298,7 +330,8 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
 
   return (
     <div
-      className="mx-auto max-w-[1100px]"
+      ref={root}
+      className={overlay ? undefined : 'mx-auto max-w-[1100px]'}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
@@ -306,7 +339,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
         }
       }}
     >
-      <h1 className="mb-4 text-xl font-semibold">New ticket</h1>
+      {!overlay && <h1 className="mb-4 text-xl font-semibold">New ticket</h1>}
       {!canCreate && (
         <div role="alert" className="mb-4 flex items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
           <Lock className="mt-0.5 size-4 shrink-0" />
@@ -322,7 +355,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
         </div>
       )}
       <TypeControl value={draft.type} onChange={(type) => patch({ type, parent: type === 'epic' ? null : draft.parent })} />
-      <div className="mt-5 grid gap-8 pb-24 lg:grid-cols-[minmax(0,1fr)_280px]">
+      <div className={overlay ? 'mt-5 grid grid-cols-[minmax(0,1fr)_240px] gap-6 pb-6' : 'mt-5 grid gap-8 pb-24 lg:grid-cols-[minmax(0,1fr)_280px]'}>
         <div className="space-y-5">
           <div className="space-y-1.5">
             <label htmlFor="nt-title" className="text-[13px] font-medium">
@@ -331,7 +364,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
             <Input
               id="nt-title"
               ref={titleRef}
-              autoFocus
+              autoFocus={!overlay}
               value={draft.title}
               onChange={(e) => patch({ title: e.target.value })}
               maxLength={160}
@@ -353,6 +386,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
             acceptance={draft.acceptance}
             onAcceptance={(acceptance) => patch({ acceptance })}
             invalid={attempted ? check.sections : {}}
+            collapsible={overlay}
           />
         </div>
         <aside className="space-y-4" aria-label="Properties">
@@ -396,7 +430,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
           <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
         </aside>
       </div>
-      <div className="sticky bottom-0 -mx-6 mt-8 border-t border-border bg-bg px-6 py-3">
+      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky bottom-0 -mx-6 mt-8 border-t border-border bg-bg px-6 py-3'}>
         {(summary || serverError) && (
           <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -415,7 +449,8 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
           <Button type="button" variant="outline" onClick={() => void submit(true)} disabled={!canCreate || create.isPending}>
             Create and open another
           </Button>
-          <Button type="button" variant="ghost" onClick={() => void navigate({ to: '/tickets' })}>
+          {footerExtra}
+          <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
             Cancel
           </Button>
         </div>
@@ -451,6 +486,7 @@ function NewTicketForm({ me, workspace }: { me: Me; workspace: Workspace }) {
 export function NewTicketPage() {
   const { workspace } = useWorkspace()
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  usePageHeader('New ticket')
   if (!me || !workspace) return <Skeleton className="mx-auto h-96 max-w-[1100px]" aria-label="Loading" />
   return <NewTicketForm key={`${workspace.id}:${me.person}`} me={me} workspace={workspace} />
 }

@@ -118,17 +118,20 @@ describe('app shell', () => {
     expect(await screen.findByText('CHF 31.40')).toBeInTheDocument()
   })
 
-  it('opens the new ticket page from the button and from the c shortcut, but not while typing', async () => {
+  it('opens the new ticket overlay from the button and from the c shortcut, but not while typing', async () => {
     const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
     await user.click(await screen.findByRole('button', { name: /New ticket/ }))
-    expect(await screen.findByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'New ticket' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New ticket' })).toBeNull())
     await user.click(screen.getByRole('link', { name: /Board/ }))
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board'))
     await user.keyboard('c')
-    expect(await screen.findByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
-    await user.type(screen.getByLabelText('Title'), 'c')
-    expect(screen.getByLabelText('Title')).toHaveValue('c')
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' })
+    expect(screen.getByTestId('topbar-title')).toHaveTextContent('Board')
+    await user.type(within(sheet).getByLabelText('Title'), 'c')
+    expect(within(sheet).getByLabelText('Title')).toHaveValue('c')
   })
 
   describe('full palette', () => {
@@ -195,7 +198,8 @@ describe('app shell', () => {
       await user.click(screen.getByRole('button', { name: /New ticket/ }))
       await user.type(await screen.findByLabelText('Title'), 'ga')
       expect(screen.getByLabelText('Title')).toHaveValue('ga')
-      expect(screen.getByRole('heading', { level: 1, name: 'New ticket' })).toBeInTheDocument()
+      expect(screen.getByRole('dialog', { name: 'New ticket' })).toBeInTheDocument()
+      expect(screen.getByTestId('topbar-title')).toHaveTextContent('Tickets')
     })
 
     it('shows shortcuts next to items and opens the save view dialog from Create', async () => {

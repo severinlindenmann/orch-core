@@ -4,7 +4,7 @@ import { can } from '@/api/permissions'
 import { SHORTCUT_DEFS } from '@/api/shortcuts'
 import { useRole } from '../useRole'
 import { useWorkspace } from '../workspace'
-import { useShellState } from './ShellUi'
+import { useShellActions, useShellState } from './ShellUi'
 
 export interface Shortcut {
   id: string
@@ -24,7 +24,10 @@ const WORKSPACE_SHORTCUTS: Shortcut[] = Array.from({ length: 9 }, (_, i) => ({
   label: `Switch to workspace ${i + 1}`,
 }))
 
-/** Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet). */
+/**
+ * Who runs a shortcut. A key without one is handled by the component that owns it (`[` by the sidebar, `?` by the help sheet).
+ * `c` (new-ticket) opens the New ticket overlay; `useShortcuts` does that instead of navigating.
+ */
 const RUN: Record<string, Shortcut['run']> = {
   'new-ticket': (go) => go('/tickets/new'),
   'go.today': (go) => go('/'),
@@ -55,6 +58,7 @@ export function useShortcuts() {
   const router = useRouter()
   const { workspaces, switchWorkspace } = useWorkspace()
   const { setPaletteOpen, setPaletteSeed } = useShellState()
+  const { openNewTicket } = useShellActions()
   const role = useRole()
   useEffect(() => {
     const go = (to: string) => void router.navigate({ to } as never)
@@ -93,10 +97,12 @@ export function useShortcuts() {
       const hit = SHORTCUTS.find((s) => s.run && s.keys === e.key)
       if (hit) {
         e.preventDefault()
-        if (hit.id === 'new-ticket' && role && !can(role, 'ticket.create')) {
-          // A viewer gets the reason, in the palette, instead of a form they cannot submit.
-          setPaletteSeed('New ticket')
-          setPaletteOpen(true)
+        if (hit.id === 'new-ticket') {
+          if (role && !can(role, 'ticket.create')) {
+            // A viewer gets the reason, in the palette, instead of a form they cannot submit.
+            setPaletteSeed('New ticket')
+            setPaletteOpen(true)
+          } else openNewTicket()
           return
         }
         hit.run!(go)
@@ -107,5 +113,5 @@ export function useShortcuts() {
       window.removeEventListener('keydown', onKey)
       disarm()
     }
-  }, [router, workspaces, switchWorkspace, role, setPaletteOpen, setPaletteSeed])
+  }, [router, workspaces, switchWorkspace, role, setPaletteOpen, setPaletteSeed, openNewTicket])
 }

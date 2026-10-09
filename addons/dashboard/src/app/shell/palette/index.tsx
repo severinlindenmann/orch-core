@@ -18,13 +18,15 @@ import { availableActions, GATE_LABEL } from '../../pages/ticket/actions'
 import { SignDialog } from '../../pages/ticket/SignDialog'
 import { useViewer, type HumanAction } from '../../pages/ticket/shared'
 import { requestSaveView } from '../../pages/tickets/saveViewRequest'
-import { useShellState } from '../ShellUi'
+import { useShellActions, useShellState } from '../ShellUi'
+import { guessType, quickProblem, quickTitle } from '../../pages/new-ticket/quickRules'
+import { useQuickCreate } from '../../pages/new-ticket/useQuickCreate'
 import { keysFor } from '../shortcuts'
 import { Group, matches, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
 import { toastApiError } from '@/app/toast'
 
-type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | { ask: string }
+type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value)
@@ -57,6 +59,8 @@ export function CommandPalette() {
   const person = me?.person
   const role = useRole()
   const runAddon = useRunAddonAction(ticketKey)
+  const { openNewTicket } = useShellActions()
+  const quick = useQuickCreate(workspace?.id)
 
   // Recent items: every visited ticket and page, per viewer.
   const [recent, setRecent] = useState<RecentItem[]>([])
@@ -90,6 +94,11 @@ export function CommandPalette() {
       setPaletteSeed('')
     }
   }, [paletteOpen, paletteSeed, setPaletteSeed])
+
+  // A sub-prompt (Quick ticket, Comment, ...) takes typing at once, also when it was picked with the mouse.
+  useEffect(() => {
+    if (mode) document.querySelector<HTMLInputElement>('[cmdk-input]')?.focus()
+  }, [mode])
 
   // The prefix restricts what is listed; the rest is the search text.
   const prefix = mode ? '' : q.startsWith('>') || q.startsWith('#') || q.startsWith('@') ? q[0] : ''
@@ -146,7 +155,17 @@ export function CommandPalette() {
 
   const create: Entry[] = [
     can(role, 'ticket.create') || !role
-      ? { id: 'new-ticket', label: 'New ticket', icon: <Plus />, hint: 'create', keys: keysFor('new-ticket'), run: () => go('/tickets/new') }
+      ? {
+          id: 'new-ticket',
+          label: 'New ticket',
+          icon: <Plus />,
+          hint: 'create',
+          keys: keysFor('new-ticket'),
+          run: () => {
+            close()
+            openNewTicket()
+          },
+        }
       : {
           id: 'new-ticket',
           label: (
@@ -157,6 +176,21 @@ export function CommandPalette() {
           ),
           icon: <Plus />,
           hint: 'new ticket create',
+          disabled: true,
+          run: () => undefined,
+        },
+    can(role, 'ticket.create') || !role
+      ? { id: 'quick-ticket', label: 'Quick ticket…', icon: <Zap />, hint: 'create new ticket one line', run: () => (setQ(''), setMode('quick')) }
+      : {
+          id: 'quick-ticket',
+          label: (
+            <>
+              Quick ticket…
+              <span className="ml-2 text-[12px] text-text-faint">Viewers cannot create tickets</span>
+            </>
+          ),
+          icon: <Zap />,
+          hint: 'quick ticket new create',
           disabled: true,
           run: () => undefined,
         },
@@ -294,6 +328,31 @@ export function CommandPalette() {
         ]}
       />
     )
+  } else if (mode === 'quick') {
+    const problem = quickProblem(text)
+    body = (
+      <Group
+        heading="Quick ticket"
+        entries={[
+          {
+            id: 'quick-create',
+            label: problem ? (
+              <span className="text-text-muted">Describe the ticket in one line, then Enter</span>
+            ) : (
+              <span className="min-w-0 flex-1 truncate">
+                Create {guessType(text)} in Backlog: “{quickTitle(text)}”
+              </span>
+            ),
+            icon: <Zap />,
+            disabled: !!problem || quick.pending,
+            run: () => {
+              close()
+              void quick.create(text)
+            },
+          },
+        ]}
+      />
+    )
   } else if (mode === 'ask-to') {
     body = <Group heading="Ask whom" entries={visible(members.map((m) => ({ id: m.person, label: m.name, icon: <User />, hint: m.role, run: () => (setQ(''), setMode({ ask: m.person })) })))} />
   } else if (mode === 'move-pick') {
@@ -345,7 +404,7 @@ export function CommandPalette() {
     )
   }
 
-  const placeholder = mode === 'comment' ? 'Write a comment, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : mode === 'move-pick' ? 'Search for the ticket to move...' : PLACEHOLDER
+  const placeholder = mode === 'quick' ? 'Quick ticket: describe it in one line, then Enter...' : mode === 'comment' ? 'Write a comment, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : mode === 'move-pick' ? 'Search for the ticket to move...' : PLACEHOLDER
 
   return (
     <>

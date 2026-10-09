@@ -83,4 +83,6 @@ export interface WsCfg {
   epics: number[]
   /** An existing epic that gets extra generated children (the factory epic). */
   extraEpic?: { key: string; children: number }
+  /** The generated epic at `index` takes `extra` more children (after all others are placed), so one epic is big enough to shadow the board. */
+  bigEpic?: { index: number; extra: number }
 }

@@ -51,6 +51,25 @@ export function DisplayPopover({ display, onChange }: { display: BoardDisplay; o
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-text-faint">Group</span>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={display.group}
+            onValueChange={(v) => v && onChange({ group: v as BoardDisplay['group'] })}
+            aria-label="Group by"
+            className="w-full"
+          >
+            <ToggleGroupItem value="epic" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              Epic
+            </ToggleGroupItem>
+            <ToggleGroupItem value="none" className="h-8 flex-1 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+              None
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
         <div className="flex flex-col gap-2">
           <SwitchRow label="Show labels" checked={display.labels} onChange={(labels) => onChange({ labels })} />
           <SwitchRow label="Show estimate" checked={display.estimate} onChange={(estimate) => onChange({ estimate })} />

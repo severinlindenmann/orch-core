@@ -16,6 +16,9 @@ import { useRole } from '@/app/useRole'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
+import { groupByEpic, hasEpics, isCollapsed, NO_EPIC } from '../board/grouping'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
 import { SavedViews } from './SavedViews'
 import { TicketsTable, type AddonColumn } from './TicketsTable'
@@ -131,6 +134,18 @@ export function TicketsPage() {
   const { data: everything = [] } = useQuery({ queryKey: ['tickets', wsId, 'all'], queryFn: () => api.listTickets(wsId!), enabled: !!wsId })
 
   const rows = useMemo(() => (all ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [all, search.status])
+  const [grouping, setGrouping] = useTicketsGroup()
+  const dirty = hasFilters(search)
+  const grouped = grouping.group === 'epic' && hasEpics(everything)
+  const groups = useMemo(
+    () => (grouped ? groupByEpic(everything, rows, dirty || !!search.status?.length) : null),
+    [grouped, everything, rows, dirty, search.status],
+  )
+  // What j/k walks: the rows on screen, so a folded epic's children and the epic rows themselves are skipped.
+  const navRows = useMemo(
+    () => (groups ? [...groups.lanes.filter((l) => !isCollapsed(l, grouping.sections)).flatMap((l) => l.children), ...(grouping.sections[NO_EPIC] ? [] : groups.none)] : rows),
+    [groups, grouping.sections, rows],
+  )
   const counts = useMemo(() => {
     const c = Object.fromEntries(STATUSES.map((s) => [s, 0])) as Record<Status, number>
     for (const t of all ?? []) c[t.status]++
@@ -198,8 +213,8 @@ export function TicketsPage() {
   const picked = [...selected].filter((k) => visibleKeys.has(k))
 
   const searchRef = useRef<HTMLInputElement>(null)
-  const state = useRef({ rows, focusKey, canBulk })
-  state.current = { rows, focusKey, canBulk }
+  const state = useRef({ rows: navRows, focusKey, canBulk })
+  state.current = { rows: navRows, focusKey, canBulk }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
@@ -236,7 +251,6 @@ export function TicketsPage() {
   }, [navigate, toggle])
 
   const sort: SortKey = search.sort ?? 'updated'
-  const dirty = hasFilters(search)
   const shown: TicketSummary[] = rows
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
@@ -245,6 +259,20 @@ export function TicketsPage() {
         <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
           {shown.length === (everything.length || shown.length) ? `${shown.length} tickets` : `${shown.length} of ${everything.length}`}
         </span>
+        <span className="flex-1" />
+        {hasEpics(everything) && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text-faint">Group</span>
+            <ToggleGroup type="single" variant="outline" size="sm" value={grouping.group} onValueChange={(v) => v && setGrouping({ group: v as 'epic' | 'none' })} aria-label="Group by">
+              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+                Epic
+              </ToggleGroupItem>
+              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+                None
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        )}
       </div>
       {wsId && (
         <SavedViews
@@ -284,6 +312,9 @@ export function TicketsPage() {
         <>
           <TicketsTable
             tickets={shown}
+            groups={groups}
+            sections={grouping.sections}
+            onSection={(key, collapse) => setGrouping({ sections: { ...grouping.sections, [key]: collapse } })}
             people={people}
             me={me?.person}
             selected={selected}

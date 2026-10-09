@@ -118,6 +118,8 @@ function StateGlyph({ ticket, people, me, task }: { ticket: TicketSummary; peopl
 
 const DEFAULT_CARD_DISPLAY: Pick<BoardDisplay, 'density' | 'labels' | 'estimate' | 'progress'> = { density: 'comfortable', labels: true, estimate: true, progress: false }
 
+export type CardVariant = 'card' | 'lane'
+
 interface CardProps {
   ticket: TicketSummary
   people: BoardPeople
@@ -125,8 +127,31 @@ interface CardProps {
   task?: string
   canMove: boolean
   display?: Pick<BoardDisplay, 'density' | 'labels' | 'estimate' | 'progress'>
+  /** `lane`: the two-line card of an epic's child. */
+  variant?: CardVariant
   onOpen: (key: string) => void
   onMove?: (key: string, status: Status) => void
+}
+
+/** Two lines for a child under its epic: key, state, estimate, priority; then the title. The epic is the lane, so no chip. */
+function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showProgress }: { ticket: TicketSummary; people: BoardPeople; me: string | undefined; task?: string; overlay?: boolean; showEstimate: boolean; showProgress: boolean }) {
+  return (
+    <div className={cn('flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lg shadow-black/40')}>
+      <div className="flex items-center gap-1.5">
+        <TypeIcon type={ticket.type} />
+        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{ticket.key}</span>
+        <StateGlyph ticket={ticket} people={people} me={me} task={task} />
+        {ticket.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
+        <span className="flex-1" />
+        {showEstimate && <CardFields ticket={ticket} />}
+        <PriorityMarker priority={ticket.priority} />
+      </div>
+      <div className="line-clamp-1 text-[12px] leading-snug text-text" title={ticket.title}>
+        {ticket.title}
+      </div>
+      {showProgress && <ProgressBar ticket={ticket} />}
+    </div>
+  )
 }
 
 /** Three lines: key and state, title, people / chip / estimate. Progress only when Display asks for it. */
@@ -137,6 +162,7 @@ export function TicketCardBody({
   task,
   overlay,
   display = DEFAULT_CARD_DISPLAY,
+  variant = 'card',
 }: {
   ticket: TicketSummary
   people: BoardPeople
@@ -144,8 +170,10 @@ export function TicketCardBody({
   task?: string
   overlay?: boolean
   display?: CardProps['display']
+  variant?: CardVariant
 }) {
   const d = display ?? DEFAULT_CARD_DISPLAY
+  if (variant === 'lane') return <LaneCardBody ticket={ticket} people={people} me={me} task={task} overlay={overlay} showEstimate={d.estimate} showProgress={d.progress} />
   const compact = d.density === 'compact'
   const chip = ticket.parent ? (people.epicTitle(ticket.parent) ?? ticket.parent) : ticket.labels[0]
   const more = ticket.labels.length - (ticket.parent ? 0 : 1)
@@ -269,7 +297,7 @@ function MoveMenu({
   )
 }
 
-export function TicketCard({ ticket, people, me, task, canMove, display, onOpen, onMove }: CardProps) {
+export function TicketCard({ ticket, people, me, task, canMove, display, variant, onOpen, onMove }: CardProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: ticket.key, data: { ticket }, disabled: !canMove })
   const [menu, setMenu] = useState(false)
   const cardRef = useRef<HTMLDivElement | null>(null)
@@ -310,7 +338,7 @@ export function TicketCard({ ticket, people, me, task, canMove, display, onOpen,
           isDragging && 'opacity-40',
         )}
       >
-        <TicketCardBody ticket={ticket} people={people} me={me} task={task} display={display} />
+        <TicketCardBody ticket={ticket} people={people} me={me} task={task} display={display} variant={variant} />
       </div>
       {menu && (
         <MoveMenu

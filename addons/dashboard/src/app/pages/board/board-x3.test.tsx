@@ -41,9 +41,21 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
   })
 
   it('the board scrolls inside its own region: overflow-x-auto and min-w-0, and its parents do not overflow', async () => {
-    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy') })
+    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy'), storage: { 'orch.board.display': JSON.stringify({ group: 'none' }) } })
     const col = await screen.findByRole('region', { name: 'Backlog' }, T)
     const scroller = col.parentElement!
+    expect(scroller.className).toContain('overflow-x-auto')
+    expect(scroller.className).toContain('min-w-0')
+    for (let el = scroller.parentElement; el && el !== document.body; el = el.parentElement) {
+      expect(getComputedStyle(el).overflowX, el.className).not.toBe('scroll')
+    }
+    mockStore.sim.stopAll()
+  })
+
+  it('the grouped board scrolls inside its own region too', async () => {
+    renderApp('/board', { viewer: 'p_tom', setup: (s) => s.reset('busy') })
+    await screen.findByRole('region', { name: 'Backlog' }, T)
+    const scroller = document.querySelector<HTMLElement>('[data-grouped="epic"]')!
     expect(scroller.className).toContain('overflow-x-auto')
     expect(scroller.className).toContain('min-w-0')
     for (let el = scroller.parentElement; el && el !== document.body; el = el.parentElement) {
@@ -65,12 +77,12 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
     await user.keyboard('m')
     const menu = await screen.findByRole('menu', { name: 'Move to' })
     await user.click(within(menu).getByRole('menuitem', { name: 'Open' }))
-    const open = screen.getByRole('region', { name: 'Open' })
+    const open = screen.getByRole('group', { name: 'DEMO-0040 · Open' })
     await waitFor(() => expect(within(open).getByTestId('card-DEMO-0043')).toBeInTheDocument(), T)
     await waitFor(() => expect(document.activeElement).toBe(within(open).getByTestId('card-DEMO-0043')), T)
     expect(await screen.findByText('Moved DEMO-0043 to Open', {}, T)).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Undo' }))
-    const prog = screen.getByRole('region', { name: 'In progress' })
+    const prog = screen.getByRole('group', { name: 'DEMO-0040 · In progress' })
     await waitFor(() => expect(within(prog).getByTestId('card-DEMO-0043')).toBeInTheDocument(), T)
   })
 })

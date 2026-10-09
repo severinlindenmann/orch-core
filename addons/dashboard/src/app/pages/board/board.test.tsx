@@ -5,8 +5,10 @@ import { renderApp } from '@/test/renderApp'
 describe('board page', () => {
   it('renders status columns with DEMO-0043 under in-progress', async () => {
     renderApp('/board')
-    const col = await screen.findByRole('region', { name: 'In progress' })
-    expect(await within(col).findByTestId('card-DEMO-0043')).toBeInTheDocument()
+    await screen.findByRole('region', { name: 'In progress' })
+    // Grouped by epic (the default): DEMO-0043 is a child of DEMO-0040, so it sits in that lane's In progress cell.
+    const cell = await screen.findByRole('group', { name: 'DEMO-0040 · In progress' })
+    expect(await within(cell).findByTestId('card-DEMO-0043')).toBeInTheDocument()
     for (const name of ['Backlog', 'Open', 'Waiting', 'Testing']) expect(screen.getByRole('region', { name })).toBeInTheDocument()
     // Done starts collapsed to a rail (Display > Collapsed columns).
     expect(screen.getByRole('button', { name: /Expand Done/ })).toBeInTheDocument()

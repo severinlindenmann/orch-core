@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { Bug, ChevronDown, ChevronUp, ChevronsUp, Equal, FlaskConical, Layers, Sparkles, Wrench, type LucideIcon } from 'lucide-react'
 import { STATUSES, type Priority, type Status, type TicketSummary, type TicketType } from '@/api/types'
 import { cn } from '@/lib/utils'
+import type { GroupBy } from './grouping'
 
 export const STATUS_LABEL: Record<Status, string> = {
   backlog: 'Backlog',
@@ -11,6 +12,9 @@ export const STATUS_LABEL: Record<Status, string> = {
   testing: 'Testing',
   done: 'Done',
 }
+
+/** Done lists its latest tickets only, until "Show all". */
+export const DONE_LIMIT = 5
 
 export const TYPE_ICON: Record<TicketType, LucideIcon> = {
   feature: Sparkles,
@@ -80,8 +84,12 @@ export interface BoardDisplay {
   estimate: boolean
   progress: boolean
   collapsed: Status[]
+  /** Swimlanes per epic (default) or one flat set of columns. */
+  group: GroupBy
+  /** Lanes the person folded (true) or unfolded (false) themselves; absent = the default for that epic. */
+  lanes: Record<string, boolean>
 }
-export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'] }
+export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'], group: 'epic', lanes: {} }
 const DISPLAY_KEY = 'orch.board.display'
 
 function loadDisplay(): BoardDisplay {
@@ -94,6 +102,8 @@ function loadDisplay(): BoardDisplay {
       estimate: raw.estimate ?? DEFAULT_DISPLAY.estimate,
       progress: raw.progress ?? DEFAULT_DISPLAY.progress,
       collapsed: Array.isArray(raw.collapsed) ? raw.collapsed.filter((s): s is Status => STATUSES.includes(s)) : DEFAULT_DISPLAY.collapsed,
+      group: raw.group === 'none' ? 'none' : 'epic',
+      lanes: raw.lanes && typeof raw.lanes === 'object' ? Object.fromEntries(Object.entries(raw.lanes).filter(([, v]) => typeof v === 'boolean')) : {},
     }
   } catch {
     return DEFAULT_DISPLAY

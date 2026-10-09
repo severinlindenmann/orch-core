@@ -106,15 +106,22 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
     setSelected(currentId)
     setFocusId(currentId)
   }, [currentId])
+  const requestSeen = useRef<{ id: string; state: unknown } | null>(null)
   // A requested session: select it here, or switch to the workspace scope when this ticket's list does not hold it.
   useEffect(() => {
     if (!request) return
     if (list.some((s) => s.id === request) || ended.some((s) => s.id === request)) {
       requestDone?.()
       select(request)
+      // The keyboard goes to the dock now, and into the terminal once xterm is up (select's focus step).
+      region.current?.focus({ preventScroll: true })
     } else if (ticket && sessions.some((s) => s.id === request)) toWorkspace(currentId ?? '')
+    // Not a session of this viewer (or gone) once the sessions were read again after the request: drop it, the dock
+    // stays as it is (no focus grab, no waiting).
+    else if (requestSeen.current && requestSeen.current.id === request && requestSeen.current.state !== state) requestDone?.()
+    else if (!requestSeen.current || requestSeen.current.id !== request) requestSeen.current = { id: request, state }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request, sessions])
+  }, [request, sessions, state])
   // Opening the dock puts focus on the session strip (or the dock), so the keyboard is where the eye is.
   useEffect(() => {
     if (focus.current !== 'dock') return

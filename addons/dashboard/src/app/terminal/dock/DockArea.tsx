@@ -81,7 +81,6 @@ export function DockArea({ children }: { children: ReactNode }) {
     if (!allowed) return
     return onDockRequest((id) => {
       setRequest(id)
-      focus.current = 'dock'
       setPrefs((p) => (p.open ? p : { ...p, open: true }))
     })
   }, [allowed, setPrefs])

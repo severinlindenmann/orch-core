@@ -129,7 +129,6 @@ const claimsOf = (store: MockStore) => ((store.sharedAddonState('drop').claims ?
 const claimedBy = (store: MockStore, x: Received): string | undefined => claimsOf(store)[x.id] ?? x.claimed_by
 const sentOf = (s: Record<string, unknown>) => s.sent as Sent[]
 const size = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`)
-const when = (iso: string) => fmtWhen(iso)
 const left = (iso: string, now: string) => {
   const ms = Date.parse(iso) - Date.parse(now)
   if (ms <= 0) return 'expired'
@@ -188,7 +187,7 @@ registerAddon({
           file: x.name,
           from: x.from,
           size: size(x.bytes),
-          received: when(x.received_at),
+          received: fmtWhen(x.received_at, now),
           ticket: x.ticket ?? '',
           expires: left(x.expires_at, now),
           state: by ? (by === prefix ? 'claimed here' : `claimed by ${by}`) : x.addressed === 'inbox' ? 'to claim' : 'for this workspace',

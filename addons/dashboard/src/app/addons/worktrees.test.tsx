@@ -1,4 +1,5 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
+import { openDockOn } from '@/app/terminal/dock/request'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
@@ -114,6 +115,22 @@ describe('worktrees page', () => {
     // The keyboard goes to the dock (the session strip, then the terminal once xterm is up).
     await waitFor(() => expect(dock.contains(document.activeElement)).toBe(true), { timeout: 8000 })
   }, 25_000)
+  it('a dock request for a session that is not in the viewer\'s view is dropped: no focus grab, nothing selected', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    vi.stubGlobal('innerHeight', 900)
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    const add = await screen.findByRole('button', { name: 'Add worktree' }, T)
+    await user.click(screen.getByRole('button', { name: /^Open terminal dock/ }))
+    const dock = await screen.findByRole('region', { name: 'Terminal dock' }, T)
+    // Opening the dock puts the keyboard on its strip; then the person goes back to the page.
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-session-strip'), T)
+    const before = dock.querySelector('[data-session-strip]')?.getAttribute('aria-label')
+    add.focus()
+    act(() => openDockOn('no-such-session'))
+    await new Promise((r) => setTimeout(r, 600))
+    expect(document.activeElement).toBe(add)
+    expect(dock.querySelector('[data-session-strip]')?.getAttribute('aria-label')).toBe(before)
+  })
   it('no Open terminal here when terminals is off', async () => {
     renderApp('/addon/worktrees/worktrees', {
       viewer: 'p_sev',

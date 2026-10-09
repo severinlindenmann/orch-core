@@ -50,7 +50,7 @@ export function SignConfirm({
       title={signTitle(action, addonTitle, addon)}
       covers={[
         <>
-          Runs "{words(action)}" (<Raw>{action}</Raw>) of the addon {addonTitle} (<Raw>{addon}</Raw>)
+          Runs "{words(action)}" (<Raw>{action}</Raw>) of the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
         </>,
         `In workspace ${workspace.name} (${workspace.prefix})`,
       ]}
@@ -62,7 +62,7 @@ export function SignConfirm({
         <p className="flex items-center gap-1.5">
           <AddonBadge name={addon} title={addonTitle} />
           <span>
-            From the addon {addonTitle} (<Raw>{addon}</Raw>)
+            From the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{addonTitle} (<Raw>{addon}</Raw>)</>}
           </span>
         </p>
         {label && <p className="break-words text-text">{cap(label)}</p>}
@@ -83,4 +83,6 @@ export function SignConfirm({
 }
 
 /** The dialog title and toast title: core's words only. */
-export const signTitle = (action: string, addonTitle: string, addon: string) => `Sign: ${wordsAndId(action)} · ${addonTitle} (${addon})`
+export const signTitle = (action: string, addonTitle: string, addon: string) => `Sign: ${wordsAndId(action)} · ${addonName(addonTitle, addon)}`
+/** "Schedules (schedules)": the manifest title and always the package id, once when they are the same. */
+export const addonName = (title: string, id: string) => (title === id ? id : `${title} (${id})`)

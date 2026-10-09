@@ -106,7 +106,7 @@ describe('activity timeline', () => {
     const st = await everything(s)
     const titles = st.timeline.map((r) => r.title).join('\n')
     // The commit and the push are one run by Records in the workspace log.
-    const rec = st.timeline.find((r) => r.actor === 'Records')!
+    const rec = st.timeline.find((r) => r.actor === 'Records (records)')!
     expect(rec).toMatchObject({ count: 2, ticket: undefined })
     expect(rec.subtitle).toMatch(/latest: pushed \w+ to the remote \(Severin\)/)
     expect(titles).toContain('Claude Code for Severin · DEMO-0044 · was refused: only people approve')

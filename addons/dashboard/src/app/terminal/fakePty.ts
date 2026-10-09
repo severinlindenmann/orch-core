@@ -3,6 +3,7 @@
 
 import type { ShellCtx } from '@/api/terminals'
 import { maskSecrets } from '@/api/secrets'
+import { fmtClock } from '@/lib/time'
 
 export type { ShellCtx }
 
@@ -16,7 +17,8 @@ const HELP = ['orch status', 'orch show <key> --section <name>', 'orch task next
 const HUMAN_ONLY = 'err human_only approve · retry:false · next: orch ask or orch wait'
 const CLEAR = '\x1b[2J\x1b[H'
 
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+/** The CLI prints the exact time with its zone, like the real `orch status`. */
+const clockUtc = (iso: string) => `${fmtClock(iso)} UTC`
 const left = (until: string, now: string) => {
   const min = Math.max(0, Math.round((Date.parse(until) - Date.parse(now)) / 60000))
   return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min left` : `${min} min left`
@@ -78,10 +80,10 @@ function run(line: string, c: ShellCtx): CommandResult {
               `move       ${t.move.who} · ${t.move.why}`,
               `gates      ${t.gates.map((g) => `${g.name} ${g.state}`).join(' · ')}`,
               `questions  ${t.questions.open} open of ${t.questions.total}`,
-              c.claim ? `claim      ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${hhmm(c.claim.expires)}` : 'claim      none',
+              c.claim ? `claim      ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${clockUtc(c.claim.expires)}` : 'claim      none',
               `tasks      ${t.tasks.done}/${t.tasks.total} done${t.tasks.doing ? ` · doing ${t.tasks.doing}` : ''}${t.next_task ? ` · next ${t.next_task.id}` : ''}`,
               `cursor     ${c.cursor}`,
-              c.grant ? `grant      ${c.grant.id} · ${c.grant.scope} · until ${hhmm(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant      none · run orch grant',
+              c.grant ? `grant      ${c.grant.id} · ${c.grant.scope} · until ${clockUtc(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant      none · run orch grant',
             ]
           : ['orch · no ticket in this shell'],
       }

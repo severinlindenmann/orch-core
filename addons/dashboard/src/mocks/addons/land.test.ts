@@ -525,6 +525,11 @@ describe('busy day', () => {
     expect(after.status).toBe('testing')
     expect(after.landing).toBeUndefined()
     expect(text(await panel(s, conflictNeed.ticket))).toContain('Back to review')
+    // Leaving done ends the landing story, even for a ticket whose landing failed without a resolution.
+    s.store.append(red.ticket, { type: 'status.changed', actor: 'host', to: 'testing' })
+    expect(s.store.ticket(red.ticket)!.landing).toBeUndefined()
+    s.store.append(red.ticket, { type: 'status.changed', actor: 'host', to: 'done' })
+    expect(s.store.ticket(red.ticket)!.landing).toBeUndefined()
   })
 
   it('R2: landing records count only while the landing addon is on, and only when written by it', () => {

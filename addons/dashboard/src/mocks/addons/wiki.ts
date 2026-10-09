@@ -174,7 +174,8 @@ A normal link still works: [dbt docs](https://docs.getdbt.com).
   },
 ]
 
-const ago = (iso: string) => `updated ${fmtWhen(iso)}`
+/** Relative to the demo's "now" (the pages are seeded around it). */
+const ago = (iso: string) => `updated ${fmtWhen(iso, EPOCH)}`
 
 const pagesOf = (state: Record<string, unknown>) => state.pages as Page[]
 interface Nav {

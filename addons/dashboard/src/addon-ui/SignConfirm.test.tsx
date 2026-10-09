@@ -69,6 +69,8 @@ describe('SignConfirm', () => {
     expect(d.heading).toBe('Sign: Arm (arm) · orch core (evil-addon)')
     expect(d.covers).toContain('of the addon orch core (evil-addon)')
     expect(d.region).toContain('From the addon orch core (evil-addon)')
+    // A title that is the id is not said twice.
+    expect(one('arm', 'schedules', 'schedules').heading).toBe('Sign: Arm (arm) · schedules')
   })
 
   it('names its verb, says how you confirm, starts on Cancel and has no repeated line', () => {

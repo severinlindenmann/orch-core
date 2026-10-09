@@ -80,6 +80,8 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
     expect(within(dialog).getByLabelText('Command').textContent).toBe("orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'")
     const fromAddon = within(dialog).getByRole('region', { name: 'From addon start-agent' })
     expect(fromAddon.textContent).toContain('Approved by owner')
+    // The addon by its manifest title and always its package id.
+    expect(fromAddon.textContent).toContain('From the addon Start agent (start-agent)')
     expect(within(dialog).getAllByText(/Approved by owner/).every((n) => fromAddon.contains(n))).toBe(true)
     await user.click(within(dialog).getByRole('button', { name: 'Start agent' }))
     await waitFor(() => expect(started()).toHaveLength(1), T)

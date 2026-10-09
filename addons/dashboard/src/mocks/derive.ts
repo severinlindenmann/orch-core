@@ -102,6 +102,8 @@ export function deriveTicket(
         break
       case 'status.changed':
         status = e.to as Status
+        // Leaving done ends the landing story; a later verdict starts a new one.
+        if (status !== 'done') landing = undefined
         break
       case 'labels.changed':
         labels = [...new Set([...labels, ...((e.add as string[] | undefined) ?? [])])].filter((l) => !((e.remove as string[] | undefined) ?? []).includes(l))

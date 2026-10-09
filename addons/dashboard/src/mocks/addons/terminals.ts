@@ -176,7 +176,7 @@ registerAddon({
       sessionByTicket,
       items: shown.map((s) => ({
         title: sessionTitle(s),
-        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${fmtWhen(s.started)}`,
+        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${fmtWhen(s.started, c.store.now())}`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
       })),

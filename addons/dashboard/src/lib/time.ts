@@ -40,6 +40,14 @@ export function fmtClock(iso: string): string {
   return d ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}` : iso
 }
 
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** "Fri 12:00": a slot in the coming week (schedules' next run). */
+export function fmtSlot(iso: string): string {
+  const d = parse(iso)
+  return d ? `${DOW[d.getUTCDay()]} ${fmtClock(iso)}` : iso
+}
+
 /** "9 Oct". */
 export function fmtDay(iso: string): string {
   const d = parse(iso)

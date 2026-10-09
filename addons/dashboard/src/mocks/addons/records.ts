@@ -118,7 +118,7 @@ registerAddon({
       ticket: p.key,
       title: c.store.ticket(p.key)?.title ?? '',
       events: p.events,
-      last: fmtWhen(p.last),
+      last: fmtWhen(p.last, c.store.now()),
     }))
     const events = rows.reduce((n, r) => n + r.events, 0)
     const err = state.pushError as string | null
@@ -183,7 +183,7 @@ registerAddon({
       lastPushText: last ? `Last push ${last.commit} to ${last.remote}, ${fmtExact(last.at)}` : 'Not pushed yet',
       historyItems: hist.map((h, i) => ({
         title: `${plural(h.tickets, 'ticket', 'tickets')}, ${plural(h.events, 'event', 'events')}`,
-        subtitle: `${fmtWhen(h.at)} by ${h.by}`,
+        subtitle: `${fmtWhen(h.at, c.store.now())} by ${h.by}`,
         badge: last && h.hash === last.commit ? 'pushed' : i === 0 ? 'latest' : undefined,
         status: last && h.hash === last.commit ? ('ok' as const) : ('idle' as const),
       })),

@@ -3,8 +3,7 @@ import { PERSON_NAME } from '../busy/pools'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
-import { plural } from '@/lib/time'
-import { fmtWhen } from '@/lib/time'
+import { fmtWhen, plural } from '@/lib/time'
 
 // github: pull requests (code reviews) and the external issues lane. Addon state is the only store for PRs and issues;
 // the ticket panel reads `addon.prByTicket.$ticket` (see view()), nothing is written to ticket addon data.

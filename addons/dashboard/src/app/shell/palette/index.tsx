@@ -25,6 +25,7 @@ import { keysFor } from '../shortcuts'
 import { Group, matches, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
 import { toastApiError } from '@/app/toast'
+import { statusLabel } from '@/app/pages/ticket/shared'
 
 type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
@@ -297,7 +298,7 @@ export function CommandPalette() {
       <>
         <span className="w-24 shrink-0 font-mono text-[12px] text-text-faint">{t.key}</span>
         <span className="flex-1 truncate">{t.title}</span>
-        <span className="text-[11px] text-text-faint">{STATUS_LABEL[t.status]}</span>
+        <span className="text-[11px] text-text-faint">{statusLabel(t.status, t.landing)}</span>
       </>
     ),
     run: () => go(`/ticket/${t.key}`),
@@ -365,7 +366,7 @@ export function CommandPalette() {
             <>
               <span className="w-24 shrink-0 font-mono text-[12px] text-text-faint">{t.key}</span>
               <span className="flex-1 truncate">{t.title}</span>
-              <span className="text-[11px] text-text-faint">{STATUS_LABEL[t.status]}</span>
+              <span className="text-[11px] text-text-faint">{statusLabel(t.status, t.landing)}</span>
             </>
           ),
           run: () => (setQ(''), setMoveTarget({ key: t.key, status: t.status }), setMode('move')),

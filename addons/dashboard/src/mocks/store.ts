@@ -53,7 +53,6 @@ import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
 import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
-import { setClock } from '@/lib/time'
 import type { RelaySim } from './relay'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
@@ -165,8 +164,6 @@ export class MockStore {
     this.seed()
     if (this.persist) this.load(saved)
     this.startLiveIfBusy()
-    // The host's clock: relative times everywhere (pages and addon views) are measured against it (src/lib/time.ts).
-    setClock(() => Date.parse(this.now()))
   }
 
   private live = false
@@ -224,7 +221,9 @@ export class MockStore {
         for (const { ticket, event } of mod.seedLog(this.addonState(ws.id, name), ws.id, this)) {
           const def = this.defs.get(ticket)
           if (!def || this.wsOfKey.get(ticket) !== ws.id) continue
-          this.events.get(ticket)!.push(this.expand(def, event as FixtureEvent, 0))
+          // An addon seeds only its own records, as itself: never core events or another addon's, never as a person.
+          if (typeof event.type !== 'string' || !event.type.startsWith(`${name}.`) || typeof event.at !== 'string') continue
+          this.events.get(ticket)!.push(this.expand(def, { ...event, actor: `addon:${name}` } as FixtureEvent, 0))
           touched.add(ticket)
         }
         for (const key of touched) {
@@ -1018,9 +1017,10 @@ export class MockStore {
       // Only core's signing prompt sets `confirmed` (addon args cannot: actionRuntime strips it), so addon.decided's presence is true.
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
     }
-    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
-    if (!res.ok) return res
+    if (!raw.ok) return raw
+    const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
     if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
@@ -1037,6 +1037,25 @@ export class MockStore {
     if (meta?.kind !== 'navigation') this.bump(ws)
     this.save()
     return res
+  }
+
+  /**
+   * What core lets an action's answer point the client at: a `ticket` (the toast's Open) only when it is a ticket of
+   * this workspace the viewer can see; a `terminal` (the dock opens on it) only while terminals is active here and the
+   * session is in this viewer's terminals view. Anything else is dropped, never passed on.
+   */
+  private checkedResult(ws: string, res: AddonActionResult): AddonActionResult {
+    const { ticket, terminal, ...rest } = res
+    const out: AddonActionResult = rest
+    if (typeof ticket === 'string' && this.wsOfKey.get(ticket) === ws && this.isVisible(ticket)) out.ticket = ticket
+    if (typeof terminal === 'string') {
+      const w = this.workspaces.find((x) => x.id === ws)
+      const mod = getAddon('terminals')
+      const view = addonActive(w, 'terminals') && mod?.view ? mod.view(this.addonState(ws, 'terminals'), { store: this, ws, viewer: this.viewer }) : null
+      const sessions = (view?.sessions ?? []) as { id: string }[]
+      if (sessions.some((x) => x.id === terminal)) out.terminal = terminal
+    }
+    return out
   }
 
   /**

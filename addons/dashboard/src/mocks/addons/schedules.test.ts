@@ -65,11 +65,11 @@ describe('schedules package and seed', () => {
   })
   it('last and next run come from the mock clock (Friday 11:30 UTC)', async () => {
     const s = setup()
-    expect((await row(s, 'check-inbox')).next).toBe('Fri 12:00 UTC')
-    expect((await row(s, 'deps-weekly')).next).toBe('Mon 07:00 UTC')
+    expect((await row(s, 'check-inbox')).next).toBe('Fri 12:00')
+    expect((await row(s, 'deps-weekly')).next).toBe('Mon 07:00')
     expect((await row(s, 'deps-weekly')).last).toMatch(/^4 days ago/)
     vi.advanceTimersByTime(60 * 60 * 1000)
-    expect((await row(s, 'check-inbox')).next).toBe('Fri 13:00 UTC')
+    expect((await row(s, 'check-inbox')).next).toBe('Fri 13:00')
   })
 })
 
@@ -95,7 +95,7 @@ describe('arming', () => {
     expect(await row(s, 'check-inbox')).toMatchObject({ armed: false, next: 'disabled' })
     vi.advanceTimersByTime(2 * 60 * 60 * 1000)
     await run(s, 'arm', { id: 'check-inbox', confirmed: true })
-    expect((await row(s, 'check-inbox')).next).toBe('Fri 14:00 UTC')
+    expect((await row(s, 'check-inbox')).next).toBe('Fri 14:00')
   })
   it('the table says Enabled or Disabled and keeps timing, next run, last run and result in their own columns', async () => {
     const { scheduleRows } = await state(setup())

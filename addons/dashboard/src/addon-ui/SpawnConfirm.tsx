@@ -21,7 +21,7 @@ import { fmtClock } from '@/lib/time'
 const GRANT_HOURS = 8
 /** Longest addon-supplied text shown in the dialog. */
 const ADDON_TEXT_MAX = 300
-const hhmm = (iso: string) => fmtClock(iso)
+const timeOfDay = (iso: string) => fmtClock(iso)
 const cap = (v: unknown) => {
   const t = typeof v === 'string' ? v : ''
   return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
@@ -157,7 +157,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     ['Where', c.where],
     // Rendered by core from the validated plan, never from the addon's text.
     ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
-    ['Grant', grant ? `active until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
+    ['Grant', grant ? `active until ${timeOfDay(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${timeOfDay(until)}`],
   ]
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
@@ -232,7 +232,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     return (
       <SignPrompt
         title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
-        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${hhmm(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${timeOfDay(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
         confirmLabel="Sign and start"
         disabled={!!c.blocked}
         onClose={onClose}

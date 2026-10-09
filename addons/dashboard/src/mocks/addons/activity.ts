@@ -159,7 +159,11 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
       const label = findHarness(harnessForAgent(a.id))?.label ?? a.id
       return a.for ? `${label} for ${names.get(a.for) ?? a.for}` : label
     }
-    if (a.kind === 'addon') return c.store.addons.find((p) => p.name === a.id)?.title ?? a.id
+    if (a.kind === 'addon') {
+      // The title is the addon's own word for itself: its package id goes with it when they differ.
+      const title = c.store.addons.find((p) => p.name === a.id)?.title
+      return title && title !== a.id ? `${title} (${a.id})` : a.id
+    }
     return 'orch'
   }
   const out: Entry[] = []
@@ -191,7 +195,7 @@ const bySearch = (e: Entry, n: Nav, titleOf: (k: string) => string) =>
   !n.q || `${e.actor} ${e.actorId ?? ''} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
 
 /** Runs of consecutive events by one actor on one ticket (or in the workspace log) on one day become one row. */
-function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
+function collapse(list: Entry[], titleOf: (k: string) => string, now: string): Row[] {
   const rows: Row[] = []
   let run: Entry[] = []
   const flush = () => {
@@ -204,7 +208,7 @@ function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
     const summary = count === 1 ? first.summary : `${count} ${noun}`
     const where = first.ticket ?? 'workspace'
     // The one time format: how long ago the newest event of the row was (the count says there were more).
-    const time = fmtWhen(first.at)
+    const time = fmtWhen(first.at, now)
     const what = count === 1 ? (first.ticket ? titleOf(first.ticket) : '') : `latest: ${first.summary}`
     rows.push({
       id: `${first.src}:${first.seq}`,
@@ -257,7 +261,7 @@ registerAddon({
     const inScope = known.filter((e) => inPeriod(e, nav.period, today))
     const shownEntries = inScope.filter((e) => byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
     const newEntries = everything.filter((e) => isNew(e, nav.seen) && inPeriod(e, nav.period, today) && byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
-    const allRows = collapse(shownEntries, titleOf)
+    const allRows = collapse(shownEntries, titleOf, c.store.now())
     const limit = PAGE * nav.pages
     const timeline = allRows.slice(0, limit)
     const hidden = allRows.length - timeline.length
@@ -361,7 +365,7 @@ registerAddon({
     const ticketRows = [...perTicket]
       .sort((a, b) => b[1].n - a[1].n || b[1].last.at.localeCompare(a[1].last.at))
       .slice(0, TABLE_ROWS)
-      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), events: v.n, last_actor: v.last.actor, last: fmtWhen(v.last.at) }))
+      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), events: v.n, last_actor: v.last.actor, last: fmtWhen(v.last.at, c.store.now()) }))
     const ticketNodes: unknown[] = [
       { type: 'markdown', text: `### By ticket, ${period.word}` },
       {
@@ -407,7 +411,7 @@ registerAddon({
       },
       today: { events: todays.length, byAgents },
       todaySummary,
-      todayHint: last ? `Latest: ${last.actor}, ${fmtWhen(last.at)}` : 'Nothing has happened yet',
+      todayHint: last ? `Latest: ${last.actor}, ${fmtWhen(last.at, c.store.now())}` : 'Nothing has happened yet',
       ticketRows,
     }
   },

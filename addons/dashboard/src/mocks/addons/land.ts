@@ -58,8 +58,8 @@ const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id =
 /** "Claude Code for Severin", or a person's name. */
 const whoLabel = (c: Ctx, actor: string) => (actor.includes(':') ? `${agentLabel(actor)} for ${nameOf(c, actor.split(':')[2])}` : nameOf(c, actor))
 /** A deadline (a time of day) and when something happened (the one formatter). */
-const hhmm = (iso: string) => fmtClock(iso)
-const when = (iso?: string) => (iso ? fmtWhen(iso) : '–')
+const timeOfDay = (iso: string) => fmtClock(iso)
+const when = (c: Ctx, iso?: string) => (iso ? fmtWhen(iso, c.store.now()) : '–')
 const repo = (remote: string) => remote.split('/').slice(-1)[0]
 const queueName = (q: Pick<Queue, 'remote' | 'target'>) => `${q.remote} → ${q.target}`
 const titleOf = (c: Ctx, key: string) => c.store.ticket(key)?.title ?? ''
@@ -128,7 +128,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       { label: 'Source', value: cur.source_sha, mono: true },
       { label: 'Target', value: cur.target_sha, mono: true },
       { label: 'Rebase', value: 'Clean: the approval stands' },
-      { label: 'Times out', value: hhmm(cur.timeout_at) },
+      { label: 'Times out', value: timeOfDay(cur.timeout_at) },
     ])
     children.push(checksWidget(cur))
   } else if (queued) {
@@ -172,7 +172,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
     kv([
       { label: 'State', value: `Merged into ${merged.target}` },
       { label: 'Queue', value: `${repo(merged.remote)} → ${merged.target}` },
-      { label: 'Attempt', value: `#${merged.n} · ${when(merged.ended)}` },
+      { label: 'Attempt', value: `#${merged.n} · ${when(c, merged.ended)}` },
       { label: 'Checks', value: checksLine(merged) },
     ])
     children.push({ type: 'alert', tone: 'success', title: `Approved, tested and merged: the same candidate ${merged.candidate_sha}`, text: `Source ${merged.source_sha} rebased cleanly onto ${merged.target_sha}; the checks ran on ${merged.candidate_sha} and that commit is what merged.` })
@@ -197,7 +197,7 @@ function entryRow(c: Ctx, state: LandState, q: Queue, i: number) {
     `source ${e.source_sha}`,
     e.stacked_on && !block ? `stacked on ${parentName(c, e.stacked_on)}` : '',
     block ? `waits for ${parentName(c, block.parent)}${block.why === 'failed' ? ' (its landing failed)' : ' (ahead in the queue)'}` : '',
-    checking ? `checking now (attempt #${cur!.n})` : `queued ${when(e.enqueued)} by ${nameOf(c, e.by)}`,
+    checking ? `checking now (attempt #${cur!.n})` : `queued ${when(c, e.enqueued)} by ${nameOf(c, e.by)}`,
   ].filter(Boolean)
   return {
     id: `entry:${e.ticket}`,
@@ -235,7 +235,7 @@ function queueSection(c: Ctx, state: LandState, q: Queue): Node[] {
           { label: 'Now', value: `Attempt #${mine.n} · ${mine.ticket} ${titleOf(c, mine.ticket)}` },
           { label: 'Candidate', value: `${mine.candidate_sha} (source ${mine.source_sha} on target ${mine.target_sha})`, mono: true },
           { label: 'Rebase', value: 'Clean: the approval stands' },
-          { label: 'Times out', value: hhmm(mine.timeout_at) },
+          { label: 'Times out', value: timeOfDay(mine.timeout_at) },
         ],
       })
       out.push(checksWidget(mine))
@@ -280,14 +280,14 @@ function historyRows(c: Ctx, state: LandState) {
       candidate: a.candidate_sha,
       checks: checksLine(a),
       outcome: a.outcome === 'failed' ? `failed: ${a.reason === 'conflict' ? 'conflict' : a.reason === 'timeout' ? 'timed out' : 'red checks'}` : a.outcome === 'requeued' ? 'requeued: target moved' : (a.outcome ?? 'checking'),
-      when: when(a.ended ?? a.started),
+      when: when(c, a.ended ?? a.started),
       has_checks: a.checks.length > 0,
     }))
 }
 
 function workerAlert(c: Ctx, state: LandState): Node {
   const cur = attemptOf(state, state.worker.current)
-  const resumed = state.worker.resumed ? ` Restarted at ${when(state.worker.resumed.at)}: resumed from attempt #${state.worker.resumed.from}, no repeat merge.` : ''
+  const resumed = state.worker.resumed ? ` Restarted at ${when(c, state.worker.resumed.at)}: resumed from attempt #${state.worker.resumed.from}, no repeat merge.` : ''
   const demo = c.store.sim.running().includes(scriptId(c.ws)) ? ` Demo worker running: a step every ${STEP_MS / 1000} s.` : ''
   if (cur && !cur.outcome) {
     const q = queueOfAttempt(state, cur)

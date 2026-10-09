@@ -982,6 +982,31 @@ export class MockStore {
     return { ok: true, event }
   }
 
+  /**
+   * Core's gate invalidation on behalf of an addon whose work changed gated code (the land addon: any conflict
+   * resolution or fix during landing is new code the approval does not cover). The addon must be active in the
+   * ticket's workspace and the gate approved now. Recorded by core as `gate.invalidated {gate, reason, addon}`; a void
+   * verify approval takes the verdict with it (derive), so a done ticket goes back to testing: back to review.
+   */
+  voidApproval(key: string, gate: GateName, opts: { addon: string; reason: string }): { ok: true; event: OrchEvent } | StoreFailure {
+    const t = this.ticket(key)
+    const w = this.workspaceOf(key)
+    if (!t || !w) return refuse(404, 'not_found', `No ticket ${key}`)
+    if (!addonActive(w, opts.addon)) return refuse(409, 'addon.inactive', `${opts.addon} is not active in this workspace.`)
+    const reason = opts.reason.trim().slice(0, 400)
+    if (!reason) return refuse(400, 'validation', 'Say why the approval is void.')
+    if (t.gates[gate].state !== 'approved') return refuse(409, 'gate.not_approved', `The ${gate} gate of ${key} is not approved.`)
+    const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate, reason, addon: opts.addon })
+    if (gate === 'verify' && t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
+    return { ok: true, event }
+  }
+
+  /** An addon's simulator step changed its state outside an action (no event): save it and let live pages refresh. */
+  addonChanged(wsId: string): void {
+    this.bump(wsId)
+    this.save()
+  }
+
   // ------------------------------------------------------------ workspace views
 
   /** Gate policy: why `person` may not approve `gate` on `t` (null when eligible). */
@@ -997,7 +1022,8 @@ export class MockStore {
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
     if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
-    if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
+    // An invalidated approval no longer counts: the same person may approve the new content.
+    if (t.gates[gate].state !== 'invalidated' && t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
     return null
   }
 

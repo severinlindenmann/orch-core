@@ -1051,5 +1051,150 @@
       }
     },
     "package_sha256": "9ab7f2f0df9ca08b7c99dad68338474f256cec63e6ae54788071129c13697556"
+  },
+  {
+    "name": "land",
+    "title": "Landing",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: lands approved tickets on their target branch one at a time, checked on the exact commit that merges.",
+    "capabilities": [
+      "network",
+      "git_push"
+    ],
+    "first_party": true,
+    "package_sha256": "f8ffaede032daab41656c9858bc19e75b45fede20357a93c6608237b369bc716",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "landing",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.workerAlert"
+            },
+            {
+              "$ref": "addon.controls"
+            },
+            {
+              "$ref": "addon.body"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "landing.ticket",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "when": "addon.byTicket.$ticket",
+        "node": {
+          "$ref": "addon.byTicket.$ticket"
+        }
+      },
+      {
+        "slot": "board.card_field",
+        "id": "landing.card",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "when": "addon.cards.$ticket",
+        "node": {
+          "type": "stat",
+          "label": "",
+          "value": "${addon.cards.$ticket}"
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "land.settings",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "Tickets land only on these branches. `main` is never a landing target (D33): people merge to main by hand."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "targets": {
+                    "type": "string",
+                    "title": "Allowed targets (comma separated)",
+                    "maxLength": 300
+                  },
+                  "timeout_minutes": {
+                    "type": "integer",
+                    "title": "Check timeout (minutes)",
+                    "minimum": 5,
+                    "maximum": 120,
+                    "default": 30
+                  }
+                }
+              },
+              "formData": {
+                "$ref": "addon.settings"
+              },
+              "action": "save_settings",
+              "submitLabel": "Save"
+            }
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "run_worker",
+        "title": "Run the landing worker (demo)",
+        "action": "run_worker"
+      }
+    ],
+    "actions": {
+      "save_settings": {
+        "minRole": "owner"
+      },
+      "enqueue": {
+        "minRole": "member",
+        "label": "Add to the landing queue"
+      },
+      "dequeue": {
+        "minRole": "member",
+        "label": "Take off the landing queue"
+      },
+      "resolve": {
+        "minRole": "maintainer",
+        "decision": true
+      },
+      "run_worker": {
+        "minRole": "member",
+        "label": "Run the worker (demo)"
+      },
+      "stop_worker": {
+        "minRole": "member",
+        "label": "Stop the worker (demo)"
+      },
+      "view_queues": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Show the queues"
+      },
+      "view_history": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Show the history"
+      },
+      "open_checks": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Open checks"
+      }
+    }
   }
 ]

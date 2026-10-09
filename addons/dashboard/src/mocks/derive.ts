@@ -185,6 +185,9 @@ export function deriveTicket(
       case 'gate.invalidated': {
         const g = e.gate as GateName
         gateInvalid[g] = { reason: (e.reason as string) ?? 'Gated content changed after approval', at: e.at }
+        // The verdict is the verify approval: once that approval is void (e.g. a landing conflict was resolved, so the
+        // code changed), the verdict no longer stands and the ticket waits for a new one.
+        if (g === 'verify') verdict = null
         break
       }
       case 'section.edited': {
@@ -455,6 +458,18 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'resumed the AI Factory'
     case 'wiki.linked':
       return 'linked a wiki page'
+    case 'land.queued':
+      return `queued for landing on ${t(e.target, 'the target')}`
+    case 'land.dequeued':
+      return 'took it off the landing queue'
+    case 'land.attempt':
+      return e.outcome === 'merged'
+        ? `landed on ${t(e.target, 'the target')} as ${t(e.candidate_sha, 'a candidate')}`
+        : e.outcome === 'requeued'
+          ? `rebuilt the landing candidate: ${t(e.target, 'the target')} moved`
+          : `landing attempt failed: ${e.reason === 'conflict' ? 'conflict' : 'red checks'}`
+    case 'land.resolved':
+      return `resolved the landing ${e.kind === 'red_checks' ? 'red checks' : 'conflict'}; the approval is void`
     // Workspace events
     case 'member.added':
       return `added ${who} as ${t(e.role, 'member')}`

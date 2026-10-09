@@ -22,6 +22,7 @@ export function CardFields({ ticket, own }: { ticket: TicketSummary; own?: boole
   const readOnly = !can(useRole(), 'addon.action')
   const shown = items.filter((c) => {
     if (c.waiting) return false // a field that reads addon state appears once it has loaded
+    if (c.guarded) return true // its `when` held (e.g. a landing chip read from the addon's state)
     const data = ticket.addons?.[c.addon]
     return data && Object.keys(data).length > 0
   })

@@ -2008,6 +2008,33 @@
         "type": "status.changed",
         "actor": "claude-code:s_f101:p_sev",
         "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T09:50:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-09T10:40:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "Proration matches the three worked examples in the plan."
+      },
+      {
+        "at": "2026-10-09T10:40:01Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify",
+        "via": "dashboard",
+        "presence": "touchid"
+      },
+      {
+        "at": "2026-10-09T10:40:02Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
       }
     ]
   },
@@ -2078,6 +2105,47 @@
         "type": "status.changed",
         "actor": "claude-code:s_f101:p_sev",
         "to": "in-progress"
+      },
+      {
+        "at": "2026-10-09T09:30:00Z",
+        "type": "status.changed",
+        "actor": "claude-code:s_f101:p_sev",
+        "to": "testing"
+      },
+      {
+        "at": "2026-10-09T10:20:00Z",
+        "type": "verdict.given",
+        "actor": "p_mara",
+        "result": "pass",
+        "text": "Every invoice line carries billing_run_id."
+      },
+      {
+        "at": "2026-10-09T10:20:01Z",
+        "type": "gate.approved",
+        "actor": "p_mara",
+        "gate": "verify",
+        "via": "dashboard",
+        "presence": "touchid"
+      },
+      {
+        "at": "2026-10-09T10:20:02Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "done"
+      },
+      {
+        "at": "2026-10-09T10:58:00Z",
+        "type": "gate.invalidated",
+        "actor": "host",
+        "gate": "verify",
+        "addon": "land",
+        "reason": "Landing: Claude Code resolved a rebase conflict in models/marts/fct_invoice_lines.sql. A resolution is new code, so the approval no longer covers it."
+      },
+      {
+        "at": "2026-10-09T10:58:01Z",
+        "type": "status.changed",
+        "actor": "host",
+        "to": "testing"
       }
     ]
   },

@@ -490,6 +490,11 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | D50 | Person key from the recovery code | `PK` is derived from the 24-word recovery code (§5.2) instead of a wrapped copy on the relay. Same code, same `PK`: identity and pins survive the loss of every device as long as the code is kept. |
 | D51 | Dev override in the v2 core | The dev-only "test human" override (#265) is built into the v2 core in P1 with the human operations (C2, C7), not into v1 in P0. P0 exits without it; demo workspaces get it in P1. |
 | D52 | P0 exit without demo workspaces | P0 ends with the kit, the VPS, the relay deployed over HTTPS, spikes S1/S2 and the e2e harness (`hello` also checks the public relay), plus `bin/reset`. Starting the demo workspaces (`bin/ws1`, `bin/ws2`, `demo/create.sh`), dev mode, the fake relay (#267) and the guard over `ORCH_*` (#266) move to P1, where the v2 core exists. |
+| D53 | Landing (merge lane) | Draft (orch-v2-land-skills.md §1): a land addon in P2 lands approved tickets one at a time per (remote, target branch). Approval, checks and merge bind to the same candidate SHA; a clean rebase keeps the approval but is re-checked, any conflict resolution voids it. Never lands to `main`. |
+| D54 | Relay without pages | Draft (§2): the relay is API only; the only page is a static, script-free fallback for the pairing link. UIs live in the dashboard and the app. |
+| D55 | Skills and connections | Draft (§3): skills stay plain `SKILL.md`; orch metadata goes in an `orch.skill.json` sidecar; skills reference owner-configured, identity-bound connections by name; adding a credential reference needs owner approval. |
+| D56 | Simple auth | Draft (§4), owner decision: only the CLI's own login, or plain API tokens in `<state dir>/secrets/<workspace-uuid>.env` (0600, parsed, never sourced), exposed per declared need. No keychain, OAuth or org secrets for now. |
+| D57 | Checks and re-login | Draft (§5): connection checks with timeout and classified results, on demand, at session start and before claim; re-login hints to the owner; agents never log in. |
 
 ---
 

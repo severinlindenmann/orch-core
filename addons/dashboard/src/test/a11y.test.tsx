@@ -109,7 +109,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
       await user.click(t)
       await waitFor(() => expect(t).toHaveAttribute('aria-selected', 'true'))
     })
-  })
+  }, 30_000) // the Raw tab renders the whole ticket document as highlighted JSON; axe needs longer than the default 10 s
 
   it.each(ADDON_PAGES)('addon page %s', async (p, title, marker) => {
     await check(`/addon/${p}`, title, marker)

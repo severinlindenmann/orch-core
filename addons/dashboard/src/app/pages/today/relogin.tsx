@@ -1,9 +1,10 @@
 // Today's "Re-login needed" items (D57): one per connection whose last check is auth expired or wrong identity, for
 // the owner only. It shows the connection's login_hint to copy and "Run check again"; agents never handle logins and
 // no password is ever stored.
+import { reloginItems } from '@/api/attention'
 import { ChevronDown, KeyRound, Loader2, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import { CHECK_LABEL, isBlocking, type ConnectionInfo } from '@/api/connections'
+import { CHECK_LABEL, type ConnectionInfo } from '@/api/connections'
 import { can } from '@/api/permissions'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
@@ -77,7 +78,7 @@ export function ReloginGroup({ now }: { now: string }) {
   const connections = useConnections(owner ? ws : undefined)
   const [open, setOpen] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const items = (connections.data ?? []).filter((c) => c.last_check && isBlocking(c.last_check.status))
+  const items = reloginItems(connections.data ?? [])
   if (!owner || !ws || items.length === 0) return null
   return (
     <section role="region" aria-labelledby="today-group-relogin" className="overflow-hidden rounded-lg border border-border bg-surface">

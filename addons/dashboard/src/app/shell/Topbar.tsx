@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { restartToday } from '../todayRestart'
 import { useRole } from '../useRole'
 import { useShellActions, useShellState } from './ShellUi'
 import { toastApiError } from '@/app/toast'
@@ -44,6 +45,7 @@ export function Topbar() {
     try {
       await api.resetDemo()
       await qc.invalidateQueries()
+      restartToday()
       toast.success('Demo data reset')
     } catch (e) {
       toastApiError(e, 'Reset failed')
@@ -55,6 +57,7 @@ export function Topbar() {
     try {
       await api.resetDemo(to)
       await qc.invalidateQueries()
+      restartToday()
       toast.success(`Demo data: ${DATASET_NAME[to]}`)
     } catch (e) {
       toastApiError(e, 'Switch failed')

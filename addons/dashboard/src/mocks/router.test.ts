@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
+import { reloginItems } from '@/api/attention'
 import { parseActor } from './derive'
 import { createMockStore, sessionBelongsTo } from './store'
 
@@ -306,13 +307,15 @@ describe('stable ages and the attention count', () => {
     expect(store.needsYou(ws).find((i) => i.kind === 'verdict' && i.ticket === v.ticket)!.since).toBe(moved)
   })
 
-  it('workspace needs_you counts open addon decisions the viewer can decide', async () => {
+  it('workspace needs_you counts open addon decisions the viewer can decide, and the owner\'s re-logins (R-c)', async () => {
     const { api, store } = setup()
     const ws = store.workspaces[0].id
     const core = (await api.getToday(ws)).needs_you.length
     const addon = (await api.getAddonDecisions(ws)).length
     expect(addon).toBeGreaterThan(0)
-    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(core + addon)
+    const relogin = reloginItems(await api.getConnections(ws)).length
+    expect(relogin).toBeGreaterThan(0)
+    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(core + addon + relogin)
     store.setViewer('p_tom')
     expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(0)
   })

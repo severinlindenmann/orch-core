@@ -8,7 +8,7 @@ import { AddonLanes } from './AddonLane'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { ColumnSums } from './ColumnSum'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups, type EpicLane } from './grouping'
-import { DONE_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
+import { CELL_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 import { CardFields, TicketCard, type BoardPeople } from './TicketCard'
 
 /** What a lane cell is called as a drop target: one per lane and status, so ids stay unique. */
@@ -95,8 +95,8 @@ function Cell({
       </div>
     )
   }
-  const limited = status === 'done' && !showAll && tickets.length > DONE_LIMIT
-  const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
+  const limited = !showAll && tickets.length > CELL_LIMIT
+  const visible = limited ? tickets.slice(0, CELL_LIMIT) : tickets
   return (
     <div
       ref={setNodeRef}
@@ -115,12 +115,12 @@ function Cell({
       ))}
       {limited && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(true)}>
-          Show all {tickets.length}
+          +{tickets.length - CELL_LIMIT} more
         </Button>
       )}
-      {status === 'done' && showAll && tickets.length > DONE_LIMIT && (
+      {showAll && tickets.length > CELL_LIMIT && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(false)}>
-          Show last {DONE_LIMIT}
+          Show fewer
         </Button>
       )}
     </div>
@@ -248,10 +248,10 @@ export function EpicLanes({
   }
   const cols = STATUSES.map((s) => (railed(s) ? '40px' : 'minmax(216px, 1fr)')).join(' ')
   const minWidth = STATUSES.reduce((n, s) => n + (railed(s) ? 40 : 216), 0) + (STATUSES.length - 1) * 8
-  // "No epic" comes first: single tickets are what a big epic would otherwise push out of sight.
+  // Epics first, with the ungrouped tickets expanded at the end.
   const lanes = [
-    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null as EpicLane | null, tickets: groups.none }] : []),
     ...groups.lanes.map((l) => ({ key: l.epic.key, lane: l as EpicLane | null, tickets: l.children })),
+    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null as EpicLane | null, tickets: groups.none }] : []),
   ]
   return (
     <>

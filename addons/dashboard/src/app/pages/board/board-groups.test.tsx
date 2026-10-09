@@ -71,11 +71,11 @@ describe('board grouped by epic (N2)', () => {
     await waitFor(async () => expect(await sumOf()).toBe(grouped + 21))
   })
 
-  it('No epic comes first, and lane titles are h3 headings', async () => {
+  it('No epic comes last, and lane titles are h3 headings', async () => {
     renderApp('/board')
     const none = await screen.findByRole('button', { name: /^Collapse No epic/ }, T)
     const epic = screen.getByRole('button', { name: /^Collapse DEMO-0040 / })
-    expect(none.compareDocumentPosition(epic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(epic.compareDocumentPosition(none) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByRole('heading', { level: 3, name: 'No epic' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: /Tariff and billing/ })).toBeInTheDocument()
   })

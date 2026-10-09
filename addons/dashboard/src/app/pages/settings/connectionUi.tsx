@@ -46,7 +46,7 @@ export function DemoChip({ className }: { className?: string }) {
 
 /** What a check, the doctor or a grant can change: connections, skills, the secrets file, tickets (needs) and Today. */
 export function invalidateConnectionData(qc: QueryClient) {
-  return Promise.all(['connections', 'skills', 'secrets', 'ticket', 'today'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
+  return Promise.all(['connections', 'skills', 'secrets', 'ticket', 'today', 'workspaces'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
 }
 
 export const KIND_LABEL = { cli_login: 'CLI login', api_token: 'API token' } as const

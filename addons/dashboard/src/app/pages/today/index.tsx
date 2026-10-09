@@ -1,29 +1,78 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { Eye } from 'lucide-react'
+import { ChevronDown, Eye } from 'lucide-react'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
 import { useAddons } from '@/addon-ui'
 import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
+import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
 import { usePageHeader } from '../../shell/ShellUi'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
-import { ApprovalRow, DecisionRow, FoldRow, QuestionRow, VerdictRow } from './rows'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
-import { displayName, useMediaQuery, WIDE_QUERY, type Directory } from './shared'
+import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+function readSeen(key: string): Set<string> | null {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? new Set(JSON.parse(value) as string[]) : null
+  } catch {
+    return null
+  }
+}
+
+function writeSeen(key: string, ids: string[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(ids))
+  } catch {
+    /* storage unavailable: nothing is marked new next time */
+  }
+}
+
+/** Which open item a signing action is for: the question id, the gate, or `verify` for a verdict. */
+function actionRef(a: HumanAction): string {
+  if (a.kind === 'answer') return a.question
+  if (a.kind === 'verdict') return 'verify'
+  return a.gate
+}
+
+/** A viewer's summary line for one person who decides: "Severin decides · 4 open", opening into that person's rows. */
+function PersonSummary({ person, entries, scope, renderRow }: { person: string; entries: Entry[]; scope: string; renderRow: (row: Row) => ReactNode }) {
+  const [open, setOpen] = useSessionState(`orch.today.person.${scope}.${person}`, false)
+  const kinds = buildGroups(entries).map((g) => `${g.count} ${g.label.toLowerCase()}`).join(' · ')
+  return (
+    <section aria-label={`${person} decides`} className="overflow-hidden rounded-lg border border-border bg-surface">
+      <h2>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+          className="flex w-full items-center gap-1 px-3 py-3 text-left text-sm outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        >
+          <ChevronDown className={cn('mr-1 size-4 shrink-0 text-text-muted transition-transform', !open && '-rotate-90')} aria-hidden />
+          <span className="font-semibold text-text">{person} decides</span>{' '}
+          <span className="min-w-0 truncate tabular-nums text-text-muted">· {entries.length} open · {kinds}</span>
+        </button>
+      </h2>
+      {open && <ul className="border-t border-border">{buildGroups(entries).flatMap((g) => g.rows).map(renderRow)}</ul>}
+    </section>
+  )
+}
 
 export function TodayPage() {
   usePageHeader('Today')
@@ -36,6 +85,7 @@ export function TodayPage() {
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.
   const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const generation = useTodayGeneration()
   const ds = dataset.data?.dataset
   const [switched, setSwitched] = useState<{ ds?: string; at: number }>({ ds, at: 0 })
   if (switched.ds !== ds) setSwitched({ ds, at: switched.ds === undefined ? 0 : dataset.dataUpdatedAt })
@@ -51,7 +101,7 @@ export function TodayPage() {
   const role = useRole()
   const readOnly = !can(role, 'ticket.act')
 
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale) {
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready) {
     return (
       <div className="space-y-4" aria-busy="true">
         <h1 className="text-xl font-semibold tracking-tight">Today</h1>
@@ -63,7 +113,8 @@ export function TodayPage() {
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (
     <TodayInbox
-      key={`${ws}:${me.data.person}:${readOnly}:${ds}`}
+      key={`${ws}:${me.data.person}:${readOnly}:${ds}:${generation}`}
+      generation={`${ds}:${generation}`}
       items={readOnly ? today.data.read_only_open : today.data.needs_you}
       decisions={decisionsQ.data}
       readOnly={readOnly}
@@ -74,7 +125,8 @@ export function TodayPage() {
   )
 }
 
-function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }: {
+function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, generation }: {
+  generation: string
   items: NeedsYouItem[]
   decisions: AddonDecision[]
   readOnly: boolean
@@ -94,14 +146,31 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
 
   const entries = useMemo(() => toEntries(items, decisions), [items, decisions])
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
-  const [order, setOrder] = useState<string[]>(() => acceptOrder(entries))
+  // "New" means new since the person's last look: ids not in the list they last saw here (kept per workspace and
+  // person in the browser; a first visit, a dataset switch or Reset marks nothing new). New items lead their group.
+  const seenKey = `${SEEN_PREFIX}${ws}:${viewer}`
+  const [newIds, setNewIds] = useState<ReadonlySet<string>>(() => {
+    const seen = readSeen(seenKey)
+    return new Set(seen ? entries.filter((e) => !seen.has(e.id)).map((e) => e.id) : [])
+  })
+  const [order, setOrder] = useState<string[]>(() => acceptOrder(entries, newIds))
+  useEffect(() => writeSeen(seenKey, order), [seenKey, order])
   const { shown, fresh } = useMemo(() => reconcile(order, entries), [order, entries])
+  // Taking arrivals in ("N new · Show", or directly when nothing is on screen) marks them new and opens the groups they
+  // landed in (only those: another group the person closed stays closed).
+  const [reveal, setReveal] = useState<{ n: number; groups: string[] }>({ n: 0, groups: [] })
+  const takeFresh = useCallback(() => {
+    const ids = new Set([...newIds, ...fresh.map((e) => e.id)])
+    setNewIds(ids)
+    setOrder(acceptOrder(entries, ids))
+    setReveal((r) => ({ n: r.n + 1, groups: [...new Set(fresh.map((e) => e.group))] }))
+  }, [newIds, fresh, entries])
   // With nothing on screen there is nothing to keep still: take the new items in directly. Resolved ids leave the
   // accepted order, so an item that reopens later comes back through the pill, not in its old place.
   useEffect(() => {
-    if (shown.length === 0 && fresh.length > 0) setOrder(acceptOrder(entries))
+    if (shown.length === 0 && fresh.length > 0) takeFresh()
     else setOrder((o) => pruneOrder(o, entries))
-  }, [shown.length, fresh.length, entries])
+  }, [shown.length, fresh.length, entries, takeFresh])
   const groups = useMemo(() => buildGroups(shown), [shown])
 
   // Exactly one open row: on load the first blocking question, else the first row.
@@ -114,6 +183,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
   const toggle = (id: string) => setExpanded((e) => (e === id ? null : id))
 
   const [signing, setSigning] = useState<{ ticket: string; action: HumanAction } | null>(null)
+  // From the touch until the host confirms, the row being signed is dimmed with "Signing…" (R-d).
+  const [pending, setPending] = useState(false)
   const sign = (ticket: string, action: HumanAction) => setSigning({ ticket, action })
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
@@ -133,7 +204,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
     return person ? displayName(dir, person) : fallbackDecider
   }
 
-  const renderRow = (row: Row) => {
+  const renderContent = (row: Row) => {
     if (row.kind === 'fold') {
       const ds = row.entries.map((e) => e.decision)
       const title = addonTitle(row.addon)
@@ -174,12 +245,27 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
     return <VerdictRow key={row.id} {...props} />
   }
 
+  const renderRow = (row: Row) => {
+    const ids = row.kind === 'one' ? [row.entry.id] : row.entries.map((e) => e.id)
+    const e = row.kind === 'one' ? row.entry : undefined
+    const beingSigned = pending && !!signing && !!e && e.group !== 'addons' && signing.ticket === e.item.ticket && actionRef(signing.action) === e.item.ref
+    return (
+      <NewItemContext.Provider key={row.id} value={ids.some((id) => newIds.has(id))}>
+        <SigningContext.Provider value={beingSigned}>{renderContent(row)}</SigningContext.Provider>
+      </NewItemContext.Provider>
+    )
+  }
+
+  // A viewer decides nothing: the open items are summed up per person who decides, each opening on demand.
+  const byPerson = new Map<string, Entry[]>()
+  if (readOnly) for (const e of shown) byPerson.set(deciderOf(e), [...(byPerson.get(deciderOf(e)) ?? []), e])
+
   const n = attention.needsYou.total
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')
   const allOwners = waiting.who.length > 0 && waiting.who.every((p) => owners.includes(p))
-  const scope = `${ws}:${viewer}`
+  const scope = `${ws}:${viewer}:${generation}`
 
   const header = (
     <div className="space-y-1">
@@ -204,20 +290,23 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
 
   const queue = (
     <section aria-label={readOnly ? 'Open in the workspace' : 'Needs you'} className="min-w-0 space-y-3">
-      {/* A zero-height sticky slot: the pill floats over the top of the queue, so its arrival moves no row. top-7 less the pill's -mt-5 leaves it 8 px below the scroll edge when stuck. */}
-      <div data-testid="new-items" className="pointer-events-none sticky top-7 z-10 mb-0 flex h-0 justify-center">
+      {/* A zero-height sticky slot, first in the queue: the pill hangs down into the first group's header line (never up
+          over the Agents row above the queue), so its arrival moves no row. It stays in view while scrolling. */}
+      <div data-testid="new-items" className="pointer-events-none sticky top-2 z-10 mb-0 flex h-0 justify-center">
         {fresh.length > 0 && (
           <button
             type="button"
-            onClick={() => setOrder(acceptOrder(entries))}
-            className="orch-pill-in pointer-events-auto -mt-5 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={takeFresh}
+            className="orch-pill-in pointer-events-auto mt-2 flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-text shadow-md outline-none hover:bg-surface focus-visible:ring-2 focus-visible:ring-ring"
           >
             {fresh.length} new · Show
           </button>
         )}
       </div>
       <ReloginGroup now={now} />
-      {groups.map((g) => (
+      {readOnly ? [...byPerson].map(([person, personEntries]) => (
+        <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />
+      )) : groups.map((g) => (
         <QueueGroup
           key={g.id}
           group={g}
@@ -226,6 +315,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           note={g.id === 'addons' ? 'you sign every answer in orch' : undefined}
           renderRow={renderRow}
           pinned={expanded}
+          reveal={reveal.groups.includes(g.id) ? reveal.n : 0}
         />
       ))}
       {groups.length === 0 && (
@@ -267,7 +357,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention }:
           <Glance readOnly={!canAddon} />
         </div>
       )}
-      {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} />}
+      {signTicket && <SignDialog ticket={signTicket} action={signing!.action} onClose={() => setSigning(null)} onPending={setPending} />}
     </div>
   )
 }

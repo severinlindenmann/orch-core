@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { AddonBadge, selectContributions, useAddons } from '@/addon-ui'
+import { selectContributions, useAddons } from '@/addon-ui'
 import { useAddonStates } from '@/addon-ui/slots'
 import { addonActive } from '@/api/addons'
 import type { TicketSummary } from '@/api/types'
@@ -56,9 +56,8 @@ export function ColumnSums({ tickets }: { tickets: TicketSummary[] }) {
     <>
       {sums.map((s) => (
         <span key={`${s.addon}/${s.id}`} aria-label={`Sum of ${s.title}`} title={withUnit(s.total, s.unit)} className="inline-flex items-center gap-1 shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">
-          <AddonBadge name={s.addon} />
           {s.total}
-          <span className="hidden @min-[232px]:inline"> {s.unit === 'pt' && s.total !== 1 ? 'pts' : s.unit}</span>
+          <span className="inline"> {s.unit === 'pt' && s.total !== 1 ? 'pts' : s.unit}</span>
         </span>
       ))}
     </>

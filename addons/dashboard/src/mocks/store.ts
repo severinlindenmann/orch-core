@@ -1,5 +1,6 @@
 // In-memory mock store seeded from fixtures. Mutations append events; state is re-derived from events.
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
+import { countAttention } from '@/api/attention'
 import type {
   AddonActionResult,
   AddonDecision,
@@ -1108,15 +1109,38 @@ export class MockStore {
     return fallback
   }
 
+  /**
+   * What the dashboard calls "blocking" (R1): an open question flagged blocking **and** an agent session waiting on
+   * exactly that question right now. Seeds and agents may flag more; the raw flag still drives the host's own logic
+   * (an agent waits on its blocking question, the turn line). Lazy: the agents are read on the first call only.
+   */
+  blockingCheck(workspaceId: string): (ticket: string, ref: string) => boolean {
+    let waitingOn: Set<string> | undefined
+    return (ticket, ref) => {
+      waitingOn ??= new Set(this.agents(workspaceId).flatMap((a) => (a.state === 'waiting' && a.waiting_on?.kind === 'question' ? [`${a.waiting_on.ticket}/${a.waiting_on.ref}`] : [])))
+      return waitingOn.has(`${ticket}/${ref}`)
+    }
+  }
+
+  /** The ticket as the API serves it: open questions say "blocking" by the same rule as Today (`blockingCheck`). */
+  servedTicket(key: string): TicketDocument | undefined {
+    const doc = this.ticket(key)
+    const ws = this.workspaceOf(key)
+    if (!doc || !ws) return doc
+    const blocks = this.blockingCheck(ws.id)
+    return { ...doc, questions_state: doc.questions_state.map((q) => (q.state === 'open' && q.blocking ? { ...q, blocking: blocks(key, q.id) } : q)) }
+  }
+
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
   private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
+    const blocks = this.blockingCheck(workspaceId)
     for (const t of this.listTickets(workspaceId)) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
         if (q.state === 'open' && (!eligible || this.addressedTo(t, q.to, eligible)))
-          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: q.blocking })
+          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: !!q.blocking && blocks(t.key, q.id) })
       }
       if (t.status === 'testing' && !t.verdict && can('verify'))
         items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: this.lastEventAt(t.key, (e) => e.type === 'status.changed' && e.to === 'testing', t.created_at), ref: 'verify' })
@@ -1202,7 +1226,7 @@ export class MockStore {
     return this.workspaces.map((w) => {
       const counts: Partial<Record<Status, number>> = {}
       for (const t of this.listTickets(w.id)) counts[t.status] = (counts[t.status] ?? 0) + 1
-      return { ...w, counts, needs_you: this.needsYou(w.id).length + this.addonDecisions(w.id).length }
+      return { ...w, counts, needs_you: countAttention(this.needsYou(w.id), this.addonDecisions(w.id), can(this.roleIn(w.id, this.viewer), 'settings') ? this.conn.connections(w.id) : []).total }
     })
   }
 

@@ -70,7 +70,7 @@ function visibleTicket(store: MockStore, key: string): TicketDocument | Transpor
   if (!store.isVisible(key)) return fail(404, 'not_visible', `No ticket ${key}`, 'The ticket is restricted to other people.')
   const ws = store.workspaceOf(key)
   if (ws && !store.roleIn(ws.id, store.viewer)) return fail(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
-  return store.ticket(key)!
+  return store.servedTicket(key)!
 }
 const isResponse = (x: unknown): x is TransportResponse => typeof x === 'object' && x !== null && 'status' in x && 'json' in x
 
@@ -86,7 +86,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
   if (!a || typeof a !== 'object' || !('action' in a)) return fail(400, 'validation', 'Body must be {action, ...}')
   if (!can(role, 'ticket.act')) return fail(403, 'forbidden', 'Viewers cannot change tickets.', 'Ask an owner or maintainer.')
 
-  const finish = (event: OrchEvent | null) => ok({ ok: true, event, ticket: store.ticket(key)! })
+  const finish = (event: OrchEvent | null) => ok({ ok: true, event, ticket: store.servedTicket(key)! })
 
   switch (a.action) {
     case 'answer': {

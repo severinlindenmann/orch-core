@@ -15,14 +15,14 @@ describe('SignConfirm', () => {
   it('writes the title and the covers itself; the addon\'s label only appears in the From-addon region', () => {
     draw()
     const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: 'Sign: Arm · Schedules' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: 'Sign: Arm (arm) · Schedules (schedules)' })).toBeInTheDocument()
     expect(within(dialog).getByText(/In workspace Acme Energy \(DEMO\)/)).toBeInTheDocument()
     const covers = within(dialog).getByText('Covers').nextElementSibling!
     expect(covers.textContent).not.toContain(SPOOF)
     expect(dialog.querySelector('h2')!.textContent).not.toContain(SPOOF)
     const region = within(dialog).getByRole('region', { name: 'From addon schedules' })
     expect(region.textContent).toContain(SPOOF)
-    expect(region.textContent).toContain('Id: check-inbox')
+    expect(region.textContent).toContain('Id (id): check-inbox')
     expect(region.className).toMatch(/dashed/)
   })
 
@@ -34,24 +34,41 @@ describe('SignConfirm', () => {
     )
     const dialog = screen.getByRole('dialog')
     const region = within(dialog).getByRole('region', { name: 'From addon publish' })
-    expect(region.textContent).toContain('Share: B')
-    expect(region.textContent).toMatch(/About:\s*Revoke share A/)
+    expect(region.textContent).toContain('Share (share): B')
+    expect(region.textContent).toMatch(/Addon says:\s*Revoke share A/)
     expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).not.toContain('Revoke share A')
   })
 
-  it('names the item an id points at by its row ("Schedule: Smoke on testing") and keeps the signed id under it, in words', () => {
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <SignConfirm addon="schedules" addonTitle="Schedules" action="run_now" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={{ id: 'smoke-on-testing' }} subject="Smoke on testing" onSign={() => {}} onClose={() => {}} />
-      </QueryClientProvider>,
-    )
-    const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: 'Sign: Run now · Schedules' })).toBeInTheDocument()
-    const region = within(dialog).getByRole('region', { name: 'From addon schedules' })
-    expect(region.textContent).toMatch(/Schedule:\s*Smoke on testing/)
-    expect(region.textContent).toContain('Id: smoke-on-testing')
-    expect(region.textContent).not.toContain(' = ')
-    expect(region.textContent).toContain('From the addon Schedules')
+  it('keeps the exact signed values: raw action ids, raw arg keys and values, and the package id beside any title', () => {
+    const one = (action: string, title = 'Schedules', addon = 'schedules', args: Record<string, unknown> = { schedule_id: 'smoke-on-testing' }, subject?: string) => {
+      const view = render(
+        <QueryClientProvider client={new QueryClient()}>
+          <SignConfirm addon={addon} addonTitle={title} action={action} workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={args} subject={subject} onSign={() => {}} onClose={() => {}} />
+        </QueryClientProvider>,
+      )
+      const dialog = screen.getByRole('dialog')
+      const out = { heading: within(dialog).getByRole('heading').textContent!, covers: within(dialog).getByText('Covers').nextElementSibling!.textContent!, region: within(dialog).getByRole('region').textContent! }
+      view.unmount()
+      return out
+    }
+    // Two actions that read alike in words still show different exact ids.
+    const a = one('arm_schedule')
+    const b = one('arm-schedule')
+    expect(a.heading).toBe('Sign: Arm schedule (arm_schedule) · Schedules (schedules)')
+    expect(b.heading).toBe('Sign: Arm schedule (arm-schedule) · Schedules (schedules)')
+    expect(a.covers).toContain('Runs "Arm schedule" (arm_schedule) of the addon Schedules (schedules)')
+    expect(b.covers).toContain('(arm-schedule)')
+    // An arg whose label is its words also shows its raw key, and the value verbatim.
+    expect(a.region).toContain('Schedule id (schedule_id): smoke-on-testing')
+    // The addon's own words stay labelled as the addon's.
+    const c = one('run_now', 'Schedules', 'schedules', { id: 'smoke-on-testing' }, 'Smoke on testing')
+    expect(c.region).toMatch(/Addon says:\s*Smoke on testing/)
+    expect(c.region).toContain('Id (id): smoke-on-testing')
+    // An addon that calls itself "orch core" still shows its package id in core's lines.
+    const d = one('arm', 'orch core', 'evil-addon')
+    expect(d.heading).toBe('Sign: Arm (arm) · orch core (evil-addon)')
+    expect(d.covers).toContain('of the addon orch core (evil-addon)')
+    expect(d.region).toContain('From the addon orch core (evil-addon)')
   })
 
   it('names its verb, says how you confirm, starts on Cancel and has no repeated line', () => {

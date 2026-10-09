@@ -48,8 +48,8 @@ describe('Schedules page', () => {
     await user.click(within(rowOf('Smoke test on testing')).getByRole('button', { name: 'Enable' }))
     const dialog = await screen.findByRole('dialog', { name: /Sign: .* · Schedules/ }, T)
     // The row's own name, labelled as the addon's words; the signed args stay visible next to it.
-    expect(within(dialog).getByText(/^Schedule:/)).toHaveTextContent('Schedule: Smoke test on testing')
-    expect(within(dialog).getByText(/^Id:/)).toHaveTextContent('Id: smoke-on-testing')
+    expect(within(dialog).getByText(/Addon says:/)).toHaveTextContent('Smoke test on testing')
+    expect(within(dialog).getByRole('region', { name: 'From addon schedules' }).textContent).toContain('Id (id): smoke-on-testing')
     await user.click(within(dialog).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(within(rowOf('Smoke test on testing')).getByText(/next ticket moved to testing/)).toBeInTheDocument(), T)
     expect(within(rowOf('Smoke test on testing')).getByText('Enabled')).toBeInTheDocument()

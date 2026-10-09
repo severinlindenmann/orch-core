@@ -197,7 +197,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         const s = signing
         setSigning(null)
         setSignPending(true)
-        void signed(signTitle(s.action, titleOf(s.addon)), async () => {
+        void signed(signTitle(s.action, titleOf(s.addon), s.addon), async () => {
           const { secret: shown, ...res } = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
           openResultUrl(res)
           if (shown) setSecret({ addon: s.addon, secret: shown })

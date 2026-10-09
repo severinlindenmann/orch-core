@@ -161,7 +161,11 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   ]
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
-  const titleOf = (name: string) => addons?.find((p) => p.name === name)?.title ?? name
+  // Display name (manifest-written) plus the package id, so no addon passes as another or as core.
+  const titleOf = (name: string) => {
+    const t = addons?.find((p) => p.name === name)?.title
+    return t && t !== name ? `${t} (${name})` : name
+  }
   const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
 
   const body: ReactNode = (

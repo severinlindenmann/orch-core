@@ -87,23 +87,38 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   }
   const allowed = (addon: string, action: string) => !!workspace && atLeast(role, meta(addon, action)?.minRole ?? 'member')
   /** Undo only for the pair the manifest declares, and only when the target is a plain action this viewer may run. */
-  const undoAllowed = (addon: string, action: string, target: string) => {
+  const undoAllowed = (addon: string, action: string, target: string, sent?: Record<string, unknown>, back?: Record<string, unknown>) => {
     if (meta(addon, action)?.undo !== target) return false
+    // The reverse acts on what was acted on: same args as the request, nothing else the addon picked.
+    const a = withoutReservedKeys(sent)
+    const b = back ?? {}
+    if (Object.keys(a).length !== Object.keys(b).length || Object.keys(a).some((k) => a[k] !== b[k])) return false
     const t = meta(addon, target)
     return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
   }
   const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
   const body = (extra?: Record<string, unknown>) => ({ ...withoutReservedKeys(extra), ...(ticket ? { ticket } : {}) })
 
+  /** A refusal: in place under the trigger when the surface shows it (`inlineErrors`), else a toast that stays until dismissed. */
+  const fail = (err: unknown, fallback: string) => {
+    if (opts.inlineErrors) setError(err instanceof ApiError ? { message: err.message, hint: err.hint } : { message: fallback })
+    else toastApiError(err, fallback)
+  }
+
   const m = useMutation({
     mutationFn: ({ addon, action, extra, confirmed }: Pending & { confirmed?: ConfirmedLaunch }) => {
       if (!workspace) throw new Error('No workspace')
       // After core's dialog: the ticket and choice core validated and showed, never the addon's own args for them.
       const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
-      return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core })
+      return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core }).then(({ secret: shown, ...res }) => {
+        // The value lives only in this component's state while the modal is open; it is never kept in the mutation cache.
+        if (shown) setSecret({ addon, secret: shown })
+        return { ...res, secretShown: !!shown }
+      })
     },
+    gcTime: 0,
     onMutate: () => setError(null),
-    onSuccess: (res, { addon, action }) => {
+    onSuccess: (res, { addon, action, extra }) => {
       openResultUrl(res)
       // Navigation moves only this viewer's view: no toast, and only this addon's state is read again.
       if (meta(addon, action)?.kind === 'navigation') {
@@ -111,8 +126,9 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         return
       }
       // A value shown once never rides in a toast: core's modal holds it until the person says they saved it.
-      if (res.secret) setSecret({ addon, secret: res.secret })
-      else if (res.undo && undoAllowed(addon, action, res.undo.action)) {
+      if (res.secretShown) {
+        /* the modal is the feedback */
+      } else if (res.undo && undoAllowed(addon, action, res.undo.action, extra, res.undo.args)) {
         const undo = res.undo
         toast.success(res.message, { action: { label: 'Undo', onClick: () => run(addon, undo.action, undo.args) } })
       } else toast.success(res.message)
@@ -123,8 +139,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     },
     // A refusal can still have been recorded in the addon's state (e.g. a rejected push): read it again.
     onError: (err, { addon }) => {
-      if (opts.inlineErrors) setError(err instanceof ApiError ? { message: err.message, hint: err.hint } : { message: 'That did not work.' })
-      else toastApiError(err, 'Action failed')
+      fail(err, 'Action failed')
       void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })
     },
   })
@@ -138,11 +153,11 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       const open = await qc.fetchQuery({ queryKey: ['addon-decisions', workspace.id], queryFn: () => api.getAddonDecisions(workspace.id) })
       const d = open.find((x) => x.addon === addon && x.action === action && x.id === extra?.id)
       const option = d?.options.find((o) => o.key === extra?.option)
-      if (!d) return void toast.error('That decision is closed.')
-      if (!option) return void toast.error(`Choose ${d.options.map((o) => o.label).join(', ')}.`)
+      if (!d) return fail(new ApiError(409, { code: 'decision.closed', message: 'That decision is closed.', retryable: false }), 'That decision is closed.')
+      if (!option) return fail(new ApiError(400, { code: 'validation.option', message: `Choose ${d.options.map((o) => o.label).join(', ')}.`, retryable: false }), 'Choose an option.')
       setDeciding({ addon, action, d, option })
     } catch (e) {
-      toastApiError(e, 'Could not open the decision')
+      fail(e, 'Could not open the decision')
     }
   }
 
@@ -152,7 +167,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     if (m0?.decision) void openDecision(addon, action, extra)
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
-    else if (confirm === 'destructive') setDestroying({ addon, action, extra })
+    else if (confirm === 'destructive') setDestroying({ addon, action, extra, subject })
     else m.mutate({ addon, action, extra })
   }
 
@@ -175,7 +190,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
           const res = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
           openResultUrl(res)
           return res.message
-        }).finally(() => setSignPending(false))
+        }, (e) => fail(e, 'Could not sign')).finally(() => setSignPending(false))
       }}
     />
   )
@@ -192,7 +207,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         void signed(`Decide: ${x.d.title}`, async () => {
           const res = await api.runAddonAction(workspace.id, x.addon, x.action, decisionBody(x.d, x.option.key))
           return res.message
-        }).finally(() => setSignPending(false))
+        }, (e) => fail(e, 'Could not send the answer')).finally(() => setSignPending(false))
       }}
     />
   )
@@ -200,6 +215,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     <DestructiveConfirm
       label={meta(destroying.addon, destroying.action)?.confirmLabel ?? meta(destroying.addon, destroying.action)?.label ?? 'Confirm'}
       text={meta(destroying.addon, destroying.action)?.confirmText}
+      subject={destroying.subject}
       onClose={() => setDestroying(null)}
       onConfirm={() => {
         const d = destroying

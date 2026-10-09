@@ -93,8 +93,8 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
       ) : (
         <ul className="divide-y divide-border">
-          {n.items.map((it, i) => (
-            it.actions ? <ActionListItem key={i} it={it} /> : <ListItemView key={i} it={it} />
+          {stableKeys(n.items.map((it) => it.title)).map((k, i) => (
+            n.items[i].actions ? <ActionListItem key={k} it={n.items[i]} /> : <ListItemView key={k} it={n.items[i]} />
           ))}
         </ul>
       )
@@ -117,8 +117,8 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {n.rows.map((r, i) => (
-              n.rowActions ? <ActionDataRow key={i} columns={n.columns} row={r} rowActions={n.rowActions} /> : <DataRowView key={i} columns={n.columns} row={r} />
+            {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => (
+              n.rowActions ? <ActionDataRow key={k} columns={n.columns} row={n.rows[i]} rowActions={n.rowActions} /> : <DataRowView key={k} columns={n.columns} row={n.rows[i]} />
             ))}
           </TableBody>
         </Table>
@@ -175,6 +175,17 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </a>
       )
   }
+}
+
+/** Row keys that survive an insert or removal (a row's own id or first cell), so a row's error and dialogs stay with it; repeats get a suffix. */
+function stableKeys(ids: unknown[]): string[] {
+  const seen = new Map<string, number>()
+  return ids.map((id) => {
+    const base = id === null || id === undefined || id === '' ? 'row' : String(id)
+    const n = seen.get(base) ?? 0
+    seen.set(base, n + 1)
+    return n ? `${base}#${n}` : base
+  })
 }
 
 function Stat({ node }: { node: NodeOf<'stat'> }) {

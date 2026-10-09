@@ -22,9 +22,13 @@ describe('app shell', () => {
     const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
     expect(dismiss).not.toHaveBeenCalled()
+    const ok = toast.success('Saved')
+    const bad = toast.error('Could not save', { duration: Infinity })
     await user.click(await screen.findByRole('link', { name: /Board/ }))
     await screen.findByRole('heading', { name: 'Board' })
-    expect(dismiss).toHaveBeenCalled()
+    // The confirmation goes with the route; the failure stays until dismissed.
+    await waitFor(() => expect(dismiss).toHaveBeenCalledWith(ok))
+    expect(dismiss).not.toHaveBeenCalledWith(bad)
     dismiss.mockRestore()
   })
 

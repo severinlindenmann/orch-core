@@ -137,9 +137,9 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
 })
 
 describe('Undo on a success toast follows the manifest', () => {
-  const stopApp = async (setup?: (s: MockStore) => void) => {
+  const stopApp = async (setup?: (s: MockStore) => void, viewer = 'p_sev') => {
     const success = vi.spyOn(toast, 'success')
-    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup })
+    const { user } = renderApp('/addon/publish/shares', { viewer, setup })
     const row = (await screen.findByText('Billing explorer', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Stop' }))
     await waitFor(() => expect(success.mock.calls.some((c) => c[0] === 'Billing explorer stopped.')).toBe(true), T)
@@ -161,6 +161,21 @@ describe('Undo on a success toast follows the manifest', () => {
     const opts = await stopApp()
     expect(opts?.action).toBeUndefined()
     expect(post).toHaveBeenCalledTimes(1)
+  })
+  it('undo args that differ from the request get no Undo button', async () => {
+    vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Billing explorer stopped.', undo: { action: 'start', args: { id: 'app_ops' } } })
+    expect((await stopApp())?.action).toBeUndefined()
+  })
+  it.each([
+    ['a target the viewer\'s role may not run', { minRole: 'owner' as const }, 'p_mara'],
+    ['a navigation target', { minRole: 'member' as const, kind: 'navigation' as const }, 'p_sev'],
+    ['a decision target', { minRole: 'member' as const, decision: true }, 'p_sev'],
+  ])('a declared undo pointing at %s gets no Undo button', async (_n, startMeta, viewer) => {
+    const opts = await stopApp((s) => {
+      manifest('publish', 'stop', { minRole: 'member', undo: 'start' })(s)
+      manifest('publish', 'start', startMeta)(s)
+    }, viewer)
+    expect(opts?.action).toBeUndefined()
   })
   it('a valid declared undo shows Undo, and pressing it runs the undo action through the normal path', async () => {
     const opts = (await stopApp()) as { action: { label: string; onClick: () => void } }

@@ -1,5 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
+import { api } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
@@ -41,6 +44,18 @@ describe('Schedules page', () => {
     await user.click(file)
     await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
     await waitFor(() => expect(mockStore.listTickets(wsOf(mockStore)).some((t) => t.title === 'Update dependencies, week 41')).toBe(true), T)
+  })
+  it('a refused Arm shows in the row, not in a toast', async () => {
+    const error = vi.spyOn(toast, 'error')
+    vi.spyOn(api, 'runAddonAction').mockRejectedValue(new ApiError(409, { code: 'schedule.x', message: 'Smoke test on testing cannot be armed now.', hint: 'Try again later.', retryable: false }))
+    const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
+    await screen.findByText('Smoke test on testing', {}, T)
+    await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Arm' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /Sign: arm/ }, T)).getByRole('button', { name: /Sign and run/ }))
+    const alert = await within(itemOf('Smoke test on testing')).findByRole('alert', {}, T)
+    expect(alert).toHaveTextContent(/cannot be armed now\. Try again later/)
+    expect(error).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
   it('Run now adds a run and shows its report as markdown', async () => {
     const { user, container } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })

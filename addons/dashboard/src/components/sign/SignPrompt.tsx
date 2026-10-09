@@ -16,7 +16,8 @@ export const TOUCH_ID_MS = import.meta.env.MODE === 'test' ? 0 : 600
  */
 export function useSignedAction() {
   const qc = useQueryClient()
-  return async (title: string, run: () => Promise<unknown>): Promise<boolean> => {
+  /** `onError`: the caller shows a refusal itself (in place); without it the refusal is a toast. */
+  return async (title: string, run: () => Promise<unknown>, onError?: (e: unknown) => void): Promise<boolean> => {
     const id = toast.loading('Touch the sensor to confirm')
     await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
     try {
@@ -26,7 +27,10 @@ export function useSignedAction() {
       toast.success(typeof result === 'string' ? result : `${title}: signed with Touch ID`, { id })
       return true
     } catch (e) {
-      toastApiError(e, 'Could not sign', id)
+      if (onError) {
+        toast.dismiss(id)
+        onError(e)
+      } else toastApiError(e, 'Could not sign', id)
       return false
     }
   }

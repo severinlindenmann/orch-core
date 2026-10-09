@@ -11,21 +11,21 @@ describe('toastApiError', () => {
 
   it('shows the API message with the hint as description', () => {
     toastApiError(new ApiError(409, { code: 'human_only', message: 'Done is reached by a verdict', hint: 'Give the verdict on the ticket page', retryable: false }))
-    expect(toast.error).toHaveBeenCalledWith('Done is reached by a verdict', { description: 'Give the verdict on the ticket page' })
+    expect(toast.error).toHaveBeenCalledWith('Done is reached by a verdict', { duration: Infinity, description: 'Give the verdict on the ticket page' })
   })
 
   it('omits the description without a hint', () => {
     toastApiError(new ApiError(403, { code: 'forbidden', message: 'Nope', retryable: false }))
-    expect(toast.error).toHaveBeenCalledWith('Nope', { description: undefined })
+    expect(toast.error).toHaveBeenCalledWith('Nope', { duration: Infinity, description: undefined })
   })
 
   it('uses a generic message for anything else', () => {
     toastApiError(new Error('boom'))
-    expect(toast.error).toHaveBeenCalledWith('Something went wrong.', { description: undefined })
+    expect(toast.error).toHaveBeenCalledWith('Something went wrong.', { duration: Infinity, description: undefined })
   })
 
   it('uses a caller fallback for non-API errors', () => {
     toastApiError('x', 'Could not rename')
-    expect(toast.error).toHaveBeenCalledWith('Could not rename', { description: undefined })
+    expect(toast.error).toHaveBeenCalledWith('Could not rename', { duration: Infinity, description: undefined })
   })
 })

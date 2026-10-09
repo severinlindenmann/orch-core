@@ -57,7 +57,7 @@ describe('AI Factory page', () => {
         ;(s.addonState(wsOf(s), 'factory') as { used: number }).used = 22
       },
     })
-    expect(await screen.findByText('22 of 25 children used. The factory pauses at 25.', {}, T)).toBeInTheDocument()
+    expect(await screen.findByText('22 of 25 children used. The factory stops at 25.', {}, T)).toBeInTheDocument()
   })
   it('an open permit is answered in place, with the same signing prompt as Today', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })

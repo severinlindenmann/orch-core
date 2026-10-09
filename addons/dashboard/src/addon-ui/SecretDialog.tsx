@@ -12,13 +12,16 @@ import { AddonBadge } from './AddonBadge'
  */
 export function SecretDialog({ addon, secret, onDone }: { addon: string; secret: { label: string; value: string; note?: string }; onDone: () => void }) {
   const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
   const copy = () => {
-    void navigator.clipboard?.writeText(secret.value).then(
+    if (!navigator.clipboard) return setFailed(true)
+    void navigator.clipboard.writeText(secret.value).then(
       () => {
+        setFailed(false)
         setCopied(true)
         setTimeout(() => setCopied(false), 1500)
       },
-      () => {},
+      () => setFailed(true),
     )
   }
   return (
@@ -54,6 +57,11 @@ export function SecretDialog({ addon, secret, onDone }: { addon: string; secret:
               {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>
+          {failed && (
+            <p role="alert" className="text-[12px] text-danger">
+              Copy failed — select the link and press ⌘C.
+            </p>
+          )}
           {secret.note && <p className="break-words text-[12px] text-text-muted">{secret.note}</p>}
         </div>
         <DialogFooter>

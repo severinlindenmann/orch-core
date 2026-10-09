@@ -285,13 +285,14 @@ registerAddon({
             ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} at ${hhmm(paused!.at)}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
             : { type: 'stack', children: [] }
 
-    const demoAlert = watching
+    // Everyone sees that demo activity is running, not only the person who started it.
+    const demoAlert = c.store.sim.running().includes(scriptId(c.ws))
       ? { type: 'alert', tone: 'info', title: `Demo activity is running: a new child and permit about every ${STEP_MS / 1000} s, at most ${WATCH_STEPS} an hour.` }
       : { type: 'stack', children: [] }
     // Near the child budget: say so before the factory stops (a stopped factory has its own alert).
     const budgetAlert =
       epic && mode !== 'stopped' && used >= Math.ceil(MAX_CHILDREN * 0.8)
-        ? { type: 'alert', tone: 'warn', title: `${used} of ${MAX_CHILDREN} children used. The factory pauses at ${MAX_CHILDREN}.` }
+        ? { type: 'alert', tone: 'warn', title: `${used} of ${MAX_CHILDREN} children used. The factory stops at ${MAX_CHILDREN}.` }
         : { type: 'stack', children: [] }
     const button = (label: string, action: string, variant: 'primary' | 'secondary' | 'ghost') => ({ type: 'button', label, action, variant })
     const controls = {

@@ -95,8 +95,9 @@ const shareItem = (x: Share) => ({
   subtitle: subtitle(x),
   badge: x.ticket ?? 'workspace',
   actions: [
-    // A show-once link cannot be copied again: the row says so; pressing it explains (copy_link answers 409).
-    { label: x.kind === 'show-once' ? 'Shown once' : 'Copy link', action: 'copy_link', args: { id: x.id }, variant: 'ghost' as const },
+    // A sealed share opens only for its recipient: there is no link to copy. A show-once link cannot be copied again:
+    // the row says so; pressing it explains (copy_link answers 409).
+    ...(x.kind === 'sealed' ? [] : [{ label: x.kind === 'show-once' ? 'Shown once' : 'Copy link', action: 'copy_link', args: { id: x.id }, variant: 'ghost' as const }]),
     { label: 'Extend 7 days', action: 'extend', args: { id: x.id }, variant: 'ghost' as const },
     { label: 'Revoke', action: 'revoke', args: { id: x.id }, variant: 'danger' as const },
   ],

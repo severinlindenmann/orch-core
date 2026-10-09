@@ -232,7 +232,7 @@
         "minRole": "member",
         "confirm": "destructive",
         "confirmLabel": "Remove worktree",
-        "confirmText": "The worktree folder is deleted from disk. The branch stays in the repository."
+        "confirmText": "The worktree folder is deleted from disk and the branch stays in the repository. A worktree with changed files is not removed: commit or stash them first."
       }
     }
   },

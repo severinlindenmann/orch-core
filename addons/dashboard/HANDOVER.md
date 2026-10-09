@@ -236,17 +236,15 @@ Options: `--quick` (one configuration), `--docks min,max`, `--dataset busy`, `--
 tests after each small change; full suite, typecheck and build at the end of a group. Commit only `addons/dashboard`
 paths; never commit `.design-drafts/`. No realistic-looking secrets in seeds (GitHub push protection).
 
-**Preview for the owner.** Hosted preview: (added on publish). Local: http://127.0.0.1:5180/ (live) and
+**Preview for the owner.** Hosted preview: https://claude.ai/artifact/GrZ7aDDxWJkZcDkhtzZ4az (private to the owner's claude.ai account until shared). Local: http://127.0.0.1:5180/ (live) and
 http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
 
 1. `npm run build`.
-2. Copy `dist/assets` into a preview folder in the session scratchpad.
-3. Write the small `index.html`: `<title>`, the Google Fonts link, the built CSS, a `<style>` with the dark
-   background, a script adding the `dark` class, `<div id="root">`, the built module script.
-4. In **every** `.js` file (lazy chunks too) replace each literal U+FFFD with the JS escape `�` and escape C0/C1
-   control characters (the xterm chunk has a literal ESC); the publisher refuses them. They sit inside strings, so
-   escaping is safe.
-5. Publish to the same artifact URL, passing the new hashed files in `files` and `null` for the old ones.
+2. `python3 scripts/build-preview.py dist <preview-folder>`: copies the JS chunks, inlines the built CSS into a small
+   `index.html` (title, Google Fonts, dark background, `dark` class, module preloads, root, entry script), and
+   escapes every U+FFFD and C0/C1 control character in every `.js` as `\uXXXX` (the publisher refuses them; they sit
+   inside strings, so escaping is safe). It prints the new files and the old ones to remove.
+3. Publish to the same artifact URL, passing the new hashed files in `files` and `null` for the old ones.
 
 ## Known gaps and notes
 

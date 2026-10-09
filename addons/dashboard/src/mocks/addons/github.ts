@@ -42,6 +42,8 @@ interface Issue {
 
 const DBT = 'acme-energy/energy-dbt'
 const API = 'acme-energy/billing-api'
+/** The third repository the workspace works in (Worktrees lists the same three). */
+const INGEST = 'acme-energy/ingest'
 const at = (iso: string) => iso
 const pr = (p: Omit<Pr, 'id'>): Pr => ({ id: `${p.repo}#${p.number}`, ...p })
 const agent = (name: string) => ({ kind: 'agent' as const, name })
@@ -52,7 +54,7 @@ const seedPrs = (): Pr[] => [
   pr({ repo: DBT, number: 31, title: 'Load tariff tables as dbt seeds', ticket: 'DEMO-0043', branch: 'feat/DEMO-0043-tariff-seeds', state: 'draft', checks: checks(['lint', 'pass'], ['dbt build', 'pending'], ['schema tests', 'pending']), review: 'requested', author: agent('claude-code'), additions: 214, deletions: 12, files: 9, updated_at: at('2026-10-09T11:12:00Z') }),
   pr({ repo: DBT, number: 29, title: 'Add billing reconciliation tests', ticket: 'DEMO-0041', branch: 'feat/DEMO-0041-reconciliation', state: 'open', checks: checks(['lint', 'pass'], ['dbt build', 'pass'], ['schema tests', 'pass']), review: 'requested', author: agent('claude-code'), additions: 186, deletions: 4, files: 6, updated_at: at('2026-10-09T09:30:00Z') }),
   pr({ repo: DBT, number: 27, title: 'Normalize meter reading timestamps to UTC', ticket: 'DEMO-0042', branch: 'feat/DEMO-0042-utc', state: 'merged', checks: checks(['lint', 'pass'], ['dbt build', 'pass']), review: 'approved', author: person('Mara'), additions: 98, deletions: 61, files: 7, updated_at: at('2026-10-07T15:00:00Z') }),
-  pr({ repo: DBT, number: 33, title: 'Add freshness checks to sources', ticket: 'DEMO-0037', branch: 'feat/DEMO-0037-freshness', state: 'open', checks: checks(['lint', 'pass'], ['dbt build', 'fail'], ['source freshness', 'fail']), review: 'changes requested', author: agent('claude-code'), additions: 73, deletions: 9, files: 4, updated_at: at('2026-10-09T07:45:00Z') }),
+  pr({ repo: INGEST, number: 12, title: 'Add freshness checks to sources', ticket: 'DEMO-0037', branch: 'feat/DEMO-0037-freshness', state: 'open', checks: checks(['lint', 'pass'], ['dbt build', 'fail'], ['source freshness', 'fail']), review: 'changes requested', author: agent('claude-code'), additions: 73, deletions: 9, files: 4, updated_at: at('2026-10-09T07:45:00Z') }),
   pr({ repo: API, number: 58, title: 'Fix duplicate meter ids in dim_meter', ticket: 'DEMO-0046', branch: 'fix/DEMO-0046-dup-meters', state: 'open', checks: checks(['unit tests', 'pass'], ['contract tests', 'pass']), review: 'none', author: person('Mara'), additions: 41, deletions: 17, files: 3, updated_at: at('2026-10-08T16:20:00Z') }),
   pr({ repo: API, number: 61, title: 'Rotate warehouse service credentials', ticket: 'DEMO-0044', branch: 'chore/DEMO-0044-rotate-creds', state: 'open', checks: checks(['unit tests', 'pass'], ['contract tests', 'pending']), review: 'requested', author: agent('claude-code'), additions: 22, deletions: 22, files: 2, updated_at: at('2026-10-09T10:55:00Z') }),
 ]
@@ -83,9 +85,9 @@ const ago = (fromIso: string, nowIso: string): string => fmtWhen(fromIso, nowIso
 const seedState = () => ({
   prs: seedPrs(),
   issues: seedIssues(),
-  settings: { org: 'acme-energy', link_prs: true, repos: `${DBT}, ${API}`, poll_minutes: 5 },
+  settings: { org: 'acme-energy', link_prs: true, repos: `${DBT}, ${API}, ${INGEST}`, poll_minutes: 5 },
 })
-const REPO_OF: Record<string, string> = { 'acme-energy-dbt': DBT, 'acme-energy-billing-api': API, 'acme-energy-ingest': 'acme-energy/ingest' }
+const REPO_OF: Record<string, string> = { 'acme-energy-dbt': DBT, 'acme-energy-billing-api': API, 'acme-energy-ingest': INGEST }
 const ISSUE_TITLES = [
   'Seed loader fails on files with a BOM', 'Invoice total rounds half down', 'Document the tariff naming', 'Expose valid-from in the API', 'Bump dbt-utils',
   'Staging model for gas meters', 'Retry policy is not in the README', 'Pin the OpenAPI generator', 'Freshness check warns too late', 'Timestamps lose the zone on export',
@@ -122,7 +124,7 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
       }),
     )
   }
-  const repos = [DBT, API, 'acme-energy/ingest']
+  const repos = [DBT, API, INGEST]
   const extra = ISSUE_TITLES.slice(0, demo ? 17 : 5)
   extra.forEach((title, i) => state.issues.push(issue(repos[i % 3], 130 + i, title, (['bug', 'docs', 'chore', 'feature'] as const)[rng.int(0, 3)])))
   return state

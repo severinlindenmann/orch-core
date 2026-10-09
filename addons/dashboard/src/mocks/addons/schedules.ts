@@ -1,3 +1,4 @@
+import { fmtWhen } from '@/lib/time'
 import type { AddonDecision, NewTicketRequest } from '@/api/types'
 import type { StoreFailure } from '../store'
 import type { Rng } from '../busy/rng'
@@ -57,19 +58,15 @@ interface Run {
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const KIND_LABEL: Record<Kind, string> = { schedule: 'schedule', listener: 'listener', recurring: 'recurring ticket' }
 const KEEP_RUNS = 200
 const SHOWN_RUNS = 8
 const MAX_FINDINGS_SHOWN = 5
-const pad = (n: number) => String(n).padStart(2, '0')
 const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5))
 
-const stamp = (iso: string) => {
-  const d = new Date(iso)
-  return `${DOW[d.getUTCDay()]} ${pad(d.getUTCDate())} ${MON[d.getUTCMonth()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
-}
+/** When a run happened, in the one format (src/lib/time.ts): "30 min ago", "4 days ago". */
+const stamp = (iso: string) => fmtWhen(iso)
 /** ISO week number of a date. */
 function isoWeek(iso: string): number {
   const d = new Date(iso)

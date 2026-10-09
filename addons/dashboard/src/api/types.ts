@@ -699,6 +699,8 @@ export interface AddonActionResult {
   changed?: boolean
   /** An https address the client opens in a new tab (e.g. github's Open). */
   url?: string
+  /** A ticket this action created (e.g. an imported issue): the success toast offers "Open". */
+  ticket?: string
   /** A terminals session this action opened (e.g. Worktrees' "Open terminal here"): core opens the dock on it. */
   terminal?: string
   /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */

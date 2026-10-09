@@ -869,7 +869,7 @@ export class MockStore {
     this.append(key, { type: 'ticket.created', actor, status: 'backlog' })
     this.append(key, { type: 'people.set', owner: this.viewer, assignees: [], reviewers: [], watchers: [] })
     this.append(key, { type: 'github.imported', actor, external })
-    return { ok: true, message: `Imported ${external} as ${key}`, changed: true }
+    return { ok: true, message: `Imported ${external} as ${key} (Backlog).`, changed: true, ticket: key }
   }
 
   /** Per-workspace state of an addon (lazily seeded, persisted). */

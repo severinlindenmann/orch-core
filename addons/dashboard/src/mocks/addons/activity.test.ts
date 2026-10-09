@@ -179,7 +179,9 @@ describe('activity timeline', () => {
     const waiting = await state(s)
     expect(waiting.newEvents).toBe(1)
     expect(JSON.stringify(waiting.page)).toContain('Show 1 new event')
-    expect(waiting.timeline).toEqual(before.timeline)
+    // Same rows in the same order (their relative times may tick on).
+    const strip = (rows: Row[]) => rows.map(({ subtitle: _s, ...r }) => r)
+    expect(strip(waiting.timeline)).toEqual(strip(before.timeline))
     expect(waiting.counts).toEqual(before.counts)
     await run(s, 'show_new')
     const top = (await state(s)).timeline[0]
@@ -223,7 +225,7 @@ describe('activity filter bar (per viewer)', () => {
     expect(st.typeOptions.slice(1).map((o) => o.title.split(' ')[0])).toEqual(['Status', 'Gates', 'Questions', 'Tasks', 'Artifacts', 'Addons', 'Workspace'])
     expect(st.typeOptions.slice(1).every((o) => /\(\d+\)$/.test(o.title))).toBe(true)
     expect(st.personOptions[0]).toEqual({ const: 'everyone', title: 'Everyone' })
-    expect(st.personOptions.map((o) => o.title).join()).toMatch(/Severin \(\d+\).*claude-code \(\d+\)/)
+    expect(st.personOptions.map((o) => o.title).join()).toMatch(/Severin \(\d+\).*Claude Code \(\d+\)/)
   })
   it('the headline is the sum of the type counts for the period, and follows the period', async () => {
     const s = setup()

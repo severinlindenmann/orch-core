@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
 import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
@@ -111,8 +112,17 @@ describe('github issues lane', () => {
     expect(buttons).toHaveLength(8)
     const card = buttons[0].closest('[data-testid="lane-card"]') as HTMLElement
     const title = card.querySelector('div > div')!.textContent!
+    const success = vi.spyOn(toast, 'success')
     await user.click(buttons[0])
     await waitFor(() => expect(within(lane).queryByText(title)).not.toBeInTheDocument(), T)
     expect(within(lane).getAllByRole('button', { name: 'Import as ticket' })).toHaveLength(7)
+    // The confirmation names the new ticket and opens it.
+    const [msg, opts] = success.mock.calls.find(([m]) => /^Imported GH-\d+ as DEMO-\d+ \(Backlog\)\.$/.test(String(m)))!
+    const key = /as (DEMO-\d+)/.exec(String(msg))![1]
+    const action = (opts as { action: { label: string; onClick: () => void } }).action
+    expect(action.label).toBe('Open')
+    action.onClick()
+    expect(await screen.findByRole('heading', { level: 1, name: title.split('acme-energy/')[0] }, T)).toBeInTheDocument()
+    expect(key).toMatch(/^DEMO-/)
   })
 })

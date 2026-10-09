@@ -61,7 +61,9 @@ export function SignConfirm({
       <section aria-label={`From addon ${addon}`} className="space-y-1 rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
         <p className="flex items-center gap-1.5">
           <AddonBadge name={addon} title={addonTitle} />
-          From the addon {addonTitle} (<Raw>{addon}</Raw>)
+          <span>
+            From the addon {addonTitle} (<Raw>{addon}</Raw>)
+          </span>
         </p>
         {label && <p className="break-words text-text">{cap(label)}</p>}
         {subject && (

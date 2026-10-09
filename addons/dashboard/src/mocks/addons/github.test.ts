@@ -1,3 +1,4 @@
+import { installAndGrant } from '@/test/installAddon'
 import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
@@ -36,10 +37,18 @@ describe('github times', () => {
 })
 
 describe('github seed', () => {
-  it('has six pull requests across two acme-energy repos with checks, reviews, authors and diff stats', async () => {
-    const st = await state(setup())
+  it('has six pull requests across the three repositories Worktrees lists, with checks, reviews, authors and diff stats', async () => {
+    const s = setup()
+    const st = await state(s)
     expect(st.prs).toHaveLength(6)
-    expect(new Set(st.prs.map((p) => p.repo))).toEqual(new Set(['acme-energy/energy-dbt', 'acme-energy/billing-api']))
+    expect(new Set(st.prs.map((p) => p.repo))).toEqual(new Set(['acme-energy/energy-dbt', 'acme-energy/billing-api', 'acme-energy/ingest']))
+    // R2: the same repositories and the same repository per ticket as the worktrees.
+    installAndGrant(s.store, s.ws, 'worktrees')
+    const wts = (await s.api.getAddonState(s.ws, 'worktrees')).worktrees as { ticket: string; repo: string }[]
+    for (const w of wts) {
+      const pr = st.prs.find((p) => p.ticket === w.ticket)
+      if (pr) expect(pr.repo, w.ticket).toBe(w.repo)
+    }
     expect(new Set(st.prs.flatMap((p) => p.checks.map((c) => c.status)))).toEqual(new Set(['pass', 'fail', 'pending']))
     expect(new Set(st.prs.map((p) => p.author.kind))).toEqual(new Set(['agent', 'person']))
     expect(st.prs.every((p) => p.ticket && p.additions >= 0 && p.deletions >= 0 && p.review)).toBe(true)

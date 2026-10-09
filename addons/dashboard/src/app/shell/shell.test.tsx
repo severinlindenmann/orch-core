@@ -36,7 +36,7 @@ describe('app shell', () => {
   it('renders an addon page with the badge in the page title', async () => {
     renderApp('/addon/usage/overview')
     const title = await screen.findByRole('heading', { level: 1, name: /Usage/ })
-    expect(title.querySelector('[aria-label="From addon: usage"]')).not.toBeNull()
+    expect(title.querySelector('[aria-label="From the Usage addon"]')).not.toBeNull()
     expect(await screen.findByText('CHF 31.40')).toBeInTheDocument()
   })
 

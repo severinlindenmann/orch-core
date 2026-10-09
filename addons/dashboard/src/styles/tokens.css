@@ -19,7 +19,7 @@
   --border-strong: #3a424d;
   --text: #e8eaed;
   --text-muted: #9aa3ad;
-  --text-faint: #6e7681;
+  --text-faint: #8b949e; /* 4.5:1 or better on bg, surface, surface-2 and the sidebar */
 
   /* teal accent: actions */
   --brand: #2fc6a3;
@@ -67,7 +67,7 @@
   --chart-1: var(--brand);
   --chart-2: var(--info);
   --chart-3: var(--warning);
-  --chart-4: var(--addon);
+  --chart-4: #b392f0; /* violet: charts never use the addon orange */
   --chart-5: var(--danger);
   --sidebar-background: var(--sidebar);
   --sidebar-foreground: var(--text);

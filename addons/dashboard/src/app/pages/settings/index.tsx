@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
+import { ChevronLeft } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
-import { AddonBadge } from '@/addon-ui/AddonBadge'
-import { useSlot } from '@/addon-ui/slots'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
@@ -20,13 +19,11 @@ export const ONLY_OWNERS = 'Only owners change settings.'
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
 
-/** /settings/$tab (general | members | gates | addons) and /settings/addon/$name. */
+/** /settings/$tab (general | members | gates | addons) and /settings/addon/$name (opened from the addon's row in Addons). */
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const contributions = useSlot('settings')
-  const addons = contributions.filter((c, i) => contributions.findIndex((x) => x.addon === c.addon) === i)
 
   if (!workspace || !me.data) {
     return (
@@ -37,7 +34,8 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
     )
   }
   const isOwner = can(roleOf(workspace, me.data.person), 'settings')
-  const current = addon ? `addon/${addon}` : (tab ?? 'general')
+  // An addon's own settings page belongs to Addons: that stays the marked section.
+  const current = addon ? 'addons' : (tab ?? 'general')
 
   return (
     <div className="flex max-w-5xl gap-8">
@@ -48,12 +46,6 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
             {t.label}
           </Link>
         ))}
-        {addons.map((c) => (
-          <Link key={c.addon} to="/settings/addon/$name" params={{ name: c.addon }} className={cn(link, current === `addon/${c.addon}` && active)} aria-current={current === `addon/${c.addon}` ? 'page' : undefined}>
-            <span className="flex-1 truncate">{c.title}</span>
-            <AddonBadge name={c.addon} />
-          </Link>
-        ))}
       </nav>
 
       <div className="min-w-0 flex-1 space-y-4">
@@ -61,7 +53,13 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
         {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
-        {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} />}
+        {current === 'addons' && !addon && <AddonManager workspace={workspace} canEdit={isOwner} />}
+        {addon && (
+          <Link to="/settings/$tab" params={{ tab: 'addons' }} className="inline-flex items-center gap-1 text-[13px] text-text-muted hover:text-text">
+            <ChevronLeft aria-hidden className="size-3.5" />
+            Back to Addons
+          </Link>
+        )}
         {addon && <AddonSettings name={addon} workspace={workspace} canEdit={isOwner} />}
       </div>
     </div>

@@ -1,6 +1,8 @@
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
+import { addonHairline } from '@/addon-ui/addonClasses'
+import { cn } from '@/lib/utils'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
@@ -21,7 +23,7 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
   const c = selectContributions(addons ?? [], 'nav', { workspace, addon }, state?.waiting).find((x) => x.addon === name && x.id === page)
   usePageHeader(c ? c.title : name)
 
-  if (isLoading || !workspace) return <Skeleton className="h-40 w-full max-w-3xl" />
+  if (isLoading || !workspace) return <Skeleton className="h-40 w-full" />
   if (!addonActive(workspace, name)) {
     const title = addons?.find((x) => x.name === name)?.title ?? name
     const isOwner = can(role, 'addon.manage')
@@ -49,13 +51,13 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
       </div>
     )
   return (
-    <div className="max-w-4xl space-y-4">
-      <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-        <AddonBadge name={c.addon} className="size-5 text-xs" />
+    <div className="w-full space-y-4">
+      <h1 className={cn('flex items-center gap-2 border-b pb-3 text-xl font-semibold tracking-tight', addonHairline)}>
+        <AddonBadge name={c.addon} title={c.addonTitle} className="size-5 text-xs" />
         {c.title}
         <PreviewChip name={c.addon} />
       </h1>
-      <AddonContributionView c={c} ctx={{ workspace, addon }} readOnly={!can(role, 'addon.action')} />
+      <AddonContributionView c={c} ctx={{ workspace, addon }} readOnly={!can(role, 'addon.action')} bare />
     </div>
   )
 }

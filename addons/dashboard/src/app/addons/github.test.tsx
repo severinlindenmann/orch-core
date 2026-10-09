@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
+import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
@@ -30,7 +31,7 @@ describe('github code reviews page', () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     const { user } = renderApp('/addon/github/reviews', { viewer: 'p_sev' })
     const row = (await screen.findByText('Add billing reconciliation tests', {}, T)).closest('tr')!
-    await user.click(within(row).getByRole('button', { name: 'Open' }))
+    await user.click(await moreAction(user, row, 'Open'))
     await waitFor(() => expect(open).toHaveBeenCalledWith('https://github.com/acme-energy/energy-dbt/pull/29', '_blank', 'noopener,noreferrer'), T)
   })
   it('viewer sees the table with disabled actions', async () => {

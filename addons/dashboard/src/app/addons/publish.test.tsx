@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { api, mockStore } from '@/api/client'
+import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
@@ -20,7 +21,7 @@ describe('publish page', () => {
   it('revoking a share removes it from the page', async () => {
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
     const item = (await screen.findByText('Tariff API notes', {}, T)).closest('li')!
-    await user.click(within(item).getByRole('button', { name: 'Revoke' }))
+    await user.click(await moreAction(user, item, 'Revoke'))
     await waitFor(() => expect(screen.queryByText('Tariff API notes')).not.toBeInTheDocument(), T)
   })
   it('viewer sees the page with disabled actions', async () => {
@@ -37,7 +38,7 @@ describe('publish ticket panel', () => {
     const item = (await within(panel).findByText('Before/after report', {}, T)).closest('li')!
     expect(within(panel).queryByText('UTC migration summary')).not.toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: 'Share report…' })).toBeInTheDocument()
-    await user.click(within(item).getByRole('button', { name: 'Revoke' }))
+    await user.click(await moreAction(user, item, 'Revoke'))
     await waitFor(() => expect(within(panel).queryByText('Before/after report')).not.toBeInTheDocument(), T)
   })
 })

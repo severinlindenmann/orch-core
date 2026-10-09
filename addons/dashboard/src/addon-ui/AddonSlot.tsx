@@ -1,5 +1,9 @@
+import { useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import type { AddonSlot as SlotName } from '@/api/types'
+import { cn } from '@/lib/utils'
 import { ErrorBoundary, BlockProblem } from '@/components/ErrorBoundary'
+import { AddonBadge } from './AddonBadge'
 import { AddonFrame } from './AddonFrame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AddonNode } from './AddonNode'
@@ -23,32 +27,143 @@ export function AddonStatePlaceholder({ title, waiting, compact = false }: { tit
   )
 }
 
+/** The body of a contribution: its node, or core's placeholder while the addon's state loads. */
+function ContributionBody({ c, ctx, compact, readOnly }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean }) {
+  if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact} />
+  return (
+    <ErrorBoundary resetKey={c.node} fallback={() => <BlockProblem what={`This ${c.addon} panel`} />}>
+      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} />
+    </ErrorBoundary>
+  )
+}
+
 /**
  * One contribution inside its frame. `readOnly` is required: the caller derives it from the viewer's role in the
  * workspace the contribution acts in (`!can(role, 'addon.action')`, or a stricter rule such as settings).
+ * `bare`: the caller already shows the A and the title (an addon page's own header), so no second framed header;
+ * the content keeps `data-addon` so it stays identifiable as the addon's.
  */
-export function AddonContributionView({ c, ctx = {}, compact = false, readOnly }: { c: ResolvedContribution; ctx?: SlotContext; compact?: boolean; readOnly: boolean }) {
+export function AddonContributionView({
+  c,
+  ctx = {},
+  compact = false,
+  readOnly,
+  bare = false,
+  level,
+}: {
+  c: ResolvedContribution
+  ctx?: SlotContext
+  compact?: boolean
+  readOnly: boolean
+  bare?: boolean
+  level?: 2 | 3
+}) {
+  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} />
+  if (bare) return <div data-addon={c.addon}>{body}</div>
   return (
-    <AddonFrame addon={c.addon} title={c.title} slot={c.slot} compact={compact}>
-      {c.waiting ? (
-        <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact} />
-      ) : (
-      <ErrorBoundary resetKey={c.node} fallback={() => <BlockProblem what={`This ${c.addon} panel`} />}>
-        <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} />
-      </ErrorBoundary>
-      )}
+    <AddonFrame addon={c.addon} addonTitle={c.addonTitle} title={c.title} slot={c.slot} compact={compact} level={level}>
+      {body}
     </AddonFrame>
   )
 }
 
-/** Convenience: every contribution for a slot, stacked, each in its frame. Renders nothing when there are none. */
-export function AddonSlotStack({ name, ctx = {}, readOnly, className }: { name: SlotName; ctx?: Omit<SlotContext, 'workspace'>; readOnly: boolean; className?: string }) {
+const MAX_OPEN = 2
+const panelKey = (c: ResolvedContribution) => `orch.panel.${c.addon}/${c.id}`
+const readOpen = (c: ResolvedContribution): boolean => {
+  try {
+    return localStorage.getItem(panelKey(c)) === '1'
+  } catch {
+    return false
+  }
+}
+const writeOpen = (c: ResolvedContribution, open: boolean) => {
+  try {
+    if (open) localStorage.setItem(panelKey(c), '1')
+    else localStorage.removeItem(panelKey(c))
+  } catch {
+    /* storage unavailable: the choice lasts for this page only */
+  }
+}
+
+/**
+ * Panels as 32 px header buttons (the A, the title, a chevron), collapsed by default. What the person opens is
+ * remembered per panel, and at most two stay open: opening a third closes the one opened longest ago.
+ */
+export function CollapsibleStack({ items, ctx = {}, readOnly, className, level = 2 }: { items: ResolvedContribution[]; ctx?: SlotContext; readOnly: boolean; className?: string; level?: 2 | 3 }) {
+  const keys = items.map(panelKey)
+  const [open, setOpen] = useState<string[]>(() => items.filter(readOpen).map(panelKey).slice(-MAX_OPEN))
+  const Heading = level === 2 ? 'h2' : 'h3'
+  const toggle = (c: ResolvedContribution) => {
+    const k = panelKey(c)
+    if (open.includes(k)) {
+      writeOpen(c, false)
+      setOpen(open.filter((x) => x !== k))
+      return
+    }
+    const next = [...open, k]
+    while (next.length > MAX_OPEN) {
+      const dropped = next.shift() as string
+      const gone = items.find((x) => panelKey(x) === dropped)
+      if (gone) writeOpen(gone, false)
+    }
+    writeOpen(c, true)
+    setOpen(next)
+  }
+  return (
+    <div className={className ?? 'space-y-2'}>
+      {items.map((c, i) => {
+        const isOpen = open.includes(keys[i])
+        const id = `panel-${c.addon}-${c.id}`
+        return (
+          <section key={keys[i]} data-addon={c.addon} className="rounded-lg border border-addon-border bg-surface">
+            <Heading className="m-0">
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                aria-controls={id}
+                onClick={() => toggle(c)}
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-semibold text-text hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <AddonBadge name={c.addon} title={c.addonTitle} />
+                <span className="flex-1 truncate">{c.title}</span>
+                <ChevronRight aria-hidden className={cn('size-4 shrink-0 text-text-muted transition-transform', isOpen && 'rotate-90')} />
+              </button>
+            </Heading>
+            {isOpen && (
+              <div id={id} className="border-t border-addon-border p-3">
+                <ContributionBody c={c} ctx={ctx} compact={false} readOnly={readOnly} />
+              </div>
+            )}
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Convenience: every contribution for a slot, stacked, each in its frame (or collapsible). Renders nothing when there are none. */
+export function AddonSlotStack({
+  name,
+  ctx = {},
+  readOnly,
+  className,
+  collapsible = false,
+  level = 2,
+}: {
+  name: SlotName
+  ctx?: Omit<SlotContext, 'workspace'>
+  readOnly: boolean
+  className?: string
+  collapsible?: boolean
+  level?: 2 | 3
+}) {
   const items = useSlot(name, ctx)
   if (items.length === 0) return null
+  if (collapsible) return <CollapsibleStack items={items} ctx={ctx} readOnly={readOnly} className={className} level={level} />
   return (
     <div className={className ?? 'space-y-3'}>
       {items.map((c) => (
-        <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={ctx} readOnly={readOnly} />
+        <AddonContributionView key={`${c.addon}/${c.id}`} c={c} ctx={ctx} readOnly={readOnly} level={level} />
       ))}
     </div>
   )

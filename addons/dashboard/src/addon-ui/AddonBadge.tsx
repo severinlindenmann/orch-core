@@ -2,8 +2,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 
 /** The orange "A": marks anything an addon contributes, so people always see what is core and what is not. */
-export function AddonBadge({ name, className }: { name: string; className?: string }) {
-  const label = `From addon: ${name}`
+export function AddonBadge({ name, className, title }: { name: string; className?: string; /** The addon's display title: the tooltip then reads "From the Publish addon". */ title?: string }) {
+  const label = title ? `From the ${title} addon` : `From addon: ${name}`
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>

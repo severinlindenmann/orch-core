@@ -40,17 +40,23 @@ describe('Settings', () => {
     expect(await screen.findByText(/Not connected/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
   })
-  it('lists one entry per enabled addon with a settings page, with the A badge', async () => {
+  it('the nav shows General, Members, Gates and Addons only: no entry per addon', async () => {
     renderApp('/settings/general')
     const nav = await screen.findByRole('navigation', { name: 'Settings' })
-    expect(await within(nav).findByRole('link', { name: /Publish/ })).toHaveAttribute('href', '/settings/addon/publish')
-    expect(within(nav).getAllByRole('img', { name: /From addon/ }).length).toBeGreaterThan(0)
-    expect(within(nav).getByRole('link', { name: 'Gate policies' })).toBeInTheDocument()
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Addons'])
+    expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
+  })
+  it("an addon's settings open from its row in Addons, with Addons marked as the current section", async () => {
+    const { user } = renderApp('/settings/addons')
+    const row = await screen.findByRole('row', { name: /Publish/ })
+    await user.click(within(row).getByRole('link', { name: 'Settings' }))
+    expect(await screen.findByRole('link', { name: /Back to Addons/ })).toHaveAttribute('href', '/settings/addons')
+    expect(within(screen.getByRole('navigation', { name: 'Settings' })).getByRole('link', { name: 'Addons' })).toHaveAttribute('aria-current', 'page')
   })
   it('shows the workspace identity', async () => {
     renderApp('/settings/general')
     expect(await screen.findByText('6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11')).toBeInTheDocument()
-    expect(screen.getByText(/epoch 1/i)).toBeInTheDocument()
+    expect(await screen.findByText(/epoch 1/i)).toBeInTheDocument() // the identity loads after the workspace id
   })
   it('archiving needs the prefix and then the mock refuses', async () => {
     const { user } = renderApp('/settings/general')
